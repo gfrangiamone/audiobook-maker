@@ -1,0 +1,671 @@
+// ═══════════════════ ACTIVE JOBS MONITOR ═══════════════════
+let _monTimer=null;
+function openMonitor(){
+  document.getElementById('monModal').classList.add('open');
+  _fetchMonitor();
+  _monTimer=setInterval(_fetchMonitor,5000);
+}
+function closeMonitor(){
+  document.getElementById('monModal').classList.remove('open');
+  if(_monTimer){clearInterval(_monTimer);_monTimer=null}
+}
+function _fetchMonitor(){
+  fetch('/api/active_jobs').then(r=>r.json()).then(d=>{
+    const body=document.getElementById('monBody');
+    if(!d.jobs||d.jobs.length===0){
+      body.innerHTML='<div style="text-align:center;padding:24px;color:#999;font-size:.95rem">Nessuna generazione in corso</div>';
+      document.getElementById('monTitle').textContent='Active Jobs';
+      return;
+    }
+    document.getElementById('monTitle').textContent='Active Jobs ('+d.count+')';
+    let h='<table style="width:100%;border-collapse:collapse;font-size:.9rem">';
+    h+='<thead><tr style="background:var(--s2,#f0f5fa)">';
+    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Inizio</th>';
+    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Titolo</th>';
+    h+='<th style="padding:8px 10px;text-align:center;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Progresso</th>';
+    h+='</tr></thead><tbody>';
+    d.jobs.forEach(j=>{
+      const pct=j.total>0?Math.round(j.progress/j.total*100):0;
+      h+='<tr>';
+      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee);white-space:nowrap;font-family:monospace;font-size:.82rem;color:#888">'+esc(j.started)+'</td>';
+      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee)">';
+      h+='<div style="font-weight:600">'+esc(j.title)+'</div>';
+      if(j.chapter)h+='<div style="font-size:.8rem;color:#999;margin-top:2px">'+esc(j.chapter)+'</div>';
+      h+='</td>';
+      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee);text-align:center">';
+      if(j.status==='generating'){
+        h+='<div style="background:var(--brd,#e5e7eb);border-radius:6px;height:8px;width:80px;display:inline-block;vertical-align:middle;overflow:hidden">';
+        h+='<div style="background:var(--ac,#2563eb);height:100%;width:'+pct+'%;border-radius:6px;transition:width .5s"></div></div>';
+        h+=' <span style="font-size:.8rem;color:#888;margin-left:4px">'+pct+'%</span>';
+      } else {
+        h+='<span style="font-size:.8rem;color:#aaa">'+esc(j.status)+'</span>';
+      }
+      h+='</td></tr>';
+    });
+    h+='</tbody></table>';
+    body.innerHTML=h;
+  }).catch(()=>{
+    document.getElementById('monBody').innerHTML='<div style="text-align:center;padding:20px;color:#c00">Errore di connessione</div>';
+  });
+}
+
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeMonitor();document.getElementById('aboutModal').classList.remove('open');document.getElementById('emailModal').classList.remove('open')}});
+
+let cl='en';
+function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
+function applyI18n(){
+  document.querySelectorAll('[data-t]').forEach(e=>{
+    const k=e.getAttribute('data-t'),v=t(k);
+    if(e.tagName==='OPTION')e.textContent=v;
+    else e.textContent=v;
+  });
+  document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
+  document.documentElement.lang=cl;
+}
+function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}}
+function detectLang(){
+  try{const s=localStorage.getItem('abm_l');if(s&&L[s])return s}catch(e){}
+  const n=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
+  return L[n]?n:'en';
+}
+
+// ═══════════════════ STATE ═══════════════════
+let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false;
+
+// ═══════════════════ THEME ═══════════════════
+function detectTheme(){
+  try{const s=localStorage.getItem('abm_th');if(s)return s}catch(e){}
+  return window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
+}
+function applyTheme(th){
+  if(th==='dark'){document.documentElement.setAttribute('data-theme','dark');document.getElementById('themeBtn').textContent='\\u2600\\ufe0f'}
+  else{document.documentElement.removeAttribute('data-theme');document.getElementById('themeBtn').textContent='\U0001F319'}
+  try{localStorage.setItem('abm_th',th)}catch(e){}
+}
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
+  applyTheme(cur);
+}
+
+// ═══════════════════ INIT ═══════════════════
+document.addEventListener('DOMContentLoaded',()=>{
+  applyTheme(detectTheme());
+  cl=detectLang();applyI18n();buildAbout();applySEO();
+  document.getElementById('lsw').onclick=e=>{if(e.target.dataset.l)setLang(e.target.dataset.l)};
+  document.getElementById('themeBtn').onclick=toggleTheme;
+  document.getElementById('fbBtn').onclick=openFreeBooks;
+  document.getElementById('fbClose').onclick=closeFreeBooks;
+  document.getElementById('fbModal').onclick=e=>{if(e.target===e.currentTarget)closeFreeBooks()};
+  document.getElementById('pgBtn').onclick=openPodcastGuide;
+  document.getElementById('pgClose').onclick=closePodcastGuide;
+  document.getElementById('pgModal').onclick=e=>{if(e.target===e.currentTarget)closePodcastGuide()};
+  document.getElementById('aboutBtn').onclick=e=>{e.preventDefault();openAbout()};
+  document.getElementById('aboutClose').onclick=()=>document.getElementById('aboutModal').classList.remove('open');
+  document.getElementById('aboutModal').onclick=e=>{if(e.target===e.currentTarget)e.target.classList.remove('open')};
+  // Monitor modal handlers
+  document.getElementById('monClose').onclick=closeMonitor;
+  document.getElementById('monModal').onclick=e=>{if(e.target===e.currentTarget)closeMonitor()};
+  // Email modal handlers
+  document.getElementById('emSubmit').onclick=submitEmail;
+  document.getElementById('emSkip').onclick=skipEmail;
+  document.getElementById('emClose').onclick=skipEmail;
+  document.getElementById('emailModal').onclick=e=>{if(e.target===e.currentTarget)skipEmail()};
+  setupUpload();loadVoices();
+  document.getElementById('btnG').onclick=startGen;
+  document.getElementById('btnD').onclick=downloadFile;
+  document.getElementById('btnP').onclick=downloadPodcast;
+  document.getElementById('btnN').onclick=resetAll;
+  document.getElementById('btnC').onclick=cancelJob;
+  window.addEventListener('beforeunload',onBeforeUnload);
+  document.getElementById('toS').onclick=function(){toggleOut(this)};
+  document.getElementById('toC').onclick=function(){toggleOut(this)};
+  // Chapter selection handlers
+  document.getElementById('selAll').onclick=chSelAll;
+  document.getElementById('selNone').onclick=chSelNone;
+  document.getElementById('selInv').onclick=chSelInvert;
+  document.getElementById('chAll').onchange=chMasterToggle;
+});
+
+function toggleOut(el){
+  document.querySelectorAll('.tg button').forEach(b=>b.classList.remove('on'));
+  el.classList.add('on');singleFile=el.dataset.v==='single';
+  document.getElementById('podHint').style.display=singleFile?'none':'';
+  // Show/hide chapter selection UI
+  const show=!singleFile;
+  document.getElementById('thSel').style.display=show?'':'none';
+  document.querySelectorAll('#chl .col-sel').forEach(td=>td.style.display=show?'':'none');
+  document.querySelectorAll('#chl tr').forEach(tr=>tr.style.cursor=show?'pointer':'');
+  document.getElementById('selBar').classList.toggle('vis',show);
+  if(show){updateSelection()}
+  else if(bookData){
+    // Restore full summary counts
+    document.getElementById('smC').textContent=bookData.total_chapters;
+    document.getElementById('smW').textContent=bookData.total_words.toLocaleString();
+    document.getElementById('smD').textContent=fmtDur(bookData.estimated_minutes);
+    document.getElementById('btnG').disabled=false;
+  }
+}
+
+// ═══════════════════ UPLOAD + LOCK ═══════════════════
+function setupUpload(){
+  const z=document.getElementById('uz'),fi=document.getElementById('fi');
+  z.onclick=()=>{if(!generating&&!jobDone)fi.click()};
+  ['dragenter','dragover'].forEach(e=>z.addEventListener(e,ev=>{ev.preventDefault();if(!generating&&!jobDone)z.classList.add('dg')}));
+  ['dragleave','drop'].forEach(e=>z.addEventListener(e,ev=>{ev.preventDefault();z.classList.remove('dg')}));
+  z.addEventListener('drop',ev=>{if(generating||jobDone)return;const f=ev.dataTransfer.files;if(f.length)handleFile(f[0])});
+  fi.addEventListener('change',()=>{if(!generating&&!jobDone&&fi.files.length)handleFile(fi.files[0])});
+}
+
+// ═══════════════════ ACCORDION ═══════════════════
+function toggleStep(id){
+  const el=document.getElementById(id);
+  if(el.classList.contains('disabled')||el.classList.contains('locked'))return;
+  el.classList.toggle('collapsed');
+  if(!el.classList.contains('collapsed')){
+    setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'nearest'}),100);
+  }
+}
+function activateStep(id){
+  const el=document.getElementById(id);
+  el.classList.remove('collapsed','disabled');
+  el.style.display='';
+  setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'nearest'}),150);
+}
+function collapseStep(id){document.getElementById(id).classList.add('collapsed')}
+function disableStep(id){const el=document.getElementById(id);el.classList.add('collapsed','disabled')}
+
+function lockUI(){
+  generating=true;
+  ['s1','s2','s3'].forEach(id=>{const el=document.getElementById(id);el.classList.add('locked','collapsed','done')});
+  document.getElementById('fi').disabled=true;
+}
+function unlockUI(){
+  generating=false;
+  ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('locked'));
+  document.getElementById('fi').disabled=false;
+}
+
+function handleFile(file){
+  if(generating||jobDone)return;
+  const fn=file.name.toLowerCase();
+  if(!fn.endsWith('.epub')&&!fn.endsWith('.txt')){showErr('aerr',t('err_epub'));return}
+  document.getElementById('uz').classList.add('ok');
+  document.getElementById('ufn').textContent='\\u2713 '+file.name;
+  document.getElementById('ufn').style.display='block';
+  document.getElementById('s1sum').textContent='\\u2713 '+file.name;
+  document.getElementById('utx').textContent=t('upload_ok');
+  document.getElementById('aerr').innerHTML='';
+  analyzeEpub(file);
+}
+
+async function analyzeEpub(file){
+  const lo=document.getElementById('alo');lo.classList.add('vis');
+  disableStep('s2');disableStep('s3');
+  const fd=new FormData();fd.append('epub',file);
+  try{
+    const r=await fetch('/api/analyze',{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');return}
+    bookData=d;jobId=d.job_id;lo.classList.remove('vis');
+    isTxtFile=(d.file_type==='txt');
+    if(d.language){
+      const lc=d.language.split('-')[0].toLowerCase();
+      const sel=document.getElementById('vl');
+      if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;updVoices()}
+    }
+    // Set output mode based on file type
+    if(isTxtFile){
+      // TXT: force single file, hide output toggle and chapter table
+      toggleOut(document.getElementById('toS'));
+      document.getElementById('fgOut').style.display='none';
+    }else{
+      // EPUB: default to chapters mode
+      document.getElementById('fgOut').style.display='';
+      toggleOut(document.getElementById('toC'));
+    }
+    fillPreview(d);
+    collapseStep('s1');document.getElementById('s1').classList.add('done');
+    activateStep('s2');
+    if(!isTxtFile)activateStep('s3');
+    else{
+      // TXT single chapter: skip step 3 preview, go straight to generate from s2
+      activateStep('s3');
+    }
+  }catch(e){showErr('aerr','Error: '+e.message);lo.classList.remove('vis')}
+}
+
+// ═══════════════════ VOICES ═══════════════════
+async function loadVoices(){
+  try{const r=await fetch('/api/voices');voices=await r.json();fillLangs()}catch(e){console.error(e)}
+}
+function fillLangs(){
+  const sel=document.getElementById('vl');sel.innerHTML='';
+  for(const[c,l]of Object.entries(voices)){
+    const o=document.createElement('option');o.value=c;o.textContent=l.name+' ('+l.voices.length+')';sel.appendChild(o);
+  }
+  sel.onchange=updVoices;
+  if(voices.it)sel.value='it';
+  updVoices();
+}
+function updVoices(){
+  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');sel.innerHTML='';
+  if(!voices[lc])return;
+  const lang=voices[lc];let lg='';
+  for(const v of lang.voices){
+    if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'\\u2640':'\\u2642';sel.appendChild(g);lg=v.gender}
+    const o=document.createElement('option');o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
+    sel.lastElementChild.appendChild(o);
+  }
+  const dv=lang.voices.find(v=>v.id.includes('Giuseppe')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+  if(dv)sel.value=dv.id;
+}
+
+// ═══════════════════ PREVIEW ═══════════════════
+function fillPreview(d){
+  document.getElementById('bkT').textContent=d.title;
+  document.getElementById('bkA').textContent=d.author?(t('by')+' '+d.author):'';
+  // Cover image
+  const coverImg=document.getElementById('bkCover');
+  console.log('[cover] has_cover='+d.has_cover+', job_id='+d.job_id);
+  if(d.has_cover&&d.job_id){
+    coverImg.src='/api/cover/'+d.job_id;
+    coverImg.style.display='';
+    coverImg.onload=function(){console.log('[cover] loaded OK: '+this.naturalWidth+'x'+this.naturalHeight)};
+    coverImg.onerror=function(){console.log('[cover] load FAILED');this.style.display='none'};
+  }else{coverImg.style.display='none';coverImg.src=''}
+  document.getElementById('smC').textContent=d.total_chapters;
+  document.getElementById('smW').textContent=d.total_words.toLocaleString();
+  document.getElementById('smD').textContent=fmtDur(d.estimated_minutes);
+  document.getElementById('selTot').textContent=d.total_chapters;
+  const tb=document.getElementById('chl');tb.innerHTML='';
+  for(const ch of d.chapters){
+    const tr=document.createElement('tr');
+    tr.dataset.idx=ch.index;
+    tr.dataset.words=ch.words;
+    tr.dataset.mins=ch.estimated_minutes;
+    const selTd=document.createElement('td');
+    selTd.className='col-sel';
+    selTd.style.display=singleFile?'none':'';
+    const cb=document.createElement('input');
+    cb.type='checkbox';cb.checked=true;cb.dataset.idx=ch.index;
+    cb.addEventListener('change',()=>{tr.classList.toggle('unchecked',!cb.checked);updateSelection()});
+    selTd.appendChild(cb);
+    tr.innerHTML='<td><span class="cn">'+ch.index+'.</span>'+esc(ch.title.substring(0,60))+'</td><td>'+ch.words.toLocaleString()+'</td><td>'+fmtDur(ch.estimated_minutes)+'</td>';
+    tr.insertBefore(selTd,tr.firstChild);
+    tr.style.cursor=singleFile?'':'pointer';
+    tr.addEventListener('click',e=>{if(singleFile||e.target.tagName==='INPUT')return;cb.checked=!cb.checked;tr.classList.toggle('unchecked',!cb.checked);updateSelection()});
+    tb.appendChild(tr);
+  }
+  // Master checkbox
+  document.getElementById('chAll').checked=true;
+  updateSelection();
+  document.getElementById('s3sum').textContent=d.title.substring(0,25)+(d.title.length>25?'..':'')+' \u2014 '+d.total_chapters+' cap., '+d.total_words.toLocaleString()+' '+t('sum_w').toLowerCase();
+}
+
+function updateSelection(){
+  const boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
+  let cnt=0,words=0,mins=0;
+  boxes.forEach(cb=>{
+    if(cb.checked){cnt++;const tr=cb.closest('tr');words+=parseInt(tr.dataset.words||0);mins+=parseFloat(tr.dataset.mins||0)}
+  });
+  document.getElementById('selCnt').textContent=cnt;
+  // Update summary to reflect selection
+  if(!singleFile){
+    document.getElementById('smC').textContent=cnt+' / '+(bookData?bookData.total_chapters:boxes.length);
+    document.getElementById('smW').textContent=words.toLocaleString();
+    document.getElementById('smD').textContent=fmtDur(mins);
+  }
+  // Master checkbox state
+  const all=boxes.length;
+  const master=document.getElementById('chAll');
+  master.checked=cnt===all;
+  master.indeterminate=cnt>0&&cnt<all;
+  // Disable generate if none selected and in chapter mode
+  document.getElementById('btnG').disabled=(!singleFile&&cnt===0);
+}
+
+function chSelAll(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.remove('unchecked')});updateSelection()}
+function chSelNone(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=false;cb.closest('tr').classList.add('unchecked')});updateSelection()}
+function chSelInvert(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=!cb.checked;cb.closest('tr').classList.toggle('unchecked',!cb.checked)});updateSelection()}
+function chMasterToggle(){const v=document.getElementById('chAll').checked;document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=v;cb.closest('tr').classList.toggle('unchecked',!v)});updateSelection()}
+
+// ═══════════════════ GENERATION ═══════════════════
+async function startGen(){
+  // Collect selected chapter indices when in chapter mode
+  let selectedChapters=null;
+  if(!singleFile){
+    selectedChapters=[];
+    document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
+      if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
+    });
+    if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
+  }
+  document.getElementById('s3err').innerHTML='';
+  document.getElementById('btnG').disabled=true;
+  // Set s2 summary for collapsed state
+  const vSel=document.getElementById('vv');
+  const vName=vSel.options[vSel.selectedIndex]?vSel.options[vSel.selectedIndex].text:'';
+  const rSel=document.getElementById('vr');
+  const rName=rSel.options[rSel.selectedIndex]?rSel.options[rSel.selectedIndex].text:'';
+  document.getElementById('s2sum').textContent=vName+' \u2014 '+rName;
+  lockUI();
+  const s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
+  if(bookData){document.getElementById('s4bkT').textContent=bookData.title||'';document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display='';sc.onerror=function(){this.style.display='none'}}else{sc.style.display='none';sc.src=''}}
+  document.getElementById('pMsg').textContent=t('starting');
+  setTimeout(()=>s4.scrollIntoView({behavior:'smooth',block:'nearest'}),200);
+  try{
+    const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile};
+    if(selectedChapters)payload.selected_chapters=selectedChapters;
+    const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(d.error){showPErr(d.error);unlockUI();return}
+    listenProgress();
+  }catch(e){showPErr('Error: '+e.message);unlockUI()}
+}
+
+function listenProgress(){
+  let retries=0;
+  const maxRetries=5;
+  function connect(){
+    const es=new EventSource('/api/progress/'+jobId);
+    es.onmessage=ev=>{
+      retries=0;  // Reset su messaggio ricevuto
+      const d=JSON.parse(ev.data);
+      if(d.status==='error'){es.close();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';document.getElementById('emailModal').classList.remove('open');return}
+      if(d.status==='cancelled'){es.close();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';document.getElementById('emailModal').classList.remove('open');unlockUI();generating=false;return}
+
+      const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
+      document.getElementById('pPct').textContent=pct+'%';
+      document.getElementById('pBar').style.width=pct+'%';
+      document.getElementById('pMsg').textContent=d.progress_message||'';
+
+      if(d.current_chapter)
+        document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
+      if(d.progress_total>0)
+        document.getElementById('xBlk').textContent=d.progress_current+' / '+d.progress_total;
+      if(d.total_chapters>0)
+        document.getElementById('xCh').textContent=d.current_chapter_num+' / '+d.total_chapters;
+      if(d.elapsed_seconds>0)
+        document.getElementById('xEl').textContent=fmtTime(d.elapsed_seconds);
+
+      // ETA basata su chars/sec reale
+      if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
+        const cps=d.processed_chars/d.elapsed_seconds;
+        const left=d.total_chars-d.processed_chars;
+        const eta=Math.round(left/cps);
+        document.getElementById('xEta').textContent=eta>0?'~'+fmtTime(eta):t('almost');
+        document.getElementById('xSpd').textContent=Math.round(cps)+' '+t('cps');
+        // Email prompt: after 60s elapsed, ETA > 10min, chapter mode, SMTP available
+        if(!emailPromptShown&&!emailRegistered&&smtpAvailable&&d.elapsed_seconds>=30&&(d.elapsed_seconds+eta)>180){
+          emailPromptShown=true;
+          showEmailModal();
+        }
+      }
+      if(d.bytes_generated>0)
+        document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
+
+      if(d.status==='done'){
+        es.close();
+        generating=false;
+        jobDone=true;
+        document.getElementById('pPct').textContent='100%';
+        document.getElementById('pBar').style.width='100%';
+        document.getElementById('pMsg').textContent=t('done_msg');
+        document.getElementById('pMsg').style.color='var(--ok)';
+        if(d.failed_chunks>0){
+          document.getElementById('pMsg').textContent=t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)';
+          document.getElementById('pMsg').style.color='#d97706';
+        }
+        document.getElementById('xEta').textContent='-';
+        document.getElementById('dlA').style.display='block';
+        document.getElementById('dlA').classList.add('fi');
+        document.getElementById('btnP').style.display=d.has_podcast?'':'none';
+        document.getElementById('s4t').textContent=t('done_t');
+        document.getElementById('cnA').style.display='none';
+        document.getElementById('emailModal').classList.remove('open');
+        // Heartbeat: segnala al server che il client è ancora sulla pagina
+        hbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},10000);
+        // Manda subito il primo heartbeat (evita gap iniziale)
+        if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId);
+        // Heartbeat extra quando la tab torna in primo piano
+        // (Chrome throttla setInterval in background, ma visibilitychange NO)
+        document._hbVis=()=>{if(!document.hidden&&jobId&&jobDone)navigator.sendBeacon('/api/heartbeat/'+jobId)};
+        document.addEventListener('visibilitychange',document._hbVis);
+        // UI resta locked fino a "nuovo"
+      }
+    };
+    es.onerror=()=>{
+      es.close();
+      if(retries<maxRetries&&generating){
+        retries++;
+        // Riconnessione progressiva: 2s, 4s, 6s, 8s, 10s
+        setTimeout(connect,retries*2000);
+      }
+    };
+  }
+  connect();
+}
+
+function cancelJob(){
+  if(!jobId||!generating)return;
+  navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
+  location.reload();
+}
+
+// ═══════════════════ EMAIL NOTIFICATION ═══════════════════
+function showEmailModal(){
+  const m=document.getElementById('emailModal');
+  document.getElementById('emTitle').textContent='📧 '+t('email_title');
+  document.getElementById('emDesc').textContent=t('email_desc');
+  document.getElementById('emDlLabel').textContent=t('email_dl_type');
+  document.getElementById('emDlAudioL').textContent=t('email_dl_audio');
+  document.getElementById('emDlPodcastL').textContent=t('email_dl_podcast');
+  document.getElementById('emBaseUrlLabel').textContent=t('email_base_url');
+  document.getElementById('emEmail').placeholder=t('email_placeholder');
+  document.getElementById('emSubmit').textContent=t('email_btn');
+  document.getElementById('emSkip').textContent=t('email_skip');
+  document.getElementById('emErr').style.display='none';
+  document.getElementById('emOk').style.display='none';
+  document.getElementById('emBtns').style.display='flex';
+  document.getElementById('emDlType').style.display=singleFile?'none':'';
+  document.getElementById('emBaseUrlWrap').style.display='none';
+  // Reset radio to "audio" every time modal opens
+  document.querySelectorAll('input[name="emDl"]').forEach((r,i)=>{r.checked=i===0});
+  // Radio change: show/hide base URL field
+  document.querySelectorAll('input[name="emDl"]').forEach(r=>{
+    r.onchange=()=>{
+      document.getElementById('emBaseUrlWrap').style.display=
+        document.querySelector('input[name="emDl"]:checked').value==='podcast'?'':'none';
+    };
+  });
+  m.classList.add('open');
+}
+
+async function submitEmail(){
+  const email=document.getElementById('emEmail').value.trim();
+  const errEl=document.getElementById('emErr');
+  errEl.style.display='none';
+  // Validate email client-side
+  if(!email||!/^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$/.test(email)){
+    errEl.textContent=t('email_invalid');errEl.style.display='block';return;
+  }
+  const dlType=document.querySelector('input[name="emDl"]:checked').value;
+  const baseUrl=document.getElementById('emBaseUrl').value.trim();
+  if(dlType==='podcast'&&!baseUrl){
+    errEl.textContent=t('email_base_url');errEl.style.display='block';return;
+  }
+  try{
+    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({job_id:jobId,email:email,download_type:dlType,base_url:baseUrl,lang:cl})});
+    const d=await r.json();
+    if(d.error){
+      errEl.textContent=d.error==='Email service not configured on this server'?t('email_unavail'):d.error;
+      errEl.style.display='block';return;
+    }
+    emailRegistered=true;
+    document.getElementById('emBtns').style.display='none';
+    document.getElementById('emDlType').style.display='none';
+    document.getElementById('emBaseUrlWrap').style.display='none';
+    document.getElementById('emEmail').style.display='none';
+    document.getElementById('emDesc').style.display='none';
+    document.getElementById('emOk').textContent=t('email_ok');
+    document.getElementById('emOk').style.display='block';
+    // Show inline status indicator in step 4
+    document.getElementById('emailStatusText').textContent=t('email_ok');
+    document.getElementById('emailStatus').style.display='block';
+    // Auto-close after 5 seconds
+    setTimeout(()=>{document.getElementById('emailModal').classList.remove('open')},5000);
+  }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display='block'}
+}
+
+function skipEmail(){
+  document.getElementById('emailModal').classList.remove('open');
+}
+
+// Check SMTP availability on page load
+async function checkSmtp(){
+  try{
+    const r=await fetch('/api/email_available');
+    const d=await r.json();
+    smtpAvailable=d.available===true;
+  }catch(e){smtpAvailable=false}
+}
+checkSmtp();
+
+async function downloadFile(){
+  if(!jobId)return;
+  const btn=document.getElementById('btnD');
+  btn.disabled=true;btn.textContent='⏳...';
+  const maxDlRetries=3;
+  for(let attempt=1;attempt<=maxDlRetries;attempt++){
+    try{
+      // Heartbeat prima del download (assicura che il job sia ancora vivo)
+      navigator.sendBeacon('/api/heartbeat/'+jobId);
+      const r=await fetch('/api/download/'+jobId);
+      if(r.status===404){
+        if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
+        showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
+        btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        return;
+      }
+      if(!r.ok){
+        const txt=await r.text();
+        showPErr(txt||'Download failed');
+        btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        return;
+      }
+      const blob=await r.blob();
+      const cd=r.headers.get('Content-Disposition')||'';
+      const m=cd.match(/filename[^;=\\n]*=['"]?([^'";\\n]*)/);
+      const fname=m?m[1]:'audiobook.mp3';
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=fname;
+      document.body.appendChild(a);a.click();
+      setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+      btn.innerHTML='\\u2705 <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+      btn.disabled=false;
+      return;
+    }catch(e){
+      if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
+      showPErr('Download error: '+e.message);
+      btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+    }
+  }
+}
+
+async function downloadPodcast(){
+  if(!jobId)return;
+  const baseUrl=prompt(t('podcast_url_prompt'),'https://example.com/podcast');
+  if(!baseUrl)return;
+  const btn=document.getElementById('btnP');
+  btn.disabled=true;btn.textContent='\\u23F3...';
+  try{
+    navigator.sendBeacon('/api/heartbeat/'+jobId);
+    const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
+    if(!r.ok){
+      const txt=await r.text();
+      showPErr(txt||'Download failed');
+      btn.disabled=false;btn.innerHTML='\\uD83C\\uDF99\\uFE0F <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      return;
+    }
+    const blob=await r.blob();
+    const cd=r.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename[^;=\\n]*=['"]?([^'";\\n]*)/);
+    const fname=m?m[1]:'podcast.zip';
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=fname;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+    btn.innerHTML='\\u2705 <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+    btn.disabled=false;
+  }catch(e){
+    showPErr('Download error: '+e.message);
+    btn.disabled=false;btn.innerHTML='\\uD83C\\uDF99\\uFE0F <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+  }
+}
+
+function onBeforeUnload(e){
+  if(generating&&!jobDone&&jobId&&!emailRegistered){
+    // Cancel solo se la generazione è in corso E l'utente NON ha registrato email
+    navigator.sendBeacon('/api/cancel/'+jobId);
+  }
+}
+
+function resetAll(){
+  if(hbInterval){clearInterval(hbInterval);hbInterval=null}
+  if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
+  generating=false;
+  jobDone=false;
+  unlockUI();
+  document.getElementById('s4').style.display='none';
+  // Accordion: s1 open, s2+s3 disabled collapsed
+  document.getElementById('s1').classList.remove('collapsed','disabled','done');
+  disableStep('s2');disableStep('s3');
+  ['s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
+  document.getElementById('dlA').style.display='none';
+  document.getElementById('btnP').style.display='none';
+  document.getElementById('podHint').style.display='none';
+  document.getElementById('cnA').style.display='';
+  document.getElementById('btnG').disabled=false;
+  document.getElementById('pBar').style.width='0%';
+  document.getElementById('pPct').textContent='0%';
+  document.getElementById('pMsg').style.color='';
+  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>document.getElementById(id).textContent='-');
+  document.getElementById('uz').classList.remove('ok');
+  document.getElementById('ufn').style.display='none';
+  document.getElementById('fi').value='';
+  document.getElementById('chl').innerHTML='';
+  document.getElementById('s3err').innerHTML='';
+  document.getElementById('selBar').classList.remove('vis');
+  document.getElementById('thSel').style.display='none';
+  singleFile=true;isTxtFile=false;
+  document.getElementById('fgOut').style.display='';
+  document.querySelectorAll('.tg button').forEach(b=>b.classList.remove('on'));
+  document.getElementById('toS').classList.add('on');
+  bookData=null;jobId=null;
+  emailPromptShown=false;emailRegistered=false;
+  document.getElementById('emailModal').classList.remove('open');
+  // Reset email modal fields
+  document.getElementById('emEmail').value='';document.getElementById('emEmail').style.display='';
+  document.getElementById('emBaseUrl').value='';
+  document.getElementById('emDesc').style.display='';
+  document.querySelectorAll('input[name="emDl"]').forEach((r,i)=>{r.checked=i===0});
+  ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);el.style.display='none';el.src=''});
+  ['s1sum','s2sum','s3sum'].forEach(id=>document.getElementById(id).textContent='');
+  applyI18n();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ═══════════════════ HELPERS ═══════════════════
+function fmtDur(m){if(m<1)return'< 1 min';if(m<60)return Math.round(m)+' min';const h=Math.floor(m/60);const r=Math.round(m%60);return h+'h '+(r>0?r+'min':'')}
+function fmtTime(s){if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m'+(r>0?' '+r+'s':'');return Math.floor(m/60)+'h '+(m%60>0?(m%60)+'m':'')}
+function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB'}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+function showPErr(m){document.getElementById('pra').innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+</script>
+</body>
+</html>
