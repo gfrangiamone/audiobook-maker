@@ -1,0 +1,5 @@
+flask>=3.0
+edge-tts>=6.1
+Pillow>=10.0
+ebooklib>=0.18
+beautifulsoup4>=4.12
