@@ -1,0 +1,108 @@
+name: Test & Deploy
+
+# ── Trigger: solo su tag di release (es. v1.0.0, v2.3.1) ──
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  APP_DIR: /opt/audiobook-maker        # Cartella dell'app sul server
+  SERVICE_NAME: audiobook-maker         # Nome del servizio systemd
+  BACKUP_DIR: /opt/backups/audiobook    # Cartella backup sul server
+
+jobs:
+
+  # ════════════════════════════════════════════
+  # JOB 1 — Test
+  # ════════════════════════════════════════════
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  # ════════════════════════════════════════════
+  # JOB 2 — Deploy (solo se i test passano)
+  # ════════════════════════════════════════════
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+
+            TAG="${GITHUB_REF_NAME:-$(date +%Y%m%d_%H%M%S)}"
+            echo "══════════════════════════════════════"
+            echo "  Deploying $TAG"
+            echo "══════════════════════════════════════"
+
+            # ── 1. Backup ──
+            echo "→ Creating backup..."
+            sudo mkdir -p ${{ env.BACKUP_DIR }}
+            BACKUP_FILE="${{ env.BACKUP_DIR }}/backup_${TAG}_$(date +%Y%m%d_%H%M%S).tar.gz"
+            sudo tar -czf "$BACKUP_FILE" \
+              -C $(dirname ${{ env.APP_DIR }}) \
+              $(basename ${{ env.APP_DIR }}) \
+              --exclude='__pycache__' \
+              --exclude='.git' \
+              --exclude='*.pyc' \
+              --exclude='data/*'
+            echo "  Backup: $BACKUP_FILE"
+
+            # Mantieni solo gli ultimi 5 backup
+            cd ${{ env.BACKUP_DIR }}
+            ls -t backup_*.tar.gz | tail -n +6 | xargs -r sudo rm --
+            echo "  Old backups cleaned."
+
+            # ── 2. Pull ──
+            echo "→ Pulling from GitHub..."
+            cd ${{ env.APP_DIR }}
+            sudo git fetch --all --tags
+            sudo git checkout "tags/${TAG}" -f
+            echo "  Checked out ${TAG}"
+
+            # ── 3. Install/update dependencies ──
+            echo "→ Updating dependencies..."
+            if [ -f requirements.txt ]; then
+              sudo pip install -r requirements.txt --break-system-packages -q
+            fi
+
+            # ── 4. Restart ──
+            echo "→ Restarting service..."
+            sudo systemctl restart ${{ env.SERVICE_NAME }}
+            sleep 3
+
+            # ── 5. Health check ──
+            if sudo systemctl is-active --quiet ${{ env.SERVICE_NAME }}; then
+              echo "══════════════════════════════════════"
+              echo "  ✅ Deploy OK — $TAG is live!"
+              echo "══════════════════════════════════════"
+            else
+              echo "══════════════════════════════════════"
+              echo "  ❌ Service failed! Rolling back..."
+              echo "══════════════════════════════════════"
+              sudo tar -xzf "$BACKUP_FILE" -C $(dirname ${{ env.APP_DIR }})
+              sudo systemctl restart ${{ env.SERVICE_NAME }}
+              echo "  Rollback complete."
+              exit 1
+            fi

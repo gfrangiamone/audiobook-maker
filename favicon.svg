@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#c29a6c"/>
+      <stop offset="100%" style="stop-color:#a07850"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- Book (open) -->
+  <path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Book spine -->
+  <path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <!-- Headphone band -->
+  <path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+  <!-- Left ear cup -->
+  <rect x="13" y="34" width="7" height="10" rx="3" fill="white"/>
+  <!-- Right ear cup -->
+  <rect x="44" y="34" width="7" height="10" rx="3" fill="white"/>
+  <!-- Sound waves left -->
+  <path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>
+  <!-- Sound waves right -->
+  <path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>
+</svg>
