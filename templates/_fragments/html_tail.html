@@ -78,7 +78,7 @@ function detectTheme(){
   return window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
 }
 function applyTheme(th){
-  if(th==='dark'){document.documentElement.setAttribute('data-theme','dark');document.getElementById('themeBtn').textContent='\\u2600\\ufe0f'}
+  if(th==='dark'){document.documentElement.setAttribute('data-theme','dark');document.getElementById('themeBtn').textContent='☀️'}
   else{document.documentElement.removeAttribute('data-theme');document.getElementById('themeBtn').textContent='\U0001F319'}
   try{localStorage.setItem('abm_th',th)}catch(e){}
 }
@@ -190,9 +190,9 @@ function handleFile(file){
   const fn=file.name.toLowerCase();
   if(!fn.endsWith('.epub')&&!fn.endsWith('.txt')){showErr('aerr',t('err_epub'));return}
   document.getElementById('uz').classList.add('ok');
-  document.getElementById('ufn').textContent='\\u2713 '+file.name;
+  document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
-  document.getElementById('s1sum').textContent='\\u2713 '+file.name;
+  document.getElementById('s1sum').textContent='✓ '+file.name;
   document.getElementById('utx').textContent=t('upload_ok');
   document.getElementById('aerr').innerHTML='';
   analyzeEpub(file);
@@ -252,7 +252,7 @@ function updVoices(){
   if(!voices[lc])return;
   const lang=voices[lc];let lg='';
   for(const v of lang.voices){
-    if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'\\u2640':'\\u2642';sel.appendChild(g);lg=v.gender}
+    if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender}
     const o=document.createElement('option');o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
     sel.lastElementChild.appendChild(o);
   }
@@ -299,7 +299,7 @@ function fillPreview(d){
   // Master checkbox
   document.getElementById('chAll').checked=true;
   updateSelection();
-  document.getElementById('s3sum').textContent=d.title.substring(0,25)+(d.title.length>25?'..':'')+' \u2014 '+d.total_chapters+' cap., '+d.total_words.toLocaleString()+' '+t('sum_w').toLowerCase();
+  document.getElementById('s3sum').textContent=d.title.substring(0,25)+(d.title.length>25?'..':'')+' — '+d.total_chapters+' cap., '+d.total_words.toLocaleString()+' '+t('sum_w').toLowerCase();
 }
 
 function updateSelection(){
@@ -347,7 +347,7 @@ async function startGen(){
   const vName=vSel.options[vSel.selectedIndex]?vSel.options[vSel.selectedIndex].text:'';
   const rSel=document.getElementById('vr');
   const rName=rSel.options[rSel.selectedIndex]?rSel.options[rSel.selectedIndex].text:'';
-  document.getElementById('s2sum').textContent=vName+' \u2014 '+rName;
+  document.getElementById('s2sum').textContent=vName+' — '+rName;
   lockUI();
   const s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
   if(bookData){document.getElementById('s4bkT').textContent=bookData.title||'';document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display='';sc.onerror=function(){this.style.display='none'}}else{sc.style.display='none';sc.src=''}}
@@ -487,7 +487,7 @@ async function submitEmail(){
   const errEl=document.getElementById('emErr');
   errEl.style.display='none';
   // Validate email client-side
-  if(!email||!/^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$/.test(email)){
+  if(!email||!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)){
     errEl.textContent=t('email_invalid');errEl.style.display='block';return;
   }
   const dlType=document.querySelector('input[name="emDl"]:checked').value;
@@ -546,31 +546,31 @@ async function downloadFile(){
       if(r.status===404){
         if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
         showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
-        btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
         return;
       }
       if(!r.ok){
         const txt=await r.text();
         showPErr(txt||'Download failed');
-        btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
         return;
       }
       const blob=await r.blob();
       const cd=r.headers.get('Content-Disposition')||'';
-      const m=cd.match(/filename[^;=\\n]*=['"]?([^'";\\n]*)/);
+      const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
       const fname=m?m[1]:'audiobook.mp3';
       const a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
       a.download=fname;
       document.body.appendChild(a);a.click();
       setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
-      btn.innerHTML='\\u2705 <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+      btn.innerHTML='✅ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
       btn.disabled=false;
       return;
     }catch(e){
       if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
       showPErr('Download error: '+e.message);
-      btn.disabled=false;btn.innerHTML='\\u2B07\\uFE0F <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+      btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
     }
   }
 }
@@ -580,30 +580,30 @@ async function downloadPodcast(){
   const baseUrl=prompt(t('podcast_url_prompt'),'https://example.com/podcast');
   if(!baseUrl)return;
   const btn=document.getElementById('btnP');
-  btn.disabled=true;btn.textContent='\\u23F3...';
+  btn.disabled=true;btn.textContent='⏳...';
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
     if(!r.ok){
       const txt=await r.text();
       showPErr(txt||'Download failed');
-      btn.disabled=false;btn.innerHTML='\\uD83C\\uDF99\\uFE0F <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
       return;
     }
     const blob=await r.blob();
     const cd=r.headers.get('Content-Disposition')||'';
-    const m=cd.match(/filename[^;=\\n]*=['"]?([^'";\\n]*)/);
+    const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
     const fname=m?m[1]:'podcast.zip';
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
     a.download=fname;
     document.body.appendChild(a);a.click();
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
-    btn.innerHTML='\\u2705 <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+    btn.innerHTML='✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
     btn.disabled=false;
   }catch(e){
     showPErr('Download error: '+e.message);
-    btn.disabled=false;btn.innerHTML='\\uD83C\\uDF99\\uFE0F <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+    btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
   }
 }
 
