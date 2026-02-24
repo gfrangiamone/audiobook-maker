@@ -41,7 +41,7 @@ en:"Millions of books digitized by Google. Filter by 'Free Google eBooks' to fin
 fr:"Des millions de livres numérisés par Google. Filtrez par 'Ebooks gratuits' pour le domaine public. Disponibles en EPUB et PDF.",
 es:"Millones de libros digitalizados por Google. Filtra por 'Ebooks gratuitos' para encontrar obras de dominio público. Disponibles en EPUB y PDF.",
 de:"Millionen von Google digitalisierte Bücher. Nach 'Kostenlose E-Books' filtern für gemeinfreie Werke. Verfügbar als EPUB und PDF.",
-zh:"谷歌数字化的数百万册书籍。筛选"免费电子书"查找公版作品。支持EPUB和PDF下载。"}},
+zh:"谷歌数字化的数百万册书籍。筛选\u201c免费电子书\u201d查找公版作品。支持EPUB和PDF下载。"}},
 {id:"liberliber",name:"Liber Liber / Manuzio",url:"https://www.liberliber.it/online/opere/libri/",icon:"🇮🇹",desc:{
 it:"Il progetto italiano più importante per la diffusione di ebook gratuiti. Ampia raccolta di classici della letteratura italiana: Dante, Manzoni, Pirandello, Verga e molti altri.",
 en:"Italy's most important free ebook project. Extensive collection of Italian literature classics: Dante, Manzoni, Pirandello, Verga and many others.",
