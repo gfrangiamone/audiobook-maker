@@ -71,6 +71,10 @@
     "email_invalid": "Bitte geben Sie eine gültige E-Mail-Adresse ein.",
     "email_unavail": "Der E-Mail-Dienst ist auf diesem Server nicht konfiguriert.",
     "btn_podcast_guide": "Podcast-Anleitung",
-    "modal_guide_title": "So veröffentlichen Sie Ihren Podcast"
+    "modal_guide_title": "So veröffentlichen Sie Ihren Podcast",
+    "btn_preview": "Vorschau anhören",
+    "btn_prev_stop": "Stoppen",
+    "prev_modal_title": "Lesevorschau",
+    "prev_error": "Fehler beim Erstellen der Audiovorschau."
   }
 }

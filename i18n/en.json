@@ -71,6 +71,10 @@
     "email_invalid": "Please enter a valid email address.",
     "email_unavail": "Email service is not configured on this server.",
     "btn_podcast_guide": "Podcast guide",
-    "modal_guide_title": "How to publish your podcast"
+    "modal_guide_title": "How to publish your podcast",
+    "btn_preview": "Listen to preview",
+    "btn_prev_stop": "Stop",
+    "prev_modal_title": "Reading preview",
+    "prev_error": "Error generating audio preview."
   }
 }

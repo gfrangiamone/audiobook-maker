@@ -71,6 +71,10 @@
     "email_invalid": "请输入有效的电子邮件地址。",
     "email_unavail": "服务器未配置邮件服务。",
     "btn_podcast_guide": "播客指南",
-    "modal_guide_title": "如何发布你的播客"
+    "modal_guide_title": "如何发布你的播客",
+    "btn_preview": "收听预览",
+    "btn_prev_stop": "停止",
+    "prev_modal_title": "阅读预览",
+    "prev_error": "生成音频预览时出错。"
   }
 }

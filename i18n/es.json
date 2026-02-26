@@ -71,6 +71,10 @@
     "email_invalid": "Introduce una dirección de email válida.",
     "email_unavail": "El servicio de email no está configurado en este servidor.",
     "btn_podcast_guide": "Guía podcast",
-    "modal_guide_title": "Cómo publicar tu podcast"
+    "modal_guide_title": "Cómo publicar tu podcast",
+    "btn_preview": "Escuchar vista previa",
+    "btn_prev_stop": "Detener",
+    "prev_modal_title": "Vista previa de lectura",
+    "prev_error": "Error al generar la vista previa de audio."
   }
 }

@@ -213,6 +213,29 @@ select:focus{outline:none;border-color:var(--ac)}
 .btn-g{background:var(--srf2);color:var(--txd);border:1px solid var(--brd);margin-top:10px}
 .btn-g:hover{border-color:var(--ac);color:var(--ac)}
 
+/* ── Preview button ── */
+.btn-preview{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;border-radius:8px;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.88rem;cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit}
+.btn-preview:hover:not(:disabled){border-color:var(--ac);color:var(--ac);background:var(--srf)}
+.btn-preview:disabled{opacity:.38;cursor:not-allowed}
+.btn-preview.loading{opacity:.7;cursor:wait}
+
+/* ── Preview modal ── */
+.prev-modal{max-width:500px;width:calc(100% - 32px)}
+.prev-audio-row{margin-bottom:14px}
+.prev-player{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--srf2);border-radius:10px;border:1px solid var(--brd)}
+.prev-spinner{width:20px;height:20px;border:2px solid var(--brd);border-top-color:var(--ac);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+.prev-play-icon{width:22px;height:22px;color:var(--ac);flex-shrink:0}
+.prev-play-btn{background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;flex-shrink:0;color:var(--ac);border-radius:4px;transition:opacity .15s}
+.prev-play-btn:hover{opacity:.72}
+.prev-time{font-size:.82rem;color:var(--txd);white-space:nowrap;min-width:30px}
+.prev-progress-wrap{flex:1;cursor:pointer;padding:6px 0}
+.prev-progress-bg{height:4px;background:var(--brd);border-radius:2px;overflow:hidden}
+.prev-progress-fill{height:100%;background:var(--ac);border-radius:2px;width:0%;transition:width .1s linear}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prev-text-box{background:var(--srf2);border:1px solid var(--brd);border-radius:10px;padding:14px 18px;line-height:1.75;font-size:.95rem;color:var(--tx);max-height:180px;overflow-y:auto}
+.pw{transition:background .08s,color .08s;border-radius:3px;padding:0 1px}
+.pw.hi{background:var(--ac);color:#fff}
+
 /* ═══ PROGRESS ═══ */
 .pa{padding:20px 0}
 .pb{width:100%;height:8px;background:var(--srf2);border-radius:4px;overflow:hidden;margin:16px 0 12px}
@@ -360,6 +383,10 @@ select:focus{outline:none;border-color:var(--ac)}
       <div class="bk-meta">
         <div style="font-family:'DM Serif Display',serif;font-size:1.3rem" id="bkT"></div>
         <div style="color:var(--txd);font-size:.9rem" id="bkA"></div>
+        <button type="button" class="btn-preview" id="btnPrev" onclick="previewRead()" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+          <span id="prevTxt" data-t="btn_preview"></span>
+        </button>
       </div>
     </div>
     <div class="sb">
@@ -477,6 +504,36 @@ select:focus{outline:none;border-color:var(--ac)}
 </div>
 
 <!-- Admin: active jobs monitor -->
+<a href="#" id="monLink" onclick="openMonitor();return false" style="position:fixed;bottom:8px;right:12px;font-size:11px;color:rgba(150,150,150,.35);text-decoration:none;z-index:50;font-family:monospace;transition:color .3s" onmouseenter="this.style.color='rgba(150,150,150,.7)'" onmouseleave="this.style.color='rgba(150,150,150,.35)'">&bull;&bull;&bull;</a>
+
+<!-- Preview audio popup -->
+<div class="modal-overlay" id="prevModal" onclick="if(event.target===this)previewStop()">
+  <div class="modal prev-modal">
+    <div class="modal-head">
+      <span data-t="prev_modal_title"></span>
+      <button class="modal-close" onclick="previewStop()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="prev-audio-row">
+        <audio id="prevAudio"></audio>
+        <div class="prev-player" id="prevPlayer">
+          <div class="prev-spinner" id="prevSpinner"></div>
+          <button class="prev-play-btn" id="prevPlayBtn" onclick="prevPlayPause()" style="display:none" aria-label="Play/Pausa">
+            <svg class="prev-play-icon" id="prevIconPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <svg class="prev-play-icon" id="prevIconPause" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          </button>
+          <span class="prev-time" id="prevTime">0:00</span>
+          <div class="prev-progress-wrap" onclick="prevSeek(event)">
+            <div class="prev-progress-bg">
+              <div class="prev-progress-fill" id="prevProgressFill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="prev-text-box" id="prevText" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
 <a href="#" id="monLink" onclick="openMonitor();return false" style="position:fixed;bottom:8px;right:12px;font-size:11px;color:rgba(150,150,150,.35);text-decoration:none;z-index:50;font-family:monospace;transition:color .3s" onmouseenter="this.style.color='rgba(150,150,150,.7)'" onmouseleave="this.style.color='rgba(150,150,150,.35)'">&bull;&bull;&bull;</a>
 <div class="modal-overlay" id="monModal">
   <div class="modal" style="max-width:620px">

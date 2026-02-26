@@ -49,7 +49,7 @@ function _fetchMonitor(){
   });
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeMonitor();document.getElementById('aboutModal').classList.remove('open');document.getElementById('emailModal').classList.remove('open')}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open');document.getElementById('emailModal').classList.remove('open')}});
 
 let cl='en';
 function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
@@ -79,7 +79,7 @@ function detectTheme(){
 }
 function applyTheme(th){
   if(th==='dark'){document.documentElement.setAttribute('data-theme','dark');document.getElementById('themeBtn').textContent='☀️'}
-  else{document.documentElement.removeAttribute('data-theme');document.getElementById('themeBtn').textContent='\U0001F319'}
+  else{document.documentElement.removeAttribute('data-theme');document.getElementById('themeBtn').textContent='🌙'}
   try{localStorage.setItem('abm_th',th)}catch(e){}
 }
 function toggleTheme(){
@@ -178,11 +178,13 @@ function lockUI(){
   generating=true;
   ['s1','s2','s3'].forEach(id=>{const el=document.getElementById(id);el.classList.add('locked','collapsed','done')});
   document.getElementById('fi').disabled=true;
+  previewStop(); _updatePreviewBtn();
 }
 function unlockUI(){
   generating=false;
   ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('locked'));
   document.getElementById('fi').disabled=false;
+  _updatePreviewBtn();
 }
 
 function handleFile(file){
@@ -224,6 +226,7 @@ async function analyzeEpub(file){
       toggleOut(document.getElementById('toC'));
     }
     fillPreview(d);
+    _updatePreviewBtn();
     collapseStep('s1');document.getElementById('s1').classList.add('done');
     activateStep('s2');
     if(!isTxtFile)activateStep('s3');
@@ -260,7 +263,156 @@ function updVoices(){
   if(dv)sel.value=dv.id;
 }
 
-// ═══════════════════ PREVIEW ═══════════════════
+// ═══════════════════ PREVIEW AUDIO ═══════════════════
+let _prevWords=[], _prevText='', _prevDuration=0, _prevLoading=false;
+
+function _updatePreviewBtn(){
+  const btn=document.getElementById('btnPrev');
+  if(!btn)return;
+  const ok=!!(bookData&&bookData.preview_text&&!generating&&!jobDone);
+  btn.disabled=!ok;
+  btn.classList.remove('loading');
+}
+
+// Mostra: 'loading' (spinner) | 'play' (icona ▶) | 'pause' (icona ⏸)
+function _prevShowState(state){
+  const spinner=document.getElementById('prevSpinner');
+  const btn    =document.getElementById('prevPlayBtn');
+  const iPlay  =document.getElementById('prevIconPlay');
+  const iPause =document.getElementById('prevIconPause');
+  spinner.style.display = state==='loading' ? '' : 'none';
+  btn.style.display     = state!=='loading' ? '' : 'none';
+  iPlay.style.display   = state==='play'    ? '' : 'none';
+  iPause.style.display  = state==='pause'   ? '' : 'none';
+}
+
+// Toglie play/pausa — se l'audio è finito, ricomincia dall'inizio
+function prevPlayPause(){
+  const audio=document.getElementById('prevAudio');
+  if(!audio.src)return;
+  if(audio.paused){
+    if(audio.ended||audio.currentTime>=audio.duration-0.1){
+      audio.currentTime=0;
+      _prevWords.forEach(w=>w.classList.remove('hi'));
+      document.getElementById('prevProgressFill').style.width='0%';
+      document.getElementById('prevTime').textContent='0:00';
+    }
+    audio.play().catch(e=>console.error('[preview]',e));
+  } else {
+    audio.pause();
+  }
+}
+
+function _prevBuildText(text){
+  _prevText=text; _prevWords=[];
+  const box=document.getElementById('prevText');
+  box.innerHTML='';
+  text.split(/(\s+)/).forEach(tok=>{
+    if(/^\s+$/.test(tok)){
+      box.appendChild(document.createTextNode(tok));
+    } else {
+      const sp=document.createElement('span');
+      sp.className='pw'; sp.textContent=tok;
+      _prevWords.push(sp); box.appendChild(sp);
+    }
+  });
+}
+
+function _prevHighlightAt(currentTime){
+  if(!_prevWords.length||!_prevDuration)return;
+  const idx=Math.min(
+    Math.floor((currentTime/_prevDuration)*_prevWords.length),
+    _prevWords.length-1
+  );
+  _prevWords.forEach((w,i)=>w.classList.toggle('hi',i===idx));
+  _prevWords[idx].scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+
+function prevSeek(ev){
+  const audio=document.getElementById('prevAudio');
+  if(!audio.src||!_prevDuration)return;
+  const rect=ev.currentTarget.getBoundingClientRect();
+  const ratio=(ev.clientX-rect.left)/rect.width;
+  audio.currentTime=Math.max(0,Math.min(1,ratio))*_prevDuration;
+}
+
+function previewStop(){
+  _prevLoading=false;
+  const audio=document.getElementById('prevAudio');
+  audio.pause(); audio.removeAttribute('src'); audio.load();
+  _prevWords.forEach(w=>w.classList.remove('hi'));
+  const m=document.getElementById('prevModal');
+  if(m)m.classList.remove('open');
+  const pf=document.getElementById('prevProgressFill');
+  if(pf)pf.style.width='0%';
+  const pt=document.getElementById('prevTime');
+  if(pt)pt.textContent='0:00';
+  _prevDuration=0;
+  const spinner=document.getElementById('prevSpinner');
+  const playBtn=document.getElementById('prevPlayBtn');
+  if(spinner)spinner.style.display='none';
+  if(playBtn)playBtn.style.display='none';
+  _updatePreviewBtn();
+}
+
+async function previewRead(){
+  if(_prevLoading)return;
+  if(!bookData||!bookData.preview_text)return;
+
+  _prevLoading=true;
+  document.getElementById('btnPrev').disabled=true;
+  document.getElementById('btnPrev').classList.add('loading');
+
+  _prevShowState('loading');
+  _prevBuildText(bookData.preview_text);
+  document.getElementById('prevModal').classList.add('open');
+
+  const voice=document.getElementById('vv').value;
+  const rate =document.getElementById('vr').value;
+  const audio=document.getElementById('prevAudio');
+
+  const url='/api/preview_audio/'+bookData.job_id
+    +'?voice='+encodeURIComponent(voice)
+    +'&rate='+encodeURIComponent(rate);
+
+  audio.ontimeupdate=()=>{
+    const dur=audio.duration;
+    if(!dur||!isFinite(dur))return;
+    _prevDuration=dur;
+    document.getElementById('prevProgressFill').style.width=(audio.currentTime/dur*100)+'%';
+    const s=Math.floor(audio.currentTime);
+    document.getElementById('prevTime').textContent=Math.floor(s/60)+':'+(s%60<10?'0':'')+(s%60);
+    _prevHighlightAt(audio.currentTime);
+  };
+  // Sincronizza icona con stato audio
+  audio.onplay  =()=>_prevShowState('pause');
+  audio.onpause =()=>{ if(!audio.ended) _prevShowState('play'); };
+  audio.onended =()=>{
+    _prevLoading=false;
+    _prevShowState('play');  // ▶ per replay
+    _prevWords.forEach(w=>w.classList.remove('hi'));
+    _updatePreviewBtn();
+  };
+  audio.onerror=()=>{
+    if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
+    _prevLoading=false;
+    document.getElementById('prevModal').classList.remove('open');
+    _updatePreviewBtn();
+    alert(t('prev_error'));
+  };
+  // Pronto: mostra ▶ senza avviare automaticamente
+  audio.oncanplay=()=>{
+    _prevLoading=false;
+    _prevShowState('play');
+    _updatePreviewBtn();
+    audio.oncanplay=null;
+  };
+
+  audio.src=url;
+  audio.load();
+}
+
+// ═══════════════════ PREVIEW (Book info - Step 3) ═══════════════════
 function fillPreview(d){
   document.getElementById('bkT').textContent=d.title;
   document.getElementById('bkA').textContent=d.author?(t('by')+' '+d.author):'';
@@ -645,6 +797,7 @@ function resetAll(){
   document.getElementById('fgOut').style.display='';
   document.querySelectorAll('.tg button').forEach(b=>b.classList.remove('on'));
   document.getElementById('toS').classList.add('on');
+  previewStop(); _prevText=''; _prevWords=[];
   bookData=null;jobId=null;
   emailPromptShown=false;emailRegistered=false;
   document.getElementById('emailModal').classList.remove('open');

@@ -11,6 +11,7 @@ Usage:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -1533,6 +1534,52 @@ def api_analyze():
             "estimated_minutes": round(ch.word_count / 150, 1),
         })
 
+    # ── Preview text ──────────────────────────────────────────────────────────
+    # EPUB: salta il front matter e usa un capitolo interno con contenuto narrativo reale.
+    # TXT:  usa il primo contenuto disponibile.
+    # Lunghezza target: 200-300 caratteri, troncata a fine frase.
+    def _pick_preview_text(chapters_list, is_txt_file):
+        from epub_to_tts import is_content_chapter as _icc
+        if not chapters_list:
+            return ""
+        if is_txt_file:
+            for ch in chapters_list:
+                raw = (ch.text or "").strip()
+                if len(raw) >= 150:
+                    return raw
+            return ""
+        # EPUB: filtra front matter con la stessa euristica usata in epub_to_tts
+        valid = [ch for ch in chapters_list
+                 if _icc(ch.text or "", ch.title or "") and (ch.word_count or 0) >= 80]
+        if not valid:
+            for ch in chapters_list:
+                raw = (ch.text or "").strip()
+                if len(raw) >= 150:
+                    return raw
+            return ""
+        # Secondo capitolo valido (più probabile contenuto narrativo, non introduzione)
+        target = valid[1] if len(valid) > 1 else valid[0]
+        return (target.text or "").strip()
+
+    def _trim_preview(text, min_chars=200, max_chars=300):
+        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio."""
+        import re as _re
+        text = _re.sub(r'\s+', ' ', text).strip()
+        if len(text) <= max_chars:
+            return text
+        window = text[min_chars:max_chars]
+        m = _re.search(r'[.!?]["""»\)\s]', window)
+        cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
+        if cut <= 0:
+            cut = max_chars
+        return text[:cut].rstrip()
+
+    raw_preview = _pick_preview_text(info.chapters, is_txt)
+    preview_text = _trim_preview(raw_preview) if raw_preview else ""
+    # Store for /api/preview_audio
+    jobs[job_id]["preview_text"] = preview_text
+    # ──────────────────────────────────────────────────────────────────────────
+
     return jsonify({
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
@@ -1542,8 +1589,73 @@ def api_analyze():
         "total_chars": info.total_chars,
         "estimated_minutes": round(info.estimated_duration_minutes, 1),
         "chapters": chapters,
+        "preview_text": preview_text,
     })
 
+
+@app.route("/api/preview_audio/<job_id>")
+def api_preview_audio(job_id):
+    """Serve l'MP3 di anteprima come endpoint GET.
+    Il browser può usare l'URL direttamente come audio.src — nessun problema di autoplay policy.
+    Il timeout è gestito da concurrent.futures (funziona sempre, a differenza di asyncio.wait_for).
+    """
+    if not job_id or job_id not in jobs:
+        return jsonify({"error": "Job non trovato"}), 404
+
+    preview_text = jobs[job_id].get("preview_text", "")
+    if not preview_text:
+        return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
+
+    voice = request.args.get("voice", "it-IT-GiuseppeNeural")
+    rate  = request.args.get("rate",  "+0%")
+
+    work_dir = UPLOAD_DIR / job_id
+    work_dir.mkdir(exist_ok=True)
+    preview_path = work_dir / "preview.mp3"
+    cache_key_path = work_dir / "preview.key"
+    current_key = f"{voice}|{rate}"
+
+    # Riusa il file se voce e velocità non sono cambiate
+    if preview_path.exists() and cache_key_path.exists():
+        if cache_key_path.read_text(encoding="utf-8").strip() == current_key:
+            return send_file(str(preview_path), mimetype="audio/mpeg",
+                             as_attachment=False, download_name="preview.mp3",
+                             conditional=True)
+
+    # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
+    # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
+    # da asyncio — risolve il caso in cui edge-tts si blocca sulla connessione TCP.
+    def _generate():
+        loop = asyncio.new_event_loop()
+        try:
+            async def _run():
+                communicate = edge_tts.Communicate(
+                    text=preview_text, voice=voice, rate=rate
+                )
+                await communicate.save(str(preview_path))
+            loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_generate).result(timeout=30)
+    except concurrent.futures.TimeoutError:
+        return jsonify({"error": "Timeout: il servizio TTS non ha risposto in 30 secondi."}), 504
+    except Exception as e:
+        return jsonify({"error": f"Errore generazione anteprima: {e}"}), 500
+
+    if not preview_path.exists():
+        return jsonify({"error": "File MP3 non generato."}), 500
+
+    try:
+        cache_key_path.write_text(current_key, encoding="utf-8")
+    except Exception:
+        pass
+
+    return send_file(str(preview_path), mimetype="audio/mpeg",
+                     as_attachment=False, download_name="preview.mp3",
+                     conditional=True)
 
 @app.route("/api/cover/<job_id>")
 def api_cover(job_id):
