@@ -1,8 +1,8 @@
-# 📚 Audiobook Maker ([Audiobook-maker]https://audiobook-maker.com)
+# 📚 Audiobook Maker
 
 **Convert your EPUB and TXT ebooks into high-quality audiobooks using neural text-to-speech voices.**
 
-Audiobook Maker is a self-hosted web application that turns any EPUB or TXT file into a full audiobook in minutes. It leverages Microsoft Edge's neural TTS engine (via [edge-tts](https://github.com/rany2/edge-tts)) to produce natural-sounding audio in multiple languages, with no API keys, no subscriptions, and no data retention.
+Audiobook Maker (https://audiobook-maker.com) is a self-hosted web application that turns any EPUB or TXT file into a full audiobook in minutes. It leverages Microsoft Edge's neural TTS engine (via [edge-tts](https://github.com/rany2/edge-tts)) to produce natural-sounding audio in multiple languages, with no API keys, no subscriptions, and no data retention.
 
 ---
 
