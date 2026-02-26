@@ -550,8 +550,8 @@ function listenProgress(){
         const eta=Math.round(left/cps);
         document.getElementById('xEta').textContent=eta>0?'~'+fmtTime(eta):t('almost');
         document.getElementById('xSpd').textContent=Math.round(cps)+' '+t('cps');
-        // Email prompt: after 60s elapsed, ETA > 10min, chapter mode, SMTP available
-        if(!emailPromptShown&&!emailRegistered&&smtpAvailable&&d.elapsed_seconds>=30&&(d.elapsed_seconds+eta)>180){
+        // Email prompt: after 5s elapsed, ETA > 1min, chapter mode, SMTP available
+        if(!emailPromptShown&&!emailRegistered&&smtpAvailable&&d.elapsed_seconds>=5&&(d.elapsed_seconds+eta)>60){
           emailPromptShown=true;
           showEmailModal();
         }
