@@ -31,14 +31,21 @@ zh:{
   kw:"有声读物, 电子书, EPUB, TTS, 文本转语音, EPUB转有声读物, 电子书转换, Audiobook Maker, TTS电子书, 神经语音, 免费有声读物, 无障碍, 视力障碍, 读写困难, 播客, RSS",
   ld:"免费在线工具，使用神经网络TTS语音将EPUB电子书转换为高质量有声读物。"}
 };
+// applySEO è no-op al primo caricamento: il server ha già renderizzato
+// tutti i meta tag correttamente. Si attiva solo quando l'utente cambia
+// lingua manualmente via UI, aggiornando i meta in-place senza reload.
+let _seoInitDone = false;
 function applySEO(){
+  if(!_seoInitDone){ _seoInitDone=true; return; }
   const s=SEO[cl]||SEO.en;
   document.title=s.title;
-  document.documentElement.lang=cl==='zh'?'zh-CN':cl;
+  // html[lang] viene aggiornato da applyI18n() — non serve ridefinirlo qui
   document.getElementById('metaDesc').setAttribute('content',s.desc);
   document.getElementById('metaKw').setAttribute('content',s.kw);
   document.getElementById('ogTitle').setAttribute('content',s.title);
   document.getElementById('ogDesc').setAttribute('content',s.desc);
+  const ogUrl=document.getElementById('ogUrl');
+  if(ogUrl)ogUrl.setAttribute('content',location.href);
   document.getElementById('twTitle').setAttribute('content',s.title);
   document.getElementById('twDesc').setAttribute('content',s.desc);
   try{

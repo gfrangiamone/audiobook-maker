@@ -64,6 +64,8 @@ function applyI18n(){
 }
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}}
 function detectLang(){
+  // INIT_LANG è iniettato server-side: rispetta la lingua della URL (/it/, /en/, ecc.)
+  if(typeof INIT_LANG!=='undefined'&&L[INIT_LANG])return INIT_LANG;
   try{const s=localStorage.getItem('abm_l');if(s&&L[s])return s}catch(e){}
   const n=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
   return L[n]?n:'en';

@@ -12,6 +12,7 @@ Usage:
 
 import asyncio
 import concurrent.futures
+import re
 import json
 import os
 import shutil
@@ -1469,9 +1470,116 @@ def _safe_filename(name):
 # ROUTES
 # ═══════════════════════════════════════════════════════════════════
 
+# ─── Rotte per lingua (/it/, /en/, /fr/, /es/, /de/, /zh/) ───────────────────
+# Ogni URL ha HTML pre-renderizzato con meta tag, title, hreflang e canonical
+# corretti per quella lingua — indicizzabili da Google come pagine distinte.
+
 @app.route("/")
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    """Root: serve la lingua rilevata dall'Accept-Language, senza redirect.
+    Il redirect 302 penalizzerebbe il PageRank; meglio rispondere con canonical.
+    """
+    lang = _detect_lang_from_request()
+    resp = app.make_response(HTML_TEMPLATES.get(lang, HTML_TEMPLATES["en"]))
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Vary"] = "Accept-Language"
+    return resp
+
+@app.route("/it/")
+def index_it():
+    return HTML_TEMPLATES["it"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/en/")
+def index_en():
+    return HTML_TEMPLATES["en"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/fr/")
+def index_fr():
+    return HTML_TEMPLATES["fr"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/es/")
+def index_es():
+    return HTML_TEMPLATES["es"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/de/")
+def index_de():
+    return HTML_TEMPLATES["de"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/zh/")
+def index_zh():
+    return HTML_TEMPLATES["zh"], 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ─── sitemap.xml ─────────────────────────────────────────────────────────────
+@app.route("/sitemap.xml")
+def sitemap():
+    """Sitemap con tutte le varianti linguistiche.
+    Richiede ABM_BASE_URL configurato per gli URL assoluti (obbligatorio per Google).
+    """
+    if not BASE_URL:
+        return "<!-- sitemap non disponibile: impostare ABM_BASE_URL -->", 200, {
+            "Content-Type": "text/xml; charset=utf-8"
+        }
+
+    from datetime import date
+    today = date.today().isoformat()
+
+    lang_hreflang_map = {
+        "it": "it", "en": "en", "fr": "fr",
+        "es": "es", "de": "de", "zh": "zh-Hans"
+    }
+
+    # Blocco alternates condiviso da tutti gli URL
+    alt_lines = []
+    for lc, hl in lang_hreflang_map.items():
+        alt_lines.append(
+            '      <xhtml:link rel="alternate" hreflang="' + hl + '" href="' + BASE_URL + '/' + lc + '/"/>'
+        )
+    alt_lines.append(
+        '      <xhtml:link rel="alternate" hreflang="x-default" href="' + BASE_URL + '/"/>'
+    )
+    alternates = "\n".join(alt_lines)
+
+    urls = []
+    # Root (x-default)
+    urls.append(f"""  <url>
+    <loc>{BASE_URL}/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+{alternates}
+  </url>""")
+
+    # Una URL per lingua
+    for lc in lang_hreflang_map:
+        urls.append(f"""  <url>
+    <loc>{BASE_URL}/{lc}/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+{alternates}
+  </url>""")
+
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+{chr(10).join(urls)}
+</urlset>"""
+    return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
+
+
+# ─── robots.txt ──────────────────────────────────────────────────────────────
+@app.route("/robots.txt")
+def robots():
+    sitemap_line = f"Sitemap: {BASE_URL}/sitemap.xml" if BASE_URL else ""
+    body = f"""User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dl/
+{sitemap_line}
+""".strip()
+    return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
 
 
 @app.route("/api/voices")
@@ -2482,7 +2590,89 @@ def api_download_podcast(job_id):
 # HTML TEMPLATE (assembled from modular components)
 # ═══════════════════════════════════════════════════════════════════
 
-HTML_TEMPLATE = build_html_template(version=__version__)
+# ═══════════════════════════════════════════════════════════════════
+# SEO DATA — usato sia per il pre-rendering server-side che per sitemap.xml
+# Mantienilo allineato con seo_data.js (che gestisce il cambio lingua client-side)
+# ═══════════════════════════════════════════════════════════════════
+_SEO_DATA = {
+    "it": {
+        "title":   "Audiobook Maker — Convertitore EPUB in Audiolibro TTS",
+        "desc":    "Strumento online gratuito per convertire ebook EPUB in audiolibri di alta qualità con voci neurali TTS. Supporta più lingue, selezione capitoli e generazione feed podcast RSS. Ideale per ipovedenti e persone con difficoltà di lettura.",
+        "kw":      "audiolibro, ebook, epub, tts, text to speech, da epub ad audiolibro, convertitore ebook, audiobook maker, voci neurali, audiolibro gratis, accessibilità, ipovedenti, dislessia, podcast, rss, sintesi vocale, libro parlato",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "Strumento online gratuito per convertire ebook EPUB in audiolibri con voci neurali TTS.",
+    },
+    "en": {
+        "title":   "Audiobook Maker — EPUB to Audiobook TTS Converter",
+        "desc":    "Free online tool to convert EPUB ebooks into high-quality audiobooks using neural text-to-speech (TTS) voices. Supports multiple languages, chapter selection, and podcast RSS feed generation. Great for visually impaired readers and people with reading difficulties.",
+        "kw":      "audiobook, ebook, epub, tts, text to speech, epub to audiobook, ebook converter, audiobook maker, neural voices, free audiobook, accessibility, visually impaired, dyslexia, podcast, rss",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "Free online tool to convert EPUB ebooks into high-quality audiobooks using neural TTS voices.",
+    },
+    "fr": {
+        "title":   "Audiobook Maker — Convertisseur EPUB en Livre Audio TTS",
+        "desc":    "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio de haute qualité avec des voix neuronales TTS. Prend en charge plusieurs langues, la sélection de chapitres et la génération de flux RSS podcast. Idéal pour les malvoyants.",
+        "kw":      "livre audio, ebook, epub, tts, text to speech, epub en livre audio, convertisseur ebook, voix neuronales, livre audio gratuit, accessibilité, malvoyants, dyslexie, podcast, rss, synthèse vocale",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio avec des voix neuronales TTS.",
+    },
+    "es": {
+        "title":   "Audiobook Maker — Conversor EPUB a Audiolibro TTS",
+        "desc":    "Herramienta online gratuita para convertir ebooks EPUB en audiolibros de alta calidad con voces neuronales TTS. Soporta múltiples idiomas, selección de capítulos y generación de feed podcast RSS. Ideal para personas con discapacidad visual.",
+        "kw":      "audiolibro, ebook, epub, tts, text to speech, epub a audiolibro, conversor ebook, voces neuronales, audiolibro gratis, accesibilidad, discapacidad visual, dislexia, podcast, rss, síntesis de voz",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB en audiolibros con voces neuronales TTS.",
+    },
+    "de": {
+        "title":   "Audiobook Maker — EPUB zu Hörbuch TTS-Konverter",
+        "desc":    "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in hochwertige Hörbücher mit neuronalen TTS-Stimmen. Unterstützt mehrere Sprachen, Kapitelauswahl und Podcast-RSS-Feed-Generierung. Ideal für Sehbehinderte.",
+        "kw":      "Hörbuch, E-Book, EPUB, TTS, Text-to-Speech, EPUB zu Hörbuch, E-Book-Konverter, neuronale Stimmen, kostenloses Hörbuch, Barrierefreiheit, Sehbehinderung, Legasthenie, Podcast, RSS, Sprachsynthese",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in Hörbücher mit neuronalen TTS-Stimmen.",
+    },
+    "zh": {
+        "title":   "Audiobook Maker — EPUB转有声读物 TTS转换器",
+        "desc":    "免费在线工具，使用神经网络TTS语音将EPUB电子书转换为高质量有声读物。支持多语言、章节选择和播客RSS订阅源生成。适合视力障碍者和有阅读困难的人群。",
+        "kw":      "有声读物, 电子书, EPUB, TTS, 文本转语音, EPUB转有声读物, 神经语音, 免费有声读物, 无障碍, 视力障碍, 读写困难, 播客, RSS",
+        "ld_name": "Audiobook Maker",
+        "ld_desc": "免费在线工具，使用神经网络TTS语音将EPUB电子书转换为高质量有声读物。",
+    },
+}
+
+_SUPPORTED_LANGS = list(_SEO_DATA.keys())  # ['it', 'en', 'fr', 'es', 'de', 'zh']
+
+# Pre-rendering: una copia HTML per lingua, pronta a startup.
+# Nessun costo a request-time; ogni risposta è un semplice return di stringa.
+HTML_TEMPLATES: dict[str, str] = {
+    lang: build_html_template(
+        lang=lang,
+        seo=seo,
+        base_url=BASE_URL,
+        version=__version__,
+    )
+    for lang, seo in _SEO_DATA.items()
+}
+# Fallback generico per URL sconosciuti
+HTML_TEMPLATE = HTML_TEMPLATES["en"]
+
+
+def _detect_lang_from_request() -> str:
+    """Rileva la lingua preferita dall'header Accept-Language del browser.
+
+    Scorre i tag di qualità q= e restituisce la prima lingua supportata.
+    Fallback: 'en'.
+    """
+    accept = request.headers.get("Accept-Language", "en")
+    # Formato: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+    tags = re.findall(r'([a-zA-Z]{2,3})(?:-[a-zA-Z0-9]+)*(?:;q=([0-9.]+))?', accept)
+    # Ordina per q (default 1.0)
+    ranked = sorted(tags, key=lambda t: float(t[1]) if t[1] else 1.0, reverse=True)
+    for lang_tag, _ in ranked:
+        lang = lang_tag.lower()
+        if lang in _SUPPORTED_LANGS:
+            return lang
+    return "en"
+
 
 
 
