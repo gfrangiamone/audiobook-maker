@@ -1575,6 +1575,7 @@ def robots():
     body = f"""User-agent: *
 Allow: /
 Disallow: /api/
+Disallow: /data/
 Disallow: /dl/
 {sitemap_line}
 """.strip()
