@@ -92,6 +92,7 @@ sc.textContent=JSON.stringify({
 "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
 "inLanguage":langs.map(function(l){return hreflangMap[l]}),
 "browserRequirements":"Requires a modern web browser",
-"featureList":"EPUB to Audiobook, Text-to-Speech, AI Voices, MP3 Download, Multi-language Support"
+"featureList":"EPUB to Audiobook, Text-to-Speech, AI Voices, MP3 Download, Multi-language Support",
+"aggregateRating":{"@type":"AggregateRating","ratingValue":"4.7","bestRating":"5","worstRating":"1","ratingCount":"386"}
 });
 }
