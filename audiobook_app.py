@@ -2597,48 +2597,49 @@ def api_download_podcast(job_id):
 # ═══════════════════════════════════════════════════════════════════
 _SEO_DATA = {
     "it": {
-        "title":   "Audiobook Maker — Convertitore EPUB in Audiolibro TTS",
-        "desc":    "Strumento online gratuito per convertire ebook EPUB in audiolibri di alta qualità con voci neurali TTS. Supporta più lingue, selezione capitoli e generazione feed podcast RSS. Ideale per ipovedenti e persone con difficoltà di lettura.",
-        "kw":      "audiolibro, ebook, epub, tts, text to speech, da epub ad audiolibro, convertitore ebook, audiobook maker, voci neurali, audiolibro gratis, accessibilità, ipovedenti, dislessia, podcast, rss, sintesi vocale, libro parlato",
+        "title":   "Audiobook Maker — Convertitore Gratuito da EPUB ad Audiolibro Online | Text-to-Speech AI",
+        "desc":    "Converti i tuoi ebook EPUB in audiolibri MP3 gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro. Nessuna installazione, funziona dal browser. Supporta italiano, inglese, francese, spagnolo, tedesco e cinese.",
+        "kw":      "convertitore epub audiolibro, epub in audiolibro gratis, convertire ebook in audiolibro online, creare audiolibro da epub, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to mp3, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Strumento online gratuito per convertire ebook EPUB in audiolibri con voci neurali TTS.",
+        "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB in audiolibri MP3 con voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
     "en": {
-        "title":   "Audiobook Maker — EPUB to Audiobook TTS Converter",
-        "desc":    "Free online tool to convert EPUB ebooks into high-quality audiobooks using neural text-to-speech (TTS) voices. Supports multiple languages, chapter selection, and podcast RSS feed generation. Great for visually impaired readers and people with reading difficulties.",
-        "kw":      "audiobook, ebook, epub, tts, text to speech, epub to audiobook, ebook converter, audiobook maker, neural voices, free audiobook, accessibility, visually impaired, dyslexia, podcast, rss",
+        "title":   "Audiobook Maker — Free Online EPUB to Audiobook Converter | AI Text-to-Speech",
+        "desc":    "Convert your EPUB ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
+        "kw":      "epub to audiobook converter, free epub to audiobook, convert ebook to audiobook online free, epub to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Free online tool to convert EPUB ebooks into high-quality audiobooks using neural TTS voices.",
+        "ld_desc": "Free online tool to convert EPUB ebooks into MP3 audiobooks using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
     "fr": {
-        "title":   "Audiobook Maker — Convertisseur EPUB en Livre Audio TTS",
-        "desc":    "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio de haute qualité avec des voix neuronales TTS. Prend en charge plusieurs langues, la sélection de chapitres et la génération de flux RSS podcast. Idéal pour les malvoyants.",
-        "kw":      "livre audio, ebook, epub, tts, text to speech, epub en livre audio, convertisseur ebook, voix neuronales, livre audio gratuit, accessibilité, malvoyants, dyslexie, podcast, rss, synthèse vocale",
+        "title":   "Audiobook Maker — Convertisseur Gratuit EPUB en Livre Audio en Ligne | Text-to-Speech IA",
+        "desc":    "Convertissez vos ebooks EPUB en livres audio MP3 gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio. Aucune installation, fonctionne dans le navigateur.",
+        "kw":      "convertisseur epub livre audio, epub en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers mp3, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio avec des voix neuronales TTS.",
+        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
     "es": {
-        "title":   "Audiobook Maker — Conversor EPUB a Audiolibro TTS",
-        "desc":    "Herramienta online gratuita para convertir ebooks EPUB en audiolibros de alta calidad con voces neuronales TTS. Soporta múltiples idiomas, selección de capítulos y generación de feed podcast RSS. Ideal para personas con discapacidad visual.",
-        "kw":      "audiolibro, ebook, epub, tts, text to speech, epub a audiolibro, conversor ebook, voces neuronales, audiolibro gratis, accesibilidad, discapacidad visual, dislexia, podcast, rss, síntesis de voz",
+        "title":   "Audiobook Maker — Convertidor Gratuito de EPUB a Audiolibro Online | Text-to-Speech IA",
+        "desc":    "Convierte tus ebooks EPUB en audiolibros MP3 gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro. Sin instalación, funciona desde el navegador.",
+        "kw":      "convertidor epub audiolibro, epub a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a mp3, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB en audiolibros con voces neuronales TTS.",
+        "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
     "de": {
-        "title":   "Audiobook Maker — EPUB zu Hörbuch TTS-Konverter",
-        "desc":    "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in hochwertige Hörbücher mit neuronalen TTS-Stimmen. Unterstützt mehrere Sprachen, Kapitelauswahl und Podcast-RSS-Feed-Generierung. Ideal für Sehbehinderte.",
-        "kw":      "Hörbuch, E-Book, EPUB, TTS, Text-to-Speech, EPUB zu Hörbuch, E-Book-Konverter, neuronale Stimmen, kostenloses Hörbuch, Barrierefreiheit, Sehbehinderung, Legasthenie, Podcast, RSS, Sprachsynthese",
+        "title":   "Audiobook Maker — Kostenloser Online EPUB zu Hörbuch Konverter | KI Text-to-Speech",
+        "desc":    "Konvertieren Sie Ihre EPUB-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
+        "kw":      "epub zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in Hörbücher mit neuronalen TTS-Stimmen.",
+        "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
     "zh": {
-        "title":   "Audiobook Maker — EPUB转有声读物 TTS转换器",
-        "desc":    "免费在线工具，使用神经网络TTS语音将EPUB电子书转换为高质量有声读物。支持多语言、章节选择和播客RSS订阅源生成。适合视力障碍者和有阅读困难的人群。",
-        "kw":      "有声读物, 电子书, EPUB, TTS, 文本转语音, EPUB转有声读物, 神经语音, 免费有声读物, 无障碍, 视力障碍, 读写困难, 播客, RSS",
+        "title":   "Audiobook Maker — 免费在线EPUB转有声书转换器 | AI文字转语音",
+        "desc":    "使用自然AI语音将EPUB电子书免费转换为MP3有声书。免费在线文字转语音转换器：上传书籍，选择语音，下载有声书。无需安装，浏览器即可使用。支持中文、英语、意大利语、法语、西班牙语和德语。",
+        "kw":      "epub转有声书, 免费epub转有声书, 在线电子书转有声书, 免费创建有声书, 文字转语音中文, 免费在线有声书转换器, epub转mp3, 电子书转音频, 语音合成, 有声书制作, 免费电子书转音频, ebook to audiobook中文, tts中文免费, 在线制作有声书, 文本转语音, epub阅读器语音, 文字转有声书, 听电子书, 免费有声书制作器, epub转音频免费",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "免费在线工具，使用神经网络TTS语音将EPUB电子书转换为高质量有声读物。",
+        "ld_desc": "免费在线工具，使用神经网络AI TTS语音将EPUB电子书转换为MP3有声书。支持6种语言和播客RSS订阅源生成。",
     },
 }
+
 
 _SUPPORTED_LANGS = list(_SEO_DATA.keys())  # ['it', 'en', 'fr', 'es', 'de', 'zh']
 
