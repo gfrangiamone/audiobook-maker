@@ -62,7 +62,12 @@ function applyI18n(){
   document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
   document.documentElement.lang=cl;
 }
-function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}}
+function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}
+  // Sync URL with selected language (SEO: URL ↔ content coherence)
+  var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
+  // Update server-rendered SEO content block language
+  var sc=document.getElementById('seoContent');if(sc)sc.style.display='none';
+}
 function detectLang(){
   // INIT_LANG è iniettato server-side: rispetta la lingua della URL (/it/, /en/, ecc.)
   if(typeof INIT_LANG!=='undefined'&&L[INIT_LANG])return INIT_LANG;

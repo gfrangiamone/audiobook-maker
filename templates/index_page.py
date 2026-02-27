@@ -90,6 +90,7 @@ def build_html_template(
 
         replacements = {
             "__HTML_LANG__":     html_lang,
+            "__LANG_CODE__":     lang,          # ← inietta INIT_LANG per il JS
             "__SEO_TITLE__":     seo.get("title", "Audiobook Maker"),
             "__SEO_DESC__":      seo.get("desc", ""),
             "__SEO_KW__":        seo.get("kw", ""),
