@@ -197,7 +197,7 @@ function unlockUI(){
 function handleFile(file){
   if(generating||jobDone)return;
   const fn=file.name.toLowerCase();
-  if(!fn.endsWith('.epub')&&!fn.endsWith('.txt')){showErr('aerr',t('err_epub'));return}
+  if(!fn.endsWith('.epub')&&!fn.endsWith('.pdf')&&!fn.endsWith('.txt')){showErr('aerr',t('err_epub'));return}
   document.getElementById('uz').classList.add('ok');
   document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
@@ -228,7 +228,7 @@ async function analyzeEpub(file){
       toggleOut(document.getElementById('toS'));
       document.getElementById('fgOut').style.display='none';
     }else{
-      // EPUB: default to chapters mode
+      // EPUB/PDF: default to chapters mode
       document.getElementById('fgOut').style.display='';
       toggleOut(document.getElementById('toC'));
     }

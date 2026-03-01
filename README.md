@@ -1,15 +1,15 @@
 # 📚 Audiobook Maker
 
-**Convert your EPUB and TXT ebooks into high-quality audiobooks using neural text-to-speech voices.**
+**Convert your EPUB, PDF and TXT ebooks into high-quality audiobooks using neural text-to-speech voices.**
 
-Audiobook Maker (https://audiobook-maker.com) is a self-hosted web application that turns any EPUB or TXT file into a full audiobook in minutes. It leverages Microsoft Edge's neural TTS engine (via [edge-tts](https://github.com/rany2/edge-tts)) to produce natural-sounding audio in multiple languages, with no API keys, no subscriptions, and no data retention.
+Audiobook Maker (https://audiobook-maker.com) is a self-hosted web application that turns any EPUB, PDF or TXT file into a full audiobook in minutes. It leverages Microsoft Edge's neural TTS engine (via [edge-tts](https://github.com/rany2/edge-tts)) to produce natural-sounding audio in multiple languages, with no API keys, no subscriptions, and no data retention.
 
 ---
 
 ## ✨ Features
 
 - **Neural TTS voices** — 300+ high-quality voices via edge-tts, covering Italian, English, French, Spanish, German, Chinese and more
-- **EPUB & TXT support** — automatic chapter extraction, smart front-matter filtering, cover image display
+- **EPUB, PDF & TXT support** — automatic chapter extraction, smart text cleaning (footnotes, captions, headers/footers removal for PDF), cover image display
 - **Audio preview** — listen to a sample of your book with the selected voice and speed before generating the full audiobook
 - **Flexible output** — single MP3 file or one file per chapter (ZIP archive)
 - **Podcast mode** — generates an RSS 2.0 feed ready to publish as a private podcast
@@ -31,6 +31,7 @@ Audiobook Maker (https://audiobook-maker.com) is a self-hosted web application t
 - Internet connection (edge-tts calls Microsoft's TTS service)
 
 Optional:
+- [PyMuPDF](https://pymupdf.readthedocs.io/) — for PDF support (`pip install pymupdf`)
 - [Pillow](https://python-pillow.org/) — for cover image resizing (`pip install pillow`)
 - SMTP server — for email notifications
 
@@ -45,6 +46,9 @@ cd audiobook-maker
 
 # Install dependencies
 pip install flask edge-tts
+
+# Optional: PDF support and cover image resizing
+pip install pymupdf pillow
 
 # Run the app
 python audiobook_app.py
@@ -104,6 +108,7 @@ When `ABM_BASE_URL` is set, the app exposes dedicated URLs for each language, fu
 audiobook-maker/
 ├── audiobook_app.py          # Flask application, routes, job management
 ├── epub_to_tts.py            # EPUB parsing and chapter extraction
+├── pdf_to_tts.py             # PDF parsing, text cleaning and chapter detection
 ├── version.py                # Version string
 └── templates/
     ├── index_page.py         # Template assembly and SEO rendering
@@ -157,4 +162,5 @@ The author assumes no liability for misuse of the software.
 
 - [edge-tts](https://github.com/rany2/edge-tts) by rany2 — the TTS engine powering this project
 - [EbookLib](https://github.com/aerkalov/ebooklib) — EPUB parsing
+- [PyMuPDF](https://pymupdf.readthedocs.io/) — PDF text extraction
 - Microsoft Azure Cognitive Services — neural voice synthesis

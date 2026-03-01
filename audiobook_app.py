@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Audiobook Maker — Web app to convert EPUB into MP3 audiobooks.
+Audiobook Maker — Web app to convert EPUB/PDF into MP3 audiobooks.
 
 Requirements:
-    pip install flask edge-tts ebooklib beautifulsoup4 lxml Pillow
+    pip install flask edge-tts ebooklib beautifulsoup4 lxml Pillow pymupdf
 
 Usage:
     python audiobook_app.py
@@ -39,6 +39,12 @@ except ImportError:
     print("ERROR: epub_to_tts.py not found in the same folder.", file=sys.stderr)
     print(f"  Script folder: {SCRIPT_DIR}", file=sys.stderr)
     sys.exit(1)
+
+try:
+    from pdf_to_tts import parse_pdf
+except ImportError:
+    parse_pdf = None
+    print("WARNING: pdf_to_tts.py not found — PDF support disabled.", file=sys.stderr)
 
 try:
     import edge_tts
@@ -1600,8 +1606,11 @@ def api_analyze():
     fname_lower = file.filename.lower()
     is_txt = fname_lower.endswith(".txt")
     is_epub = fname_lower.endswith(".epub")
-    if not is_epub and not is_txt:
-        return jsonify({"error": "File must be .epub or .txt"}), 400
+    is_pdf = fname_lower.endswith(".pdf")
+    if not is_epub and not is_txt and not is_pdf:
+        return jsonify({"error": "File must be .epub, .pdf or .txt"}), 400
+    if is_pdf and parse_pdf is None:
+        return jsonify({"error": "PDF support not available. Install pymupdf: pip install pymupdf"}), 400
 
     job_id = str(uuid.uuid4())[:8]
     work_dir = UPLOAD_DIR / job_id
@@ -1612,10 +1621,12 @@ def api_analyze():
     try:
         if is_txt:
             info = parse_txt(str(file_path))
+        elif is_pdf:
+            info = parse_pdf(str(file_path))
         else:
             info = parse_epub(str(file_path))
     except Exception as e:
-        label = "TXT" if is_txt else "EPUB"
+        label = "TXT" if is_txt else ("PDF" if is_pdf else "EPUB")
         return jsonify({"error": f"{label} parse error: {e}"}), 400
 
     if not info.chapters:
@@ -1624,7 +1635,7 @@ def api_analyze():
     jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
                      "last_poll": time.time(), "original_filename": file.filename}
 
-    # Extract cover thumbnail for preview (EPUB only)
+    # Extract cover thumbnail for preview (EPUB only; PDF/TXT have no embedded cover)
     has_cover = False
     if is_epub:
         cover_path, cover_mime = _extract_cover_for_preview(str(file_path), str(work_dir))
@@ -1683,7 +1694,7 @@ def api_analyze():
             cut = max_chars
         return text[:cut].rstrip()
 
-    raw_preview = _pick_preview_text(info.chapters, is_txt)
+    raw_preview = _pick_preview_text(info.chapters, is_txt or is_pdf)
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
@@ -1692,7 +1703,7 @@ def api_analyze():
     return jsonify({
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
-        "file_type": "txt" if is_txt else "epub",
+        "file_type": "txt" if is_txt else ("pdf" if is_pdf else "epub"),
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
         "total_chars": info.total_chars,
@@ -2427,123 +2438,54 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en"):
     _t = {
         "it": {"title": "Download", "h2": "Il tuo audiolibro &egrave; pronto!",
                "btn": "&#x2B07;&#xFE0F; Scarica",
-               "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati.",
-               "share_label": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
-               "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker \u2014 gratis e direttamente dal browser!",
-               "share_copied": "Link copiato!"},
+               "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati."},
         "en": {"title": "Download", "h2": "Your audiobook is ready!",
                "btn": "&#x2B07;&#xFE0F; Download",
-               "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent.",
-               "share_label": "Like it? Share with your friends!",
-               "share_text": "I just turned an ebook into an audiobook with Audiobook Maker \u2014 free and right in the browser!",
-               "share_copied": "Link copied!"},
+               "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent."},
         "fr": {"title": "T&eacute;l&eacute;chargement", "h2": "Votre livre audio est pr&ecirc;t !",
                "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger",
-               "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email.",
-               "share_label": "Vous avez aim&eacute; ? Partagez avec vos amis !",
-               "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker \u2014 gratuit et directement depuis le navigateur !",
-               "share_copied": "Lien copi&eacute; !"},
+               "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email."},
         "es": {"title": "Descarga", "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
                "btn": "&#x2B07;&#xFE0F; Descargar",
-               "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email.",
-               "share_label": "&iquest;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
-               "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker \u2014 \u00a1gratis y desde el navegador!",
-               "share_copied": "&iexcl;Enlace copiado!"},
+               "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email."},
         "de": {"title": "Download", "h2": "Dein H&ouml;rbuch ist fertig!",
                "btn": "&#x2B07;&#xFE0F; Herunterladen",
-               "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht.",
-               "share_label": "Hat es dir gefallen? Teile es mit deinen Freunden!",
-               "share_text": "Ich habe gerade ein E-Book in ein H\u00f6rbuch verwandelt mit Audiobook Maker \u2014 kostenlos und direkt im Browser!",
-               "share_copied": "Link kopiert!"},
+               "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht."},
         "zh": {"title": "\u4e0b\u8f7d", "h2": "\u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
                "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d",
-               "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002",
-               "share_label": "\u89c9\u5f97\u4e0d\u9519\uff1f\u5206\u4eab\u7ed9\u4f60\u7684\u670b\u53cb\uff01",
-               "share_text": "\u6211\u521a\u7528 Audiobook Maker \u628a\u4e00\u672c\u7535\u5b50\u4e66\u8f6c\u6210\u4e86\u6709\u58f0\u4e66\u2014\u2014\u514d\u8d39\u4e14\u5728\u6d4f\u89c8\u5668\u4e2d\u5373\u53ef\u5b8c\u6210\uff01",
-               "share_copied": "\u94fe\u63a5\u5df2\u590d\u5236\uff01"},
+               "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002"},
     }
     t = _t.get(lang, _t["en"])
     type_label = "Podcast ZIP" if dl_type == "podcast" else "Audio ZIP"
     warn_text = t["warn"].replace("{r}", remaining_str)
-
-    import urllib.parse
-    share_url = "https://audiobook-maker.com"
-    share_txt_enc = urllib.parse.quote(t["share_text"])
-    share_url_enc = urllib.parse.quote(share_url)
-    share_full_enc = urllib.parse.quote(t["share_text"] + " " + share_url)
-
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
 <title>Audiobook Maker — {t['title']}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'DM Sans',-apple-system,sans-serif;min-height:100vh;margin:0;background:#f5f3ef;color:#2c2a26;display:flex;justify-content:center;align-items:center;padding:20px}}
-.card{{text-align:center;max-width:520px;width:100%;background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.08);overflow:hidden}}
-.card-hero{{background:linear-gradient(135deg,#c29a6c 0%,#d4a574 50%,#c47a2a 100%);padding:40px 32px 32px;color:#fff;position:relative;overflow:hidden}}
-.card-hero::before{{content:'';position:absolute;top:-50%;right:-30%;width:200px;height:200px;background:rgba(255,255,255,.08);border-radius:50%}}
-.card-hero::after{{content:'';position:absolute;bottom:-40%;left:-20%;width:160px;height:160px;background:rgba(255,255,255,.05);border-radius:50%}}
-.hero-icon{{font-size:3.5rem;margin-bottom:12px;position:relative;z-index:1}}
-.hero-h2{{font-family:'DM Serif Display',serif;font-size:1.6rem;font-weight:400;margin-bottom:6px;position:relative;z-index:1}}
-.hero-title{{opacity:.9;font-style:italic;font-size:.95rem;position:relative;z-index:1}}
-.card-body{{padding:28px 32px 32px}}
-.type-badge{{display:inline-block;padding:5px 14px;background:rgba(196,122,42,.08);border-radius:20px;font-size:.82rem;color:#c47a2a;font-weight:600;margin-bottom:20px}}
-.dl-btn{{display:inline-block;padding:16px 40px;background:#c47a2a;color:white;text-decoration:none;border-radius:10px;font-weight:700;font-size:1.1rem;transition:all .25s;box-shadow:0 4px 16px rgba(196,122,42,.3)}}
-.dl-btn:hover{{background:#d4903e;transform:translateY(-2px);box-shadow:0 6px 24px rgba(196,122,42,.35)}}
-.warn{{color:#c44040;font-weight:600;margin-top:20px;font-size:.85rem;line-height:1.5}}
-.share-section{{margin-top:24px;padding-top:20px;border-top:1px solid #e6e2dc}}
-.share-label{{font-size:.85rem;color:#9e9890;margin-bottom:12px}}
-.share-icons{{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}}
-.share-icons a,.share-icons button{{width:42px;height:42px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6e2dc;background:#f5f3ef;color:#6b6760;cursor:pointer;transition:all .25s;text-decoration:none;font-size:0;padding:0}}
-.share-icons a:hover,.share-icons button:hover{{border-color:#c47a2a;color:#c47a2a;transform:translateY(-3px);box-shadow:0 4px 12px rgba(196,122,42,.15)}}
-.share-icons svg{{width:18px;height:18px;fill:currentColor}}
-.copy-wrap{{position:relative;display:inline-flex}}
-.copy-tip{{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#2c2a26;color:#fff;font-size:.72rem;padding:4px 10px;border-radius:5px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .25s}}
-.copy-tip.show{{opacity:1}}
-.home-link{{display:inline-block;margin-top:20px;font-size:.82rem;color:#c47a2a;text-decoration:none;font-weight:500;transition:color .2s}}
-.home-link:hover{{text-decoration:underline}}
+body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
+align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
+.box{{text-align:center;padding:48px;max-width:500px;background:white;border-radius:16px;
+box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+h1{{font-size:3rem;margin:0 0 16px}}
+h2{{color:#2c3e50;margin:0 0 8px}}
+.title{{color:#666;font-style:italic;margin:0 0 24px}}
+.btn{{display:inline-block;padding:16px 32px;background:#3b82f6;color:white;
+text-decoration:none;border-radius:8px;font-weight:600;font-size:18px;
+transition:background .2s}}
+.btn:hover{{background:#2563eb}}
+.warn{{color:#e74c3c;font-weight:600;margin-top:24px;font-size:.9rem}}
+.type{{display:inline-block;padding:4px 12px;background:#e8f4f8;border-radius:12px;
+font-size:.85rem;color:#2980b9;margin-bottom:16px}}
 </style></head><body>
-<div class="card">
-<div class="card-hero">
-  <div class="hero-icon">&#x1F3A7;</div>
-  <h2 class="hero-h2">{t['h2']}</h2>
-  <p class="hero-title">{book_title}</p>
-</div>
-<div class="card-body">
-  <div class="type-badge">{type_label}</div>
-  <div><a href="/dl/{token}/download" class="dl-btn">{t['btn']}</a></div>
-  <p class="warn">{warn_text}</p>
-
-  <div class="share-section">
-    <div class="share-label">{t['share_label']}</div>
-    <div class="share-icons">
-      <a href="https://x.com/intent/tweet?text={share_txt_enc}&url={share_url_enc}" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
-      <a href="https://www.facebook.com/sharer/sharer.php?u={share_url_enc}" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
-      <a href="https://wa.me/?text={share_full_enc}" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg></a>
-      <a href="https://t.me/share/url?url={share_url_enc}&text={share_txt_enc}" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
-      <a href="https://www.linkedin.com/sharing/share-offsite/?url={share_url_enc}" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
-      <a href="https://www.reddit.com/submit?url={share_url_enc}&title={share_txt_enc}" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 01.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg></a>
-      <div class="copy-wrap">
-        <button onclick="copyLink()" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-        <span class="copy-tip" id="cpTip">{t['share_copied']}</span>
-      </div>
-    </div>
-  </div>
-  <a href="/" class="home-link">&#x1F3A7; Audiobook Maker</a>
-</div>
-</div>
-<script>
-function copyLink(){{
-  navigator.clipboard.writeText('https://audiobook-maker.com').then(function(){{
-    var tip=document.getElementById('cpTip');
-    tip.classList.add('show');
-    setTimeout(function(){{tip.classList.remove('show')}},2000);
-  }});
-}}
-</script>
-</body></html>"""
+<div class="box">
+<h1>&#x1F3A7;</h1>
+<h2>{t['h2']}</h2>
+<p class="title">{book_title}</p>
+<p class="type">{type_label}</p>
+<p><a href="/dl/{token}/download" class="btn">{t['btn']}</a></p>
+<p class="warn">{warn_text}</p>
+</div></body></html>"""
 
 
 @app.route("/api/download/<job_id>")
@@ -2666,46 +2608,46 @@ def api_download_podcast(job_id):
 # ═══════════════════════════════════════════════════════════════════
 _SEO_DATA = {
     "it": {
-        "title":   "Audiobook Maker — Convertitore Gratuito da EPUB ad Audiolibro Online | Text-to-Speech AI",
-        "desc":    "Converti i tuoi ebook EPUB in audiolibri MP3 gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro. Nessuna installazione, funziona dal browser. Supporta italiano, inglese, francese, spagnolo, tedesco e cinese.",
-        "kw":      "convertitore epub audiolibro, epub in audiolibro gratis, convertire ebook in audiolibro online, creare audiolibro da epub, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to mp3, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
+        "title":   "Audiobook Maker — Convertitore Gratuito da EPUB/PDF ad Audiolibro Online | Text-to-Speech AI",
+        "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro. Nessuna installazione, funziona dal browser. Supporta italiano, inglese, francese, spagnolo, tedesco e cinese.",
+        "kw":      "convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to mp3, pdf to mp3, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB in audiolibri MP3 con voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
+        "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 con voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
     "en": {
-        "title":   "Audiobook Maker — Free Online EPUB to Audiobook Converter | AI Text-to-Speech",
-        "desc":    "Convert your EPUB ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
-        "kw":      "epub to audiobook converter, free epub to audiobook, convert ebook to audiobook online free, epub to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub",
+        "title":   "Audiobook Maker — Free Online EPUB/PDF to Audiobook Converter | AI Text-to-Speech",
+        "desc":    "Convert your EPUB and PDF ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
+        "kw":      "epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Free online tool to convert EPUB ebooks into MP3 audiobooks using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
+        "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 audiobooks using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
     "fr": {
-        "title":   "Audiobook Maker — Convertisseur Gratuit EPUB en Livre Audio en Ligne | Text-to-Speech IA",
-        "desc":    "Convertissez vos ebooks EPUB en livres audio MP3 gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio. Aucune installation, fonctionne dans le navigateur.",
-        "kw":      "convertisseur epub livre audio, epub en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers mp3, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit",
+        "title":   "Audiobook Maker — Convertisseur Gratuit EPUB/PDF en Livre Audio en Ligne | Text-to-Speech IA",
+        "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio. Aucune installation, fonctionne dans le navigateur.",
+        "kw":      "convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers mp3, pdf vers mp3, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
+        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB et PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
     "es": {
-        "title":   "Audiobook Maker — Convertidor Gratuito de EPUB a Audiolibro Online | Text-to-Speech IA",
-        "desc":    "Convierte tus ebooks EPUB en audiolibros MP3 gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro. Sin instalación, funciona desde el navegador.",
-        "kw":      "convertidor epub audiolibro, epub a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a mp3, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis",
+        "title":   "Audiobook Maker — Convertidor Gratuito de EPUB/PDF a Audiolibro Online | Text-to-Speech IA",
+        "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro. Sin instalación, funciona desde el navegador.",
+        "kw":      "convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a mp3, pdf a mp3, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
+        "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
     "de": {
-        "title":   "Audiobook Maker — Kostenloser Online EPUB zu Hörbuch Konverter | KI Text-to-Speech",
-        "desc":    "Konvertieren Sie Ihre EPUB-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
-        "kw":      "epub zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos",
+        "title":   "Audiobook Maker — Kostenloser Online EPUB/PDF zu Hörbuch Konverter | KI Text-to-Speech",
+        "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
+        "kw":      "epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, pdf zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
+        "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
     "zh": {
-        "title":   "Audiobook Maker — 免费在线EPUB转有声书转换器 | AI文字转语音",
-        "desc":    "使用自然AI语音将EPUB电子书免费转换为MP3有声书。免费在线文字转语音转换器：上传书籍，选择语音，下载有声书。无需安装，浏览器即可使用。支持中文、英语、意大利语、法语、西班牙语和德语。",
-        "kw":      "epub转有声书, 免费epub转有声书, 在线电子书转有声书, 免费创建有声书, 文字转语音中文, 免费在线有声书转换器, epub转mp3, 电子书转音频, 语音合成, 有声书制作, 免费电子书转音频, ebook to audiobook中文, tts中文免费, 在线制作有声书, 文本转语音, epub阅读器语音, 文字转有声书, 听电子书, 免费有声书制作器, epub转音频免费",
+        "title":   "Audiobook Maker — 免费在线EPUB/PDF转有声书转换器 | AI文字转语音",
+        "desc":    "使用自然AI语音将EPUB和PDF电子书免费转换为MP3有声书。免费在线文字转语音转换器：上传书籍，选择语音，下载有声书。无需安装，浏览器即可使用。支持中文、英语、意大利语、法语、西班牙语和德语。",
+        "kw":      "epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, 免费创建有声书, 文字转语音中文, 免费在线有声书转换器, epub转mp3, pdf转mp3, 电子书转音频, 语音合成, 有声书制作, 免费电子书转音频, ebook to audiobook中文, tts中文免费, 在线制作有声书, 文本转语音, epub阅读器语音, 文字转有声书, 听电子书, 免费有声书制作器, epub转音频免费, pdf转音频免费",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "免费在线工具，使用神经网络AI TTS语音将EPUB电子书转换为MP3有声书。支持6种语言和播客RSS订阅源生成。",
+        "ld_desc": "免费在线工具，使用神经网络AI TTS语音将EPUB和PDF电子书转换为MP3有声书。支持6种语言和播客RSS订阅源生成。",
     },
 }
 
@@ -2748,7 +2690,7 @@ def _detect_lang_from_request() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# AUTO-CLEANUP (deletes EPUB + MP3 files)
+# AUTO-CLEANUP (deletes EPUB/PDF/TXT + MP3 files)
 # ═══════════════════════════════════════════════════════════════════
 
 CLEANUP_AFTER_DOWNLOAD_SEC = 60 * 60   # 60 minutes after download
