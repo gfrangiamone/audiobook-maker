@@ -2427,54 +2427,123 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en"):
     _t = {
         "it": {"title": "Download", "h2": "Il tuo audiolibro &egrave; pronto!",
                "btn": "&#x2B07;&#xFE0F; Scarica",
-               "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati."},
+               "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati.",
+               "share_label": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
+               "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker \u2014 gratis e direttamente dal browser!",
+               "share_copied": "Link copiato!"},
         "en": {"title": "Download", "h2": "Your audiobook is ready!",
                "btn": "&#x2B07;&#xFE0F; Download",
-               "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent."},
+               "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent.",
+               "share_label": "Like it? Share with your friends!",
+               "share_text": "I just turned an ebook into an audiobook with Audiobook Maker \u2014 free and right in the browser!",
+               "share_copied": "Link copied!"},
         "fr": {"title": "T&eacute;l&eacute;chargement", "h2": "Votre livre audio est pr&ecirc;t !",
                "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger",
-               "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email."},
+               "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email.",
+               "share_label": "Vous avez aim&eacute; ? Partagez avec vos amis !",
+               "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker \u2014 gratuit et directement depuis le navigateur !",
+               "share_copied": "Lien copi&eacute; !"},
         "es": {"title": "Descarga", "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
                "btn": "&#x2B07;&#xFE0F; Descargar",
-               "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email."},
+               "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email.",
+               "share_label": "&iquest;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
+               "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker \u2014 \u00a1gratis y desde el navegador!",
+               "share_copied": "&iexcl;Enlace copiado!"},
         "de": {"title": "Download", "h2": "Dein H&ouml;rbuch ist fertig!",
                "btn": "&#x2B07;&#xFE0F; Herunterladen",
-               "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht."},
+               "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht.",
+               "share_label": "Hat es dir gefallen? Teile es mit deinen Freunden!",
+               "share_text": "Ich habe gerade ein E-Book in ein H\u00f6rbuch verwandelt mit Audiobook Maker \u2014 kostenlos und direkt im Browser!",
+               "share_copied": "Link kopiert!"},
         "zh": {"title": "\u4e0b\u8f7d", "h2": "\u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
                "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d",
-               "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002"},
+               "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002",
+               "share_label": "\u89c9\u5f97\u4e0d\u9519\uff1f\u5206\u4eab\u7ed9\u4f60\u7684\u670b\u53cb\uff01",
+               "share_text": "\u6211\u521a\u7528 Audiobook Maker \u628a\u4e00\u672c\u7535\u5b50\u4e66\u8f6c\u6210\u4e86\u6709\u58f0\u4e66\u2014\u2014\u514d\u8d39\u4e14\u5728\u6d4f\u89c8\u5668\u4e2d\u5373\u53ef\u5b8c\u6210\uff01",
+               "share_copied": "\u94fe\u63a5\u5df2\u590d\u5236\uff01"},
     }
     t = _t.get(lang, _t["en"])
     type_label = "Podcast ZIP" if dl_type == "podcast" else "Audio ZIP"
     warn_text = t["warn"].replace("{r}", remaining_str)
+
+    import urllib.parse
+    share_url = "https://audiobook-maker.com"
+    share_txt_enc = urllib.parse.quote(t["share_text"])
+    share_url_enc = urllib.parse.quote(share_url)
+    share_full_enc = urllib.parse.quote(t["share_text"] + " " + share_url)
+
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
 <title>Audiobook Maker — {t['title']}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
-body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
-align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
-.box{{text-align:center;padding:48px;max-width:500px;background:white;border-radius:16px;
-box-shadow:0 4px 24px rgba(0,0,0,.08)}}
-h1{{font-size:3rem;margin:0 0 16px}}
-h2{{color:#2c3e50;margin:0 0 8px}}
-.title{{color:#666;font-style:italic;margin:0 0 24px}}
-.btn{{display:inline-block;padding:16px 32px;background:#3b82f6;color:white;
-text-decoration:none;border-radius:8px;font-weight:600;font-size:18px;
-transition:background .2s}}
-.btn:hover{{background:#2563eb}}
-.warn{{color:#e74c3c;font-weight:600;margin-top:24px;font-size:.9rem}}
-.type{{display:inline-block;padding:4px 12px;background:#e8f4f8;border-radius:12px;
-font-size:.85rem;color:#2980b9;margin-bottom:16px}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:'DM Sans',-apple-system,sans-serif;min-height:100vh;margin:0;background:#f5f3ef;color:#2c2a26;display:flex;justify-content:center;align-items:center;padding:20px}}
+.card{{text-align:center;max-width:520px;width:100%;background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.08);overflow:hidden}}
+.card-hero{{background:linear-gradient(135deg,#c29a6c 0%,#d4a574 50%,#c47a2a 100%);padding:40px 32px 32px;color:#fff;position:relative;overflow:hidden}}
+.card-hero::before{{content:'';position:absolute;top:-50%;right:-30%;width:200px;height:200px;background:rgba(255,255,255,.08);border-radius:50%}}
+.card-hero::after{{content:'';position:absolute;bottom:-40%;left:-20%;width:160px;height:160px;background:rgba(255,255,255,.05);border-radius:50%}}
+.hero-icon{{font-size:3.5rem;margin-bottom:12px;position:relative;z-index:1}}
+.hero-h2{{font-family:'DM Serif Display',serif;font-size:1.6rem;font-weight:400;margin-bottom:6px;position:relative;z-index:1}}
+.hero-title{{opacity:.9;font-style:italic;font-size:.95rem;position:relative;z-index:1}}
+.card-body{{padding:28px 32px 32px}}
+.type-badge{{display:inline-block;padding:5px 14px;background:rgba(196,122,42,.08);border-radius:20px;font-size:.82rem;color:#c47a2a;font-weight:600;margin-bottom:20px}}
+.dl-btn{{display:inline-block;padding:16px 40px;background:#c47a2a;color:white;text-decoration:none;border-radius:10px;font-weight:700;font-size:1.1rem;transition:all .25s;box-shadow:0 4px 16px rgba(196,122,42,.3)}}
+.dl-btn:hover{{background:#d4903e;transform:translateY(-2px);box-shadow:0 6px 24px rgba(196,122,42,.35)}}
+.warn{{color:#c44040;font-weight:600;margin-top:20px;font-size:.85rem;line-height:1.5}}
+.share-section{{margin-top:24px;padding-top:20px;border-top:1px solid #e6e2dc}}
+.share-label{{font-size:.85rem;color:#9e9890;margin-bottom:12px}}
+.share-icons{{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}}
+.share-icons a,.share-icons button{{width:42px;height:42px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6e2dc;background:#f5f3ef;color:#6b6760;cursor:pointer;transition:all .25s;text-decoration:none;font-size:0;padding:0}}
+.share-icons a:hover,.share-icons button:hover{{border-color:#c47a2a;color:#c47a2a;transform:translateY(-3px);box-shadow:0 4px 12px rgba(196,122,42,.15)}}
+.share-icons svg{{width:18px;height:18px;fill:currentColor}}
+.copy-wrap{{position:relative;display:inline-flex}}
+.copy-tip{{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#2c2a26;color:#fff;font-size:.72rem;padding:4px 10px;border-radius:5px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .25s}}
+.copy-tip.show{{opacity:1}}
+.home-link{{display:inline-block;margin-top:20px;font-size:.82rem;color:#c47a2a;text-decoration:none;font-weight:500;transition:color .2s}}
+.home-link:hover{{text-decoration:underline}}
 </style></head><body>
-<div class="box">
-<h1>&#x1F3A7;</h1>
-<h2>{t['h2']}</h2>
-<p class="title">{book_title}</p>
-<p class="type">{type_label}</p>
-<p><a href="/dl/{token}/download" class="btn">{t['btn']}</a></p>
-<p class="warn">{warn_text}</p>
-</div></body></html>"""
+<div class="card">
+<div class="card-hero">
+  <div class="hero-icon">&#x1F3A7;</div>
+  <h2 class="hero-h2">{t['h2']}</h2>
+  <p class="hero-title">{book_title}</p>
+</div>
+<div class="card-body">
+  <div class="type-badge">{type_label}</div>
+  <div><a href="/dl/{token}/download" class="dl-btn">{t['btn']}</a></div>
+  <p class="warn">{warn_text}</p>
+
+  <div class="share-section">
+    <div class="share-label">{t['share_label']}</div>
+    <div class="share-icons">
+      <a href="https://x.com/intent/tweet?text={share_txt_enc}&url={share_url_enc}" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+      <a href="https://www.facebook.com/sharer/sharer.php?u={share_url_enc}" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
+      <a href="https://wa.me/?text={share_full_enc}" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg></a>
+      <a href="https://t.me/share/url?url={share_url_enc}&text={share_txt_enc}" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
+      <a href="https://www.linkedin.com/sharing/share-offsite/?url={share_url_enc}" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
+      <a href="https://www.reddit.com/submit?url={share_url_enc}&title={share_txt_enc}" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 01.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg></a>
+      <div class="copy-wrap">
+        <button onclick="copyLink()" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
+        <span class="copy-tip" id="cpTip">{t['share_copied']}</span>
+      </div>
+    </div>
+  </div>
+  <a href="/" class="home-link">&#x1F3A7; Audiobook Maker</a>
+</div>
+</div>
+<script>
+function copyLink(){{
+  navigator.clipboard.writeText('https://audiobook-maker.com').then(function(){{
+    var tip=document.getElementById('cpTip');
+    tip.classList.add('show');
+    setTimeout(function(){{tip.classList.remove('show')}},2000);
+  }});
+}}
+</script>
+</body></html>"""
 
 
 @app.route("/api/download/<job_id>")

@@ -65,8 +65,8 @@ function applyI18n(){
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
-  // Update server-rendered SEO content block language
-  var sc=document.getElementById('seoContent');if(sc)sc.style.display='none';
+  // Server-rendered SEO content is visually hidden via CSS (clip pattern);
+  // no JS override needed — crawlers can still index it.
 }
 function detectLang(){
   // INIT_LANG è iniettato server-side: rispetta la lingua della URL (/it/, /en/, ecc.)
@@ -826,6 +826,36 @@ function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
 function showPErr(m){document.getElementById('pra').innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+
+// ═══════════════════ SOCIAL SHARE ═══════════════════
+const SHARE_URL='https://audiobook-maker.com';
+function _shareText(){return t('share_text')+' '+SHARE_URL}
+function updateShareLinks(){
+  var txt=encodeURIComponent(t('share_text'));
+  var url=encodeURIComponent(SHARE_URL);
+  var full=encodeURIComponent(t('share_text')+' '+SHARE_URL);
+  var el;
+  el=document.getElementById('shX');if(el)el.href='https://x.com/intent/tweet?text='+txt+'&url='+url;
+  el=document.getElementById('shFb');if(el)el.href='https://www.facebook.com/sharer/sharer.php?u='+url;
+  el=document.getElementById('shWa');if(el)el.href='https://wa.me/?text='+full;
+  el=document.getElementById('shTg');if(el)el.href='https://t.me/share/url?url='+url+'&text='+txt;
+  el=document.getElementById('shLi');if(el)el.href='https://www.linkedin.com/sharing/share-offsite/?url='+url;
+  el=document.getElementById('shRd');if(el)el.href='https://www.reddit.com/submit?url='+url+'&title='+txt;
+}
+function copyShareLink(){
+  navigator.clipboard.writeText(SHARE_URL).then(function(){
+    var tip=document.getElementById('shCopiedTip');
+    if(tip){tip.classList.add('show');setTimeout(function(){tip.classList.remove('show')},2000)}
+  }).catch(function(){});
+}
+// Init share copy button
+document.addEventListener('DOMContentLoaded',function(){
+  var cb=document.getElementById('shCopy');if(cb)cb.onclick=copyShareLink;
+  updateShareLinks();
+});
+// Re-update share links on language change (hook into existing applyI18n)
+var _origApplyI18n=applyI18n;
+applyI18n=function(){_origApplyI18n();updateShareLinks()};
 </script>
 </body>
 </html>
