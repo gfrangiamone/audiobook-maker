@@ -1484,9 +1484,11 @@ def _safe_filename(name):
 def index():
     """Root: serve la lingua rilevata dall'Accept-Language, senza redirect.
     Il redirect 302 penalizzerebbe il PageRank; meglio rispondere con canonical.
+    Usa HTML_ROOT_TEMPLATES: canonical punta a BASE_URL/ (non /{lang}/).
+    Questo garantisce che l'URL x-default negli hreflang sia auto-canonicalizzante.
     """
     lang = _detect_lang_from_request()
-    resp = app.make_response(HTML_TEMPLATES.get(lang, HTML_TEMPLATES["en"]))
+    resp = app.make_response(HTML_ROOT_TEMPLATES.get(lang, HTML_ROOT_TEMPLATES["en"]))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Vary"] = "Accept-Language"
     return resp
@@ -2743,6 +2745,20 @@ HTML_TEMPLATES: dict[str, str] = {
 }
 # Fallback generico per URL sconosciuti
 HTML_TEMPLATE = HTML_TEMPLATES["en"]
+
+# Template dedicati per la root (/): canonical punta a BASE_URL/ (se stesso),
+# non a /{lang}/. Risolve l'errore SEO "hreflang URL non usa il proprio canonical".
+# Google crawla / e vede canonical=/, che corrisponde all'x-default negli hreflang.
+HTML_ROOT_TEMPLATES: dict[str, str] = {
+    lang: build_html_template(
+        lang=lang,
+        seo=seo,
+        base_url=BASE_URL,
+        version=__version__,
+        canonical_url=f"{BASE_URL}/" if BASE_URL else "",
+    )
+    for lang, seo in _SEO_DATA.items()
+}
 
 
 def _detect_lang_from_request() -> str:

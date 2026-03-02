@@ -42,6 +42,7 @@ def build_html_template(
     seo: dict | None = None,
     base_url: str = "",
     version: str = "",
+    canonical_url: str = "",
 ) -> str:
     """Assemble the full HTML template from fragments with server-side SEO.
 
@@ -59,6 +60,10 @@ def build_html_template(
         seo: Dict with keys: title, desc, kw, ld_name, ld_desc.
         base_url: Base URL for canonical/hreflang (e.g. "https://audiobook-maker.com").
         version: Version string for the badge (e.g. "2.1").
+        canonical_url: Override for the canonical URL. If empty, defaults to
+                       "{base_url}/{lang}/". Used by the root route (/) to set
+                       canonical to "{base_url}/" so that hreflang x-default
+                       points to a self-canonicalizing URL.
 
     Returns:
         Complete HTML string with all SEO baked in.
@@ -73,7 +78,7 @@ def build_html_template(
     # ── 2. Replace <head> placeholders with server-side SEO data ──
     if seo:
         html_lang = _HREFLANG_MAP.get(lang, "en")
-        canonical = f"{base_url}/{lang}/" if base_url else ""
+        canonical = canonical_url or (f"{base_url}/{lang}/" if base_url else "")
 
         # Build hreflang link tags
         hreflang_lines = []
