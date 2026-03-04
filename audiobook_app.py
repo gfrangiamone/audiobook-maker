@@ -1585,9 +1585,370 @@ Allow: /
 Disallow: /api/
 Disallow: /data/
 Disallow: /dl/
+Disallow: /logs
 {sitemap_line}
 """.strip()
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+
+# ─── Admin log viewer (/logs) ────────────────────────────────────────────────
+# URL: /logs?2026-03  (parametro = anno-mese)
+# Non indicizzato (Disallow: /logs in robots.txt consigliato)
+
+@app.route("/logs")
+def admin_logs():
+    """Admin log viewer: mostra il log mensile in formato tabellare."""
+    from datetime import datetime
+    from collections import OrderedDict
+
+    # Determina anno-mese dal query string (primo parametro senza valore)
+    # es. /logs?2026-03
+    ym = None
+    for key in request.args:
+        if re.match(r'^\d{4}-\d{2}$', key):
+            ym = key
+            break
+    if not ym:
+        ym = datetime.now().strftime("%Y-%m")
+
+    log_path = SCRIPT_DIR / f"activity_{ym}.log"
+
+    # Parse log: raggruppa per session_id
+    sessions = OrderedDict()  # session_id -> { first_dt, last_dt, filename, last_op, events[] }
+
+    if log_path.exists():
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = [p.strip() for p in line.split("#")]
+                    if len(parts) < 4:
+                        continue
+                    sid = parts[0]
+                    dt_str = parts[1]
+                    # filename è tra virgolette
+                    filename = parts[2].strip().strip('"')
+                    operation = parts[3].strip()
+
+                    try:
+                        dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        continue
+
+                    if sid not in sessions:
+                        sessions[sid] = {
+                            "first_dt": dt,
+                            "last_dt": dt,
+                            "filename": filename,
+                            "last_op": operation,
+                            "events": [operation],
+                        }
+                    else:
+                        s = sessions[sid]
+                        if dt < s["first_dt"]:
+                            s["first_dt"] = dt
+                        if dt >= s["last_dt"]:
+                            s["last_dt"] = dt
+                            s["last_op"] = operation
+                        s["filename"] = filename  # aggiorna sempre (stesso file)
+                        s["events"].append(operation)
+        except Exception as e:
+            return f"Errore lettura log: {e}", 500
+
+    # Costruisci righe tabella
+    rows_html = ""
+    for sid, s in reversed(list(sessions.items())):
+        first = s["first_dt"].strftime("%d-%m-%Y / %H:%M")
+        last = s["last_dt"].strftime("%d-%m-%Y / %H:%M")
+        delta = s["last_dt"] - s["first_dt"]
+        total_sec = int(delta.total_seconds())
+        hh = total_sec // 3600
+        mm = (total_sec % 3600) // 60
+        elapsed = f"{hh:02d}:{mm:02d}"
+
+        # Titolo: prendi il nome file, rimuovi estensione e parti superflue
+        title = s["filename"]
+        # Rimuovi hash e suffissi tipici (Anna's Archive, Z-Library, ecc.)
+        for ext in (".epub", ".txt", ".pdf"):
+            if title.lower().endswith(ext):
+                title = title[:-len(ext)]
+        # Tronca se troppo lungo
+        display_title = title[:80] + ("…" if len(title) > 80 else "")
+
+        # Badge colorato per ultimo evento
+        op = s["last_op"]
+        op_colors = {
+            "ANALYZE": ("#6b7280", "#f3f4f6"),
+            "GENERATE": ("#2563eb", "#eff6ff"),
+            "COMPLETE": ("#16a34a", "#f0fdf4"),
+            "DOWNLOAD": ("#7c3aed", "#f5f3ff"),
+            "DOWNLOAD_EMAIL": ("#7c3aed", "#f5f3ff"),
+            "DOWNLOAD_EMAIL_PODCAST": ("#7c3aed", "#f5f3ff"),
+            "DOWNLOAD_PODCAST": ("#7c3aed", "#f5f3ff"),
+            "EMAIL_REGISTERED": ("#0891b2", "#ecfeff"),
+            "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
+            "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
+            "CANCEL": ("#dc2626", "#fef2f2"),
+        }
+        fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
+
+        # Timeline compatta degli eventi
+        event_icons = {
+            "ANALYZE": "🔍",
+            "GENERATE": "⚙️",
+            "COMPLETE": "✅",
+            "DOWNLOAD": "⬇️",
+            "DOWNLOAD_EMAIL": "📧⬇️",
+            "DOWNLOAD_EMAIL_PODCAST": "🎙️⬇️",
+            "DOWNLOAD_PODCAST": "🎙️⬇️",
+            "EMAIL_REGISTERED": "📬",
+            "EMAIL_SENT": "📤",
+            "EMAIL_FAILED": "❌📧",
+            "CANCEL": "🚫",
+        }
+        timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
+
+        rows_html += f"""<tr>
+<td class="cell-id"><code>{sid}</code></td>
+<td class="cell-dt">{first}</td>
+<td class="cell-dt">{last}</td>
+<td class="cell-elapsed">{elapsed}</td>
+<td class="cell-title" title="{s['filename']}">{display_title}</td>
+<td class="cell-op"><span class="badge" style="color:{fg};background:{bg}">{op}</span></td>
+<td class="cell-timeline">{timeline}</td>
+</tr>
+"""
+
+    total_sessions = len(sessions)
+    completed = sum(1 for s in sessions.values() if s["last_op"] == "COMPLETE")
+    downloaded = sum(1 for s in sessions.values() if "DOWNLOAD" in s["last_op"])
+    cancelled = sum(1 for s in sessions.values() if s["last_op"] == "CANCEL")
+    email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
+
+    # Mesi disponibili (scan dei file activity_*.log)
+    available_months = []
+    try:
+        for f in sorted(SCRIPT_DIR.glob("activity_*.log"), reverse=True):
+            m = re.search(r'activity_(\d{4}-\d{2})\.log', f.name)
+            if m:
+                available_months.append(m.group(1))
+    except Exception:
+        pass
+
+    months_nav = ""
+    for m in available_months:
+        active_cls = ' class="active"' if m == ym else ""
+        months_nav += f'<a href="/logs?{m}"{active_cls}>{m}</a> '
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
+<title>Audiobook Maker — Activity Log ({ym})</title>
+<style>
+:root {{
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --border: #475569;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #a78bfa;
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+}}
+.header {{
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}}
+.header h1 {{
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+}}
+.header .period {{
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}}
+.months-nav {{
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}}
+.months-nav .label {{
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    margin-right: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}}
+.months-nav a {{
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    transition: all .15s;
+}}
+.months-nav a:hover {{ background: var(--surface2); color: var(--text); }}
+.months-nav a.active {{
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+}}
+.stats {{
+    display: flex;
+    gap: 16px;
+    padding: 16px 24px;
+    flex-wrap: wrap;
+}}
+.stat {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    min-width: 120px;
+}}
+.stat .num {{
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}}
+.stat .lbl {{
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 2px;
+}}
+.table-wrap {{
+    overflow-x: auto;
+    padding: 0 24px 40px;
+    margin-top: 8px;
+}}
+table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}}
+thead th {{
+    background: var(--surface);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-size: 0.68rem;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}}
+tbody tr {{
+    border-bottom: 1px solid rgba(71,85,105,.3);
+    transition: background .1s;
+}}
+tbody tr:hover {{ background: rgba(56,189,248,.05); }}
+td {{ padding: 8px 12px; vertical-align: middle; }}
+.cell-id code {{
+    color: var(--accent2);
+    font-size: 0.78rem;
+    background: rgba(167,139,250,.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+}}
+.cell-dt {{
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}}
+.cell-elapsed {{
+    font-weight: 600;
+    color: var(--text);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}}
+.cell-title {{
+    max-width: 340px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+}}
+.badge {{
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}}
+.cell-timeline {{
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}}
+.empty {{
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+}}
+.empty .icon {{ font-size: 3rem; margin-bottom: 12px; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🎧 AUDIOBOOK MAKER — ACTIVITY LOG</h1>
+    <span class="period">{ym}</span>
+</div>
+
+{"<div class='months-nav'><span class='label'>Mesi:</span>" + months_nav + "</div>" if months_nav else ""}
+
+<div class="stats">
+    <div class="stat"><div class="num">{total_sessions}</div><div class="lbl">Sessioni</div></div>
+    <div class="stat"><div class="num">{completed}</div><div class="lbl">Completati</div></div>
+    <div class="stat"><div class="num">{downloaded}</div><div class="lbl">Download</div></div>
+    <div class="stat"><div class="num">{email_sent}</div><div class="lbl">Email inviate</div></div>
+    <div class="stat"><div class="num">{cancelled}</div><div class="lbl">Cancellati</div></div>
+</div>
+
+<div class="table-wrap">
+{"<table><thead><tr><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Stato</th><th>Timeline</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
+</div>
+
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 
