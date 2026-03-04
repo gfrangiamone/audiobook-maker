@@ -273,6 +273,18 @@ select:focus{outline:none;border-color:var(--ac)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .al{padding:14px 18px;border-radius:var(--rs);font-size:.9rem;margin-bottom:16px}
 .al-e{background:var(--errs);color:var(--err);border:1px solid rgba(196,64,64,.15)}
+.al-w{background:rgba(234,179,8,.09);color:#856d10;border:1px solid rgba(234,179,8,.35)}
+[data-theme="dark"] .al-w{color:#f0c060;background:rgba(234,179,8,.07);border-color:rgba(234,179,8,.25)}
+.voice-chip{margin-top:10px;font-size:.8rem;display:none;align-items:center;gap:0;flex-wrap:wrap;line-height:1}
+.voice-chip.vis{display:inline-flex}
+.vc-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;background:var(--acs);border:1px solid var(--ac);border-radius:20px;color:var(--ac);font-weight:600;white-space:nowrap}
+.vc-badge span.vc-icon{font-size:.9rem;line-height:1}
+.vc-badge span.vc-label{font-size:.78rem;letter-spacing:.01em}
+.vc-link{margin-left:8px;color:var(--txd);cursor:pointer;font-size:.75rem;text-decoration:none;font-weight:500;white-space:nowrap;transition:color .15s;border-bottom:1px dotted var(--txm)}
+.vc-link:hover{color:var(--ac);border-bottom-color:var(--ac)}
+[data-theme="dark"] .vc-badge{background:rgba(240,160,80,.13)}
+.vm-link{color:inherit;font-weight:600;cursor:pointer;text-decoration:underline;white-space:nowrap}
+.vm-link:hover{opacity:.8}
 .lo{display:none;padding:32px;text-align:center}.lo.vis{display:block}
 .lo .tx{color:var(--txd);margin-top:12px;font-size:.9rem}
 .fi{animation:fi .4s ease}
@@ -367,6 +379,7 @@ select:focus{outline:none;border-color:var(--ac)}
   <div class="step collapsed disabled" id="s2">
     <div class="sh" onclick="toggleStep('s2')"><div class="sn">2</div><div class="st" data-t="s2_title"></div><span class="sh-sum" id="s2sum"></span><div class="sh-chev">&#x25BC;</div></div>
     <div class="step-body">
+    <div id="voiceMismatch" class="al al-w" style="display:none"></div>
     <div class="fr">
       <div class="fg"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
       <div class="fg"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
@@ -407,6 +420,9 @@ select:focus{outline:none;border-color:var(--ac)}
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
           <span id="prevTxt" data-t="btn_preview"></span>
         </button>
+        <div class="voice-chip" id="voiceChip">
+          <div class="vc-badge"><span class="vc-icon">🎙</span><span class="vc-label" id="voiceChipTxt"></span></div><a class="vc-link" id="voiceChipLink" onclick="goToAudioSettings()"></a>
+        </div>
       </div>
     </div>
     <div class="sb">

@@ -268,6 +268,8 @@ function updVoices(){
   }
   const dv=lang.voices.find(v=>v.id.includes('Giuseppe')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
   if(dv)sel.value=dv.id;
+  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();};
+  _updateVoiceChip();checkVoiceMismatch();
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
@@ -435,8 +437,7 @@ function fillPreview(d){
   document.getElementById('smC').textContent=d.total_chapters;
   document.getElementById('smW').textContent=d.total_words.toLocaleString();
   document.getElementById('smD').textContent=fmtDur(d.estimated_minutes);
-  document.getElementById('selTot').textContent=d.total_chapters;
-  const tb=document.getElementById('chl');tb.innerHTML='';
+  document.getElementById('selTot').textContent=d.total_chapters;  const tb=document.getElementById('chl');tb.innerHTML='';
   for(const ch of d.chapters){
     const tr=document.createElement('tr');
     tr.dataset.idx=ch.index;
@@ -459,6 +460,7 @@ function fillPreview(d){
   document.getElementById('chAll').checked=true;
   updateSelection();
   document.getElementById('s3sum').textContent=d.title.substring(0,25)+(d.title.length>25?'..':'')+' — '+d.total_chapters+' cap., '+d.total_words.toLocaleString()+' '+t('sum_w').toLowerCase();
+  _updateVoiceChip();checkVoiceMismatch();
 }
 
 function updateSelection(){
@@ -855,7 +857,85 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 // Re-update share links on language change (hook into existing applyI18n)
 var _origApplyI18n=applyI18n;
-applyI18n=function(){_origApplyI18n();updateShareLinks()};
+applyI18n=function(){_origApplyI18n();updateShareLinks();checkVoiceMismatch();_updateVoiceChip()};
+
+// ═══════════════════ VOICE CHIP + MISMATCH ═══════════════════
+function _updateVoiceChip(){
+  const chip=document.getElementById('voiceChip');
+  const chipTxt=document.getElementById('voiceChipTxt');
+  const chipLink=document.getElementById('voiceChipLink');
+  if(!chip||!chipTxt||!chipLink)return;
+  const vl=document.getElementById('vl');
+  const vv=document.getElementById('vv');
+  if(!vl||!vv||!vl.value||!vl.options[vl.selectedIndex]){chip.classList.remove('vis');return;}
+  const langName=vl.options[vl.selectedIndex].text.replace(/\s*\(\d+\)\s*$/,'');
+  const voiceName=vv.options[vv.selectedIndex]?vv.options[vv.selectedIndex].text:'';
+  if(!langName){chip.classList.remove('vis');return;}
+  chipTxt.textContent=langName+(voiceName?' — '+voiceName:'');
+  const _lbl={it:'✏️ Cambia',en:'✏️ Change',fr:'✏️ Modifier',es:'✏️ Cambiar',de:'✏️ Ändern',zh:'✏️ 更改'};
+  chipLink.textContent=_lbl[cl]||_lbl.en;
+  chip.classList.add('vis');
+}
+
+function checkVoiceMismatch(){
+  const banner=document.getElementById('voiceMismatch');
+  if(!banner)return;
+  if(!bookData||!bookData.language){banner.style.display='none';return;}
+  const bookLang=bookData.language.split('-')[0].toLowerCase();
+  // Only warn for well-known, unambiguous language codes
+  const known=['it','en','fr','es','de','zh','pt','nl','pl','ru','ja','ko'];
+  if(!known.includes(bookLang)){banner.style.display='none';return;}
+  const voiceLang=document.getElementById('vl').value;
+  if(bookLang===voiceLang){banner.style.display='none';return;}
+  const _names={
+    it:{it:'italiano',en:'Italian',fr:'italien',es:'italiano',de:'Italienisch',zh:'意大利语'},
+    en:{it:'inglese',en:'English',fr:'anglais',es:'inglés',de:'Englisch',zh:'英语'},
+    fr:{it:'francese',en:'French',fr:'français',es:'francés',de:'Französisch',zh:'法语'},
+    es:{it:'spagnolo',en:'Spanish',fr:'espagnol',es:'español',de:'Spanisch',zh:'西班牙语'},
+    de:{it:'tedesco',en:'German',fr:'allemand',es:'alemán',de:'Deutsch',zh:'德语'},
+    zh:{it:'cinese',en:'Chinese',fr:'chinois',es:'chino',de:'Chinesisch',zh:'中文'},
+    pt:{it:'portoghese',en:'Portuguese',fr:'portugais',es:'portugués',de:'Portugiesisch',zh:'葡萄牙语'},
+    ru:{it:'russo',en:'Russian',fr:'russe',es:'ruso',de:'Russisch',zh:'俄语'},
+    ja:{it:'giapponese',en:'Japanese',fr:'japonais',es:'japonés',de:'Japanisch',zh:'日语'},
+    ko:{it:'coreano',en:'Korean',fr:'coréen',es:'coreano',de:'Koreanisch',zh:'韩语'},
+    nl:{it:'olandese',en:'Dutch',fr:'néerlandais',es:'neerlandés',de:'Niederländisch',zh:'荷兰语'},
+    pl:{it:'polacco',en:'Polish',fr:'polonais',es:'polaco',de:'Polnisch',zh:'波兰语'},
+  };
+  const dn=(_names[bookLang]||{})[cl]||bookLang;
+  const _fix=`<a class="vm-link" onclick="autoFixVoice('${bookLang}')">`;
+  const _msgs={
+    it:`⚠️ Il libro sembra in <strong>${dn}</strong>, ma hai selezionato una voce in un'altra lingua. ${_fix}Seleziona voce ${dn} →</a>`,
+    en:`⚠️ The book appears to be in <strong>${dn}</strong>, but a different voice language is selected. ${_fix}Switch to ${dn} voice →</a>`,
+    fr:`⚠️ Le livre semble être en <strong>${dn}</strong>, mais une autre langue de voix est sélectionnée. ${_fix}Passer en voix ${dn} →</a>`,
+    es:`⚠️ El libro parece estar en <strong>${dn}</strong>, pero está seleccionado otro idioma de voz. ${_fix}Cambiar a voz ${dn} →</a>`,
+    de:`⚠️ Das Buch scheint auf <strong>${dn}</strong> zu sein, aber eine andere Stimmensprache ist gewählt. ${_fix}Zu ${dn}-Stimme wechseln →</a>`,
+    zh:`⚠️ 本书似乎是<strong>${dn}</strong>，但选择了不同语言的语音。${_fix}切换到${dn}语音 →</a>`,
+  };
+  banner.innerHTML=_msgs[cl]||_msgs.en;
+  banner.style.display='';
+}
+
+function autoFixVoice(langCode){
+  const sel=document.getElementById('vl');
+  if(!sel||!sel.querySelector('option[value="'+langCode+'"]'))return;
+  sel.value=langCode;
+  updVoices();
+  goToAudioSettings();
+  // Brief highlight on both selectors to confirm the change
+  [document.getElementById('vl'),document.getElementById('vv')].forEach(el=>{
+    if(!el)return;
+    el.style.transition='box-shadow .25s';
+    el.style.boxShadow='0 0 0 3px var(--ac)';
+    setTimeout(()=>{el.style.boxShadow='none'},1400);
+  });
+}
+
+function goToAudioSettings(){
+  const s2=document.getElementById('s2');
+  if(!s2||s2.classList.contains('disabled'))return;
+  s2.classList.remove('collapsed');
+  setTimeout(()=>s2.scrollIntoView({behavior:'smooth',block:'nearest'}),80);
+}
 </script>
 </body>
 </html>
