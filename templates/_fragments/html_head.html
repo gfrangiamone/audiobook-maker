@@ -254,6 +254,16 @@ select:focus{outline:none;border-color:var(--ac)}
 .share-icons .share-copied{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--tx);color:var(--bg);font-size:.72rem;padding:3px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
 .share-icons .share-copied.show{opacity:1}
 .share-copy-wrap{position:relative;display:inline-flex}
+/* Donate panel */
+.donate-panel{margin-top:18px;padding:16px 18px;background:linear-gradient(135deg,var(--srf2) 0%,#fff8f0 100%);border:1px solid #e8c99a;border-radius:12px;text-align:center}
+.donate-panel .donate-title{font-size:.95rem;font-weight:600;color:var(--tx);margin-bottom:6px}
+.donate-panel .donate-body{font-size:.88rem;color:var(--tx);font-weight:500;margin-bottom:14px;line-height:1.5}
+.donate-btns{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+.donate-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:1.5px solid transparent}
+.donate-coffee{background:#ffdd00;color:#1a1400;border-color:#e5c800}
+.donate-coffee:hover{background:#ffd000;transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,208,0,.4)}
+.donate-paypal{background:#003087;color:#fff;border-color:#002070}
+.donate-paypal:hover{background:#002070;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,48,135,.35)}
 
 /* ═══ PROGRESS ═══ */
 .pa{padding:20px 0}
@@ -484,6 +494,15 @@ select:focus{outline:none;border-color:var(--ac)}
       </div>
       <div style="margin-top:10px">
         <button class="btn btn-g" id="btnN">&#x1F4DA; <span data-t="btn_new"></span></button>
+      </div>
+      <!-- Donation panel — shown after conversion completes -->
+      <div class="donate-panel" id="donatePanel">
+        <div class="donate-title" data-t="donate_title"></div>
+        <div class="donate-body" data-t="donate_body"></div>
+        <div class="donate-btns">
+          <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
+          <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
+        </div>
       </div>
       <!-- Social share row -->
       <div class="share-row" id="shareRow">

@@ -2878,6 +2878,17 @@ transform:translateY(-2px);box-shadow:0 3px 10px rgba(0,0,0,.08)}}
 background:#333;color:#fff;font-size:.72rem;padding:3px 8px;border-radius:4px;
 white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}}
 .copy-tip.show{{opacity:1}}
+.donate-panel{{margin-top:20px;padding:18px 20px;background:linear-gradient(135deg,#fffaf4,#fff3e0);
+border:1px solid #e8c99a;border-radius:12px;text-align:center}}
+.donate-title{{font-size:.97rem;font-weight:700;color:#2c2a26;margin-bottom:6px}}
+.donate-body{{font-size:.82rem;color:#6b6760;line-height:1.5;margin-bottom:14px}}
+.donate-btns{{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}}
+.donate-btn{{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;
+font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:1.5px solid transparent}}
+.donate-coffee{{background:#ffdd00;color:#1a1400;border-color:#e5c800}}
+.donate-coffee:hover{{background:#ffd000;transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,208,0,.4)}}
+.donate-paypal{{background:#003087;color:#fff;border-color:#002070}}
+.donate-paypal:hover{{background:#002070;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,48,135,.35)}}
 </style></head><body>
 <div class="box">
 <h1>&#x1F3A7;</h1>
@@ -2901,9 +2912,34 @@ white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}}
     </div>
   </div>
 </div>
+<!-- Donate panel — text filled by JS based on browser language -->
+<div class="donate-panel">
+  <div class="donate-title" id="donTitle"></div>
+  <div class="donate-body" id="donBody"></div>
+  <div class="donate-btns">
+    <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span id="donCoffee"></span></a>
+    <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span id="donPaypal"></span></a>
+  </div>
+</div>
 </div>
 <script>
 (function(){{
+  /* ── Donate i18n (browser language) ── */
+  var DL={{
+    it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'AudiobookMaker \u00e8 gratuito, senza pubblicit\u00e0 e rimarr\u00e0 gratuito! Aiutami a coprire i costi del server e della manutenzione. Anche una piccola donazione di \u20ac1 o \u20ac2 \u00e8 gi\u00e0 un buon contributo:',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
+    fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'AudiobookMaker est gratuit, sans publicit\u00e9 et le restera\u00a0! Aidez-moi \u00e0 couvrir les co\u00fbts du serveur et de la maintenance. Un petit don de 1 ou 2\u00a0\u20ac est d\u00e9j\u00e0 une grande contribution\u00a0:',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
+    es:{{title:'\u2764\ufe0f \u00bfTe ha resultado \u00fatil esta herramienta?',body:'AudiobookMaker es gratuito, sin publicidad y seguir\u00e1 si\u00e9ndolo. Ay\u00fadame a cubrir los costes del servidor y mantenimiento. \u00a1Una peque\u00f1a donaci\u00f3n de 1 o 2\u00a0\u20ac ya es una gran contribuci\u00f3n!:',coffee:'Inv\u00edtame a un caf\u00e9',paypal:'Donaci\u00f3n PayPal'}},
+    de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'AudiobookMaker ist kostenlos, werbefrei \u2013 und bleibt es auch! Hilf mir, die Server- und Wartungskosten zu decken. Eine kleine Spende von 1 oder 2\u00a0\u20ac ist schon ein gro\u00dfer Beitrag:',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
+    zh:{{title:'\u2764\ufe0f \u8fd9\u4e2a\u5de5\u5177\u5bf9\u60a8\u6709\u5e2e\u52a9\u5417\uff1f',body:'AudiobookMaker \u514d\u8d39\u3001\u65e0\u5e7f\u544a\uff0c\u5c06\u6c38\u8fdc\u4fdd\u6301\u514d\u8d39\uff01\u8bf7\u5e2e\u52a9\u6211\u627f\u62c5\u670d\u52a1\u5668\u548c\u7ef4\u62a4\u8d39\u7528\u3002\u54ea\u6015\u6350\u8d60 1 \u6216 2 \u6b27\u5143\uff0c\u4e5f\u662f\u83ab\u5927\u7684\u652f\u6301\uff1a',coffee:'\u8bf7\u6211\u559d\u676f\u548f\u5561',paypal:'PayPal \u6350\u6b3e'}},
+    en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'AudiobookMaker is free, ad-free, and will remain free! Help me cover server and maintenance costs. A small donation of \u20ac1 or \u20ac2 is already a great contribution:',coffee:'Buy me a coffee',paypal:'PayPal donation'}}
+  }};
+  var bl=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
+  var d=DL[bl]||DL['en'];
+  document.getElementById('donTitle').textContent=d.title;
+  document.getElementById('donBody').textContent=d.body;
+  document.getElementById('donCoffee').textContent=d.coffee;
+  document.getElementById('donPaypal').textContent=d.paypal;
+  /* ── Share links ── */
   var S='{share_url}';
   var T='{share_text_js}';
   var u=encodeURIComponent(S);
