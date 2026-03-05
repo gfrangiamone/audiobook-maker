@@ -2897,6 +2897,15 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <p class="type">{type_label}</p>
 <p><a href="/dl/{token}/download" class="btn">{t['btn']}</a></p>
 <p class="warn">{warn_text}</p>
+<!-- Donate panel — text filled by JS based on browser language -->
+<div class="donate-panel">
+  <div class="donate-title" id="donTitle"></div>
+  <div class="donate-body" id="donBody"></div>
+  <div class="donate-btns">
+    <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span id="donCoffee"></span></a>
+    <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span id="donPaypal"></span></a>
+  </div>
+</div>
 <div class="share-row">
   <div class="share-label">{t['share']}</div>
   <div class="share-icons">
@@ -2912,21 +2921,12 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
     </div>
   </div>
 </div>
-<!-- Donate panel — text filled by JS based on browser language -->
-<div class="donate-panel">
-  <div class="donate-title" id="donTitle"></div>
-  <div class="donate-body" id="donBody"></div>
-  <div class="donate-btns">
-    <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span id="donCoffee"></span></a>
-    <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span id="donPaypal"></span></a>
-  </div>
-</div>
 </div>
 <script>
 (function(){{
   /* ── Donate i18n (browser language) ── */
   var DL={{
-    it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'AudiobookMaker \u00e8 gratuito, senza pubblicit\u00e0 e rimarr\u00e0 gratuito! Aiutami a coprire i costi del server e della manutenzione. Anche una piccola donazione di \u20ac1 o \u20ac2 \u00e8 gi\u00e0 un buon contributo:',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
+    it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'AudiobookMaker \u00e8 gratuito, senza pubblicit\u00e0 e rimarr\u00e0 gratuito! Aiutami a coprire i costi del server e della manutenzione. Anche una piccola donazione di \u20ac1 o \u20ac2 \u00e8 gi\u00e0 un grande contributo:',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
     fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'AudiobookMaker est gratuit, sans publicit\u00e9 et le restera\u00a0! Aidez-moi \u00e0 couvrir les co\u00fbts du serveur et de la maintenance. Un petit don de 1 ou 2\u00a0\u20ac est d\u00e9j\u00e0 une grande contribution\u00a0:',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
     es:{{title:'\u2764\ufe0f \u00bfTe ha resultado \u00fatil esta herramienta?',body:'AudiobookMaker es gratuito, sin publicidad y seguir\u00e1 si\u00e9ndolo. Ay\u00fadame a cubrir los costes del servidor y mantenimiento. \u00a1Una peque\u00f1a donaci\u00f3n de 1 o 2\u00a0\u20ac ya es una gran contribuci\u00f3n!:',coffee:'Inv\u00edtame a un caf\u00e9',paypal:'Donaci\u00f3n PayPal'}},
     de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'AudiobookMaker ist kostenlos, werbefrei \u2013 und bleibt es auch! Hilf mir, die Server- und Wartungskosten zu decken. Eine kleine Spende von 1 oder 2\u00a0\u20ac ist schon ein gro\u00dfer Beitrag:',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
