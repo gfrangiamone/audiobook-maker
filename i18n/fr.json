@@ -76,6 +76,7 @@
     "btn_prev_stop": "Arrêter",
     "prev_modal_title": "Aperçu de lecture",
     "prev_error": "Erreur lors de la génération de l'aperçu.",
-    "concurrent_limit": "Vous avez atteint le nombre maximum de générations simultanées. Veuillez attendre la fin d'une de vos sessions en cours avant d'en démarrer une nouvelle."
+    "concurrent_limit": "Vous avez atteint le nombre maximum de générations simultanées. Veuillez attendre la fin d'une de vos sessions en cours avant d'en démarrer une nouvelle.",
+    "btn_retry": "Réessayer la génération"
   }
 }

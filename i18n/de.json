@@ -76,6 +76,7 @@
     "btn_prev_stop": "Stoppen",
     "prev_modal_title": "Lesevorschau",
     "prev_error": "Fehler beim Erstellen der Audiovorschau.",
-    "concurrent_limit": "Sie haben die maximale Anzahl gleichzeitiger Generierungen erreicht. Bitte warten Sie, bis eine Ihrer laufenden Sitzungen abgeschlossen ist, bevor Sie eine neue starten."
+    "concurrent_limit": "Sie haben die maximale Anzahl gleichzeitiger Generierungen erreicht. Bitte warten Sie, bis eine Ihrer laufenden Sitzungen abgeschlossen ist, bevor Sie eine neue starten.",
+    "btn_retry": "Generierung erneut versuchen"
   }
 }

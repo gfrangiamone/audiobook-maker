@@ -521,8 +521,21 @@ async function startGen(){
       body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
-      if(d.error_code==='concurrent_limit'){showPErr(t('concurrent_limit')||d.error)}
-      else{showPErr(d.error)}
+      if(d.error_code==='concurrent_limit'){
+        // Show error in pMsg without destroying pra DOM structure
+        document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;
+        document.getElementById('pMsg').style.color='var(--err)';
+        document.getElementById('pBar').style.width='0%';
+        document.getElementById('pPct').textContent='';
+        document.getElementById('pCh').textContent='';
+        document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
+        // Replace cancel button with retry
+        document.getElementById('cnA').innerHTML=
+          '<button class="btn btn-ok" id="btnRetry">\u{1F504} '+(t('btn_retry')||'Retry generation')+'</button>';
+        document.getElementById('btnRetry').onclick=retryGen;
+        unlockUI();return
+      }
+      showPErr(d.error);
       unlockUI();return
     }
     listenProgress();
@@ -616,6 +629,20 @@ function cancelJob(){
   if(!jobId||!generating)return;
   navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
   location.reload();
+}
+
+function retryGen(){
+  // Restore cancel button
+  document.getElementById('cnA').innerHTML=
+    '<button class="btn btn-g" id="btnC" style="border-color:var(--err);color:var(--err)">\u23F9\uFE0F '+(t('btn_cancel')||'Cancel')+'</button>';
+  document.getElementById('btnC').onclick=cancelJob;
+  // Restore progress area
+  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display=''});
+  document.getElementById('pMsg').textContent='';
+  document.getElementById('pMsg').style.color='';
+  document.getElementById('pPct').textContent='0%';
+  // Retry generation
+  startGen();
 }
 
 // ═══════════════════ EMAIL NOTIFICATION ═══════════════════
