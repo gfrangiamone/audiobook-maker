@@ -75,6 +75,7 @@
     "btn_preview": "Escuchar vista previa",
     "btn_prev_stop": "Detener",
     "prev_modal_title": "Vista previa de lectura",
-    "prev_error": "Error al generar la vista previa de audio."
+    "prev_error": "Error al generar la vista previa de audio.",
+    "concurrent_limit": "Has alcanzado el límite máximo de generaciones simultáneas. Espera a que se complete una de las sesiones en curso antes de iniciar una nueva."
   }
 }

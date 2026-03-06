@@ -75,6 +75,7 @@
     "btn_preview": "Ascolta anteprima",
     "btn_prev_stop": "Interrompi",
     "prev_modal_title": "Anteprima lettura",
-    "prev_error": "Errore durante la generazione dell'anteprima."
+    "prev_error": "Errore durante la generazione dell'anteprima.",
+    "concurrent_limit": "Hai raggiunto il limite massimo di generazioni simultanee. Attendi il completamento di una delle sessioni in corso prima di avviarne una nuova."
   }
 }

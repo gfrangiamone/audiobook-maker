@@ -100,6 +100,40 @@ _admin_queue = []          # list of dicts: {title, author, filename, voice, cha
 _admin_queue_lock = threading.Lock()
 _admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
 
+# ── Client tracking & rate limiting ──
+# Max concurrent generating jobs per client device (cookie-based).
+# Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
+MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", "2"))
+
+# Cookie name and max-age for client identification
+_CLIENT_COOKIE_NAME = "abm_cid"
+_CLIENT_COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
+
+
+def _get_client_id():
+    """Return the client_id from cookie, or generate a new one (will be set later)."""
+    return request.cookies.get(_CLIENT_COOKIE_NAME, "")
+
+
+def _get_client_ip():
+    """Return client IP address, respecting reverse proxy headers."""
+    # X-Forwarded-For: client, proxy1, proxy2 → take the first
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def _active_generating_for_client(client_id):
+    """Count how many jobs are currently generating for the given client_id."""
+    if not client_id:
+        return 0
+    return sum(
+        1 for j in jobs.values()
+        if j.get("client_id") == client_id and j.get("status") == "generating"
+    )
+
+
 FAVICON_B64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I2MyOWE2YyIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiNhMDc4NTAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE0IiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxwYXRoIGQ9Ik0xNiA0NFYyMGMwLTIgMS41LTMuNSAzLjUtMy41QzIzIDE2LjUgMjggMTcgMzIgMTljNC0yIDktMi41IDEyLjUtMi41IDIgMCAzLjUgMS41IDMuNSAzLjV2MjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJNMzIgMTl2MjUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPHBhdGggZD0iTTE3IDM2YzAtOSA2LjctMTUgMTUtMTVzMTUgNiAxNSAxNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxyZWN0IHg9IjEzIiB5PSIzNCIgd2lkdGg9IjciIGhlaWdodD0iMTAiIHJ4PSIzIiBmaWxsPSJ3aGl0ZSIvPgogIDxyZWN0IHg9IjQ0IiB5PSIzNCIgd2lkdGg9IjciIGhlaWdodD0iMTAiIHJ4PSIzIiBmaWxsPSJ3aGl0ZSIvPgogIDxwYXRoIGQ9Ik0yMiAzNy41YzEuMi0xIDEuMi0zIDAtNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI5YTZjIiBzdHJva2Utd2lkdGg9IjEuMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPHBhdGggZD0iTTQyIDM3LjVjLTEuMi0xLTEuMi0zIDAtNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzI5YTZjIiBzdHJva2Utd2lkdGg9IjEuMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPg=="
 
 _download_tokens = {}  # token -> {job_id, created_at, download_type, base_url, ...}
@@ -462,26 +496,30 @@ def _send_completion_email(job_id):
     """
     success = _send_email(email, subject, html_body)
     if success:
-        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT")
+        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""))
     else:
-        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED")
+        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""))
 
 # ── Activity log ──
 _log_lock = threading.Lock()
 
 
-def _log_activity(session_id, filename, operation):
+def _log_activity(session_id, filename, operation, client_id="", client_ip="", voice=""):
     """Append one line to the activity log file (one file per month).
 
     Format (# separated):
-        session_id # datetime # "filename" # operation
+        session_id # datetime # "filename" # operation # client_id # client_ip # voice
     Operations: ANALYZE, GENERATE, COMPLETE, DOWNLOAD, DOWNLOAD_PODCAST
     """
     from datetime import datetime
     now = datetime.now()
     log_path = SCRIPT_DIR / f"activity_{now.strftime('%Y-%m')}.log"
     ts = now.strftime("%Y-%m-%d %H:%M:%S")
-    line = f'{session_id} # {ts} # "{filename}" # {operation}\n'
+    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice}\n'
     try:
         with _log_lock:
             with open(log_path, "a", encoding="utf-8") as f:
@@ -907,7 +945,9 @@ def run_generation(job_id, info, voice, rate, single_file):
         else:
             job["progress_message"] = "Done!"
         job["status"] = "done"
-        _log_activity(job_id, job.get("original_filename", ""), "COMPLETE")
+        _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""))
 
         # Send email notification if user registered
         if job.get("notify_email"):
@@ -926,7 +966,9 @@ def run_generation(job_id, info, voice, rate, single_file):
         except Exception:
             pass
         print(f"[{job_id}] Generation cancelled, resources freed.")
-        _log_activity(job_id, job.get("original_filename", ""), "CANCEL")
+        _log_activity(job_id, job.get("original_filename", ""), "CANCEL",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""))
 
     except Exception as e:
         job["status"] = "error"
@@ -1615,7 +1657,7 @@ def admin_logs():
     log_path = SCRIPT_DIR / f"activity_{ym}.log"
 
     # Parse log: raggruppa per session_id
-    sessions = OrderedDict()  # session_id -> { first_dt, last_dt, filename, last_op, events[] }
+    sessions = OrderedDict()  # session_id -> { first_dt, last_dt, filename, last_op, events[], client_id, client_ip, voice }
 
     if log_path.exists():
         try:
@@ -1632,6 +1674,10 @@ def admin_logs():
                     # filename è tra virgolette
                     filename = parts[2].strip().strip('"')
                     operation = parts[3].strip()
+                    # New fields (backward-compatible: may be missing in old logs)
+                    client_id = parts[4].strip() if len(parts) > 4 else ""
+                    client_ip = parts[5].strip() if len(parts) > 5 else ""
+                    voice = parts[6].strip() if len(parts) > 6 else ""
 
                     try:
                         dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
@@ -1645,6 +1691,9 @@ def admin_logs():
                             "filename": filename,
                             "last_op": operation,
                             "events": [operation],
+                            "client_id": client_id,
+                            "client_ip": client_ip,
+                            "voice": voice,
                         }
                     else:
                         s = sessions[sid]
@@ -1655,8 +1704,34 @@ def admin_logs():
                             s["last_op"] = operation
                         s["filename"] = filename  # aggiorna sempre (stesso file)
                         s["events"].append(operation)
+                        # Keep most recent non-empty client info
+                        if client_id:
+                            s["client_id"] = client_id
+                        if client_ip:
+                            s["client_ip"] = client_ip
+                        if voice:
+                            s["voice"] = voice
         except Exception as e:
             return f"Errore lettura log: {e}", 500
+
+    # Conta sessioni per client_id (per evidenziare utenti ricorrenti)
+    client_session_count = {}
+    for s in sessions.values():
+        cid = s.get("client_id", "")
+        if cid:
+            client_session_count[cid] = client_session_count.get(cid, 0) + 1
+
+    # Palette colori per client ricorrenti (assegna colore ai client con 2+ sessioni)
+    _client_colors = [
+        "#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24",
+        "#fb923c", "#22d3ee", "#c084fc", "#f87171", "#4ade80",
+    ]
+    _client_color_map = {}
+    _color_idx = 0
+    for cid, count in client_session_count.items():
+        if count >= 2:
+            _client_color_map[cid] = _client_colors[_color_idx % len(_client_colors)]
+            _color_idx += 1
 
     # Costruisci righe tabella
     rows_html = ""
@@ -1711,6 +1786,26 @@ def admin_logs():
         }
         timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
 
+        # Client info: colore per utenti ricorrenti
+        cid = s.get("client_id", "")
+        cip = s.get("client_ip", "")
+        cid_short = cid[:8] if cid else "—"
+        cid_count = client_session_count.get(cid, 0) if cid else 0
+        cid_color = _client_color_map.get(cid, "var(--text-dim)")
+        cid_badge = f' <span style="font-size:0.65rem;color:{cid_color};opacity:.8">({cid_count})</span>' if cid_count >= 2 else ""
+        cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
+
+        # Voice: extract short name from full voice ID (e.g. "it-IT-GiuseppeNeural" → "Giuseppe")
+        voice_raw = s.get("voice", "")
+        voice_short = voice_raw
+        if voice_raw:
+            # Extract the name part: last segment before "Neural"/"Multilingual"/etc.
+            parts_v = voice_raw.split("-")
+            if len(parts_v) >= 3:
+                voice_short = parts_v[-1].replace("Neural", "").replace("Multilingual", "")
+                voice_lang = "-".join(parts_v[:2])  # "it-IT"
+                voice_short = f'{voice_short} <span style="opacity:.5;font-size:.65rem">{voice_lang}</span>'
+
         rows_html += f"""<tr>
 <td class="cell-id"><code>{sid}</code></td>
 <td class="cell-dt">{first}</td>
@@ -1719,6 +1814,9 @@ def admin_logs():
 <td class="cell-title" title="{s['filename']}">{display_title}</td>
 <td class="cell-op"><span class="badge" style="color:{fg};background:{bg}">{op}</span></td>
 <td class="cell-timeline">{timeline}</td>
+<td class="cell-voice" title="{voice_raw}">{voice_short or "—"}</td>
+<td class="cell-client" title="{cid}"><code style="{cid_style}">{cid_short}</code>{cid_badge}</td>
+<td class="cell-ip">{cip or "—"}</td>
 </tr>
 """
 
@@ -1727,6 +1825,8 @@ def admin_logs():
     downloaded = sum(1 for s in sessions.values() if "DOWNLOAD" in s["last_op"])
     cancelled = sum(1 for s in sessions.values() if s["last_op"] == "CANCEL")
     email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
+    unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
+    returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
     # Mesi disponibili (scan dei file activity_*.log)
     available_months = []
@@ -1917,6 +2017,23 @@ td {{ padding: 8px 12px; vertical-align: middle; }}
     font-size: 0.75rem;
     white-space: nowrap;
 }}
+.cell-voice {{
+    color: var(--text);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}}
+.cell-client code {{
+    font-size: 0.75rem;
+    background: rgba(167,139,250,.08);
+    padding: 2px 5px;
+    border-radius: 3px;
+}}
+.cell-ip {{
+    color: var(--text-dim);
+    font-size: 0.73rem;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}}
 .empty {{
     text-align: center;
     padding: 60px 20px;
@@ -1940,10 +2057,12 @@ td {{ padding: 8px 12px; vertical-align: middle; }}
     <div class="stat"><div class="num">{downloaded}</div><div class="lbl">Download</div></div>
     <div class="stat"><div class="num">{email_sent}</div><div class="lbl">Email inviate</div></div>
     <div class="stat"><div class="num">{cancelled}</div><div class="lbl">Cancellati</div></div>
+    <div class="stat"><div class="num">{unique_clients}</div><div class="lbl">Client unici</div></div>
+    <div class="stat"><div class="num">{returning_clients}</div><div class="lbl">Ricorrenti</div></div>
 </div>
 
 <div class="table-wrap">
-{"<table><thead><tr><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Stato</th><th>Timeline</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
+{"<table><thead><tr><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Stato</th><th>Timeline</th><th>Voce</th><th>Client</th><th>IP</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
 </div>
 
 </body>
@@ -1996,7 +2115,8 @@ def api_analyze():
         return jsonify({"error": "No content found."}), 400
 
     jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
-                     "last_poll": time.time(), "original_filename": file.filename}
+                     "last_poll": time.time(), "original_filename": file.filename,
+                     "client_id": _get_client_id(), "client_ip": _get_client_ip()}
 
     # Extract cover thumbnail for preview (EPUB only; PDF/TXT have no embedded cover)
     has_cover = False
@@ -2007,7 +2127,8 @@ def api_analyze():
             jobs[job_id]["cover_thumb"] = cover_path
             jobs[job_id]["cover_mime"] = cover_mime
 
-    _log_activity(job_id, file.filename, "ANALYZE")
+    _log_activity(job_id, file.filename, "ANALYZE",
+                  jobs[job_id]["client_id"], jobs[job_id]["client_ip"])
 
     chapters = []
     for ch in info.chapters:
@@ -2168,6 +2289,22 @@ def api_generate():
     if job["status"] not in ("analyzed",):
         return jsonify({"error": "Generation already running or completed."}), 400
 
+    # ── Concurrent generation limit per client ──
+    client_id = job.get("client_id", "")
+    client_ip = job.get("client_ip", "")
+    if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
+        active = _active_generating_for_client(client_id)
+        if active >= MAX_CONCURRENT_PER_CLIENT:
+            return jsonify({
+                "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
+                "error_code": "concurrent_limit",
+                "max": MAX_CONCURRENT_PER_CLIENT,
+                "active": active,
+            }), 429
+
+    # Save voice in job for logging
+    job["voice"] = voice
+
     info = job["info"]
 
     # Filter chapters if a subset was selected (only in chapter mode)
@@ -2186,7 +2323,8 @@ def api_generate():
         target=run_generation, args=(job_id, info, voice, rate, single_file), daemon=True
     )
     thread.start()
-    _log_activity(job_id, job.get("original_filename", ""), "GENERATE")
+    _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
+                  client_id, client_ip, voice)
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     return jsonify({"status": "started"})
 
@@ -2294,7 +2432,9 @@ def api_register_email():
     job["email_registered"] = True
 
     print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
-    _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED")
+    _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  job.get("voice", ""))
 
     return jsonify({"status": "registered", "email": email})
 
@@ -2433,11 +2573,11 @@ def _serve_audio_download(token_info, job, job_id):
     if job:
         orig = job.get("original_filename", orig)
         if "output_zip" in job and os.path.exists(job["output_zip"]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(job["output_zip"], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         if job.get("output_files") and os.path.exists(job["output_files"][0]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(job["output_files"][0], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         print(f"[dl] Job {job_id} in memory but files missing on disk")
@@ -2447,10 +2587,10 @@ def _serve_audio_download(token_info, job, job_id):
     output_file = token_info.get("output_file", "")
 
     if output_zip and os.path.exists(output_zip):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
         return send_file(output_zip, as_attachment=True, download_name=output_name)
     if output_file and os.path.exists(output_file):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
         return send_file(output_file, as_attachment=True, download_name=output_name)
 
     # 3. Path reconstruction: stored paths may be from a different DATA_DIR
@@ -2459,13 +2599,13 @@ def _serve_audio_download(token_info, job, job_id):
         reconstructed = str(job_dir / os.path.basename(output_zip))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_zip} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(reconstructed, as_attachment=True, download_name=output_name)
     if output_file and not os.path.exists(output_file):
         reconstructed = str(job_dir / "output" / os.path.basename(output_file))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_file} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(reconstructed, as_attachment=True, download_name=output_name)
 
     # 4. Fallback: scan job directory for downloadable files
@@ -2478,7 +2618,7 @@ def _serve_audio_download(token_info, job, job_id):
         if zips:
             found = str(zips[0])
             print(f"[dl] Fallback: found ZIP {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         # Look for MP3 in output/ subdirectory, then root
@@ -2489,7 +2629,7 @@ def _serve_audio_download(token_info, job, job_id):
         if len(mp3s) == 1:
             found = str(mp3s[0])
             print(f"[dl] Fallback: found single MP3 {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         elif len(mp3s) > 1:
@@ -2497,7 +2637,7 @@ def _serve_audio_download(token_info, job, job_id):
             src_dir = str(mp3s[0].parent)
             zip_file = shutil.make_archive(str(job_dir / "download"), "zip", src_dir)
             print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {zip_file}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
             return send_file(zip_file, as_attachment=True,
                              download_name=output_name or "audiobook.zip")
 
@@ -2746,7 +2886,10 @@ def _serve_podcast_download(token_info, job, job_id):
     finally:
         shutil.rmtree(str(podcast_dir), ignore_errors=True)
     orig = token_info.get("original_filename", job.get("original_filename", "") if job else "")
-    _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST")
+    _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
+                  job.get("client_id", "") if job else "",
+                  job.get("client_ip", "") if job else "",
+                  job.get("voice", "") if job else "")
     return send_file(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
@@ -2973,7 +3116,9 @@ def api_download(job_id):
     # Refresh heartbeat — evita che il cleanup rimuova il job durante il download
     job["last_poll"] = time.time()
     job["downloaded_at"] = time.time()
-    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD")
+    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  job.get("voice", ""))
     if "output_zip" in job:
         return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
     else:
@@ -3064,7 +3209,9 @@ def api_download_podcast(job_id):
     finally:
         shutil.rmtree(str(podcast_dir), ignore_errors=True)
 
-    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST")
+    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  job.get("voice", ""))
     return send_file(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
@@ -3176,15 +3323,36 @@ def _detect_lang_from_request() -> str:
     return "en"
 
 
+@app.after_request
+def _set_client_cookie(response):
+    """Ensure every response carries the abm_cid cookie for client tracking."""
+    if _CLIENT_COOKIE_NAME not in request.cookies:
+        cid = str(uuid.uuid4())[:12]
+        response.set_cookie(
+            _CLIENT_COOKIE_NAME, cid,
+            max_age=_CLIENT_COOKIE_MAX_AGE,
+            httponly=True, samesite="Lax",
+        )
+    return response
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════
 # AUTO-CLEANUP (deletes EPUB/PDF/TXT + MP3 files)
 # ═══════════════════════════════════════════════════════════════════
 
-CLEANUP_AFTER_DOWNLOAD_SEC = 60 * 60   # 60 minutes after download
-CLEANUP_AFTER_ABANDON_SEC = 60 * 60    # 60 minutes after client disappears
-CLEANUP_INTERVAL_SEC = 60              # check every 60 seconds
+# Regole di cancellazione:
+# 1. Browser chiuso senza email registrata → cancella (heartbeat perso per 60s)
+# 2. Utente scarica direttamente dall'UI web → cancella subito dopo download
+# 3. Email di notifica inviata → mantieni 24h dall'invio, poi cancella
+# 4. Job in errore o cancellato → cancella subito
+# 5. Cartelle orfane su disco (non in jobs né in tokens) → cancella
+
+CLEANUP_GRACE_AFTER_DOWNLOAD_SEC = 5 * 60  # 5 min grazia dopo download diretto
+CLEANUP_HEARTBEAT_TIMEOUT_SEC = 60          # heartbeat perso per 60s = browser chiuso
+CLEANUP_INTERVAL_SEC = 60                   # check every 60 seconds
+CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimosse
 
 
 def _cleanup_job(job_id, reason=""):
@@ -3207,60 +3375,63 @@ def _cleanup_loop():
             status = job.get("status", "")
             has_email = job.get("email_registered", False)
 
-            # Cancelled jobs: immediate cleanup (already done in thread,
-            # but belt-and-suspenders)
+            # ── Cancelled jobs: immediate cleanup ──
             if status == "cancelled":
                 to_remove.append((jid, "cancelled"))
                 continue
 
-            # Jobs still generating with email registered: keep alive indefinitely
-            if has_email and status in ("generating", "analyzed"):
+            # ── Error jobs: immediate cleanup ──
+            if status == "error":
+                start = job.get("start_time", now)
+                if (now - start) > 120:  # grazia di 2 min per leggere l'errore
+                    to_remove.append((jid, "error"))
                 continue
 
-            # Done jobs: protected by grace period from completion time
-            if status == "done":
-                completed_at = job.get("completed_at", 0)
-                dl_at = job.get("downloaded_at")
-                last_poll = job.get("last_poll", 0)
-                email_sent_at = job.get("email_sent_at")
+            # ── Analyzed but never started: cleanup if heartbeat lost ──
+            if status == "analyzed":
+                last_poll = job.get("last_poll", job.get("start_time", now))
+                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 3:  # 3 min per analyzed
+                    to_remove.append((jid, "stale analyzed"))
+                continue
 
-                # Email-registered jobs: keep for 24h from email sent
+            # ── Generating jobs ──
+            if status == "generating":
+                # Con email registrata: non cancellare mai (continua in background)
+                if has_email:
+                    continue
+                # Senza email: controlla heartbeat (browser chiuso = cancella)
+                last_poll = job.get("last_poll", job.get("start_time", now))
+                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                    job["cancelled"] = True  # segnala al thread di generazione
+                    to_remove.append((jid, f"heartbeat lost during generation ({int(now - last_poll)}s)"))
+                continue
+
+            # ── Done jobs ──
+            if status == "done":
+                dl_at = job.get("downloaded_at")
+                email_sent_at = job.get("email_sent_at")
+                last_poll = job.get("last_poll", 0)
+
+                # REGOLA 3: Email inviata → mantieni 24h dall'invio
                 if has_email and email_sent_at:
                     if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
-                        to_remove.append((jid, f"email retention expired {int(now - email_sent_at)}s"))
+                        to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
                     continue
-                # Email registered but not yet sent (still completing): keep
+
+                # Email registrata ma non ancora inviata → mantieni
                 if has_email and not email_sent_at:
                     continue
 
-                # GRACE PERIOD: mai rimuovere un job completato da meno di 10 minuti
-                # Questo protegge da heartbeat mancanti (tab in background, ecc.)
-                if completed_at and (now - completed_at) < CLEANUP_AFTER_ABANDON_SEC:
+                # REGOLA 2: Download diretto dall'UI → cancella dopo breve grazia
+                if dl_at:
+                    if (now - dl_at) > CLEANUP_GRACE_AFTER_DOWNLOAD_SEC:
+                        to_remove.append((jid, f"downloaded {int(now - dl_at)}s ago"))
                     continue
 
-                # Downloaded 10+ min ago → cleanup
-                if dl_at and (now - dl_at) > CLEANUP_AFTER_DOWNLOAD_SEC:
-                    to_remove.append((jid, f"downloaded {int(now - dl_at)}s ago"))
+                # REGOLA 1: Nessun download, nessuna email, heartbeat perso → browser chiuso
+                if last_poll and (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                    to_remove.append((jid, f"abandoned (heartbeat lost {int(now - last_poll)}s)"))
                     continue
-
-                # Not downloaded AND heartbeat scaduto da 10+ min → cleanup
-                if not dl_at and last_poll and (now - last_poll) > CLEANUP_AFTER_ABANDON_SEC:
-                    to_remove.append((jid, f"abandoned {int(now - last_poll)}s ago"))
-                    continue
-
-            # Error jobs: cleanup after 60s
-            if status == "error":
-                err_time = job.get("elapsed_seconds", 0)
-                start = job.get("start_time", now)
-                if (now - start) > CLEANUP_AFTER_ABANDON_SEC:
-                    to_remove.append((jid, "error"))
-                    continue
-
-            # Analyzed but never started: cleanup if no poll for 5 min
-            if status == "analyzed":
-                created = job.get("last_poll", job.get("start_time", now))
-                if (now - created) > 5 * 60:
-                    to_remove.append((jid, "stale analyzed"))
 
         for jid, reason in to_remove:
             try:
@@ -3268,7 +3439,7 @@ def _cleanup_loop():
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-        # Cleanup expired download tokens
+        # ── Cleanup expired download tokens ──
         expired_tokens = [(t, info) for t, info in _download_tokens.items()
                           if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
         for t, t_info in expired_tokens:
@@ -3279,8 +3450,33 @@ def _cleanup_loop():
                 job_dir = UPLOAD_DIR / jid
                 if job_dir.exists():
                     shutil.rmtree(str(job_dir), ignore_errors=True)
+                    print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
             _save_tokens()
+
+        # ── Cleanup cartelle orfane su disco ──
+        # Cartelle in UPLOAD_DIR non associate a nessun job né token attivo
+        _known_job_ids = set(jobs.keys())
+        _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
+        _all_known = _known_job_ids | _known_token_jobs
+        try:
+            for entry in UPLOAD_DIR.iterdir():
+                if not entry.is_dir():
+                    continue
+                if entry.name.startswith("_"):
+                    continue  # skip _download_tokens.json etc.
+                if entry.name in _all_known:
+                    continue  # still referenced
+                # Check age: only remove if old enough
+                try:
+                    dir_age = now - entry.stat().st_mtime
+                except OSError:
+                    continue
+                if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
+                    shutil.rmtree(str(entry), ignore_errors=True)
+                    print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
+        except OSError:
+            pass
 
         # Flush pending admin digest (rate-limited: max 1/hour)
         _try_send_admin_digest()
@@ -3303,6 +3499,7 @@ def _ensure_background_threads():
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_loop, daemon=True).start()
     print(f"[startup] Background threads started (data dir: {UPLOAD_DIR})")
+    print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled → {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:

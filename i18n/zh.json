@@ -75,6 +75,7 @@
     "btn_preview": "收听预览",
     "btn_prev_stop": "停止",
     "prev_modal_title": "阅读预览",
-    "prev_error": "生成音频预览时出错。"
+    "prev_error": "生成音频预览时出错。",
+    "concurrent_limit": "您已达到同时生成的最大数量。请等待当前会话之一完成后再启动新会话。"
   }
 }

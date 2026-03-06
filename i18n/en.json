@@ -75,6 +75,7 @@
     "btn_preview": "Listen to preview",
     "btn_prev_stop": "Stop",
     "prev_modal_title": "Reading preview",
-    "prev_error": "Error generating audio preview."
+    "prev_error": "Error generating audio preview.",
+    "concurrent_limit": "You have reached the maximum number of simultaneous generations. Please wait for one of your current sessions to complete before starting a new one."
   }
 }

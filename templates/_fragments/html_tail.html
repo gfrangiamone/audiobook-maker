@@ -520,7 +520,11 @@ async function startGen(){
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)});
     const d=await r.json();
-    if(d.error){showPErr(d.error);unlockUI();return}
+    if(d.error){
+      if(d.error_code==='concurrent_limit'){showPErr(t('concurrent_limit')||d.error)}
+      else{showPErr(d.error)}
+      unlockUI();return
+    }
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
