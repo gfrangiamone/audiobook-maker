@@ -1807,16 +1807,16 @@ def admin_logs():
                 voice_short = f'{voice_short} <span style="opacity:.5;font-size:.65rem">{voice_lang}</span>'
 
         rows_html += f"""<tr>
+<td class="cell-client" title="{cid}"><code style="{cid_style}">{cid_short}</code>{cid_badge}</td>
+<td class="cell-ip">{cip or "—"}</td>
 <td class="cell-id"><code>{sid}</code></td>
 <td class="cell-dt">{first}</td>
 <td class="cell-dt">{last}</td>
 <td class="cell-elapsed">{elapsed}</td>
 <td class="cell-title" title="{s['filename']}">{display_title}</td>
+<td class="cell-voice" title="{voice_raw}">{voice_short or "—"}</td>
 <td class="cell-op"><span class="badge" style="color:{fg};background:{bg}">{op}</span></td>
 <td class="cell-timeline">{timeline}</td>
-<td class="cell-voice" title="{voice_raw}">{voice_short or "—"}</td>
-<td class="cell-client" title="{cid}"><code style="{cid_style}">{cid_short}</code>{cid_badge}</td>
-<td class="cell-ip">{cip or "—"}</td>
 </tr>
 """
 
@@ -2062,7 +2062,7 @@ td {{ padding: 8px 12px; vertical-align: middle; }}
 </div>
 
 <div class="table-wrap">
-{"<table><thead><tr><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Stato</th><th>Timeline</th><th>Voce</th><th>Client</th><th>IP</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
+{"<table><thead><tr><th>Client</th><th>IP</th><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Voce</th><th>Stato</th><th>Timeline</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
 </div>
 
 </body>
