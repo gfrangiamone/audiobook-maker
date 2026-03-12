@@ -776,6 +776,89 @@ def parse_txt(file_path):
     return _SimpleBookInfo(title=title, author="", text=text)
 
 
+def parse_abm(file_path):
+    """Parse an .abm project file (ZIP with manifest + chapter texts + optional cover).
+
+    Returns (info, cover_info) where info is duck-typed BookInfo and
+    cover_info is {"data": bytes, "filename": str} or None.
+    """
+    import zipfile
+
+    path = Path(file_path)
+    if not zipfile.is_zipfile(str(path)):
+        raise ValueError("Invalid .abm file: not a valid ZIP archive")
+
+    with zipfile.ZipFile(str(path), "r") as zf:
+        # Read and validate manifest
+        try:
+            manifest_data = zf.read("manifest.json")
+        except KeyError:
+            raise ValueError("Invalid .abm file: manifest.json not found")
+
+        try:
+            manifest = json.loads(manifest_data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ValueError(f"Invalid .abm file: malformed manifest.json ({e})")
+
+        if manifest.get("format") != "audiobook-maker-project":
+            raise ValueError("Invalid .abm file: unrecognized format in manifest.json")
+
+        title = manifest.get("title", path.stem)
+        author = manifest.get("author", "")
+        language = manifest.get("language", "")
+
+        # Read chapters in manifest order
+        chapters_meta = manifest.get("chapters", [])
+        if not chapters_meta:
+            raise ValueError("Invalid .abm file: no chapters listed in manifest")
+
+        chapters = []
+        for cm in chapters_meta:
+            fname = cm.get("filename", "")
+            ch_title = cm.get("title", f"Chapter {cm.get('index', '?')}")
+            ch_index = cm.get("index", len(chapters) + 1)
+
+            ch_path = f"chapters/{fname}" if not fname.startswith("chapters/") else fname
+            try:
+                ch_text = zf.read(ch_path).decode("utf-8").strip()
+            except KeyError:
+                print(f"[abm] WARNING: chapter file '{ch_path}' not found in archive, skipping")
+                continue
+            except UnicodeDecodeError:
+                ch_text = zf.read(ch_path).decode("latin-1", errors="replace").strip()
+
+            if not ch_text:
+                continue
+
+            chapters.append(_SimpleChapter(index=ch_index, title=ch_title, text=ch_text))
+
+        if not chapters:
+            raise ValueError("Invalid .abm file: no readable chapter content found")
+
+        # Build BookInfo-compatible object
+        info = _SimpleBookInfo.__new__(_SimpleBookInfo)
+        info.title = title
+        info.author = author
+        info.language = language
+        info.chapters = chapters
+        info.total_words = sum(ch.word_count for ch in chapters)
+        info.total_chars = sum(ch.char_count for ch in chapters)
+        info.estimated_duration_minutes = info.total_words / 150
+
+        # Extract cover if present
+        cover_info = None
+        if manifest.get("has_cover") and manifest.get("cover_file"):
+            cover_file = manifest["cover_file"]
+            try:
+                cover_data = zf.read(cover_file)
+                if len(cover_data) > 100:  # sanity check
+                    cover_info = {"data": cover_data, "filename": cover_file}
+            except KeyError:
+                pass
+
+    return info, cover_info
+
+
 def run_generation(job_id, info, voice, rate, single_file):
     job = jobs[job_id]
     job["status"] = "generating"
@@ -2089,8 +2172,9 @@ def api_analyze():
     is_txt = fname_lower.endswith(".txt")
     is_epub = fname_lower.endswith(".epub")
     is_pdf = fname_lower.endswith(".pdf")
-    if not is_epub and not is_txt and not is_pdf:
-        return jsonify({"error": "File must be .epub, .pdf or .txt"}), 400
+    is_abm = fname_lower.endswith(".abm")
+    if not is_epub and not is_txt and not is_pdf and not is_abm:
+        return jsonify({"error": "File must be .epub, .pdf, .txt or .abm"}), 400
     if is_pdf and parse_pdf is None:
         return jsonify({"error": "PDF support not available. Install pymupdf: pip install pymupdf"}), 400
 
@@ -2100,15 +2184,18 @@ def api_analyze():
     file_path = work_dir / file.filename
     file.save(str(file_path))
 
+    abm_cover_info = None  # cover data extracted from .abm file
     try:
-        if is_txt:
+        if is_abm:
+            info, abm_cover_info = parse_abm(str(file_path))
+        elif is_txt:
             info = parse_txt(str(file_path))
         elif is_pdf:
             info = parse_pdf(str(file_path))
         else:
             info = parse_epub(str(file_path))
     except Exception as e:
-        label = "TXT" if is_txt else ("PDF" if is_pdf else "EPUB")
+        label = "ABM" if is_abm else ("TXT" if is_txt else ("PDF" if is_pdf else "EPUB"))
         return jsonify({"error": f"{label} parse error: {e}"}), 400
 
     if not info.chapters:
@@ -2118,9 +2205,22 @@ def api_analyze():
                      "last_poll": time.time(), "original_filename": file.filename,
                      "client_id": _get_client_id(), "client_ip": _get_client_ip()}
 
-    # Extract cover thumbnail for preview (EPUB only; PDF/TXT have no embedded cover)
+    # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
-    if is_epub:
+    if is_abm and abm_cover_info:
+        # Cover from .abm archive
+        cover_data = abm_cover_info["data"]
+        cover_filename = abm_cover_info["filename"]
+        is_png = cover_filename.lower().endswith(".png")
+        ext = ".png" if is_png else ".jpg"
+        mime = "image/png" if is_png else "image/jpeg"
+        cover_out = str(work_dir / ("cover_thumb" + ext))
+        with open(cover_out, "wb") as cf:
+            cf.write(cover_data)
+        has_cover = True
+        jobs[job_id]["cover_thumb"] = cover_out
+        jobs[job_id]["cover_mime"] = mime
+    elif is_epub:
         cover_path, cover_mime = _extract_cover_for_preview(str(file_path), str(work_dir))
         if cover_path and os.path.exists(cover_path):
             has_cover = True
@@ -2178,7 +2278,7 @@ def api_analyze():
             cut = max_chars
         return text[:cut].rstrip()
 
-    raw_preview = _pick_preview_text(info.chapters, is_txt or is_pdf)
+    raw_preview = _pick_preview_text(info.chapters, is_txt or is_pdf or is_abm)
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
@@ -2187,7 +2287,7 @@ def api_analyze():
     return jsonify({
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
-        "file_type": "txt" if is_txt else ("pdf" if is_pdf else "epub"),
+        "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
         "total_chars": info.total_chars,
@@ -2272,6 +2372,74 @@ def api_cover(job_id):
         return "", 404
     mime = job.get("cover_mime", "image/jpeg")
     return send_file(cover_path, mimetype=mime)
+
+
+@app.route("/api/export_abm/<job_id>")
+def api_export_abm(job_id):
+    """Export cleaned text as .abm project file (ZIP with manifest + chapters + cover)."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    job = jobs[job_id]
+    info = job.get("info")
+    if not info or not info.chapters:
+        return jsonify({"error": "No book data available"}), 400
+
+    import zipfile
+    import io
+    from datetime import datetime, timezone
+
+    buf = io.BytesIO()
+    safe_title = _safe_filename(info.title) or "project"
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Build chapter files and manifest entries
+        chapters_manifest = []
+        for ch in info.chapters:
+            ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
+            ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
+            zf.writestr(f"chapters/{ch_filename}", ch.text)
+            chapters_manifest.append({
+                "index": ch.index,
+                "filename": ch_filename,
+                "title": ch.title,
+                "word_count": ch.word_count,
+            })
+
+        # Cover
+        has_cover = False
+        cover_file = ""
+        cover_path = job.get("cover_thumb")
+        if cover_path and os.path.exists(cover_path):
+            cover_ext = ".png" if cover_path.endswith(".png") else ".jpg"
+            cover_file = f"cover{cover_ext}"
+            with open(cover_path, "rb") as cf:
+                zf.writestr(cover_file, cf.read())
+            has_cover = True
+
+        # Manifest
+        manifest = {
+            "format": "audiobook-maker-project",
+            "format_version": "1.0",
+            "title": info.title,
+            "author": getattr(info, "author", ""),
+            "language": getattr(info, "language", ""),
+            "has_cover": has_cover,
+            "cover_file": cover_file,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "original_filename": job.get("original_filename", ""),
+            "chapters": chapters_manifest,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+    buf.seek(0)
+    download_name = f"{safe_title}.abm"
+
+    _log_activity(job_id, job.get("original_filename", ""), "EXPORT_ABM",
+                  job.get("client_id", ""), job.get("client_ip", ""))
+
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=download_name)
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -2399,6 +2567,56 @@ def api_heartbeat(job_id):
         jobs[job_id]["last_poll"] = time.time()
         return "", 204
     return "", 404
+
+
+@app.route("/api/reset_to_chapters/<job_id>", methods=["POST"])
+def api_reset_to_chapters(job_id):
+    """Reset a completed job back to 'analyzed' so the user can select different chapters."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    job = jobs[job_id]
+    if job.get("status") != "done":
+        return jsonify({"error": "Job is not in completed state"}), 400
+
+    # Verify that the original book info is still available
+    if not job.get("info") or not job["info"].chapters:
+        return jsonify({"error": "Book data no longer available. Please re-upload the file."}), 400
+
+    # Clean up generated output files to free disk space
+    work_dir = UPLOAD_DIR / job_id
+    output_dir = work_dir / "output"
+    if output_dir.exists():
+        shutil.rmtree(str(output_dir), ignore_errors=True)
+    # Remove zip if present
+    for key in ("output_zip",):
+        fpath = job.get(key, "")
+        if fpath and os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+
+    # Reset job state
+    job["status"] = "analyzed"
+    job["last_poll"] = time.time()
+    # Clear output-related keys
+    for key in ("output_files", "output_name", "output_zip", "output_file",
+                "podcast_ready", "podcast_safe_name", "podcast_mp3s",
+                "progress_current", "progress_total", "progress_message",
+                "processed_chars", "total_chars", "bytes_generated",
+                "start_time", "elapsed_seconds", "current_chapter",
+                "current_chapter_num", "total_chapters",
+                "downloaded_at", "email_sent_at", "email_registered",
+                "failed_chunks", "cancelled"):
+        job.pop(key, None)
+    # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
+    #        client_id, client_ip, voice (so preview still works)
+
+    _log_activity(job_id, job.get("original_filename", ""), "RESET_CHAPTERS",
+                  job.get("client_id", ""), job.get("client_ip", ""))
+
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/register_email", methods=["POST"])

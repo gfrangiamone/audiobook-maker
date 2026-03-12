@@ -220,6 +220,8 @@ select:focus{outline:none;border-color:var(--ac)}
 .btn-ok:hover:not(:disabled){filter:brightness(1.1)}
 .btn-g{background:var(--srf2);color:var(--txd);border:1px solid var(--brd);margin-top:10px}
 .btn-g:hover{border-color:var(--ac);color:var(--ac)}
+.btn-info{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;min-width:32px;border-radius:50%;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.9rem;cursor:pointer;transition:all .2s;padding:0;flex-shrink:0}
+.btn-info:hover{border-color:var(--ac);color:var(--ac);background:var(--srf)}
 
 /* ── Preview button ── */
 .btn-preview{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;border-radius:8px;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.88rem;cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit}
@@ -375,7 +377,7 @@ select:focus{outline:none;border-color:var(--ac)}
     <div class="sh" onclick="toggleStep('s1')"><div class="sn">1</div><div class="st" data-t="s1_title"></div><span class="sh-sum" id="s1sum"></span><div class="sh-chev">&#x25BC;</div></div>
     <div class="step-body">
     <div class="uz" id="uz">
-      <input type="file" id="fi" accept=".epub,.pdf,.txt">
+      <input type="file" id="fi" accept=".epub,.pdf,.txt,.abm">
       <div class="ic">&#x1F4DA;</div>
       <div class="tx" id="utx" data-t="upload_text"></div>
       <div class="fn" id="ufn" style="display:none"></div>
@@ -451,8 +453,10 @@ select:focus{outline:none;border-color:var(--ac)}
       <tbody id="chl"></tbody></table>
     </div>
     <div id="s3err"></div>
-    <div style="margin-top:24px">
-      <button class="btn btn-p" id="btnG">&#x1F3A7; <span data-t="btn_gen"></span></button>
+    <div style="margin-top:24px;display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
+      <button class="btn btn-p" id="btnG" style="flex:1;min-width:200px">&#x1F3A7; <span data-t="btn_gen"></span></button>
+      <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="flex:0 1 auto;min-width:180px;width:auto;margin-top:0"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
+      <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="align-self:center">&#x2139;&#xFE0F;</button>
     </div>
     </div>
   </div>
@@ -492,7 +496,8 @@ select:focus{outline:none;border-color:var(--ac)}
         <button class="btn btn-ok" id="btnD">&#x2B07;&#xFE0F; <span data-t="btn_dl"></span></button>
         <button class="btn btn-ok" id="btnP" style="display:none;background:var(--ac);opacity:.85">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
       </div>
-      <div style="margin-top:10px">
+      <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-g" id="btnBackCh" onclick="goBackToChapters()" style="display:none">&#x1F4D6; <span data-t="btn_back_chapters"></span></button>
         <button class="btn btn-g" id="btnN">&#x1F4DA; <span data-t="btn_new"></span></button>
       </div>
       <!-- Donation panel — shown after conversion completes -->
@@ -535,6 +540,17 @@ select:focus{outline:none;border-color:var(--ac)}
         <button class="modal-close" id="aboutClose">&times;</button>
       </div>
       <div class="modal-body" id="aboutBody"></div>
+    </div>
+  </div>
+
+  <!-- ABM EXPORT GUIDE MODAL -->
+  <div class="modal-overlay" id="abmGuideModal">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-head">
+        <h2 id="abmGuideTitle"></h2>
+        <button class="modal-close" id="abmGuideClose" onclick="closeAbmGuide()">&times;</button>
+      </div>
+      <div class="modal-body" id="abmGuideBody" style="max-height:70vh;overflow-y:auto"></div>
     </div>
   </div>
 
