@@ -870,6 +870,43 @@ def parse_abm(file_path):
     return info, cover_info
 
 
+def _include_cover_in_dir(job, target_dir):
+    """Copy book cover image into target_dir so it gets included in the ZIP.
+
+    Tries the cover_thumb extracted during analysis first; if not available,
+    attempts extraction from the source EPUB/ABM file.
+    """
+    try:
+        cover_src = job.get("cover_thumb", "")
+        if cover_src and os.path.exists(cover_src):
+            ext = os.path.splitext(cover_src)[1] or ".jpg"
+            dest = os.path.join(str(target_dir), f"cover{ext}")
+            shutil.copy2(cover_src, dest)
+            print(f"[zip-cover] Included cover from thumb: {dest}")
+            return True
+
+        # Fallback: try to extract from source file
+        epub_path = job.get("epub_path", "")
+        if epub_path and os.path.exists(epub_path):
+            dest = os.path.join(str(target_dir), "cover.jpg")
+            if _extract_cover_from_epub(epub_path, dest, target_size=1400):
+                print(f"[zip-cover] Included cover extracted from EPUB: {dest}")
+                return True
+            # Try raw extraction without Pillow
+            raw_path, _ = _extract_cover_for_preview(epub_path, str(target_dir))
+            if raw_path and os.path.exists(raw_path):
+                raw_ext = os.path.splitext(raw_path)[1] or ".jpg"
+                final = os.path.join(str(target_dir), f"cover{raw_ext}")
+                if raw_path != final:
+                    shutil.copy2(raw_path, final)
+                    os.remove(raw_path)
+                print(f"[zip-cover] Included cover (raw) from EPUB: {final}")
+                return True
+    except Exception as e:
+        print(f"[zip-cover] Could not include cover: {e}")
+    return False
+
+
 def run_generation(job_id, info, voice, rate, single_file):
     job = jobs[job_id]
     job["status"] = "generating"
@@ -1012,6 +1049,10 @@ def run_generation(job_id, info, voice, rate, single_file):
 
             job["progress_message"] = "Creating ZIP..."
             safe_name = _safe_filename(info.title) or "audiolibro"
+
+            # Include book cover in ZIP if available
+            _include_cover_in_dir(job, output_dir)
+
             zip_path = shutil.make_archive(str(work_dir / safe_name), "zip", str(output_dir))
             job["output_files"] = mp3_files
             job["output_name"] = f"{safe_name}.zip"
