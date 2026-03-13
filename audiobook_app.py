@@ -124,6 +124,17 @@ def _get_client_ip():
     return request.remote_addr or ""
 
 
+def _get_browser_lang():
+    """Return primary browser language from Accept-Language header (e.g. 'it', 'en', 'fr')."""
+    accept = request.headers.get("Accept-Language", "")
+    if not accept:
+        return ""
+    # Parse first language tag: "it-IT,it;q=0.9,en;q=0.8" → "it"
+    first = accept.split(",")[0].split(";")[0].strip()
+    # Return just the primary subtag (e.g. "it-IT" → "it")
+    return first.split("-")[0].lower() if first else ""
+
+
 def _active_generating_for_client(client_id):
     """Count how many jobs are currently generating for the given client_id."""
     if not client_id:
@@ -498,28 +509,28 @@ def _send_completion_email(job_id):
     if success:
         _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""))
     else:
         _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""))
 
 # ── Activity log ──
 _log_lock = threading.Lock()
 
 
-def _log_activity(session_id, filename, operation, client_id="", client_ip="", voice=""):
+def _log_activity(session_id, filename, operation, client_id="", client_ip="", voice="", browser_lang=""):
     """Append one line to the activity log file (one file per month).
 
     Format (# separated):
-        session_id # datetime # "filename" # operation # client_id # client_ip # voice
+        session_id # datetime # "filename" # operation # client_id # client_ip # voice # browser_lang
     Operations: ANALYZE, GENERATE, COMPLETE, DOWNLOAD, DOWNLOAD_PODCAST
     """
     from datetime import datetime
     now = datetime.now()
     log_path = SCRIPT_DIR / f"activity_{now.strftime('%Y-%m')}.log"
     ts = now.strftime("%Y-%m-%d %H:%M:%S")
-    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice}\n'
+    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
     try:
         with _log_lock:
             with open(log_path, "a", encoding="utf-8") as f:
@@ -1030,7 +1041,7 @@ def run_generation(job_id, info, voice, rate, single_file):
         job["status"] = "done"
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""))
 
         # Send email notification if user registered
         if job.get("notify_email"):
@@ -1051,7 +1062,7 @@ def run_generation(job_id, info, voice, rate, single_file):
         print(f"[{job_id}] Generation cancelled, resources freed.")
         _log_activity(job_id, job.get("original_filename", ""), "CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""))
 
     except Exception as e:
         job["status"] = "error"
@@ -1721,14 +1732,89 @@ Disallow: /logs
 # URL: /logs?2026-03  (parametro = anno-mese)
 # Non indicizzato (Disallow: /logs in robots.txt consigliato)
 
-@app.route("/logs")
-def admin_logs():
-    """Admin log viewer: mostra il log mensile in formato tabellare."""
+
+def _parse_log_sessions(ym):
+    """Parse log file for given YYYY-MM and return (sessions OrderedDict, client_session_count dict)."""
     from datetime import datetime
     from collections import OrderedDict
 
-    # Determina anno-mese dal query string (primo parametro senza valore)
-    # es. /logs?2026-03
+    log_path = SCRIPT_DIR / f"activity_{ym}.log"
+    sessions = OrderedDict()
+
+    if not log_path.exists():
+        return sessions, {}
+
+    with open(log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split("#")]
+            if len(parts) < 4:
+                continue
+            sid = parts[0]
+            dt_str = parts[1]
+            filename = parts[2].strip().strip('"')
+            operation = parts[3].strip()
+            client_id = parts[4].strip() if len(parts) > 4 else ""
+            client_ip = parts[5].strip() if len(parts) > 5 else ""
+            voice = parts[6].strip() if len(parts) > 6 else ""
+            browser_lang = parts[7].strip() if len(parts) > 7 else ""
+
+            try:
+                dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+
+            if sid not in sessions:
+                sessions[sid] = {
+                    "first_dt": dt, "last_dt": dt,
+                    "filename": filename, "last_op": operation,
+                    "events": [operation],
+                    "client_id": client_id, "client_ip": client_ip,
+                    "voice": voice, "browser_lang": browser_lang,
+                }
+            else:
+                s = sessions[sid]
+                if dt < s["first_dt"]:
+                    s["first_dt"] = dt
+                if dt >= s["last_dt"]:
+                    s["last_dt"] = dt
+                    s["last_op"] = operation
+                s["filename"] = filename
+                s["events"].append(operation)
+                if client_id:
+                    s["client_id"] = client_id
+                if client_ip:
+                    s["client_ip"] = client_ip
+                if voice:
+                    s["voice"] = voice
+                if browser_lang:
+                    s["browser_lang"] = browser_lang
+
+    client_session_count = {}
+    for s in sessions.values():
+        cid = s.get("client_id", "")
+        if cid:
+            client_session_count[cid] = client_session_count.get(cid, 0) + 1
+
+    return sessions, client_session_count
+
+
+def _session_completed(s):
+    """Return True if session reached generation completion (includes download scenarios)."""
+    _completed_ops = {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
+                      "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST"}
+    return bool(set(s["events"]) & _completed_ops)
+
+
+@app.route("/logs")
+def admin_logs():
+    """Admin log viewer: card-based, mobile-friendly, with day grouping and Excel export."""
+    from datetime import datetime
+    from collections import defaultdict
+    import html as html_mod
+
     ym = None
     for key in request.args:
         if re.match(r'^\d{4}-\d{2}$', key):
@@ -1737,74 +1823,11 @@ def admin_logs():
     if not ym:
         ym = datetime.now().strftime("%Y-%m")
 
-    log_path = SCRIPT_DIR / f"activity_{ym}.log"
+    try:
+        sessions, client_session_count = _parse_log_sessions(ym)
+    except Exception as e:
+        return f"Errore lettura log: {e}", 500
 
-    # Parse log: raggruppa per session_id
-    sessions = OrderedDict()  # session_id -> { first_dt, last_dt, filename, last_op, events[], client_id, client_ip, voice }
-
-    if log_path.exists():
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = [p.strip() for p in line.split("#")]
-                    if len(parts) < 4:
-                        continue
-                    sid = parts[0]
-                    dt_str = parts[1]
-                    # filename è tra virgolette
-                    filename = parts[2].strip().strip('"')
-                    operation = parts[3].strip()
-                    # New fields (backward-compatible: may be missing in old logs)
-                    client_id = parts[4].strip() if len(parts) > 4 else ""
-                    client_ip = parts[5].strip() if len(parts) > 5 else ""
-                    voice = parts[6].strip() if len(parts) > 6 else ""
-
-                    try:
-                        dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        continue
-
-                    if sid not in sessions:
-                        sessions[sid] = {
-                            "first_dt": dt,
-                            "last_dt": dt,
-                            "filename": filename,
-                            "last_op": operation,
-                            "events": [operation],
-                            "client_id": client_id,
-                            "client_ip": client_ip,
-                            "voice": voice,
-                        }
-                    else:
-                        s = sessions[sid]
-                        if dt < s["first_dt"]:
-                            s["first_dt"] = dt
-                        if dt >= s["last_dt"]:
-                            s["last_dt"] = dt
-                            s["last_op"] = operation
-                        s["filename"] = filename  # aggiorna sempre (stesso file)
-                        s["events"].append(operation)
-                        # Keep most recent non-empty client info
-                        if client_id:
-                            s["client_id"] = client_id
-                        if client_ip:
-                            s["client_ip"] = client_ip
-                        if voice:
-                            s["voice"] = voice
-        except Exception as e:
-            return f"Errore lettura log: {e}", 500
-
-    # Conta sessioni per client_id (per evidenziare utenti ricorrenti)
-    client_session_count = {}
-    for s in sessions.values():
-        cid = s.get("client_id", "")
-        if cid:
-            client_session_count[cid] = client_session_count.get(cid, 0) + 1
-
-    # Palette colori per client ricorrenti (assegna colore ai client con 2+ sessioni)
     _client_colors = [
         "#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24",
         "#fb923c", "#22d3ee", "#c084fc", "#f87171", "#4ade80",
@@ -1816,102 +1839,114 @@ def admin_logs():
             _client_color_map[cid] = _client_colors[_color_idx % len(_client_colors)]
             _color_idx += 1
 
-    # Costruisci righe tabella
-    rows_html = ""
-    for sid, s in reversed(list(sessions.items())):
-        first = s["first_dt"].strftime("%d-%m-%Y / %H:%M")
-        last = s["last_dt"].strftime("%d-%m-%Y / %H:%M")
-        delta = s["last_dt"] - s["first_dt"]
-        total_sec = int(delta.total_seconds())
-        hh = total_sec // 3600
-        mm = (total_sec % 3600) // 60
-        elapsed = f"{hh:02d}:{mm:02d}"
-
-        # Titolo: prendi il nome file, rimuovi estensione e parti superflue
-        title = s["filename"]
-        # Rimuovi hash e suffissi tipici (Anna's Archive, Z-Library, ecc.)
-        for ext in (".epub", ".txt", ".pdf"):
-            if title.lower().endswith(ext):
-                title = title[:-len(ext)]
-        # Tronca se troppo lungo
-        display_title = title[:80] + ("…" if len(title) > 80 else "")
-
-        # Badge colorato per ultimo evento
-        op = s["last_op"]
-        op_colors = {
-            "ANALYZE": ("#6b7280", "#f3f4f6"),
-            "GENERATE": ("#2563eb", "#eff6ff"),
-            "COMPLETE": ("#16a34a", "#f0fdf4"),
-            "DOWNLOAD": ("#7c3aed", "#f5f3ff"),
-            "DOWNLOAD_EMAIL": ("#7c3aed", "#f5f3ff"),
-            "DOWNLOAD_EMAIL_PODCAST": ("#7c3aed", "#f5f3ff"),
-            "DOWNLOAD_PODCAST": ("#7c3aed", "#f5f3ff"),
-            "EMAIL_REGISTERED": ("#0891b2", "#ecfeff"),
-            "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
-            "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
-            "CANCEL": ("#dc2626", "#fef2f2"),
-        }
-        fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
-
-        # Timeline compatta degli eventi
-        event_icons = {
-            "ANALYZE": "🔍",
-            "GENERATE": "⚙️",
-            "COMPLETE": "✅",
-            "DOWNLOAD": "⬇️",
-            "DOWNLOAD_EMAIL": "📧⬇️",
-            "DOWNLOAD_EMAIL_PODCAST": "🎙️⬇️",
-            "DOWNLOAD_PODCAST": "🎙️⬇️",
-            "EMAIL_REGISTERED": "📬",
-            "EMAIL_SENT": "📤",
-            "EMAIL_FAILED": "❌📧",
-            "CANCEL": "🚫",
-        }
-        timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
-
-        # Client info: colore per utenti ricorrenti
-        cid = s.get("client_id", "")
-        cip = s.get("client_ip", "")
-        cid_short = cid[:8] if cid else "—"
-        cid_count = client_session_count.get(cid, 0) if cid else 0
-        cid_color = _client_color_map.get(cid, "var(--text-dim)")
-        cid_badge = f' <span style="font-size:0.65rem;color:{cid_color};opacity:.8">({cid_count})</span>' if cid_count >= 2 else ""
-        cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
-
-        # Voice: extract short name from full voice ID (e.g. "it-IT-GiuseppeNeural" → "Giuseppe")
-        voice_raw = s.get("voice", "")
-        voice_short = voice_raw
-        if voice_raw:
-            # Extract the name part: last segment before "Neural"/"Multilingual"/etc.
-            parts_v = voice_raw.split("-")
-            if len(parts_v) >= 3:
-                voice_short = parts_v[-1].replace("Neural", "").replace("Multilingual", "")
-                voice_lang = "-".join(parts_v[:2])  # "it-IT"
-                voice_short = f'{voice_short} <span style="opacity:.5;font-size:.65rem">{voice_lang}</span>'
-
-        rows_html += f"""<tr>
-<td class="cell-client" title="{cid}"><code style="{cid_style}">{cid_short}</code>{cid_badge}</td>
-<td class="cell-ip">{cip or "—"}</td>
-<td class="cell-id"><code>{sid}</code></td>
-<td class="cell-dt">{first}</td>
-<td class="cell-dt">{last}</td>
-<td class="cell-elapsed">{elapsed}</td>
-<td class="cell-title" title="{s['filename']}">{display_title}</td>
-<td class="cell-voice" title="{voice_raw}">{voice_short or "—"}</td>
-<td class="cell-op"><span class="badge" style="color:{fg};background:{bg}">{op}</span></td>
-<td class="cell-timeline">{timeline}</td>
-</tr>
-"""
-
     total_sessions = len(sessions)
-    completed = sum(1 for s in sessions.values() if s["last_op"] == "COMPLETE")
-    downloaded = sum(1 for s in sessions.values() if "DOWNLOAD" in s["last_op"])
-    cancelled = sum(1 for s in sessions.values() if s["last_op"] == "CANCEL")
+    gen_completed = sum(1 for s in sessions.values() if _session_completed(s))
+    gen_cancelled = total_sessions - gen_completed
     email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
-    # Mesi disponibili (scan dei file activity_*.log)
+    days = defaultdict(list)
+    for sid, s in reversed(list(sessions.items())):
+        day_key = s["first_dt"].strftime("%Y-%m-%d")
+        days[day_key].append((sid, s))
+
+    event_icons = {
+        "ANALYZE": "🔍", "GENERATE": "⚙️", "COMPLETE": "✅",
+        "DOWNLOAD": "⬇️", "DOWNLOAD_EMAIL": "📧⬇️",
+        "DOWNLOAD_EMAIL_PODCAST": "🎙️⬇️", "DOWNLOAD_PODCAST": "🎙️⬇️",
+        "EMAIL_REGISTERED": "📬", "EMAIL_SENT": "📤",
+        "EMAIL_FAILED": "❌📧", "CANCEL": "🚫",
+        "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
+    }
+    op_colors = {
+        "ANALYZE": ("#6b7280", "#f3f4f6"), "GENERATE": ("#2563eb", "#eff6ff"),
+        "COMPLETE": ("#16a34a", "#f0fdf4"), "DOWNLOAD": ("#7c3aed", "#f5f3ff"),
+        "DOWNLOAD_EMAIL": ("#7c3aed", "#f5f3ff"),
+        "DOWNLOAD_EMAIL_PODCAST": ("#7c3aed", "#f5f3ff"),
+        "DOWNLOAD_PODCAST": ("#7c3aed", "#f5f3ff"),
+        "EMAIL_REGISTERED": ("#0891b2", "#ecfeff"),
+        "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
+        "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
+        "CANCEL": ("#dc2626", "#fef2f2"),
+        "RESET_CHAPTERS": ("#f59e0b", "#fffbeb"),
+        "EXPORT_ABM": ("#6366f1", "#eef2ff"),
+    }
+
+    cards_html = ""
+    for day_key in sorted(days.keys(), reverse=True):
+        day_sessions = days[day_key]
+        day_count = len(day_sessions)
+        try:
+            day_dt = datetime.strptime(day_key, "%Y-%m-%d")
+            day_label = day_dt.strftime("%d/%m/%Y")
+        except ValueError:
+            day_label = day_key
+
+        cards_html += f"""<div class="day-group" data-day="{day_key}">
+<div class="day-header" onclick="this.parentElement.classList.toggle('collapsed')">
+<span class="day-label">{day_label}</span>
+<span class="day-count">{day_count}</span>
+<span class="day-chevron">▾</span>
+</div>
+<div class="day-cards">
+"""
+        for sid, s in day_sessions:
+            first = s["first_dt"].strftime("%H:%M")
+            last = s["last_dt"].strftime("%H:%M")
+            delta = s["last_dt"] - s["first_dt"]
+            total_sec = int(delta.total_seconds())
+            elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}"
+
+            title = s["filename"]
+            for ext in (".epub", ".txt", ".pdf"):
+                if title.lower().endswith(ext):
+                    title = title[:-len(ext)]
+            display_title = html_mod.escape(title[:80] + ("…" if len(title) > 80 else ""))
+
+            op = s["last_op"]
+            fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
+            timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
+
+            cid = s.get("client_id", "")
+            cip = s.get("client_ip", "")
+            cid_short = cid[:8] if cid else "—"
+            cid_count = client_session_count.get(cid, 0) if cid else 0
+            cid_color = _client_color_map.get(cid, "var(--text-dim)")
+            cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
+            cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
+
+            voice_raw = s.get("voice", "")
+            voice_short = ""
+            if voice_raw:
+                parts_v = voice_raw.split("-")
+                if len(parts_v) >= 3:
+                    voice_short = parts_v[-1].replace("Neural", "").replace("Multilingual", "")
+                    voice_lang = "-".join(parts_v[:2])
+                    voice_short = f'{voice_short} <span class="voice-lang">{voice_lang}</span>'
+                else:
+                    voice_short = html_mod.escape(voice_raw)
+
+            blang = html_mod.escape(s.get("browser_lang", "") or "")
+            blang_display = f'<span class="card-blang">{blang}</span>' if blang else "—"
+
+            cards_html += f"""<div class="card">
+<div class="card-top">
+<span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
+<span class="badge" style="color:{fg};background:{bg}">{op}</span>
+</div>
+<div class="card-timeline">{timeline}</div>
+<div class="card-meta">
+<div class="meta-row"><span class="meta-label">⏱</span><span>{first} → {last} ({elapsed})</span></div>
+<div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
+<div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
+<div class="meta-row"><span class="meta-label">🎤</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or "—"}</span></div>
+<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
+</div>
+</div>
+"""
+        cards_html += "</div></div>\n"
+
     available_months = []
     try:
         for f in sorted(SCRIPT_DIR.glob("activity_*.log"), reverse=True):
@@ -1935,223 +1970,209 @@ def admin_logs():
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
 <title>Audiobook Maker — Activity Log ({ym})</title>
 <style>
-:root {{
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --surface2: #334155;
-    --border: #475569;
-    --text: #e2e8f0;
-    --text-dim: #94a3b8;
-    --accent: #38bdf8;
-    --accent2: #a78bfa;
+:root {{ --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#e2e8f0;--text-dim:#94a3b8;--accent:#38bdf8;--accent2:#a78bfa;--green:#22c55e;--red:#ef4444; }}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh}}
+.header{{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
+.header h1{{font-size:.9rem;font-weight:600;color:var(--accent);letter-spacing:.5px}}
+.header .period{{font-size:1.3rem;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}}
+.header-actions{{margin-left:auto;display:flex;gap:8px}}
+.btn{{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:.75rem;font-weight:600;cursor:pointer;text-decoration:none;transition:all .15s}}
+.btn:hover{{background:var(--border)}}
+.btn-accent{{background:var(--accent);color:var(--bg);border-color:var(--accent)}}
+.btn-accent:hover{{opacity:.85}}
+.btn-toggle{{margin-left:auto;flex-shrink:0}}
+.months-nav{{padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center}}
+.months-nav .label{{color:var(--text-dim);font-size:.7rem;margin-right:6px;text-transform:uppercase;letter-spacing:1px}}
+.months-nav a{{color:var(--text-dim);text-decoration:none;padding:4px 10px;border-radius:4px;font-size:.78rem;transition:all .15s}}
+.months-nav a:hover{{background:var(--surface2);color:var(--text)}}
+.months-nav a.active{{background:var(--accent);color:var(--bg);font-weight:600}}
+.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;padding:14px 20px}}
+.stat{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center}}
+.stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}}
+.stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
+.day-group{{margin:0 12px 6px}}
+.day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
+.day-header:hover{{background:var(--surface2)}}
+.day-label{{font-weight:700;font-size:.85rem;color:var(--accent);font-variant-numeric:tabular-nums}}
+.day-count{{background:var(--accent);color:var(--bg);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px}}
+.day-chevron{{margin-left:auto;color:var(--text-dim);font-size:.9rem;transition:transform .2s}}
+.day-group.collapsed .day-chevron{{transform:rotate(-90deg)}}
+.day-group.collapsed .day-cards{{display:none}}
+.day-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;padding:10px 0 4px}}
+.card{{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;transition:border-color .15s,box-shadow .15s}}
+.card:hover{{border-color:var(--accent);box-shadow:0 0 0 1px rgba(56,189,248,.15)}}
+.card-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}}
+.card-title{{font-weight:600;font-size:.82rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}}
+.badge{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.62rem;font-weight:700;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}}
+.card-timeline{{color:var(--text-dim);font-size:.7rem;margin-bottom:8px;overflow-x:auto;white-space:nowrap;padding-bottom:2px}}
+.card-meta{{display:flex;flex-direction:column;gap:4px}}
+.meta-row{{display:flex;align-items:center;gap:6px;font-size:.73rem;color:var(--text-dim);min-width:0}}
+.meta-label{{flex-shrink:0;width:20px;text-align:center;font-size:.78rem}}
+.sid{{color:var(--accent2);font-size:.7rem;background:rgba(167,139,250,.1);padding:1px 5px;border-radius:3px}}
+.card-ip{{margin-left:auto;font-size:.68rem;color:var(--text-dim);font-variant-numeric:tabular-nums}}
+.card-voice{{color:var(--text);font-size:.72rem}} .voice-lang{{opacity:.5;font-size:.62rem}}
+.cid-count{{font-size:.62rem;opacity:.8}}
+.card-blang{{font-size:.65rem;background:rgba(167,139,250,.12);color:var(--accent2);padding:1px 6px;border-radius:3px;font-weight:600;text-transform:uppercase}}
+.empty{{text-align:center;padding:60px 20px;color:var(--text-dim)}} .empty .icon{{font-size:3rem;margin-bottom:12px}}
+@media(max-width:600px){{
+.header{{padding:12px 14px;gap:8px}} .header h1{{font-size:.78rem}} .header .period{{font-size:1.1rem}}
+.stats{{grid-template-columns:repeat(3,1fr);gap:6px;padding:10px 12px}} .stat{{padding:8px 6px}} .stat .num{{font-size:1.2rem}} .stat .lbl{{font-size:.58rem}}
+.months-nav{{padding:8px 12px;gap:4px}} .day-group{{margin:0 8px 4px}} .day-cards{{grid-template-columns:1fr;gap:8px;padding:8px 0 2px}} .card{{padding:12px}} .btn{{padding:6px 10px;font-size:.68rem}}
+.header-actions{{margin-left:0;width:100%;justify-content:flex-end}}
 }}
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{
-    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    min-height: 100vh;
-}}
-.header {{
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 20px 24px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-}}
-.header h1 {{
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--accent);
-    letter-spacing: 0.5px;
-}}
-.header .period {{
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-}}
-.months-nav {{
-    padding: 12px 24px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    align-items: center;
-}}
-.months-nav .label {{
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    margin-right: 8px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}}
-.months-nav a {{
-    color: var(--text-dim);
-    text-decoration: none;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    transition: all .15s;
-}}
-.months-nav a:hover {{ background: var(--surface2); color: var(--text); }}
-.months-nav a.active {{
-    background: var(--accent);
-    color: var(--bg);
-    font-weight: 600;
-}}
-.stats {{
-    display: flex;
-    gap: 16px;
-    padding: 16px 24px;
-    flex-wrap: wrap;
-}}
-.stat {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 20px;
-    min-width: 120px;
-}}
-.stat .num {{
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--accent);
-    font-variant-numeric: tabular-nums;
-}}
-.stat .lbl {{
-    font-size: 0.7rem;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-top: 2px;
-}}
-.table-wrap {{
-    overflow-x: auto;
-    padding: 0 24px 40px;
-    margin-top: 8px;
-}}
-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82rem;
-}}
-thead th {{
-    background: var(--surface);
-    color: var(--text-dim);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    font-size: 0.68rem;
-    padding: 10px 12px;
-    text-align: left;
-    border-bottom: 2px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 2;
-}}
-tbody tr {{
-    border-bottom: 1px solid rgba(71,85,105,.3);
-    transition: background .1s;
-}}
-tbody tr:hover {{ background: rgba(56,189,248,.05); }}
-td {{ padding: 8px 12px; vertical-align: middle; }}
-.cell-id code {{
-    color: var(--accent2);
-    font-size: 0.78rem;
-    background: rgba(167,139,250,.1);
-    padding: 2px 6px;
-    border-radius: 3px;
-}}
-.cell-dt {{
-    color: var(--text-dim);
-    font-size: 0.78rem;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}}
-.cell-elapsed {{
-    font-weight: 600;
-    color: var(--text);
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-}}
-.cell-title {{
-    max-width: 340px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text);
-}}
-.badge {{
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-}}
-.cell-timeline {{
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    white-space: nowrap;
-}}
-.cell-voice {{
-    color: var(--text);
-    font-size: 0.75rem;
-    white-space: nowrap;
-}}
-.cell-client code {{
-    font-size: 0.75rem;
-    background: rgba(167,139,250,.08);
-    padding: 2px 5px;
-    border-radius: 3px;
-}}
-.cell-ip {{
-    color: var(--text-dim);
-    font-size: 0.73rem;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}}
-.empty {{
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-dim);
-}}
-.empty .icon {{ font-size: 3rem; margin-bottom: 12px; }}
+@media(max-width:380px){{ .stats{{grid-template-columns:repeat(2,1fr)}} }}
 </style>
 </head>
 <body>
 
 <div class="header">
-    <h1>🎧 AUDIOBOOK MAKER — ACTIVITY LOG</h1>
+    <h1>🎧 ACTIVITY LOG</h1>
     <span class="period">{ym}</span>
+    <div class="header-actions">
+        <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📊 Excel</a>
+    </div>
 </div>
 
-{"<div class='months-nav'><span class='label'>Mesi:</span>" + months_nav + "</div>" if months_nav else ""}
+<div class='months-nav'>{"<span class='label'>Mesi:</span>" + months_nav if months_nav else ""}<button class="btn btn-toggle" id="btnToggleDays" onclick="toggleAllDays()">Aggrega</button></div>
 
 <div class="stats">
     <div class="stat"><div class="num">{total_sessions}</div><div class="lbl">Sessioni</div></div>
-    <div class="stat"><div class="num">{completed}</div><div class="lbl">Completati</div></div>
-    <div class="stat"><div class="num">{downloaded}</div><div class="lbl">Download</div></div>
+    <div class="stat stat-green"><div class="num">{gen_completed}</div><div class="lbl">Gen. completata</div></div>
+    <div class="stat stat-red"><div class="num">{gen_cancelled}</div><div class="lbl">Cancellati</div></div>
     <div class="stat"><div class="num">{email_sent}</div><div class="lbl">Email inviate</div></div>
-    <div class="stat"><div class="num">{cancelled}</div><div class="lbl">Cancellati</div></div>
     <div class="stat"><div class="num">{unique_clients}</div><div class="lbl">Client unici</div></div>
     <div class="stat"><div class="num">{returning_clients}</div><div class="lbl">Ricorrenti</div></div>
 </div>
 
-<div class="table-wrap">
-{"<table><thead><tr><th>Client</th><th>IP</th><th>Session ID</th><th>Inizio</th><th>Ultimo evento</th><th>Durata</th><th>Contenuto</th><th>Voce</th><th>Stato</th><th>Timeline</th></tr></thead><tbody>" + rows_html + "</tbody></table>" if rows_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
+<div class="cards-container">
+{cards_html if cards_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
 </div>
+
+<script>
+function toggleAllDays() {{
+    const groups = document.querySelectorAll('.day-group');
+    const btn = document.getElementById('btnToggleDays');
+    const allCollapsed = [...groups].every(g => g.classList.contains('collapsed'));
+    groups.forEach(g => {{
+        if (allCollapsed) g.classList.remove('collapsed');
+        else g.classList.add('collapsed');
+    }});
+    btn.textContent = allCollapsed ? 'Aggrega' : 'Mostra tutti';
+}}
+</script>
 
 </body>
 </html>"""
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
+
+@app.route("/logs/export")
+def admin_logs_export():
+    """Export activity log as Excel (.xlsx) file."""
+    from datetime import datetime
+    import io, csv
+
+    ym = None
+    for key in request.args:
+        if re.match(r'^\d{4}-\d{2}$', key):
+            ym = key
+            break
+    if not ym:
+        ym = datetime.now().strftime("%Y-%m")
+
+    try:
+        sessions, client_session_count = _parse_log_sessions(ym)
+    except Exception as e:
+        return f"Errore lettura log: {e}", 500
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter="#")
+    writer.writerow([
+        "Session ID", "Date Start", "Date End", "Duration (min)",
+        "Filename", "Last Status", "Events", "Client ID", "Client IP",
+        "Voice", "Browser Lang", "Completed", "Recurring Client"
+    ])
+    for sid, s in sessions.items():
+        delta = s["last_dt"] - s["first_dt"]
+        duration_min = round(delta.total_seconds() / 60, 1)
+        completed = "Yes" if _session_completed(s) else "No"
+        cid = s.get("client_id", "")
+        recurring = "Yes" if client_session_count.get(cid, 0) >= 2 else "No"
+        writer.writerow([
+            sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+            s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"), duration_min,
+            s["filename"], s["last_op"], " → ".join(s["events"]),
+            cid, s.get("client_ip", ""), s.get("voice", ""),
+            s.get("browser_lang", ""), completed, recurring,
+        ])
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"Log {ym}"
+
+        total_s = len(sessions)
+        gen_c = sum(1 for s_ in sessions.values() if _session_completed(s_))
+        gen_x = total_s - gen_c
+        em_s = sum(1 for s_ in sessions.values() if "EMAIL_SENT" in s_["events"])
+        uniq = len(set(s_.get("client_id", "") for s_ in sessions.values() if s_.get("client_id")))
+        ret = sum(1 for c in client_session_count.values() if c >= 2)
+
+        ws.merge_cells("A1:B1")
+        ws["A1"] = f"Audiobook Maker — Activity Log {ym}"
+        ws["A1"].font = Font(name="Arial", bold=True, color="38bdf8", size=14)
+        summary = [("Sessioni", total_s), ("Gen. completata", gen_c), ("Cancellati", gen_x),
+                   ("Email inviate", em_s), ("Client unici", uniq), ("Ricorrenti", ret)]
+        for i, (lbl, val) in enumerate(summary):
+            ws.cell(row=2, column=1 + i * 2, value=lbl).font = Font(name="Arial", color="94a3b8", size=10)
+            ws.cell(row=2, column=2 + i * 2, value=val).font = Font(name="Arial", bold=True, color="e2e8f0", size=12)
+
+        headers = ["Session ID", "Data inizio", "Data fine", "Durata (min)", "Contenuto",
+                   "Ultimo stato", "Timeline eventi", "Client ID", "IP", "Voce",
+                   "Lingua browser", "Completato", "Client ricorrente"]
+        hdr_fill = PatternFill("solid", fgColor="334155")
+        hdr_font = Font(name="Arial", bold=True, color="e2e8f0", size=10)
+        for col_idx, h in enumerate(headers, 1):
+            c = ws.cell(row=4, column=col_idx, value=h)
+            c.font = hdr_font; c.fill = hdr_fill; c.alignment = Alignment(horizontal="center")
+
+        data_font = Font(name="Arial", size=10, color="e2e8f0")
+        for row_idx, (sid, s) in enumerate(reversed(list(sessions.items())), 5):
+            delta = s["last_dt"] - s["first_dt"]
+            row_data = [sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+                        s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+                        round(delta.total_seconds() / 60, 1), s["filename"], s["last_op"],
+                        " → ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
+                        s.get("voice", ""), s.get("browser_lang", ""),
+                        "✓" if _session_completed(s) else "✗",
+                        "✓" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
+            for col_idx, val in enumerate(row_data, 1):
+                c = ws.cell(row=row_idx, column=col_idx, value=val)
+                c.font = data_font
+                if row_idx % 2 == 0:
+                    c.fill = PatternFill("solid", fgColor="1e293b")
+
+        col_widths = [12, 20, 20, 12, 45, 18, 50, 14, 16, 25, 10, 12, 14]
+        for i, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.auto_filter.ref = f"A4:M{4 + len(sessions)}"
+
+        xlsx_io = io.BytesIO()
+        wb.save(xlsx_io)
+        xlsx_io.seek(0)
+        return Response(xlsx_io.getvalue(),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="activity_log_{ym}.xlsx"'})
+    except ImportError:
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        return Response(csv_bytes, mimetype="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="activity_log_{ym}.csv"'})
 
 
 @app.route("/api/voices")
@@ -2203,7 +2224,8 @@ def api_analyze():
 
     jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
                      "last_poll": time.time(), "original_filename": file.filename,
-                     "client_id": _get_client_id(), "client_ip": _get_client_ip()}
+                     "client_id": _get_client_id(), "client_ip": _get_client_ip(),
+                     "browser_lang": _get_browser_lang()}
 
     # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
@@ -2228,7 +2250,8 @@ def api_analyze():
             jobs[job_id]["cover_mime"] = cover_mime
 
     _log_activity(job_id, file.filename, "ANALYZE",
-                  jobs[job_id]["client_id"], jobs[job_id]["client_ip"])
+                  jobs[job_id]["client_id"], jobs[job_id]["client_ip"],
+                  browser_lang=jobs[job_id].get("browser_lang", ""))
 
     chapters = []
     for ch in info.chapters:
@@ -2436,7 +2459,8 @@ def api_export_abm(job_id):
     download_name = f"{safe_title}.abm"
 
     _log_activity(job_id, job.get("original_filename", ""), "EXPORT_ABM",
-                  job.get("client_id", ""), job.get("client_ip", ""))
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  browser_lang=job.get("browser_lang", ""))
 
     return send_file(buf, mimetype="application/zip", as_attachment=True,
                      download_name=download_name)
@@ -2492,7 +2516,8 @@ def api_generate():
     )
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
-                  client_id, client_ip, voice)
+                  client_id, client_ip, voice,
+                  browser_lang=job.get("browser_lang", ""))
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     return jsonify({"status": "started"})
 
@@ -2614,7 +2639,8 @@ def api_reset_to_chapters(job_id):
     #        client_id, client_ip, voice (so preview still works)
 
     _log_activity(job_id, job.get("original_filename", ""), "RESET_CHAPTERS",
-                  job.get("client_id", ""), job.get("client_ip", ""))
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  job.get("voice", ""), job.get("browser_lang", ""))
 
     return jsonify({"status": "ok"})
 
@@ -2652,7 +2678,7 @@ def api_register_email():
     print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
                   job.get("client_id", ""), job.get("client_ip", ""),
-                  job.get("voice", ""))
+                  job.get("voice", ""), job.get("browser_lang", ""))
 
     return jsonify({"status": "registered", "email": email})
 
@@ -2791,11 +2817,11 @@ def _serve_audio_download(token_info, job, job_id):
     if job:
         orig = job.get("original_filename", orig)
         if "output_zip" in job and os.path.exists(job["output_zip"]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(job["output_zip"], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         if job.get("output_files") and os.path.exists(job["output_files"][0]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(job["output_files"][0], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         print(f"[dl] Job {job_id} in memory but files missing on disk")
@@ -2805,10 +2831,10 @@ def _serve_audio_download(token_info, job, job_id):
     output_file = token_info.get("output_file", "")
 
     if output_zip and os.path.exists(output_zip):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
         return send_file(output_zip, as_attachment=True, download_name=output_name)
     if output_file and os.path.exists(output_file):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
         return send_file(output_file, as_attachment=True, download_name=output_name)
 
     # 3. Path reconstruction: stored paths may be from a different DATA_DIR
@@ -2817,13 +2843,13 @@ def _serve_audio_download(token_info, job, job_id):
         reconstructed = str(job_dir / os.path.basename(output_zip))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_zip} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(reconstructed, as_attachment=True, download_name=output_name)
     if output_file and not os.path.exists(output_file):
         reconstructed = str(job_dir / "output" / os.path.basename(output_file))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_file} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(reconstructed, as_attachment=True, download_name=output_name)
 
     # 4. Fallback: scan job directory for downloadable files
@@ -2836,7 +2862,7 @@ def _serve_audio_download(token_info, job, job_id):
         if zips:
             found = str(zips[0])
             print(f"[dl] Fallback: found ZIP {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         # Look for MP3 in output/ subdirectory, then root
@@ -2847,7 +2873,7 @@ def _serve_audio_download(token_info, job, job_id):
         if len(mp3s) == 1:
             found = str(mp3s[0])
             print(f"[dl] Fallback: found single MP3 {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         elif len(mp3s) > 1:
@@ -2855,7 +2881,7 @@ def _serve_audio_download(token_info, job, job_id):
             src_dir = str(mp3s[0].parent)
             zip_file = shutil.make_archive(str(job_dir / "download"), "zip", src_dir)
             print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {zip_file}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return send_file(zip_file, as_attachment=True,
                              download_name=output_name or "audiobook.zip")
 
@@ -3107,7 +3133,7 @@ def _serve_podcast_download(token_info, job, job_id):
     _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
                   job.get("client_id", "") if job else "",
                   job.get("client_ip", "") if job else "",
-                  job.get("voice", "") if job else "")
+                  job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
     return send_file(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
@@ -3336,7 +3362,7 @@ def api_download(job_id):
     job["downloaded_at"] = time.time()
     _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD",
                   job.get("client_id", ""), job.get("client_ip", ""),
-                  job.get("voice", ""))
+                  job.get("voice", ""), job.get("browser_lang", ""))
     if "output_zip" in job:
         return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
     else:
@@ -3429,7 +3455,7 @@ def api_download_podcast(job_id):
 
     _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
                   job.get("client_id", ""), job.get("client_ip", ""),
-                  job.get("voice", ""))
+                  job.get("voice", ""), job.get("browser_lang", ""))
     return send_file(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 

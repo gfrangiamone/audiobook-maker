@@ -49,7 +49,7 @@ function _fetchMonitor(){
   });
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open');document.getElementById('emailModal').classList.remove('open');document.getElementById('langWarnModal').classList.remove('open')}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeAbmGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open');document.getElementById('emailModal').classList.remove('open')}});
 
 let cl='en';
 function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
@@ -61,6 +61,9 @@ function applyI18n(){
   });
   document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
   document.documentElement.lang=cl;
+  // Dynamic tooltips
+  const btnExp=document.getElementById('btnExport');
+  if(btnExp)btnExp.title=t('btn_export_abm_tip');
 }
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
@@ -77,7 +80,8 @@ function detectLang(){
 }
 
 // ═══════════════════ STATE ═══════════════════
-let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false,previewListened=false;
+let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false;
+let previewListened=false,_langWarnResolve=null;
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -112,6 +116,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   // Monitor modal handlers
   document.getElementById('monClose').onclick=closeMonitor;
   document.getElementById('monModal').onclick=e=>{if(e.target===e.currentTarget)closeMonitor()};
+  // ABM guide modal handlers
+  document.getElementById('abmGuideModal').onclick=e=>{if(e.target===e.currentTarget)closeAbmGuide()};
   // Email modal handlers
   document.getElementById('emSubmit').onclick=submitEmail;
   document.getElementById('emSkip').onclick=skipEmail;
@@ -185,19 +191,21 @@ function lockUI(){
   generating=true;
   ['s1','s2','s3'].forEach(id=>{const el=document.getElementById(id);el.classList.add('locked','collapsed','done')});
   document.getElementById('fi').disabled=true;
+  const btnExp=document.getElementById('btnExport');if(btnExp)btnExp.disabled=true;
   previewStop(); _updatePreviewBtn();
 }
 function unlockUI(){
   generating=false;
   ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('locked'));
   document.getElementById('fi').disabled=false;
+  const btnExp=document.getElementById('btnExport');if(btnExp)btnExp.disabled=!bookData;
   _updatePreviewBtn();
 }
 
 function handleFile(file){
   if(generating||jobDone)return;
   const fn=file.name.toLowerCase();
-  if(!fn.endsWith('.epub')&&!fn.endsWith('.pdf')&&!fn.endsWith('.txt')){showErr('aerr',t('err_epub'));return}
+  if(!fn.endsWith('.epub')&&!fn.endsWith('.pdf')&&!fn.endsWith('.txt')&&!fn.endsWith('.abm')){showErr('aerr',t('err_epub'));return}
   document.getElementById('uz').classList.add('ok');
   document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
@@ -217,6 +225,7 @@ async function analyzeEpub(file){
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');return}
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');
     isTxtFile=(d.file_type==='txt');
+    const isAbmFile=(d.file_type==='abm');
     if(d.language){
       const lc=d.language.split('-')[0].toLowerCase();
       const sel=document.getElementById('vl');
@@ -228,10 +237,13 @@ async function analyzeEpub(file){
       toggleOut(document.getElementById('toS'));
       document.getElementById('fgOut').style.display='none';
     }else{
-      // EPUB/PDF: default to chapters mode
+      // EPUB/PDF/ABM: default to chapters mode
       document.getElementById('fgOut').style.display='';
       toggleOut(document.getElementById('toC'));
     }
+    // Export button: always enabled after analysis
+    const btnExp=document.getElementById('btnExport');
+    if(btnExp)btnExp.disabled=false;
     fillPreview(d);
     _updatePreviewBtn();
     collapseStep('s1');document.getElementById('s1').classList.add('done');
@@ -394,7 +406,7 @@ async function previewRead(){
     _prevHighlightAt(audio.currentTime);
   };
   // Sincronizza icona con stato audio
-  audio.onplay  =()=>{_prevShowState('pause');previewListened=true;};
+  audio.onplay  =()=>{previewListened=true;_prevShowState('pause')};
   audio.onpause =()=>{ if(!audio.ended) _prevShowState('play'); };
   audio.onended =()=>{
     _prevLoading=false;
@@ -490,26 +502,42 @@ function chSelNone(){document.querySelectorAll('#chl .col-sel input[type=checkbo
 function chSelInvert(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=!cb.checked;cb.closest('tr').classList.toggle('unchecked',!cb.checked)});updateSelection()}
 function chMasterToggle(){const v=document.getElementById('chAll').checked;document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=v;cb.closest('tr').classList.toggle('unchecked',!v)});updateSelection()}
 
-// ═══════════════════ GENERATION ═══════════════════
+// ═══════════════════ EXPORT ABM ═══════════════════
+function exportAbm(){
+  if(!jobId){showErr('s3err','No file analyzed yet');return}
+  const a=document.createElement('a');
+  a.href='/api/export_abm/'+jobId;
+  a.download='';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+function openAbmGuide(){
+  document.getElementById('abmGuideTitle').textContent=t('abm_guide_title');
+  document.getElementById('abmGuideBody').innerHTML=t('abm_guide_body');
+  document.getElementById('abmGuideModal').classList.add('open');
+}
+function closeAbmGuide(){document.getElementById('abmGuideModal').classList.remove('open')}
 
-// Language detection warning: returns a Promise<boolean> (true = proceed, false = cancel)
+// ═══════════════════ GENERATION ═══════════════════
 function _showLangWarning(){
   return new Promise(resolve=>{
-    const m=document.getElementById('langWarnModal');
-    document.getElementById('lwTitle').textContent='\u26A0\uFE0F '+t('lang_warn_title');
-    document.getElementById('lwBody').textContent=t('lang_warn_body');
-    document.getElementById('lwConfirm').textContent=t('lang_warn_confirm');
-    document.getElementById('lwCancel').textContent=t('lang_warn_cancel');
-    function cleanup(){m.classList.remove('open');document.getElementById('lwConfirm').onclick=null;document.getElementById('lwCancel').onclick=null;document.getElementById('lwClose').onclick=null;m.onclick=null}
-    document.getElementById('lwConfirm').onclick=()=>{cleanup();resolve(true)};
-    document.getElementById('lwCancel').onclick=()=>{cleanup();resolve(false)};
-    document.getElementById('lwClose').onclick=()=>{cleanup();resolve(false)};
-    m.onclick=e=>{if(e.target===m){cleanup();resolve(false)}};
-    m.classList.add('open');
+    _langWarnResolve=function(val){
+      document.getElementById('langWarnModal').classList.remove('open');
+      _langWarnResolve=null;
+      resolve(val);
+    };
+    applyI18n();
+    document.getElementById('langWarnModal').classList.add('open');
   });
 }
 
 async function startGen(){
+  // Language warning: if book language unknown and user hasn't listened to preview
+  if(bookData&&!bookData.language&&!previewListened){
+    const proceed=await _showLangWarning();
+    if(!proceed)return;
+  }
   // Collect selected chapter indices when in chapter mode
   let selectedChapters=null;
   if(!singleFile){
@@ -518,13 +546,6 @@ async function startGen(){
       if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
     });
     if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
-  }
-  // ── Language detection warning ──
-  // If the input file does not provide clear language info AND the user
-  // has not listened to the voice preview, show a warning before proceeding.
-  if(bookData&&!bookData.language&&!previewListened){
-    const userConfirmed=await _showLangWarning();
-    if(!userConfirmed)return;
   }
   document.getElementById('s3err').innerHTML='';
   document.getElementById('btnG').disabled=true;
@@ -624,6 +645,8 @@ function listenProgress(){
         document.getElementById('dlA').style.display='block';
         document.getElementById('dlA').classList.add('fi');
         document.getElementById('btnP').style.display=d.has_podcast?'':'none';
+        // Show "back to chapters" button if the book has multiple chapters
+        document.getElementById('btnBackCh').style.display=(bookData&&bookData.total_chapters>1)?'':'none';
         document.getElementById('s4t').textContent=t('done_t');
         document.getElementById('cnA').style.display='none';
         document.getElementById('emailModal').classList.remove('open');
@@ -831,6 +854,50 @@ function onBeforeUnload(e){
   }
 }
 
+async function goBackToChapters(){
+  if(!jobId||!bookData)return;
+  // Stop heartbeat
+  if(hbInterval){clearInterval(hbInterval);hbInterval=null}
+  if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
+  // Ask backend to reset job status
+  try{
+    const r=await fetch('/api/reset_to_chapters/'+jobId,{method:'POST'});
+    const d=await r.json();
+    if(d.error){showErr('s3err',d.error);return}
+  }catch(e){
+    // If backend fails, still allow UI reset (job data might be lost on restart)
+    console.warn('[goBack] reset endpoint failed:',e);
+  }
+  // Reset UI state
+  jobDone=false;
+  generating=false;
+  emailPromptShown=false;emailRegistered=false;
+  // Hide step 4
+  document.getElementById('s4').style.display='none';
+  document.getElementById('dlA').style.display='none';
+  document.getElementById('btnP').style.display='none';
+  document.getElementById('btnBackCh').style.display='none';
+  document.getElementById('cnA').style.display='';
+  document.getElementById('pBar').style.width='0%';
+  document.getElementById('pPct').textContent='0%';
+  document.getElementById('pMsg').style.color='';
+  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>document.getElementById(id).textContent='-');
+  document.getElementById('emailModal').classList.remove('open');
+  // Unlock steps and reopen chapter selection
+  unlockUI();
+  ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
+  document.getElementById('s1').classList.add('collapsed');
+  document.getElementById('s1').classList.add('done');
+  document.getElementById('s2').classList.add('collapsed');
+  document.getElementById('s2').classList.add('done');
+  // Re-activate step 3 (chapter selection)
+  activateStep('s3');
+  // Re-enable generate button
+  document.getElementById('btnG').disabled=false;
+  updateSelection();
+  _updatePreviewBtn();
+}
+
 function resetAll(){
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
@@ -844,6 +911,7 @@ function resetAll(){
   ['s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
   document.getElementById('dlA').style.display='none';
   document.getElementById('btnP').style.display='none';
+  document.getElementById('btnBackCh').style.display='none';
   document.getElementById('podHint').style.display='none';
   document.getElementById('cnA').style.display='';
   document.getElementById('btnG').disabled=false;
