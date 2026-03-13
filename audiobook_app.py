@@ -95,7 +95,7 @@ EMAIL_FILE_RETENTION_SEC = 24 * 60 * 60  # 24 ore di retention dopo invio email
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
 ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
-ADMIN_DIGEST_INTERVAL_SEC = 60 * 60  # 1 ora tra un digest e il successivo
+ADMIN_DIGEST_INTERVAL_SEC = 6*60 * 60  # 6 ore tra un digest e il successivo
 _admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}
 _admin_queue_lock = threading.Lock()
 _admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
