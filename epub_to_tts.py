@@ -32,7 +32,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from bs4 import BeautifulSoup, NavigableString, Tag, XMLParsedAsHTMLWarning
+    from bs4 import BeautifulSoup, Comment, NavigableString, Tag, XMLParsedAsHTMLWarning
     import warnings
     warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 except ImportError:
@@ -321,6 +321,9 @@ def extract_text_from_element(element, depth: int = 0) -> list[str]:
     """
     parts = []
 
+    if isinstance(element, Comment):
+        return parts
+
     if isinstance(element, NavigableString):
         text = str(element)
         if text.strip():
@@ -383,6 +386,10 @@ def html_to_text(html_content: str) -> str:
     for tag_name in TAGS_TO_REMOVE_WITH_CONTENT:
         for tag in soup.find_all(tag_name):
             tag.decompose()
+
+    # Rimuovi commenti HTML (non utili per TTS, es. "new page: back: notes")
+    for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
+        comment.extract()
 
     # Rimuovi note (epub:type, class, role)
     for tag in soup.find_all(True):
@@ -615,8 +622,14 @@ def detect_chapter_title(html_content: str) -> Optional[str]:
     return None
 
 
-def is_content_chapter(text: str, title: str = "") -> bool:
-    """Determina se un blocco di testo è un capitolo con contenuto narrativo reale."""
+def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> bool:
+    """
+    Determina se un blocco di testo è un capitolo con contenuto narrativo reale.
+
+    Se lenient=True, usa soglie più permissive per le euristiche content-based.
+    Questo è il principio: "meglio preservare in eccesso che perdere contenuto narrativo".
+    Usato nel percorso di recupero (salvage) di sezioni da documenti misti.
+    """
     clean = text.strip()
 
     # Troppo corto — probabilmente frontespizio, colophon, ecc.
@@ -684,6 +697,8 @@ def is_content_chapter(text: str, title: str = "") -> bool:
         return False
 
     # Euristica content-based: rileva sezioni non-narrative dal contenuto
+    # In modalità lenient, le soglie sono più permissive per preservare
+    # contenuto ambiguo (es. epiloghi con riferimenti a date storiche)
     lines = clean.split("\n")
     non_empty = [l.strip() for l in lines if l.strip()]
     if non_empty:
@@ -691,22 +706,39 @@ def is_content_chapter(text: str, title: str = "") -> bool:
 
         # 1. Troppo righe cortissime → probabile indice/elenco
         short_lines = sum(1 for l in non_empty if len(l) < 15)
-        if n_lines > 10 and short_lines / n_lines > 0.7:
+        short_threshold = 0.85 if lenient else 0.7
+        if n_lines > 10 and short_lines / n_lines > short_threshold:
             return False
 
         # 2. Alta densità di numeri di pagina → probabile indice
         page_ref_lines = sum(1 for l in non_empty
                             if re.search(r"\b\d{1,4}\s*$", l)  # riga finisce con numero
                             or re.search(r"\.\s*\.\s*\.\s*\d", l))  # puntini + numero
-        if n_lines > 5 and page_ref_lines / n_lines > 0.4:
+        page_threshold = 0.6 if lenient else 0.4
+        if n_lines > 5 and page_ref_lines / n_lines > page_threshold:
             return False
 
         # 3. Alta densità di pattern bibliografici
-        bib_patterns = sum(1 for l in non_empty
-                          if re.search(r"\b(19|20)\d{2}\b", l)  # anno pubblicazione
-                          and re.search(r"[,;]\s", l)  # separatori multipli
-                          and len(l) > 40)
-        if n_lines > 5 and bib_patterns / n_lines > 0.5:
+        # In modalità lenient, richiede pattern più specifici: le menzioni
+        # di anni in prosa narrativa (es. "nel 1930") NON contano come biblio.
+        # Un vero entry bibliografico ha tipicamente: anno tra parentesi,
+        # riferimenti a pagine, editori, o pattern "Autore (anno)".
+        if lenient:
+            # Pattern bibliografico stretto: richiede anno tra parentesi
+            # O pattern "Autore, Titolo, anno" O riferimenti a pagine
+            bib_count = sum(1 for l in non_empty
+                           if (re.search(r"\(\d{4}\)", l)         # anno tra parentesi
+                               or re.search(r"\bpp?\.\s*\d", l)   # p. 123 / pp. 123
+                               or re.search(r"\b(Press|Publisher|Publ\.|Ed\.|Verlag)\b", l, re.I))
+                           and len(l) > 40)
+            bib_threshold = 0.5
+        else:
+            bib_count = sum(1 for l in non_empty
+                           if re.search(r"\b(19|20)\d{2}\b", l)   # anno pubblicazione
+                           and re.search(r"[,;]\s", l)            # separatori multipli
+                           and len(l) > 40)
+            bib_threshold = 0.5
+        if n_lines > 5 and bib_count / n_lines > bib_threshold:
             return False
 
         # 4. Testo che inizia con tipici pattern di colophon/copyright
@@ -717,7 +749,8 @@ def is_content_chapter(text: str, title: str = "") -> bool:
             "stampato in", "finito di stampare", "tipografia",
             "isbn", "© ", "propriet", "vietata la riproduzione",
         ]
-        if sum(1 for s in colophon_signals if s in first_500) >= 2:
+        colophon_min = 3 if lenient else 2
+        if sum(1 for s in colophon_signals if s in first_500) >= colophon_min:
             return False
 
     return True
@@ -817,6 +850,30 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
         # Filtra capitoli vuoti o non-contenuto
         if not is_content_chapter(clean, title):
+            # ── Fallback: tenta di recuperare sotto-sezioni narrative ──
+            # Documenti misti (es. back-matter con Epilogo + Note + Indice)
+            # possono fallire come blocco unico ma contenere sezioni valide.
+            # Principio: meglio preservare in eccesso che perdere contenuto.
+            salvaged_sections = _split_html_by_headings_auto(html_content)
+            if salvaged_sections:
+                for section_title, section_html in salvaged_sections:
+                    sec_raw = html_to_text(section_html)
+                    sec_clean = clean_text_for_tts(sec_raw)
+
+                    if not is_content_chapter(sec_clean, section_title, lenient=True):
+                        continue
+
+                    sec_clean = _remove_duplicate_heading(sec_clean, section_title)
+
+                    chapter_index += 1
+                    chapter = Chapter(
+                        index=chapter_index,
+                        title=section_title,
+                        text=sec_clean.strip(),
+                        source_file=file_name,
+                    )
+                    info.chapters.append(chapter)
+
             continue
 
         # Rimuovi l'heading dal corpo se appare anche come titolo
@@ -1030,6 +1087,9 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
         while current:
             if current == stop_element:
                 break
+            if isinstance(current, Comment):
+                current = current.next_sibling
+                continue
             if isinstance(current, Tag):
                 section_parts.append(str(current))
             elif isinstance(current, NavigableString):
@@ -1041,6 +1101,140 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
         section_html = "".join(section_parts)
         if section_html.strip():
             sections.append((title, f"<body>{section_html}</body>"))
+
+    return sections
+
+
+def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
+    """
+    Spezza un documento HTML in sezioni basandosi sugli heading trovati,
+    senza bisogno di corrispondenza con il TOC.
+
+    Utilizzata come fallback per documenti misti (es. back-matter con Epilogo + Note)
+    quando il documento intero viene scartato da is_content_chapter ma potrebbe
+    contenere sotto-sezioni narrative da preservare.
+
+    Principio: meglio preservare in eccesso che perdere contenuto narrativo.
+
+    Returns: lista di (titolo, html_della_sezione)
+    """
+    soup = BeautifulSoup(html_content, "lxml")
+
+    # Rimuovi tag non voluti
+    for tag_name in TAGS_TO_REMOVE_WITH_CONTENT:
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
+
+    body = soup.find("body") or soup
+
+    # Trova tutti gli heading nel documento — usa solo il livello più alto presente
+    # (tipicamente h1 per sezioni principali di back-matter)
+    all_headings = body.find_all(HEADING_TAGS)
+    if len(all_headings) < 2:
+        return []
+
+    # Identifica il livello heading più alto (h1 < h2 < h3...)
+    from collections import Counter
+    level_counts = Counter(h.name for h in all_headings)
+    # Prendi il livello più alto che appare almeno 2 volte, o il più alto in assoluto
+    sorted_levels = sorted(level_counts.keys(), key=lambda x: int(x[1]))
+    target_level = None
+    for lv in sorted_levels:
+        if level_counts[lv] >= 2:
+            target_level = lv
+            break
+    if not target_level:
+        target_level = sorted_levels[0]
+
+    target_headings = [h for h in all_headings if h.name == target_level]
+    if len(target_headings) < 2:
+        return []
+
+    # Raccogli i testi dei heading normalizzati, per filtrare mini-TOC tra sezioni
+    heading_texts_lower = set()
+    for h in target_headings:
+        ht = h.get_text(strip=True).lower()
+        if ht:
+            heading_texts_lower.add(ht)
+
+    def _is_mini_toc(tag: Tag) -> bool:
+        """Rileva paragrafi che sono mini-TOC (contengono solo titoli di altre sezioni)."""
+        if tag.name != "p":
+            return False
+        text = tag.get_text(strip=True)
+        if not text or len(text) > 500:
+            return False
+        # Verifica: rimuovendo tutti i titoli heading dal testo, resta vuoto?
+        residual = text.lower()
+        for ht in heading_texts_lower:
+            residual = residual.replace(ht, "")
+        # Se il residuo è solo spazi/punteggiatura, è un mini-TOC
+        residual = re.sub(r"[\s\W]+", "", residual)
+        return len(residual) == 0
+
+    # Estrai HTML tra heading consecutivi
+    sections = []
+    for i, heading in enumerate(target_headings):
+        title = heading.get_text(strip=True)
+        if not title or len(title) > 200:
+            title = title[:100] if title else f"Sezione {i+1}"
+
+        # Raccogli tutti gli elementi tra questo heading e il prossimo
+        section_parts = []
+        current = heading.next_sibling
+
+        stop_element = None
+        if i + 1 < len(target_headings):
+            stop_element = target_headings[i + 1]
+
+        while current:
+            if current == stop_element:
+                break
+            if isinstance(current, Comment):
+                current = current.next_sibling
+                continue
+            if isinstance(current, Tag):
+                # Salta paragrafi mini-TOC (contengono solo titoli di altre sezioni)
+                if _is_mini_toc(current):
+                    current = current.next_sibling
+                    continue
+                section_parts.append(str(current))
+            elif isinstance(current, NavigableString):
+                text = str(current).strip()
+                if text:
+                    section_parts.append(text)
+            current = current.next_sibling
+
+        section_html = "".join(section_parts)
+        if section_html.strip():
+            sections.append((title, f"<body>{section_html}</body>"))
+
+    # Includi anche eventuale contenuto PRIMA del primo heading
+    # (potrebbe essere una prefazione o testo introduttivo)
+    first_heading = target_headings[0]
+    pre_parts = []
+    current = body.contents[0] if body.contents else None
+    while current:
+        if current == first_heading:
+            break
+        if isinstance(current, Comment):
+            current = current.next_sibling
+            continue
+        if isinstance(current, Tag):
+            # Salta div vuoti, hr, commenti
+            text_content = current.get_text(strip=True)
+            if text_content and len(text_content) > 50:
+                pre_parts.append(str(current))
+        elif isinstance(current, NavigableString):
+            text = str(current).strip()
+            if text and len(text) > 50:
+                pre_parts.append(text)
+        current = current.next_sibling
+
+    if pre_parts:
+        pre_html = "".join(pre_parts)
+        if pre_html.strip():
+            sections.insert(0, ("Premessa", f"<body>{pre_html}</body>"))
 
     return sections
 
