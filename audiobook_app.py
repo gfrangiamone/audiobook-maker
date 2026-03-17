@@ -57,6 +57,12 @@ except ImportError:
 from version import __version__
 from templates.index_page import build_html_template
 
+# ── Import favicon data (embedded, served via Flask routes for SEO) ──
+from favicon_data import (
+    get_favicon_ico, get_favicon_png_192,
+    get_apple_touch_icon, get_favicon_svg,
+)
+
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1766,6 +1772,32 @@ Disallow: /logs
 {sitemap_line}
 """.strip()
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+# ─── Favicon routes (URL-based for search engine compatibility) ──────────────
+# Google richiede che le favicon siano servite da URL reali e crawlabili,
+# NON inline come data URI. Senza queste route, nei risultati di ricerca
+# appare un'icona generica al posto della favicon del sito.
+
+@app.route("/favicon.ico")
+def favicon_ico():
+    return send_file(get_favicon_ico(), mimetype="image/x-icon",
+                     max_age=86400 * 30)
+
+@app.route("/favicon-192.png")
+def favicon_png_192():
+    return send_file(get_favicon_png_192(), mimetype="image/png",
+                     max_age=86400 * 30)
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    return send_file(get_apple_touch_icon(), mimetype="image/png",
+                     max_age=86400 * 30)
+
+@app.route("/favicon.svg")
+def favicon_svg():
+    return send_file(get_favicon_svg(), mimetype="image/svg+xml",
+                     max_age=86400 * 30)
 
 
 
