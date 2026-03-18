@@ -14,6 +14,17 @@ Il modulo rimuove automaticamente elementi non adatti all'ascolto:
   - Indici, bibliografie, glossari
   - URL, ISBN, DOI e riferimenti incrociati
 
+Strategia di segmentazione in capitoli (in ordine di priorità):
+  1. Outline/bookmarks del PDF (se presenti)
+  2. Rilevamento heading per font size (titoli più grandi del body text)
+  3. Indice visuale — pagina "Indice"/"Contents" con titoli e numeri di pagina
+  4. Fallback: intero documento come singolo capitolo
+
+Se una strategia produce capitoli che vengono tutti filtrati come non-contenuto,
+si passa automaticamente alla successiva. In ultima istanza, se il PDF contiene
+testo ma nessuna strategia produce capitoli validi, il testo viene forzato
+come singolo capitolo (recovery di sicurezza).
+
 Requisiti: pip install pymupdf
 
 Uso:
@@ -591,9 +602,247 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
     return chapters
 
 
+def _detect_page_number_offset(doc: fitz.Document, body_font_size: float) -> int:
+    """Rileva l'offset tra i numeri di pagina stampati e gli indici PDF (0-based).
+
+    Molti libri hanno pagine iniziali (copertina, colophon, indice) che spostano
+    la numerazione. Es: pagina stampata "11" potrebbe essere PDF page index 11
+    (offset 0) o 12 (offset 1), ecc.
+
+    Controlla le prime 30 pagine cercando numeri di pagina isolati in font piccolo
+    e confronta con l'indice PDF.
+
+    Restituisce l'offset: pdf_page_0based = printed_page + offset - 1
+    """
+    small_threshold = body_font_size * SMALL_TEXT_RATIO
+
+    for page_idx in range(min(30, len(doc))):
+        page = doc[page_idx]
+        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+
+        for block in blocks:
+            if block["type"] != 0:
+                continue
+            # Cerca blocchi con solo un numero (tipico page number)
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "").strip()
+                    size = span.get("size", 0)
+                    # Numero di pagina: font piccolo, testo è solo un numero
+                    if (size < body_font_size * 0.95
+                            and text.isdigit()
+                            and 1 <= int(text) <= 999):
+                        printed_num = int(text)
+                        # offset = page_idx - (printed_num - 1)
+                        # perché: pdf_page_0based = printed_page - 1 + offset
+                        offset = page_idx - (printed_num - 1)
+                        if 0 <= offset <= 10:  # offset ragionevole
+                            return offset
+
+    return 0  # nessun offset rilevato
+
+
+def _detect_chapters_from_visual_toc(doc: fitz.Document, body_font_size: float,
+                                      repeated_headers: set) -> list:
+    """Strategia 2b: rileva capitoli dalla pagina "Indice" visuale del PDF.
+
+    Molti libri PDF senza bookmarks hanno comunque una pagina "Indice" o
+    "Table of Contents" con la lista dei capitoli e i numeri di pagina.
+    Questa funzione cerca tali pagine e ne estrae la struttura.
+
+    Pattern riconosciuti:
+    - Righe alternate: titolo (con tab finale) + numero di pagina
+    - Righe con "..." o tab seguiti da numero di pagina
+    - Righe "Titolo   123" con spazi/tab/puntini come separatore
+
+    Restituisce lista di (title, text) tuple.
+    """
+    # Nomi tipici per la pagina indice (multilingua)
+    toc_page_titles = {
+        "indice", "indice generale", "indice dei contenuti",
+        "sommario", "table of contents", "contents", "toc",
+        "table des matières", "sommaire",
+        "índice", "índice general", "contenido",
+        "inhaltsverzeichnis", "inhalt",
+        "目录",
+    }
+
+    # Cerca la pagina Indice nelle prime 15 pagine
+    toc_page_idx = -1
+    toc_pages = []
+
+    for page_idx in range(min(15, len(doc))):
+        page = doc[page_idx]
+        text = page.get_text("text").strip()
+        if not text:
+            continue
+
+        first_line = text.split("\n")[0].strip().lower()
+        # La prima riga della pagina è il titolo dell'indice
+        if first_line in toc_page_titles:
+            toc_page_idx = page_idx
+            toc_pages.append(page_idx)
+            # L'indice potrebbe estendersi su più pagine consecutive
+            for next_pg in range(page_idx + 1, min(page_idx + 4, len(doc))):
+                next_text = doc[next_pg].get_text("text").strip()
+                # Se la pagina successiva continua con lo stesso pattern
+                # (righe con numeri, niente titolo nuovo)
+                if next_text and not next_text.split("\n")[0].strip().lower() in toc_page_titles:
+                    lines = next_text.split("\n")
+                    # Verifica che abbia il pattern TOC (righe con numeri a fine riga)
+                    has_numbers = sum(1 for l in lines
+                                     if l.strip() and re.match(r"^\d{1,4}$", l.strip()))
+                    if has_numbers >= 2:
+                        toc_pages.append(next_pg)
+                    else:
+                        break
+            break
+
+    if toc_page_idx < 0:
+        return []
+
+    # Estrai le righe dalle pagine TOC
+    toc_lines = []
+    for pg_idx in toc_pages:
+        page = doc[pg_idx]
+        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        for block in blocks:
+            if block["type"] != 0:
+                continue
+            for line in block.get("lines", []):
+                line_text = ""
+                for span in line.get("spans", []):
+                    line_text += span.get("text", "")
+                line_text = line_text.strip()
+                if line_text:
+                    toc_lines.append(line_text)
+
+    if not toc_lines:
+        return []
+
+    # Parsing delle entry TOC
+    # Pattern 1: righe alternate "Titolo\t" + "123"
+    # Pattern 2: righe "Titolo ... 123" o "Titolo\t123"
+    entries = []  # (title, printed_page_num)
+
+    i = 0
+    # Salta il titolo "Indice"
+    if toc_lines and toc_lines[0].lower().strip() in toc_page_titles:
+        i = 1
+
+    while i < len(toc_lines):
+        line = toc_lines[i]
+
+        # Pattern 1: la riga corrente è un titolo (termina con tab o non è un numero),
+        # e la riga successiva è un numero di pagina
+        if (i + 1 < len(toc_lines)
+                and re.match(r"^\d{1,4}$", toc_lines[i + 1].strip())
+                and not re.match(r"^\d{1,4}$", line.strip())):
+            title = line.rstrip("\t .")
+            page_num = int(toc_lines[i + 1].strip())
+            if title and 1 <= page_num <= 9999:
+                entries.append((title, page_num))
+            i += 2
+            continue
+
+        # Pattern 2: "Titolo ... 123" o "Titolo\t\t123" sulla stessa riga
+        m = re.match(r"^(.+?)[\s.·…\t]{3,}(\d{1,4})\s*$", line)
+        if m:
+            title = m.group(1).strip()
+            page_num = int(m.group(2))
+            if title and 1 <= page_num <= 9999:
+                entries.append((title, page_num))
+            i += 1
+            continue
+
+        i += 1
+
+    if len(entries) < 2:
+        return []
+
+    # Calcola l'offset tra pagine stampate e indici PDF
+    page_offset = _detect_page_number_offset(doc, body_font_size)
+
+    print(f"[pdf] Indice visuale trovato a pagina {toc_page_idx + 1}, "
+          f"{len(entries)} voci, offset pagina: {page_offset}")
+
+    # Costruisci i capitoli usando le entry TOC
+    chapters = []
+    total_pages = len(doc)
+
+    for i, (title, printed_page) in enumerate(entries):
+        # Converti da pagina stampata a indice PDF (0-based)
+        start_page = printed_page - 1 + page_offset
+        if start_page < 0 or start_page >= total_pages:
+            continue
+
+        # Fine capitolo = inizio del prossimo (o fine documento)
+        if i + 1 < len(entries):
+            end_page = entries[i + 1][1] - 1 + page_offset
+            end_page = min(end_page, total_pages)
+        else:
+            end_page = total_pages
+
+        # Estrai testo delle pagine del capitolo
+        chapter_text_parts = []
+        for page_num in range(start_page, end_page):
+            page = doc[page_num]
+            page_text = _extract_page_text_filtered(page, body_font_size, repeated_headers)
+            if page_text:
+                chapter_text_parts.append(page_text)
+
+        chapter_text = "\n\n".join(chapter_text_parts)
+        if chapter_text.strip():
+            chapters.append((title, chapter_text))
+
+    return chapters
+
+
 # ═══════════════════════════════════════════════════════════════════
 # ENTRY POINT PRINCIPALE
 # ═══════════════════════════════════════════════════════════════════
+
+def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
+    """Pulisce e filtra i capitoli grezzi, restituendo una lista di Chapter.
+
+    Applica pulizia PDF, pulizia TTS e filtra le sezioni non-contenuto.
+    """
+    chapters = []
+    chapter_index = 0
+    for title, raw_text in raw_chapters:
+        # Pulizia specifica PDF
+        cleaned = _clean_pdf_text(raw_text)
+
+        # Pulizia generica TTS (condivisa con epub_to_tts)
+        cleaned = clean_text_for_tts(cleaned)
+
+        # Filtro contenuto
+        if _is_non_content_section(title, cleaned):
+            continue
+
+        chapter_index += 1
+        chapter = Chapter(
+            index=chapter_index,
+            title=title.strip(),
+            text=cleaned.strip(),
+            source_file=os.path.basename(pdf_path),
+        )
+        chapters.append(chapter)
+
+    return chapters
+
+
+def _extract_full_text(doc: fitz.Document, body_font_size: float,
+                       repeated_headers: set) -> str:
+    """Estrae tutto il testo del documento, pagina per pagina, con filtri base."""
+    all_text_parts = []
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        page_text = _extract_page_text_filtered(page, body_font_size, repeated_headers)
+        if page_text:
+            all_text_parts.append(page_text)
+    return "\n\n".join(all_text_parts)
+
 
 def parse_pdf(pdf_path: str) -> BookInfo:
     """Parsa un file PDF ed estrae capitoli ottimizzati per TTS.
@@ -603,7 +852,13 @@ def parse_pdf(pdf_path: str) -> BookInfo:
     Strategia di segmentazione (in ordine di priorità):
     1. Outline/bookmarks del PDF (se presenti)
     2. Rilevamento heading per font size
-    3. Fallback: intero documento come singolo capitolo
+    3. Indice visuale (pagina "Indice" / "Contents" nel PDF)
+    4. Fallback: intero documento come singolo capitolo
+
+    Se una strategia produce capitoli ma tutti vengono filtrati come
+    non-contenuto, si passa alla strategia successiva. Se anche il
+    fallback finale viene filtrato, si forza l'inclusione dell'intero
+    testo come singolo capitolo (recovery di ultima istanza).
     """
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File non trovato: {pdf_path}")
@@ -632,56 +887,56 @@ def parse_pdf(pdf_path: str) -> BookInfo:
           f"header/footer ripetuti: {len(repeated_headers)}")
 
     # ── Segmentazione in capitoli ──
-    raw_chapters = []
+    # Ogni strategia produce raw_chapters → pulizia → filtro.
+    # Se dopo il filtro restano 0 capitoli, si prova la strategia successiva.
+
+    strategies = []
 
     # Strategia 1: outline/bookmarks
     if outline:
-        raw_chapters = _detect_chapters_from_outline(doc, outline, body_font_size, repeated_headers)
-        if raw_chapters:
-            print(f"[pdf] Capitoli da outline: {len(raw_chapters)}")
+        raw = _detect_chapters_from_outline(doc, outline, body_font_size, repeated_headers)
+        if raw:
+            strategies.append(("outline", raw))
 
     # Strategia 2: heading detection per font size
-    if not raw_chapters:
-        raw_chapters = _detect_chapters_from_headings(doc, body_font_size, repeated_headers)
-        if raw_chapters:
-            print(f"[pdf] Capitoli da heading font-size: {len(raw_chapters)}")
+    raw = _detect_chapters_from_headings(doc, body_font_size, repeated_headers)
+    if raw:
+        strategies.append(("heading font-size", raw))
 
-    # Strategia 3: fallback — tutto il documento come singolo capitolo
-    if not raw_chapters:
-        print("[pdf] Nessun capitolo rilevato, fallback a documento singolo")
-        all_text_parts = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            page_text = _extract_page_text_filtered(page, body_font_size, repeated_headers)
-            if page_text:
-                all_text_parts.append(page_text)
-        full_text = "\n\n".join(all_text_parts)
-        if full_text.strip():
-            raw_chapters = [(info.title, full_text)]
+    # Strategia 3: indice visuale
+    raw = _detect_chapters_from_visual_toc(doc, body_font_size, repeated_headers)
+    if raw:
+        strategies.append(("indice visuale", raw))
+
+    # Strategia 4: fallback — tutto il documento come singolo capitolo
+    full_text = _extract_full_text(doc, body_font_size, repeated_headers)
+    if full_text.strip():
+        strategies.append(("documento singolo", [(info.title, full_text)]))
 
     doc.close()
 
-    # ── Pulizia e costruzione capitoli ──
-    chapter_index = 0
-    for title, raw_text in raw_chapters:
-        # Pulizia specifica PDF
-        cleaned = _clean_pdf_text(raw_text)
+    # ── Prova ogni strategia in ordine ──
+    for strategy_name, raw_chapters in strategies:
+        chapters = _build_chapters_from_raw(raw_chapters, pdf_path)
+        if chapters:
+            print(f"[pdf] Capitoli da {strategy_name}: {len(chapters)}")
+            info.chapters = chapters
+            break
 
-        # Pulizia generica TTS (condivisa con epub_to_tts)
+    # ── Recovery di ultima istanza ──
+    # Se tutte le strategie hanno prodotto 0 capitoli dopo il filtro,
+    # ma c'è testo nel documento, forza l'inclusione senza filtri.
+    if not info.chapters and full_text.strip():
+        print("[pdf] Recovery: tutti i capitoli filtrati, forza inclusione testo completo")
+        cleaned = _clean_pdf_text(full_text)
         cleaned = clean_text_for_tts(cleaned)
-
-        # Filtro contenuto
-        if _is_non_content_section(title, cleaned):
-            continue
-
-        chapter_index += 1
-        chapter = Chapter(
-            index=chapter_index,
-            title=title.strip(),
-            text=cleaned.strip(),
-            source_file=os.path.basename(pdf_path),
-        )
-        info.chapters.append(chapter)
+        if cleaned.strip() and len(cleaned.split()) >= 30:
+            info.chapters.append(Chapter(
+                index=1,
+                title=info.title,
+                text=cleaned.strip(),
+                source_file=os.path.basename(pdf_path),
+            ))
 
     # ── Totali ──
     info.total_words = sum(c.word_count for c in info.chapters)
