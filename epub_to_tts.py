@@ -569,6 +569,11 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
     text = re.sub(r"\s+([.,;:!?])", r"\1", text)   # Spazio prima di punteggiatura
     text = re.sub(r"([.,;:!?]){3,}", r"\1\1", text)  # Punteggiatura ripetuta
     text = re.sub(r'"{2,}', '"', text)              # Virgolette doppie
+    # Punto/esclamativo/interrogativo attaccato a parola successiva senza spazio
+    # Es: "fine.Inizio" → "fine. Inizio", "no!Fermati" → "no! Fermati"
+    # Evita: "..." (ellipsis già gestiti), decimali "3.14" (cifra, non lettera)
+    # NB: le abbreviazioni (ecc., dott., ...) sono già espanse allo step 4
+    text = re.sub(r"([.!?])([A-Za-zÀ-ÖØ-öø-ÿ])", r"\1 \2", text)
 
     # 8. Rimuovi righe troppo corte isolate (probabilmente artefatti)
     lines = text.split("\n")
