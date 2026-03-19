@@ -129,10 +129,17 @@ LINE_SKIP_PATTERNS = [
     r"^\s*[*\u2022\u25CF]{1,5}\s*$",     # Asterischi/bullet decorativi isolati
     r"^\s*[-*_=~#]{3,}\s*$",             # Separatori visivi (---, ***, ===, ###)
     r"^\s*#{1,6}\s*$",                   # Solo hash senza testo
+    # Processing instructions EPUB residue (marcatori di pagina editoriali)
+    # Righe tipo: ?dp n="28" folio="22" ?  oppure  dp n="18" folio="12"
+    r"^\s*\?*\s*dp\s+n=.*$",
 ]
 
 # ── Pattern di sostituzione (rimuovono porzioni dal testo) ──
 NOISE_PATTERNS = [
+    # Processing instructions EPUB residue (inline e a fine paragrafo)
+    # Cattura con e senza delimitatori ?:
+    #   ?dp n="28" folio="22" ?   ??dp n="18" folio="12"??   dp n="18" folio="12"
+    (r"\?*\s*dp\s+n=[\"']?\d+[\"']?\s+folio=[\"']?\d*[\"']?\s*\?*", ""),
     # Riferimenti a note [1], [2], (1), {1}, [a], ecc.
     (r"\[\d+\]", ""),
     (r"\{\d+\}", ""),
@@ -494,6 +501,19 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
     text = re.sub(r"<[^>]+>", "", text)          # Tag HTML residui
     text = re.sub(r"&\w+;", "", text)            # Entità HTML residue (&amp; ecc.)
     text = re.sub(r"&\#\d+;", "", text)          # Entità HTML numeriche
+    # Processing instructions XML/EPUB residue (marcatori di pagina editoriali)
+    # Cattura tutte le varianti:
+    #   <?dp n="28" folio="22" ?>          — XML PI completa
+    #   ?dp n="28" folio="22" ?            — con delimitatori ?
+    #   ??dp n="18" folio="12"??           — con doppi delimitatori ??
+    #   dp n="18" folio="12"               — senza delimitatori (residuo puro)
+    text = re.sub(r"<\?[^?]*\?>", "", text)      # XML PI completa: <?...?>
+    # Prima rimuovi il pattern base (senza ?), poi pulisci i ? orfani residui
+    text = re.sub(r"\bdp\s+n=[\"']?\d+[\"']?\s+folio=[\"']?\d*[\"']?\s*", "", text)
+    text = re.sub(r"\?{1,3}\s*dp\s+[^?\n]*\?{1,3}", "", text)  # con delimitatori ?
+    # Pulisci ? orfani (residui da PI consecutive):
+    #  - "? ??" o " ???" → spazi/vuoto (? non preceduti da lettera = non domande)
+    text = re.sub(r"(?<![a-zA-ZÀ-ÿ])\s*\?+\s*", " ", text)  # ? senza parola prima
 
     # 3. Rimuovi pattern di rumore
     lines = text.split("\n")
@@ -573,10 +593,18 @@ def format_heading_for_tts(heading: str) -> str:
     """Formatta un heading di capitolo per lettura TTS naturale."""
     heading = heading.strip()
 
+    # Ordinali italiani/inglesi per matching numerico
+    _ORDINALS = (
+        r"primo|secondo|terzo|quarto|quinto|sesto|settimo|ottavo|nono|decimo"
+        r"|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+    )
+
     # Rimuovi numerazione tipo "Capitolo 1:" / "Chapter 3 -" e tieni solo il titolo
-    # ma mantieni "Capitolo X" se è l'unica cosa
+    # ma mantieni "Capitolo X" se è l'unica cosa.
+    # NB: \b dopo "Cap\.?" evita che "Cap" matchi come prefisso di "Capitolo".
     m = re.match(
-        r"^(Capitolo|Chapter|Cap\.?|Parte|Part|Sezione|Section)\s*[.:—\-]?\s*(\d+|[IVXLCDM]+)\s*[.:—\-]?\s*(.*)",
+        rf"^(Capitolo|Chapter|Cap\.?\b|Parte|Part|Sezione|Section)\s*[.:—\-]?\s*"
+        rf"(\d+|[IVXLCDM]+|{_ORDINALS})\s*[.:—\-]?\s*(.*)",
         heading,
         re.IGNORECASE,
     )
@@ -756,6 +784,69 @@ def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> boo
     return True
 
 
+def _is_title_content(title: str) -> bool:
+    """
+    Verifica se un titolo indica contenuto narrativo (non apparato critico).
+
+    Versione leggera di is_content_chapter: controlla solo il titolo,
+    senza requisiti di lunghezza del testo. Usata per sezioni da TOC
+    dove l'intro può essere breve ma il marcatore strutturale è utile.
+    """
+    title_lower = title.lower()
+    skip_titles = [
+        # ── Indice / TOC ──
+        "indice", "indice generale", "indice dei contenuti", "indice analitico",
+        "sommario", "table of contents", "contents", "toc",
+        "table des matières", "sommaire", "índice", "índice general",
+        "inhaltsverzeichnis", "inhalt",
+        # ── Copyright / Colophon ──
+        "copyright", "colophon", "note legali", "informazioni legali",
+        "avviso legale", "legal notice", "all rights reserved",
+        "copyright notice", "mentions légales", "aviso legal",
+        "impressum",
+        # ── Copertina / Frontespizio ──
+        "frontespizio", "title page", "cover", "copertina",
+        "half title", "halftitle", "page de titre",
+        # ── Dedica / Epigrafe ──
+        "dedica", "dedication", "dédicace", "dedicatoria",
+        "epigrafe", "epigraph", "épigraphe",
+        # ── Bibliografia / Riferimenti ──
+        "bibliografia", "bibliography", "bibliographie", "bibliografía",
+        "riferimenti bibliografici", "riferimenti", "references",
+        "opere citate", "works cited", "fonti", "sources",
+        "letture consigliate", "further reading", "suggested reading",
+        "per approfondire", "lectures complémentaires",
+        # ── Note ──
+        "note", "notes", "note al testo", "note a piè di pagina",
+        "note finali", "endnotes", "footnotes", "anmerkungen",
+        "note dell'autore", "note del traduttore", "note del curatore",
+        "note bibliografiche", "note critiche",
+        # ── Glossario ──
+        "glossario", "glossary", "glossaire", "glosario", "glossar",
+        # ── Indice analitico ──
+        "indice analitico", "indice dei nomi", "indice dei luoghi",
+        "indice delle opere", "indice tematico",
+        "index", "name index", "subject index", "word index",
+        # ── Appendice ──
+        "appendice", "appendix", "annexe", "apéndice", "anhang",
+        # ── Informazioni autore ──
+        "about the author", "sull'autore", "l'autore", "l'autrice",
+        "biography", "biografia", "biographie",
+        "about the translator", "nota del traduttore",
+        "dello stesso autore", "also by", "du même auteur",
+        "altre opere", "other books",
+        # ── Ringraziamenti ──
+        "ringraziamenti", "acknowledgements", "acknowledgments",
+        "remerciements", "agradecimientos", "danksagung",
+        # ── Errata / Crediti ──
+        "errata", "errata corrige", "credits", "crediti",
+        "photo credits", "image credits", "illustration credits",
+        # ── Indice riferimenti biblici (specifico per testi religiosi) ──
+        "indice dei riferimenti",
+    ]
+    return not any(skip in title_lower for skip in skip_titles)
+
+
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     """Parsa un file EPUB ed estrae capitoli ottimizzati per TTS."""
     book = epub.read_epub(epub_path, options={"ignore_ncx": False})
@@ -815,15 +906,67 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             sections = _split_html_by_headings(html_content, toc_titles)
 
             if sections:
+                # ── Pre-processing: unisci "Capitolo N" + titolo reale ──
+                # Pattern EPUB comune: "Capitolo primo" (vuoto) seguito da
+                # "LA CREATIVITÀ RELIGIOSA DELL'UOMO" (contenuto).
+                # Unisci in: "Capitolo primo — LA CREATIVITÀ RELIGIOSA DELL'UOMO"
+                merged_sections = []
+                i_sec = 0
+                while i_sec < len(sections):
+                    sec_title, sec_html = sections[i_sec]
+                    sec_text_raw = html_to_text(sec_html).strip()
+
+                    # Rileva pattern "Capitolo/Chapter N" senza contenuto
+                    is_chapter_number = bool(re.match(
+                        r"^(Capitolo|Chapter|Cap\.?|Parte|Part|Sezione|Section)"
+                        r"\s*(primo|secondo|terzo|quarto|quinto|sesto|settimo|"
+                        r"ottavo|nono|decimo|\d+|[IVXLCDM]+)\s*$",
+                        sec_title.strip(), re.IGNORECASE
+                    ))
+
+                    if is_chapter_number and len(sec_text_raw) < 50:
+                        # Unisci con la sezione successiva (se esiste)
+                        if i_sec + 1 < len(sections):
+                            next_title, next_html = sections[i_sec + 1]
+                            combined_title = f"{sec_title} — {next_title}"
+                            # Unisci anche il contenuto HTML
+                            combined_html = sec_html.replace("</body>", "") + next_html.replace("<body>", "")
+                            merged_sections.append((combined_title, combined_html))
+                            i_sec += 2
+                            continue
+                    merged_sections.append((sec_title, sec_html))
+                    i_sec += 1
+
                 # File multi-capitolo: processa ogni sezione
-                for section_title, section_html in sections:
+                for section_title, section_html in merged_sections:
                     raw_text = html_to_text(section_html)
                     clean = clean_text_for_tts(raw_text)
 
-                    if not is_content_chapter(clean, section_title):
+                    # Per sezioni da TOC: usa solo il filtro per titolo di
+                    # is_content_chapter, non il filtro per lunghezza.
+                    # Le intro brevi (o vuote) dei capitoli principali
+                    # sono marcatori strutturali utili per il TTS.
+                    if not _is_title_content(section_title):
                         continue
 
                     clean = _remove_duplicate_heading(clean, section_title)
+
+                    # Salta sezioni con testo vuoto, tranne i marcatori
+                    # di capitolo principale (titoli in maiuscolo o "Capitolo N —")
+                    # che servono come indicatori strutturali nel TTS.
+                    clean_stripped = clean.strip()
+                    if not clean_stripped or clean_stripped == ".":
+                        # Controlla se è un marcatore strutturale utile
+                        title_upper_chars = sum(1 for c in section_title if c.isupper())
+                        title_alpha_chars = sum(1 for c in section_title if c.isalpha())
+                        is_main_chapter = (
+                            # Titolo prevalentemente maiuscolo (es. "LA CREATIVITÀ...")
+                            (title_alpha_chars > 0 and title_upper_chars / title_alpha_chars > 0.6)
+                            # O contiene "Capitolo/Chapter —"
+                            or bool(re.search(r"(Capitolo|Chapter|Parte|Part)\s+.*\s*—\s*", section_title, re.IGNORECASE))
+                        )
+                        if not is_main_chapter:
+                            continue  # Salta sotto-sezione vuota
 
                     chapter_index += 1
                     chapter = Chapter(
@@ -1069,6 +1212,9 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
     if len(chapter_headings) < 2:
         return []
 
+    # Costruisci set di id() di TUTTI gli heading capitolo per rilevamento rapido
+    all_heading_ids = set(id(ch["element"]) for ch in chapter_headings)
+
     # Estrai HTML tra heading consecutivi
     sections = []
     for i, ch in enumerate(chapter_headings):
@@ -1084,6 +1230,12 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
         if i + 1 < len(chapter_headings):
             stop_element = chapter_headings[i + 1]["element"]
 
+        # Set di id() degli heading successivi (per rilevare wrapper annidati)
+        remaining_heading_ids = set(
+            id(chapter_headings[j]["element"])
+            for j in range(i + 1, len(chapter_headings))
+        )
+
         while current:
             if current == stop_element:
                 break
@@ -1091,6 +1243,18 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
                 current = current.next_sibling
                 continue
             if isinstance(current, Tag):
+                # Salta elementi che CONTENGONO heading di sezioni successive
+                # (evita duplicazione quando le sotto-sezioni sono racchiuse
+                #  in <div> wrapper che includono sia l'heading che il contenuto)
+                if remaining_heading_ids:
+                    contains_subsequent = False
+                    for desc in current.descendants:
+                        if isinstance(desc, Tag) and id(desc) in remaining_heading_ids:
+                            contains_subsequent = True
+                            break
+                    if contains_subsequent:
+                        current = current.next_sibling
+                        continue
                 section_parts.append(str(current))
             elif isinstance(current, NavigableString):
                 text = str(current).strip()
@@ -1099,8 +1263,9 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
             current = current.next_sibling
 
         section_html = "".join(section_parts)
-        if section_html.strip():
-            sections.append((title, f"<body>{section_html}</body>"))
+        # Emetti sempre la sezione (anche con contenuto vuoto):
+        # il chiamante deciderà se tenerla come marcatore strutturale.
+        sections.append((title, f"<body>{section_html}</body>"))
 
     return sections
 
@@ -1172,6 +1337,9 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
         residual = re.sub(r"[\s\W]+", "", residual)
         return len(residual) == 0
 
+    # Set di id() di TUTTI gli heading target per rilevamento rapido
+    all_heading_ids = set(id(h) for h in target_headings)
+
     # Estrai HTML tra heading consecutivi
     sections = []
     for i, heading in enumerate(target_headings):
@@ -1187,6 +1355,11 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
         if i + 1 < len(target_headings):
             stop_element = target_headings[i + 1]
 
+        # Set di id() degli heading successivi (per rilevare wrapper annidati)
+        remaining_heading_ids = set(
+            id(target_headings[j]) for j in range(i + 1, len(target_headings))
+        )
+
         while current:
             if current == stop_element:
                 break
@@ -1198,6 +1371,18 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
                 if _is_mini_toc(current):
                     current = current.next_sibling
                     continue
+                # Salta elementi che CONTENGONO heading di sezioni successive
+                # (evita duplicazione quando le sotto-sezioni sono racchiuse
+                #  in <div> wrapper che includono sia l'heading che il contenuto)
+                if remaining_heading_ids:
+                    contains_subsequent = False
+                    for desc in current.descendants:
+                        if isinstance(desc, Tag) and id(desc) in remaining_heading_ids:
+                            contains_subsequent = True
+                            break
+                    if contains_subsequent:
+                        current = current.next_sibling
+                        continue
                 section_parts.append(str(current))
             elif isinstance(current, NavigableString):
                 text = str(current).strip()
@@ -1221,6 +1406,16 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
             current = current.next_sibling
             continue
         if isinstance(current, Tag):
+            # Salta elementi che CONTENGONO heading target
+            # (wrapper div che racchiudono sia heading che contenuto)
+            contains_heading = False
+            for desc in current.descendants:
+                if isinstance(desc, Tag) and id(desc) in all_heading_ids:
+                    contains_heading = True
+                    break
+            if contains_heading:
+                current = current.next_sibling
+                continue
             # Salta div vuoti, hr, commenti
             text_content = current.get_text(strip=True)
             if text_content and len(text_content) > 50:
