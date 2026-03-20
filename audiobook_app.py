@@ -1881,12 +1881,88 @@ def _session_completed(s):
     return bool(set(s["events"]) & _completed_ops)
 
 
+def _session_in_progress(s, sid):
+    """Return True if session is currently generating (in progress).
+
+    A session is in-progress when:
+    - GENERATE is in its events (generation was started)
+    - No completion ops recorded yet
+    - No CANCEL recorded
+    - The job is still active in memory with status 'generating'
+    """
+    if "GENERATE" not in s["events"]:
+        return False
+    if _session_completed(s):
+        return False
+    if "CANCEL" in s["events"]:
+        return False
+    # Cross-reference with in-memory jobs dict for real-time status
+    job = jobs.get(sid)
+    if job and job.get("status") == "generating":
+        return True
+    return False
+
+
 @app.route("/logs")
 def admin_logs():
     """Admin log viewer: card-based, mobile-friendly, with day grouping and Excel export."""
     from datetime import datetime
     from collections import defaultdict
     import html as html_mod
+
+    # ── i18n for log page labels ──
+    _log_i18n = {
+        "it": {
+            "sessions": "Sessioni", "gen_completed": "Gen. completata",
+            "in_progress": "In corso", "cancelled": "Cancellati",
+            "email_sent": "Email inviate", "unique_clients": "Client unici",
+            "recurring": "Ricorrenti", "months": "Mesi",
+            "collapse": "Aggrega", "expand": "Mostra tutti",
+            "no_activity": "Nessuna attività registrata per",
+        },
+        "en": {
+            "sessions": "Sessions", "gen_completed": "Gen. completed",
+            "in_progress": "In progress", "cancelled": "Cancelled",
+            "email_sent": "Emails sent", "unique_clients": "Unique clients",
+            "recurring": "Returning", "months": "Months",
+            "collapse": "Collapse", "expand": "Show all",
+            "no_activity": "No activity recorded for",
+        },
+        "fr": {
+            "sessions": "Sessions", "gen_completed": "Gén. terminée",
+            "in_progress": "En cours", "cancelled": "Annulées",
+            "email_sent": "Emails envoyés", "unique_clients": "Clients uniques",
+            "recurring": "Récurrents", "months": "Mois",
+            "collapse": "Regrouper", "expand": "Tout afficher",
+            "no_activity": "Aucune activité enregistrée pour",
+        },
+        "de": {
+            "sessions": "Sitzungen", "gen_completed": "Gen. abgeschlossen",
+            "in_progress": "Laufend", "cancelled": "Abgebrochen",
+            "email_sent": "E-Mails gesendet", "unique_clients": "Einzelne Clients",
+            "recurring": "Wiederkehrend", "months": "Monate",
+            "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
+            "no_activity": "Keine Aktivitäten aufgezeichnet für",
+        },
+        "es": {
+            "sessions": "Sesiones", "gen_completed": "Gen. completada",
+            "in_progress": "En curso", "cancelled": "Canceladas",
+            "email_sent": "Emails enviados", "unique_clients": "Clientes únicos",
+            "recurring": "Recurrentes", "months": "Meses",
+            "collapse": "Agrupar", "expand": "Mostrar todos",
+            "no_activity": "No hay actividad registrada para",
+        },
+        "zh": {
+            "sessions": "会话", "gen_completed": "生成完成",
+            "in_progress": "进行中", "cancelled": "已取消",
+            "email_sent": "已发邮件", "unique_clients": "唯一客户",
+            "recurring": "回访", "months": "月份",
+            "collapse": "折叠", "expand": "全部显示",
+            "no_activity": "没有活动记录",
+        },
+    }
+    _blang = _get_browser_lang()
+    t = _log_i18n.get(_blang, _log_i18n["en"])
 
     ym = None
     for key in request.args:
@@ -1914,7 +1990,8 @@ def admin_logs():
 
     total_sessions = len(sessions)
     gen_completed = sum(1 for s in sessions.values() if _session_completed(s))
-    gen_cancelled = total_sessions - gen_completed
+    gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
+    gen_cancelled = total_sessions - gen_completed - gen_in_progress
     email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
@@ -1947,6 +2024,7 @@ def admin_logs():
     }
 
     cards_html = ""
+    now = datetime.now()
     for day_key in sorted(days.keys(), reverse=True):
         day_sessions = days[day_key]
         day_count = len(day_sessions)
@@ -1965,11 +2043,37 @@ def admin_logs():
 <div class="day-cards">
 """
         for sid, s in day_sessions:
+            is_progress = _session_in_progress(s, sid)
+            is_completed = _session_completed(s)
+            has_email = "EMAIL_SENT" in s["events"]
+            cid = s.get("client_id", "")
+            cid_count = client_session_count.get(cid, 0) if cid else 0
+            is_recurring = cid_count >= 2
+            is_identified = bool(cid)
+
+            # Determine card status for filtering
+            if is_progress:
+                card_status = "in_progress"
+            elif is_completed:
+                card_status = "completed"
+            else:
+                card_status = "cancelled"
+
             first = s["first_dt"].strftime("%H:%M")
             last = s["last_dt"].strftime("%H:%M")
-            delta = s["last_dt"] - s["first_dt"]
-            total_sec = int(delta.total_seconds())
-            elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}"
+
+            if is_progress:
+                delta = now - s["first_dt"]
+                total_sec = int(delta.total_seconds())
+                elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
+                start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
+                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span> ⏳'
+                last = "—"
+            else:
+                delta = s["last_dt"] - s["first_dt"]
+                total_sec = int(delta.total_seconds())
+                elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}"
+                elapsed_html = elapsed
 
             title = s["filename"]
             for ext in (".epub", ".txt", ".pdf"):
@@ -1981,10 +2085,8 @@ def admin_logs():
             fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
             timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
 
-            cid = s.get("client_id", "")
             cip = s.get("client_ip", "")
             cid_short = cid[:8] if cid else "—"
-            cid_count = client_session_count.get(cid, 0) if cid else 0
             cid_color = _client_color_map.get(cid, "var(--text-dim)")
             cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
             cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
@@ -2003,14 +2105,22 @@ def admin_logs():
             blang = html_mod.escape(s.get("browser_lang", "") or "")
             blang_display = f'<span class="card-blang">{blang}</span>' if blang else "—"
 
-            cards_html += f"""<div class="card">
+            card_cls = "card card-in-progress" if is_progress else "card"
+            data_attrs = (
+                f'data-status="{card_status}" '
+                f'data-email="{1 if has_email else 0}" '
+                f'data-recurring="{1 if is_recurring else 0}" '
+                f'data-identified="{1 if is_identified else 0}"'
+            )
+
+            cards_html += f"""<div class="{card_cls}" {data_attrs}>
 <div class="card-top">
 <span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
 <span class="badge" style="color:{fg};background:{bg}">{op}</span>
 </div>
 <div class="card-timeline">{timeline}</div>
 <div class="card-meta">
-<div class="meta-row"><span class="meta-label">⏱</span><span>{first} → {last} ({elapsed})</span></div>
+<div class="meta-row"><span class="meta-label">⏱</span><span>{first} → {last} ({elapsed_html})</span></div>
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
 <div class="meta-row"><span class="meta-label">🎤</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or "—"}</span></div>
@@ -2043,7 +2153,7 @@ def admin_logs():
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
 <title>Audiobook Maker — Activity Log ({ym})</title>
 <style>
-:root {{ --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#e2e8f0;--text-dim:#94a3b8;--accent:#38bdf8;--accent2:#a78bfa;--green:#22c55e;--red:#ef4444; }}
+:root {{ --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#e2e8f0;--text-dim:#94a3b8;--accent:#38bdf8;--accent2:#a78bfa;--green:#22c55e;--red:#ef4444;--orange:#f97316; }}
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh}}
 .header{{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
@@ -2060,10 +2170,15 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .months-nav a{{color:var(--text-dim);text-decoration:none;padding:4px 10px;border-radius:4px;font-size:.78rem;transition:all .15s}}
 .months-nav a:hover{{background:var(--surface2);color:var(--text)}}
 .months-nav a.active{{background:var(--accent);color:var(--bg);font-weight:600}}
-.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;padding:14px 20px}}
-.stat{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center}}
+.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;padding:14px 20px}}
+.stat{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center;cursor:pointer;transition:all .2s;user-select:none}}
+.stat:hover{{background:var(--surface2);transform:translateY(-1px)}}
+.stat.active{{border-color:var(--accent);box-shadow:0 0 0 2px rgba(56,189,248,.25)}}
+.stat.stat-green.active{{border-color:var(--green);box-shadow:0 0 0 2px rgba(34,197,94,.25)}}
+.stat.stat-red.active{{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.25)}}
+.stat.stat-orange.active{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.25)}}
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
-.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
 .day-group{{margin:0 12px 6px}}
 .day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
@@ -2076,6 +2191,11 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .day-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;padding:10px 0 4px}}
 .card{{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;transition:border-color .15s,box-shadow .15s}}
 .card:hover{{border-color:var(--accent);box-shadow:0 0 0 1px rgba(56,189,248,.15)}}
+.card-in-progress{{border-color:var(--orange);background:rgba(249,115,22,.06);animation:pulse-border 2s ease-in-out infinite}}
+.card-in-progress:hover{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.3)}}
+@keyframes pulse-border{{0%,100%{{border-color:var(--orange);box-shadow:0 0 0 0 rgba(249,115,22,.15)}}50%{{border-color:rgba(249,115,22,.5);box-shadow:0 0 8px 0 rgba(249,115,22,.2)}}}}
+.card.card-hidden{{display:none}}
+.day-group.day-hidden{{display:none}}
 .card-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}}
 .card-title{{font-weight:600;font-size:.82rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}}
 .badge{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.62rem;font-weight:700;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}}
@@ -2091,7 +2211,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .empty{{text-align:center;padding:60px 20px;color:var(--text-dim)}} .empty .icon{{font-size:3rem;margin-bottom:12px}}
 @media(max-width:600px){{
 .header{{padding:12px 14px;gap:8px}} .header h1{{font-size:.78rem}} .header .period{{font-size:1.1rem}}
-.stats{{grid-template-columns:repeat(3,1fr);gap:6px;padding:10px 12px}} .stat{{padding:8px 6px}} .stat .num{{font-size:1.2rem}} .stat .lbl{{font-size:.58rem}}
+.stats{{grid-template-columns:repeat(4,1fr);gap:6px;padding:10px 12px}} .stat{{padding:8px 6px}} .stat .num{{font-size:1.2rem}} .stat .lbl{{font-size:.58rem}}
 .months-nav{{padding:8px 12px;gap:4px}} .day-group{{margin:0 8px 4px}} .day-cards{{grid-template-columns:1fr;gap:8px;padding:8px 0 2px}} .card{{padding:12px}} .btn{{padding:6px 10px;font-size:.68rem}}
 .header-actions{{margin-left:0;width:100%;justify-content:flex-end}}
 }}
@@ -2108,19 +2228,20 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     </div>
 </div>
 
-<div class='months-nav'>{"<span class='label'>Mesi:</span>" + months_nav if months_nav else ""}<button class="btn btn-toggle" id="btnToggleDays" onclick="toggleAllDays()">Aggrega</button></div>
+<div class='months-nav'>{"<span class='label'>" + t["months"] + ":</span>" + months_nav if months_nav else ""}<button class="btn btn-toggle" id="btnToggleDays" onclick="toggleAllDays()">{t["collapse"]}</button></div>
 
 <div class="stats">
-    <div class="stat"><div class="num">{total_sessions}</div><div class="lbl">Sessioni</div></div>
-    <div class="stat stat-green"><div class="num">{gen_completed}</div><div class="lbl">Gen. completata</div></div>
-    <div class="stat stat-red"><div class="num">{gen_cancelled}</div><div class="lbl">Cancellati</div></div>
-    <div class="stat"><div class="num">{email_sent}</div><div class="lbl">Email inviate</div></div>
-    <div class="stat"><div class="num">{unique_clients}</div><div class="lbl">Client unici</div></div>
-    <div class="stat"><div class="num">{returning_clients}</div><div class="lbl">Ricorrenti</div></div>
+    <div class="stat active" data-filter="all" onclick="filterCards('all',this)"><div class="num">{total_sessions}</div><div class="lbl">{t["sessions"]}</div></div>
+    <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)"><div class="num">{gen_completed}</div><div class="lbl">{t["gen_completed"]}</div></div>
+    <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div></div>
+    <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">{gen_cancelled}</div><div class="lbl">{t["cancelled"]}</div></div>
+    <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
+    <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
+    <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">{returning_clients}</div><div class="lbl">{t["recurring"]}</div></div>
 </div>
 
 <div class="cards-container">
-{cards_html if cards_html else "<div class='empty'><div class='icon'>📭</div><p>Nessuna attività registrata per <strong>" + ym + "</strong></p></div>"}
+{cards_html if cards_html else "<div class='empty'><div class='icon'>📭</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
 </div>
 
 <script>
@@ -2132,7 +2253,62 @@ function toggleAllDays() {{
         if (allCollapsed) g.classList.remove('collapsed');
         else g.classList.add('collapsed');
     }});
-    btn.textContent = allCollapsed ? 'Aggrega' : 'Mostra tutti';
+    btn.textContent = allCollapsed ? '{t["collapse"]}' : '{t["expand"]}';
+}}
+
+function filterCards(filter, el) {{
+    // Toggle active state on stat buttons
+    document.querySelectorAll('.stat').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+
+    const cards = document.querySelectorAll('.card');
+    cards.forEach(card => {{
+        let show = false;
+        if (filter === 'all') {{
+            show = true;
+        }} else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{
+            show = card.dataset.status === filter;
+        }} else if (filter === 'email') {{
+            show = card.dataset.email === '1';
+        }} else if (filter === 'identified') {{
+            show = card.dataset.identified === '1';
+        }} else if (filter === 'recurring') {{
+            show = card.dataset.recurring === '1';
+        }}
+        card.classList.toggle('card-hidden', !show);
+    }});
+
+    // Hide day groups with no visible cards
+    document.querySelectorAll('.day-group').forEach(group => {{
+        const visibleCards = group.querySelectorAll('.card:not(.card-hidden)');
+        group.classList.toggle('day-hidden', visibleCards.length === 0);
+        // Update day count badge
+        const countBadge = group.querySelector('.day-count');
+        if (countBadge) {{
+            countBadge.textContent = visibleCards.length;
+        }}
+    }});
+}}
+
+// Live timer for in-progress sessions
+function updateLiveTimers() {{
+    const timers = document.querySelectorAll('.live-timer');
+    const now = new Date();
+    timers.forEach(timer => {{
+        const startStr = timer.dataset.start;
+        if (!startStr) return;
+        const start = new Date(startStr);
+        const diff = Math.max(0, Math.floor((now - start) / 1000));
+        const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+        const s = String(diff % 60).padStart(2, '0');
+        timer.textContent = h + ':' + m + ':' + s;
+    }});
+}}
+
+// Update timers every second
+if (document.querySelectorAll('.live-timer').length > 0) {{
+    setInterval(updateLiveTimers, 1000);
 }}
 </script>
 
@@ -2165,12 +2341,13 @@ def admin_logs_export():
     writer.writerow([
         "Session ID", "Date Start", "Date End", "Duration (min)",
         "Filename", "Last Status", "Events", "Client ID", "Client IP",
-        "Voice", "Browser Lang", "Completed", "Recurring Client"
+        "Voice", "Browser Lang", "Completed", "In Progress", "Recurring Client"
     ])
     for sid, s in sessions.items():
         delta = s["last_dt"] - s["first_dt"]
         duration_min = round(delta.total_seconds() / 60, 1)
         completed = "Yes" if _session_completed(s) else "No"
+        in_progress = "Yes" if _session_in_progress(s, sid) else "No"
         cid = s.get("client_id", "")
         recurring = "Yes" if client_session_count.get(cid, 0) >= 2 else "No"
         writer.writerow([
@@ -2178,7 +2355,7 @@ def admin_logs_export():
             s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"), duration_min,
             s["filename"], s["last_op"], " → ".join(s["events"]),
             cid, s.get("client_ip", ""), s.get("voice", ""),
-            s.get("browser_lang", ""), completed, recurring,
+            s.get("browser_lang", ""), completed, in_progress, recurring,
         ])
 
     try:
@@ -2192,7 +2369,8 @@ def admin_logs_export():
 
         total_s = len(sessions)
         gen_c = sum(1 for s_ in sessions.values() if _session_completed(s_))
-        gen_x = total_s - gen_c
+        gen_p = sum(1 for sid_, s_ in sessions.items() if _session_in_progress(s_, sid_))
+        gen_x = total_s - gen_c - gen_p
         em_s = sum(1 for s_ in sessions.values() if "EMAIL_SENT" in s_["events"])
         uniq = len(set(s_.get("client_id", "") for s_ in sessions.values() if s_.get("client_id")))
         ret = sum(1 for c in client_session_count.values() if c >= 2)
@@ -2200,15 +2378,16 @@ def admin_logs_export():
         ws.merge_cells("A1:B1")
         ws["A1"] = f"Audiobook Maker — Activity Log {ym}"
         ws["A1"].font = Font(name="Arial", bold=True, color="38bdf8", size=14)
-        summary = [("Sessioni", total_s), ("Gen. completata", gen_c), ("Cancellati", gen_x),
-                   ("Email inviate", em_s), ("Client unici", uniq), ("Ricorrenti", ret)]
+        summary = [("Sessioni", total_s), ("Gen. completata", gen_c), ("In corso", gen_p),
+                   ("Cancellati", gen_x), ("Email inviate", em_s), ("Client unici", uniq),
+                   ("Ricorrenti", ret)]
         for i, (lbl, val) in enumerate(summary):
             ws.cell(row=2, column=1 + i * 2, value=lbl).font = Font(name="Arial", color="94a3b8", size=10)
             ws.cell(row=2, column=2 + i * 2, value=val).font = Font(name="Arial", bold=True, color="e2e8f0", size=12)
 
         headers = ["Session ID", "Data inizio", "Data fine", "Durata (min)", "Contenuto",
                    "Ultimo stato", "Timeline eventi", "Client ID", "IP", "Voce",
-                   "Lingua browser", "Completato", "Client ricorrente"]
+                   "Lingua browser", "Completato", "In corso", "Client ricorrente"]
         hdr_fill = PatternFill("solid", fgColor="334155")
         hdr_font = Font(name="Arial", bold=True, color="e2e8f0", size=10)
         for col_idx, h in enumerate(headers, 1):
@@ -2224,6 +2403,7 @@ def admin_logs_export():
                         " → ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
                         s.get("voice", ""), s.get("browser_lang", ""),
                         "✓" if _session_completed(s) else "✗",
+                        "✓" if _session_in_progress(s, sid) else "",
                         "✓" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
             for col_idx, val in enumerate(row_data, 1):
                 c = ws.cell(row=row_idx, column=col_idx, value=val)
@@ -2231,10 +2411,10 @@ def admin_logs_export():
                 if row_idx % 2 == 0:
                     c.fill = PatternFill("solid", fgColor="1e293b")
 
-        col_widths = [12, 20, 20, 12, 45, 18, 50, 14, 16, 25, 10, 12, 14]
+        col_widths = [12, 20, 20, 12, 45, 18, 50, 14, 16, 25, 10, 12, 10, 14]
         for i, w in enumerate(col_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
-        ws.auto_filter.ref = f"A4:M{4 + len(sessions)}"
+        ws.auto_filter.ref = f"A4:N{4 + len(sessions)}"
 
         xlsx_io = io.BytesIO()
         wb.save(xlsx_io)
