@@ -271,6 +271,18 @@ select:focus{outline:none;border-color:var(--ac)}
 .donate-paypal{background:#003087;color:#fff;border-color:#002070}
 .donate-paypal:hover{background:#002070;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,48,135,.35)}
 
+/* ═══ DONATE MODAL ═══ */
+.dm-icon{text-align:center;font-size:2.4rem;margin-bottom:8px;animation:dmPulse 1.6s ease-in-out infinite}
+@keyframes dmPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+.dm-subtitle{font-size:1rem;font-weight:700;color:var(--tx);text-align:center;margin-bottom:10px;line-height:1.4}
+.dm-body{font-size:.88rem;color:var(--txd);line-height:1.6;text-align:center;margin-bottom:20px}
+.dm-btns{display:flex;flex-direction:column;gap:10px}
+.dm-btns .dm-row{display:flex;gap:10px}
+.dm-already{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;border-radius:10px;font-size:.88rem;font-weight:600;background:var(--srf2);color:var(--txd);border:1.5px solid var(--brd);cursor:pointer;transition:all .2s;font-family:inherit;width:100%}
+.dm-already:hover{border-color:var(--ok);color:var(--ok);background:rgba(34,197,94,.06);transform:translateY(-1px)}
+.dm-btns .donate-btn{flex:1;justify-content:center;padding:12px 18px;border-radius:10px;font-size:.9rem}
+@media(max-width:500px){.dm-btns .dm-row{flex-direction:column}}
+
 /* ═══ PROGRESS ═══ */
 .pa{padding:20px 0}
 .pb{width:100%;height:8px;background:var(--srf2);border-radius:4px;overflow:hidden;margin:16px 0 12px}
@@ -596,6 +608,34 @@ select:focus{outline:none;border-color:var(--ac)}
 
 <!-- Admin: active jobs monitor -->
 <a href="#" id="monLink" onclick="openMonitor();return false" style="position:fixed;bottom:8px;right:12px;font-size:11px;color:rgba(150,150,150,.35);text-decoration:none;z-index:50;font-family:monospace;transition:color .3s" onmouseenter="this.style.color='rgba(150,150,150,.7)'" onmouseleave="this.style.color='rgba(150,150,150,.35)'">&bull;&bull;&bull;</a>
+
+<!-- Language warning modal -->
+
+<!-- Donate prompt modal (shown before generation for returning users) -->
+<div class="modal-overlay" id="donateModal" onclick="if(event.target===this)closeDonateModalX()">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <h2 data-t="donate_modal_title"></h2>
+      <button class="modal-close" onclick="closeDonateModalX()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="dm-icon">❤️</div>
+      <div class="dm-subtitle" data-t="donate_modal_subtitle"></div>
+      <div class="dm-body" data-t="donate_body"></div>
+      <div class="dm-btns">
+        <div class="dm-row">
+          <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener"
+             class="donate-btn donate-coffee" onclick="onDonateModal('donate')">☕ <span data-t="donate_coffee"></span></a>
+          <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener"
+             class="donate-btn donate-paypal" onclick="onDonateModal('donate')">💙 <span data-t="donate_paypal"></span></a>
+        </div>
+        <button class="dm-already" onclick="onDonateModal('already')">
+          ✅ <span data-t="donate_modal_already"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Language warning modal -->
 <div class="modal-overlay" id="langWarnModal" onclick="if(event.target===this)_langWarnResolve(false)">

@@ -49,7 +49,7 @@ function _fetchMonitor(){
   });
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFreeBooks();closePodcastGuide();closeAbmGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open')}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDonateModalX();closeFreeBooks();closePodcastGuide();closeAbmGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open')}});
 
 let cl='en';
 function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
@@ -533,12 +533,70 @@ function _showLangWarning(){
   });
 }
 
+// ═══════════════════ DONATE MODAL ═══════════════════
+let _donateModalResolve=null;
+
+function _shouldShowDonateModal(){
+  // Show only if client has generated before (not first time) and not suppressed
+  try{
+    const gen=localStorage.getItem('abm_gen_count');
+    if(!gen||parseInt(gen)<1)return false; // first-time user → skip
+    const suppress=localStorage.getItem('abm_donate_dismiss');
+    if(suppress){
+      const until=parseInt(suppress);
+      if(Date.now()<until)return false; // still suppressed
+      localStorage.removeItem('abm_donate_dismiss'); // expired
+    }
+    return true;
+  }catch(e){return false}
+}
+
+function _markGeneration(){
+  // Increment generation counter so next time the modal can show
+  try{
+    const c=parseInt(localStorage.getItem('abm_gen_count')||'0');
+    localStorage.setItem('abm_gen_count',String(c+1));
+  }catch(e){}
+}
+
+function _suppressDonate(days){
+  try{localStorage.setItem('abm_donate_dismiss',String(Date.now()+days*86400000))}catch(e){}
+}
+
+function _showDonateModal(){
+  return new Promise(resolve=>{
+    _donateModalResolve=resolve;
+    applyI18n(); // ensure texts are up-to-date
+    document.getElementById('donateModal').classList.add('open');
+  });
+}
+
+function closeDonateModalX(){
+  const m=document.getElementById('donateModal');
+  if(!m||!m.classList.contains('open'))return;
+  m.classList.remove('open');
+  _suppressDonate(3); // X close → reappear after 3 days
+  if(_donateModalResolve){_donateModalResolve(true);_donateModalResolve=null}
+}
+
+function onDonateModal(action){
+  document.getElementById('donateModal').classList.remove('open');
+  _suppressDonate(30); // donate or "already donated" → suppress 30 days
+  if(_donateModalResolve){_donateModalResolve(true);_donateModalResolve=null}
+}
+
 async function startGen(){
   // Language warning: if book language unknown and user hasn't listened to preview
   if(bookData&&!bookData.language&&!previewListened){
     const proceed=await _showLangWarning();
     if(!proceed)return;
   }
+  // Donate modal: show for returning users before generation starts
+  if(_shouldShowDonateModal()){
+    await _showDonateModal();
+  }
+  // Mark this generation so the modal can appear next time
+  _markGeneration();
   // Collect selected chapter indices when in chapter mode
   let selectedChapters=null;
   if(!singleFile){
