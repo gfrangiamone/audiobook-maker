@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+_debug*
 *.py[cod]
 *.log
 *.egg-info/
