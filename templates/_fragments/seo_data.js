@@ -7,7 +7,7 @@ kw:"convertitore epub audiolibro, epub in audiolibro gratis, convertire ebook in
 ld:"Audiobook Maker"
 },
 en:{
-title:"Audiobook Maker — Free EPUB/PDF to Audiobook Converter | AI Voices",
+title:"Audiobook Maker: Free EPUB/PDF to MP3 | 400+ AI Voices",
 desc:"Convert your EPUB and PDF ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
 kw:"epub to audiobook converter, free epub to audiobook, convert ebook to audiobook online free, pdf to audiobook converter, pdf to mp3 converter, epub to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub",
 ld:"Audiobook Maker"
@@ -25,7 +25,7 @@ kw:"convertidor epub audiolibro, epub a audiolibro gratis, convertir ebook a aud
 ld:"Audiobook Maker"
 },
 de:{
-title:"Audiobook Maker — EPUB/PDF zu Hörbuch Kostenlos | KI-Stimmen",
+title:"Audiobook Maker: EPUB/PDF zu Hörbuch Gratis | KI-Stimmen",
 desc:"Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
 kw:"epub zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, pdf zu hörbuch, pdf in hörbuch umwandeln kostenlos, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos",
 ld:"Audiobook Maker"
@@ -78,21 +78,25 @@ hlx.href="https://audiobook-maker.com";
 // HTML lang attribute
 const htmlLangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans"};
 document.documentElement.lang=htmlLangMap[lang]||"en";
-// Structured Data (JSON-LD)
-let sc=document.querySelector('script[type="application/ld+json"]');
-if(!sc){sc=document.createElement("script");sc.type="application/ld+json";document.head.appendChild(sc)}
-sc.textContent=JSON.stringify({
+// Structured Data (JSON-LD) — update SoftwareApplication in <head>
+let sc=document.getElementById('jsonLd');
+if(sc){sc.textContent=JSON.stringify({
 "@context":"https://schema.org",
-"@type":"WebApplication",
+"@type":"SoftwareApplication",
 "name":s.ld,
 "url":"https://audiobook-maker.com",
 "description":s.desc,
 "applicationCategory":"MultimediaApplication",
-"operatingSystem":"Any",
+"applicationSubCategory":"Text-to-Speech Converter",
+"operatingSystem":"Any (Web Browser)",
 "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
 "inLanguage":langs.map(function(l){return hreflangMap[l]}),
 "browserRequirements":"Requires a modern web browser",
-"featureList":"EPUB to Audiobook, PDF to Audiobook, Text-to-Speech, AI Voices, MP3 Download, Multi-language Support",
+"featureList":["EPUB to MP3 audiobook conversion","PDF to MP3 audiobook conversion","400+ neural AI voices (Microsoft Edge TTS)","50+ languages supported","Chapter selection and preview","Podcast RSS feed generation","Email notification for long conversions","No registration required","No usage limits","Browser-based processing"],
+"isAccessibleForFree":true,
+"author":{"@type":"Person","name":"Giuseppe Frangiamone","url":"https://github.com/gfrangiamone"},
+"license":"https://www.gnu.org/licenses/agpl-3.0.html",
+"sameAs":["https://github.com/gfrangiamone/audiobook-maker","https://alternativeto.net/software/audiobook-maker/"],
 "aggregateRating":{"@type":"AggregateRating","ratingValue":"4.7","bestRating":"5","worstRating":"1","ratingCount":"386"}
-});
+})}
 }

@@ -1,0 +1,5 @@
+='<style>.pg-guide code{background:var(--srf2);color:var(--ac);padding:2px 6px;border-radius:4px;font-size:.85em;word-break:break-all}.pg-guide a{color:var(--ac)}.pg-guide i{color:inherit;opacity:.85}</style>';
+  h+='<div class="pg-guide" style="font-size:.93rem;line-height:1.6;color:var(--tx)">';
+  // Intro
+  h+='<p style="margin:0 0 10px;color:var(--tx)">'+g.intro+'</p>';
+  h+='<div style="backg

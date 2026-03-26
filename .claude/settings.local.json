@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(timeout 8 python audiobook_app.py)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8234/en/)"
     ]
   }
 }

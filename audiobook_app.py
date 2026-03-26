@@ -3734,7 +3734,7 @@ _SEO_DATA = {
         "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 con voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
     "en": {
-        "title":   "Audiobook Maker — Free EPUB/PDF to Audiobook Converter | AI Voices",
+        "title":   "Audiobook Maker: Free EPUB/PDF to MP3 | 400+ AI Voices",
         "desc":    "Convert your EPUB and PDF ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
         "kw":      "epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf",
         "ld_name": "Audiobook Maker",
@@ -3755,7 +3755,7 @@ _SEO_DATA = {
         "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
     "de": {
-        "title":   "Audiobook Maker — EPUB/PDF zu Hörbuch Kostenlos | KI-Stimmen",
+        "title":   "Audiobook Maker: EPUB/PDF zu Hörbuch Gratis | KI-Stimmen",
         "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
         "kw":      "epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, pdf zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos",
         "ld_name": "Audiobook Maker",

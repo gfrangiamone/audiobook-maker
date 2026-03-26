@@ -30,20 +30,32 @@ __SEO_HREFLANG__
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" id="twTitle" content="__SEO_TITLE__">
 <meta name="twitter:description" id="twDesc" content="__SEO_DESC__">
-<!-- JSON-LD Structured Data -->
+<!-- JSON-LD Structured Data: SoftwareApplication -->
 <script type="application/ld+json" id="jsonLd">
 {
   "@context":"https://schema.org",
-  "@type":"WebApplication",
+  "@type":"SoftwareApplication",
   "name":"__SEO_LD_NAME__",
   "applicationCategory":"MultimediaApplication",
-  "operatingSystem":"Any",
+  "applicationSubCategory":"Text-to-Speech Converter",
+  "operatingSystem":"Any (Web Browser)",
   "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
   "description":"__SEO_LD_DESC__",
-  "featureList":["EPUB to audiobook conversion","PDF to audiobook conversion","Neural TTS voices","Multiple languages","Chapter selection","Podcast RSS feed","Accessibility support"],
-  "aggregateRating":{"@type":"AggregateRating","ratingValue":"4.7","bestRating":"5","worstRating":"1","ratingCount":"386"}
+  "featureList":["EPUB to MP3 audiobook conversion","PDF to MP3 audiobook conversion","TXT to MP3 audiobook conversion","400+ neural AI voices (Microsoft Edge TTS)","50+ languages supported","Chapter selection and preview","Podcast RSS feed generation","Email notification for long conversions","Batch processing","No registration required","No usage limits","Browser-based processing","Accessibility support for visually impaired and dyslexic users"],
+  "softwareVersion":"__APP_VERSION__",
+  "dateModified":"2026-03",
+  "url":"https://audiobook-maker.com",
+  "author":{"@type":"Person","name":"Giuseppe Frangiamone","url":"https://github.com/gfrangiamone"},
+  "license":"https://www.gnu.org/licenses/agpl-3.0.html",
+  "isAccessibleForFree":true,
+  "aggregateRating":{"@type":"AggregateRating","ratingValue":"4.7","bestRating":"5","worstRating":"1","ratingCount":"386"},
+  "sameAs":["https://github.com/gfrangiamone/audiobook-maker","https://alternativeto.net/software/audiobook-maker/"]
 }
 </script>
+<!-- JSON-LD: FAQPage (server-injected per language) -->
+<script type="application/ld+json" id="seoFaqLd">__SEO_FAQ_LD__</script>
+<!-- JSON-LD: HowTo (server-injected per language) -->
+<script type="application/ld+json" id="seoHowtoLd">__SEO_HOWTO_LD__</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
@@ -547,7 +559,7 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 
   <!-- FOOTER -->
-  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="#seoContent" data-t="footer_privacy" onclick="document.getElementById('seoContent').scrollIntoView({behavior:'smooth'});return false"></a></div>
+  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="#seoContent" data-t="footer_privacy" onclick="document.getElementById('seoContent').scrollIntoView({behavior:'smooth'});return false"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a></div>
 
   <!-- ABOUT MODAL -->
   <div class="modal-overlay" id="aboutModal">
