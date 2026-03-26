@@ -129,8 +129,8 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .site-desc{font-size:.82rem;color:var(--txd);line-height:1.45}
 @media(max-width:500px){.modal{max-height:92vh}.modal-body{padding:12px 16px 20px}}
 
-/* ═══ SEO CONTENT (visually hidden, accessible to crawlers & screen readers) ═══ */
-#seoContent{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* ═══ SEO CONTENT (visible section below the app) ═══ */
+/* Styles are injected by seo_content.py — no hiding rules here */
 
 /* ═══ FOOTER ═══ */
 .footer{text-align:center;padding:24px 0 8px;margin-top:8px}
@@ -346,6 +346,7 @@ select:focus{outline:none;border-color:var(--ac)}
 <div class="app">
   <div class="hdr">
     <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
+    <p data-t="h1_tagline" style="font-size:.85rem;color:var(--txd);margin-top:2px"></p>
     <p data-t="subtitle"></p>
     <div class="toolbar">
       <div class="lsw" id="lsw">
@@ -546,7 +547,7 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 
   <!-- FOOTER -->
-  <div class="footer"><a href="#" id="aboutBtn"></a></div>
+  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="#seoContent" data-t="footer_privacy" onclick="document.getElementById('seoContent').scrollIntoView({behavior:'smooth'});return false"></a></div>
 
   <!-- ABOUT MODAL -->
   <div class="modal-overlay" id="aboutModal">
