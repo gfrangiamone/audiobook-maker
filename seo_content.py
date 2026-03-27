@@ -20,9 +20,12 @@ Il blocco si adatta al tema della pagina usando le CSS custom properties
 (--tx, --txd, --srf, ecc.) già definite nel tema light/dark.
 """
 
+from datetime import datetime
 from html import escape
 import json
 import re
+
+from version import get_formatted_date
 
 # Convert bare URLs in escaped text to clickable links
 _URL_RE = re.compile(r'(https?://[^\s)<>&]+/?)(?=[)\s.,;]|$)')
@@ -732,7 +735,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         </details>
 
         <div class="seo-updated">
-            <time datetime="2026-03">{escape(c["updated_label"])}: March 2026</time>
+            <time datetime="{datetime.now().strftime('%Y-%m')}">{escape(c["updated_label"])}: {get_formatted_date()}</time>
         </div>"""
 
     return article_html, faq_ld_json, howto_ld_json
