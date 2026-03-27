@@ -1800,6 +1800,27 @@ def favicon_svg():
                      max_age=86400 * 30)
 
 
+@app.route("/manifest.json")
+def web_manifest():
+    """Web App Manifest — Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""
+    manifest = {
+        "name": "Audiobook Maker",
+        "short_name": "Audiobook Maker",
+        "icons": [
+            {"src": "/favicon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"},
+            {"src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any"}
+        ],
+        "display": "standalone",
+        "start_url": "/",
+        "theme_color": "#c29a6c",
+        "background_color": "#1a1a2e"
+    }
+    return json.dumps(manifest), 200, {
+        "Content-Type": "application/manifest+json",
+        "Cache-Control": "public, max-age=2592000"
+    }
+
 
 # ─── Admin log viewer (/logs) ────────────────────────────────────────────────
 # URL: /logs?2026-03  (parametro = anno-mese)
