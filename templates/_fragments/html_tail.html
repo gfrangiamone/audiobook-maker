@@ -49,7 +49,55 @@ function _fetchMonitor(){
   });
 }
 
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDonateModalX();closeFreeBooks();closePodcastGuide();closeAbmGuide();closeMonitor();previewStop();document.getElementById('aboutModal').classList.remove('open')}});
+// ═══════════════════ LANGUAGE DROPDOWN ═══════════════════
+const LANG_FLAGS={'it':'🇮🇹','en':'🇬🇧','fr':'🇫🇷','es':'🇪🇸','de':'🇩🇪','zh':'🇨🇳'};
+function toggleLangDropdown(){
+  const el=document.getElementById('langDropdown');
+  if(el)el.classList.toggle('open');
+}
+function closeLangDropdown(){
+  const el=document.getElementById('langDropdown');
+  if(el)el.classList.remove('open');
+}
+function selectLang(code){
+  const codeEl=document.getElementById('langCode');
+  const flagEl=document.getElementById('langFlag');
+  if(codeEl)codeEl.textContent=code.toUpperCase();
+  if(flagEl)flagEl.textContent=LANG_FLAGS[code]||'';
+  document.querySelectorAll('.lang-option').forEach(opt=>opt.classList.toggle('active',opt.dataset.lang===code));
+  closeLangDropdown();
+  setLang(code);
+}
+
+// Sync dropdown with current language on init
+function syncLangDropdown(){
+  const cur=cl||'en';
+  const codeEl=document.getElementById('langCode');
+  const flagEl=document.getElementById('langFlag');
+  if(codeEl)codeEl.textContent=cur.toUpperCase();
+  if(flagEl)flagEl.textContent=LANG_FLAGS[cur]||'';
+  document.querySelectorAll('.lang-option').forEach(opt=>opt.classList.toggle('active',opt.dataset.lang===cur));
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click',function(e){if(!e.target.closest('.lang-switcher'))closeLangDropdown()});
+
+// Keyboard shortcuts handler (inside DOMContentLoaded for safety)
+function setupKeyboardShortcuts(){
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){
+      closeDonateModalX();
+      closeFreeBooks();
+      closePodcastGuide();
+      closeAbmGuide();
+      closeMonitor();
+      previewStop();
+      const aboutModal=document.getElementById('aboutModal');
+      if(aboutModal)aboutModal.classList.remove('open');
+      closeLangDropdown();
+    }
+  });
+}
 
 let cl='en';
 function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
@@ -102,28 +150,51 @@ function toggleTheme(){
 document.addEventListener('DOMContentLoaded',()=>{
   applyTheme(detectTheme());
   cl=detectLang();applyI18n();buildAbout();applySEO();
-  document.getElementById('lsw').onclick=e=>{if(e.target.dataset.l)setLang(e.target.dataset.l)};
-  document.getElementById('themeBtn').onclick=toggleTheme;
-  document.getElementById('fbBtn').onclick=openFreeBooks;
-  document.getElementById('fbClose').onclick=closeFreeBooks;
-  document.getElementById('fbModal').onclick=e=>{if(e.target===e.currentTarget)closeFreeBooks()};
-  document.getElementById('pgBtn').onclick=openPodcastGuide;
-  document.getElementById('pgClose').onclick=closePodcastGuide;
-  document.getElementById('pgModal').onclick=e=>{if(e.target===e.currentTarget)closePodcastGuide()};
-  document.getElementById('aboutBtn').onclick=e=>{e.preventDefault();openAbout()};
-  document.getElementById('aboutClose').onclick=()=>document.getElementById('aboutModal').classList.remove('open');
-  document.getElementById('aboutModal').onclick=e=>{if(e.target===e.currentTarget)e.target.classList.remove('open')};
+  syncLangDropdown();
+  setupKeyboardShortcuts();
+  
+  // Safe DOM element setup with null checks
+  const lsw=document.getElementById('lsw');
+  if(lsw)lsw.onclick=e=>{if(e.target.dataset.l)setLang(e.target.dataset.l)};
+  const themeBtn=document.getElementById('themeBtn');
+  if(themeBtn)themeBtn.onclick=toggleTheme;
+  const fbBtn=document.getElementById('fbBtn');
+  if(fbBtn)fbBtn.onclick=openFreeBooks;
+  const fbClose=document.getElementById('fbClose');
+  if(fbClose)fbClose.onclick=closeFreeBooks;
+  const fbModal=document.getElementById('fbModal');
+  if(fbModal)fbModal.onclick=e=>{if(e.target===e.currentTarget)closeFreeBooks()};
+  const pgBtn=document.getElementById('pgBtn');
+  if(pgBtn)pgBtn.onclick=openPodcastGuide;
+  const pgClose=document.getElementById('pgClose');
+  if(pgClose)pgClose.onclick=closePodcastGuide;
+  const pgModal=document.getElementById('pgModal');
+  if(pgModal)pgModal.onclick=e=>{if(e.target===e.currentTarget)closePodcastGuide()};
+  const aboutBtn=document.getElementById('aboutBtn');
+  if(aboutBtn)aboutBtn.onclick=e=>{e.preventDefault();openAbout()};
+  const aboutClose=document.getElementById('aboutClose');
+  if(aboutClose)aboutClose.onclick=()=>{const m=document.getElementById('aboutModal');if(m)m.classList.remove('open')};
+  const aboutModal=document.getElementById('aboutModal');
+  if(aboutModal)aboutModal.onclick=e=>{if(e.target===e.currentTarget)e.target.classList.remove('open')};
   // Monitor modal handlers
-  document.getElementById('monClose').onclick=closeMonitor;
-  document.getElementById('monModal').onclick=e=>{if(e.target===e.currentTarget)closeMonitor()};
+  const monClose=document.getElementById('monClose');
+  if(monClose)monClose.onclick=closeMonitor;
+  const monModal=document.getElementById('monModal');
+  if(monModal)monModal.onclick=e=>{if(e.target===e.currentTarget)closeMonitor()};
   // ABM guide modal handlers
-  document.getElementById('abmGuideModal').onclick=e=>{if(e.target===e.currentTarget)closeAbmGuide()};
+  const abmGuideModal=document.getElementById('abmGuideModal');
+  if(abmGuideModal)abmGuideModal.onclick=e=>{if(e.target===e.currentTarget)closeAbmGuide()};
   // Email modal handlers
-  document.getElementById('emSubmit').onclick=submitEmail;
-  document.getElementById('emSkip').onclick=skipEmail;
-  document.getElementById('emClose').onclick=skipEmail;
+  const emSubmit=document.getElementById('emSubmit');
+  if(emSubmit)emSubmit.onclick=submitEmail;
+  const emSkip=document.getElementById('emSkip');
+  if(emSkip)emSkip.onclick=skipEmail;
+  const emClose=document.getElementById('emClose');
+  if(emClose)emClose.onclick=skipEmail;
   // Email modal: persistent — no dismiss on overlay click (only explicit Skip or Submit)
-  document.getElementById('emailModal').onclick=e=>{if(e.target===e.currentTarget)e.stopPropagation()};
+  const emailModal=document.getElementById('emailModal');
+  if(emailModal)emailModal.onclick=e=>{if(e.target===e.currentTarget)e.stopPropagation()};
+  
   setupUpload();loadVoices();
   document.getElementById('btnG').onclick=startGen;
   document.getElementById('btnD').onclick=downloadFile;
@@ -213,7 +284,37 @@ function handleFile(file){
   document.getElementById('s1sum').textContent='✓ '+file.name;
   document.getElementById('utx').textContent=t('upload_ok');
   document.getElementById('aerr').innerHTML='';
+  // Show upload progress
+  showUploadProgress(file);
   analyzeEpub(file);
+}
+function showUploadProgress(file){
+  const progress=document.getElementById('uploadProgress');
+  const fill=document.getElementById('uploadProgressFill');
+  const status=document.getElementById('uploadStatus');
+  const percent=document.getElementById('uploadPercent');
+  progress.style.display='block';
+  // Simulate progress (actual XHR upload would give real progress)
+  let p=0;
+  const totalSize=file.size;
+  const interval=setInterval(()=>{
+    p+=Math.random()*12;
+    if(p>=85){p=85;clearInterval(interval)}
+    fill.style.width=p+'%';
+    percent.textContent=Math.round(p)+'%';
+    const uploaded=Math.round((p/100)*totalSize);
+    status.textContent=fmtBytes(uploaded)+' / '+fmtBytes(totalSize);
+  },150);
+  // Store interval to clear when done
+  window._uploadProgressInterval=interval;
+}
+function hideUploadProgress(){
+  const progress=document.getElementById('uploadProgress');
+  const fill=document.getElementById('uploadProgressFill');
+  fill.style.width='100%';
+  document.getElementById('uploadPercent').textContent='100%';
+  setTimeout(()=>{progress.style.display='none';fill.style.width='0%'},500);
+  if(window._uploadProgressInterval){clearInterval(window._uploadProgressInterval);window._uploadProgressInterval=null}
 }
 
 async function analyzeEpub(file){
@@ -223,8 +324,8 @@ async function analyzeEpub(file){
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
     const d=await r.json();
-    if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');return}
-    bookData=d;jobId=d.job_id;lo.classList.remove('vis');
+    if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
+    bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
     isTxtFile=(d.file_type==='txt');
     const isAbmFile=(d.file_type==='abm');
     if(d.language){
@@ -283,6 +384,9 @@ function updVoices(){
   if(dv)sel.value=dv.id;
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();};
   _updateVoiceChip();checkVoiceMismatch();
+  // Reset speed to "Normal" (+0%) whenever language or voice changes
+  const vrSel=document.getElementById('vr');
+  if(vrSel)vrSel.value='+0%';
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════

@@ -109,13 +109,35 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .hdr p{color:var(--txd);font-size:.95rem}
 
 /* ═══ TOOLBAR: language + theme ═══ */
-.toolbar{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
-.lsw{display:flex;gap:4px;flex-wrap:wrap}
-.lsw button{background:var(--srf2);border:1px solid var(--brd);color:var(--txd);padding:4px 10px;border-radius:6px;font-size:.78rem;cursor:pointer;font-family:inherit;transition:all .2s}
-.lsw button:hover{border-color:var(--brdh);color:var(--tx)}
-.lsw button.on{background:var(--acs);border-color:var(--ac);color:var(--ac);font-weight:600}
+.toolbar{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+
+/* Language Switcher Dropdown (compact) */
+.lang-switcher{position:relative;display:inline-block}
+.lang-current{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--srf2);border:1px solid var(--brd);border-radius:8px;cursor:pointer;font-size:.82rem;color:var(--txd);transition:all .2s;min-width:88px;justify-content:space-between}
+.lang-current:hover{border-color:var(--brdh);color:var(--tx)}
+.lang-current .chevron{font-size:.6rem;transition:transform .2s}
+.lang-dropdown{position:absolute;top:calc(100% + 4px);left:0;min-width:130px;background:var(--srf);border:1px solid var(--brd);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:100;overflow:hidden;opacity:0;visibility:hidden;transform:translateY(-8px);transition:all .2s ease}
+.lang-dropdown.open{opacity:1;visibility:visible;transform:translateY(0)}
+.lang-option{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:.82rem;color:var(--txd);transition:background .15s}
+.lang-option:hover{background:var(--srf2);color:var(--tx)}
+.lang-option.active{background:var(--acs);color:var(--ac);font-weight:600}
+
+/* Original lsw buttons hidden (replaced by dropdown) */
+.lsw{display:none}
+
+/* Keyboard shortcuts hint */
+.shortcuts-hint{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:.72rem;color:var(--txm);justify-content:center}
+.shortcut-key{display:inline-flex;align-items:center;gap:3px;padding:2px 5px;background:var(--srf2);border:1px solid var(--brd);border-radius:4px;font-size:.68rem;font-family:monospace}
+
+/* Tooltip styles */
+.tooltip-trigger{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txm);font-size:.65rem;cursor:help;transition:all .2s;margin-left:4px;font-weight:700;vertical-align:middle}
+.tooltip-trigger:hover{border-color:var(--ac);color:var(--ac)}
+.tooltip-content{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--tx);color:var(--bg);font-size:.75rem;padding:8px 12px;border-radius:6px;white-space:nowrap;max-width:260px;white-space:normal;line-height:1.4;z-index:50;opacity:0;visibility:hidden;transition:all .2s;pointer-events:none;text-align:left}
+.tooltip-content::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:var(--tx)}
+.tooltip-trigger:hover .tooltip-content{opacity:1;visibility:visible}
+
 .theme-sep{width:1px;height:20px;background:var(--brd);flex-shrink:0}
-.theme-btn{background:var(--srf2);border:1px solid var(--brd);color:var(--txd);width:36px;height:28px;border-radius:6px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0}
+.theme-btn{background:var(--srf2);border:1px solid var(--brd);color:var(--txd);width:34px;height:28px;border-radius:8px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0}
 .theme-btn:hover{border-color:var(--ac);color:var(--ac)}
 
 /* ═══ FREE BOOKS BUTTON ═══ */
@@ -177,7 +199,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .step.collapsed .sh-sum{max-width:300px;opacity:1}
 .sn{width:32px;height:32px;background:var(--acs);color:var(--ac);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;flex-shrink:0;transition:background .3s,color .3s}
 .step.done .sn{background:var(--ok);color:#fff}
-.st{font-weight:600;font-size:1.05rem}
+.st{font-weight:600;font-size:1.05rem;position:relative}
 
 /* ═══ UPLOAD ═══ */
 .uz{border:2px dashed var(--brd);border-radius:var(--r);padding:48px 24px;text-align:center;cursor:pointer;transition:all .25s;background:var(--srf2)}
@@ -187,6 +209,11 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .uz .ic{font-size:2.5rem;margin-bottom:12px}
 .uz .tx{color:var(--txd);font-size:.9rem}
 .uz .fn{color:var(--ok);font-weight:600;margin-top:8px}
+/* Upload progress bar */
+.upload-progress{display:none;margin-top:14px}
+.upload-progress-bar{height:5px;background:var(--srf3);border-radius:3px;overflow:hidden}
+.upload-progress-fill{height:100%;background:linear-gradient(90deg,var(--ac),var(--ach));border-radius:3px;transition:width .3s ease;width:0%}
+.upload-progress-text{display:flex;justify-content:space-between;margin-top:5px;font-size:.75rem;color:var(--txm)}
 
 /* ═══ FORMS ═══ */
 .fr{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
@@ -298,8 +325,11 @@ select:focus{outline:none;border-color:var(--ac)}
 
 /* ═══ PROGRESS ═══ */
 .pa{padding:20px 0}
-.pb{width:100%;height:8px;background:var(--srf2);border-radius:4px;overflow:hidden;margin:16px 0 12px}
-.pf{height:100%;background:linear-gradient(90deg,var(--ac),var(--ach));border-radius:4px;transition:width .5s ease;width:0}
+.pb{width:100%;height:10px;background:var(--srf2);border-radius:5px;overflow:hidden;margin:16px 0 12px;position:relative}
+.pf{height:100%;background:linear-gradient(90deg,var(--ac),var(--ach));border-radius:5px;transition:width .5s ease;width:0;position:relative}
+/* Shimmer animation on progress bar */
+.pf::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:shimmer 1.4s infinite}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 .pt{display:flex;justify-content:space-between;align-items:baseline}
 .pp{font-size:2rem;font-weight:700;color:var(--ac)}
 .pc{font-size:.85rem;color:var(--txd);text-align:right;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -362,13 +392,21 @@ select:focus{outline:none;border-color:var(--ac)}
     <p data-t="h1_tagline" style="font-size:.85rem;color:var(--txd);margin-top:2px"></p>
     <p data-t="subtitle"></p>
     <div class="toolbar">
-      <div class="lsw" id="lsw">
-        <button data-l="it">Italiano</button>
-        <button data-l="en">English</button>
-        <button data-l="fr">Fran&ccedil;ais</button>
-        <button data-l="es">Espa&ntilde;ol</button>
-        <button data-l="de">Deutsch</button>
-        <button data-l="zh">&#x4E2D;&#x6587;</button>
+      <!-- Language Switcher Dropdown -->
+      <div class="lang-switcher" id="langSwitcher">
+        <div class="lang-current" id="langCurrent" onclick="toggleLangDropdown()">
+          <span class="flag" id="langFlag">🇮🇹</span>
+          <span class="lang-code" id="langCode">IT</span>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="lang-dropdown" id="langDropdown">
+          <div class="lang-option active" data-lang="it" onclick="selectLang('it')"><span class="flag">🇮🇹</span>Italiano</div>
+          <div class="lang-option" data-lang="en" onclick="selectLang('en')"><span class="flag">🇬🇧</span>English</div>
+          <div class="lang-option" data-lang="fr" onclick="selectLang('fr')"><span class="flag">🇫🇷</span>Français</div>
+          <div class="lang-option" data-lang="es" onclick="selectLang('es')"><span class="flag">🇪🇸</span>Español</div>
+          <div class="lang-option" data-lang="de" onclick="selectLang('de')"><span class="flag">🇩🇪</span>Deutsch</div>
+          <div class="lang-option" data-lang="zh" onclick="selectLang('zh')"><span class="flag">🇨🇳</span>中文</div>
+        </div>
       </div>
       <div class="theme-sep"></div>
       <button class="theme-btn" id="themeBtn" title="Toggle theme">&#x2600;&#xFE0F;</button>
@@ -404,13 +442,17 @@ select:focus{outline:none;border-color:var(--ac)}
 
   <!-- STEP 1 -->
   <div class="step" id="s1">
-    <div class="sh" onclick="toggleStep('s1')"><div class="sn">1</div><div class="st" data-t="s1_title"></div><span class="sh-sum" id="s1sum"></span><div class="sh-chev">&#x25BC;</div></div>
+    <div class="sh" onclick="toggleStep('s1')"><div class="sn">1</div><div class="st" data-t="s1_title"><span class="tooltip-trigger">?<span class="tooltip-content">Carica un EPUB, PDF o TXT. Il sistema estrarrà automaticamente il testo.</span></span></div><span class="sh-sum" id="s1sum"></span><div class="sh-chev">&#x25BC;</div></div>
     <div class="step-body">
     <div class="uz" id="uz">
       <input type="file" id="fi" accept=".epub,.pdf,.txt,.abm">
       <div class="ic">&#x1F4DA;</div>
       <div class="tx" id="utx" data-t="upload_text"></div>
       <div class="fn" id="ufn" style="display:none"></div>
+    </div>
+    <div class="upload-progress" id="uploadProgress">
+      <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
+      <div class="upload-progress-text"><span id="uploadStatus">Caricamento...</span><span id="uploadPercent">0%</span></div>
     </div>
     <div class="lo" id="alo"><div class="sp"></div><div class="tx" data-t="analyzing"></div></div>
     <div id="aerr"></div>
@@ -419,7 +461,7 @@ select:focus{outline:none;border-color:var(--ac)}
 
   <!-- STEP 2 -->
   <div class="step collapsed disabled" id="s2">
-    <div class="sh" onclick="toggleStep('s2')"><div class="sn">2</div><div class="st" data-t="s2_title"></div><span class="sh-sum" id="s2sum"></span><div class="sh-chev">&#x25BC;</div></div>
+    <div class="sh" onclick="toggleStep('s2')"><div class="sn">2</div><div class="st" data-t="s2_title"><span class="tooltip-trigger">?<span class="tooltip-content">Scegli la lingua e la voce neurale Microsoft. Regola la velocità di lettura.</span></span></div><span class="sh-sum" id="s2sum"></span><div class="sh-chev">&#x25BC;</div></div>
     <div class="step-body">
     <div id="voiceMismatch" class="al al-w" style="display:none"></div>
     <div class="fr">
@@ -451,7 +493,7 @@ select:focus{outline:none;border-color:var(--ac)}
 
   <!-- STEP 3 -->
   <div class="step collapsed disabled" id="s3">
-    <div class="sh" onclick="toggleStep('s3')"><div class="sn">3</div><div class="st" data-t="s3_title"></div><span class="sh-sum" id="s3sum"></span><div class="sh-chev">&#x25BC;</div></div>
+    <div class="sh" onclick="toggleStep('s3')"><div class="sn">3</div><div class="st" data-t="s3_title"><span class="tooltip-trigger">?<span class="tooltip-content">Visualizza l'anteprima, seleziona i capitoli da includere e avvia la generazione.</span></span></div><span class="sh-sum" id="s3sum"></span><div class="sh-chev">&#x25BC;</div></div>
     <div class="step-body">
     <div class="bk-info">
       <img id="bkCover" class="bk-cover" style="display:none" alt="">
