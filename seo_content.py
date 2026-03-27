@@ -48,6 +48,17 @@ _CONTENT = {
             "con oltre 400 voci AI neurali in decine di lingue (tecnologia Microsoft Edge TTS). "
             "Non richiede registrazione, non ha limiti di utilizzo e funziona interamente nel browser."
         ),
+        "key_takeaways": {
+            "title": "Punti Chiave",
+            "items": [
+                "✅ <strong>Gratis al 100%</strong> — Nessuna registrazione, nessun limite",
+                "✅ <strong>400+ voci neurali AI</strong> — Microsoft Edge TTS di alta qualità",
+                "✅ <strong>50+ lingue</strong> — Italiano, Inglese, Francese, Spagnolo, Tedesco, Cinese e altre",
+                "✅ <strong>Nessuna installazione</strong> — Funziona direttamente nel browser",
+                "✅ <strong>Podcast RSS</strong> — Genera feed per ascoltare capitoli nella tua app preferita",
+                "✅ <strong>Open source</strong> — Progetto trasparente con licenza AGPL-3.0",
+            ],
+        },
         "heading": "Converti i tuoi Ebook EPUB e PDF in Audiolibri MP3 — Gratis Online",
         "text": (
             "Audiobook Maker è un convertitore online gratuito che trasforma i tuoi ebook EPUB e PDF "
@@ -145,6 +156,17 @@ _CONTENT = {
             "with 400+ neural AI voices in dozens of languages (Microsoft Edge TTS). "
             "It runs entirely in your browser with no usage limits."
         ),
+        "key_takeaways": {
+            "title": "Quick Summary",
+            "items": [
+                "✅ <strong>100% Free</strong> — No signup, no limits",
+                "✅ <strong>400+ neural AI voices</strong> — High-quality Microsoft Edge TTS",
+                "✅ <strong>50+ languages</strong> — English, Italian, French, Spanish, German, Chinese and more",
+                "✅ <strong>No installation</strong> — Works directly in your browser",
+                "✅ <strong>Podcast RSS</strong> — Generate feed to listen in your favorite app",
+                "✅ <strong>Open source</strong> — Transparent project with AGPL-3.0 license",
+            ],
+        },
         "heading": "Convert Your EPUB and PDF Ebooks to MP3 Audiobooks — Free Online",
         "text": (
             "Audiobook Maker is a free online converter that transforms your EPUB and PDF ebooks into MP3 audiobooks "
@@ -239,6 +261,17 @@ _CONTENT = {
             "avec plus de 400 voix IA neuronales dans des dizaines de langues (Microsoft Edge TTS). "
             "Sans inscription, sans limites, directement dans votre navigateur."
         ),
+        "key_takeaways": {
+            "title": "Points Clés",
+            "items": [
+                "✅ <strong>100% Gratuit</strong> — Sans inscription, sans limites",
+                "✅ <strong>400+ voix IA neuronales</strong> — Microsoft Edge TTS de haute qualité",
+                "✅ <strong>50+ langues</strong> — Français, Anglais, Italien, Espagnol, Allemand, Chinois et plus",
+                "✅ <strong>Sans installation</strong> — Fonctionne directement dans votre navigateur",
+                "✅ <strong>Podcast RSS</strong> — Générez un flux pour écouter dans votre app préférée",
+                "✅ <strong>Open source</strong> — Projet transparent sous licence AGPL-3.0",
+            ],
+        },
         "heading": "Convertissez vos Ebooks EPUB et PDF en Livres Audio MP3 — Gratuit en Ligne",
         "text": (
             "Audiobook Maker est un convertisseur en ligne gratuit qui transforme vos ebooks EPUB et PDF en livres "
@@ -320,6 +353,17 @@ _CONTENT = {
             "con más de 400 voces IA neuronales en decenas de idiomas (Microsoft Edge TTS). "
             "Sin registro, sin límites, directamente en tu navegador."
         ),
+        "key_takeaways": {
+            "title": "Puntos Clave",
+            "items": [
+                "✅ <strong>100% Gratis</strong> — Sin registro, sin límites",
+                "✅ <strong>400+ voces IA neuronales</strong> — Microsoft Edge TTS de alta calidad",
+                "✅ <strong>50+ idiomas</strong> — Español, Inglés, Italiano, Francés, Alemán, Chino y más",
+                "✅ <strong>Sin instalación</strong> — Funciona directamente en tu navegador",
+                "✅ <strong>Podcast RSS</strong> — Genera feed para escuchar en tu app favorita",
+                "✅ <strong>Open source</strong> — Proyecto transparente con licencia AGPL-3.0",
+            ],
+        },
         "heading": "Convierte tus Ebooks EPUB y PDF en Audiolibros MP3 — Gratis Online",
         "text": (
             "Audiobook Maker es un convertidor en línea gratuito que transforma tus ebooks EPUB y PDF en "
@@ -401,6 +445,17 @@ _CONTENT = {
             "mit über 400 neuronalen KI-Stimmen in Dutzenden von Sprachen (Microsoft Edge TTS). "
             "Ohne Registrierung, ohne Limits, direkt im Browser."
         ),
+        "key_takeaways": {
+            "title": "Kurzübersicht",
+            "items": [
+                "✅ <strong>100% Kostenlos</strong> — Keine Anmeldung, keine Limits",
+                "✅ <strong>400+ neuronale KI-Stimmen</strong> — Microsoft Edge TTS hoher Qualität",
+                "✅ <strong>50+ Sprachen</strong> — Deutsch, Englisch, Italienisch, Französisch, Spanisch, Chinesisch und mehr",
+                "✅ <strong>Keine Installation</strong> — Funktioniert direkt in Ihrem Browser",
+                "✅ <strong>Podcast RSS</strong> — Feed generieren für Ihre Lieblings-App",
+                "✅ <strong>Open source</strong> — Transparentes Projekt mit AGPL-3.0 Lizenz",
+            ],
+        },
         "heading": "Konvertieren Sie Ihre EPUB- und PDF-E-Books in MP3-Hörbücher — Kostenlos Online",
         "text": (
             "Audiobook Maker ist ein kostenloser Online-Konverter, der Ihre EPUB- und PDF-E-Books in MP3-Hörbücher "
@@ -482,6 +537,17 @@ _CONTENT = {
             "拥有超过400种神经网络AI语音，支持数十种语言（Microsoft Edge TTS）。"
             "无需注册，无使用限制，直接在浏览器中运行。"
         ),
+        "key_takeaways": {
+            "title": "快速总结",
+            "items": [
+                "✅ <strong>100% 免费</strong> — 无需注册，无使用限制",
+                "✅ <strong>400+ 神经网络AI语音</strong> — 高质量 Microsoft Edge TTS",
+                "✅ <strong>50+ 语言</strong> — 中文、英语、意大利语、法语、西班牙语、德语等",
+                "✅ <strong>无需安装</strong> — 直接在浏览器中运行",
+                "✅ <strong>播客 RSS</strong> — 生成订阅源在您喜爱的应用中收听",
+                "✅ <strong>开源</strong> — 透明项目，采用 AGPL-3.0 许可证",
+            ],
+        },
         "heading": "免费在线将EPUB和PDF电子书转换为MP3有声书",
         "text": (
             "Audiobook Maker是一款免费在线转换器，利用神经网络AI文字转语音技术"
@@ -639,6 +705,21 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     """
     c = _CONTENT.get(lang, _CONTENT["en"])
 
+    # Key Takeaways box HTML
+    kt = c.get("key_takeaways", {})
+    kt_items_html = ""
+    if kt:
+        for item in kt.get("items", []):
+            kt_items_html += f"            <li>{item}</li>\n"
+        kt_box_html = f"""
+        <div class="key-takeaways">
+            <h3>{escape(kt.get("title", ""))}</h3>
+            <ul>
+{kt_items_html}            </ul>
+        </div>"""
+    else:
+        kt_box_html = ""
+
     # Features <li> items
     features_li = "\n".join(
         f"            <li>{escape(f)}</li>" for f in c["features"]
@@ -694,6 +775,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
 
     article_html = f"""
         <div class="seo-summary">{escape(c["direct_answer"])}</div>
+        {kt_box_html}
 
         <details class="seo-section">
             <summary><h2>{escape(c["heading"])}</h2></summary>
@@ -765,6 +847,17 @@ def build_seo_content_html(initial_lang: str) -> str:
   font-family:'DM Sans',system-ui,sans-serif; font-size:0.92rem; line-height:1.7; color:var(--txd,#6b6760) }
 #seoContent .seo-summary { background:var(--srf,#fff); border:1px solid var(--brd,#d5d0c8);
   border-radius:8px; padding:1rem 1.2rem; margin-bottom:1.2rem; font-weight:500; color:var(--tx,#2c2a26); line-height:1.6 }
+/* ── Key Takeaways box ── */
+#seoContent .key-takeaways { background:linear-gradient(135deg,var(--srf,#fff) 0%,#fef9f3 100%);
+  border:1.5px solid var(--ac,#c47a2a); border-radius:10px; padding:1rem 1.2rem; margin-bottom:1.2rem;
+  box-shadow:0 2px 12px rgba(196,122,42,.12) }
+#seoContent .key-takeaways h3 { font-size:1rem; color:var(--ac,#c47a2a); margin:0 0 0.7rem 0; font-weight:700;
+  display:flex; align-items:center; gap:0.4rem }
+#seoContent .key-takeaways h3::before { content:'✓'; font-size:1rem; font-weight:700 }
+#seoContent .key-takeaways ul { margin:0; padding:0 0 0 1.2rem; list-style:none }
+#seoContent .key-takeaways li { margin-bottom:0.4rem; color:var(--tx,#2c2a26); line-height:1.5;
+  padding-left:0.2rem }
+#seoContent .key-takeaways li::marker { color:var(--ac,#c47a2a) }
 /* ── Collapsible sections (details/summary) ── */
 #seoContent .seo-section { margin-bottom:0.25rem; border-bottom:1px solid var(--brd,#d5d0c8);
   padding:0.4rem 0 }
