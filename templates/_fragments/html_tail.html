@@ -722,7 +722,8 @@ async function startGen(){
   const s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
   if(bookData){document.getElementById('s4bkT').textContent=bookData.title||'';document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display='';sc.onerror=function(){this.style.display='none'}}else{sc.style.display='none';sc.src=''}}
   document.getElementById('pMsg').textContent=t('starting');
-  setTimeout(()=>s4.scrollIntoView({behavior:'smooth',block:'nearest'}),200);
+  // Scroll to generation panel (s3 or btnG) instead of step 4 to keep button visible
+  setTimeout(()=>{const genPanel=document.getElementById('s3');const btnG=document.getElementById('btnG');if(genPanel)genPanel.scrollIntoView({behavior:'smooth',block:'start'})},200);
   try{
     const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
@@ -839,7 +840,35 @@ function listenProgress(){
 function cancelJob(){
   if(!jobId||!generating)return;
   navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
-  location.reload();
+  generating=false;
+  unlockUI();
+  document.getElementById('s4').style.display='none';
+  document.getElementById('dlA').style.display='none';
+  document.getElementById('btnP').style.display='none';
+  document.getElementById('btnBackCh').style.display='none';
+  document.getElementById('cnA').style.display='';
+  document.getElementById('pBar').style.width='0%';
+  document.getElementById('pPct').textContent='0%';
+  document.getElementById('pCh').textContent='';
+  document.getElementById('xBlk').textContent='—';
+  document.getElementById('xCh').textContent='—';
+  document.getElementById('xEl').textContent='—';
+  document.getElementById('xEta').textContent='—';
+  document.getElementById('xSz').textContent='—';
+  document.getElementById('xSpd').textContent='—';
+  // Restore progress area if it was hidden
+  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display=''});
+  document.getElementById('pMsg').textContent='';
+  document.getElementById('pMsg').style.color='';
+  document.getElementById('btnG').disabled=false;
+  // Keep step 3 OPEN (remove collapsed class) so user can restart generation
+  const s3=document.getElementById('s3');
+  if(s3){
+    s3.classList.remove('collapsed');
+    s3.classList.remove('locked');
+  }
+  // Scroll to step 3 to show the panel
+  setTimeout(()=>{if(s3)s3.scrollIntoView({behavior:'smooth',block:'start'})},100);
 }
 
 function retryGen(){
