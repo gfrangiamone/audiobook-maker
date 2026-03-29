@@ -148,6 +148,9 @@ _CONTENT = {
             "Il progetto è open source con licenza AGPL-3.0."
         ),
         "updated_label": "Ultimo aggiornamento",
+        "share_label": "Condividi",
+        "donate_text": "Sostieni il progetto:",
+        "donate_btn": "Dona con Ko-fi",
     },
     # ─── ENGLISH ────────────────────────────────────────────────────
     "en": {
@@ -253,6 +256,9 @@ _CONTENT = {
             "The project is open source under the AGPL-3.0 license."
         ),
         "updated_label": "Last updated",
+        "share_label": "Share",
+        "donate_text": "Support the project:",
+        "donate_btn": "Donate with Ko-fi",
     },
     # ─── FRANÇAIS ───────────────────────────────────────────────────
     "fr": {
@@ -345,6 +351,9 @@ _CONTENT = {
             "aucune donnée personnelle collectée. Projet open source sous licence AGPL-3.0."
         ),
         "updated_label": "Dernière mise à jour",
+        "share_label": "Partager",
+        "donate_text": "Soutenez le projet:",
+        "donate_btn": "Donner avec Ko-fi",
     },
     # ─── ESPAÑOL ────────────────────────────────────────────────────
     "es": {
@@ -437,6 +446,9 @@ _CONTENT = {
             "sin recopilación de datos personales. Proyecto open source bajo licencia AGPL-3.0."
         ),
         "updated_label": "Última actualización",
+        "share_label": "Compartir",
+        "donate_text": "Apoya el proyecto:",
+        "donate_btn": "Donar con Ko-fi",
     },
     # ─── DEUTSCH ────────────────────────────────────────────────────
     "de": {
@@ -529,6 +541,9 @@ _CONTENT = {
             "keine personenbezogenen Daten werden erhoben. Open-Source-Projekt unter AGPL-3.0-Lizenz."
         ),
         "updated_label": "Zuletzt aktualisiert",
+        "share_label": "Teilen",
+        "donate_text": "Projekt unterstützen:",
+        "donate_btn": "Mit Ko-fi spenden",
     },
     # ─── 中文 ───────────────────────────────────────────────────────
     "zh": {
@@ -615,6 +630,9 @@ _CONTENT = {
             "无需注册，不收集个人数据。项目以AGPL-3.0许可证开源。"
         ),
         "updated_label": "最后更新",
+        "share_label": "分享",
+        "donate_text": "支持项目：",
+        "donate_btn": "用 Ko-fi 捐赠",
     },
 }
 
@@ -774,7 +792,6 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         )
 
     article_html = f"""
-        <div class="seo-summary">{escape(c["direct_answer"])}</div>
         {kt_box_html}
 
         <details class="seo-section">
@@ -815,6 +832,19 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
                 {escape(c["privacy"])}
             </div>
         </details>
+
+        <div class="seo-share-donate">
+            <div class="share-btns">
+                <span class="share-label">{escape(c.get("share_label", "Condividi"))}</span>
+                <a href="https://twitter.com/intent/tweet?text=Audiobook+Maker+-+Converti+EPUB+e+PDF+in+audiolibri+MP3+gratis&url=https://audiobookmaker.app" target="_blank" rel="noopener" class="share-btn share-twitter">𝕏</a>
+                <a href="https://www.facebook.com/sharer/sharer.php?u=https://audiobookmaker.app" target="_blank" rel="noopener" class="share-btn share-facebook">f</a>
+                <a href="https://www.linkedin.com/shareArticle?mini=true&url=https://audiobookmaker.app" target="_blank" rel="noopener" class="share-btn share-linkedin">in</a>
+            </div>
+            <div class="donate-section">
+                <span class="donate-text">{escape(c.get("donate_text", "Sostieni il progetto:"))}</span>
+                <a href="https://ko-fi.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn">☕ {escape(c.get("donate_btn", "Dona con Ko-fi"))}</a>
+            </div>
+        </div>
 
         <div class="seo-updated">
             <time datetime="{datetime.now().strftime('%Y-%m')}">{escape(c["updated_label"])}: {get_formatted_date()}</time>
@@ -892,6 +922,27 @@ def build_seo_content_html(initial_lang: str) -> str:
   border:1px solid var(--brd,#d5d0c8); border-radius:8px; font-size:0.85rem }
 /* ── Updated timestamp ── */
 #seoContent .seo-updated { margin-top:1rem; font-size:0.8rem; color:var(--txm,#9e9890) }
+/* ── Share & Donate banner ── */
+#seoContent .seo-share-donate { margin:1.5rem 0; padding:1rem; background:linear-gradient(135deg,var(--srf,#fff) 0%,#fef9f3 100%);
+  border:1.5px solid var(--ac,#c47a2a); border-radius:10px; display:flex; flex-wrap:wrap; gap:1rem; align-items:center; justify-content:space-between }
+#seoContent .share-btns { display:flex; align-items:center; gap:0.5rem }
+#seoContent .share-label { font-weight:600; color:var(--tx,#2c2a26); font-size:0.9rem }
+#seoContent .share-btn { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%;
+  font-weight:700; font-size:0.85rem; text-decoration:none; transition:transform 0.2s,opacity 0.2s }
+#seoContent .share-btn:hover { transform:scale(1.1) }
+#seoContent .share-twitter { background:#000; color:#fff }
+#seoContent .share-facebook { background:#1877f2; color:#fff }
+#seoContent .share-linkedin { background:#0a66c2; color:#fff }
+#seoContent .donate-section { display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap }
+#seoContent .donate-text { font-size:0.85rem; color:var(--txd,#6b6760) }
+#seoContent .donate-btn { display:inline-flex; align-items:center; gap:0.4rem; padding:0.5rem 1rem; background:var(--ac,#c47a2a);
+  color:#fff; border-radius:20px; font-weight:600; font-size:0.85rem; text-decoration:none; transition:background 0.2s,transform 0.2s }
+#seoContent .donate-btn:hover { background:#b36d22; transform:scale(1.03) }
+@media (max-width:500px) {
+  #seoContent .seo-share-donate { flex-direction:column; align-items:flex-start }
+  #seoContent .donate-section { width:100% }
+  #seoContent .donate-btn { width:100%; justify-content:center }
+}
 </style>"""
 
     # Build all language blocks
