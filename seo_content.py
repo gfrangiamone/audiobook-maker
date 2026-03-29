@@ -149,8 +149,6 @@ _CONTENT = {
         ),
         "updated_label": "Ultimo aggiornamento",
         "share_label": "Condividi",
-        "donate_text": "Sostieni il progetto:",
-        "donate_btn": "Dona con Ko-fi",
     },
     # ─── ENGLISH ────────────────────────────────────────────────────
     "en": {
@@ -257,8 +255,6 @@ _CONTENT = {
         ),
         "updated_label": "Last updated",
         "share_label": "Share",
-        "donate_text": "Support the project:",
-        "donate_btn": "Donate with Ko-fi",
     },
     # ─── FRANÇAIS ───────────────────────────────────────────────────
     "fr": {
@@ -352,8 +348,6 @@ _CONTENT = {
         ),
         "updated_label": "Dernière mise à jour",
         "share_label": "Partager",
-        "donate_text": "Soutenez le projet:",
-        "donate_btn": "Donner avec Ko-fi",
     },
     # ─── ESPAÑOL ────────────────────────────────────────────────────
     "es": {
@@ -447,8 +441,6 @@ _CONTENT = {
         ),
         "updated_label": "Última actualización",
         "share_label": "Compartir",
-        "donate_text": "Apoya el proyecto:",
-        "donate_btn": "Donar con Ko-fi",
     },
     # ─── DEUTSCH ────────────────────────────────────────────────────
     "de": {
@@ -542,8 +534,6 @@ _CONTENT = {
         ),
         "updated_label": "Zuletzt aktualisiert",
         "share_label": "Teilen",
-        "donate_text": "Projekt unterstützen:",
-        "donate_btn": "Mit Ko-fi spenden",
     },
     # ─── 中文 ───────────────────────────────────────────────────────
     "zh": {
@@ -631,8 +621,6 @@ _CONTENT = {
         ),
         "updated_label": "最后更新",
         "share_label": "分享",
-        "donate_text": "支持项目：",
-        "donate_btn": "用 Ko-fi 捐赠",
     },
 }
 
@@ -840,10 +828,6 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
                 <a href="https://www.facebook.com/sharer/sharer.php?u=https://audiobookmaker.app" target="_blank" rel="noopener" class="share-btn share-facebook">f</a>
                 <a href="https://www.linkedin.com/shareArticle?mini=true&url=https://audiobookmaker.app" target="_blank" rel="noopener" class="share-btn share-linkedin">in</a>
             </div>
-            <div class="donate-section">
-                <span class="donate-text">{escape(c.get("donate_text", "Sostieni il progetto:"))}</span>
-                <a href="https://ko-fi.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn">☕ {escape(c.get("donate_btn", "Dona con Ko-fi"))}</a>
-            </div>
         </div>
 
         <div class="seo-updated">
@@ -933,16 +917,6 @@ def build_seo_content_html(initial_lang: str) -> str:
 #seoContent .share-twitter { background:#000; color:#fff }
 #seoContent .share-facebook { background:#1877f2; color:#fff }
 #seoContent .share-linkedin { background:#0a66c2; color:#fff }
-#seoContent .donate-section { display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap }
-#seoContent .donate-text { font-size:0.85rem; color:var(--txd,#6b6760) }
-#seoContent .donate-btn { display:inline-flex; align-items:center; gap:0.4rem; padding:0.5rem 1rem; background:var(--ac,#c47a2a);
-  color:#fff; border-radius:20px; font-weight:600; font-size:0.85rem; text-decoration:none; transition:background 0.2s,transform 0.2s }
-#seoContent .donate-btn:hover { background:#b36d22; transform:scale(1.03) }
-@media (max-width:500px) {
-  #seoContent .seo-share-donate { flex-direction:column; align-items:flex-start }
-  #seoContent .donate-section { width:100% }
-  #seoContent .donate-btn { width:100%; justify-content:center }
-}
 </style>"""
 
     # Build all language blocks
