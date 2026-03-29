@@ -8,6 +8,7 @@ data/
 dist/
 build/
 .venv/
+.minimax/
 venv/
 
 # App data (generated at runtime)
