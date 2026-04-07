@@ -130,6 +130,7 @@ function detectLang(){
 // ═══════════════════ STATE ═══════════════════
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false;
 let previewListened=false,_langWarnResolve=null;
+let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -331,8 +332,11 @@ async function analyzeEpub(file){
     if(d.language){
       const lc=d.language.split('-')[0].toLowerCase();
       const sel=document.getElementById('vl');
-      if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;updVoices()}
+      if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;}
     }
+    // Rigenera la lista voci ora che bookData.total_chars è noto: serve a
+    // nascondere proattivamente le voci Google se il libro supera il budget mensile.
+    updVoices();
     // Set output mode based on file type
     if(isTxtFile){
       // TXT: force single file, hide output toggle and chapter table
@@ -360,7 +364,15 @@ async function analyzeEpub(file){
 
 // ═══════════════════ VOICES ═══════════════════
 async function loadVoices(){
-  try{const r=await fetch('/api/voices');voices=await r.json();fillLangs()}catch(e){console.error(e)}
+  try{
+    const r=await fetch('/api/voices');
+    const data=await r.json();
+    // Estrai budget Google TTS e rimuovi la chiave speciale
+    if(data._google_tts){_googleTtsBudget=data._google_tts;delete data._google_tts;}
+    else{_googleTtsBudget=null;}
+    voices=data;
+    fillLangs();
+  }catch(e){console.error(e)}
 }
 function fillLangs(){
   const sel=document.getElementById('vl');sel.innerHTML='';
@@ -371,16 +383,49 @@ function fillLangs(){
   if(voices.it)sel.value='it';
   updVoices();
 }
+function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
+function _googleTtsAffordable(){
+  // True se Google TTS è disponibile e ha caratteri sufficienti per il libro corrente.
+  // Se non c'è ancora un libro analizzato, basta che il budget non sia esaurito.
+  if(!_googleTtsBudget||!_googleTtsBudget.available)return false;
+  const remaining=_googleTtsBudget.chars_remaining||0;
+  if(remaining<=0)return false;
+  const bookChars=(bookData&&bookData.total_chars)||0;
+  if(bookChars>0&&bookChars>remaining)return false;
+  return true;
+}
 function updVoices(){
   const lc=document.getElementById('vl').value,sel=document.getElementById('vv');sel.innerHTML='';
   if(!voices[lc])return;
-  const lang=voices[lc];let lg='';
-  for(const v of lang.voices){
+  const lang=voices[lc];
+  // Separa voci per engine, edge prima poi google
+  const edgeVoices=lang.voices.filter(v=>(v.engine||'edge')==='edge');
+  // Mostra le voci Google solo se il budget mensile copre il libro corrente
+  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>v.engine==='google'):[];
+  let lg='';
+  // Voci Microsoft Edge
+  for(const v of edgeVoices){
     if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender}
     const o=document.createElement('option');o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
     sel.lastElementChild.appendChild(o);
   }
-  const dv=lang.voices.find(v=>v.id.includes('Giuseppe')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+  // Voci Google HD (se presenti)
+  if(googleVoices.length>0){
+    lg='';
+    for(const v of googleVoices){
+      if(v.gender!==lg){
+        const g=document.createElement('optgroup');
+        const gLabel=v.gender==='Female'?'♀':(v.gender==='Male'?'♂':'⚥');
+        g.label=gLabel+' Google HD';
+        sel.appendChild(g);lg=v.gender;
+      }
+      const o=document.createElement('option');o.value=v.id;
+      o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
+      o.classList.add('gcloud-voice');
+      sel.lastElementChild.appendChild(o);
+    }
+  }
+  const dv=edgeVoices.find(v=>v.id.includes('Giuseppe')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
   if(dv)sel.value=dv.id;
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();};
   _updateVoiceChip();checkVoiceMismatch();
@@ -740,6 +785,18 @@ async function startGen(){
         document.getElementById('pCh').textContent='';
         document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
         // Replace cancel button with retry
+        document.getElementById('cnA').innerHTML=
+          '<button class="btn btn-ok" id="btnRetry">\u{1F504} '+(t('btn_retry')||'Retry generation')+'</button>';
+        document.getElementById('btnRetry').onclick=retryGen;
+        unlockUI();return
+      }
+      if(d.error_code==='google_tts_budget'){
+        document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);
+        document.getElementById('pMsg').style.color='var(--err)';
+        document.getElementById('pBar').style.width='0%';
+        document.getElementById('pPct').textContent='';
+        document.getElementById('pCh').textContent='';
+        document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
         document.getElementById('cnA').innerHTML=
           '<button class="btn btn-ok" id="btnRetry">\u{1F504} '+(t('btn_retry')||'Retry generation')+'</button>';
         document.getElementById('btnRetry').onclick=retryGen;
@@ -1187,7 +1244,9 @@ function _updateVoiceChip(){
   const langName=vl.options[vl.selectedIndex].text.replace(/\s*\(\d+\)\s*$/,'');
   const voiceName=vv.options[vv.selectedIndex]?vv.options[vv.selectedIndex].text:'';
   if(!langName){chip.classList.remove('vis');return;}
-  chipTxt.textContent=langName+(voiceName?' — '+voiceName:'');
+  const isGV=_isGoogleVoice(vv.value);
+  const engineTag=isGV?' [Google HD]':'';
+  chipTxt.textContent=langName+(voiceName?' — '+voiceName:'')+ engineTag;
   const _lbl={it:'✏️ Cambia',en:'✏️ Change',fr:'✏️ Modifier',es:'✏️ Cambiar',de:'✏️ Ändern',zh:'✏️ 更改'};
   chipLink.textContent=_lbl[cl]||_lbl.en;
   chip.classList.add('vis');

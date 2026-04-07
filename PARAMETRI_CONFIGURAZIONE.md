@@ -19,6 +19,9 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_BASE_URL` | `""` (vuoto, con rstrip di `/`) | `audiobook_app.py` | 96 |
 | `ABM_ADMIN_EMAIL` | `""` (vuoto, se vuoto il digest admin e' disabilitato) | `audiobook_app.py` | 103 |
 | `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` | `audiobook_app.py` | 112 |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) | `google_tts.py` | 69 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
+| `ABM_GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (1M caratteri/mese, free tier Google Cloud TTS) | `google_tts.py` | 33 |
 
 ---
 
@@ -158,16 +161,28 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 ---
 
-## 6. Versione (`version.py`)
+## 6. Google Cloud TTS (`google_tts.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.4.1"` | `version.py` | 7 |
+| `GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (da `ABM_GOOGLE_TTS_MONTHLY_LIMIT`) | `google_tts.py` | 33 |
+| `VOICES_CACHE_TTL` | `3600` (1 ora, cache voci Google) | `google_tts.py` | 42 |
+| `_usage_file_path` | `Path(data_dir) / "google_tts_usage.json"` | `google_tts.py` | 51 |
+| `_MONITORING_STABILIZATION_LAG_SEC` | `900` (15 min, intervallo escluso dalle query Cloud Monitoring per usare solo metriche stabilizzate) | `google_tts.py` | 380 |
+| `_MAX_CHARS_PER_REQUEST` | `2200` (bound massimo caratteri/richiesta TTS per sanity check, = `CHUNK_MAX_CHARS` + 10% tolleranza) | `google_tts.py` | 610 |
+
+---
+
+## 7. Versione (`version.py`)
+
+| Parametro | Valore | File | Riga |
+|-----------|--------|------|------|
+| `__version__` | `"3.5.0"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
 
-## 7. SEO Content (`seo_content.py`)
+## 8. SEO Content (`seo_content.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -180,11 +195,12 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Categoria | Numero parametri |
 |-----------|:---:|
-| Variabili d'ambiente (`ABM_*`) | 9 |
+| Variabili d'ambiente (`ABM_*`) | 12 |
 | Configurazione Flask | 1 |
 | Costanti applicative (`audiobook_app.py`) | 24 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
+| Google Cloud TTS (`google_tts.py`) | 5 |
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
-| **Totale** | **58** |
+| **Totale** | **66** |
