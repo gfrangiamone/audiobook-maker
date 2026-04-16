@@ -398,6 +398,8 @@ _FAVICON_SVG_B64 = (
 # ── Helper: decode and serve ────────────────────────────────────────────────
 
 def _decode(b64: str) -> bytes:
+    b64 = b64.strip()
+    b64 += "=" * (-len(b64) % 4)  # fix padding
     return base64.b64decode(b64)
 
 
