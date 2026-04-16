@@ -7,6 +7,7 @@ _debug*
 data/
 dist/
 build/
+script/
 .venv/
 .minimax/
 venv/
@@ -28,3 +29,11 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Sensitive runtime data (should normally live in ABM_DATA_DIR outside repo,
+# but guard against accidental commits if ever present in the working tree)
+_vouchers.json
+_payments.json
+voucher_admin.log
+**/ABM_DATA_DIR/
+

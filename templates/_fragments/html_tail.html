@@ -131,6 +131,7 @@ function detectLang(){
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false;
 let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
+let aiOptEnabled=false,llmAvailable=false,aiAlreadyOptimized=false;
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -210,10 +211,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('selNone').onclick=chSelNone;
   document.getElementById('selInv').onclick=chSelInvert;
   document.getElementById('chAll').onchange=chMasterToggle;
+  _initAiOptToggle();
 });
 
 function toggleOut(el){
-  document.querySelectorAll('.tg button').forEach(b=>b.classList.remove('on'));
+  el.closest('.tg').querySelectorAll('button').forEach(b=>b.classList.remove('on'));
   el.classList.add('on');singleFile=el.dataset.v==='single';
   document.getElementById('podHint').style.display=singleFile?'none':'';
   // Show/hide chapter selection UI
@@ -329,6 +331,8 @@ async function analyzeEpub(file){
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
     isTxtFile=(d.file_type==='txt');
     const isAbmFile=(d.file_type==='abm');
+    llmAvailable=!!d.llm_available;aiAlreadyOptimized=!!d.ai_optimized;aiOptEnabled=false;
+    _updateAiOptUI();
     if(d.language){
       const lc=d.language.split('-')[0].toLowerCase();
       const sel=document.getElementById('vl');
@@ -669,6 +673,400 @@ function openAbmGuide(){
 }
 function closeAbmGuide(){document.getElementById('abmGuideModal').classList.remove('open')}
 
+// ═══════════════════ AI TEXT OPTIMIZATION ═══════════════════
+function _initAiOptToggle(){
+  // Toggle buttons for AI optimization
+  const btnOff=document.getElementById('optNone');
+  const btnOn=document.getElementById('optEnable');
+  if(!btnOff||!btnOn)return;
+  btnOff.onclick=function(){
+    aiOptEnabled=false;
+    btnOff.classList.add('on');btnOn.classList.remove('on');
+    document.getElementById('aiOptInfo').style.display='none';
+    _updateOptButtons();
+  };
+  btnOn.onclick=function(){
+    aiOptEnabled=true;
+    btnOn.classList.add('on');btnOff.classList.remove('on');
+    document.getElementById('aiOptInfo').style.display='';
+    _updateOptButtons();
+  };
+}
+
+function _updateOptButtons(){
+  var btnOpt=document.getElementById('btnOptimize');
+  if(btnOpt)btnOpt.style.display=(aiOptEnabled&&!aiAlreadyOptimized)?'':'none';
+}
+
+function _updateAiOptUI(){
+  const wrap=document.getElementById('fgOptimizeWrap');
+  if(!wrap)return;
+  if(llmAvailable){
+    wrap.style.display='';
+    if(aiAlreadyOptimized){
+      document.getElementById('aiAlreadyOpt').style.display='';
+      document.getElementById('aiOptInfo').style.display='none';
+      aiOptEnabled=false;
+      document.getElementById('optNone').classList.add('on');
+      document.getElementById('optEnable').classList.remove('on');
+    }else{
+      document.getElementById('aiAlreadyOpt').style.display='none';
+    }
+  }else{
+    wrap.style.display='none';
+    aiOptEnabled=false;
+  }
+  _updateOptButtons();
+}
+
+// Track whether the optimization email prompt has been shown
+let optEmailPromptShown=false;
+
+function _showOptEmailModal(){
+  // Reuse the existing email modal but with optimization-specific content
+  return new Promise(function(resolve){
+    const modal=document.getElementById('optBatchModal');
+    const errEl=document.getElementById('optBatchErr');
+    const okEl=document.getElementById('optBatchOk');
+    const btnsEl=document.getElementById('optBatchBtns');
+    errEl.style.display='none';okEl.style.display='none';btnsEl.style.display='flex';
+    document.getElementById('optAutoGen').checked=false;
+    document.getElementById('optBatchEmail').value='';
+    applyI18n();
+    modal.classList.add('open');
+    document.getElementById('optBatchClose').onclick=function(){modal.classList.remove('open');resolve(null)};
+    document.getElementById('optBatchCancel').onclick=function(){modal.classList.remove('open');resolve(null)};
+    document.getElementById('optBatchSubmit').onclick=function(){
+      var email=document.getElementById('optBatchEmail').value.trim();
+      if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+        errEl.textContent=t('opt_batch_email_err')||'Enter a valid email address';
+        errEl.style.display='';return;
+      }
+      errEl.style.display='none';
+      var autoGen=document.getElementById('optAutoGen').checked;
+      // Register email and batch params on the server
+      var payload={
+        job_id:jobId,batch:true,
+        email:email,
+        auto_generate:autoGen,
+        lang:cl
+      };
+      if(autoGen){
+        payload.voice=document.getElementById('vv').value;
+        payload.rate=document.getElementById('vr').value;
+        payload.single_file=singleFile;
+      }
+      fetch('/api/register_opt_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
+        btnsEl.style.display='none';
+        var msgKey=autoGen?'opt_batch_started_auto':'opt_batch_started';
+        okEl.textContent=t(msgKey)||'Email registered! You can close this page.';
+        okEl.style.display='';
+        optEmailPromptShown=true;
+        resolve({email:email,autoGenerate:autoGen});
+      })
+      .catch(function(e){errEl.textContent='Error: '+e.message;errEl.style.display=''});
+    };
+  });
+}
+
+// ═══════════════════ PAYMENT (LLM optimization) ═══════════════════
+let llmConfig={rate:1.1,threshold:0.5,bonus:10,expiry:180,paypalClientId:"",paypalMode:"sandbox",paypalAvailable:false};
+let paypalSdkLoaded=false;
+
+function _loadPaypalSdk(clientId){
+  return new Promise(function(resolve,reject){
+    if(paypalSdkLoaded&&window.paypal){resolve();return}
+    var s=document.createElement('script');
+    s.src='https://www.paypal.com/sdk/js?client-id='+encodeURIComponent(clientId)+'&currency=EUR&intent=capture';
+    s.onload=function(){paypalSdkLoaded=true;resolve()};
+    s.onerror=function(){reject(new Error('Failed to load PayPal SDK'))};
+    document.head.appendChild(s);
+  });
+}
+
+async function _showPaymentModal(costEur,chars){
+  return new Promise(async function(resolve){
+    var modal=document.getElementById('payModal');
+    var errEl=document.getElementById('payErr');
+    var okEl=document.getElementById('payOk');
+    errEl.style.display='none';okEl.style.display='none';
+    document.getElementById('payCostValue').textContent='€ '+costEur.toFixed(2);
+    document.getElementById('payCostDetails').textContent=chars.toLocaleString()+' char × '+llmConfig.rate.toFixed(2)+' €/M';
+    document.getElementById('payPaypalPane').style.display='';
+    document.getElementById('payVoucherPane').style.display='none';
+    document.getElementById('payTabPaypal').style.background='#8b5cf6';
+    document.getElementById('payTabPaypal').style.color='white';
+    document.getElementById('payTabVoucher').style.background='var(--srf2)';
+    document.getElementById('payTabVoucher').style.color='';
+    document.getElementById('paypal-button-container').innerHTML='';
+    document.getElementById('payPaypalLoading').style.display='';
+    document.getElementById('payVoucherCode').value='';
+    document.getElementById('payVoucherEmail').value='';
+    applyI18n();
+    // pay_desc contiene tag HTML (<b>) e placeholder {chars} → calcolo dinamico della soglia in caratteri
+    // soglia_char = floor(threshold_eur / rate_eur_per_Mchar * 1_000_000), arrotondato per difetto a migliaia
+    var thresholdChars=Math.floor((llmConfig.threshold/llmConfig.rate)*1000000/1000)*1000;
+    var charsStr=thresholdChars.toLocaleString(cl||'it');
+    document.getElementById('payDescText').innerHTML=t('pay_desc').replace('{chars}',charsStr);
+    modal.classList.add('open');
+
+    var resolved=false;
+    function done(token){if(resolved)return;resolved=true;modal.classList.remove('open');resolve(token)}
+    document.getElementById('payClose').onclick=function(){done(null)};
+    document.getElementById('payTabPaypal').onclick=function(){
+      document.getElementById('payPaypalPane').style.display='';
+      document.getElementById('payVoucherPane').style.display='none';
+      this.style.background='#8b5cf6';this.style.color='white';
+      document.getElementById('payTabVoucher').style.background='var(--srf2)';
+      document.getElementById('payTabVoucher').style.color='';
+    };
+    document.getElementById('payTabVoucher').onclick=function(){
+      document.getElementById('payVoucherPane').style.display='';
+      document.getElementById('payPaypalPane').style.display='none';
+      this.style.background='#8b5cf6';this.style.color='white';
+      document.getElementById('payTabPaypal').style.background='var(--srf2)';
+      document.getElementById('payTabPaypal').style.color='';
+    };
+    document.getElementById('payVoucherSubmit').onclick=async function(){
+      errEl.style.display='none';
+      var code=document.getElementById('payVoucherCode').value.trim().toUpperCase();
+      var email=document.getElementById('payVoucherEmail').value.trim();
+      if(!code||!email){errEl.textContent=t('pay_err_generic');errEl.style.display='';return}
+      try{
+        var r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
+        var d=await r.json();
+        if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
+        okEl.textContent=t('pay_voucher_valid');okEl.style.display='';
+        setTimeout(function(){done(d.payment_token)},800);
+      }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
+    };
+
+    // Load PayPal SDK and render button
+    if(llmConfig.paypalAvailable&&llmConfig.paypalClientId){
+      try{
+        await _loadPaypalSdk(llmConfig.paypalClientId);
+        document.getElementById('payPaypalLoading').style.display='none';
+        window.paypal.Buttons({
+          style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
+          createOrder:async function(){
+            var r=await fetch('/api/paypal_create_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId})});
+            var d=await r.json();
+            if(d.error)throw new Error(d.error);
+            return d.order_id;
+          },
+          onApprove:async function(data){
+            try{
+              var r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
+              var d=await r.json();
+              if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
+              okEl.textContent=t('pay_success');okEl.style.display='';
+              setTimeout(function(){done(d.payment_token)},800);
+            }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
+          },
+          onError:function(err){errEl.textContent=t('pay_err_generic');errEl.style.display='';console.error(err)},
+          onCancel:function(){}
+        }).render('#paypal-button-container');
+      }catch(e){
+        document.getElementById('payPaypalLoading').textContent='PayPal unavailable: '+e.message;
+      }
+    }else{
+      document.getElementById('payPaypalLoading').textContent='PayPal not configured';
+    }
+  });
+}
+
+async function startOptimization(){
+  if(!jobId){return}
+  document.getElementById('s3err').innerHTML='';
+
+  // ── Check cost estimate first ──
+  var paymentToken=null;
+  try{
+    var est=await fetch('/api/optimize_estimate/'+jobId).then(function(r){return r.json()});
+    if(est.error){showS3Err(est.error);return}
+    if(est.requires_payment){
+      // Refresh config from server
+      try{var cfg=await fetch('/api/llm_available').then(function(r){return r.json()});
+        llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
+        llmConfig.threshold=cfg.free_threshold_eur||0.5;
+        llmConfig.bonus=cfg.voucher_bonus_percent||10;
+        llmConfig.expiry=cfg.voucher_expiry_days||180;
+        llmConfig.paypalClientId=cfg.paypal_client_id||"";
+        llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
+        llmConfig.paypalAvailable=!!cfg.paypal_available;
+      }catch(e){}
+      paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
+      if(!paymentToken){return} // user cancelled
+    }
+  }catch(e){showS3Err('Estimate error: '+e.message);return}
+
+  document.getElementById('btnG').disabled=true;
+  document.getElementById('btnOptimize').disabled=true;
+  optEmailPromptShown=false;
+  // Show step 4 with optimization progress
+  var s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
+  document.getElementById('s4t').textContent=t('s4_opt_title')||'AI Text Optimization';
+  if(bookData){
+    document.getElementById('s4bkT').textContent=bookData.title||'';
+    document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';
+    var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');
+    if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display=''}
+    else{sc.style.display='none';sc.src=''}
+  }
+  document.getElementById('pMsg').textContent=t('opt_starting')||'Starting AI text optimization...';
+  document.getElementById('pBar').style.width='0%';
+  document.getElementById('pPct').textContent='0%';
+  // Hide generation-specific stats
+  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
+  // Riallinea il bottone Annulla al contesto ottimizzazione AI: cambia label e handler
+  _setCancelButtonMode('opt');
+  lockUI();
+  setTimeout(function(){const genPanel=document.getElementById('s3');if(genPanel)genPanel.scrollIntoView({behavior:'smooth',block:'start'})},200);
+  try{
+    var payload={job_id:jobId,batch:false,lang:cl};
+    if(paymentToken)payload.payment_token=paymentToken;
+    var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var d=await r.json();
+    if(d.error){
+      if(d.error_code==='llm_concurrent_limit'){
+        document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
+        document.getElementById('pMsg').style.color='var(--err)';
+      }else{showPErr(d.error)}
+      unlockUI();return;
+    }
+    listenOptProgress();
+  }catch(e){showPErr('Error: '+e.message);unlockUI()}
+}
+
+function showS3Err(msg){
+  var s3err=document.getElementById('s3err');
+  if(s3err){s3err.textContent=msg;s3err.style.color='var(--err)'}
+}
+
+function listenOptProgress(){
+  var es=new EventSource('/api/optimize_progress/'+jobId);
+  es.onmessage=function(ev){
+    var d=JSON.parse(ev.data);
+    if(d.status==='error'){
+      es.close();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
+    }
+    if(d.status==='cancelled'){
+      es.close();
+      _setCancelButtonMode('gen');
+      document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
+      unlockUI();return;
+    }
+    if(d.status==='optimized'){
+      es.close();
+      _setCancelButtonMode('gen');
+      aiAlreadyOptimized=true;aiOptEnabled=false;
+      _updateAiOptUI();
+      document.getElementById('pMsg').textContent=t('opt_done')||'Text optimization complete!';
+      document.getElementById('pBar').style.width='100%';
+      document.getElementById('pPct').textContent='100%';
+      // Show buttons: generate audiobook + download .ABM
+      var cnA=document.getElementById('cnA');
+      cnA.innerHTML='<div style="display:flex;flex-direction:column;gap:10px;align-items:center;margin-top:12px">'
+        +'<button class="btn btn-ok" id="btnProceedGen" style="width:100%;max-width:400px">&#x1F3A7; '+(t('opt_proceed_gen')||'Generate audiobook')+'</button>'
+        +'<button class="btn btn-g" id="btnDownloadAbm" style="width:100%;max-width:400px">&#x1F4E5; '+(t('opt_download_abm')||'Download optimized project (.abm)')+'</button>'
+        +'</div>';
+      document.getElementById('btnProceedGen').onclick=function(){
+        var bpg=document.getElementById('btnProceedGen');
+        if(bpg.disabled)return;
+        bpg.disabled=true;
+        bpg.style.opacity='0.6';
+        bpg.style.cursor='not-allowed';
+        var bda=document.getElementById('btnDownloadAbm');
+        if(bda){bda.disabled=true;bda.style.opacity='0.6';bda.style.cursor='not-allowed';}
+        document.getElementById('s4').style.display='none';
+        unlockUI();
+        document.getElementById('btnG').disabled=false;
+        if(document.getElementById('btnOptimize'))document.getElementById('btnOptimize').disabled=false;
+        startGen();
+      };
+      document.getElementById('btnDownloadAbm').onclick=function(){
+        fetch('/api/export_abm/'+jobId).then(function(r){
+          if(!r.ok)throw new Error('Export failed');
+          return r.blob();
+        }).then(function(blob){
+          var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+          a.download=(bookData&&bookData.title?bookData.title:'project')+'_optimized.abm';
+          a.click();URL.revokeObjectURL(a.href);
+        }).catch(function(e){alert('Error: '+e.message)});
+      };
+      unlockUI();return;
+    }
+    if(d.auto_generate_started){
+      es.close();
+      _setCancelButtonMode('gen');
+      document.getElementById('s4t').textContent=t('s4_title')||'Generation';
+      // L'email è già registrata lato server (batch mode). Evita il re-prompt nella fase TTS.
+      emailRegistered=true;emailPromptShown=true;
+      listenProgress();
+      return;
+    }
+    // Update optimization progress (character-based for smooth updates).
+    // IMPORTANTE: sia numeratore sia denominatore devono essere in unità di
+    // caratteri di INPUT. opt_processed_chars somma i char *originali* dei
+    // capitoli completati; opt_streamed_chars è output LLM (espanso), quindi
+    // lo limitiamo alla dimensione del capitolo corrente per evitare che la
+    // barra sfori prima che il capitolo termini.
+    var totalChars=d.opt_total_chars||1;
+    var doneChars=d.opt_processed_chars||0;
+    var curChChars=d.opt_current_chapter_chars||0;
+    var streamedChars=Math.min(d.opt_streamed_chars||0,curChChars);
+    var workedChars=doneChars+streamedChars;
+    var pct=Math.min(99,Math.round(workedChars/totalChars*100));
+    document.getElementById('pBar').style.width=pct+'%';
+    document.getElementById('pPct').textContent=pct+'%';
+    document.getElementById('pMsg').textContent=d.opt_progress_message||'';
+
+    // Chapter title (pCh)
+    var pChEl=document.getElementById('pCh');
+    if(pChEl&&d.opt_current_chapter){
+      pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);
+    }
+
+    // Chapter counter (xCh)
+    if(d.opt_progress_total>0){
+      var xChEl=document.getElementById('xCh');
+      if(xChEl){xChEl.textContent=(d.opt_current_chapter_num||0)+' / '+d.opt_progress_total;xChEl.closest('.ps').style.display=''}
+    }
+
+    // Elapsed (xEl)
+    if(d.opt_elapsed_seconds>0){
+      var el=document.getElementById('xEl');
+      if(el){el.textContent=fmtTime(d.opt_elapsed_seconds);el.closest('.ps').style.display=''}
+    }
+
+    // ETA (xEta) + Speed (xSpd) — calcolati sui char/sec reali
+    if(workedChars>0&&d.opt_elapsed_seconds>1&&totalChars>0){
+      var cps=workedChars/d.opt_elapsed_seconds;
+      var left=Math.max(0,totalChars-workedChars);
+      var eta=Math.round(left/cps);
+      var xEtaEl=document.getElementById('xEta');
+      if(xEtaEl){xEtaEl.textContent=eta>0?'~'+fmtTime(eta):t('almost');xEtaEl.closest('.ps').style.display=''}
+      var xSpdEl=document.getElementById('xSpd');
+      if(xSpdEl){xSpdEl.textContent=Math.round(cps)+' '+t('cps');xSpdEl.closest('.ps').style.display=''}
+    }
+
+    // Generated chars so far (xSz) — mostrato come numero di caratteri ottimizzati
+    if(workedChars>0){
+      var xSzEl=document.getElementById('xSz');
+      if(xSzEl){xSzEl.textContent=workedChars.toLocaleString(cl||'it')+' char';xSzEl.closest('.ps').style.display=''}
+    }
+    // After 5 seconds, show email modal if SMTP available and not yet shown
+    if(!optEmailPromptShown&&smtpAvailable&&d.opt_elapsed_seconds>=5){
+      optEmailPromptShown=true;
+      _showOptEmailModal();
+    }
+  };
+  es.onerror=function(){es.close()};
+}
+
 // ═══════════════════ GENERATION ═══════════════════
 function _showLangWarning(){
   return new Promise(resolve=>{
@@ -892,6 +1290,33 @@ function listenProgress(){
     };
   }
   connect();
+}
+
+// Imposta label + handler del bottone Annulla in base al contesto:
+//   'opt' = ottimizzazione AI in corso  →  'Annulla ottimizzazione' / cancelOptimization
+//   'gen' = generazione audio TTS       →  'Annulla' / cancelJob
+function _setCancelButtonMode(mode){
+  var btnC=document.getElementById('btnC');
+  if(!btnC)return;
+  if(mode==='opt'){
+    btnC.innerHTML='\u23F9\uFE0F '+(t('btn_cancel_opt')||'Cancel optimization');
+    btnC.onclick=cancelOptimization;
+  }else{
+    btnC.innerHTML='\u23F9\uFE0F '+(t('btn_cancel')||'Cancel');
+    btnC.onclick=cancelJob;
+  }
+}
+
+function cancelOptimization(){
+  if(!jobId)return;
+  try{navigator.sendBeacon('/api/cancel_optimize/'+jobId);}catch(e){}
+  document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
+  // Ripristina label di default per i cicli successivi
+  _setCancelButtonMode('gen');
+  unlockUI();
+  document.getElementById('btnG').disabled=false;
+  if(document.getElementById('btnOptimize'))document.getElementById('btnOptimize').disabled=false;
+  var s4=document.getElementById('s4');if(s4)s4.style.display='none';
 }
 
 function cancelJob(){

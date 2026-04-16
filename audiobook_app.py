@@ -59,6 +59,69 @@ except ImportError:
     google_tts = None
     print("WARNING: google_tts.py not found — Google Cloud TTS disabled.", file=sys.stderr)
 
+# ── DeepSeek LLM per ottimizzazione testo TTS — opzionale ──
+DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_BASE = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MAX_TOKENS = 8192
+DEEPSEEK_TEMPERATURE = 0.3
+DEEPSEEK_CHARS_PER_TOKEN = 3.5
+DEEPSEEK_MAX_CONTEXT_TOKENS = 128000
+DEEPSEEK_RESERVED_OUTPUT_TOKENS = 8192
+DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
+DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
+DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
+
+_deepseek_client = None
+_deepseek_prompt = ""
+
+def _init_deepseek():
+    """Initialize DeepSeek client and load TTS optimization prompt."""
+    global _deepseek_client, _deepseek_prompt
+    if not DEEPSEEK_API_KEY:
+        print("[startup] DeepSeek LLM optimization disabled (ABM_DEEPSEEK_API_KEY not set)")
+        return
+    try:
+        from openai import OpenAI
+        _deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_API_BASE)
+        prompt_path = SCRIPT_DIR / "prompt_tts_optimization.md"
+        if prompt_path.exists():
+            _deepseek_prompt = prompt_path.read_text(encoding="utf-8").strip()
+            print(f"[startup] DeepSeek LLM optimization enabled (prompt: {len(_deepseek_prompt)} chars)")
+        else:
+            print(f"WARNING: prompt_tts_optimization.md not found — LLM optimization disabled.", file=sys.stderr)
+            _deepseek_client = None
+    except ImportError:
+        print("WARNING: openai library not installed — LLM optimization disabled. Run: pip install openai", file=sys.stderr)
+        _deepseek_client = None
+
+def _llm_available():
+    """True se l'ottimizzazione LLM è disponibile."""
+    return _deepseek_client is not None and bool(_deepseek_prompt)
+
+
+# ── PayPal payment config per LLM optimization ──
+PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
+PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
+PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
+PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10"))
+LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50"))
+VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
+VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
+PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
+
+_paypal_token_cache = {"access_token": None, "expires_at": 0}
+
+def _paypal_available():
+    """True se PayPal è configurato."""
+    return bool(PAYPAL_CLIENT_ID and PAYPAL_SECRET)
+
+
+def _estimate_llm_cost_eur(char_count):
+    """Stima il costo in EUR per ottimizzare N caratteri."""
+    return round((char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+
 
 # ── Import version and template builder ──
 from version import __version__
@@ -136,6 +199,8 @@ EMAIL_FILE_RETENTION_SEC = 24 * 60 * 60  # 24 ore di retention dopo invio email
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
 ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
+# Token admin per UI web /admin/vouchers. Se vuoto, l'endpoint è disabilitato.
+ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
 ADMIN_DIGEST_INTERVAL_SEC = 24*60 * 60  # 24 ore tra un digest e il successivo
 _admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}
 _admin_queue_lock = threading.Lock()
@@ -145,6 +210,10 @@ _admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
 # Max concurrent generating jobs per client device (cookie-based).
 # Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
 MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", "2"))
+
+# Max concurrent LLM optimization jobs per client device.
+# Set via ABM_MAX_CONCURRENT_LLM_PER_CLIENT env var; default 1.
+MAX_CONCURRENT_LLM_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", "1"))
 
 # Cookie name and max-age for client identification
 _CLIENT_COOKIE_NAME = "abm_cid"
@@ -183,6 +252,16 @@ def _active_generating_for_client(client_id):
     return sum(
         1 for j in jobs.values()
         if j.get("client_id") == client_id and j.get("status") == "generating"
+    )
+
+
+def _active_optimizing_for_client(client_id):
+    """Count how many LLM optimization jobs are running for the given client_id."""
+    if not client_id:
+        return 0
+    return sum(
+        1 for j in jobs.values()
+        if j.get("client_id") == client_id and j.get("status") == "optimizing"
     )
 
 
@@ -253,6 +332,318 @@ def _load_tokens():
             print(f"[tokens] Loaded {loaded} tokens from disk ({expired} expired/invalid)")
     except Exception as e:
         print(f"[tokens] Failed to load tokens: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PAYMENTS & VOUCHERS (for LLM optimization)
+# ═══════════════════════════════════════════════════════════════════
+
+_payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
+_vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
+_PAYMENTS_FILE = UPLOAD_DIR / "_payments.json"
+_VOUCHERS_FILE = UPLOAD_DIR / "_vouchers.json"
+_payments_lock = threading.Lock()
+_vouchers_lock = threading.Lock()
+
+# — Rate limit voucher_validate (Point 1) —
+# IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
+# Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
+_voucher_attempts_ip = {}
+_voucher_attempts_email = {}
+_voucher_rl_lock = threading.Lock()
+VOUCHER_RL_PER_MIN = 5
+VOUCHER_RL_PER_HOUR = 30
+VOUCHER_EMAIL_FAIL_LIMIT = 10    # fallimenti consecutivi prima del lockout
+VOUCHER_EMAIL_LOCKOUT_SEC = 900  # 15 minuti
+
+
+def _voucher_rl_check(ip, email):
+    """Return (allowed, retry_after_sec, reason)."""
+    now = time.time()
+    with _voucher_rl_lock:
+        # — IP sliding window —
+        hits = _voucher_attempts_ip.get(ip, [])
+        hits = [t for t in hits if now - t < 3600]
+        last_min = [t for t in hits if now - t < 60]
+        if len(last_min) >= VOUCHER_RL_PER_MIN:
+            retry = 60 - int(now - last_min[0])
+            _voucher_attempts_ip[ip] = hits
+            return False, max(1, retry), "rate_limit_ip_minute"
+        if len(hits) >= VOUCHER_RL_PER_HOUR:
+            retry = 3600 - int(now - hits[0])
+            _voucher_attempts_ip[ip] = hits
+            return False, max(1, retry), "rate_limit_ip_hour"
+        # — Email lockout —
+        em = (email or "").lower().strip()
+        if em:
+            info = _voucher_attempts_email.get(em)
+            if info and info.get("lockout_until", 0) > now:
+                return False, int(info["lockout_until"] - now), "email_locked"
+        # Record hit for IP — caller can trigger email-fail separately
+        hits.append(now)
+        _voucher_attempts_ip[ip] = hits
+    return True, 0, None
+
+
+def _voucher_rl_record_result(email, success):
+    """Aggiorna contatore fallimenti per email; reset on success."""
+    em = (email or "").lower().strip()
+    if not em:
+        return
+    now = time.time()
+    with _voucher_rl_lock:
+        if success:
+            _voucher_attempts_email.pop(em, None)
+            return
+        info = _voucher_attempts_email.get(em) or {"fail_count": 0, "lockout_until": 0}
+        info["fail_count"] = info.get("fail_count", 0) + 1
+        if info["fail_count"] >= VOUCHER_EMAIL_FAIL_LIMIT:
+            info["lockout_until"] = now + VOUCHER_EMAIL_LOCKOUT_SEC
+            info["fail_count"] = 0  # reset contatore dopo lockout
+        _voucher_attempts_email[em] = info
+
+
+
+def _save_payments():
+    try:
+        with _payments_lock:
+            with open(_PAYMENTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(_payments, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[payments] Failed to save: {e}")
+
+
+def _load_payments():
+    global _payments
+    if not _PAYMENTS_FILE.exists():
+        return
+    try:
+        with open(_PAYMENTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Retention: drop payments older than PAYMENT_RETENTION_DAYS
+        now = time.time()
+        cutoff = now - PAYMENT_RETENTION_DAYS * 86400
+        _payments = {k: v for k, v in data.items() if v.get("captured_at", 0) > cutoff}
+        if len(data) != len(_payments):
+            _save_payments()
+        print(f"[payments] Loaded {len(_payments)} payment records")
+    except Exception as e:
+        print(f"[payments] Failed to load: {e}")
+
+
+def _save_vouchers():
+    try:
+        with _vouchers_lock:
+            with open(_VOUCHERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(_vouchers, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[vouchers] Failed to save: {e}")
+
+
+def _load_vouchers():
+    global _vouchers
+    if not _VOUCHERS_FILE.exists():
+        return
+    try:
+        with open(_VOUCHERS_FILE, "r", encoding="utf-8") as f:
+            _vouchers = json.load(f)
+        print(f"[vouchers] Loaded {len(_vouchers)} voucher records")
+    except Exception as e:
+        print(f"[vouchers] Failed to load: {e}")
+
+
+def _generate_voucher_code():
+    """Generate a 12-char uppercase alphanumeric voucher code (no ambiguous chars)."""
+    import secrets
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
+    while True:
+        code = "-".join("".join(secrets.choice(chars) for _ in range(4)) for _ in range(3))
+        if code not in _vouchers:
+            return code
+
+
+def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
+                    kind="refund", note="", created_by="auto_refund",
+                    expiry_days=None, apply_bonus=True, code=None):
+    """Create a voucher.
+
+    kind: "refund" (auto-emesso dopo fallimento pagato), "promo" (generato da admin),
+          "gift" (regalo admin). Solo "refund" applica il bonus % predefinito.
+    note: testo libero amministrativo (motivo/causale).
+    created_by: "auto_refund" per l'emissione automatica, "admin" per CLI.
+    expiry_days: None → usa VOUCHER_EXPIRY_DAYS (refund). Gli admin possono passare un valore custom.
+    apply_bonus: se False salva l'importo nominale (usato per promo/gift).
+    code: se fornito, usa quel codice invece di generarne uno (utile per PROMO- prefix).
+    """
+    if code is None:
+        code = _generate_voucher_code()
+    now = time.time()
+    if apply_bonus:
+        bonus_amount = round(amount_eur * (1 + VOUCHER_BONUS_PERCENT / 100.0), 2)
+    else:
+        bonus_amount = round(float(amount_eur), 2)
+    days = VOUCHER_EXPIRY_DAYS if expiry_days is None else int(expiry_days)
+    _vouchers[code] = {
+        "code": code,
+        "email": (email or "").lower().strip(),
+        "amount_eur": bonus_amount,
+        "base_amount_eur": amount_eur,
+        "remaining_eur": bonus_amount,   # Saldo residuo (decresce ad ogni uso)
+        "uses": [],                       # list[{"job_id","amount_eur","at","remaining_after"}]
+        "created_at": now,
+        "expires_at": now + days * 86400,
+        "used": False,                    # True solo quando saldo ≤ 0.01
+        "used_at": None,
+        "origin_order_id": origin_order_id,
+        "origin_job_id": origin_job_id,
+        # — Nuovi campi (Point 4) —
+        "kind": kind,                # "refund" | "promo" | "gift"
+        "note": (note or "")[:500],
+        "created_by": created_by,    # "auto_refund" | "admin"
+    }
+    _save_vouchers()
+    return code, bonus_amount
+
+
+def _voucher_remaining(v: dict) -> float:
+    """Saldo residuo del voucher. Gestisce record legacy privi di ``remaining_eur``:
+    se esiste il flag ``used`` binario → 0 residuo; altrimenti l'importo originale.
+    """
+    if "remaining_eur" in v:
+        try:
+            return max(0.0, round(float(v["remaining_eur"]), 2))
+        except (TypeError, ValueError):
+            return 0.0
+    # Legacy: nessun remaining_eur memorizzato
+    if v.get("used"):
+        return 0.0
+    try:
+        return round(float(v.get("amount_eur", 0) or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
+    """Scala ``amount`` EUR dal saldo del voucher ``code``. Ritorna il nuovo saldo
+    residuo. Se il saldo scende sotto 0.01 EUR il voucher viene marcato ``used=True``.
+    Solleva ``ValueError`` se il voucher non è spendibile o il saldo è insufficiente.
+    """
+    v = _vouchers.get(code)
+    if not v:
+        raise ValueError("voucher not found")
+    if v.get("expires_at", 0) <= time.time():
+        raise ValueError("voucher expired")
+    remaining = _voucher_remaining(v)
+    # Arrotondamenti: se la differenza è ≤ 0.01 permettiamo lo spend (evita errori di 1 cent)
+    if amount > remaining + 0.01:
+        raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
+    spent = round(min(amount, remaining), 2)
+    new_remaining = round(remaining - spent, 2)
+    now = time.time()
+    v["remaining_eur"] = new_remaining
+    uses = v.get("uses")
+    if not isinstance(uses, list):
+        uses = []
+    uses.append({
+        "job_id": job_id,
+        "amount_eur": spent,
+        "at": now,
+        "remaining_after": new_remaining,
+    })
+    v["uses"] = uses
+    # Mark fully used solo quando il saldo è praticamente zero
+    if new_remaining < 0.01:
+        v["used"] = True
+        v["used_at"] = now
+    else:
+        v["used"] = False
+    _save_vouchers()
+    return new_remaining
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PAYPAL REST API v2
+# ═══════════════════════════════════════════════════════════════════
+
+def _paypal_get_access_token():
+    """Get OAuth2 access token (cached ~8h)."""
+    import requests
+    now = time.time()
+    if _paypal_token_cache["access_token"] and _paypal_token_cache["expires_at"] > now + 60:
+        return _paypal_token_cache["access_token"]
+    if not _paypal_available():
+        return None
+    r = requests.post(
+        f"{PAYPAL_API_BASE}/v1/oauth2/token",
+        auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
+        data={"grant_type": "client_credentials"},
+        headers={"Accept": "application/json"},
+        timeout=15,
+    )
+    if r.status_code != 200:
+        # Diagnostic info — don't leak the secret, but show ID prefix and mode
+        cid_hint = (PAYPAL_CLIENT_ID[:6] + "…" + PAYPAL_CLIENT_ID[-4:]) if len(PAYPAL_CLIENT_ID) > 12 else "(too short)"
+        body = (r.text or "")[:300]
+        raise RuntimeError(
+            f"PayPal OAuth failed: HTTP {r.status_code} on {PAYPAL_API_BASE} "
+            f"(mode={PAYPAL_MODE}, client_id={cid_hint}, secret_len={len(PAYPAL_SECRET)}). "
+            f"Response: {body}. "
+            f"Verifica che le credenziali siano dell'app {PAYPAL_MODE.upper()} "
+            f"creata su https://developer.paypal.com/dashboard/applications/{PAYPAL_MODE}"
+        )
+    data = r.json()
+    _paypal_token_cache["access_token"] = data["access_token"]
+    _paypal_token_cache["expires_at"] = now + int(data.get("expires_in", 28800)) - 60
+    return data["access_token"]
+
+
+def _paypal_create_order(amount_eur, description, custom_id=None):
+    """Create a PayPal Order. Returns dict with 'id' and 'status'."""
+    import requests
+    token = _paypal_get_access_token()
+    if not token:
+        raise RuntimeError("PayPal not configured")
+    payload = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "amount": {"currency_code": "EUR", "value": f"{amount_eur:.2f}"},
+            "description": description[:127],
+        }],
+        "application_context": {
+            "brand_name": "Audiobook Maker",
+            "user_action": "PAY_NOW",
+            "shipping_preference": "NO_SHIPPING",
+        },
+    }
+    if custom_id:
+        payload["purchase_units"][0]["custom_id"] = custom_id[:127]
+    r = requests.post(
+        f"{PAYPAL_API_BASE}/v2/checkout/orders",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        },
+        json=payload,
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _paypal_capture_order(order_id):
+    """Capture a previously-approved order. Returns captured order dict."""
+    import requests
+    token = _paypal_get_access_token()
+    if not token:
+        raise RuntimeError("PayPal not configured")
+    r = requests.post(
+        f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}/capture",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()
 
 
 def _smtp_available():
@@ -419,6 +810,9 @@ def _send_completion_email(job_id):
         "podcast_info_language": info.language if info else "",
         "original_filename": job.get("original_filename", ""),
         "lang": lang,
+        # Optional: optimized .abm snapshot (when auto_generate flow produced one)
+        "optimized_abm_path": job.get("optimized_abm_path", ""),
+        "optimized_abm_name": job.get("optimized_abm_name", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -507,7 +901,21 @@ def _send_completion_email(job_id):
         },
     }
 
-    t = _email_i18n.get(lang, _email_i18n["en"])
+    t = dict(_email_i18n.get(lang, _email_i18n["en"]))
+
+    # Se il job ha incluso ottimizzazione AI + generazione TTS nel medesimo flusso,
+    # l'utente si aspetta di scaricare anche l'audio: chiariamo il bottone con
+    # "file audio" per distinguerlo dall'email di sola ottimizzazione (.abm).
+    if job.get("ai_optimized"):
+        _btn_audio = {
+            "it": "&#x2B07;&#xFE0F; Scarica i tuoi file audio",
+            "en": "&#x2B07;&#xFE0F; Download your audio files",
+            "fr": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger vos fichiers audio",
+            "es": "&#x2B07;&#xFE0F; Descarga tus archivos de audio",
+            "de": "&#x2B07;&#xFE0F; Audiodateien herunterladen",
+            "zh": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u97f3\u9891\u6587\u4ef6",
+        }
+        t["btn"] = _btn_audio.get(lang, _btn_audio["en"])
 
     # ── Podcast section (only for podcast downloads) ──
     podcast_section = ""
@@ -526,6 +934,29 @@ def _send_completion_email(job_id):
         <p style="margin:0">{t['podcast_p3']}</p>
       </div>"""
 
+    # ── Optional: link to optimized .abm file (only present when auto_generate flow produced one) ──
+    abm_section = ""
+    has_abm = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
+    if has_abm:
+        abm_url = f"{BASE_URL}/dl/{token}/abm" if BASE_URL else f"/dl/{token}/abm"
+        _abm_labels = {
+            "it": ("&#x1F4DD; Scarica progetto ottimizzato (.abm)", "Contiene il testo ottimizzato dall'AI, utile per future ri-generazioni audio o revisioni manuali."),
+            "en": ("&#x1F4DD; Download optimized project (.abm)", "Contains the AI-optimized text, useful for future audio re-generations or manual revisions."),
+            "fr": ("&#x1F4DD; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)", "Contient le texte optimis&eacute; par l'IA, utile pour les futures re-g&eacute;n&eacute;rations audio ou r&eacute;visions manuelles."),
+            "es": ("&#x1F4DD; Descargar proyecto optimizado (.abm)", "Contiene el texto optimizado por IA, &uacute;til para futuras regeneraciones de audio o revisiones manuales."),
+            "de": ("&#x1F4DD; Optimiertes Projekt herunterladen (.abm)", "Enth&auml;lt den KI-optimierten Text, n&uuml;tzlich f&uuml;r zuk&uuml;nftige Audio-Regenerierung oder manuelle &Uuml;berarbeitung."),
+            "zh": ("&#x1F4DD; \u4e0b\u8f7d\u4f18\u5316\u540e\u7684\u9879\u76ee\u6587\u4ef6 (.abm)", "\u5305\u542bAI\u4f18\u5316\u540e\u7684\u6587\u672c\uff0c\u53ef\u7528\u4e8e\u672a\u6765\u97f3\u9891\u91cd\u65b0\u751f\u6210\u6216\u624b\u52a8\u4fee\u8ba2\u3002"),
+        }
+        abm_btn, abm_hint = _abm_labels.get(lang, _abm_labels["en"])
+        abm_section = f"""
+      <p style="margin:16px 0 6px">
+        <a href="{abm_url}" style="display:inline-block;padding:12px 24px;background:#8b5cf6;color:white;
+           text-decoration:none;border-radius:8px;font-weight:600;font-size:15px">
+          {abm_btn}
+        </a>
+      </p>
+      <p style="margin:0 0 16px;color:#666;font-size:13px">{abm_hint}</p>"""
+
     subject = t["subject"]
     html_body = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -537,6 +968,7 @@ def _send_completion_email(job_id):
           {t['btn']}
         </a>
       </p>
+      {abm_section}
       <p style="color:#e74c3c;font-weight:600">{t['warn']}</p>
       {podcast_section}
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
@@ -721,9 +1153,90 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
     return chunks if chunks else [text]
 
 
+def _is_multilingual_voice(voice: str) -> bool:
+    """True se la voce edge-tts è una 'Multilingual' (tendenzialmente soggetta a
+    lingua-drift su testi monolingua). Rileva sia il token 'Multilingual' sia
+    'MultiLingual'/'multilingual' nel nome shortname.
+    """
+    return "multilingual" in (voice or "").lower()
+
+
+# Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo alla
+# frase successiva per garantire abbastanza contesto linguistico al motore.
+_TTS_MIN_SENT_CHARS = 80
+# Limite superiore di sicurezza: se una "frase" è enorme non la spezziamo ulteriormente
+# (ci penserà il chunking a monte).
+_TTS_MAX_SENT_CHARS = 1500
+
+
+def _split_sentences_for_tts(text: str):
+    """Split un chunk in frasi, accorpando quelle troppo corte per dare contesto
+    sufficiente al motore TTS Multilingual. Preserva spazi/punteggiatura originali.
+
+    Strategia: tokenizza su terminatori ``. ? ! …`` seguiti da spazio/newline, poi
+    fa merge in avanti finché la lunghezza minima è raggiunta.
+    Ritorna una lista di stringhe pronte per TTS (nessuna sarà vuota).
+    """
+    import re as _re
+    if not text:
+        return []
+    # Regex: terminatore + eventuali virgolette/chiuse + whitespace obbligatorio
+    # Usa lookbehind per mantenere il terminatore nella frase precedente.
+    pattern = _re.compile(r'(?<=[\.\?\!…])["\'»”’\)\]]*\s+')
+    raw = pattern.split(text)
+    raw = [s for s in (s.strip() for s in raw) if s]
+    if not raw:
+        return [text.strip()] if text.strip() else []
+    merged = []
+    buf = ""
+    for s in raw:
+        if not buf:
+            buf = s
+        else:
+            buf = buf + " " + s
+        if len(buf) >= _TTS_MIN_SENT_CHARS:
+            merged.append(buf)
+            buf = ""
+    if buf:
+        if merged and len(buf) < _TTS_MIN_SENT_CHARS:
+            merged[-1] = merged[-1] + " " + buf
+        else:
+            merged.append(buf)
+    # Safety cap: nessuna frase estremamente lunga (non dovrebbe capitare ma non vogliamo spezzare)
+    return [m for m in merged if m]
+
+
+async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
+    """Singola chiamata edge-tts con retry/backoff. In caso di fallimento totale
+    scrive un brevissimo silenzio e ritorna False.
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
+            await communicate.save(output_path)
+            return True
+        except Exception as e:
+            last_error = e
+            wait = 2 ** attempt
+            snippet = text[:60].replace('\n', ' ')
+            print(f"[tts] Attempt {attempt+1}/{max_retries} failed ({len(text)} chars: \"{snippet}...\"): {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(wait)
+    print(f"[tts] WARNING: all {max_retries} attempts failed ({len(text)} chars). Last: {last_error}")
+    _generate_silence_mp3(output_path, duration_sec=1)
+    return False
+
+
 async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
-    """Generate MP3 from text via edge-tts with retry and fallback."""
-    # Sanitize text: remove characters that commonly cause NoAudioReceived
+    """Generate MP3 from text via edge-tts with retry and fallback.
+
+    Per le voci *Multilingual* (es. ``it-IT-GiuseppeMultilingualNeural``) il motore
+    Azure fa auto-detection della lingua per clausola e può "sbandare" (italiano
+    letto in inglese/spagnolo/portoghese). Mitigazione: spezzare in frasi e
+    sintetizzare una per volta. Contesti più brevi → meno drift. I singoli MP3
+    vengono concatenati (via ``_concatenate_mp3``) nel file finale.
+    """
     import re as _re
     clean = text.strip()
     if not clean:
@@ -738,26 +1251,41 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
         _generate_silence_mp3(output_path, duration_sec=1)
         return
 
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            communicate = edge_tts.Communicate(text=clean, voice=voice, rate=rate)
-            await communicate.save(output_path)
-            return  # Success
-        except Exception as e:
-            last_error = e
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[tts] Attempt {attempt+1}/{max_retries} failed for chunk "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(wait)
+    # ── Percorso "split-per-frase" solo per voci Multilingual ──
+    if _is_multilingual_voice(voice):
+        sentences = _split_sentences_for_tts(clean)
+        # Se c'è una sola frase non conviene — si risparmia I/O e concat.
+        if len(sentences) >= 2:
+            import tempfile
+            tmpdir = tempfile.mkdtemp(prefix="abmtts_")
+            try:
+                parts = []
+                any_failed = False
+                for i, sent in enumerate(sentences):
+                    part_path = os.path.join(tmpdir, f"s{i:04d}.mp3")
+                    ok = await _edge_tts_call(sent, voice, rate, part_path, max_retries=max_retries)
+                    if not ok:
+                        any_failed = True
+                    parts.append(part_path)
+                _concatenate_mp3(parts, output_path)
+                if any_failed:
+                    return False
+                return True
+            finally:
+                try:
+                    for f in os.listdir(tmpdir):
+                        try:
+                            os.remove(os.path.join(tmpdir, f))
+                        except OSError:
+                            pass
+                    os.rmdir(tmpdir)
+                except OSError:
+                    pass
+        # fallthrough: singola frase → chiamata unica
 
-    # All retries failed: generate silence as fallback so the book continues
-    print(f"[tts] WARNING: All {max_retries} attempts failed, generating silence for chunk "
-          f"({len(clean)} chars). Last error: {last_error}")
-    _generate_silence_mp3(output_path, duration_sec=1)
-    return False  # Signal failure (silence was generated instead)
+    # ── Percorso standard: chiamata singola con retry ──
+    ok = await _edge_tts_call(clean, voice, rate, output_path, max_retries=max_retries)
+    return ok if ok is False else None
 
 
 def generate_chunk_mp3_google(text, voice, rate, output_path, max_retries=3):
@@ -1000,6 +1528,583 @@ def _include_cover_in_dir(job, target_dir):
     return False
 
 
+# ═══════════════════════════════════════════════════════════════════
+# LLM TEXT OPTIMIZATION (DeepSeek)
+# ═══════════════════════════════════════════════════════════════════
+
+def _split_text_into_chunks(text, max_chars):
+    """Split text into chunks respecting paragraph boundaries."""
+    paragraphs = re.split(r'\n\s*\n', text)
+    chunks = []
+    current_chunk = []
+    current_size = 0
+
+    for para in paragraphs:
+        para_size = len(para)
+        if para_size > max_chars:
+            if current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+                current_chunk = []
+                current_size = 0
+            sentences = re.split(r'(?<=[.!?…])\s+', para)
+            sub_chunk = []
+            sub_size = 0
+            for sent in sentences:
+                if sub_size + len(sent) > max_chars and sub_chunk:
+                    chunks.append(" ".join(sub_chunk))
+                    sub_chunk = []
+                    sub_size = 0
+                sub_chunk.append(sent)
+                sub_size += len(sent)
+            if sub_chunk:
+                chunks.append(" ".join(sub_chunk))
+            continue
+        if current_size + para_size + 2 > max_chars and current_chunk:
+            chunks.append("\n\n".join(current_chunk))
+            current_chunk = []
+            current_size = 0
+        current_chunk.append(para)
+        current_size += para_size + 2
+    if current_chunk:
+        chunks.append("\n\n".join(current_chunk))
+    return chunks
+
+
+# Pattern di preamboli/postfazioni meta che il LLM a volte emette nonostante
+# il prompt vieti commenti (Understood, Sure, Ecco il testo…, According to the
+# rules…). Se presenti vengono scartati dal sanitizer: se finissero nell'audio,
+# il TTS leggerebbe "Understood, according to the rule…" come se fosse testo
+# del libro.
+_LLM_PREAMBLE_PATTERNS = (
+    # Inglese
+    r"^(understood|sure|certainly|of\s+course|got\s+it|okay|ok|alright|"
+    r"here(?:'s|\s+is)\s+(?:the\s+)?(?:optimized|cleaned|edited|revised)(?:\s+text|\s+version)?|"
+    r"below\s+is\s+the|following\s+the\s+rules?|according\s+to\s+the\s+rules?|"
+    r"as\s+requested|as\s+instructed|noted)\b",
+    # Italiano
+    r"^(capito|compreso|d['’]accordo|ho\s+capito|perfetto|va\s+bene|certo|"
+    r"ecco\s+(?:il|la|una)?\s*(?:testo|versione)(?:\s+ottimizzata?|\s+rivista|\s+pulita|\s+corretta)?|"
+    r"seguendo\s+le\s+regole|secondo\s+le\s+regole|come\s+richiesto)\b",
+    # Francese / spagnolo / tedesco (difese minori ma utili)
+    r"^(compris|d['’]accord|voici\s+le\s+texte|suivant\s+les\s+r[èe]gles|"
+    r"entendido|de\s+acuerdo|aqu[ií]\s+est[áa]\s+el\s+texto|"
+    r"verstanden|hier\s+ist\s+der\s+text)\b",
+)
+_LLM_PREAMBLE_RE = re.compile(
+    "|".join(_LLM_PREAMBLE_PATTERNS), re.IGNORECASE | re.UNICODE
+)
+
+
+def _sanitize_llm_output(text: str) -> str:
+    """Rimuove contaminazioni tipiche dell'output LLM prima di passarlo al TTS.
+
+    Due categorie di problemi mitigati:
+      1) Preamboli/postfazioni meta ("Understood, according to the rules…",
+         "Ecco il testo ottimizzato:", "Here is the optimized version:"…)
+         che il modello emette nonostante il prompt li vieti. Se raggiungono
+         il TTS vengono letti come se fossero testo del libro.
+      2) Paragrafi/righe duplicate consecutivamente — tipicamente il titolo
+         del capitolo ripetuto sia in coda al chunk precedente sia in testa
+         a quello successivo.
+
+    Conservativo: rimuove SOLO righe/blocchi che iniziano con un pattern
+    riconosciuto (o sono duplicati esatti). Il contenuto narrativo non è mai
+    toccato.
+    """
+    if not text:
+        return text
+
+    # ── 1) Strip preamble: rimuovi, in testa, le prime righe che iniziano
+    # con un marcatore meta (e l'eventuale riga che termina con ':').
+    lines = text.splitlines()
+    idx = 0
+    # Salta righe vuote iniziali
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    # Se la prima riga non vuota sembra un preambolo, scartala (più le righe
+    # immediatamente successive finché restano "meta": righe brevi che
+    # terminano con ':' sono tipiche intestazioni ["Ecco il testo:"]).
+    stripped_any = False
+    while idx < len(lines):
+        candidate = lines[idx].strip()
+        if not candidate:
+            if stripped_any:
+                idx += 1  # consuma riga vuota separatrice dopo il preambolo
+            break
+        is_preamble = bool(_LLM_PREAMBLE_RE.match(candidate))
+        # riga meta "corta" che termina con ':' (es. "Optimized text:")
+        is_meta_header = (
+            len(candidate) <= 80 and candidate.endswith(":")
+            and not candidate[0].islower()
+        )
+        if is_preamble or (stripped_any and is_meta_header):
+            idx += 1
+            stripped_any = True
+            continue
+        break
+
+    # ── 2) Strip trailing meta: ultime righe tipo "Note: …" o
+    # "[End of optimized text]".
+    end = len(lines)
+    while end > idx:
+        tail = lines[end - 1].strip()
+        if not tail:
+            end -= 1
+            continue
+        if tail.startswith(("Note:", "Nota:", "[Note", "[End", "[Fine",
+                            "— End", "—End")):
+            end -= 1
+            continue
+        break
+
+    cleaned = "\n".join(lines[idx:end]).strip("\n")
+
+    # ── 3) Deduplica paragrafi consecutivi identici (titolo ripetuto a cavallo
+    # di due chunk concatenati, o stesso blocco emesso due volte dal modello).
+    paragraphs = re.split(r"\n{2,}", cleaned)
+    deduped = []
+    for p in paragraphs:
+        p_norm = p.strip()
+        if not p_norm:
+            continue
+        if deduped and deduped[-1].strip() == p_norm:
+            continue
+        deduped.append(p)
+
+    # ── 4) Deduplica anche righe consecutive identiche *all'interno* di un
+    # paragrafo (difesa in più contro doppie emissioni di singole righe).
+    final_paragraphs = []
+    for p in deduped:
+        plines = p.split("\n")
+        out_lines = []
+        for ln in plines:
+            if out_lines and out_lines[-1].strip() and out_lines[-1].strip() == ln.strip():
+                continue
+            out_lines.append(ln)
+        final_paragraphs.append("\n".join(out_lines))
+
+    return "\n\n".join(final_paragraphs).strip()
+
+
+def _call_deepseek(user_content, job=None, max_retries=4):
+    """Call DeepSeek API with streaming. Returns optimized text.
+    If job is provided, updates opt_streamed_chars for real-time progress.
+    Retries on transient network errors (connection reset, read timeout) with
+    exponential backoff. The full chunk is re-sent on each retry since the
+    LLM stream cannot be resumed mid-way."""
+    messages = [
+        {"role": "system", "content": _deepseek_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    last_exc = None
+    for attempt in range(max_retries):
+        result_parts = []
+        partial_streamed = 0  # chars added to job during this attempt
+        try:
+            stream = _deepseek_client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=messages,
+                max_tokens=DEEPSEEK_MAX_TOKENS,
+                temperature=DEEPSEEK_TEMPERATURE,
+                stream=True,
+                timeout=120.0,
+            )
+            for event in stream:
+                if event.choices and event.choices[0].delta.content:
+                    chunk = event.choices[0].delta.content
+                    result_parts.append(chunk)
+                    if job is not None:
+                        job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(chunk)
+                        partial_streamed += len(chunk)
+            raw = "".join(result_parts)
+            cleaned = _sanitize_llm_output(raw)
+            if cleaned != raw:
+                # Riallinea il contatore dello streaming se abbiamo scartato
+                # preamboli/duplicati (evita numeratore gonfiato in progress bar).
+                removed = len(raw) - len(cleaned)
+                if job is not None and removed > 0:
+                    job["opt_streamed_chars"] = max(
+                        0, job.get("opt_streamed_chars", 0) - removed
+                    )
+                print(f"  [DeepSeek] sanitized output: removed {removed} chars of meta/duplicates")
+            return cleaned
+        except Exception as e:
+            last_exc = e
+            # Roll back partial progress so the next attempt's streaming
+            # doesn't double-count chars
+            if job is not None and partial_streamed > 0:
+                job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
+            err_name = type(e).__name__
+            # Only retry on transient network errors
+            transient = any(s in err_name for s in (
+                "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
+                "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
+            ))
+            if not transient or attempt >= max_retries - 1:
+                raise
+            wait = 2 ** attempt  # 1, 2, 4, 8 seconds
+            print(f"  [DeepSeek] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
+            time.sleep(wait)
+    # Should not reach here, but just in case
+    if last_exc:
+        raise last_exc
+    return "".join(result_parts)
+
+
+def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None):
+    """Optimize a single chapter's text, using chunking if needed."""
+    label = f"[ch {chapter_num}/{total_chapters}]" if chapter_num else ""
+    if len(text) <= DEEPSEEK_MAX_INPUT_CHARS:
+        print(f"  {label} LLM single call ({len(text):,} chars)")
+        return _call_deepseek(text, job=job)
+    # Chunk the chapter
+    chunks = _split_text_into_chunks(text, DEEPSEEK_MAX_INPUT_CHARS)
+    print(f"  {label} LLM chunked: {len(chunks)} chunks")
+    results = []
+    for i, chunk in enumerate(chunks):
+        if len(chunks) > 1:
+            if i == 0:
+                user_content = f"[Parte {i+1} di {len(chunks)} — inizio del testo]\n\n{chunk}"
+            elif i == len(chunks) - 1:
+                user_content = f"[Parte {i+1} di {len(chunks)} — fine del testo]\n\n{chunk}"
+            else:
+                user_content = f"[Parte {i+1} di {len(chunks)} — continuazione]\n\n{chunk}"
+        else:
+            user_content = chunk
+        results.append(_call_deepseek(user_content, job=job))
+        if i < len(chunks) - 1:
+            time.sleep(2)  # rate limiting tra chunk
+    # Seconda passata di sanitizzazione sul testo ricomposto: se il chunk i
+    # finisce con il titolo del capitolo e il chunk i+1 lo ripete in testa,
+    # dopo il join diventano paragrafi consecutivi identici → deduplicati.
+    return _sanitize_llm_output("\n\n".join(results))
+
+
+def _generate_optimized_abm(job_id):
+    """Generate an .abm file with AI-optimized text for email download."""
+    import zipfile
+    import io
+    from datetime import datetime, timezone
+
+    job = jobs[job_id]
+    info = job.get("info")
+    if not info:
+        return None, None
+
+    buf = io.BytesIO()
+    safe_title = _safe_filename(info.title) or "project"
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        chapters_manifest = []
+        for ch in info.chapters:
+            ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
+            ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
+            zf.writestr(f"chapters/{ch_filename}", ch.text)
+            chapters_manifest.append({
+                "index": ch.index,
+                "filename": ch_filename,
+                "title": ch.title,
+                "word_count": ch.word_count,
+            })
+
+        # Cover
+        has_cover = False
+        cover_file = ""
+        cover_path = job.get("cover_thumb")
+        if cover_path and os.path.exists(cover_path):
+            cover_ext = ".png" if cover_path.endswith(".png") else ".jpg"
+            cover_file = f"cover{cover_ext}"
+            with open(cover_path, "rb") as cf:
+                zf.writestr(cover_file, cf.read())
+            has_cover = True
+
+        manifest = {
+            "format": "audiobook-maker-project",
+            "format_version": "1.0",
+            "title": info.title,
+            "author": getattr(info, "author", ""),
+            "language": getattr(info, "language", ""),
+            "has_cover": has_cover,
+            "cover_file": cover_file,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "original_filename": job.get("original_filename", ""),
+            "ai_optimized": True,
+            "ai_optimized_at": datetime.now(timezone.utc).isoformat(),
+            "chapters": chapters_manifest,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+    buf.seek(0)
+    # Save .abm to disk for email download
+    work_dir = UPLOAD_DIR / job_id
+    work_dir.mkdir(exist_ok=True)
+    abm_path = str(work_dir / f"{safe_title}_optimized.abm")
+    with open(abm_path, "wb") as f:
+        f.write(buf.getvalue())
+    return abm_path, f"{safe_title}_optimized.abm"
+
+
+def _send_optimization_email(job_id):
+    """Send email with optimized .abm download link when LLM optimization completes."""
+    job = jobs.get(job_id)
+    if not job or not job.get("notify_email"):
+        return
+    email = job["notify_email"]
+    info = job.get("info")
+    book_title = info.title if info else "Audiobook"
+    lang = job.get("notify_lang", "en")
+
+    token = str(uuid.uuid4())
+    abm_path = job.get("optimized_abm_path", "")
+    abm_name = job.get("optimized_abm_name", "optimized.abm")
+
+    _download_tokens[token] = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "download_type": "optimized_abm",
+        "book_title": book_title,
+        "optimized_abm_path": abm_path,
+        "optimized_abm_name": abm_name,
+        "original_filename": job.get("original_filename", ""),
+        "lang": lang,
+    }
+    _save_tokens()
+    job["email_token"] = token
+    job["email_sent_at"] = time.time()
+
+    dl_url = f"{BASE_URL}/dl/{token}" if BASE_URL else f"/dl/{token}"
+
+    _opt_email_i18n = {
+        "it": {
+            "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo completata",
+            "heading": "&#x2728; Ottimizzazione testo completata!",
+            "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
+            "btn": "&#x2B07;&#xFE0F; Scarica il progetto ottimizzato (.abm)",
+            "info": "Il file .abm scaricato contiene il testo ottimizzato per la sintesi vocale. Puoi caricarlo nuovamente su Audiobook Maker per procedere alla generazione dell'audiolibro.",
+            "warn": "&#x23F0; Attenzione: il file sar&agrave; disponibile per il download soltanto per 24 ore.",
+            "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
+        },
+        "en": {
+            "subject": f"Audiobook Maker — \"{book_title}\" text optimization completed",
+            "heading": "&#x2728; Text optimization completed!",
+            "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
+            "btn": "&#x2B07;&#xFE0F; Download optimized project (.abm)",
+            "info": "The downloaded .abm file contains text optimized for speech synthesis. You can upload it back to Audiobook Maker to proceed with audiobook generation.",
+            "warn": "&#x23F0; Please note: the file will be available for download for 24 hours only.",
+            "footer": "This email was automatically generated by Audiobook Maker.",
+        },
+        "fr": {
+            "subject": f"Audiobook Maker — \"{book_title}\" optimisation du texte termin&eacute;e",
+            "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
+            "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
+            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)",
+            "info": "Le fichier .abm t&eacute;l&eacute;charg&eacute; contient le texte optimis&eacute; pour la synth&egrave;se vocale. Vous pouvez le recharger sur Audiobook Maker pour g&eacute;n&eacute;rer le livre audio.",
+            "warn": "&#x23F0; Attention : le fichier sera disponible au t&eacute;l&eacute;chargement pendant 24 heures seulement.",
+            "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
+        },
+        "es": {
+            "subject": f"Audiobook Maker — \"{book_title}\" optimizaci&oacute;n de texto completada",
+            "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
+            "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
+            "btn": "&#x2B07;&#xFE0F; Descargar proyecto optimizado (.abm)",
+            "info": "El archivo .abm descargado contiene el texto optimizado para la s&iacute;ntesis de voz. Puedes cargarlo nuevamente en Audiobook Maker para generar el audiolibro.",
+            "warn": "&#x23F0; Atenci&oacute;n: el archivo estar&aacute; disponible para descargar solo durante 24 horas.",
+            "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
+        },
+        "de": {
+            "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung abgeschlossen",
+            "heading": "&#x2728; Textoptimierung abgeschlossen!",
+            "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
+            "btn": "&#x2B07;&#xFE0F; Optimiertes Projekt herunterladen (.abm)",
+            "info": "Die heruntergeladene .abm-Datei enth&auml;lt den f&uuml;r die Sprachsynthese optimierten Text. Du kannst sie erneut in Audiobook Maker hochladen, um das H&ouml;rbuch zu generieren.",
+            "warn": "&#x23F0; Hinweis: Die Datei steht nur 24 Stunden zum Download bereit.",
+            "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
+        },
+        "zh": {
+            "subject": f"Audiobook Maker — \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
+            "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
+            "body": f"<strong>{book_title}</strong> \u7684AI\u6587\u672c\u4f18\u5316\u5df2\u6210\u529f\u5b8c\u6210\u3002",
+            "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u4f18\u5316\u9879\u76ee (.abm)",
+            "info": "\u4e0b\u8f7d\u7684.abm\u6587\u4ef6\u5305\u542b\u4e3a\u8bed\u97f3\u5408\u6210\u4f18\u5316\u7684\u6587\u672c\u3002\u60a8\u53ef\u4ee5\u5c06\u5176\u91cd\u65b0\u4e0a\u4f20\u5230Audiobook Maker\u4ee5\u7ee7\u7eed\u751f\u6210\u6709\u58f0\u8bfb\u7269\u3002",
+            "warn": "&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u572824\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002",
+            "footer": "\u6b64\u90ae\u4ef6\u7531 Audiobook Maker \u81ea\u52a8\u751f\u6210\u3002",
+        },
+    }
+
+    t = _opt_email_i18n.get(lang, _opt_email_i18n["en"])
+    subject = t["subject"]
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <h2 style="color:#2c3e50">{t['heading']}</h2>
+      <p>{t['body']}</p>
+      <p style="margin:24px 0">
+        <a href="{dl_url}" style="display:inline-block;padding:14px 28px;background:#8b5cf6;color:white;
+           text-decoration:none;border-radius:8px;font-weight:600;font-size:16px">
+          {t['btn']}
+        </a>
+      </p>
+      <div style="margin:16px 0;padding:12px 16px;background:#f0f5ff;border-left:4px solid #8b5cf6;border-radius:4px">
+        <p style="margin:0;font-size:14px">{t['info']}</p>
+      </div>
+      <p style="color:#e74c3c;font-weight:600">{t['warn']}</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="color:#999;font-size:12px">
+        {t['footer']}
+        {('Visita ' + BASE_URL) if BASE_URL else ''}
+      </p>
+    </div>
+    """
+    success = _send_email(email, subject, html_body)
+    if success:
+        _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_SENT",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+    else:
+        _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_FAILED",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+
+
+def run_optimization(job_id):
+    """Background thread: optimize text of all chapters via DeepSeek LLM."""
+    job = jobs[job_id]
+    job["status"] = "optimizing"
+    job["opt_cancelled"] = False
+    job["last_poll"] = time.time()
+    start_time = time.time()
+    info = job["info"]
+    total_chapters = len(info.chapters)
+    total_chars = sum(ch.char_count for ch in info.chapters)
+
+    job["opt_progress_current"] = 0
+    job["opt_progress_total"] = total_chapters
+    job["opt_total_chars"] = total_chars
+    job["opt_processed_chars"] = 0
+    job["opt_streamed_chars"] = 0
+    job["opt_start_time"] = start_time
+
+    try:
+        for i, ch in enumerate(info.chapters):
+            if job.get("opt_cancelled"):
+                raise _CancelledError("Optimization cancelled")
+            # Heartbeat check (skip if email registered — batch mode)
+            if not job.get("email_registered"):
+                last_poll = job.get("last_poll", start_time)
+                if time.time() - last_poll > 60:
+                    raise _CancelledError("Optimization cancelled (heartbeat lost)")
+
+            job["opt_progress_current"] = i
+            job["opt_current_chapter"] = ch.title
+            job["opt_current_chapter_num"] = i + 1
+            job["opt_elapsed_seconds"] = round(time.time() - start_time)
+            job["opt_progress_message"] = (
+                f"Optimizing chapter {i+1}/{total_chapters}: "
+                f"{ch.title[:40]}..."
+            )
+            print(f"[{job_id}] LLM optimizing chapter {i+1}/{total_chapters}: {ch.title}")
+
+            # Progress in unità di INPUT: conservo la dimensione originale prima
+            # di sovrascrivere ch.char_count con la lunghezza dell'output (che
+            # tipicamente è più grande e falserebbe la barra).
+            ch_input_chars = ch.char_count
+            job["opt_current_chapter_chars"] = ch_input_chars
+            job["opt_streamed_chars"] = 0  # reset per-capitolo: contributo cap. corrente
+
+            optimized_text = _optimize_chapter_text(
+                ch.text, chapter_num=i+1, total_chapters=total_chapters, job=job
+            )
+            # Update chapter text with optimized version
+            ch.text = optimized_text
+            ch.word_count = len(optimized_text.split())
+            ch.char_count = len(optimized_text)
+            job["opt_processed_chars"] += ch_input_chars
+            job["opt_streamed_chars"] = 0
+            job["opt_current_chapter_chars"] = 0
+
+        # Recalculate BookInfo totals
+        info.total_words = sum(ch.word_count for ch in info.chapters)
+        info.total_chars = sum(ch.char_count for ch in info.chapters)
+        info.estimated_duration_minutes = info.total_words / 150
+
+        total_elapsed = time.time() - start_time
+        job["opt_progress_current"] = total_chapters
+        job["opt_elapsed_seconds"] = round(total_elapsed)
+        job["opt_completed_at"] = time.time()
+        job["opt_progress_message"] = "Optimization complete!"
+        job["ai_optimized"] = True
+
+        print(f"[{job_id}] LLM optimization completed in {total_elapsed:.1f}s")
+        _log_activity(job_id, job.get("original_filename", ""), "OPT_COMPLETE",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+
+        # Re-check auto_generate — may have been set mid-optimization via register_opt_email
+        auto_generate = job.get("opt_auto_generate", False)
+        if auto_generate and job.get("email_registered"):
+            # Batch mode: generate .abm snapshot first (so it can be linked from the final email),
+            # then proceed directly to TTS generation
+            try:
+                abm_path, abm_name = _generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+            except Exception as e:
+                print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
+            job["status"] = "optimized"
+            voice = job.get("opt_voice", "it-IT-GiuseppeNeural")
+            rate = job.get("opt_rate", "+0%")
+            single_file = job.get("opt_single_file", True)
+            print(f"[{job_id}] Auto-generating after optimization (voice: {voice})")
+            run_generation(job_id, info, voice, rate, single_file)
+        elif job.get("email_registered"):
+            # Batch mode, no auto-generate: create .abm and send email
+            abm_path, abm_name = _generate_optimized_abm(job_id)
+            job["optimized_abm_path"] = abm_path
+            job["optimized_abm_name"] = abm_name
+            job["status"] = "optimized"
+            try:
+                _send_optimization_email(job_id)
+            except Exception as e:
+                print(f"[{job_id}] Optimization email error: {e}")
+        else:
+            # Interactive mode: just mark as optimized
+            job["status"] = "optimized"
+            job["last_poll"] = time.time()
+
+    except _CancelledError:
+        job["status"] = "cancelled"
+        job["opt_progress_message"] = "Optimization cancelled"
+        print(f"[{job_id}] LLM optimization cancelled")
+        _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+    except Exception as e:
+        job["status"] = "error"
+        job["error"] = f"LLM optimization error: {e}"
+        import traceback
+        traceback.print_exc()
+        # ── Emit voucher if user paid ──
+        if job.get("payment_type") == "paypal" and job.get("payment_email"):
+            try:
+                paid_amount = float(job.get("payment_amount_eur", 0) or 0)
+                if paid_amount > 0:
+                    book_title = getattr(job.get("info"), "title", "") if job.get("info") else ""
+                    code, bonus_amount = _create_voucher(
+                        job["payment_email"], paid_amount,
+                        origin_order_id=job.get("payment_token"),
+                        origin_job_id=job_id,
+                        kind="refund",
+                        created_by="auto_refund",
+                        note="Rimborso automatico fallimento ottimizzazione AI",
+                    )
+                    _send_voucher_email(code, job["payment_email"], bonus_amount, book_title)
+                    job["refund_voucher_code"] = code
+                    _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",
+                                  job.get("client_id", ""), "", "", "")
+                    print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR) → {job['payment_email']}")
+            except Exception as ve:
+                print(f"[{job_id}] Failed to issue voucher: {ve}")
+
+
 def run_generation(job_id, info, voice, rate, single_file):
     job = jobs[job_id]
     job["status"] = "generating"
@@ -1107,6 +2212,12 @@ def run_generation(job_id, info, voice, rate, single_file):
             failed_chunks = 0
             # Dict for O(1) lookup — supports non-contiguous indices (filtered chapters)
             chapter_by_idx = {ch.index: ch for ch in info.chapters}
+            # Rinumerazione sequenziale output: il ch.index può essere non
+            # contiguo (capitoli deselezionati via UI, o capitoli rimossi
+            # manualmente da un .abm). Gli MP3 finali devono comunque partire
+            # da 001 e non avere buchi, altrimenti l'ordinamento lessicografico
+            # nei player/podcast mostrerebbe "003, 007, 012" invece di 1,2,3.
+            output_num_by_idx = {ch.index: pos + 1 for pos, ch in enumerate(info.chapters)}
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
@@ -1115,7 +2226,8 @@ def run_generation(job_id, info, voice, rate, single_file):
                     if current_chapter_parts and current_chapter_idx >= 0:
                         ch = chapter_by_idx[current_chapter_idx]
                         safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
-                        mp3_path = str(output_dir / f"{current_chapter_idx:03d}_{safe_title}.mp3")
+                        out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
+                        mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
                         for p in current_chapter_parts:
@@ -1142,7 +2254,8 @@ def run_generation(job_id, info, voice, rate, single_file):
             if current_chapter_parts and current_chapter_idx >= 0:
                 ch = chapter_by_idx[current_chapter_idx]
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
-                mp3_path = str(output_dir / f"{current_chapter_idx:03d}_{safe_title}.mp3")
+                out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
+                mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
                 for p in current_chapter_parts:
@@ -1685,7 +2798,11 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
         str(uuid.uuid5(uuid.NAMESPACE_URL, channel_link + "/" + (info.title or "audiobook")))
     )
 
-    # Build chapter-to-file mapping from info.chapters
+    # Build chapter-to-file mapping from info.chapters.
+    # I file MP3 sono rinumerati 1..N in ordine (indipendentemente da ch.index
+    # originale, che può essere non contiguo se il .abm ha capitoli cancellati):
+    # usiamo quindi la posizione sequenziale come chiave primaria.
+    chapter_by_seq = {pos + 1: ch for pos, ch in enumerate(info.chapters)}
     chapter_by_idx = {ch.index: ch for ch in info.chapters}
 
     # Items — one per MP3, in order
@@ -1700,8 +2817,12 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
         try:
             idx_str = fname.split("_")[0]
             idx = int(idx_str)
-            if idx in chapter_by_idx:
-                ch_title = chapter_by_idx[idx].title
+            # Priorità al mapping sequenziale (post-rinumerazione); fallback
+            # all'indice originale per retrocompatibilità con job/token
+            # generati prima di questa modifica.
+            matched_ch = chapter_by_seq.get(idx) or chapter_by_idx.get(idx)
+            if matched_ch is not None:
+                ch_title = matched_ch.title
                 ch_desc = f"Chapter {idx}: {ch_title}"
         except (ValueError, IndexError):
             pass
@@ -1914,6 +3035,7 @@ Disallow: /api/
 Disallow: /data/
 Disallow: /dl/
 Disallow: /logs
+Disallow: /admin/
 {sitemap_line}
 """.strip()
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
@@ -2048,24 +3170,51 @@ def _session_completed(s):
 
 
 def _session_in_progress(s, sid):
-    """Return True if session is currently generating (in progress).
+    """Return True if session has an active AI optimization or TTS generation.
 
-    A session is in-progress when:
-    - GENERATE is in its events (generation was started)
-    - No completion ops recorded yet
-    - No CANCEL recorded
-    - The job is still active in memory with status 'generating'
+    Un'attività è considerata "in corso" se:
+      - È stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
+      - Non risulta fra gli eventi una conclusione (COMPLETE / DOWNLOAD* / OPT_COMPLETE),
+      - Non risulta un'annullamento (CANCEL / OPT_CANCEL),
+      - Il job esiste ancora in memoria con stato attivo (`generating`, `optimizing`,
+        `optimized` in attesa di auto-gen, ecc.).
     """
-    if "GENERATE" not in s["events"]:
+    events = set(s["events"])
+    has_work_start = ("GENERATE" in events) or ("OPTIMIZE" in events)
+    if not has_work_start:
         return False
-    if _session_completed(s):
+
+    # Terminazioni TTS
+    tts_done = bool(events & {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
+                              "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST"})
+    tts_cancel = "CANCEL" in events
+    # Terminazioni ottimizzazione
+    opt_cancel = "OPT_CANCEL" in events
+
+    tts_started = "GENERATE" in events
+    opt_started = "OPTIMIZE" in events
+
+    # Un'ottimizzazione ancora in corso: avviata e non cancellata/completata.
+    # Nota: OPT_COMPLETE è seguito tipicamente da GENERATE se auto_generate è attivo,
+    # quindi non lo consideriamo un terminatore definitivo a livello di sessione.
+    opt_live = opt_started and not opt_cancel and "OPT_COMPLETE" not in events
+    # Una generazione TTS ancora in corso: avviata e non cancellata/completata.
+    tts_live = tts_started and not tts_done and not tts_cancel
+
+    if not (opt_live or tts_live):
         return False
-    if "CANCEL" in s["events"]:
-        return False
-    # Cross-reference with in-memory jobs dict for real-time status
+
+    # Cross-reference con lo stato runtime del job per evitare "zombie" da log.
     job = jobs.get(sid)
-    if job and job.get("status") == "generating":
-        return True
+    if job:
+        st = job.get("status", "")
+        active_states = {"generating", "optimizing", "optimized"}
+        if st in active_states:
+            return True
+        # job esistente ma in stato finale → non più in corso
+        return False
+    # Fallback (job non più in memoria): non considerare "in corso" le sessioni
+    # storiche — ritorna False per evitare falsi positivi dopo un restart del server.
     return False
 
 
@@ -2594,6 +3743,388 @@ def admin_logs_export():
             headers={"Content-Disposition": f'attachment; filename="activity_log_{ym}.csv"'})
 
 
+# ─── Admin voucher web UI (/admin/vouchers) ─────────────────────────────────
+# Protetta da token ABM_ADMIN_TOKEN. Se il token non è configurato, endpoint 404.
+# Il token viene inviato via header X-Admin-Token (dalle API) o nel form HTML.
+# Confronto a tempo costante tramite hmac.compare_digest.
+
+def _admin_auth_ok(provided):
+    """Costante-time check del token admin."""
+    import hmac
+    if not ADMIN_TOKEN or not provided:
+        return False
+    return hmac.compare_digest(str(provided), ADMIN_TOKEN)
+
+
+def _admin_auth_from_request():
+    """Estrae il token da header X-Admin-Token, form 'token' o query 'token'."""
+    tok = request.headers.get("X-Admin-Token", "")
+    if not tok:
+        tok = (request.form.get("token") if request.method == "POST" else "") or request.args.get("token", "")
+    return tok
+
+
+@app.route("/admin/vouchers", methods=["GET"])
+def admin_vouchers_page():
+    """UI amministrativa per creare/elencare/revocare voucher.
+
+    Flusso:
+      1. GET /admin/vouchers  → form di inserimento token
+      2. L'utente inserisce il token; JS lo salva in sessionStorage e lo allega come
+         header X-Admin-Token a ogni chiamata API successiva.
+    """
+    if not ADMIN_TOKEN:
+        return ("Admin voucher UI disabled. Set ABM_ADMIN_TOKEN env var to enable.",
+                404, {"Content-Type": "text/plain; charset=utf-8"})
+    html = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin — Voucher</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1200px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem;display:flex;align-items:center;gap:10px}
+  h1 .lock{font-size:1.2rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  label{display:block;font-size:.85rem;color:var(--muted);margin:8px 0 4px}
+  input,select,textarea{width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.95rem;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  button{padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.95rem}
+  button:hover{filter:brightness(1.1)}
+  button.secondary{background:#334155}
+  button.danger{background:var(--err)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  @media(max-width:600px){.row,.row3{grid-template-columns:1fr}}
+  .msg{padding:10px 14px;border-radius:6px;margin:12px 0;font-size:.9rem}
+  .msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
+  .msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
+  table{width:100%;border-collapse:collapse;font-size:.85rem}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:8px;border-bottom:1px solid #1e293b;vertical-align:top}
+  tr:hover{background:rgba(139,92,246,.05)}
+  code{font-family:ui-monospace,monospace;background:#0f172a;padding:2px 6px;border-radius:3px;font-size:.85em}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
+  .badge.promo{background:rgba(139,92,246,.2);color:#c4b5fd}
+  .badge.gift{background:rgba(245,158,11,.2);color:#fbbf24}
+  .badge.refund{background:rgba(148,163,184,.2);color:var(--muted)}
+  .badge.ACTIVE{background:rgba(16,185,129,.2);color:var(--ok)}
+  .badge.PARTIAL{background:rgba(245,158,11,.2);color:var(--warn)}
+  .badge.USED{background:rgba(148,163,184,.2);color:var(--muted)}
+  .badge.EXPIRED{background:rgba(239,68,68,.2);color:var(--err)}
+  .btn-sm{padding:4px 10px;font-size:.8rem}
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end}
+  .toolbar > div{flex:1;min-width:150px}
+  #tokenGate{max-width:420px;margin:80px auto}
+  .hint{font-size:.8rem;color:var(--muted);margin-top:4px}
+</style>
+</head><body>
+
+<div id="tokenGate" class="panel" style="display:none">
+  <h1><span class="lock">&#x1F512;</span> Admin Voucher</h1>
+  <label>Admin token</label>
+  <input id="tokenInput" type="password" autocomplete="off" placeholder="ABM_ADMIN_TOKEN">
+  <div class="hint">Il token viene memorizzato solo in questa scheda del browser (sessionStorage).</div>
+  <div style="margin-top:14px"><button onclick="saveToken()">Sblocca</button></div>
+  <div id="tokenMsg"></div>
+</div>
+
+<div id="app" style="display:none">
+  <h1><span class="lock">&#x1F512;</span> Admin Voucher <button class="secondary btn-sm" style="margin-left:auto" onclick="logout()">Logout</button></h1>
+
+  <div class="panel">
+    <h2>Crea nuovo voucher</h2>
+    <div class="row">
+      <div><label>Email destinatario *</label><input id="cEmail" type="email" placeholder="user@example.com"></div>
+      <div><label>Tipo</label>
+        <select id="cKind">
+          <option value="promo">promo (promozionale)</option>
+          <option value="gift">gift (regalo)</option>
+          <option value="refund">refund (rimborso)</option>
+        </select>
+      </div>
+    </div>
+    <div class="row3">
+      <div><label>Importo (EUR) *</label><input id="cAmount" type="number" step="0.01" min="0.01" placeholder="2.00"></div>
+      <div><label>Validità (giorni)</label><input id="cDays" type="number" min="1" value="180"></div>
+      <div><label>&nbsp;</label><button onclick="createVoucher()" style="width:100%">Crea voucher</button></div>
+    </div>
+    <label>Nota (causale interna)</label>
+    <textarea id="cNote" rows="2" placeholder="Es: campagna lancio, influencer X, compenso collaboratore..."></textarea>
+    <div id="createMsg"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Voucher esistenti</h2>
+    <div class="toolbar">
+      <div><label>Filtra email</label><input id="fEmail" placeholder="contiene..." oninput="renderList()"></div>
+      <div><label>Filtra tipo</label>
+        <select id="fKind" onchange="renderList()">
+          <option value="">tutti</option><option value="promo">promo</option><option value="gift">gift</option><option value="refund">refund</option>
+        </select>
+      </div>
+      <div><label>Stato</label>
+        <select id="fStatus" onchange="renderList()">
+          <option value="">tutti</option><option value="ACTIVE">attivi</option><option value="PARTIAL">parziali</option><option value="USED">usati</option><option value="EXPIRED">scaduti</option>
+        </select>
+      </div>
+      <div style="flex:0"><button class="secondary" onclick="loadList()">&#x21BB; Ricarica</button></div>
+    </div>
+    <div style="overflow-x:auto">
+      <table id="tbl">
+        <thead><tr>
+          <th>Codice</th><th>Tipo</th><th>Saldo / Iniziale</th><th>Email</th><th>Creato</th><th>Scade</th><th>Stato</th><th>Nota</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="listMsg"></div>
+  </div>
+</div>
+
+<script>
+var TK=sessionStorage.getItem('abm_admin_tok')||'';
+var VOUCHERS=[];
+
+function show(el){document.getElementById(el).style.display=''}
+function hide(el){document.getElementById(el).style.display='none'}
+function msg(id,txt,cls){var e=document.getElementById(id);e.innerHTML='<div class="msg '+cls+'">'+txt+'</div>';setTimeout(function(){e.innerHTML=''},5000)}
+
+async function api(path,opts){
+  opts=opts||{};
+  opts.headers=opts.headers||{};
+  opts.headers['X-Admin-Token']=TK;
+  if(opts.body&&typeof opts.body==='object'){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(opts.body)}
+  var r=await fetch(path,opts);
+  var j=await r.json().catch(function(){return{}});
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+function saveToken(){
+  var t=document.getElementById('tokenInput').value.trim();
+  if(!t){document.getElementById('tokenMsg').innerHTML='<div class="msg err">Token richiesto</div>';return}
+  TK=t;sessionStorage.setItem('abm_admin_tok',t);
+  tryEnter();
+}
+
+function logout(){TK='';sessionStorage.removeItem('abm_admin_tok');location.reload()}
+
+async function tryEnter(){
+  try{
+    await loadList();
+    hide('tokenGate');show('app');
+  }catch(e){
+    TK='';sessionStorage.removeItem('abm_admin_tok');
+    show('tokenGate');hide('app');
+    document.getElementById('tokenMsg').innerHTML='<div class="msg err">Token non valido: '+e.message+'</div>';
+  }
+}
+
+async function loadList(){
+  var j=await api('/admin/api/vouchers');
+  VOUCHERS=j.vouchers||[];
+  renderList();
+}
+
+function fmtTs(ts){if(!ts)return'-';var d=new Date(ts*1000);return d.toLocaleString('it-IT',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+
+function statusOf(v){
+  var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:v.amount_eur);
+  if(rem<0.01)return'USED';
+  if((v.expires_at||0)*1000<Date.now())return'EXPIRED';
+  if(rem<(v.amount_eur||0)-0.01)return'PARTIAL';
+  return'ACTIVE';
+}
+
+function escapeHtml(s){return(s||'').replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+
+function renderList(){
+  var fe=(document.getElementById('fEmail').value||'').toLowerCase();
+  var fk=document.getElementById('fKind').value;
+  var fs=document.getElementById('fStatus').value;
+  var rows=VOUCHERS.filter(function(v){
+    if(fe&&(v.email||'').toLowerCase().indexOf(fe)<0)return false;
+    if(fk&&(v.kind||'refund')!==fk)return false;
+    if(fs&&statusOf(v)!==fs)return false;
+    return true;
+  }).sort(function(a,b){return(b.created_at||0)-(a.created_at||0)});
+  var tb=document.getElementById('tbody');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">Nessun voucher</td></tr>';return}
+  tb.innerHTML=rows.map(function(v){
+    var st=statusOf(v);var k=v.kind||'refund';
+    var rem=(v.remaining_eur!=null)?v.remaining_eur:(v.used?0:(v.amount_eur||0));
+    var tot=v.amount_eur||0;
+    var balCell='<strong>'+rem.toFixed(2)+'</strong> / '+tot.toFixed(2);
+    if(v.uses&&v.uses.length){balCell+=' <span style="color:var(--muted);font-size:.8em">('+v.uses.length+' us'+(v.uses.length===1?'o':'i')+')</span>';}
+    var btn=(rem<0.01)?'':('<button class="danger btn-sm" onclick="revokeVoucher(\''+v.code+'\')">Revoca</button>');
+    return '<tr>'+
+      '<td><code>'+escapeHtml(v.code)+'</code></td>'+
+      '<td><span class="badge '+k+'">'+k+'</span></td>'+
+      '<td>'+balCell+'</td>'+
+      '<td>'+escapeHtml(v.email||'')+'</td>'+
+      '<td>'+fmtTs(v.created_at)+'</td>'+
+      '<td>'+fmtTs(v.expires_at)+'</td>'+
+      '<td><span class="badge '+st+'">'+st+'</span></td>'+
+      '<td style="max-width:240px;font-size:.8em;color:var(--muted)">'+escapeHtml(v.note||'')+'</td>'+
+      '<td>'+btn+'</td>'+
+    '</tr>';
+  }).join('');
+}
+
+async function createVoucher(){
+  var email=document.getElementById('cEmail').value.trim();
+  var amount=parseFloat(document.getElementById('cAmount').value);
+  var days=parseInt(document.getElementById('cDays').value||'180');
+  var kind=document.getElementById('cKind').value;
+  var note=document.getElementById('cNote').value.trim();
+  if(!email||!amount||amount<=0){msg('createMsg','Email e importo > 0 obbligatori','err');return}
+  try{
+    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note}});
+    msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)','ok');
+    document.getElementById('cEmail').value='';document.getElementById('cAmount').value='';document.getElementById('cNote').value='';
+    await loadList();
+  }catch(e){msg('createMsg','Errore: '+e.message,'err')}
+}
+
+async function revokeVoucher(code){
+  if(!confirm('Revocare il voucher '+code+' ?'))return;
+  var reason=prompt('Motivo (opzionale):','')||'';
+  try{
+    await api('/admin/api/vouchers/'+encodeURIComponent(code)+'/revoke',{method:'POST',body:{reason:reason}});
+    msg('listMsg','Voucher '+code+' revocato','ok');
+    await loadList();
+  }catch(e){msg('listMsg','Errore: '+e.message,'err')}
+}
+
+// bootstrap
+if(TK){tryEnter()}else{show('tokenGate')}
+</script>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8",
+                       "X-Robots-Tag": "noindex, nofollow"}
+
+
+@app.route("/admin/api/vouchers", methods=["GET", "POST"])
+def admin_api_vouchers():
+    """GET: elenca voucher. POST: crea nuovo voucher.
+
+    Autenticazione via header X-Admin-Token (confronto costante-time).
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)  # rallenta brute-force
+        return jsonify({"error": "Unauthorized"}), 401
+
+    ip = _get_client_ip()
+
+    if request.method == "GET":
+        items = []
+        for code, v in _vouchers.items():
+            items.append({
+                "code": code,
+                "email": v.get("email", ""),
+                "amount_eur": v.get("amount_eur", 0),
+                "remaining_eur": _voucher_remaining(v),
+                "base_amount_eur": v.get("base_amount_eur", 0),
+                "created_at": v.get("created_at"),
+                "expires_at": v.get("expires_at"),
+                "used": bool(v.get("used")),
+                "used_at": v.get("used_at"),
+                "uses": v.get("uses", []),
+                "kind": v.get("kind", "refund"),
+                "note": v.get("note", ""),
+                "created_by": v.get("created_by", ""),
+                "origin_order_id": v.get("origin_order_id"),
+                "revoked": bool(v.get("revoked")),
+            })
+        return jsonify({"vouchers": items, "count": len(items)})
+
+    # POST → create
+    data = request.json or {}
+    email = (data.get("email") or "").strip().lower()
+    try:
+        amount = float(data.get("amount_eur") or 0)
+    except (TypeError, ValueError):
+        amount = 0
+    try:
+        days = int(data.get("days") or 180)
+    except (TypeError, ValueError):
+        days = 180
+    kind = (data.get("kind") or "promo").strip().lower()
+    note = (data.get("note") or "").strip()
+    if not email or "@" not in email:
+        return jsonify({"error": "email required"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount must be > 0"}), 400
+    if days <= 0 or days > 3650:
+        return jsonify({"error": "days out of range (1..3650)"}), 400
+    if kind not in ("promo", "gift", "refund"):
+        return jsonify({"error": "invalid kind"}), 400
+
+    # Codice con prefisso a seconda del tipo
+    prefix = "PROMO-" if kind == "promo" else ("GIFT-" if kind == "gift" else "")
+    # _generate_voucher_code dà core XXXX-XXXX-XXXX; per prefisso lo componiamo manualmente
+    import secrets as _sec
+    _alpha = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    custom_code = None
+    if prefix:
+        for _ in range(20):
+            core = "-".join("".join(_sec.choice(_alpha) for _ in range(4)) for _ in range(3))
+            cand = prefix + core
+            if cand not in _vouchers:
+                custom_code = cand
+                break
+        if not custom_code:
+            return jsonify({"error": "code generation failed"}), 500
+
+    code, bonus_amount = _create_voucher(
+        email, amount,
+        kind=kind,
+        note=note,
+        created_by="admin",
+        expiry_days=days,
+        apply_bonus=False,       # promo/gift: importo nominale, niente +10%
+        code=custom_code,
+    )
+    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "…", email)
+    print(f"[admin] voucher created via UI: {code} kind={kind} email={email} amount={amount:.2f} days={days} ip={ip}")
+    return jsonify({
+        "code": code,
+        "amount_eur": bonus_amount,
+        "expires_at": _vouchers[code].get("expires_at"),
+        "kind": kind,
+    })
+
+
+@app.route("/admin/api/vouchers/<code>/revoke", methods=["POST"])
+def admin_api_voucher_revoke(code):
+    """Revoca (marca usato) un voucher."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    code = (code or "").strip().upper()
+    if code not in _vouchers:
+        return jsonify({"error": "Not found"}), 404
+    v = _vouchers[code]
+    reason = ((request.json or {}).get("reason") or "").strip()[:200]
+    v["used"] = True
+    v["used_at"] = time.time()
+    v["remaining_eur"] = 0.0
+    v["revoked"] = True
+    v["revoke_reason"] = reason or "admin revoke"
+    _save_vouchers()
+    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "…", reason[:40])
+    print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
+    return jsonify({"ok": True, "code": code})
+
+
 @app.route("/api/voices")
 def api_voices():
     try:
@@ -2751,7 +4282,7 @@ def api_analyze():
         target = valid[1] if len(valid) > 1 else valid[0]
         return (target.text or "").strip()
 
-    def _trim_preview(text, min_chars=200, max_chars=300):
+    def _trim_preview(text, min_chars=400, max_chars=600):
         """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio."""
         import re as _re
         text = _re.sub(r'\s+', ' ', text).strip()
@@ -2770,6 +4301,19 @@ def api_analyze():
     jobs[job_id]["preview_text"] = preview_text
     # ──────────────────────────────────────────────────────────────────────────
 
+    # Detect if .abm was already AI-optimized
+    abm_ai_optimized = False
+    if is_abm:
+        try:
+            import zipfile
+            with zipfile.ZipFile(str(file_path), "r") as zf:
+                m = json.loads(zf.read("manifest.json").decode("utf-8"))
+                abm_ai_optimized = m.get("ai_optimized", False)
+        except Exception:
+            pass
+    if abm_ai_optimized:
+        jobs[job_id]["ai_optimized"] = True
+
     return jsonify({
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
@@ -2780,6 +4324,8 @@ def api_analyze():
         "estimated_minutes": round(info.estimated_duration_minutes, 1),
         "chapters": chapters,
         "preview_text": preview_text,
+        "llm_available": _llm_available(),
+        "ai_optimized": abm_ai_optimized,
     })
 
 
@@ -2921,12 +4467,14 @@ def api_export_abm(job_id):
             "cover_file": cover_file,
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "original_filename": job.get("original_filename", ""),
+            "ai_optimized": bool(job.get("ai_optimized")),
             "chapters": chapters_manifest,
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     buf.seek(0)
-    download_name = f"{safe_title}.abm"
+    suffix = "_optimized" if job.get("ai_optimized") else ""
+    download_name = f"{safe_title}{suffix}.abm"
 
     _log_activity(job_id, job.get("original_filename", ""), "EXPORT_ABM",
                   job.get("client_id", ""), job.get("client_ip", ""),
@@ -2948,7 +4496,7 @@ def api_generate():
     if job_id not in jobs:
         return jsonify({"error": "Session expired. Re-upload file."}), 400
     job = jobs[job_id]
-    if job["status"] not in ("analyzed",):
+    if job["status"] not in ("analyzed", "optimized"):
         return jsonify({"error": "Generation already running or completed."}), 400
 
     # ── Concurrent generation limit per client ──
@@ -3182,13 +4730,525 @@ def api_email_available():
     return jsonify({"available": _smtp_available()})
 
 
+# ═══════════════════════════════════════════════════════════════════
+# LLM TEXT OPTIMIZATION API
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/llm_available")
+def api_llm_available():
+    """Check if LLM text optimization is available (DeepSeek configured)."""
+    return jsonify({
+        "available": _llm_available(),
+        "paypal_available": _paypal_available(),
+        "paypal_client_id": PAYPAL_CLIENT_ID if _paypal_available() else "",
+        "paypal_mode": PAYPAL_MODE,
+        "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
+        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "voucher_bonus_percent": VOUCHER_BONUS_PERCENT,
+        "voucher_expiry_days": VOUCHER_EXPIRY_DAYS,
+    })
+
+
+@app.route("/api/optimize_estimate/<job_id>")
+def api_optimize_estimate(job_id):
+    """Return cost estimate for LLM optimization of a job."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]
+    info = job.get("info")
+    if not info or not info.chapters:
+        return jsonify({"error": "No book data"}), 400
+    total_chars = sum(ch.char_count for ch in info.chapters)
+    cost = _estimate_llm_cost_eur(total_chars)
+    return jsonify({
+        "chars": total_chars,
+        "cost_eur": cost,
+        "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
+        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
+    })
+
+
+@app.route("/api/paypal_create_order", methods=["POST"])
+def api_paypal_create_order():
+    """Create a PayPal order for LLM optimization payment."""
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    data = request.json or {}
+    job_id = data.get("job_id", "")
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]
+    info = job.get("info")
+    if not info:
+        return jsonify({"error": "No book data"}), 400
+    total_chars = sum(ch.char_count for ch in info.chapters)
+    cost = _estimate_llm_cost_eur(total_chars)
+    if cost <= LLM_FREE_THRESHOLD_EUR:
+        return jsonify({"error": "Payment not required for this job"}), 400
+
+    book_title = getattr(info, "title", "") or "Audiobook"
+    description = f"AI text optimization — {book_title[:60]}"
+    try:
+        order = _paypal_create_order(cost, description, custom_id=job_id)
+    except Exception as e:
+        print(f"[paypal] create_order failed: {e}")
+        return jsonify({"error": f"PayPal error: {e}"}), 500
+
+    # Diagnostic: log links/payee info to help troubleshoot sandbox issues
+    try:
+        pu = (order.get("purchase_units") or [{}])[0]
+        payee = pu.get("payee", {})
+        print(f"[paypal] order created: id={order.get('id')} status={order.get('status')} "
+              f"amount={pu.get('amount',{}).get('value')} {pu.get('amount',{}).get('currency_code')} "
+              f"payee_email={payee.get('email_address')} payee_id={payee.get('merchant_id')}")
+    except Exception:
+        pass
+
+    return jsonify({
+        "order_id": order.get("id"),
+        "amount_eur": cost,
+        "status": order.get("status"),
+    })
+
+
+@app.route("/api/paypal_debug_order/<order_id>", methods=["GET"])
+def api_paypal_debug_order(order_id):
+    """Diagnostic: fetch order from PayPal to inspect payee/status/etc."""
+    import requests
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    try:
+        token = _paypal_get_access_token()
+        r = requests.get(
+            f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        return jsonify({"status_code": r.status_code, "body": r.json()}), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/paypal_capture_order", methods=["POST"])
+def api_paypal_capture_order():
+    """Capture an approved PayPal order. Returns payment_token on success."""
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    data = request.json or {}
+    order_id = (data.get("order_id") or "").strip()
+    job_id = (data.get("job_id") or "").strip()
+    if not order_id:
+        return jsonify({"error": "Missing order_id"}), 400
+
+    # Idempotency: if already captured, return existing token
+    if order_id in _payments:
+        pay = _payments[order_id]
+        return jsonify({
+            "payment_token": order_id,
+            "amount_eur": pay.get("amount_eur", 0),
+            "email": pay.get("email", ""),
+            "already_captured": True,
+        })
+
+    try:
+        captured = _paypal_capture_order(order_id)
+    except Exception as e:
+        print(f"[paypal] capture_order failed: {e}")
+        return jsonify({"error": f"PayPal capture error: {e}"}), 500
+
+    # Extract payment details from capture response
+    purchase_units = captured.get("purchase_units", [])
+    if not purchase_units:
+        return jsonify({"error": "Invalid capture response"}), 500
+    pu = purchase_units[0]
+    captures = pu.get("payments", {}).get("captures", [])
+    if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
+        return jsonify({"error": "Payment not completed"}), 400
+    cap = captures[0]
+    amount_eur = float(cap.get("amount", {}).get("value", "0"))
+    payer = captured.get("payer", {})
+    email = (payer.get("email_address") or "").lower().strip()
+
+    _payments[order_id] = {
+        "order_id": order_id,
+        "amount_eur": amount_eur,
+        "email": email,
+        "job_id": job_id,
+        "captured_at": time.time(),
+        "used": False,
+        "used_at": None,
+        "capture_id": cap.get("id", ""),
+    }
+    _save_payments()
+
+    _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                  "PAYMENT_CAPTURED", "", "", "", "")
+
+    # Send receipt email (non-blocking best-effort)
+    if email and _smtp_available():
+        try:
+            _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
+        except Exception as e:
+            print(f"[paypal] receipt email failed: {e}")
+
+    return jsonify({
+        "payment_token": order_id,
+        "amount_eur": amount_eur,
+        "email": email,
+    })
+
+
+@app.route("/api/voucher_validate", methods=["POST"])
+def api_voucher_validate():
+    """Validate a voucher code + email. Returns payment_token if valid.
+
+    Protetto da rate limit per IP (5/min, 30/ora) e lockout per email dopo N fallimenti.
+    Ogni tentativo viene loggato come VOUCHER_ATTEMPT.
+    """
+    data = request.json or {}
+    code = (data.get("code") or "").strip().upper()
+    email = (data.get("email") or "").strip().lower()
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+
+    # — Rate limit check —
+    allowed, retry_after, reason = _voucher_rl_check(ip, email)
+    if not allowed:
+        _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
+        resp = jsonify({"error": "Too many attempts. Please try later.", "retry_after": retry_after})
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp
+
+    # — Validation logic —
+    outcome = "OK"
+    status = 200
+    body = None
+    if not code or not email:
+        outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required"}
+    elif code not in _vouchers:
+        outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found"}
+    else:
+        v = _vouchers[code]
+        remaining = _voucher_remaining(v)
+        if v.get("expires_at", 0) < time.time():
+            outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired"}
+        elif v.get("email", "").lower() != email:
+            outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher"}
+        elif remaining < 0.01:
+            outcome, status, body = "USED", 400, {"error": "Voucher fully used"}
+        else:
+            # Saldo residuo: l'UI lo usa come "amount_eur" spendibile.
+            body = {
+                "payment_token": code,
+                "amount_eur": remaining,
+                "remaining_eur": remaining,
+                "original_amount_eur": round(float(v.get("amount_eur", 0) or 0), 2),
+                "expires_at": v.get("expires_at"),
+            }
+
+    success = (outcome == "OK")
+    _voucher_rl_record_result(email, success)
+    # Log in forma strutturata (usiamo i campi esistenti: voice=code masked, browser_lang=outcome)
+    code_masked = (code[:4] + "…") if code else ""
+    _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
+    return jsonify(body), status
+
+
+def _send_payment_receipt_email(order_id, email, amount_eur, job):
+    """Send payment receipt email to buyer."""
+    book_title = ""
+    info = job.get("info")
+    if info:
+        book_title = getattr(info, "title", "") or ""
+    lang = job.get("browser_lang", "en")[:2] if job else "en"
+    subj_map = {
+        "it": f"Ricevuta pagamento Audiobook Maker — {amount_eur:.2f} EUR",
+        "en": f"Audiobook Maker payment receipt — EUR {amount_eur:.2f}",
+        "fr": f"Reçu de paiement Audiobook Maker — {amount_eur:.2f} EUR",
+        "es": f"Recibo de pago Audiobook Maker — {amount_eur:.2f} EUR",
+        "de": f"Zahlungsbeleg Audiobook Maker — {amount_eur:.2f} EUR",
+        "zh": f"Audiobook Maker 付款收据 — {amount_eur:.2f} EUR",
+    }
+    subject = subj_map.get(lang, subj_map["en"])
+    body_map = {
+        "it": ("Grazie per il tuo pagamento.",
+               f"Importo: <strong>{amount_eur:.2f} EUR</strong><br>ID transazione: <code>{order_id}</code>"
+               f"<br>Progetto: <strong>{book_title}</strong>",
+               "Il pagamento copre l'ottimizzazione AI del testo per la sintesi vocale. "
+               "Conserva questa email come ricevuta. Per fatturazione contattaci.",
+               "In caso di fallimento dell'ottimizzazione riceverai un buono di valore maggiorato del "
+               f"{VOUCHER_BONUS_PERCENT}% riutilizzabile entro {VOUCHER_EXPIRY_DAYS} giorni."),
+        "en": ("Thank you for your payment.",
+               f"Amount: <strong>EUR {amount_eur:.2f}</strong><br>Transaction ID: <code>{order_id}</code>"
+               f"<br>Project: <strong>{book_title}</strong>",
+               "This payment covers AI text optimization for speech synthesis. "
+               "Keep this email as receipt. Contact us for invoicing.",
+               f"If optimization fails, you will receive a voucher worth {VOUCHER_BONUS_PERCENT}% more, "
+               f"valid for {VOUCHER_EXPIRY_DAYS} days."),
+    }
+    heading, details, info_txt, refund = body_map.get(lang, body_map["en"])
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <h2 style="color:#2c3e50">&#x1F4B3; {heading}</h2>
+      <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
+        <p style="margin:0">{details}</p>
+      </div>
+      <p>{info_txt}</p>
+      <p style="font-size:.9em;color:#666">{refund}</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+    </div>"""
+    _send_email(email, subject, html_body)
+
+
+def _send_voucher_email(code, email, amount_eur, book_title):
+    """Send voucher email after optimization failure."""
+    if not (email and _smtp_available()):
+        return
+    from datetime import datetime, timedelta
+    expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
+    subject = f"Audiobook Maker — Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <h2 style="color:#2c3e50">&#x1F381; Il tuo buono</h2>
+      <p>L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine.</p>
+      <p>Come convenuto, ti inviamo un buono di valore maggiorato del {VOUCHER_BONUS_PERCENT}%:</p>
+      <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
+        <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono:</div>
+        <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code}</div>
+        <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
+        <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
+      </div>
+      <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
+      <p style="font-size:.85em;color:#666">Il buono &egrave; nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+    </div>"""
+    _send_email(email, subject, html_body)
+
+
+@app.route("/api/optimize", methods=["POST"])
+def api_optimize():
+    """Start LLM text optimization for a job's chapters."""
+    if not _llm_available():
+        return jsonify({"error": "LLM optimization not available"}), 503
+
+    data = request.json or {}
+    job_id = data.get("job_id")
+    batch = data.get("batch", False)
+    auto_generate = data.get("auto_generate", False)
+    email = (data.get("email") or "").strip().lower()
+
+    if job_id not in jobs:
+        return jsonify({"error": "Session expired. Re-upload file."}), 400
+    job = jobs[job_id]
+    if job["status"] not in ("analyzed",):
+        return jsonify({"error": "Optimization not available in current state."}), 400
+
+    # ── LLM rate limiting per client ──
+    client_id = job.get("client_id", "")
+    if client_id and MAX_CONCURRENT_LLM_PER_CLIENT > 0:
+        active = _active_optimizing_for_client(client_id)
+        if active >= MAX_CONCURRENT_LLM_PER_CLIENT:
+            return jsonify({
+                "error": f"Concurrent LLM optimization limit reached ({MAX_CONCURRENT_LLM_PER_CLIENT}).",
+                "error_code": "llm_concurrent_limit",
+                "max": MAX_CONCURRENT_LLM_PER_CLIENT,
+                "active": active,
+            }), 429
+
+    # ── Payment gate: if estimated cost > threshold, require a payment_token ──
+    info = job.get("info")
+    total_chars = sum(ch.char_count for ch in info.chapters) if info else 0
+    estimated_cost = _estimate_llm_cost_eur(total_chars)
+    if estimated_cost > LLM_FREE_THRESHOLD_EUR:
+        payment_token = (data.get("payment_token") or "").strip()
+        if not payment_token:
+            return jsonify({
+                "error": "Payment required for this optimization.",
+                "error_code": "payment_required",
+                "estimated_cost_eur": estimated_cost,
+                "chars": total_chars,
+            }), 402
+        # Validate payment_token (PayPal order_id or voucher code)
+        valid = False
+        if payment_token in _payments:
+            pay = _payments[payment_token]
+            if not pay.get("used") and pay.get("amount_eur", 0) >= estimated_cost:
+                pay["used"] = True
+                pay["used_at"] = time.time()
+                pay["used_job_id"] = job_id
+                _save_payments()
+                job["payment_token"] = payment_token
+                job["payment_type"] = "paypal"
+                job["payment_email"] = pay.get("email", "")
+                job["payment_amount_eur"] = pay.get("amount_eur", 0)
+                valid = True
+        elif payment_token in _vouchers:
+            v = _vouchers[payment_token]
+            remaining = _voucher_remaining(v)
+            if v.get("expires_at", 0) > time.time() and remaining >= estimated_cost - 0.01:
+                try:
+                    new_remaining = _voucher_consume(payment_token, estimated_cost, job_id=job_id)
+                except ValueError as _ve:
+                    return jsonify({
+                        "error": f"Voucher not spendable: {_ve}",
+                        "error_code": "invalid_payment",
+                    }), 402
+                job["payment_token"] = payment_token
+                job["payment_type"] = "voucher"
+                job["payment_email"] = v.get("email", "")
+                job["payment_amount_eur"] = round(float(estimated_cost), 2)
+                job["voucher_remaining_after"] = new_remaining
+                valid = True
+        if not valid:
+            return jsonify({
+                "error": "Invalid or already-used payment token.",
+                "error_code": "invalid_payment",
+            }), 402
+
+    # Batch mode requires email
+    if batch:
+        import re as _re
+        if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+            return jsonify({"error": "Valid email required for batch mode"}), 400
+        if not _smtp_available():
+            return jsonify({"error": "Email service not configured on this server"}), 503
+        job["notify_email"] = email
+        job["notify_lang"] = data.get("lang", "en")
+        job["email_registered"] = True
+
+    # Store auto-generate params for batch mode
+    if auto_generate:
+        job["opt_auto_generate"] = True
+        job["opt_voice"] = data.get("voice", "it-IT-GiuseppeNeural")
+        job["opt_rate"] = data.get("rate", "+0%")
+        job["opt_single_file"] = data.get("single_file", True)
+        job["notify_download_type"] = data.get("download_type", "audio")
+        job["notify_base_url"] = (data.get("base_url") or "").strip()
+    else:
+        job["opt_auto_generate"] = False
+
+    thread = threading.Thread(
+        target=run_optimization, args=(job_id,), daemon=True
+    )
+    thread.start()
+
+    _log_activity(job_id, job.get("original_filename", ""), "OPTIMIZE",
+                  client_id, job.get("client_ip", ""), "",
+                  browser_lang=job.get("browser_lang", ""))
+
+    return jsonify({"status": "started", "batch": batch, "auto_generate": auto_generate})
+
+
+@app.route("/api/optimize_progress/<job_id>")
+def api_optimize_progress(job_id):
+    """SSE endpoint for LLM optimization progress."""
+    def stream():
+        while True:
+            if job_id not in jobs:
+                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
+                break
+            job = jobs[job_id]
+            job["last_poll"] = time.time()
+            status = job.get("status", "unknown")
+            payload = {
+                "status": status,
+                "opt_progress_current": job.get("opt_progress_current", 0),
+                "opt_progress_total": job.get("opt_progress_total", 0),
+                "opt_progress_message": job.get("opt_progress_message", ""),
+                "opt_current_chapter": job.get("opt_current_chapter", ""),
+                "opt_current_chapter_num": job.get("opt_current_chapter_num", 0),
+                "opt_processed_chars": job.get("opt_processed_chars", 0),
+                "opt_streamed_chars": job.get("opt_streamed_chars", 0),
+                "opt_current_chapter_chars": job.get("opt_current_chapter_chars", 0),
+                "opt_total_chars": job.get("opt_total_chars", 0),
+                "opt_elapsed_seconds": round(time.time() - job["opt_start_time"]) if job.get("opt_start_time") else job.get("opt_elapsed_seconds", 0),
+            }
+            if status == "error":
+                payload["error"] = job.get("error", "Unknown error")
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            if status == "cancelled":
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            if status == "optimized":
+                payload["ai_optimized"] = True
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            # If auto_generate kicked in, status is now "generating" or "done"
+            if status in ("generating", "done"):
+                payload["ai_optimized"] = True
+                payload["auto_generate_started"] = True
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            yield f"data: {json.dumps(payload)}\n\n"
+            time.sleep(2)
+
+    return Response(
+        stream_with_context(stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/cancel_optimize/<job_id>", methods=["POST"])
+def api_cancel_optimize(job_id):
+    """Cancel an LLM optimization in progress."""
+    if job_id in jobs:
+        job = jobs[job_id]
+        if job.get("status") == "optimizing":
+            job["opt_cancelled"] = True
+            return jsonify({"status": "cancelling"})
+    return jsonify({"status": "not_found"}), 404
+
+
+@app.route("/api/register_opt_email", methods=["POST"])
+def api_register_opt_email():
+    """Register email on an already-running optimization (background mode)."""
+    import re as _re
+    data = request.json or {}
+    job_id = data.get("job_id", "")
+    email = (data.get("email") or "").strip().lower()
+    auto_generate = data.get("auto_generate", False)
+
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]
+
+    if job.get("status") != "optimizing":
+        return jsonify({"error": "Optimization not in progress"}), 400
+
+    if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+        return jsonify({"error": "Invalid email address"}), 400
+
+    if not _smtp_available():
+        return jsonify({"error": "Email service not configured on this server"}), 503
+
+    job["notify_email"] = email
+    job["notify_lang"] = data.get("lang", "en")
+    job["email_registered"] = True
+
+    if auto_generate:
+        job["opt_auto_generate"] = True
+        job["opt_voice"] = data.get("voice", "it-IT-GiuseppeNeural")
+        job["opt_rate"] = data.get("rate", "+0%")
+        job["opt_single_file"] = data.get("single_file", True)
+
+    print(f"[{job_id}] Optimization email registered: {email} (auto_generate: {auto_generate})")
+    _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_REGISTERED",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  "", browser_lang=job.get("browser_lang", ""))
+
+    return jsonify({"status": "registered", "email": email})
+
+
 @app.route("/api/active_jobs")
 def api_active_jobs():
     """Return list of currently generating jobs (for admin monitor)."""
     from datetime import datetime
     active = []
     for jid, job in list(jobs.items()):
-        if job.get("status") in ("generating", "analyzed"):
+        if job.get("status") in ("generating", "analyzed", "optimizing", "optimized"):
             info = job.get("info")
             title = ""
             if info:
@@ -3227,7 +5287,8 @@ def token_download_page(token):
     # Check job exists in memory OR files still on disk
     job_id = token_info["job_id"]
     job_dir = UPLOAD_DIR / job_id
-    job_in_memory = job_id in jobs and jobs[job_id].get("status") == "done"
+    dl_type = token_info.get("download_type", "audio")
+    job_in_memory = job_id in jobs and jobs[job_id].get("status") in ("done", "optimized")
     files_on_disk = job_dir.exists()
 
     if not job_in_memory and not files_on_disk:
@@ -3251,6 +5312,32 @@ def token_download_page(token):
 
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang)
+
+
+@app.route("/dl/<token>/abm")
+def token_do_download_abm(token):
+    """Serve the optimized .abm file for a token (when available)."""
+    token_info = _download_tokens.get(token)
+    if not token_info:
+        return "Link scaduto", 410
+    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+        _download_tokens.pop(token, None)
+        _save_tokens()
+        return "Link scaduto — i file sono stati cancellati dopo 24 ore", 410
+    abm_path = token_info.get("optimized_abm_path", "")
+    abm_name = token_info.get("optimized_abm_name", "optimized.abm")
+    if not abm_path or not os.path.exists(abm_path):
+        # Try reconstruction inside job dir
+        job_id = token_info.get("job_id", "")
+        if job_id and abm_path:
+            alt = UPLOAD_DIR / job_id / os.path.basename(abm_path)
+            if alt.exists():
+                abm_path = str(alt)
+    if not abm_path or not os.path.exists(abm_path):
+        return "File not available", 404
+    _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
+                  "DOWNLOAD_OPT_ABM", "", "", "", "")
+    return send_file(abm_path, as_attachment=True, download_name=abm_name)
 
 
 @app.route("/dl/<token>/download")
@@ -3283,6 +5370,21 @@ def token_do_download(token):
           f"UPLOAD_DIR={UPLOAD_DIR}")
 
     try:
+        # ── OPTIMIZED ABM download ──
+        if dl_type == "optimized_abm":
+            abm_path = token_info.get("optimized_abm_path", "")
+            abm_name = token_info.get("optimized_abm_name", "optimized.abm")
+            if not abm_path or not os.path.exists(abm_path):
+                # Try path reconstruction
+                abm_path = str(job_dir / os.path.basename(abm_path)) if abm_path else ""
+            if abm_path and os.path.exists(abm_path):
+                if job:
+                    job["downloaded_at"] = time.time()
+                _log_activity(job_id, token_info.get("original_filename", ""),
+                              "DOWNLOAD_OPT_ABM", "", "", "", "")
+                return send_file(abm_path, as_attachment=True, download_name=abm_name)
+            return "File not found", 404
+
         # ── PODCAST download ──
         is_podcast = dl_type == "podcast" and (
             (job and job.get("podcast_ready")) or token_info.get("podcast_ready"))
@@ -3717,7 +5819,12 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en"):
                "copied": "\u5df2\u590d\u5236\uff01"},
     }
     t = _t.get(lang, _t["en"])
-    type_label = "Podcast ZIP" if dl_type == "podcast" else "Audio ZIP"
+    if dl_type == "optimized_abm":
+        type_label = "Optimized Project (.abm)"
+    elif dl_type == "podcast":
+        type_label = "Podcast ZIP"
+    else:
+        type_label = "Audio ZIP"
     warn_text = t["warn"].replace("{r}", remaining_str)
 
     share_url = BASE_URL or "https://audiobook-maker.com"
@@ -4131,6 +6238,31 @@ def _cleanup_loop():
                     to_remove.append((jid, "stale analyzed"))
                 continue
 
+            # ── Optimizing jobs (LLM) ──
+            if status == "optimizing":
+                if has_email:
+                    continue  # batch mode: keep alive
+                last_poll = job.get("last_poll", job.get("opt_start_time", now))
+                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                    job["opt_cancelled"] = True
+                    to_remove.append((jid, f"heartbeat lost during optimization ({int(now - last_poll)}s)"))
+                continue
+
+            # ── Optimized jobs: ottimizzazione completata, in attesa di export/download ──
+            # Il progetto .abm va mantenuto per EMAIL_FILE_RETENTION_SEC (24h) dal termine
+            # dell'ottimizzazione in qualunque caso — sia che l'utente abbia lasciato il
+            # browser aperto, sia che sia stata registrata l'email per notifica batch.
+            # La regola unifica lo scenario "no email" con quello email-batch: entrambi
+            # hanno 24h dal completamento per scaricare il .abm tramite il bottone UI o
+            # (se applicabile) il link email.
+            if status == "optimized":
+                opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
+                if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
+                    reason = ("optimization email retention expired" if has_email
+                              else "optimized project retention expired (24h)")
+                    to_remove.append((jid, reason))
+                continue
+
             # ── Generating jobs ──
             if status == "generating":
                 # Con email registrata: non cancellare mai (continua in background)
@@ -4223,9 +6355,17 @@ def _cleanup_loop():
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════
 
-# Startup: load persisted download tokens and start background threads
+# Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
 _load_tokens()
+_load_payments()
+_load_vouchers()
+_init_deepseek()
+if _paypal_available():
+    print(f"[startup] PayPal payment enabled (mode: {PAYPAL_MODE}, "
+          f"rate: {LLM_RATE_EUR_PER_MCHAR} EUR/Mchar, threshold: {LLM_FREE_THRESHOLD_EUR} EUR)")
+else:
+    print(f"[startup] PayPal payment disabled (ABM_PAYPAL_CLIENT_ID/SECRET not set)")
 _cleanup_started = False
 
 def _google_tts_reconcile_loop():
@@ -4264,6 +6404,9 @@ def _ensure_background_threads():
         threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
     print(f"[startup] Background threads started (data dir: {UPLOAD_DIR})")
     print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
+    print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
+    if _llm_available():
+        print(f"[startup] LLM text optimization enabled (DeepSeek {DEEPSEEK_MODEL})")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled → {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:
