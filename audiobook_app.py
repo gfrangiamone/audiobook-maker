@@ -664,6 +664,9 @@ def _send_email(to_addr, subject, html_body):
     msg["From"] = SMTP_FROM
     msg["To"] = to_addr
     msg["Subject"] = subject
+    # Disable TurboSMTP link/open tracking to avoid redirect issues
+    msg["X-TurboSMTP-Tracking"] = "0"
+    msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     try:
@@ -1710,6 +1713,10 @@ def _call_deepseek(user_content, job=None, max_retries=4):
                 timeout=120.0,
             )
             for event in stream:
+                # Check cancellation during streaming to stop consuming tokens
+                if job is not None and job.get("opt_cancelled"):
+                    stream.close()
+                    raise _CancelledError("Optimization cancelled during streaming")
                 if event.choices and event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
                     result_parts.append(chunk)
@@ -1762,6 +1769,8 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
     print(f"  {label} LLM chunked: {len(chunks)} chunks")
     results = []
     for i, chunk in enumerate(chunks):
+        if job is not None and job.get("opt_cancelled"):
+            raise _CancelledError("Optimization cancelled between chunks")
         if len(chunks) > 1:
             if i == 0:
                 user_content = f"[Parte {i+1} di {len(chunks)} — inizio del testo]\n\n{chunk}"
