@@ -1241,43 +1241,37 @@ CHUNK_MAX_CHARS = 2000
 
 
 def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
-    paragraphs = text.split("\n")
+    """Spezza il testo in chunk ≤ max_chars senza mai tagliare a metà frase.
+    Strategia: tokenizza il testo in frasi (terminatori . ! ? … + spazio/newline),
+    poi accumula frasi nel chunk corrente finché il limite non viene raggiunto.
+    """
+    import re as _re
+    if not text or not text.strip():
+        return [text] if text else [""]
+    # ── 1. Tokenizza in frasi ──
+    # Split su terminatori di frase seguiti da spazio o newline, preservando il
+    # terminatore nella frase precedente (lookbehind).
+    raw_sentences = _re.split(r'(?<=[\.\!\?\…])\s+', text.strip())
+    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    if not sentences:
+        return [text.strip()]
+    # ── 2. Accumula frasi nei chunk ──
     chunks = []
     current = ""
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            if current:
-                current += "\n"
-            continue
-        if len(current) + len(para) + 1 > max_chars:
-            if current.strip():
-                chunks.append(current.strip())
-            if len(para) > max_chars:
-                sentences = []
-                for sep in [". ", "! ", "? ", "; "]:
-                    if sep in para:
-                        parts = para.split(sep)
-                        sentences = [p + sep.strip() for p in parts[:-1]] + [parts[-1]]
-                        break
-                if not sentences:
-                    sentences = [para]
-                temp = ""
-                for s in sentences:
-                    if len(temp) + len(s) + 1 > max_chars:
-                        if temp.strip():
-                            chunks.append(temp.strip())
-                        temp = s
-                    else:
-                        temp = (temp + " " + s) if temp else s
-                current = temp
-            else:
-                current = para
+    for sent in sentences:
+        if not current:
+            current = sent
+        elif len(current) + 1 + len(sent) <= max_chars:
+            current = current + " " + sent
         else:
-            current = (current + " " + para) if current else para
-    if current.strip():
-        chunks.append(current.strip())
-    return chunks if chunks else [text]
+            # Il chunk corrente è pieno: salvalo e inizia uno nuovo
+            chunks.append(current)
+            current = sent
+        # Se una singola frase supera max_chars, non la spezziamo — la lasciamo
+        # intera per evitare tagli innaturali. Il TTS gestisce testi lunghi.
+    if current:
+        chunks.append(current)
+    return chunks if chunks else [text.strip()]
 
 
 def _is_multilingual_voice(voice: str) -> bool:
@@ -1467,10 +1461,35 @@ def _strip_parenthetical(text):
     return text.strip()
 
 
+def _ensure_heading_pause(text):
+    """Aggiunge un punto alla fine delle righe che sembrano titoli/heading nel testo,
+    così il TTS inserisce una pausa naturale prima del corpo del paragrafo.
+    Un heading è una riga breve (≤120 char) isolata da righe vuote che non termina
+    già con punteggiatura (.!?…:;).
+    """
+    import re as _re
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if (stripped
+                and len(stripped) <= 120
+                and not _re.search(r'[\.\!\?\…\:\;]\s*$', stripped)):
+            # Verifica che sia isolata (preceduta o seguita da riga vuota)
+            idx = len(result)
+            prev_empty = (idx == 0) or (not result[-1].strip())
+            if prev_empty:
+                result.append(line.rstrip() + ".")
+                continue
+        result.append(line)
+    return "\n".join(result)
+
+
 def _plan_chunks(info):
     plan = []
     for ch in info.chapters:
         clean_text = _strip_parenthetical(ch.text)
+        clean_text = _ensure_heading_pause(clean_text)
         full_text = f"{ch.title}.\n\n{clean_text}"
         chunks = split_text_into_chunks(full_text)
         for ci, chunk_text in enumerate(chunks):

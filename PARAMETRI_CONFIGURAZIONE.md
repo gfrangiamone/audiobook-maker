@@ -264,7 +264,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.7.0"` | `version.py` | 7 |
+| `__version__` | `"3.7.1"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
