@@ -795,14 +795,6 @@ async function _showPaymentModal(costEur,chars){
     errEl.style.display='none';okEl.style.display='none';
     document.getElementById('payCostValue').textContent='€ '+costEur.toFixed(2);
     document.getElementById('payCostDetails').textContent=chars.toLocaleString()+' char × '+llmConfig.rate.toFixed(2)+' €/M';
-    document.getElementById('payPaypalPane').style.display='';
-    document.getElementById('payVoucherPane').style.display='none';
-    document.getElementById('payTabPaypal').style.background='#8b5cf6';
-    document.getElementById('payTabPaypal').style.color='white';
-    document.getElementById('payTabVoucher').style.background='var(--srf2)';
-    document.getElementById('payTabVoucher').style.color='';
-    document.getElementById('paypal-button-container').innerHTML='';
-    document.getElementById('payPaypalLoading').style.display='';
     document.getElementById('payVoucherCode').value='';
     document.getElementById('payVoucherEmail').value='';
     applyI18n();
@@ -816,20 +808,6 @@ async function _showPaymentModal(costEur,chars){
     var resolved=false;
     function done(token){if(resolved)return;resolved=true;modal.classList.remove('open');resolve(token)}
     document.getElementById('payClose').onclick=function(){done(null)};
-    document.getElementById('payTabPaypal').onclick=function(){
-      document.getElementById('payPaypalPane').style.display='';
-      document.getElementById('payVoucherPane').style.display='none';
-      this.style.background='#8b5cf6';this.style.color='white';
-      document.getElementById('payTabVoucher').style.background='var(--srf2)';
-      document.getElementById('payTabVoucher').style.color='';
-    };
-    document.getElementById('payTabVoucher').onclick=function(){
-      document.getElementById('payVoucherPane').style.display='';
-      document.getElementById('payPaypalPane').style.display='none';
-      this.style.background='#8b5cf6';this.style.color='white';
-      document.getElementById('payTabPaypal').style.background='var(--srf2)';
-      document.getElementById('payTabPaypal').style.color='';
-    };
     document.getElementById('payVoucherSubmit').onclick=async function(){
       errEl.style.display='none';
       var code=document.getElementById('payVoucherCode').value.trim().toUpperCase();
@@ -844,7 +822,8 @@ async function _showPaymentModal(costEur,chars){
       }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
     };
 
-    // Load PayPal SDK and render button
+    /* PayPal SDK loading disabled — payment via voucher only.
+       Backend PayPal routes are preserved for potential future re-enablement.
     if(llmConfig.paypalAvailable&&llmConfig.paypalClientId){
       try{
         await _loadPaypalSdk(llmConfig.paypalClientId);
@@ -875,6 +854,7 @@ async function _showPaymentModal(costEur,chars){
     }else{
       document.getElementById('payPaypalLoading').textContent='PayPal not configured';
     }
+    */
   });
 }
 

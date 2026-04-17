@@ -12,7 +12,7 @@ You are editing, not rewriting. Every word in your output must either be present
 
 2. **Roman numerals** → Write them out in full in the text's language (e.g. "Henry VIII" → "Henry the Eighth", "Leone XIV" → "Leone Quattordicesimo", "Capitolo III" → "Capitolo Terzo").
 
-3. **Abbreviations and acronyms** → Expand any that a TTS engine is likely to mispronounce or spell out letter by letter in an awkward way. Leave well-known acronyms that are universally spoken as words (e.g. "NATO", "FIFA") unchanged.
+3. **Abbreviations and acronyms** → Expand any that a TTS engine is likely to mispronounce or spell out letter by letter in an awkward way. Leave well-known acronyms that are universally spoken as words (e.g. "NATO", "FIFA", "AI") unchanged.
 
 4. **Ambiguous short words** → Resolve cases where a short uppercase word could be misread (e.g. "US" as a pronoun vs. a country code). Rewrite for clarity only when the spoken result would genuinely be confusing.
 

@@ -84,15 +84,17 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `_paypal_token_cache` | Dict in-memory per cache OAuth2 token (`access_token`, `expires_at`) | `audiobook_app.py` | 115 |
 | `_payments` | Dict in-memory `{order_id: {...}}` persistito su `_payments.json` | `audiobook_app.py` | — |
 | `_vouchers` | Dict in-memory `{code: {...}}` persistito su `_vouchers.json` | `audiobook_app.py` | — |
-| `_PAYMENTS_FILE` | `UPLOAD_DIR / "_payments.json"` | `audiobook_app.py` | 341 |
-| `_VOUCHERS_FILE` | `UPLOAD_DIR / "_vouchers.json"` | `audiobook_app.py` | 342 |
+| `_PAYMENTS_FILE` | `UPLOAD_DIR / "_payments.json"` | `audiobook_app.py` | 343 |
+| `_VOUCHERS_FILE` | `UPLOAD_DIR / "_vouchers.json"` | `audiobook_app.py` | 344 |
+| `_PAID_OPT_DONE_FILE` | `UPLOAD_DIR / "_paid_opt_done.json"` (tracking job pagati completati per recovery) | `audiobook_app.py` | 345 |
 
 **Funzionamento pagamenti:**
 
 - **Sotto soglia** (costo stimato ≤ `ABM_LLM_FREE_THRESHOLD_EUR`): l'ottimizzazione AI è **gratuita** e liberamente testabile (nessuna richiesta di pagamento).
-- **Sopra soglia**: l'utente deve pagare tramite PayPal (modalità `sandbox` o `live` in base a `ABM_PAYPAL_MODE`) oppure usare un buono emesso in precedenza.
-- **Flusso PayPal**: ordine creato con `intent=CAPTURE`, `currency_code=EUR`, `shipping_preference=NO_SHIPPING`, `user_action=PAY_NOW`, `Prefer: return=representation`; OAuth2 client_credentials con cache ~8h; capture idempotente (re-capture dello stesso `order_id` ritorna lo stesso `payment_token`).
-- **Voucher refund**: se l'ottimizzazione fallisce dopo un pagamento, viene emesso un buono pari all'importo pagato + `ABM_VOUCHER_BONUS_PERCENT`%, valido `ABM_VOUCHER_EXPIRY_DAYS` giorni, utilizzabile solo dall'email originale.
+- **Sopra soglia**: l'utente deve utilizzare un buono (voucher) ottenuto tramite donazione al progetto. Il pagamento diretto PayPal nel frontend è stato disabilitato (v3.7.0) ma i route backend PayPal sono mantenuti per eventuale riattivazione futura.
+- **Flusso PayPal (backend, disabilitato nel frontend)**: ordine creato con `intent=CAPTURE`, `currency_code=EUR`, `shipping_preference=NO_SHIPPING`, `user_action=PAY_NOW`, `Prefer: return=representation`; OAuth2 client_credentials con cache ~8h; capture idempotente (re-capture dello stesso `order_id` ritorna lo stesso `payment_token`).
+- **Voucher refund (errore/cancel)**: se l'ottimizzazione fallisce o viene annullata dopo un pagamento con voucher, l'importo viene **ri-accreditato integralmente** sul voucher originale tramite `_voucher_refund()`. Se il pagamento era PayPal, viene emesso un nuovo buono pari all'importo pagato + `ABM_VOUCHER_BONUS_PERCENT`%.
+- **Recovery avvio server**: `_recover_orphaned_voucher_charges()` eseguita allo startup controlla gli addebiti voucher delle ultime 2 ore; se il job_id non è più in memoria né tra i completati (`_paid_opt_done.json`), ri-accredita automaticamente l'importo. Copre il caso di crash/riavvio durante un'ottimizzazione a pagamento.
 - **Saldo residuo (consumo parziale)**: ogni voucher ha un campo `remaining_eur` (inizializzato all'importo totale) che viene decrementato di `estimated_cost` ad ogni operazione. Il buono torna "USED" solo quando il saldo scende sotto 0.01 EUR; fino a quel momento conserva stato `PARTIAL` e può essere usato più volte fino a scadenza. Lo storico delle spese è in `uses[]` (`job_id`, `amount_eur`, `at`, `remaining_after`). Record legacy senza `remaining_eur` vengono letti in compat: `used=True` → residuo 0; altrimenti residuo = `amount_eur`. La revoca admin azzera `remaining_eur`.
 - **Idempotenza capture**: re-capture sullo stesso `order_id` ritorna il token esistente senza doppio addebito.
 - **Ricevuta email**: inviata automaticamente post-capture al payer email PayPal.
@@ -262,7 +264,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.5.1"` | `version.py` | 7 |
+| `__version__` | `"3.7.0"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---

@@ -342,6 +342,7 @@ _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, us
 _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
 _PAYMENTS_FILE = UPLOAD_DIR / "_payments.json"
 _VOUCHERS_FILE = UPLOAD_DIR / "_vouchers.json"
+_PAID_OPT_DONE_FILE = UPLOAD_DIR / "_paid_opt_done.json"
 _payments_lock = threading.Lock()
 _vouchers_lock = threading.Lock()
 
@@ -559,6 +560,129 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
         v["used"] = False
     _save_vouchers()
     return new_remaining
+
+
+def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = "") -> float:
+    """Ri-accredita ``amount`` EUR sul voucher ``code`` (operazione inversa a consume).
+    Ritorna il nuovo saldo residuo. Se il voucher era marcato used, lo riattiva.
+    Solleva ``ValueError`` se il voucher non esiste.
+    """
+    v = _vouchers.get(code)
+    if not v:
+        raise ValueError("voucher not found")
+    remaining = _voucher_remaining(v)
+    original = float(v.get("amount_eur", 0) or 0)
+    new_remaining = round(min(remaining + amount, original), 2)
+    now = time.time()
+    v["remaining_eur"] = new_remaining
+    uses = v.get("uses")
+    if not isinstance(uses, list):
+        uses = []
+    uses.append({
+        "job_id": job_id,
+        "amount_eur": -round(amount, 2),  # negativo = refund
+        "at": now,
+        "remaining_after": new_remaining,
+        "reason": reason,
+    })
+    v["uses"] = uses
+    # Riattiva il voucher se aveva saldo e non è scaduto
+    if new_remaining >= 0.01:
+        v["used"] = False
+        if "used_at" in v:
+            del v["used_at"]
+    _save_vouchers()
+    print(f"[vouchers] Refund {amount:.2f} EUR → {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
+    return new_remaining
+
+
+# ── Tracking job pagati completati con successo (persistenza su disco) ──
+# Set di job_id per cui l'ottimizzazione a pagamento è terminata con successo.
+# Serve al recovery all'avvio per distinguere job completati da job interrotti.
+_paid_opt_done: set = set()
+
+def _save_paid_opt_done():
+    try:
+        with open(_PAID_OPT_DONE_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(_paid_opt_done), f)
+    except Exception as e:
+        print(f"[paid_opt_done] Failed to save: {e}")
+
+def _load_paid_opt_done():
+    global _paid_opt_done
+    if not _PAID_OPT_DONE_FILE.exists():
+        return
+    try:
+        with open(_PAID_OPT_DONE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _paid_opt_done = set(data) if isinstance(data, list) else set()
+        print(f"[startup] Loaded {len(_paid_opt_done)} paid optimization completion record(s)")
+    except Exception as e:
+        print(f"[paid_opt_done] Failed to load: {e}")
+
+def _mark_paid_opt_done(job_id: str):
+    """Segna un job come completato con successo (persistente su disco)."""
+    _paid_opt_done.add(job_id)
+    _save_paid_opt_done()
+
+def _cleanup_paid_opt_done():
+    """Rimuovi record più vecchi di 4 ore (non servono più al recovery)."""
+    # Chiamata dal cleanup loop; qui rimuoviamo solo i job_id che non sono
+    # più nei voucher uses recenti (semplice: teniamo solo quelli < 4h).
+    # Nota: non abbiamo timestamp nel set, quindi puliamo solo se il set è troppo grande.
+    if len(_paid_opt_done) > 1000:
+        _paid_opt_done.clear()
+        _save_paid_opt_done()
+
+
+def _recover_orphaned_voucher_charges():
+    """Recovery all'avvio: cerca addebiti voucher recenti (ultime 2 ore) il cui
+    job_id non è né in memoria (``jobs``) né tra quelli completati con successo
+    (``_paid_opt_done``). Questo copre il caso in cui il server è stato
+    riavviato/crashato durante un'ottimizzazione a pagamento: il voucher era già
+    stato addebitato ma il job non è mai terminato.
+    Ri-accredita automaticamente l'importo sul voucher.
+    """
+    cutoff = time.time() - 2 * 3600  # ultime 2 ore
+    recovered = 0
+    for code, v in _vouchers.items():
+        uses = v.get("uses")
+        if not isinstance(uses, list):
+            continue
+        for use in uses:
+            # Solo addebiti (positivi), non refund (negativi)
+            amt = float(use.get("amount_eur", 0) or 0)
+            if amt <= 0:
+                continue
+            use_time = float(use.get("at", 0) or 0)
+            if use_time < cutoff:
+                continue
+            use_job_id = use.get("job_id", "")
+            if not use_job_id:
+                continue
+            # Se il job è completato con successo → non rimborsare
+            if use_job_id in _paid_opt_done:
+                continue
+            # Se il job è ancora in memoria → non rimborsare (non dovrebbe accadere al restart)
+            if use_job_id in jobs:
+                continue
+            # Verifica che non sia già stato rimborsato (cerca refund con stesso job_id)
+            already_refunded = any(
+                float(u.get("amount_eur", 0) or 0) < 0 and u.get("job_id") == use_job_id
+                for u in uses
+            )
+            if already_refunded:
+                continue
+            try:
+                _voucher_refund(
+                    code, amt, job_id=use_job_id,
+                    reason="Recovery avvio server: job orfano",
+                )
+                recovered += 1
+            except Exception as e:
+                print(f"[startup] Recovery failed for voucher {code} job {use_job_id}: {e}")
+    if recovered:
+        print(f"[startup] Recovered {recovered} orphaned voucher charge(s)")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1974,6 +2098,52 @@ def _send_optimization_email(job_id):
                       "", job.get("browser_lang", ""))
 
 
+def _refund_job_payment(job_id, job, reason="error"):
+    """Rimborsa il pagamento di un job di ottimizzazione fallito o annullato.
+    - payment_type == "voucher": ri-accredita l'importo sul voucher originale.
+    - payment_type == "paypal": emette un nuovo voucher di rimborso (con bonus).
+    """
+    if job.get("refund_done"):
+        return  # già rimborsato
+    paid_amount = float(job.get("payment_amount_eur", 0) or 0)
+    if paid_amount <= 0:
+        return
+    payment_type = job.get("payment_type", "")
+    payment_email = job.get("payment_email", "")
+    payment_token = job.get("payment_token", "")
+    book_title = getattr(job.get("info"), "title", "") if job.get("info") else ""
+
+    try:
+        if payment_type == "voucher" and payment_token:
+            # Ri-accredita direttamente sul voucher originale
+            _voucher_refund(
+                payment_token, paid_amount, job_id=job_id,
+                reason=f"Rimborso automatico ottimizzazione {reason}",
+            )
+            job["refund_done"] = True
+            _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_REFUND",
+                          job.get("client_id", ""), "", "", "")
+            print(f"[{job_id}] Voucher {payment_token} refunded {paid_amount:.2f} EUR (reason={reason})")
+        elif payment_type == "paypal" and payment_email:
+            # Emetti nuovo voucher con bonus per pagamenti PayPal
+            code, bonus_amount = _create_voucher(
+                payment_email, paid_amount,
+                origin_order_id=payment_token,
+                origin_job_id=job_id,
+                kind="refund",
+                created_by="auto_refund",
+                note=f"Rimborso automatico ottimizzazione AI ({reason})",
+            )
+            _send_voucher_email(code, payment_email, bonus_amount, book_title)
+            job["refund_voucher_code"] = code
+            job["refund_done"] = True
+            _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",
+                          job.get("client_id", ""), "", "", "")
+            print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR) → {payment_email} (reason={reason})")
+    except Exception as ve:
+        print(f"[{job_id}] Failed to refund payment: {ve}")
+
+
 def run_optimization(job_id):
     """Background thread: optimize text of all chapters via DeepSeek LLM."""
     job = jobs[job_id]
@@ -2041,6 +2211,9 @@ def run_optimization(job_id):
         job["opt_completed_at"] = time.time()
         job["opt_progress_message"] = "Optimization complete!"
         job["ai_optimized"] = True
+        # Segna il job come completato per il recovery voucher all'avvio
+        if job.get("payment_type"):
+            _mark_paid_opt_done(job_id)
 
         print(f"[{job_id}] LLM optimization completed in {total_elapsed:.1f}s")
         _log_activity(job_id, job.get("original_filename", ""), "OPT_COMPLETE",
@@ -2086,32 +2259,13 @@ def run_optimization(job_id):
         _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
+        _refund_job_payment(job_id, job, "cancel")
     except Exception as e:
         job["status"] = "error"
         job["error"] = f"LLM optimization error: {e}"
         import traceback
         traceback.print_exc()
-        # ── Emit voucher if user paid ──
-        if job.get("payment_type") == "paypal" and job.get("payment_email"):
-            try:
-                paid_amount = float(job.get("payment_amount_eur", 0) or 0)
-                if paid_amount > 0:
-                    book_title = getattr(job.get("info"), "title", "") if job.get("info") else ""
-                    code, bonus_amount = _create_voucher(
-                        job["payment_email"], paid_amount,
-                        origin_order_id=job.get("payment_token"),
-                        origin_job_id=job_id,
-                        kind="refund",
-                        created_by="auto_refund",
-                        note="Rimborso automatico fallimento ottimizzazione AI",
-                    )
-                    _send_voucher_email(code, job["payment_email"], bonus_amount, book_title)
-                    job["refund_voucher_code"] = code
-                    _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",
-                                  job.get("client_id", ""), "", "", "")
-                    print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR) → {job['payment_email']}")
-            except Exception as ve:
-                print(f"[{job_id}] Failed to issue voucher: {ve}")
+        _refund_job_payment(job_id, job, "error")
 
 
 def run_generation(job_id, info, voice, rate, single_file):
@@ -6369,6 +6523,8 @@ def _cleanup_loop():
 _load_tokens()
 _load_payments()
 _load_vouchers()
+_load_paid_opt_done()
+_recover_orphaned_voucher_charges()
 _init_deepseek()
 if _paypal_available():
     print(f"[startup] PayPal payment enabled (mode: {PAYPAL_MODE}, "

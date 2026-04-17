@@ -808,22 +808,27 @@ select:focus{outline:none;border-color:var(--ac)}
           <div style="font-size:1.6em;font-weight:700;color:#8b5cf6" id="payCostValue">—</div>
           <div style="font-size:.8em;color:#666;margin-top:4px" id="payCostDetails"></div>
         </div>
-        <div id="payTabs" style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn" id="payTabPaypal" data-t="pay_tab_paypal" style="flex:1;padding:10px;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600"></button>
-          <button class="btn" id="payTabVoucher" data-t="pay_tab_voucher" style="flex:1;padding:10px;background:var(--srf2);border:1px solid var(--brd);border-radius:6px;cursor:pointer"></button>
+        <!-- Donor info panel -->
+        <div id="payDonorInfo" style="padding:16px 18px;background:linear-gradient(135deg,var(--srf2) 0%,#fff8f0 100%);border:1px solid #e8c99a;border-radius:12px;margin-bottom:16px;text-align:center">
+          <div style="font-size:.92em;color:var(--tx);font-weight:500;line-height:1.5;margin-bottom:14px" data-t="pay_donors_info"></div>
+          <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
+            <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
+            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
+          </div>
         </div>
-        <div id="payPaypalPane">
-          <p style="font-size:.9em;color:var(--txd);margin-bottom:12px" data-t="pay_paypal_hint"></p>
-          <div id="paypal-button-container" style="min-height:48px"></div>
-          <div id="payPaypalLoading" style="text-align:center;padding:12px;color:var(--txd);font-size:.9em" data-t="pay_loading"></div>
-        </div>
-        <div id="payVoucherPane" style="display:none">
+        <!-- Voucher pane (always visible, no tabs) -->
+        <div id="payVoucherPane">
           <p style="font-size:.9em;color:var(--txd);margin-bottom:12px" data-t="pay_voucher_hint"></p>
           <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_code_label"></label>
           <input type="text" id="payVoucherCode" placeholder="XXXX-XXXX-XXXX" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;font-family:monospace;text-transform:uppercase;box-sizing:border-box;margin-bottom:10px">
           <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_email_label"></label>
           <input type="email" id="payVoucherEmail" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;box-sizing:border-box;margin-bottom:12px">
           <button class="btn" id="payVoucherSubmit" style="width:100%;padding:12px;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600" data-t="pay_voucher_submit"></button>
+        </div>
+        <!-- Hidden PayPal pane (kept for future use) -->
+        <div id="payPaypalPane" style="display:none">
+          <div id="paypal-button-container" style="min-height:48px"></div>
+          <div id="payPaypalLoading" style="text-align:center;padding:12px;color:var(--txd);font-size:.9em" data-t="pay_loading"></div>
         </div>
         <div id="payErr" style="color:var(--err);font-size:.9em;margin-top:10px;display:none"></div>
         <div id="payOk" style="color:var(--ok);font-size:.95em;margin-top:10px;display:none"></div>
