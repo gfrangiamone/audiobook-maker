@@ -2174,6 +2174,13 @@ def run_optimization(job_id):
     total_chapters = len(info.chapters)
     total_chars = sum(ch.char_count for ch in info.chapters)
 
+    # Log per confermare che il prompt di ottimizzazione è caricato
+    if _deepseek_prompt:
+        prompt_len = len(_deepseek_prompt)
+        print(f"[{job_id}] Ottimizzazione AI avviata (prompt caricato: {prompt_len} caratteri)")
+    else:
+        print(f"[{job_id}] Ottimizzazione AI avviata (prompt non caricato)")
+
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
     job["opt_total_chars"] = total_chars
