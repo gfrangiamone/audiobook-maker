@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audiobook Maker — Web app to convert EPUB/PDF into MP3 audiobooks.
+Audiobook Maker  —  Web app to convert EPUB/PDF into MP3 audiobooks.
 
 Requirements:
     pip install flask edge-tts ebooklib beautifulsoup4 lxml Pillow pymupdf
@@ -29,7 +29,7 @@ from flask import (
     send_file, Response, stream_with_context
 )
 
-# ── Import epub_to_tts (must be in the same folder) ──
+#  —  —  Import epub_to_tts (must be in the same folder)  —  — 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -44,7 +44,7 @@ try:
     from pdf_to_tts import parse_pdf
 except ImportError:
     parse_pdf = None
-    print("WARNING: pdf_to_tts.py not found — PDF support disabled.", file=sys.stderr)
+    print("WARNING: pdf_to_tts.py not found  —  PDF support disabled.", file=sys.stderr)
 
 try:
     import edge_tts
@@ -52,14 +52,38 @@ except ImportError:
     print("ERROR: edge-tts not installed. Run: pip install edge-tts", file=sys.stderr)
     sys.exit(1)
 
-# ── Google Cloud TTS (Chirp3-HD) — opzionale ──
+#  —  —  Google Cloud TTS (Chirp3-HD)  —  opzionale  —  —
 try:
     import google_tts
 except ImportError:
     google_tts = None
-    print("WARNING: google_tts.py not found — Google Cloud TTS disabled.", file=sys.stderr)
+    print("WARNING: google_tts.py not found  —  Google Cloud TTS disabled.", file=sys.stderr)
 
-# ── DeepSeek LLM per ottimizzazione testo TTS — opzionale ──
+from audio_utils import (
+    _zip_safe_read, _extract_cover_from_epub, _generate_fallback_cover,
+    _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
+    _generate_silence_mp3, _concatenate_mp3, _get_audio_duration_ms,
+    _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
+)
+from tts_split import (
+    CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
+    _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
+    _edge_tts_call, generate_chunk_mp3, generate_chunk_mp3_google,
+    _strip_parenthetical, _ensure_heading_pause, _plan_chunks,
+)
+
+import email_service
+import payment
+
+# Carica traduzioni pagine di download da file JSON esterno
+_DL_PAGES_I18N = {}
+try:
+    with open(SCRIPT_DIR / "i18n" / "download_pages.json", encoding="utf-8") as _f:
+        _DL_PAGES_I18N = json.load(_f)
+except Exception as _e:
+    print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
+
+#  —  —  DeepSeek LLM per ottimizzazione testo TTS  —  opzionale  —  —
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -89,10 +113,10 @@ def _init_deepseek():
             _deepseek_prompt = prompt_path.read_text(encoding="utf-8").strip()
             print(f"[startup] DeepSeek LLM optimization enabled (prompt: {len(_deepseek_prompt)} chars)")
         else:
-            print(f"WARNING: prompt_tts_optimization.md not found — LLM optimization disabled.", file=sys.stderr)
+            print(f"WARNING: prompt_tts_optimization.md not found  —  LLM optimization disabled.", file=sys.stderr)
             _deepseek_client = None
     except ImportError:
-        print("WARNING: openai library not installed — LLM optimization disabled. Run: pip install openai", file=sys.stderr)
+        print("WARNING: openai library not installed  —  LLM optimization disabled. Run: pip install openai", file=sys.stderr)
         _deepseek_client = None
 
 def _llm_available():
@@ -100,7 +124,7 @@ def _llm_available():
     return _deepseek_client is not None and bool(_deepseek_prompt)
 
 
-# ── PayPal payment config per LLM optimization ──
+#  —  —  PayPal payment config per LLM optimization  —  — 
 PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
 PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
@@ -123,11 +147,11 @@ def _estimate_llm_cost_eur(char_count):
     return round((char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
 
 
-# ── Import version and template builder ──
+#  —  —  Import version and template builder  —  — 
 from version import __version__
 from templates.index_page import build_html_template
 
-# ── Import favicon data (embedded, served via Flask routes for SEO) ──
+#  —  —  Import favicon data (embedded, served via Flask routes for SEO)  —  — 
 from favicon_data import (
     get_favicon_ico, get_favicon_png_192,
     get_apple_touch_icon, get_favicon_svg,
@@ -135,9 +159,9 @@ from favicon_data import (
 
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # APP CONFIG
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
@@ -178,35 +202,23 @@ def _has_active_google_tts_jobs():
 if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
     google_tts.set_active_jobs_callback(_has_active_google_tts_jobs)
 
-# ── Email notification config ──
-# Configure via environment variables on the server:
-#   export ABM_SMTP_HOST=smtp.gmail.com
-#   export ABM_SMTP_PORT=587
-#   export ABM_SMTP_USER=your@email.com
-#   export ABM_SMTP_PASS=your-app-password
-#   export ABM_SMTP_FROM=noreply@audiobook-maker.com
-#   export ABM_BASE_URL=https://audiobook-maker.com
-SMTP_HOST = os.environ.get("ABM_SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("ABM_SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("ABM_SMTP_USER", "")
-SMTP_PASS = os.environ.get("ABM_SMTP_PASS", "")
-SMTP_FROM = os.environ.get("ABM_SMTP_FROM", SMTP_USER or "noreply@audiobook-maker.com")
-BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
+from email_service import (
+    _smtp_available, _send_email, _admin_notify_generation,
+    _try_send_admin_digest, _send_payment_receipt_email, _send_voucher_email,
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, ADMIN_EMAIL,
+    BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
+)
+
 EMAIL_FILE_RETENTION_SEC = 24 * 60 * 60  # 24 ore di retention dopo invio email
 
-# ── Admin activity digest (email log) ──
+#  —  —  Admin activity digest (email log)  —  — 
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
-ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
 # Token admin per UI web /admin/vouchers. Se vuoto, l'endpoint è disabilitato.
 ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
-ADMIN_DIGEST_INTERVAL_SEC = 24*60 * 60  # 24 ore tra un digest e il successivo
-_admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}
-_admin_queue_lock = threading.Lock()
-_admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
 
-# ── Client tracking & rate limiting ──
+#  —  —  Client tracking & rate limiting  —  — 
 # Max concurrent generating jobs per client device (cookie-based).
 # Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
 MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", "2"))
@@ -227,7 +239,7 @@ def _get_client_id():
 
 def _get_client_ip():
     """Return client IP address, respecting reverse proxy headers."""
-    # X-Forwarded-For: client, proxy1, proxy2 → take the first
+    # X-Forwarded-For: client, proxy1, proxy2  →  take the first
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -239,9 +251,9 @@ def _get_browser_lang():
     accept = request.headers.get("Accept-Language", "")
     if not accept:
         return ""
-    # Parse first language tag: "it-IT,it;q=0.9,en;q=0.8" → "it"
+    # Parse first language tag: "it-IT,it;q=0.9,en;q=0.8"  →  "it"
     first = accept.split(",")[0].split(";")[0].strip()
-    # Return just the primary subtag (e.g. "it-IT" → "it")
+    # Return just the primary subtag (e.g. "it-IT"  →  "it")
     return first.split("-")[0].lower() if first else ""
 
 
@@ -334,9 +346,9 @@ def _load_tokens():
         print(f"[tokens] Failed to load tokens: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # PAYMENTS & VOUCHERS (for LLM optimization)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
 _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
@@ -346,7 +358,7 @@ _PAID_OPT_DONE_FILE = UPLOAD_DIR / "_paid_opt_done.json"
 _payments_lock = threading.Lock()
 _vouchers_lock = threading.Lock()
 
-# — Rate limit voucher_validate (Point 1) —
+#  —  Rate limit voucher_validate (Point 1)  — 
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
 _voucher_attempts_ip = {}
@@ -362,7 +374,7 @@ def _voucher_rl_check(ip, email):
     """Return (allowed, retry_after_sec, reason)."""
     now = time.time()
     with _voucher_rl_lock:
-        # — IP sliding window —
+        #  —  IP sliding window  — 
         hits = _voucher_attempts_ip.get(ip, [])
         hits = [t for t in hits if now - t < 3600]
         last_min = [t for t in hits if now - t < 60]
@@ -374,13 +386,13 @@ def _voucher_rl_check(ip, email):
             retry = 3600 - int(now - hits[0])
             _voucher_attempts_ip[ip] = hits
             return False, max(1, retry), "rate_limit_ip_hour"
-        # — Email lockout —
+        #  —  Email lockout  — 
         em = (email or "").lower().strip()
         if em:
             info = _voucher_attempts_email.get(em)
             if info and info.get("lockout_until", 0) > now:
                 return False, int(info["lockout_until"] - now), "email_locked"
-        # Record hit for IP — caller can trigger email-fail separately
+        # Record hit for IP  —  caller can trigger email-fail separately
         hits.append(now)
         _voucher_attempts_ip[ip] = hits
     return True, 0, None
@@ -472,7 +484,7 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
           "gift" (regalo admin). Solo "refund" applica il bonus % predefinito.
     note: testo libero amministrativo (motivo/causale).
     created_by: "auto_refund" per l'emissione automatica, "admin" per CLI.
-    expiry_days: None → usa VOUCHER_EXPIRY_DAYS (refund). Gli admin possono passare un valore custom.
+    expiry_days: None  →  usa VOUCHER_EXPIRY_DAYS (refund). Gli admin possono passare un valore custom.
     apply_bonus: se False salva l'importo nominale (usato per promo/gift).
     code: se fornito, usa quel codice invece di generarne uno (utile per PROMO- prefix).
     """
@@ -493,11 +505,11 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
         "uses": [],                       # list[{"job_id","amount_eur","at","remaining_after"}]
         "created_at": now,
         "expires_at": now + days * 86400,
-        "used": False,                    # True solo quando saldo ≤ 0.01
+        "used": False,                    # True solo quando saldo ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ 0.01
         "used_at": None,
         "origin_order_id": origin_order_id,
         "origin_job_id": origin_job_id,
-        # — Nuovi campi (Point 4) —
+        #  —  Nuovi campi (Point 4)  — 
         "kind": kind,                # "refund" | "promo" | "gift"
         "note": (note or "")[:500],
         "created_by": created_by,    # "auto_refund" | "admin"
@@ -508,7 +520,7 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
 
 def _voucher_remaining(v: dict) -> float:
     """Saldo residuo del voucher. Gestisce record legacy privi di ``remaining_eur``:
-    se esiste il flag ``used`` binario → 0 residuo; altrimenti l'importo originale.
+    se esiste il flag ``used`` binario  →  0 residuo; altrimenti l'importo originale.
     """
     if "remaining_eur" in v:
         try:
@@ -535,7 +547,7 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
     if v.get("expires_at", 0) <= time.time():
         raise ValueError("voucher expired")
     remaining = _voucher_remaining(v)
-    # Arrotondamenti: se la differenza è ≤ 0.01 permettiamo lo spend (evita errori di 1 cent)
+    # Arrotondamenti: se la differenza è ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ 0.01 permettiamo lo spend (evita errori di 1 cent)
     if amount > remaining + 0.01:
         raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
     spent = round(min(amount, remaining), 2)
@@ -592,11 +604,11 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
         if "used_at" in v:
             del v["used_at"]
     _save_vouchers()
-    print(f"[vouchers] Refund {amount:.2f} EUR → {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
+    print(f"[vouchers] Refund {amount:.2f} EUR  →  {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
     return new_remaining
 
 
-# ── Tracking job pagati completati con successo (persistenza su disco) ──
+#  —  —  Tracking job pagati completati con successo (persistenza su disco)  —  — 
 # Set di job_id per cui l'ottimizzazione a pagamento è terminata con successo.
 # Serve al recovery all'avvio per distinguere job completati da job interrotti.
 _paid_opt_done: set = set()
@@ -660,10 +672,10 @@ def _recover_orphaned_voucher_charges():
             use_job_id = use.get("job_id", "")
             if not use_job_id:
                 continue
-            # Se il job è completato con successo → non rimborsare
+            # Se il job è completato con successo  →  non rimborsare
             if use_job_id in _paid_opt_done:
                 continue
-            # Se il job è ancora in memoria → non rimborsare (non dovrebbe accadere al restart)
+            # Se il job è ancora in memoria  →  non rimborsare (non dovrebbe accadere al restart)
             if use_job_id in jobs:
                 continue
             # Verifica che non sia già stato rimborsato (cerca refund con stesso job_id)
@@ -685,9 +697,9 @@ def _recover_orphaned_voucher_charges():
         print(f"[startup] Recovered {recovered} orphaned voucher charge(s)")
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # PAYPAL REST API v2
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 def _paypal_get_access_token():
     """Get OAuth2 access token (cached ~8h)."""
@@ -705,8 +717,8 @@ def _paypal_get_access_token():
         timeout=15,
     )
     if r.status_code != 200:
-        # Diagnostic info — don't leak the secret, but show ID prefix and mode
-        cid_hint = (PAYPAL_CLIENT_ID[:6] + "…" + PAYPAL_CLIENT_ID[-4:]) if len(PAYPAL_CLIENT_ID) > 12 else "(too short)"
+        # Diagnostic info  —  don't leak the secret, but show ID prefix and mode
+        cid_hint = (PAYPAL_CLIENT_ID[:6] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" + PAYPAL_CLIENT_ID[-4:]) if len(PAYPAL_CLIENT_ID) > 12 else "(too short)"
         body = (r.text or "")[:300]
         raise RuntimeError(
             f"PayPal OAuth failed: HTTP {r.status_code} on {PAYPAL_API_BASE} "
@@ -770,139 +782,9 @@ def _paypal_capture_order(order_id):
     return r.json()
 
 
-def _smtp_available():
-    return bool(SMTP_HOST and SMTP_USER and SMTP_PASS and BASE_URL)
+#  —  —  Admin activity digest  —  — 
 
-
-def _send_email(to_addr, subject, html_body):
-    """Send an HTML email via SMTP. Returns True on success."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-
-    if not _smtp_available():
-        print(f"[email] SMTP not configured, cannot send to {to_addr}")
-        return False
-
-    msg = MIMEMultipart("alternative")
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_addr
-    msg["Subject"] = subject
-    # Disable TurboSMTP link/open tracking to avoid redirect issues
-    msg["X-TurboSMTP-Tracking"] = "0"
-    msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-    try:
-        if SMTP_PORT == 465:
-            # SSL diretto (porta 465)
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr, msg.as_string())
-        else:
-            # STARTTLS (porta 587) o plain (porta 25)
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                if SMTP_PORT != 25:
-                    server.starttls()
-                    server.ehlo()
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr, msg.as_string())
-        print(f"[email] Sent to {to_addr}: {subject}")
-        return True
-    except Exception as e:
-        print(f"[email] Failed to send to {to_addr}: {e}")
-        return False
-
-
-# ── Admin activity digest ──
-
-def _admin_notify_generation(job_id, info, voice, filename):
-    """Queue a generation event for admin digest. Thread-safe."""
-    if not ADMIN_EMAIL:
-        return
-    from datetime import datetime
-    event = {
-        "title": getattr(info, "title", "") or filename,
-        "author": getattr(info, "author", "") or "—",
-        "filename": filename,
-        "voice": voice,
-        "chapters": len(info.chapters) if hasattr(info, "chapters") else 0,
-        "words": getattr(info, "total_words", 0),
-        "duration_est": f"{getattr(info, 'estimated_duration_minutes', 0):.0f} min",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    with _admin_queue_lock:
-        _admin_queue.append(event)
-    print(f"[admin] Queued notification for '{event['title']}' ({len(_admin_queue)} pending)")
-    # Try to send immediately (respects rate limit)
-    _try_send_admin_digest()
-
-
-def _try_send_admin_digest():
-    """Send admin digest if rate limit allows. Called from generation and cleanup loop."""
-    global _admin_last_sent
-    if not ADMIN_EMAIL or not _smtp_available():
-        return
-    with _admin_queue_lock:
-        if not _admin_queue:
-            return
-        now = time.time()
-        if (now - _admin_last_sent) < ADMIN_DIGEST_INTERVAL_SEC:
-            return  # Troppo presto, aspetta il prossimo ciclo
-        # Prendi tutti gli eventi in coda e svuota
-        events = list(_admin_queue)
-        _admin_queue.clear()
-        _admin_last_sent = now
-
-    # Build and send digest email
-    from datetime import datetime
-    count = len(events)
-    subject = f"📚 Audiobook Maker: {count} nuov{'o' if count == 1 else 'i'} libr{'o' if count == 1 else 'i'} in elaborazione"
-
-    rows = ""
-    for e in events:
-        rows += f"""<tr>
-<td style="padding:8px 12px;border-bottom:1px solid #eee">{e['timestamp']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{e['title']}</strong><br>
-<span style="color:#666;font-size:13px">{e['author']}</span></td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px">{e['filename']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{e['chapters']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{e['words']:,}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{e['duration_est']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888">{e['voice']}</td>
-</tr>"""
-
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
-<div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
-<h2 style="margin:0">🎧 Audiobook Maker — Activity Digest</h2>
-<p style="margin:8px 0 0;opacity:.85">{count} elaborazion{'e' if count == 1 else 'i'} avviat{'a' if count == 1 else 'e'} — {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
-</div>
-<table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd;border-top:none">
-<thead><tr style="background:#f0f5fa">
-<th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">Ora</th>
-<th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">Libro</th>
-<th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">File</th>
-<th style="padding:10px 12px;text-align:center;font-size:13px;color:#555">Cap.</th>
-<th style="padding:10px 12px;text-align:right;font-size:13px;color:#555">Parole</th>
-<th style="padding:10px 12px;text-align:center;font-size:13px;color:#555">Durata</th>
-<th style="padding:10px 12px;text-align:left;font-size:13px;color:#555">Voce</th>
-</tr></thead>
-<tbody>{rows}</tbody>
-</table>
-<p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio è generato automaticamente da Audiobook Maker.
-Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
-</body></html>"""
-
-    try:
-        _send_email(ADMIN_EMAIL, subject, html)
-        print(f"[admin] Digest sent to {ADMIN_EMAIL}: {count} event(s)")
-    except Exception as e:
-        # Re-queue events so they're not lost
-        with _admin_queue_lock:
-            _admin_queue.extend(events)
-        print(f"[admin] Digest send failed, {count} events re-queued: {e}")
-
+# (Functions imported from email_service)
 
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
@@ -928,6 +810,7 @@ def _send_completion_email(job_id):
         "output_zip": job.get("output_zip", ""),
         "output_name": job.get("output_name", ""),
         "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
+        "output_m4b": job.get("output_m4b", ""),
         "epub_path": job.get("epub_path", ""),
         "podcast_safe_name": job.get("podcast_safe_name", ""),
         "podcast_ready": job.get("podcast_ready", False),
@@ -952,13 +835,16 @@ def _send_completion_email(job_id):
     rss_filename = f"{safe_name}_podcast.xml"
     rss_url = f"{base_url}/{rss_filename}" if base_url else rss_filename
 
-    # ── i18n email content ──
+    #  —  —  i18n email content  —  — 
     _email_i18n = {
         "it": {
-            "subject": f"Audiobook Maker — \"{book_title}\" pronto per il download",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" pronto per il download",
             "heading": "&#x1F3A7; Il tuo audiolibro &egrave; pronto!",
             "body": f"La generazione di <strong>{book_title}</strong> &egrave; stata completata con successo.",
-            "btn": "&#x2B07;&#xFE0F; Scarica i tuoi file",
+            "m4b_failed_msg": "<div style='margin:15px 0;padding:12px;background:#fffbeb;border:1px solid #fef3c7;color:#92400e;border-radius:6px;font-size:14px'>&#x26A0;&#xFE0F; La conversione in formato M4B non &egrave; andata a buon fine dopo diversi tentativi. Ti forniamo comunque la versione MP3 singola.</div>",
+            "btn_m4b": "&#x1F4D6; Scarica audiolibro (M4B)",
+            "btn_zip": "&#x1F4C2; Scarica archivio (ZIP/MP3)",
+            "btn_mp3": "&#x1F50A; Scarica file audio (MP3)",
             "warn": "&#x23F0; Attenzione: i file saranno disponibili per il download soltanto per 24 ore a partire dalla ricezione di questa email. Dopo tale periodo verranno cancellati automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Istruzioni per la pubblicazione del Podcast</strong>",
             "podcast_p1": f"Il file ZIP scaricato contiene tutti i file necessari per il tuo podcast. Per renderlo fruibile online, <strong>decomprimi il file ZIP</strong> e carica tutti i file contenuti sul tuo server web, in modo che siano raggiungibili all'indirizzo:",
@@ -967,10 +853,13 @@ def _send_completion_email(job_id):
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
         "en": {
-            "subject": f"Audiobook Maker — \"{book_title}\" ready for download",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" ready for download",
             "heading": "&#x1F3A7; Your audiobook is ready!",
             "body": f"The generation of <strong>{book_title}</strong> has been completed successfully.",
-            "btn": "&#x2B07;&#xFE0F; Download your files",
+            "m4b_failed_msg": "<div style='margin:15px 0;padding:12px;background:#fffbeb;border:1px solid #fef3c7;color:#92400e;border-radius:6px;font-size:14px'>&#x26A0;&#xFE0F; M4B conversion failed after several attempts. We are providing the single MP3 version instead.</div>",
+            "btn_m4b": "&#x1F4D6; Download audiobook (M4B)",
+            "btn_zip": "&#x1F4C2; Download archive (ZIP/MP3)",
+            "btn_mp3": "&#x1F50A; Download audio file (MP3)",
             "warn": "&#x23F0; Please note: the files will be available for download for 24 hours only from the time you receive this email. After that, they will be automatically deleted.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Podcast Publishing Instructions</strong>",
             "podcast_p1": f"The downloaded ZIP file contains all the files needed for your podcast. To make it available online, <strong>extract the ZIP file</strong> and upload all files to your web server so they are reachable at:",
@@ -979,10 +868,10 @@ def _send_completion_email(job_id):
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
         "fr": {
-            "subject": f"Audiobook Maker — \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
             "heading": "&#x1F3A7; Votre livre audio est pr&ecirc;t !",
             "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
-            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger vos fichiers",
+            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger l'audiolibro",
             "warn": "&#x23F0; Attention : les fichiers seront disponibles au t&eacute;l&eacute;chargement pendant 24 heures seulement &agrave; compter de la r&eacute;ception de cet email. Pass&eacute; ce d&eacute;lai, ils seront automatiquement supprim&eacute;s.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instructions de publication du podcast</strong>",
             "podcast_p1": f"Le fichier ZIP t&eacute;l&eacute;charg&eacute; contient tous les fichiers n&eacute;cessaires &agrave; votre podcast. Pour le rendre accessible en ligne, <strong>d&eacute;compressez le fichier ZIP</strong> et t&eacute;l&eacute;versez tous les fichiers sur votre serveur web, de sorte qu'ils soient accessibles &agrave; l'adresse :",
@@ -991,10 +880,10 @@ def _send_completion_email(job_id):
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
         "es": {
-            "subject": f"Audiobook Maker — \"{book_title}\" listo para descargar",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" listo para descargar",
             "heading": "&#x1F3A7; &iexcl;Tu audiolibro est&aacute; listo!",
             "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se ha completado con &eacute;xito.",
-            "btn": "&#x2B07;&#xFE0F; Descarga tus archivos",
+            "btn": "&#x2B07;&#xFE0F; Descargar audiolibro",
             "warn": "&#x23F0; Atenci&oacute;n: los archivos estar&aacute;n disponibles para descargar solo durante 24 horas desde la recepci&oacute;n de este email. Despu&eacute;s de ese periodo se eliminar&aacute;n autom&aacute;ticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instrucciones para publicar el podcast</strong>",
             "podcast_p1": f"El archivo ZIP descargado contiene todos los archivos necesarios para tu podcast. Para hacerlo accesible en l&iacute;nea, <strong>descomprime el archivo ZIP</strong> y sube todos los archivos a tu servidor web para que sean accesibles en:",
@@ -1003,10 +892,10 @@ def _send_completion_email(job_id):
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
         "de": {
-            "subject": f"Audiobook Maker — \"{book_title}\" bereit zum Download",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" bereit zum Download",
             "heading": "&#x1F3A7; Dein H&ouml;rbuch ist fertig!",
             "body": f"Die Generierung von <strong>{book_title}</strong> wurde erfolgreich abgeschlossen.",
-            "btn": "&#x2B07;&#xFE0F; Dateien herunterladen",
+            "btn": "&#x2B07;&#xFE0F; Hörbuch herunterladen",
             "warn": "&#x23F0; Hinweis: Die Dateien stehen nur 24 Stunden ab Erhalt dieser E-Mail zum Download bereit. Danach werden sie automatisch gel&ouml;scht.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Anleitung zur Podcast-Ver&ouml;ffentlichung</strong>",
             "podcast_p1": f"Die heruntergeladene ZIP-Datei enth&auml;lt alle Dateien f&uuml;r deinen Podcast. Um ihn online verf&uuml;gbar zu machen, <strong>entpacke die ZIP-Datei</strong> und lade alle Dateien auf deinen Webserver hoch, sodass sie unter folgender Adresse erreichbar sind:",
@@ -1015,7 +904,7 @@ def _send_completion_email(job_id):
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
         "zh": {
-            "subject": f"Audiobook Maker — \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
             "heading": "&#x1F3A7; \u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
             "body": f"<strong>{book_title}</strong> \u5df2\u6210\u529f\u751f\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u6587\u4ef6",
@@ -1035,16 +924,31 @@ def _send_completion_email(job_id):
     # "file audio" per distinguerlo dall'email di sola ottimizzazione (.abm).
     if job.get("ai_optimized"):
         _btn_audio = {
-            "it": "&#x2B07;&#xFE0F; Scarica i tuoi file audio",
-            "en": "&#x2B07;&#xFE0F; Download your audio files",
-            "fr": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger vos fichiers audio",
-            "es": "&#x2B07;&#xFE0F; Descarga tus archivos de audio",
-            "de": "&#x2B07;&#xFE0F; Audiodateien herunterladen",
+            "it": "&#x2B07;&#xFE0F; Scarica audiolibro",
+            "en": "&#x2B07;&#xFE0F; Download audiobook",
+            "fr": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger l'audiolibro",
+            "es": "&#x2B07;&#xFE0F; Descargar audiolibro",
+            "de": "&#x2B07;&#xFE0F; Hörbuch herunterladen",
             "zh": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u97f3\u9891\u6587\u4ef6",
         }
         t["btn"] = _btn_audio.get(lang, _btn_audio["en"])
 
-    # ── Podcast section (only for podcast downloads) ──
+    #  —  —  Button and Warning logic based on job outcome  —  — 
+    is_m4b = (dl_type == "audio" and job.get("output_m4b"))
+    m4b_failed = job.get("m4b_failed", False)
+    
+    if m4b_failed:
+        t["body"] = t.get("m4b_failed_msg", "") + t["body"]
+        t["btn_final"] = t["btn_mp3"]
+    elif is_m4b:
+        t["btn_final"] = t["btn_m4b"]
+    elif dl_type == "podcast":
+        t["btn_final"] = t["btn_zip"]
+    else:
+        # ZIP or fallback
+        t["btn_final"] = t["btn_zip"]
+
+    #  —  —  Podcast section (only for podcast downloads)  —  — 
     podcast_section = ""
     if dl_type == "podcast" and base_url:
         podcast_section = f"""
@@ -1061,7 +965,7 @@ def _send_completion_email(job_id):
         <p style="margin:0">{t['podcast_p3']}</p>
       </div>"""
 
-    # ── Optional: link to optimized .abm file (only present when auto_generate flow produced one) ──
+    #  —  —  Optional: link to optimized .abm file (only present when auto_generate flow produced one)  —  — 
     abm_section = ""
     has_abm = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
     if has_abm:
@@ -1115,7 +1019,7 @@ def _send_completion_email(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
 
-# ── Activity log ──
+#  —  —  Activity log  —  — 
 _log_lock = threading.Lock()
 
 
@@ -1139,9 +1043,9 @@ def _log_activity(session_id, filename, operation, client_id="", client_ip="", v
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # VOICE MANAGEMENT
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 _voices_cache = None
 _voices_lock = threading.Lock()
@@ -1201,7 +1105,7 @@ def get_voices():
             "engine": "edge",
         })
 
-    # ── Merge voci Google Cloud TTS Chirp3-HD (se disponibili e budget non esaurito) ──
+    #  —  —  Merge voci Google Cloud TTS Chirp3-HD (se disponibili e budget non esaurito)  —  — 
     if google_tts is not None and google_tts.is_available():
         gcloud_voices = google_tts.get_voices()
         for lang_code, voice_list in gcloud_voices.items():
@@ -1233,275 +1137,11 @@ def _invalidate_voices_cache():
         google_tts.invalidate_voices_cache()
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # AUDIO GENERATION
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
-CHUNK_MAX_CHARS = 2000
-
-
-def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
-    """Spezza il testo in chunk ≤ max_chars senza mai tagliare a metà frase.
-    Strategia: tokenizza il testo in frasi (terminatori . ! ? … + spazio/newline),
-    poi accumula frasi nel chunk corrente finché il limite non viene raggiunto.
-    """
-    import re as _re
-    if not text or not text.strip():
-        return [text] if text else [""]
-    # ── 1. Tokenizza in frasi ──
-    # Split su terminatori di frase seguiti da spazio o newline, preservando il
-    # terminatore nella frase precedente (lookbehind).
-    raw_sentences = _re.split(r'(?<=[\.\!\?\…])\s+', text.strip())
-    sentences = [s.strip() for s in raw_sentences if s.strip()]
-    if not sentences:
-        return [text.strip()]
-    # ── 2. Accumula frasi nei chunk ──
-    chunks = []
-    current = ""
-    for sent in sentences:
-        if not current:
-            current = sent
-        elif len(current) + 1 + len(sent) <= max_chars:
-            current = current + " " + sent
-        else:
-            # Il chunk corrente è pieno: salvalo e inizia uno nuovo
-            chunks.append(current)
-            current = sent
-        # Se una singola frase supera max_chars, non la spezziamo — la lasciamo
-        # intera per evitare tagli innaturali. Il TTS gestisce testi lunghi.
-    if current:
-        chunks.append(current)
-    return chunks if chunks else [text.strip()]
-
-
-def _is_multilingual_voice(voice: str) -> bool:
-    """True se la voce edge-tts è una 'Multilingual' (tendenzialmente soggetta a
-    lingua-drift su testi monolingua). Rileva sia il token 'Multilingual' sia
-    'MultiLingual'/'multilingual' nel nome shortname.
-    """
-    return "multilingual" in (voice or "").lower()
-
-
-# Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo alla
-# frase successiva per garantire abbastanza contesto linguistico al motore.
-_TTS_MIN_SENT_CHARS = 80
-# Limite superiore di sicurezza: se una "frase" è enorme non la spezziamo ulteriormente
-# (ci penserà il chunking a monte).
-_TTS_MAX_SENT_CHARS = 1500
-
-
-def _split_sentences_for_tts(text: str):
-    """Split un chunk in frasi, accorpando quelle troppo corte per dare contesto
-    sufficiente al motore TTS Multilingual. Preserva spazi/punteggiatura originali.
-
-    Strategia: tokenizza su terminatori ``. ? ! …`` seguiti da spazio/newline, poi
-    fa merge in avanti finché la lunghezza minima è raggiunta.
-    Ritorna una lista di stringhe pronte per TTS (nessuna sarà vuota).
-    """
-    import re as _re
-    if not text:
-        return []
-    # Regex: terminatore + eventuali virgolette/chiuse + whitespace obbligatorio
-    # Usa lookbehind per mantenere il terminatore nella frase precedente.
-    pattern = _re.compile(r'(?<=[\.\?\!…])["\'»”’\)\]]*\s+')
-    raw = pattern.split(text)
-    raw = [s for s in (s.strip() for s in raw) if s]
-    if not raw:
-        return [text.strip()] if text.strip() else []
-    merged = []
-    buf = ""
-    for s in raw:
-        if not buf:
-            buf = s
-        else:
-            buf = buf + " " + s
-        if len(buf) >= _TTS_MIN_SENT_CHARS:
-            merged.append(buf)
-            buf = ""
-    if buf:
-        if merged and len(buf) < _TTS_MIN_SENT_CHARS:
-            merged[-1] = merged[-1] + " " + buf
-        else:
-            merged.append(buf)
-    # Safety cap: nessuna frase estremamente lunga (non dovrebbe capitare ma non vogliamo spezzare)
-    return [m for m in merged if m]
-
-
-async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
-    """Singola chiamata edge-tts con retry/backoff. In caso di fallimento totale
-    scrive un brevissimo silenzio e ritorna False.
-    """
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-            await communicate.save(output_path)
-            return True
-        except Exception as e:
-            last_error = e
-            wait = 2 ** attempt
-            snippet = text[:60].replace('\n', ' ')
-            print(f"[tts] Attempt {attempt+1}/{max_retries} failed ({len(text)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(wait)
-    print(f"[tts] WARNING: all {max_retries} attempts failed ({len(text)} chars). Last: {last_error}")
-    _generate_silence_mp3(output_path, duration_sec=1)
-    return False
-
-
-async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
-    """Generate MP3 from text via edge-tts with retry and fallback.
-
-    Per le voci *Multilingual* (es. ``it-IT-GiuseppeMultilingualNeural``) il motore
-    Azure fa auto-detection della lingua per clausola e può "sbandare" (italiano
-    letto in inglese/spagnolo/portoghese). Mitigazione: spezzare in frasi e
-    sintetizzare una per volta. Contesti più brevi → meno drift. I singoli MP3
-    vengono concatenati (via ``_concatenate_mp3``) nel file finale.
-    """
-    import re as _re
-    clean = text.strip()
-    if not clean:
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-    # Remove control characters (except newline/tab), zero-width chars, surrogates
-    clean = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
-    # Collapse excessive whitespace
-    clean = _re.sub(r'\n{3,}', '\n\n', clean)
-    clean = _re.sub(r' {3,}', ' ', clean)
-    if not clean.strip():
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-
-    # ── Percorso "split-per-frase" solo per voci Multilingual ──
-    if _is_multilingual_voice(voice):
-        sentences = _split_sentences_for_tts(clean)
-        # Se c'è una sola frase non conviene — si risparmia I/O e concat.
-        if len(sentences) >= 2:
-            import tempfile
-            tmpdir = tempfile.mkdtemp(prefix="abmtts_")
-            try:
-                parts = []
-                any_failed = False
-                for i, sent in enumerate(sentences):
-                    part_path = os.path.join(tmpdir, f"s{i:04d}.mp3")
-                    ok = await _edge_tts_call(sent, voice, rate, part_path, max_retries=max_retries)
-                    if not ok:
-                        any_failed = True
-                    parts.append(part_path)
-                _concatenate_mp3(parts, output_path)
-                if any_failed:
-                    return False
-                return True
-            finally:
-                try:
-                    for f in os.listdir(tmpdir):
-                        try:
-                            os.remove(os.path.join(tmpdir, f))
-                        except OSError:
-                            pass
-                    os.rmdir(tmpdir)
-                except OSError:
-                    pass
-        # fallthrough: singola frase → chiamata unica
-
-    # ── Percorso standard: chiamata singola con retry ──
-    ok = await _edge_tts_call(clean, voice, rate, output_path, max_retries=max_retries)
-    return ok if ok is False else None
-
-
-def generate_chunk_mp3_google(text, voice, rate, output_path, max_retries=3):
-    """Generate MP3 from text via Google Cloud TTS Chirp3-HD with retry and fallback."""
-    import re as _re
-    clean = text.strip()
-    if not clean:
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-    clean = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
-    clean = _re.sub(r'\n{3,}', '\n\n', clean)
-    clean = _re.sub(r' {3,}', ' ', clean)
-    if not clean.strip():
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            google_tts.synthesize(clean, voice, rate, output_path)
-            return  # Success
-        except Exception as e:
-            last_error = e
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[google-tts] Attempt {attempt+1}/{max_retries} failed for chunk "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-
-    print(f"[google-tts] WARNING: All {max_retries} attempts failed, generating silence for chunk "
-          f"({len(clean)} chars). Last error: {last_error}")
-    _generate_silence_mp3(output_path, duration_sec=1)
-    return False
-
-
-def _strip_parenthetical(text):
-    """Remove parenthetical content from text for cleaner TTS output.
-
-    Strips text inside round () and square [] brackets, including nested ones.
-    Cleans up resulting double spaces and leading punctuation after removal.
-    """
-    import re
-    # Iteratively remove innermost brackets to handle nesting
-    prev = None
-    while prev != text:
-        prev = text
-        text = re.sub(r'\([^()]*\)', '', text)
-        text = re.sub(r'\[[^\[\]]*\]', '', text)
-    # Clean up: collapse multiple spaces, fix orphan punctuation (e.g. " , " -> ", ")
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\s+([,;:.!?])', r'\1', text)
-    return text.strip()
-
-
-def _ensure_heading_pause(text):
-    """Aggiunge un punto alla fine delle righe che sembrano titoli/heading nel testo,
-    così il TTS inserisce una pausa naturale prima del corpo del paragrafo.
-    Un heading è una riga breve (≤120 char) isolata da righe vuote che non termina
-    già con punteggiatura (.!?…:;).
-    """
-    import re as _re
-    lines = text.split("\n")
-    result = []
-    for line in lines:
-        stripped = line.strip()
-        if (stripped
-                and len(stripped) <= 120
-                and not _re.search(r'[\.\!\?\…\:\;]\s*$', stripped)):
-            # Verifica che sia isolata (preceduta o seguita da riga vuota)
-            idx = len(result)
-            prev_empty = (idx == 0) or (not result[-1].strip())
-            if prev_empty:
-                result.append(line.rstrip() + ".")
-                continue
-        result.append(line)
-    return "\n".join(result)
-
-
-def _plan_chunks(info):
-    plan = []
-    for ch in info.chapters:
-        clean_text = _strip_parenthetical(ch.text)
-        clean_text = _ensure_heading_pause(clean_text)
-        full_text = f"{ch.title}.\n\n{clean_text}"
-        chunks = split_text_into_chunks(full_text)
-        for ci, chunk_text in enumerate(chunks):
-            plan.append({
-                "chapter_index": ch.index,
-                "chapter_title": ch.title,
-                "chunk_index": ci,
-                "chunks_in_chapter": len(chunks),
-                "text": chunk_text,
-                "chars": len(chunk_text),
-            })
-    return plan
+# (Functions moved to tts_split.py — imported at top of file)
 
 
 class _CancelledError(Exception):
@@ -1525,6 +1165,8 @@ class _SimpleBookInfo:
         self.title = title
         self.author = author
         self.language = ""
+        self.description = ""
+        self.date = ""
         ch = _SimpleChapter(1, title, text)
         self.chapters = [ch]
         self.total_words = ch.word_count
@@ -1637,46 +1279,10 @@ def parse_abm(file_path):
     return info, cover_info
 
 
-def _include_cover_in_dir(job, target_dir):
-    """Copy book cover image into target_dir so it gets included in the ZIP.
 
-    Tries the cover_thumb extracted during analysis first; if not available,
-    attempts extraction from the source EPUB/ABM file.
-    """
-    try:
-        cover_src = job.get("cover_thumb", "")
-        if cover_src and os.path.exists(cover_src):
-            ext = os.path.splitext(cover_src)[1] or ".jpg"
-            dest = os.path.join(str(target_dir), f"cover{ext}")
-            shutil.copy2(cover_src, dest)
-            print(f"[zip-cover] Included cover from thumb: {dest}")
-            return True
-
-        # Fallback: try to extract from source file
-        epub_path = job.get("epub_path", "")
-        if epub_path and os.path.exists(epub_path):
-            dest = os.path.join(str(target_dir), "cover.jpg")
-            if _extract_cover_from_epub(epub_path, dest, target_size=1400):
-                print(f"[zip-cover] Included cover extracted from EPUB: {dest}")
-                return True
-            # Try raw extraction without Pillow
-            raw_path, _ = _extract_cover_for_preview(epub_path, str(target_dir))
-            if raw_path and os.path.exists(raw_path):
-                raw_ext = os.path.splitext(raw_path)[1] or ".jpg"
-                final = os.path.join(str(target_dir), f"cover{raw_ext}")
-                if raw_path != final:
-                    shutil.copy2(raw_path, final)
-                    os.remove(raw_path)
-                print(f"[zip-cover] Included cover (raw) from EPUB: {final}")
-                return True
-    except Exception as e:
-        print(f"[zip-cover] Could not include cover: {e}")
-    return False
-
-
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # LLM TEXT OPTIMIZATION (DeepSeek)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 def _split_text_into_chunks(text, max_chars):
     """Split text into chunks respecting paragraph boundaries."""
@@ -1692,7 +1298,7 @@ def _split_text_into_chunks(text, max_chars):
                 chunks.append("\n\n".join(current_chunk))
                 current_chunk = []
                 current_size = 0
-            sentences = re.split(r'(?<=[.!?…])\s+', para)
+            sentences = re.split(r'(?<=[.!?ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦])\s+', para)
             sub_chunk = []
             sub_size = 0
             for sent in sentences:
@@ -1717,9 +1323,9 @@ def _split_text_into_chunks(text, max_chars):
 
 
 # Pattern di preamboli/postfazioni meta che il LLM a volte emette nonostante
-# il prompt vieti commenti (Understood, Sure, Ecco il testo…, According to the
-# rules…). Se presenti vengono scartati dal sanitizer: se finissero nell'audio,
-# il TTS leggerebbe "Understood, according to the rule…" come se fosse testo
+# il prompt vieti commenti (Understood, Sure, Ecco il testoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦, According to the
+# rulesÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦). Se presenti vengono scartati dal sanitizer: se finissero nell'audio,
+# il TTS leggerebbe "Understood, according to the ruleÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" come se fosse testo
 # del libro.
 _LLM_PREAMBLE_PATTERNS = (
     # Inglese
@@ -1728,12 +1334,12 @@ _LLM_PREAMBLE_PATTERNS = (
     r"below\s+is\s+the|following\s+the\s+rules?|according\s+to\s+the\s+rules?|"
     r"as\s+requested|as\s+instructed|noted)\b",
     # Italiano
-    r"^(capito|compreso|d['’]accordo|ho\s+capito|perfetto|va\s+bene|certo|"
+    r"^(capito|compreso|d['ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢]accordo|ho\s+capito|perfetto|va\s+bene|certo|"
     r"ecco\s+(?:il|la|una)?\s*(?:testo|versione)(?:\s+ottimizzata?|\s+rivista|\s+pulita|\s+corretta)?|"
     r"seguendo\s+le\s+regole|secondo\s+le\s+regole|come\s+richiesto)\b",
     # Francese / spagnolo / tedesco (difese minori ma utili)
-    r"^(compris|d['’]accord|voici\s+le\s+texte|suivant\s+les\s+r[èe]gles|"
-    r"entendido|de\s+acuerdo|aqu[ií]\s+est[áa]\s+el\s+texto|"
+    r"^(compris|d['ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢]accord|voici\s+le\s+texte|suivant\s+les\s+r[èe]gles|"
+    r"entendido|de\s+acuerdo|aqu[iÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­]\s+est[ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡a]\s+el\s+texto|"
     r"verstanden|hier\s+ist\s+der\s+text)\b",
 )
 _LLM_PREAMBLE_RE = re.compile(
@@ -1745,11 +1351,11 @@ def _sanitize_llm_output(text: str) -> str:
     """Rimuove contaminazioni tipiche dell'output LLM prima di passarlo al TTS.
 
     Due categorie di problemi mitigati:
-      1) Preamboli/postfazioni meta ("Understood, according to the rules…",
-         "Ecco il testo ottimizzato:", "Here is the optimized version:"…)
+      1) Preamboli/postfazioni meta ("Understood, according to the rulesÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦",
+         "Ecco il testo ottimizzato:", "Here is the optimized version:"ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦)
          che il modello emette nonostante il prompt li vieti. Se raggiungono
          il TTS vengono letti come se fossero testo del libro.
-      2) Paragrafi/righe duplicate consecutivamente — tipicamente il titolo
+      2) Paragrafi/righe duplicate consecutivamente  —  tipicamente il titolo
          del capitolo ripetuto sia in coda al chunk precedente sia in testa
          a quello successivo.
 
@@ -1760,7 +1366,7 @@ def _sanitize_llm_output(text: str) -> str:
     if not text:
         return text
 
-    # ── 1) Strip preamble: rimuovi, in testa, le prime righe che iniziano
+    #  —  —  1) Strip preamble: rimuovi, in testa, le prime righe che iniziano
     # con un marcatore meta (e l'eventuale riga che termina con ':').
     lines = text.splitlines()
     idx = 0
@@ -1789,7 +1395,7 @@ def _sanitize_llm_output(text: str) -> str:
             continue
         break
 
-    # ── 2) Strip trailing meta: ultime righe tipo "Note: …" o
+    #  —  —  2) Strip trailing meta: ultime righe tipo "Note: ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" o
     # "[End of optimized text]".
     end = len(lines)
     while end > idx:
@@ -1798,14 +1404,14 @@ def _sanitize_llm_output(text: str) -> str:
             end -= 1
             continue
         if tail.startswith(("Note:", "Nota:", "[Note", "[End", "[Fine",
-                            "— End", "—End")):
+                            " —  End", " — End")):
             end -= 1
             continue
         break
 
     cleaned = "\n".join(lines[idx:end]).strip("\n")
 
-    # ── 3) Deduplica paragrafi consecutivi identici (titolo ripetuto a cavallo
+    #  —  —  3) Deduplica paragrafi consecutivi identici (titolo ripetuto a cavallo
     # di due chunk concatenati, o stesso blocco emesso due volte dal modello).
     paragraphs = re.split(r"\n{2,}", cleaned)
     deduped = []
@@ -1817,7 +1423,7 @@ def _sanitize_llm_output(text: str) -> str:
             continue
         deduped.append(p)
 
-    # ── 4) Deduplica anche righe consecutive identiche *all'interno* di un
+    #  —  —  4) Deduplica anche righe consecutive identiche *all'interno* di un
     # paragrafo (difesa in più contro doppie emissioni di singole righe).
     final_paragraphs = []
     for p in deduped:
@@ -1916,11 +1522,11 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             raise _CancelledError("Optimization cancelled between chunks")
         if len(chunks) > 1:
             if i == 0:
-                user_content = f"[Parte {i+1} di {len(chunks)} — inizio del testo]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  —  inizio del testo]\n\n{chunk}"
             elif i == len(chunks) - 1:
-                user_content = f"[Parte {i+1} di {len(chunks)} — fine del testo]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  —  fine del testo]\n\n{chunk}"
             else:
-                user_content = f"[Parte {i+1} di {len(chunks)} — continuazione]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  —  continuazione]\n\n{chunk}"
         else:
             user_content = chunk
         results.append(_call_deepseek(user_content, job=job))
@@ -1928,7 +1534,7 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             time.sleep(2)  # rate limiting tra chunk
     # Seconda passata di sanitizzazione sul testo ricomposto: se il chunk i
     # finisce con il titolo del capitolo e il chunk i+1 lo ripete in testa,
-    # dopo il join diventano paragrafi consecutivi identici → deduplicati.
+    # dopo il join diventano paragrafi consecutivi identici  →  deduplicati.
     return _sanitize_llm_output("\n\n".join(results))
 
 
@@ -2028,7 +1634,7 @@ def _send_optimization_email(job_id):
 
     _opt_email_i18n = {
         "it": {
-            "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo completata",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" ottimizzazione testo completata",
             "heading": "&#x2728; Ottimizzazione testo completata!",
             "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il progetto ottimizzato (.abm)",
@@ -2037,7 +1643,7 @@ def _send_optimization_email(job_id):
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
         "en": {
-            "subject": f"Audiobook Maker — \"{book_title}\" text optimization completed",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" text optimization completed",
             "heading": "&#x2728; Text optimization completed!",
             "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download optimized project (.abm)",
@@ -2046,7 +1652,7 @@ def _send_optimization_email(job_id):
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
         "fr": {
-            "subject": f"Audiobook Maker — \"{book_title}\" optimisation du texte termin&eacute;e",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" optimisation du texte termin&eacute;e",
             "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
             "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)",
@@ -2055,7 +1661,7 @@ def _send_optimization_email(job_id):
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
         "es": {
-            "subject": f"Audiobook Maker — \"{book_title}\" optimizaci&oacute;n de texto completada",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" optimizaci&oacute;n de texto completada",
             "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
             "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar proyecto optimizado (.abm)",
@@ -2064,7 +1670,7 @@ def _send_optimization_email(job_id):
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
         "de": {
-            "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung abgeschlossen",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" Textoptimierung abgeschlossen",
             "heading": "&#x2728; Textoptimierung abgeschlossen!",
             "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Optimiertes Projekt herunterladen (.abm)",
@@ -2073,7 +1679,7 @@ def _send_optimization_email(job_id):
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
         "zh": {
-            "subject": f"Audiobook Maker — \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
+            "subject": f"Audiobook Maker  —  \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
             "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
             "body": f"<strong>{book_title}</strong> \u7684AI\u6587\u672c\u4f18\u5316\u5df2\u6210\u529f\u5b8c\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u4f18\u5316\u9879\u76ee (.abm)",
@@ -2158,28 +1764,38 @@ def _refund_job_payment(job_id, job, reason="error"):
             job["refund_done"] = True
             _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_ISSUED",
                           job.get("client_id", ""), "", "", "")
-            print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR) → {payment_email} (reason={reason})")
+            print(f"[{job_id}] Voucher issued: {code} ({bonus_amount:.2f} EUR)  →  {payment_email} (reason={reason})")
     except Exception as ve:
         print(f"[{job_id}] Failed to refund payment: {ve}")
 
 
-def run_optimization(job_id):
-    """Background thread: optimize text of all chapters via DeepSeek LLM."""
+def run_optimization(job_id, selected_chapters=None):
+    """Background thread: optimize text of all chapters via DeepSeek LLM.
+    If selected_chapters is provided (list of indices), only those are optimized.
+    """
     job = jobs[job_id]
     job["status"] = "optimizing"
     job["opt_cancelled"] = False
     job["last_poll"] = time.time()
     start_time = time.time()
     info = job["info"]
-    total_chapters = len(info.chapters)
-    total_chars = sum(ch.char_count for ch in info.chapters)
+    
+    selected_set = set(selected_chapters) if selected_chapters else None
+    
+    # Identify which chapters to optimize
+    chapters_to_opt = info.chapters
+    if selected_set:
+        chapters_to_opt = [ch for ch in info.chapters if ch.index in selected_set]
+    
+    total_chapters = len(chapters_to_opt)
+    total_chars = sum(ch.char_count for ch in chapters_to_opt)
 
     # Log per confermare che il prompt di ottimizzazione è caricato
     if _deepseek_prompt:
         prompt_len = len(_deepseek_prompt)
-        print(f"[{job_id}] Ottimizzazione AI avviata (prompt caricato: {prompt_len} caratteri)")
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt caricato: {prompt_len} caratteri)")
     else:
-        print(f"[{job_id}] Ottimizzazione AI avviata (prompt non caricato)")
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt non caricato)")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
@@ -2189,10 +1805,10 @@ def run_optimization(job_id):
     job["opt_start_time"] = start_time
 
     try:
-        for i, ch in enumerate(info.chapters):
+        for i, ch in enumerate(chapters_to_opt):
             if job.get("opt_cancelled"):
                 raise _CancelledError("Optimization cancelled")
-            # Heartbeat check (skip if email registered — batch mode)
+            # Heartbeat check (skip if email registered  —  batch mode)
             if not job.get("email_registered"):
                 last_poll = job.get("last_poll", start_time)
                 if time.time() - last_poll > 60:
@@ -2208,12 +1824,10 @@ def run_optimization(job_id):
             )
             print(f"[{job_id}] LLM optimizing chapter {i+1}/{total_chapters}: {ch.title}")
 
-            # Progress in unità di INPUT: conservo la dimensione originale prima
-            # di sovrascrivere ch.char_count con la lunghezza dell'output (che
-            # tipicamente è più grande e falserebbe la barra).
+            # Progress in unità di INPUT
             ch_input_chars = ch.char_count
             job["opt_current_chapter_chars"] = ch_input_chars
-            job["opt_streamed_chars"] = 0  # reset per-capitolo: contributo cap. corrente
+            job["opt_streamed_chars"] = 0
 
             optimized_text = _optimize_chapter_text(
                 ch.text, chapter_num=i+1, total_chapters=total_chapters, job=job
@@ -2246,7 +1860,7 @@ def run_optimization(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
-        # Re-check auto_generate — may have been set mid-optimization via register_opt_email
+        # Re-check auto_generate  —  may have been set mid-optimization via register_opt_email
         auto_generate = job.get("opt_auto_generate", False)
         if auto_generate and job.get("email_registered"):
             # Batch mode: generate .abm snapshot first (so it can be linked from the final email),
@@ -2258,10 +1872,23 @@ def run_optimization(job_id):
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
             job["status"] = "optimized"
-            voice = job.get("opt_voice", "it-IT-GiuseppeNeural")
+            voice = job.get("opt_voice", "it-IT-IsabellaNeural")
             rate = job.get("opt_rate", "+0%")
             single_file = job.get("opt_single_file", True)
             print(f"[{job_id}] Auto-generating after optimization (voice: {voice})")
+            
+            # Filter info if only a subset was optimized
+            if selected_chapters:
+                from copy import copy
+                selected_set = set(selected_chapters)
+                filtered = [ch for ch in info.chapters if ch.index in selected_set]
+                if filtered:
+                    info = copy(info)
+                    info.chapters = filtered
+                    info.total_words = sum(ch.word_count for ch in filtered)
+                    info.total_chars = sum(ch.char_count for ch in filtered)
+                    info.estimated_duration_minutes = info.total_words / 150
+            
             run_generation(job_id, info, voice, rate, single_file)
         elif job.get("email_registered"):
             # Batch mode, no auto-generate: create .abm and send email
@@ -2360,46 +1987,107 @@ def run_generation(job_id, info, voice, rate, single_file):
 
         if single_file:
             all_parts = []
+            m4b_chapters = []
+            current_ms = 0
+            silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
             failed_chunks = 0
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
                 _update_progress(i, block)
-                # Silenzio all'inizio di ogni capitolo
-                if block["chapter_index"] != prev_chapter_idx:
+
+                ch_idx = block["chapter_index"]
+                ch_title = block["chapter_title"]
+
+                # New chapter detected
+                if ch_idx != prev_chapter_idx:
+                    # Silence before chapter
                     if os.path.exists(silence_path):
                         all_parts.append(silence_path)
-                    prev_chapter_idx = block["chapter_index"]
+                        current_ms += silence_ms
+                    
+                    # Start of new chapter in M4B list
+                    m4b_chapters.append({"title": ch_title, "start": current_ms, "end": current_ms})
+                    prev_chapter_idx = ch_idx
+
                 part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                 if use_google:
                     result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
                 else:
                     result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                if result is False:
+                
+                if result is not False:
+                    all_parts.append(part_path)
+                    duration = _get_audio_duration_ms(part_path)
+                    current_ms += duration
+                    if m4b_chapters:
+                        m4b_chapters[-1]["end"] = current_ms
+                    if os.path.exists(part_path):
+                        job["bytes_generated"] += os.path.getsize(part_path)
+                else:
                     failed_chunks += 1
-                all_parts.append(part_path)
+
                 job["processed_chars"] += block["chars"]
-                if os.path.exists(part_path):
-                    job["bytes_generated"] += os.path.getsize(part_path)
+
+            if m4b_chapters:
+                m4b_chapters[-1]["end"] = current_ms
 
             job["progress_message"] = "Merging audio..."
             safe_name = _safe_filename(info.title) or "audiolibro"
             final_mp3 = str(output_dir / f"{safe_name}.mp3")
             _concatenate_mp3(all_parts, final_mp3)
+            
+            job["output_files"] = [final_mp3]
+            job["output_name"] = f"{safe_name}.mp3"
+
+            # Generate M4B too
+            final_m4b = str(output_dir / f"{safe_name}.m4b")
+            job["progress_message"] = "Converting to M4B..."
+            cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+            valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
+            
+            # Retry logic: max 2 attempts
+            for attempt in range(1, 3):
+                try:
+                    if _convert_mp3_to_m4b(final_mp3, final_m4b,
+                                           chapters=valid_m4b_ch or None,
+                                           title=getattr(info, "title", "Audiolibro"),
+                                           author=getattr(info, "author", None),
+                                           cover_path=cover_path,
+                                           date=getattr(info, "date", None),
+                                           language=getattr(info, "language", None),
+                                           description=getattr(info, "description", None)):
+                        job["output_m4b"] = final_m4b
+                        job["m4b_failed"] = False
+                        # If user requested M4B, this is the primary output name
+                        if single_file:
+                            job["output_name"] = f"{safe_name}.m4b"
+                        break
+                    else:
+                        raise Exception("Conversion returned False")
+                except Exception as e:
+                    print(f"[{job_id}] M4B conversion attempt {attempt} failed: {e}")
+                    if attempt == 2:
+                        job["m4b_failed"] = True
+                        if os.path.exists(final_m4b):
+                            try: os.remove(final_m4b)
+                            except OSError: pass
+
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
                     os.remove(p)
-            job["output_files"] = [final_mp3]
-            job["output_name"] = f"{safe_name}.mp3"
+            
             if os.path.exists(final_mp3):
                 job["bytes_generated"] = os.path.getsize(final_mp3)
         else:
             mp3_files = []
+            m4b_chapters = []
+            current_ms = 0
             current_chapter_parts = []
             current_chapter_idx = -1
             failed_chunks = 0
-            # Dict for O(1) lookup — supports non-contiguous indices (filtered chapters)
+            # Dict for O(1) lookup  —  supports non-contiguous indices (filtered chapters)
             chapter_by_idx = {ch.index: ch for ch in info.chapters}
             # Rinumerazione sequenziale output: il ch.index può essere non
             # contiguo (capitoli deselezionati via UI, o capitoli rimossi
@@ -2419,6 +2107,16 @@ def run_generation(job_id, info, voice, rate, single_file):
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
+
+                        # Aggiorna timing per capitoli M4B
+                        duration = _get_audio_duration_ms(mp3_path)
+                        m4b_chapters.append({
+                            "title": ch.title,
+                            "start": current_ms,
+                            "end": current_ms + duration
+                        })
+                        current_ms += duration
+
                         for p in current_chapter_parts:
                             if os.path.exists(p) and p != silence_path:
                                 os.remove(p)
@@ -2447,6 +2145,16 @@ def run_generation(job_id, info, voice, rate, single_file):
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
+
+                # Aggiorna timing per ultimo capitolo M4B
+                duration = _get_audio_duration_ms(mp3_path)
+                m4b_chapters.append({
+                    "title": ch.title,
+                    "start": current_ms,
+                    "end": current_ms + duration
+                })
+                current_ms += duration
+
                 for p in current_chapter_parts:
                     if os.path.exists(p) and p != silence_path:
                         os.remove(p)
@@ -2567,556 +2275,17 @@ def _google_tts_refund_unused(job_id, job):
     threading.Thread(target=_do_reconcile, daemon=True).start()
 
 
-def _zip_safe_read(zf, path):
-    """Read a file from a ZipFile, handling path separator mismatches.
-
-    ZIP entries always use forward slashes, but OPF href or os.path.join
-    may produce backslashes on Windows. Tries: exact path → normalized →
-    basename match.
-    """
-    # 1. Try exact path
-    if path in zf.namelist():
-        return zf.read(path)
-    # 2. Normalize separators
-    normalized = path.replace("\\", "/")
-    if normalized in zf.namelist():
-        return zf.read(normalized)
-    # 3. Match by basename (last resort)
-    target = os.path.basename(normalized).lower()
-    for entry in zf.namelist():
-        if os.path.basename(entry).lower() == target:
-            return zf.read(entry)
-    raise KeyError(f"No item matching '{path}' in archive")
-
-
-def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
-    """Extract cover image from EPUB and resize to square for iTunes compliance.
-
-    Tries: OPF metadata cover -> common filenames -> first large image.
-    Returns output_path on success, None on failure.
-    """
-    import zipfile
-    import io
-    import xml.etree.ElementTree as ET
-
-    try:
-        from PIL import Image
-    except ImportError:
-        return None
-
-    def _find_cover_in_opf(zf):
-        """Parse OPF to find cover image href."""
-        opf_path = None
-        try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
-            ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
-            rootfile = container.find(".//c:rootfile", ns)
-            if rootfile is not None:
-                opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
-            pass
-        if not opf_path:
-            for n in zf.namelist():
-                if n.endswith(".opf"):
-                    opf_path = n
-                    break
-        if not opf_path:
-            return None
-
-        try:
-            opf = ET.fromstring(zf.read(opf_path))
-        except (KeyError, ET.ParseError):
-            return None
-
-        opf_dir = os.path.dirname(opf_path)
-
-        # Method 1: <meta name="cover" content="item-id"/>
-        cover_id = None
-        for meta in opf.iter():
-            if meta.tag.endswith("}meta") or meta.tag == "meta":
-                if meta.get("name") == "cover":
-                    cover_id = meta.get("content")
-                    break
-
-        # Collect manifest items
-        manifest_items = {}
-        for item in opf.iter():
-            if item.tag.endswith("}item") or item.tag == "item":
-                item_id = item.get("id", "")
-                href = item.get("href", "")
-                props = item.get("properties", "")
-                mt = item.get("media-type", "")
-                manifest_items[item_id] = (href, mt, props)
-
-        # Check properties="cover-image"
-        for item_id, (href, mt, props) in manifest_items.items():
-            if "cover-image" in props and mt.startswith("image/"):
-                return (opf_dir+'/'+href).replace('\\','/') if opf_dir else href
-
-        # Check by cover_id from meta
-        if cover_id and cover_id in manifest_items:
-            href, mt, _ = manifest_items[cover_id]
-            if mt.startswith("image/"):
-                return (opf_dir+'/'+href).replace('\\','/') if opf_dir else href
-
-        return None
-
-    def _find_cover_by_name(zf):
-        """Look for common cover filenames."""
-        for n in zf.namelist():
-            base = os.path.basename(n).lower()
-            if base in ("cover.jpg", "cover.jpeg", "cover.png",
-                        "cover-image.jpg", "cover-image.png"):
-                return n
-        return None
-
-    def _find_largest_image(zf):
-        """Fallback: pick the largest image file."""
-        best, best_size = None, 0
-        for n in zf.namelist():
-            low = n.lower()
-            if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png")):
-                sz = zf.getinfo(n).file_size
-                if sz > best_size:
-                    best, best_size = n, sz
-        return best if best_size > 5000 else None
-
-    try:
-        with zipfile.ZipFile(epub_path, "r") as zf:
-            img_path = (_find_cover_in_opf(zf)
-                        or _find_cover_by_name(zf)
-                        or _find_largest_image(zf))
-            if not img_path:
-                return None
-            img_data = _zip_safe_read(zf, img_path)
-
-        img = Image.open(io.BytesIO(img_data))
-        img = img.convert("RGB")
-        w, h = img.size
-        side = min(w, h)
-        left = (w - side) // 2
-        top = (h - side) // 2
-        img = img.crop((left, top, left + side, top + side))
-        img = img.resize((target_size, target_size), Image.LANCZOS)
-        img.save(output_path, "JPEG", quality=85)
-        return output_path
-    except Exception:
-        return None
-
-
-def _generate_fallback_cover(output_path, title="", author="", target_size=1400):
-    """Generate a simple branded cover when no EPUB cover is available."""
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-    except ImportError:
-        return None
-
-    try:
-        sz = target_size
-        img = Image.new("RGB", (sz, sz), (245, 240, 232))
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([0, 0, sz, int(sz * 0.38)], fill=(194, 154, 108))
-
-        font_title = font_author = font_small = None
-        for fpath in ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-                      "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-                      "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-                      "C:/Windows/Fonts/times.ttf", "C:/Windows/Fonts/arial.ttf"]:
-            if os.path.exists(fpath):
-                font_title = ImageFont.truetype(fpath, sz // 14)
-                font_author = ImageFont.truetype(fpath, sz // 22)
-                font_small = ImageFont.truetype(fpath, sz // 32)
-                break
-        if not font_title:
-            font_title = font_author = font_small = ImageFont.load_default()
-
-        def _wrap(text, font, max_w):
-            words, lines, cur = text.split(), [], ""
-            for w in words:
-                test = f"{cur} {w}".strip()
-                if draw.textbbox((0, 0), test, font=font)[2] <= max_w:
-                    cur = test
-                else:
-                    if cur:
-                        lines.append(cur)
-                    cur = w
-            if cur:
-                lines.append(cur)
-            return lines or [text]
-
-        margin = int(sz * 0.1)
-        max_w = sz - margin * 2
-        y = int(sz * 0.42)
-        for line in _wrap(title or "Audiobook", font_title, max_w):
-            bbox = draw.textbbox((0, 0), line, font=font_title)
-            draw.text(((sz - bbox[2] + bbox[0]) // 2, y), line,
-                      fill=(60, 50, 40), font=font_title)
-            y += int((bbox[3] - bbox[1]) * 1.3)
-
-        if author:
-            y += int(sz * 0.03)
-            for line in _wrap(author, font_author, max_w):
-                bbox = draw.textbbox((0, 0), line, font=font_author)
-                draw.text(((sz - bbox[2] + bbox[0]) // 2, y), line,
-                          fill=(120, 100, 80), font=font_author)
-                y += int((bbox[3] - bbox[1]) * 1.3)
-
-        label = "Audiobook Maker"
-        bbox = draw.textbbox((0, 0), label, font=font_small)
-        draw.text(((sz - bbox[2] + bbox[0]) // 2, sz - int(sz * 0.08)),
-                  label, fill=(180, 165, 145), font=font_small)
-        img.save(output_path, "JPEG", quality=85)
-        return output_path
-    except Exception:
-        return None
-
-
-def _extract_cover_for_preview(epub_path, output_dir):
-    """Extract cover image from EPUB for UI preview. Works with or without Pillow.
-
-    Returns (output_path, mime_type) on success, (None, None) on failure.
-    Unlike _extract_cover_from_epub, this does NOT require Pillow:
-    - With Pillow: resizes to 400px thumbnail JPEG
-    - Without Pillow: extracts raw image bytes as-is
-    """
-    import zipfile
-    import xml.etree.ElementTree as ET
-
-    def _find_cover_path_in_zip(zf):
-        """Find the internal path of the cover image inside the EPUB ZIP."""
-        # 1. Try OPF metadata
-        opf_path = None
-        try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
-            ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
-            rootfile = container.find(".//c:rootfile", ns)
-            if rootfile is not None:
-                opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
-            pass
-        if not opf_path:
-            for n in zf.namelist():
-                if n.endswith(".opf"):
-                    opf_path = n
-                    break
-        if opf_path:
-            try:
-                opf = ET.fromstring(zf.read(opf_path))
-                opf_dir = os.path.dirname(opf_path)
-                cover_id = None
-                for meta in opf.iter():
-                    tag = meta.tag.split("}")[-1] if "}" in meta.tag else meta.tag
-                    if tag == "meta" and meta.get("name") == "cover":
-                        cover_id = meta.get("content")
-                        break
-                manifest = {}
-                for item in opf.iter():
-                    tag = item.tag.split("}")[-1] if "}" in item.tag else item.tag
-                    if tag == "item":
-                        manifest[item.get("id", "")] = (
-                            item.get("href", ""), item.get("media-type", ""),
-                            item.get("properties", ""))
-                for iid, (href, mt, props) in manifest.items():
-                    if "cover-image" in props and mt.startswith("image/"):
-                        return (opf_dir+'/'+href).replace('\\','/') if opf_dir else href
-                if cover_id and cover_id in manifest:
-                    href, mt, _ = manifest[cover_id]
-                    if mt.startswith("image/"):
-                        return (opf_dir+'/'+href).replace('\\','/') if opf_dir else href
-            except (KeyError, ET.ParseError):
-                pass
-
-        # 2. Try common filenames
-        for n in zf.namelist():
-            base = os.path.basename(n).lower()
-            if base in ("cover.jpg", "cover.jpeg", "cover.png",
-                        "cover-image.jpg", "cover-image.png"):
-                return n
-
-        # 3. Largest image file
-        best, best_size = None, 0
-        for n in zf.namelist():
-            low = n.lower()
-            if any(low.endswith(ext) for ext in (".jpg", ".jpeg", ".png")):
-                sz = zf.getinfo(n).file_size
-                if sz > best_size:
-                    best, best_size = n, sz
-        return best if best_size > 5000 else None
-
-    try:
-        with zipfile.ZipFile(epub_path, "r") as zf:
-            img_zip_path = _find_cover_path_in_zip(zf)
-            if not img_zip_path:
-                print(f"[cover] No cover image found in {os.path.basename(epub_path)}")
-                return None, None
-            img_data = _zip_safe_read(zf, img_zip_path)
-            print(f"[cover] Found: {img_zip_path} ({len(img_data)} bytes)")
-    except Exception as e:
-        print(f"[cover] ZIP read error: {e}")
-        return None, None
-
-    # Determine format from data header
-    is_png = img_data[:8] == b'\x89PNG\r\n\x1a\n'
-    mime = "image/png" if is_png else "image/jpeg"
-    ext = ".png" if is_png else ".jpg"
-
-    # Try Pillow for a clean resize
-    try:
-        from PIL import Image
-        import io
-        img = Image.open(io.BytesIO(img_data))
-        img = img.convert("RGB")
-        # Fit within 400px preserving aspect ratio (no square crop)
-        img.thumbnail((400, 600), Image.LANCZOS)
-        out_path = os.path.join(output_dir, "cover_thumb.jpg")
-        img.save(out_path, "JPEG", quality=85)
-        print(f"[cover] Thumbnail saved with Pillow: {os.path.getsize(out_path)} bytes")
-        return out_path, "image/jpeg"
-    except ImportError:
-        print("[cover] Pillow not available, using raw image")
-    except Exception as e:
-        print(f"[cover] Pillow resize failed: {e}, using raw image")
-
-    # Fallback: write raw image bytes (browser will handle any size)
-    out_path = os.path.join(output_dir, "cover_thumb" + ext)
-    with open(out_path, "wb") as f:
-        f.write(img_data)
-    print(f"[cover] Raw image saved: {out_path} ({len(img_data)} bytes)")
-    return out_path, mime
-
-
-def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filename="", rss_filename="podcast.xml"):
-    """Generate an RSS 2.0 podcast feed XML file compliant with iTunes specs."""
-    from datetime import datetime, timezone, timedelta
-    import xml.etree.ElementTree as ET
-    import struct
-
-    def _mp3_duration_seconds(path):
-        """Estimate MP3 duration in seconds from file size and bitrate header."""
-        try:
-            import subprocess
-            r = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", path],
-                capture_output=True, text=True
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return int(float(r.stdout.strip()))
-        except (FileNotFoundError, OSError, ValueError):
-            pass
-        # Fallback: assume ~48kbps average for edge-tts output
-        try:
-            return max(1, os.path.getsize(path) * 8 // 48000)
-        except OSError:
-            return 0
-
-    def _fmt_duration(secs):
-        h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
-        return f"{h:02d}:{m:02d}:{s:02d}"
-
-    def _rfc2822(dt):
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        return (f"{days[dt.weekday()]}, {dt.day:02d} {months[dt.month-1]} "
-                f"{dt.year} {dt.hour:02d}:{dt.minute:02d}:{dt.second:02d} +0000")
-
-    # Namespaces (iTunes + Atom + Podcast 2.0 for PSP-1 compliance)
-    itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-    atom_ns = "http://www.w3.org/2005/Atom"
-    podcast_ns = "https://podcastindex.org/namespace/1.0"
-    content_ns = "http://purl.org/rss/1.0/modules/content/"
-    ET.register_namespace("itunes", itunes_ns)
-    ET.register_namespace("atom", atom_ns)
-    ET.register_namespace("podcast", podcast_ns)
-    ET.register_namespace("content", content_ns)
-
-    rss = ET.Element("rss", {"version": "2.0"})
-    channel = ET.SubElement(rss, "channel")
-
-    # Channel metadata (RSS 2.0 required)
-    ET.SubElement(channel, "title").text = info.title or "Audiobook"
-    ET.SubElement(channel, "description").text = (
-        f"Audiobook: {info.title}" + (f" — {info.author}" if info.author else "")
-    )
-    ET.SubElement(channel, "language").text = info.language or "en"
-    channel_link = base_url or "https://example.com"
-    ET.SubElement(channel, "link").text = channel_link
-    ET.SubElement(channel, "generator").text = "Audiobook Maker"
-    now = datetime.now(timezone.utc)
-    ET.SubElement(channel, "pubDate").text = _rfc2822(now)
-    ET.SubElement(channel, "lastBuildDate").text = _rfc2822(now)
-
-    # Atom self-link (required for PSP-1)
-    rss_url = (base_url.rstrip("/") + "/" + rss_filename) if base_url else rss_filename
-    atom_link = ET.SubElement(channel, f"{{{atom_ns}}}link")
-    atom_link.set("href", rss_url)
-    atom_link.set("rel", "self")
-    atom_link.set("type", "application/rss+xml")
-
-    # iTunes channel tags (required for Apple Podcasts / PSP-1)
-    author_name = info.author or "Unknown"
-    ET.SubElement(channel, f"{{{itunes_ns}}}author").text = author_name
-    ET.SubElement(channel, f"{{{itunes_ns}}}summary").text = (
-        f"Audiobook: {info.title}" + (f" by {info.author}" if info.author else "")
-    )
-    cat = ET.SubElement(channel, f"{{{itunes_ns}}}category")
-    cat.set("text", "Arts")
-    sub = ET.SubElement(cat, f"{{{itunes_ns}}}category")
-    sub.set("text", "Books")
-    ET.SubElement(channel, f"{{{itunes_ns}}}explicit").text = "false"
-    ET.SubElement(channel, f"{{{itunes_ns}}}type").text = "serial"
-
-    # iTunes owner with email (required for PSP-1)
-    owner = ET.SubElement(channel, f"{{{itunes_ns}}}owner")
-    ET.SubElement(owner, f"{{{itunes_ns}}}name").text = author_name
-    ET.SubElement(owner, f"{{{itunes_ns}}}email").text = "podcast@example.com"
-
-    # Cover art (required: 1400-3000px square JPEG)
-    cover_url = ""
-    if cover_filename:
-        cover_url = (base_url.rstrip("/") + "/" + cover_filename) if base_url else cover_filename
-        img_el = ET.SubElement(channel, f"{{{itunes_ns}}}image")
-        img_el.set("href", cover_url)
-        # Podcast 2.0 image as well
-        p_img = ET.SubElement(channel, f"{{{podcast_ns}}}image")
-        p_img.set("href", cover_url)
-
-    # Podcast 2.0 GUID (unique identifier)
-    ET.SubElement(channel, f"{{{podcast_ns}}}guid").text = (
-        str(uuid.uuid5(uuid.NAMESPACE_URL, channel_link + "/" + (info.title or "audiobook")))
-    )
-
-    # Build chapter-to-file mapping from info.chapters.
-    # I file MP3 sono rinumerati 1..N in ordine (indipendentemente da ch.index
-    # originale, che può essere non contiguo se il .abm ha capitoli cancellati):
-    # usiamo quindi la posizione sequenziale come chiave primaria.
-    chapter_by_seq = {pos + 1: ch for pos, ch in enumerate(info.chapters)}
-    chapter_by_idx = {ch.index: ch for ch in info.chapters}
-
-    # Items — one per MP3, in order
-    for ep_num, mp3_path in enumerate(mp3_files, 1):
-        fname = os.path.basename(mp3_path)
-        file_size = os.path.getsize(mp3_path) if os.path.exists(mp3_path) else 0
-        duration_secs = _mp3_duration_seconds(mp3_path)
-
-        # Try to match chapter from filename pattern "NNN_title.mp3"
-        ch_title = f"Episode {ep_num}"
-        ch_desc = ""
-        try:
-            idx_str = fname.split("_")[0]
-            idx = int(idx_str)
-            # Priorità al mapping sequenziale (post-rinumerazione); fallback
-            # all'indice originale per retrocompatibilità con job/token
-            # generati prima di questa modifica.
-            matched_ch = chapter_by_seq.get(idx) or chapter_by_idx.get(idx)
-            if matched_ch is not None:
-                ch_title = matched_ch.title
-                ch_desc = f"Chapter {idx}: {ch_title}"
-        except (ValueError, IndexError):
-            pass
-
-        pub_date = now - timedelta(hours=len(mp3_files) - ep_num)
-        file_url = (base_url.rstrip("/") + "/" + fname) if base_url else fname
-
-        item = ET.SubElement(channel, "item")
-        ET.SubElement(item, "title").text = ch_title
-        ET.SubElement(item, "description").text = ch_desc or ch_title
-        ET.SubElement(item, f"{{{itunes_ns}}}episode").text = str(ep_num)
-        ET.SubElement(item, f"{{{itunes_ns}}}episodeType").text = "full"
-        ET.SubElement(item, f"{{{itunes_ns}}}duration").text = _fmt_duration(duration_secs)
-        ET.SubElement(item, f"{{{itunes_ns}}}author").text = info.author or "Unknown"
-        ET.SubElement(item, f"{{{itunes_ns}}}summary").text = ch_desc or ch_title
-        ET.SubElement(item, f"{{{itunes_ns}}}explicit").text = "false"
-        if cover_url:
-            item_img = ET.SubElement(item, f"{{{itunes_ns}}}image")
-            item_img.set("href", cover_url)
-        ET.SubElement(item, "pubDate").text = _rfc2822(pub_date)
-        ET.SubElement(item, "link").text = file_url
-        ET.SubElement(item, "guid", {"isPermaLink": "false"}).text = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, channel_link + "/" + fname)
-        )
-        enc = ET.SubElement(item, "enclosure")
-        enc.set("url", file_url)
-        enc.set("length", str(file_size))
-        enc.set("type", "audio/mpeg")
-
-    # Write with XML declaration
-    tree = ET.ElementTree(rss)
-    ET.indent(tree, space="  ")
-    tree.write(output_path, encoding="utf-8", xml_declaration=True)
-
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
 
-def _generate_silence_mp3(output_path, duration_sec=3):
-    """Genera un file MP3 di silenzio della durata specificata."""
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i",
-             f"anullsrc=r=24000:cl=mono",
-             "-t", str(duration_sec), "-c:a", "libmp3lame",
-             "-b:a", "48k", "-q:a", "9", output_path],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0 and os.path.exists(output_path):
-            return True
-    except (FileNotFoundError, OSError):
-        pass
-    # Fallback: silenzio MP3 minimo (~3s, frame MPEG1 Layer3 128kbps mono)
-    # Un frame MP3 = 1152 samples @ 24000Hz ≈ 48ms → ~63 frame per 3 secondi
-    # Frame header: 0xFFF3 9004 (MPEG1, Layer3, 32kbps, 24000Hz, mono)
-    # + 417 bytes di zeri per il corpo del frame
-    import struct
-    frame_header = b'\xff\xf3\x90\x04'
-    frame_body = b'\x00' * 413  # padding per frame da 417 byte totali
-    frame = frame_header + frame_body
-    n_frames = int(duration_sec * 24000 / 1152) + 1
-    with open(output_path, 'wb') as f:
-        for _ in range(n_frames):
-            f.write(frame)
-    return os.path.exists(output_path)
-
-
-def _concatenate_mp3(parts, output):
-    try:
-        import subprocess
-        list_file = output + ".filelist.txt"
-        with open(list_file, "w") as f:
-            for p in parts:
-                f.write(f"file '{p}'\n")
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", list_file, "-c", "copy", output],
-            capture_output=True, text=True
-        )
-        os.remove(list_file)
-        if result.returncode == 0:
-            return
-    except (FileNotFoundError, OSError):
-        pass
-    with open(output, "wb") as outf:
-        for p in parts:
-            with open(p, "rb") as inf:
-                outf.write(inf.read())
-
-
-def _safe_filename(name):
-    import re
-    name = re.sub(r'[<>:"/\\|?*]', '', name)
-    name = re.sub(r'\s+', '_', name.strip())
-    return name[:100]
-
-
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # ROUTES
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
-# ─── Rotte per lingua (/it/, /en/, /fr/, /es/, /de/, /zh/) ───────────────────
+#  —  —  —  Rotte per lingua (/it/, /en/, /fr/, /es/, /de/, /zh/)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # Ogni URL ha HTML pre-renderizzato con meta tag, title, hreflang e canonical
-# corretti per quella lingua — indicizzabili da Google come pagine distinte.
+# corretti per quella lingua  —  indicizzabili da Google come pagine distinte.
 
 @app.route("/")
 def index():
@@ -3156,7 +2325,7 @@ def index_zh():
     return HTML_TEMPLATES["zh"], 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-# ─── sitemap.xml ─────────────────────────────────────────────────────────────
+#  —  —  —  sitemap.xml  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 @app.route("/sitemap.xml")
 def sitemap():
     """Sitemap con tutte le varianti linguistiche.
@@ -3214,7 +2383,7 @@ def sitemap():
     return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
 
 
-# ─── robots.txt ──────────────────────────────────────────────────────────────
+#  —  —  —  robots.txt  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 @app.route("/robots.txt")
 def robots():
     sitemap_line = f"Sitemap: {BASE_URL}/sitemap.xml" if BASE_URL else ""
@@ -3230,7 +2399,7 @@ Disallow: /admin/
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
-# ─── Favicon routes (URL-based for search engine compatibility) ──────────────
+#  —  —  —  Favicon routes (URL-based for search engine compatibility)  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # Google richiede che le favicon siano servite da URL reali e crawlabili,
 # NON inline come data URI. Senza queste route, nei risultati di ricerca
 # appare un'icona generica al posto della favicon del sito.
@@ -3258,7 +2427,7 @@ def favicon_svg():
 
 @app.route("/manifest.json")
 def web_manifest():
-    """Web App Manifest — Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""
+    """Web App Manifest  —  Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""
     manifest = {
         "name": "Audiobook Maker",
         "short_name": "Audiobook Maker",
@@ -3278,7 +2447,7 @@ def web_manifest():
     }
 
 
-# ─── Admin log viewer (/logs) ────────────────────────────────────────────────
+#  —  —  —  Admin log viewer (/logs)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # URL: /logs?2026-03  (parametro = anno-mese)
 # Non indicizzato (Disallow: /logs in robots.txt consigliato)
 
@@ -3362,7 +2531,7 @@ def _session_in_progress(s, sid):
     """Return True if session has an active AI optimization or TTS generation.
 
     Un'attività è considerata "in corso" se:
-      - È stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
+      - ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
       - Non risulta fra gli eventi una conclusione (COMPLETE / DOWNLOAD* / OPT_COMPLETE),
       - Non risulta un'annullamento (CANCEL / OPT_CANCEL),
       - Il job esiste ancora in memoria con stato attivo (`generating`, `optimizing`,
@@ -3400,10 +2569,10 @@ def _session_in_progress(s, sid):
         active_states = {"generating", "optimizing", "optimized"}
         if st in active_states:
             return True
-        # job esistente ma in stato finale → non più in corso
+        # job esistente ma in stato finale  →  non più in corso
         return False
     # Fallback (job non più in memoria): non considerare "in corso" le sessioni
-    # storiche — ritorna False per evitare falsi positivi dopo un restart del server.
+    # storiche  —  ritorna False per evitare falsi positivi dopo un restart del server.
     return False
 
 
@@ -3414,7 +2583,7 @@ def admin_logs():
     from collections import defaultdict
     import html as html_mod
 
-    # ── i18n for log page labels ──
+    #  —  —  i18n for log page labels  —  — 
     _log_i18n = {
         "it": {
             "sessions": "Sessioni", "gen_completed": "Gen. completata",
@@ -3446,23 +2615,23 @@ def admin_logs():
             "email_sent": "E-Mails gesendet", "unique_clients": "Einzelne Clients",
             "recurring": "Wiederkehrend", "months": "Monate",
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
-            "no_activity": "Keine Aktivitäten aufgezeichnet für",
+            "no_activity": "Keine AktivitÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ten aufgezeichnet fÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼r",
         },
         "es": {
             "sessions": "Sesiones", "gen_completed": "Gen. completada",
             "in_progress": "En curso", "cancelled": "Canceladas",
-            "email_sent": "Emails enviados", "unique_clients": "Clientes únicos",
+            "email_sent": "Emails enviados", "unique_clients": "Clientes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âºnicos",
             "recurring": "Recurrentes", "months": "Meses",
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
         },
         "zh": {
-            "sessions": "会话", "gen_completed": "生成完成",
-            "in_progress": "进行中", "cancelled": "已取消",
-            "email_sent": "已发邮件", "unique_clients": "唯一客户",
-            "recurring": "回访", "months": "月份",
-            "collapse": "折叠", "expand": "全部显示",
-            "no_activity": "没有活动记录",
+            "sessions": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â", "gen_completed": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â",
+            "in_progress": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­", "cancelled": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ",
+            "email_sent": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶", "unique_clients": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·",
+            "recurring": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿", "months": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½",
+            "collapse": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ", "expand": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âº",
+            "no_activity": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢",
         },
     }
     _blang = _get_browser_lang()
@@ -3507,10 +2676,10 @@ def admin_logs():
 
     event_icons = {
         "ANALYZE": "🔍", "GENERATE": "⚙️", "COMPLETE": "✅",
-        "DOWNLOAD": "⬇️", "DOWNLOAD_EMAIL": "📧⬇️",
-        "DOWNLOAD_EMAIL_PODCAST": "🎙️⬇️", "DOWNLOAD_PODCAST": "🎙️⬇️",
-        "EMAIL_REGISTERED": "📬", "EMAIL_SENT": "📤",
-        "EMAIL_FAILED": "❌📧", "CANCEL": "🚫",
+        "DOWNLOAD": "📥", "DOWNLOAD_EMAIL": "📧📥",
+        "DOWNLOAD_EMAIL_PODCAST": "🎙️📥", "DOWNLOAD_PODCAST": "🎙️📥",
+        "EMAIL_REGISTERED": "📧", "EMAIL_SENT": "📨",
+        "EMAIL_FAILED": "❌", "CANCEL": "🚫",
         "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
     }
     op_colors = {
@@ -3542,7 +2711,7 @@ def admin_logs():
 <div class="day-header" onclick="this.parentElement.classList.toggle('collapsed')">
 <span class="day-label">{day_label}</span>
 <span class="day-count">{day_count}</span>
-<span class="day-chevron">▾</span>
+<span class="day-chevron">ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾</span>
 </div>
 <div class="day-cards">
 """
@@ -3571,8 +2740,8 @@ def admin_logs():
                 total_sec = int(delta.total_seconds())
                 elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
                 start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
-                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span> ⏳'
-                last = "—"
+                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span> ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³'
+                last = " — "
             else:
                 delta = s["last_dt"] - s["first_dt"]
                 total_sec = int(delta.total_seconds())
@@ -3583,14 +2752,14 @@ def admin_logs():
             for ext in (".epub", ".txt", ".pdf"):
                 if title.lower().endswith(ext):
                     title = title[:-len(ext)]
-            display_title = html_mod.escape(title[:80] + ("…" if len(title) > 80 else ""))
+            display_title = html_mod.escape(title[:80] + ("ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" if len(title) > 80 else ""))
 
             op = s["last_op"]
             fg, bg = op_colors.get(op, ("#6b7280", "#f3f4f6"))
-            timeline = " → ".join(event_icons.get(e, e) for e in s["events"])
+            timeline = "  →  ".join(event_icons.get(e, e) for e in s["events"])
 
             cip = s.get("client_ip", "")
-            cid_short = cid[:8] if cid else "—"
+            cid_short = cid[:8] if cid else " — "
             cid_color = _client_color_map.get(cid, "var(--text-dim)")
             cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
             cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
@@ -3607,7 +2776,7 @@ def admin_logs():
                     voice_short = html_mod.escape(voice_raw)
 
             blang = html_mod.escape(s.get("browser_lang", "") or "")
-            blang_display = f'<span class="card-blang">{blang}</span>' if blang else "—"
+            blang_display = f'<span class="card-blang">{blang}</span>' if blang else " — "
 
             card_cls = "card card-in-progress" if is_progress else "card"
             data_attrs = (
@@ -3624,10 +2793,10 @@ def admin_logs():
 </div>
 <div class="card-timeline">{timeline}</div>
 <div class="card-meta">
-<div class="meta-row"><span class="meta-label">⏱</span><span>{first} → {last} ({elapsed_html})</span></div>
+<div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
-<div class="meta-row"><span class="meta-label">🎤</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or "—"}</span></div>
+<div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " — "}</span></div>
 <div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
 </div>
 </div>
@@ -3655,7 +2824,7 @@ def admin_logs():
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
-<title>Audiobook Maker — Activity Log ({ym})</title>
+<title>Audiobook Maker  —  Activity Log ({ym})</title>
 <style>
 :root {{ --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#e2e8f0;--text-dim:#94a3b8;--accent:#38bdf8;--accent2:#a78bfa;--green:#22c55e;--red:#ef4444;--orange:#f97316; }}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -3728,7 +2897,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <h1>🎧 ACTIVITY LOG</h1>
     <span class="period">{ym}</span>
     <div class="header-actions">
-        <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📊 Excel</a>
+        <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -3745,7 +2914,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 </div>
 
 <div class="cards-container">
-{cards_html if cards_html else "<div class='empty'><div class='icon'>📭</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
+{cards_html if cards_html else "<div class='empty'><div class='icon'>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
 </div>
 
 <script>
@@ -3857,7 +3026,7 @@ def admin_logs_export():
         writer.writerow([
             sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
             s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"), duration_min,
-            s["filename"], s["last_op"], " → ".join(s["events"]),
+            s["filename"], s["last_op"], "  →  ".join(s["events"]),
             cid, s.get("client_ip", ""), s.get("voice", ""),
             s.get("browser_lang", ""), completed, in_progress, recurring,
         ])
@@ -3880,7 +3049,7 @@ def admin_logs_export():
         ret = sum(1 for c in client_session_count.values() if c >= 2)
 
         ws.merge_cells("A1:B1")
-        ws["A1"] = f"Audiobook Maker — Activity Log {ym}"
+        ws["A1"] = f"Audiobook Maker  —  Activity Log {ym}"
         ws["A1"].font = Font(name="Arial", bold=True, color="38bdf8", size=14)
         summary = [("Sessioni", total_s), ("Gen. completata", gen_c), ("In corso", gen_p),
                    ("Cancellati", gen_x), ("Email inviate", em_s), ("Client unici", uniq),
@@ -3904,11 +3073,11 @@ def admin_logs_export():
             row_data = [sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
                         s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"),
                         round(delta.total_seconds() / 60, 1), s["filename"], s["last_op"],
-                        " → ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
+                        "  →  ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
                         s.get("voice", ""), s.get("browser_lang", ""),
-                        "✓" if _session_completed(s) else "✗",
-                        "✓" if _session_in_progress(s, sid) else "",
-                        "✓" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
+                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if _session_completed(s) else "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
+                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if _session_in_progress(s, sid) else "",
+                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
             for col_idx, val in enumerate(row_data, 1):
                 c = ws.cell(row=row_idx, column=col_idx, value=val)
                 c.font = data_font
@@ -3932,7 +3101,7 @@ def admin_logs_export():
             headers={"Content-Disposition": f'attachment; filename="activity_log_{ym}.csv"'})
 
 
-# ─── Admin voucher web UI (/admin/vouchers) ─────────────────────────────────
+#  —  —  —  Admin voucher web UI (/admin/vouchers)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # Protetta da token ABM_ADMIN_TOKEN. Se il token non è configurato, endpoint 404.
 # Il token viene inviato via header X-Admin-Token (dalle API) o nel form HTML.
 # Confronto a tempo costante tramite hmac.compare_digest.
@@ -3958,7 +3127,7 @@ def admin_vouchers_page():
     """UI amministrativa per creare/elencare/revocare voucher.
 
     Flusso:
-      1. GET /admin/vouchers  → form di inserimento token
+      1. GET /admin/vouchers   →  form di inserimento token
       2. L'utente inserisce il token; JS lo salva in sessionStorage e lo allega come
          header X-Admin-Token a ogni chiamata API successiva.
     """
@@ -3969,7 +3138,7 @@ def admin_vouchers_page():
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Admin — Voucher</title>
+<title>Admin  —  Voucher</title>
 <style>
   :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
   *{box-sizing:border-box}
@@ -4233,7 +3402,7 @@ def admin_api_vouchers():
             })
         return jsonify({"vouchers": items, "count": len(items)})
 
-    # POST → create
+    # POST  →  create
     data = request.json or {}
     email = (data.get("email") or "").strip().lower()
     try:
@@ -4280,7 +3449,7 @@ def admin_api_vouchers():
         apply_bonus=False,       # promo/gift: importo nominale, niente +10%
         code=custom_code,
     )
-    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "…", email)
+    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦", email)
     print(f"[admin] voucher created via UI: {code} kind={kind} email={email} amount={amount:.2f} days={days} ip={ip}")
     return jsonify({
         "code": code,
@@ -4309,7 +3478,7 @@ def admin_api_voucher_revoke(code):
     v["revoked"] = True
     v["revoke_reason"] = reason or "admin revoke"
     _save_vouchers()
-    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "…", reason[:40])
+    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
 
@@ -4444,7 +3613,7 @@ def api_analyze():
             "estimated_minutes": round(ch.word_count / 150, 1),
         })
 
-    # ── Preview text ──────────────────────────────────────────────────────────
+    #  —  —  Preview text  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
     # EPUB: salta il front matter e usa un capitolo interno con contenuto narrativo reale.
     # TXT:  usa il primo contenuto disponibile.
     # Lunghezza target: 200-300 caratteri, troncata a fine frase.
@@ -4478,7 +3647,7 @@ def api_analyze():
         if len(text) <= max_chars:
             return text
         window = text[min_chars:max_chars]
-        m = _re.search(r'[.!?]["""»\)\s]', window)
+        m = _re.search(r'[.!?]["""ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»\)\s]', window)
         cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
         if cut <= 0:
             cut = max_chars
@@ -4488,7 +3657,7 @@ def api_analyze():
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
-    # ──────────────────────────────────────────────────────────────────────────
+    #  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
     # Detect if .abm was already AI-optimized
     abm_ai_optimized = False
@@ -4521,7 +3690,7 @@ def api_analyze():
 @app.route("/api/preview_audio/<job_id>")
 def api_preview_audio(job_id):
     """Serve l'MP3 di anteprima come endpoint GET.
-    Il browser può usare l'URL direttamente come audio.src — nessun problema di autoplay policy.
+    Il browser può usare l'URL direttamente come audio.src  —  nessun problema di autoplay policy.
     Il timeout è gestito da concurrent.futures (funziona sempre, a differenza di asyncio.wait_for).
     """
     if not job_id or job_id not in jobs:
@@ -4531,7 +3700,7 @@ def api_preview_audio(job_id):
     if not preview_text:
         return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
 
-    voice = request.args.get("voice", "it-IT-GiuseppeNeural")
+    voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
 
     work_dir = UPLOAD_DIR / job_id
@@ -4549,7 +3718,7 @@ def api_preview_audio(job_id):
 
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
-    # da asyncio — risolve il caso in cui edge-tts si blocca sulla connessione TCP.
+    # da asyncio  —  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
 
     def _generate():
@@ -4677,7 +3846,7 @@ def api_export_abm(job_id):
 def api_generate():
     data = request.json
     job_id = data.get("job_id")
-    voice = data.get("voice", "it-IT-GiuseppeNeural")
+    voice = data.get("voice", "it-IT-IsabellaNeural")
     rate = data.get("rate", "+0%")
     single_file = data.get("single_file", True)
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
@@ -4688,7 +3857,7 @@ def api_generate():
     if job["status"] not in ("analyzed", "optimized"):
         return jsonify({"error": "Generation already running or completed."}), 400
 
-    # ── Concurrent generation limit per client ──
+    #  —  —  Concurrent generation limit per client  —  — 
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
     if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
@@ -4706,8 +3875,8 @@ def api_generate():
 
     info = job["info"]
 
-    # Filter chapters if a subset was selected (only in chapter mode)
-    if selected_chapters and not single_file:
+    # Filter chapters if a subset was selected
+    if selected_chapters:
         selected_set = set(selected_chapters)
         filtered = [ch for ch in info.chapters if ch.index in selected_set]
         if not filtered:
@@ -4718,7 +3887,7 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    # ── Pre-allocazione atomica budget Google Cloud TTS ──
+    #  —  —  Pre-allocazione atomica budget Google Cloud TTS  —  — 
     # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
     # parallele non possono passare lo stesso check. Il refund della parte
     # non consumata avviene in run_generation in caso di errore/cancellazione.
@@ -4786,6 +3955,14 @@ def api_progress(job_id):
             if job.get("status") == "done":
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
+                # Se output_m4b non è impostato, prova a trovare il file su disco
+                # (può succedere se il client riconnette dopo che la generazione è già terminata)
+                if not job.get("output_m4b"):
+                    _work = UPLOAD_DIR / job_id
+                    _m4bs = list(_work.glob("*.m4b")) + list((_work / "output").glob("*.m4b"))
+                    if _m4bs:
+                        job["output_m4b"] = str(_m4bs[0])
+                payload["output_m4b"] = bool(job.get("output_m4b"))
                 payload["failed_chunks"] = job.get("failed_chunks", 0)
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
@@ -4808,7 +3985,7 @@ def api_cancel(job_id):
         # Se l'utente ha registrato email per notifica, ignora cancel da beforeunload
         # ma permetti cancel esplicito (pulsante con force=1)
         if job.get("email_registered") and not force:
-            print(f"[{job_id}] Cancel ignored — email registered for background processing")
+            print(f"[{job_id}] Cancel ignored  —  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
         return jsonify({"status": "cancelling"})
@@ -4855,8 +4032,9 @@ def api_reset_to_chapters(job_id):
     # Reset job state
     job["status"] = "analyzed"
     job["last_poll"] = time.time()
-    # Clear output-related keys
+    # Clear output-related keys (incluso output_m4b per evitare bottone M4B obsoleto)
     for key in ("output_files", "output_name", "output_zip", "output_file",
+                "output_m4b",
                 "podcast_ready", "podcast_safe_name", "podcast_mp3s",
                 "progress_current", "progress_total", "progress_message",
                 "processed_chars", "total_chars", "bytes_generated",
@@ -4919,9 +4097,9 @@ def api_email_available():
     return jsonify({"available": _smtp_available()})
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # LLM TEXT OPTIMIZATION API
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 @app.route("/api/llm_available")
 def api_llm_available():
@@ -4947,7 +4125,15 @@ def api_optimize_estimate(job_id):
     info = job.get("info")
     if not info or not info.chapters:
         return jsonify({"error": "No book data"}), 400
-    total_chars = sum(ch.char_count for ch in info.chapters)
+    
+    # Respect selected chapters if provided as query param (e.g. ?selected_chapters=1&selected_chapters=2)
+    selected_chapters = request.args.getlist("selected_chapters", type=int)
+    if selected_chapters:
+        selected_set = set(selected_chapters)
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_set)
+    else:
+        total_chars = sum(ch.char_count for ch in info.chapters)
+        
     cost = _estimate_llm_cost_eur(total_chars)
     return jsonify({
         "chars": total_chars,
@@ -4977,7 +4163,7 @@ def api_paypal_create_order():
         return jsonify({"error": "Payment not required for this job"}), 400
 
     book_title = getattr(info, "title", "") or "Audiobook"
-    description = f"AI text optimization — {book_title[:60]}"
+    description = f"AI text optimization  —  {book_title[:60]}"
     try:
         order = _paypal_create_order(cost, description, custom_id=job_id)
     except Exception as e:
@@ -5100,7 +4286,7 @@ def api_voucher_validate():
     email = (data.get("email") or "").strip().lower()
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
 
-    # — Rate limit check —
+    #  —  Rate limit check  — 
     allowed, retry_after, reason = _voucher_rl_check(ip, email)
     if not allowed:
         _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
@@ -5109,7 +4295,7 @@ def api_voucher_validate():
         resp.headers["Retry-After"] = str(retry_after)
         return resp
 
-    # — Validation logic —
+    #  —  Validation logic  — 
     outcome = "OK"
     status = 200
     body = None
@@ -5139,7 +4325,7 @@ def api_voucher_validate():
     success = (outcome == "OK")
     _voucher_rl_record_result(email, success)
     # Log in forma strutturata (usiamo i campi esistenti: voice=code masked, browser_lang=outcome)
-    code_masked = (code[:4] + "…") if code else ""
+    code_masked = (code[:4] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦") if code else ""
     _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
     return jsonify(body), status
 
@@ -5152,12 +4338,12 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
         book_title = getattr(info, "title", "") or ""
     lang = job.get("browser_lang", "en")[:2] if job else "en"
     subj_map = {
-        "it": f"Ricevuta pagamento Audiobook Maker — {amount_eur:.2f} EUR",
-        "en": f"Audiobook Maker payment receipt — EUR {amount_eur:.2f}",
-        "fr": f"Reçu de paiement Audiobook Maker — {amount_eur:.2f} EUR",
-        "es": f"Recibo de pago Audiobook Maker — {amount_eur:.2f} EUR",
-        "de": f"Zahlungsbeleg Audiobook Maker — {amount_eur:.2f} EUR",
-        "zh": f"Audiobook Maker 付款收据 — {amount_eur:.2f} EUR",
+        "it": f"Ricevuta pagamento Audiobook Maker  —  {amount_eur:.2f} EUR",
+        "en": f"Audiobook Maker payment receipt  —  EUR {amount_eur:.2f}",
+        "fr": f"ReÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§u de paiement Audiobook Maker  —  {amount_eur:.2f} EUR",
+        "es": f"Recibo de pago Audiobook Maker  —  {amount_eur:.2f} EUR",
+        "de": f"Zahlungsbeleg Audiobook Maker  —  {amount_eur:.2f} EUR",
+        "zh": f"Audiobook Maker ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®  —  {amount_eur:.2f} EUR",
     }
     subject = subj_map.get(lang, subj_map["en"])
     body_map = {
@@ -5185,7 +4371,7 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
       <p>{info_txt}</p>
       <p style="font-size:.9em;color:#666">{refund}</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+      <p style="color:#999;font-size:12px">Audiobook Maker  —  {BASE_URL or ''}</p>
     </div>"""
     _send_email(email, subject, html_body)
 
@@ -5196,7 +4382,7 @@ def _send_voucher_email(code, email, amount_eur, book_title):
         return
     from datetime import datetime, timedelta
     expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-    subject = f"Audiobook Maker — Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
+    subject = f"Audiobook Maker  —  Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
       <h2 style="color:#2c3e50">&#x1F381; Il tuo buono</h2>
       <p>L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine.</p>
@@ -5210,7 +4396,7 @@ def _send_voucher_email(code, email, amount_eur, book_title):
       <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
       <p style="font-size:.85em;color:#666">Il buono &egrave; nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+      <p style="color:#999;font-size:12px">Audiobook Maker  —  {BASE_URL or ''}</p>
     </div>"""
     _send_email(email, subject, html_body)
 
@@ -5233,7 +4419,7 @@ def api_optimize():
     if job["status"] not in ("analyzed",):
         return jsonify({"error": "Optimization not available in current state."}), 400
 
-    # ── LLM rate limiting per client ──
+    #  —  —  LLM rate limiting per client  —  — 
     client_id = job.get("client_id", "")
     if client_id and MAX_CONCURRENT_LLM_PER_CLIENT > 0:
         active = _active_optimizing_for_client(client_id)
@@ -5245,9 +4431,16 @@ def api_optimize():
                 "active": active,
             }), 429
 
-    # ── Payment gate: if estimated cost > threshold, require a payment_token ──
+    #  —  —  Payment gate: if estimated cost > threshold, require a payment_token  —  — 
     info = job.get("info")
-    total_chars = sum(ch.char_count for ch in info.chapters) if info else 0
+    selected_chapters = data.get("selected_chapters")
+    
+    if selected_chapters:
+        selected_set = set(selected_chapters)
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_set)
+    else:
+        total_chars = sum(ch.char_count for ch in info.chapters) if info else 0
+        
     estimated_cost = _estimate_llm_cost_eur(total_chars)
     if estimated_cost > LLM_FREE_THRESHOLD_EUR:
         payment_token = (data.get("payment_token") or "").strip()
@@ -5309,7 +4502,7 @@ def api_optimize():
     # Store auto-generate params for batch mode
     if auto_generate:
         job["opt_auto_generate"] = True
-        job["opt_voice"] = data.get("voice", "it-IT-GiuseppeNeural")
+        job["opt_voice"] = data.get("voice", "it-IT-IsabellaNeural")
         job["opt_rate"] = data.get("rate", "+0%")
         job["opt_single_file"] = data.get("single_file", True)
         job["notify_download_type"] = data.get("download_type", "audio")
@@ -5318,7 +4511,7 @@ def api_optimize():
         job["opt_auto_generate"] = False
 
     thread = threading.Thread(
-        target=run_optimization, args=(job_id,), daemon=True
+        target=run_optimization, args=(job_id, selected_chapters), daemon=True
     )
     thread.start()
 
@@ -5415,11 +4608,13 @@ def api_register_opt_email():
 
     job["notify_email"] = email
     job["notify_lang"] = data.get("lang", "en")
+    job["notify_download_type"] = data.get("download_type", "audio")
+    job["notify_base_url"] = (data.get("base_url") or "").strip()
     job["email_registered"] = True
 
     if auto_generate:
         job["opt_auto_generate"] = True
-        job["opt_voice"] = data.get("voice", "it-IT-GiuseppeNeural")
+        job["opt_voice"] = data.get("voice", "it-IT-IsabellaNeural")
         job["opt_rate"] = data.get("rate", "+0%")
         job["opt_single_file"] = data.get("single_file", True)
 
@@ -5447,7 +4642,7 @@ def api_active_jobs():
             start_ts = job.get("start_time", 0)
             active.append({
                 "title": title,
-                "started": datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d %H:%M:%S") if start_ts else "—",
+                "started": datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d %H:%M:%S") if start_ts else " — ",
                 "status": job.get("status", ""),
                 "progress": job.get("progress_current", 0),
                 "total": job.get("progress_total", 0),
@@ -5499,8 +4694,32 @@ def token_download_page(token):
     else:
         book_title = token_info.get("book_title", "")
 
+    # M4B availability: da job in memoria, da token snapshot oppure scan filesystem.
+    # Il fallback su filesystem è importante perché il job potrebbe avere output_m4b
+    # non impostato (es. se il token è stato creato prima che M4B completasse).
+    m4b_available = False
+    if job_in_memory:
+        m4b_path_mem = jobs[job_id].get("output_m4b", "")
+        if m4b_path_mem and os.path.exists(m4b_path_mem):
+            m4b_available = True
+        else:
+            # Fallback filesystem anche con job in memoria
+            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            if m4bs:
+                m4b_available = True
+                # Aggiorna anche il job in memoria per coerenza
+                jobs[job_id]["output_m4b"] = str(m4bs[0])
+    else:
+        m4b_path = token_info.get("output_m4b", "")
+        if m4b_path and os.path.exists(m4b_path):
+            m4b_available = True
+        else:
+            # Check common locations (job dir or output subdir)
+            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            m4b_available = len(m4bs) > 0
+
     return _render_dl_page(token, book_title, remaining_str,
-                           token_info["download_type"], lang)
+                           token_info["download_type"], lang, m4b_available=m4b_available)
 
 
 @app.route("/dl/<token>/abm")
@@ -5512,7 +4731,7 @@ def token_do_download_abm(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto — i file sono stati cancellati dopo 24 ore", 410
+        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
     abm_path = token_info.get("optimized_abm_path", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     if not abm_path or not os.path.exists(abm_path):
@@ -5529,6 +4748,48 @@ def token_do_download_abm(token):
     return send_file(abm_path, as_attachment=True, download_name=abm_name)
 
 
+@app.route("/dl/<token>/m4b")
+def token_do_download_m4b(token):
+    """Execute the actual M4B file download via token."""
+    token_info = _download_tokens.get(token)
+    if not token_info:
+        return "Link scaduto", 410
+
+    job_id = token_info["job_id"]
+    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+        _download_tokens.pop(token, None)
+        _save_tokens()
+        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
+
+    # Try to get data from job in memory, otherwise use token snapshot
+    job = jobs.get(job_id)
+    m4b_path = ""
+    if job:
+        m4b_path = job.get("output_m4b", "")
+        job["last_poll"] = time.time()
+        job["downloaded_at"] = time.time()
+    
+    if not m4b_path or not os.path.exists(m4b_path):
+        m4b_path = token_info.get("output_m4b", "")
+    
+    # Path reconstruction
+    if not m4b_path or not os.path.exists(m4b_path):
+        job_dir = UPLOAD_DIR / job_id
+        m4b_path = str(job_dir / "output" / f"{_safe_filename(token_info.get('book_title','audiolibro'))}.m4b")
+        if not os.path.exists(m4b_path):
+             m4bs = list(job_dir.glob("*.m4b")) + list((job_dir/"output").glob("*.m4b"))
+             if m4bs: m4b_path = str(m4bs[0])
+
+    if not m4b_path or not os.path.exists(m4b_path):
+        return "M4B file not available", 404
+
+    _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
+                  "", "", "", "")
+    
+    safe_name = _safe_filename(token_info.get("book_title", "audiolibro"))
+    return send_file(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+
+
 @app.route("/dl/<token>/download")
 def token_do_download(token):
     """Execute the actual file download via token."""
@@ -5540,7 +4801,7 @@ def token_do_download(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto — i file sono stati cancellati dopo 24 ore", 410
+        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -5559,7 +4820,7 @@ def token_do_download(token):
           f"UPLOAD_DIR={UPLOAD_DIR}")
 
     try:
-        # ── OPTIMIZED ABM download ──
+        #  —  —  OPTIMIZED ABM download  —  — 
         if dl_type == "optimized_abm":
             abm_path = token_info.get("optimized_abm_path", "")
             abm_name = token_info.get("optimized_abm_name", "optimized.abm")
@@ -5574,14 +4835,14 @@ def token_do_download(token):
                 return send_file(abm_path, as_attachment=True, download_name=abm_name)
             return "File not found", 404
 
-        # ── PODCAST download ──
+        #  —  —  PODCAST download  —  — 
         is_podcast = dl_type == "podcast" and (
             (job and job.get("podcast_ready")) or token_info.get("podcast_ready"))
 
         if is_podcast:
             return _serve_podcast_download(token_info, job, job_id)
 
-        # ── AUDIO download ──
+        #  —  —  AUDIO download  —  — 
         return _serve_audio_download(token_info, job, job_id)
 
     except Exception as e:
@@ -5695,24 +4956,24 @@ def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fna
                "footer": "Generated with Audiobook Maker"},
         "fr": {"heading": "Podcast", "by": "de", "subscribe": "S'abonner au Podcast",
                "copy": "Copier l'URL du flux", "copied": "Copié !",
-               "episodes": "Épisodes", "listen": "Écouter",
+               "episodes": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°pisodes", "listen": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°couter",
                "instructions": "Copiez l'URL du flux RSS et collez-la dans votre app podcast (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Généré avec Audiobook Maker"},
-        "es": {"heading": "Podcast", "by": "de", "subscribe": "Suscríbete al Podcast",
-               "copy": "Copiar URL del feed", "copied": "¡Copiado!",
+        "es": {"heading": "Podcast", "by": "de", "subscribe": "SuscrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­bete al Podcast",
+               "copy": "Copiar URL del feed", "copied": "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡Copiado!",
                "episodes": "Episodios", "listen": "Escuchar",
                "instructions": "Copia la URL del feed RSS y pégala en tu app de podcast favorita (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Generado con Audiobook Maker"},
         "de": {"heading": "Podcast", "by": "von", "subscribe": "Podcast abonnieren",
                "copy": "Feed-URL kopieren", "copied": "Kopiert!",
-               "episodes": "Episoden", "listen": "Anhören",
-               "instructions": "Kopieren Sie die RSS-Feed-URL und fügen Sie sie in Ihre Podcast-App ein (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
+               "episodes": "Episoden", "listen": "AnhÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ren",
+               "instructions": "Kopieren Sie die RSS-Feed-URL und fÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼gen Sie sie in Ihre Podcast-App ein (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Erstellt mit Audiobook Maker"},
-        "zh": {"heading": "播客", "by": "作者", "subscribe": "订阅播客",
-               "copy": "复制订阅源URL", "copied": "已复制！",
-               "episodes": "剧集", "listen": "收听",
-               "instructions": "复制RSS订阅源URL并粘贴到您喜爱的播客应用中（Pocket Casts、Apple Podcasts、AntennaPod、Overcast...）。",
-               "footer": "由Audiobook Maker生成"},
+        "zh": {"heading": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢", "by": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦", "subscribe": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢",
+               "copy": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂURL", "copied": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â",
+               "episodes": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ", "listen": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬",
+               "instructions": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶RSSÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂURLÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Pocket CastsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂApple PodcastsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂAntennaPodÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂOvercast...ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡",
+               "footer": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±Audiobook MakerÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â"},
     }
     lb = _labels.get(lang, _labels["en"])
 
@@ -5923,31 +5184,12 @@ def _serve_podcast_download(token_info, job, job_id):
 
 
 def _render_dl_expired_page(lang="en"):
-    _t = {
-        "it": {"title": "Link scaduto", "h2": "Link scaduto",
-               "p1": "Sono trascorse pi&ugrave; di 24 ore dall'invio dell'email. I file generati sono stati cancellati automaticamente per liberare spazio sul server.",
-               "p2": "Per generare nuovamente l'audiolibro, visita:"},
-        "en": {"title": "Link expired", "h2": "Link expired",
-               "p1": "More than 24 hours have passed since the email was sent. The generated files have been automatically deleted to free up server space.",
-               "p2": "To generate the audiobook again, visit:"},
-        "fr": {"title": "Lien expir&eacute;", "h2": "Lien expir&eacute;",
-               "p1": "Plus de 24 heures se sont &eacute;coul&eacute;es depuis l'envoi de l'email. Les fichiers g&eacute;n&eacute;r&eacute;s ont &eacute;t&eacute; automatiquement supprim&eacute;s pour lib&eacute;rer de l'espace sur le serveur.",
-               "p2": "Pour g&eacute;n&eacute;rer &agrave; nouveau le livre audio, visitez :"},
-        "es": {"title": "Enlace caducado", "h2": "Enlace caducado",
-               "p1": "Han pasado m&aacute;s de 24 horas desde el env&iacute;o del email. Los archivos generados se han eliminado autom&aacute;ticamente para liberar espacio en el servidor.",
-               "p2": "Para generar nuevamente el audiolibro, visita:"},
-        "de": {"title": "Link abgelaufen", "h2": "Link abgelaufen",
-               "p1": "Es sind mehr als 24 Stunden seit dem Versand der E-Mail vergangen. Die erzeugten Dateien wurden automatisch gel&ouml;scht, um Speicherplatz auf dem Server freizugeben.",
-               "p2": "Um das H&ouml;rbuch erneut zu erstellen, besuche:"},
-        "zh": {"title": "\u94fe\u63a5\u5df2\u8fc7\u671f", "h2": "\u94fe\u63a5\u5df2\u8fc7\u671f",
-               "p1": "\u90ae\u4ef6\u53d1\u9001\u5df2\u8d85\u8fc724\u5c0f\u65f6\u3002\u751f\u6210\u7684\u6587\u4ef6\u5df2\u81ea\u52a8\u5220\u9664\u4ee5\u91ca\u653e\u670d\u52a1\u5668\u7a7a\u95f4\u3002",
-               "p2": "\u8981\u91cd\u65b0\u751f\u6210\u6709\u58f0\u8bfb\u7269\uff0c\u8bf7\u8bbf\u95ee\uff1a"},
-    }
-    t = _t.get(lang, _t["en"])
+    expired_t = _DL_PAGES_I18N.get("expired", {})
+    t = expired_t.get(lang, expired_t.get("en", {}))
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
-<title>Audiobook Maker — {t['title']}</title>
+<title>Audiobook Maker  —  {t['title']}</title>
 <style>
 body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
 align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
@@ -5968,58 +5210,41 @@ a:hover{{text-decoration:underline}}
 </div></body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en"):
-    _t = {
-        "it": {"title": "Download", "h2": "Il tuo audiolibro &egrave; pronto!",
-               "btn": "&#x2B07;&#xFE0F; Scarica",
-               "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati.",
-               "share": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
-               "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker — gratis e direttamente dal browser!",
-               "copied": "Copiato!"},
-        "en": {"title": "Download", "h2": "Your audiobook is ready!",
-               "btn": "&#x2B07;&#xFE0F; Download",
-               "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent.",
-               "share": "Like it? Share with your friends!",
-               "share_text": "I just turned an ebook into an audiobook with Audiobook Maker — free and right in the browser!",
-               "copied": "Copied!"},
-        "fr": {"title": "T&eacute;l&eacute;chargement", "h2": "Votre livre audio est pr&ecirc;t !",
-               "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger",
-               "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email.",
-               "share": "Vous avez aim&eacute; ? Partagez avec vos amis !",
-               "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker — gratuit et directement depuis le navigateur !",
-               "copied": "Copi&eacute; !"},
-        "es": {"title": "Descarga", "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
-               "btn": "&#x2B07;&#xFE0F; Descargar",
-               "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email.",
-               "share": "&iexcl;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
-               "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker — ¡gratis y desde el navegador!",
-               "copied": "&iexcl;Copiado!"},
-        "de": {"title": "Download", "h2": "Dein H&ouml;rbuch ist fertig!",
-               "btn": "&#x2B07;&#xFE0F; Herunterladen",
-               "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht.",
-               "share": "Hat es dir gefallen? Teile es mit deinen Freunden!",
-               "share_text": "Ich habe gerade ein E-Book in ein Hörbuch verwandelt mit Audiobook Maker — kostenlos und direkt im Browser!",
-               "copied": "Kopiert!"},
-        "zh": {"title": "\u4e0b\u8f7d", "h2": "\u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
-               "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d",
-               "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002",
-               "share": "\u89c9\u5f97\u4e0d\u9519\uff1f\u5206\u4eab\u7ed9\u4f60\u7684\u670b\u53cb\uff01",
-               "share_text": "\u6211\u521a\u7528 Audiobook Maker \u628a\u4e00\u672c\u7535\u5b50\u4e66\u8f6c\u6210\u4e86\u6709\u58f0\u4e66\u2014\u2014\u514d\u8d39\u4e14\u5728\u6d4f\u89c8\u5668\u4e2d\u5373\u53ef\u5b8c\u6210\uff01",
-               "copied": "\u5df2\u590d\u5236\uff01"},
-    }
-    t = _t.get(lang, _t["en"])
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False):
+    download_t = _DL_PAGES_I18N.get("download", {})
+    t = dict(download_t.get(lang, download_t.get("en", {})))
+    
+    # If M4B is available and it was the requested type, use M4B button label
+    # or if it's the only thing we have (fallback/auto).
+    # However, if user chose ZIP, we might have both.
+    
+    is_m4b_primary = (dl_type == "audio" and m4b_available)
+    
+    if is_m4b_primary:
+        primary_btn_label = t.get("btn_m4b", "Download M4B")
+        primary_url = f"/dl/{token}/m4b"
+        secondary_btn_html = "" # Don't show MP3/ZIP if M4B is primary unless requested
+    else:
+        primary_btn_label = t.get("btn_no_m4b", t.get("btn", "Download ZIP"))
+        primary_url = f"/dl/{token}/download"
+        secondary_btn_html = ""
+        # If M4B is available but NOT primary, show it as secondary
+        if m4b_available:
+            secondary_btn_html = f'<p><a href="/dl/{token}/m4b" class="btn btn-m4b">{t.get("btn_m4b", "Download M4B")}</a></p>'
+
     if dl_type == "optimized_abm":
         type_label = "Optimized Project (.abm)"
     elif dl_type == "podcast":
         type_label = "Podcast ZIP"
+    elif is_m4b_primary:
+        type_label = "Audiobook (M4B)"
     else:
         type_label = "Audio ZIP"
+
     warn_text = t["warn"].replace("{r}", remaining_str)
 
     share_url = BASE_URL or "https://audiobook-maker.com"
-    # JS-safe share text (escape quotes for JS string)
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-    copied_text_js = t.get("copied", "Copied!").replace("'", "\\'")
 
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -6035,20 +5260,22 @@ h2{{color:#2c3e50;margin:0 0 8px}}
 .title{{color:#666;font-style:italic;margin:0 0 24px}}
 .btn{{display:inline-block;padding:16px 32px;background:#3b82f6;color:white;
 text-decoration:none;border-radius:8px;font-weight:600;font-size:18px;
-transition:background .2s}}
+transition:background .2s;border:none;cursor:pointer}}
 .btn:hover{{background:#2563eb}}
+.btn-m4b{{background:#8b5cf6;margin-top:12px}}
+.btn-m4b:hover{{background:#7c3aed}}
 .warn{{color:#e74c3c;font-weight:600;margin-top:24px;font-size:.9rem}}
 .type{{display:inline-block;padding:4px 12px;background:#e8f4f8;border-radius:12px;
 font-size:.85rem;color:#2980b9;margin-bottom:16px}}
 .share-row{{margin-top:28px;padding-top:20px;border-top:1px solid #eee;text-align:center}}
 .share-label{{font-size:.85rem;color:#999;margin-bottom:12px}}
-.share-icons{{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}}
+.share-icons{{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}}
 .share-icons a,.share-icons button{{width:40px;height:40px;border-radius:50%;display:inline-flex;
 align-items:center;justify-content:center;border:1px solid #ddd;background:#f8f9fa;color:#666;
-cursor:pointer;transition:all .2s;text-decoration:none;font-size:0;padding:0}}
-.share-icons a:hover,.share-icons button:hover{{border-color:#c47a2a;color:#c47a2a;
+cursor:pointer;transition:all .2s;text-decoration:none;padding:0}}
+.share-icons a:hover,.share-icons button:hover{{border-color:#3b82f6;color:#3b82f6;
 transform:translateY(-2px);box-shadow:0 3px 10px rgba(0,0,0,.08)}}
-.share-icons svg{{width:18px;height:18px;fill:currentColor;flex-shrink:0}}
+.share-icons svg{{width:20px;height:20px;fill:currentColor}}
 .copy-wrap{{position:relative;display:inline-flex}}
 .copy-tip{{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
 background:#333;color:#fff;font-size:.72rem;padding:3px 8px;border-radius:4px;
@@ -6058,8 +5285,8 @@ white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}}
 border:1px solid #e8c99a;border-radius:12px;text-align:center}}
 .donate-title{{font-size:.97rem;font-weight:700;color:#2c2a26;margin-bottom:6px}}
 .donate-body{{font-size:.82rem;color:#6b6760;line-height:1.5;margin-bottom:14px}}
-.donate-btns{{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}}
-.donate-btn{{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;
+.donate-btns{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
+.donate-btn{{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:8px;
 font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:1.5px solid transparent}}
 .donate-coffee{{background:#ffdd00;color:#1a1400;border-color:#e5c800}}
 .donate-coffee:hover{{background:#ffd000;transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,208,0,.4)}}
@@ -6071,9 +5298,9 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <h2>{t['h2']}</h2>
 <p class="title">{book_title}</p>
 <p class="type">{type_label}</p>
-<p><a href="/dl/{token}/download" class="btn">{t['btn']}</a></p>
-<p class="warn">{warn_text}</p>
-<!-- Donate panel — text filled by JS based on browser language -->
+<p><a href="{primary_url}" class="btn">{primary_btn_label}</a></p>
+{secondary_btn_html}
+<div class="warn">{warn_text}</div>
 <div class="donate-panel">
   <div class="donate-title" id="donTitle"></div>
   <div class="donate-body" id="donBody"></div>
@@ -6083,19 +5310,17 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
   </div>
 </div>
 <div class="share-row">
-  <div class="share-label">{t['share']}</div>
-  <div class="share-icons">
-    <a id="shX" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
-    <a id="shFb" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
-    <a id="shWa" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg></a>
-    <a id="shTg" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
-    <a id="shLi" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
-    <a id="shRd" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 01.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg></a>
-    <div class="copy-wrap">
-      <button id="shCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-      <span class="copy-tip" id="copyTip">{t['copied']}</span>
-    </div>
+<div class="share-label">{t['share']}</div>
+<div class="share-icons">
+  <a id="shWa" href="#" target="_blank" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.512-2.961-2.628-.086-.117-.718-.953-.718-1.816 0-.862.448-1.289.607-1.453.159-.164.346-.205.462-.205.115 0 .23 0 .33.006.107.006.252-.04.394.303.144.35.494 1.205.536 1.291.041.086.068.187.011.3-.058.113-.086.184-.173.283-.086.1-.184.223-.263.303-.098.098-.198.205-.086.398.111.193.494.814 1.059 1.315.728.645 1.341.844 1.53.938.189.094.301.078.414-.05.113-.129.482-.562.61-.754.128-.193.256-.164.431-.098.175.066 1.111.523 1.303.62.193.097.322.144.368.225.047.08.047.462-.097.867zM12.211 20C6.605 20 2 15.395 2 9.789 2 4.184 6.605-0.375 12.211-0.375 17.816-0.375 22 4.184 22 9.789c0 5.605-4.605 10.211-10.211 10.211z"/></svg></a>
+  <a id="shFb" href="#" target="_blank" title="Facebook"><svg viewBox="0 0 24 24"><path d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1v2h3v3h-3v6.95c5.05-.5 9-4.76 9-9.95z"/></svg></a>
+  <a id="shTw" href="#" target="_blank" title="X"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+  <a id="shTg" href="#" target="_blank" title="Telegram"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.35-.01-1.02-.2-1.52-.37-.61-.21-1.1-.33-1.06-.69.02-.19.29-.39.81-.6.32-.14 1.89-.78 4.69-1.93 1.03-.43 1.73-.71 2.1-.84.37-.13.86-.33 1.18-.33.22 0 .44.06.63.15.22.12.33.29.35.5.02.13.01.26.01.39z"/></svg></a>
+  <div class="copy-wrap">
+    <button id="btnCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
+    <span class="copy-tip" id="copyTip">{t['copied']}</span>
   </div>
+</div>
 </div>
 </div>
 <script>
@@ -6103,10 +5328,10 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
   /* ── Donate i18n (browser language) ── */
   var DL={{
     it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'AudiobookMaker \u00e8 gratuito, senza pubblicit\u00e0 e vorrei poterlo mantenere cos\u00ec! Aiutami a coprire i costi del server e della manutenzione. Anche una piccola donazione di \u20ac1 o \u20ac2 \u00e8 gi\u00e0 un grande contributo:',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
-    fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'AudiobookMaker est gratuit, sans publicit\u00e9 et j\u2019aimerais pouvoir le maintenir ainsi\u00a0! Aidez-moi \u00e0 couvrir les co\u00fbts du serveur et de la maintenance. Un petit don de 1 ou 2\u00a0\u20ac est d\u00e9j\u00e0 une grande contribution\u00a0:',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
+    fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'AudiobookMaker est gratuit, sans publicit\u00e9 et j\u2019aimerais pouvoir le maintenir ainsi\u00a0! Aidez-moi \u00e0 couvrir les co\u00fbts du serveur et de la maintenance. Un petit don de 1 o 2\u00a0\u20ac est d\u00e9j\u00e0 una grande contribution\u00a0:',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
     es:{{title:'\u2764\ufe0f \u00bfTe ha resultado \u00fatil esta herramienta?',body:'AudiobookMaker es gratuito, sin publicidad y me gustar\u00eda poder mantenerlo as\u00ed. Ay\u00fadame a cubrir los costes del servidor y mantenimiento. \u00a1Una peque\u00f1a donaci\u00f3n de 1 o 2\u00a0\u20ac ya es una gran contribuci\u00f3n!:',coffee:'Inv\u00edtame a un caf\u00e9',paypal:'Donaci\u00f3n PayPal'}},
-    de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'AudiobookMaker ist kostenlos, werbefrei \u2013 und ich m\u00f6chte es gerne so beibehalten! Hilf mir, die Server- und Wartungskosten zu decken. Eine kleine Spende von 1 oder 2\u00a0\u20ac ist schon ein gro\u00dfer Beitrag:',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
-    zh:{{title:'\u2764\ufe0f \u8fd9\u4e2a\u5de5\u5177\u5bf9\u60a8\u6709\u5e2e\u52a9\u5417\uff1f',body:'AudiobookMaker \u514d\u8d39\u3001\u65e0\u5e7f\u544a\uff0c\u6211\u5e0c\u671b\u80fd\u7ee7\u7eed\u4fdd\u6301\u4e0b\u53bb\uff01\u8bf7\u5e2e\u52a9\u6211\u652f\u4ed8\u670d\u52a1\u5668\u548c\u7ef4\u62a4\u8d39\u7528\u3002\u54ea\u6015 1 \u6216 2 \u6b27\u5143\u7684\u5c0f\u989d\u6350\u8d60\uff0c\u4e5f\u662f\u5de8\u5927\u7684\u8d21\u732e\uff1a',coffee:'\u8bf7\u6211\u559d\u676f\u5496\u5561',paypal:'PayPal \u6350\u6b3e'}},
+    de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'AudiobookMaker ist kostenlos, werbefrei \u2013 und ich m\u00f6chte es gerne so beibehalten! Hilf mir, die Server- und Wartungskosten zu decken. Eine kleine Spende von 1 oder 2\u00a0\u20ac ist schon ein gro\u00dfere Beitrag:',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
+    zh:{{title:'\u2764\ufe0f \u8fd9\u4e2a\u5de5\u5177\u5bf9\u60a8\u6709\u5e2e\u52a9\u5417\uff1f',body:'AudiobookMaker \u514d\u8d39\u3001\u65e0\u5e7f\u544a\uff0c\u6211\u5e0c\u671b\u80fd\u7ee7\u7eed\u4fdd\u6301\u4e0b\u53bb\uff01\u8bf7\u5e2e\u52a9\u6211\u652f\u4ed8\u670d\u52a1\u5668\u548c\u7ef4\u62a4\u8D39\u7528\u3002\u54ea\u6015 1 \u6216 2 \u6b27\u5143\u7684\u5c0f\u989d\u6350\u8d60\uff0c\u4e5f\u662f\u5de8\u5927\u7684\u8d21\u732e\uff1a',coffee:'\u8bf7\u6211\u559D\u5496\u5561',paypal:'PayPal \u6350\u6b3e'}},
     en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'AudiobookMaker is free, ad-free, and I\u2019d like to keep it that way! Help me cover server and maintenance costs. A small donation of \u20ac1 or \u20ac2 is already a great contribution:',coffee:'Buy me a coffee',paypal:'PayPal donation'}}
   }};
   var bl=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
@@ -6121,13 +5346,11 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
   var u=encodeURIComponent(S);
   var tx=encodeURIComponent(T);
   var f=encodeURIComponent(T+' '+S);
-  document.getElementById('shX').href='https://x.com/intent/tweet?text='+tx+'&url='+u;
-  document.getElementById('shFb').href='https://www.facebook.com/sharer/sharer.php?u='+u;
   document.getElementById('shWa').href='https://wa.me/?text='+f;
+  document.getElementById('shFb').href='https://www.facebook.com/sharer/sharer.php?u='+u;
+  document.getElementById('shTw').href='https://twitter.com/intent/tweet?text='+tx+'&url='+u;
   document.getElementById('shTg').href='https://t.me/share/url?url='+u+'&text='+tx;
-  document.getElementById('shLi').href='https://www.linkedin.com/sharing/share-offsite/?url='+u;
-  document.getElementById('shRd').href='https://www.reddit.com/submit?url='+u+'&title='+tx;
-  document.getElementById('shCopy').onclick=function(){{
+  document.getElementById('btnCopy').onclick=function(){{
     navigator.clipboard.writeText(S).then(function(){{
       var tip=document.getElementById('copyTip');
       tip.classList.add('show');
@@ -6135,8 +5358,7 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
     }});
   }};
 }})();
-</script>
-</body></html>"""
+</script></body></html>"""
 
 
 @app.route("/api/download/<job_id>")
@@ -6146,12 +5368,35 @@ def api_download(job_id):
     job = jobs[job_id]
     if job.get("status") != "done":
         return "Not ready", 400
-    # Refresh heartbeat — evita che il cleanup rimuova il job durante il download
+    
+    download_type = request.args.get("type", "").lower()
+    
+    # Refresh heartbeat  —  evita che il cleanup rimuova il job durante il download
     job["last_poll"] = time.time()
     job["downloaded_at"] = time.time()
-    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD",
+    
+    log_type = "DOWNLOAD"
+    if download_type == "m4b":
+        log_type = "DOWNLOAD_M4B"
+    elif download_type == "zip":
+        log_type = "DOWNLOAD_ZIP"
+        
+    _log_activity(job_id, job.get("original_filename", ""), log_type,
                   job.get("client_id", ""), job.get("client_ip", ""),
                   job.get("voice", ""), job.get("browser_lang", ""))
+
+    if download_type == "m4b":
+        if job.get("output_m4b") and os.path.exists(job["output_m4b"]):
+            safe_name = _safe_filename(job["info"].title) or "audiolibro"
+            return send_file(job["output_m4b"], as_attachment=True, download_name=f"{safe_name}.m4b")
+        else:
+            # Fallback to single MP3
+            return send_file(job["output_files"][0], as_attachment=True, download_name=job["output_name"])
+            
+    if download_type == "zip" and "output_zip" in job:
+        return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
+
+    # Default logic (compatibility with old links)
     if "output_zip" in job:
         return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
     else:
@@ -6249,63 +5494,75 @@ def api_download_podcast(job_id):
                      download_name=f"{safe_name}_podcast.zip")
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # HTML TEMPLATE (i18n, upload lock, ETA)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # HTML TEMPLATE (assembled from modular components)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
-# ═══════════════════════════════════════════════════════════════════
-# SEO DATA — usato sia per il pre-rendering server-side che per sitemap.xml
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# SEO DATA  —  usato sia per il pre-rendering server-side che per sitemap.xml
 # Mantienilo allineato con seo_data.js (che gestisce il cambio lingua client-side)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+
 _SEO_DATA = {
     "it": {
-        "title":   "Audiobook Maker — EPUB/PDF in Audiolibro Gratis | Voci AI",
-        "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro. Nessuna installazione, funziona dal browser. Supporta italiano, inglese, francese, spagnolo, tedesco e cinese.",
-        "kw":      "convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to mp3, pdf to mp3, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
+        "title":   "Audiobook Maker — EPUB/PDF a Audiolibro Gratis | MP3 e M4B con Capitoli",
+        "tagline": "Convertitore Gratuito da EPUB e PDF in Audiolibro",
+        "subtitle":"Converti i tuoi EPUB e PDF in audiolibri con voci neurali di alta qualità",
+        "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B (con capitoli incorporati) gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro professionale. Nessuna installazione, funziona dal browser.",
+        "kw":      "convertitore epub m4b, creare m4b con capitoli, convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to m4b, pdf to m4b, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 con voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
+        "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 e M4B con capitoli e voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
     "en": {
-        "title":   "Audiobook Maker: Free EPUB/PDF to MP3 | 400+ AI Voices",
-        "desc":    "Convert your EPUB and PDF ebooks to MP3 audiobooks for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your audiobook. No installation needed, works in your browser. Supports English, Italian, French, Spanish, German and Chinese.",
-        "kw":      "epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf",
+        "title":   "Audiobook Maker: Free EPUB/PDF to MP3 & M4B | Chapters & AI Voices",
+        "tagline": "Free EPUB & PDF to Audiobook Converter",
+        "subtitle":"Convert your EPUBs and PDFs into audiobooks with high-quality neural voices",
+        "desc":    "Convert your EPUB and PDF ebooks to MP3 or M4B audiobooks (with embedded chapters) for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your professional audiobook. No installation needed, works in your browser.",
+        "kw":      "epub to m4b converter, create m4b with chapters, pdf to m4b, epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 audiobooks using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
+        "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 and M4B audiobooks (with chapters) using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
     "fr": {
-        "title":   "Audiobook Maker — EPUB/PDF en Livre Audio Gratuit | Voix IA",
-        "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio. Aucune installation, fonctionne dans le navigateur.",
-        "kw":      "convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers mp3, pdf vers mp3, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit",
+        "title":   "Audiobook Maker — EPUB/PDF en Livre Audio Gratuit | MP3 et M4B",
+        "tagline": "Convertisseur Gratuit EPUB & PDF en Livre Audio",
+        "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurali",
+        "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 et M4B (avec chapitres) gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio professionnel. Aucune installation, fonctionne dans le navigateur.",
+        "kw":      "convertisseur epub m4b, créer m4b avec chapitres, convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers m4b, pdf vers m4b, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB et PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
+        "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB e PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
     "es": {
-        "title":   "Audiobook Maker — EPUB/PDF a Audiolibro Gratis | Voces IA",
-        "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro. Sin instalación, funciona desde el navegador.",
-        "kw":      "convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a mp3, pdf a mp3, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis",
+        "title":   "Audiobook Maker — EPUB/PDF a Audiolibro Gratis | MP3 y M4B con Capítulos",
+        "tagline": "Convertidor Gratuito de EPUB y PDF a Audiolibro",
+        "subtitle":"Convierte tus EPUB y PDF en audiolibros con voces neurales de alta calidad",
+        "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 y M4B (con capítulos incorporados) gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro profesional. Sin instalación, funciona desde el navegador.",
+        "kw":      "convertidor epub m4b, crear m4b con capítulos, convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a m4b, pdf a m4b, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
     "de": {
-        "title":   "Audiobook Maker: EPUB/PDF zu Hörbuch Gratis | KI-Stimmen",
-        "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3-Hörbücher mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
-        "kw":      "epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu mp3, pdf zu mp3, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos",
+        "title":   "Audiobook Maker: EPUB/PDF zu Hörbuch Gratis | MP3 & M4B mit Kapiteln",
+        "tagline": "Kostenloser EPUB- & PDF-zu-Hörbuch-Konverter",
+        "subtitle":"Konvertieren Sie EPUBs und PDFs in Hörbücher mit neuronalen Stimmen",
+        "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3- und M4B-Hörbücher (mit eingebetteten Kapiteln) mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr professionelles Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
+        "kw":      "epub zu m4b konverter, m4b mit kapiteln erstellen, epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu m4b, pdf zu m4b, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
     "zh": {
-        "title":   "Audiobook Maker — 免费EPUB/PDF转有声书 | AI语音",
-        "desc":    "使用自然AI语音将EPUB和PDF电子书免费转换为MP3有声书。免费在线文字转语音转换器：上传书籍，选择语音，下载有声书。无需安装，浏览器即可使用。支持中文、英语、意大利语、法语、西班牙语和德语。",
-        "kw":      "epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, 免费创建有声书, 文字转语音中文, 免费在线有声书转换器, epub转mp3, pdf转mp3, 电子书转音频, 语音合成, 有声书制作, 免费电子书转音频, ebook to audiobook中文, tts中文免费, 在线制作有声书, 文本转语音, epub阅读器语音, 文字转有声书, 听电子书, 免费有声书制作器, epub转音频免费, pdf转音频免费",
+        "title":   "Audiobook Maker — 免费 EPUB/PDF 转 MP3 及 M4B 有声书 | 支持章节和AI语音",
+        "tagline": "免费EPUB和PDF转有声书转换器",
+        "subtitle":"使用高品质神经语音将EPUB和PDF转换为有声读物",
+        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书转换为高质量 MP3 或 M4B（含章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
+        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电子书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电子书转换为有声书, tts有声书生成器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电子书转mp3, 听epub, 带音频的epub阅读器, 免费图书转有声书转换器",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "免费在线工具，使用神经网络AI TTS语音将EPUB和PDF电子书转换为MP3有声书。支持6种语言和播客RSS订阅源生成。",
+        "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电子书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅源生成。",
     },
 }
-
 
 _SUPPORTED_LANGS = list(_SEO_DATA.keys())  # ['it', 'en', 'fr', 'es', 'de', 'zh']
 
@@ -6371,16 +5628,16 @@ def _set_client_cookie(response):
 
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # AUTO-CLEANUP (deletes EPUB/PDF/TXT + MP3 files)
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 # Regole di cancellazione:
-# 1. Browser chiuso senza email registrata → cancella (heartbeat perso per 60s)
-# 2. Utente scarica direttamente dall'UI web → cancella subito dopo download
-# 3. Email di notifica inviata → mantieni 24h dall'invio, poi cancella
-# 4. Job in errore o cancellato → cancella subito
-# 5. Cartelle orfane su disco (non in jobs né in tokens) → cancella
+# 1. Browser chiuso senza email registrata  →  cancella (heartbeat perso per 60s)
+# 2. Utente scarica direttamente dall'UI web  →  cancella subito dopo download
+# 3. Email di notifica inviata  →  mantieni 24h dall'invio, poi cancella
+# 4. Job in errore o cancellato  →  cancella subito
+# 5. Cartelle orfane su disco (non in jobs né in tokens)  →  cancella
 
 CLEANUP_GRACE_AFTER_DOWNLOAD_SEC = 5 * 60  # 5 min grazia dopo download diretto
 CLEANUP_HEARTBEAT_TIMEOUT_SEC = 60          # heartbeat perso per 60s = browser chiuso
@@ -6408,26 +5665,26 @@ def _cleanup_loop():
             status = job.get("status", "")
             has_email = job.get("email_registered", False)
 
-            # ── Cancelled jobs: immediate cleanup ──
+            #  —  —  Cancelled jobs: immediate cleanup  —  — 
             if status == "cancelled":
                 to_remove.append((jid, "cancelled"))
                 continue
 
-            # ── Error jobs: immediate cleanup ──
+            #  —  —  Error jobs: immediate cleanup  —  — 
             if status == "error":
                 start = job.get("start_time", now)
                 if (now - start) > 120:  # grazia di 2 min per leggere l'errore
                     to_remove.append((jid, "error"))
                 continue
 
-            # ── Analyzed but never started: cleanup if heartbeat lost ──
+            #  —  —  Analyzed but never started: cleanup if heartbeat lost  —  — 
             if status == "analyzed":
                 last_poll = job.get("last_poll", job.get("start_time", now))
                 if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 3:  # 3 min per analyzed
                     to_remove.append((jid, "stale analyzed"))
                 continue
 
-            # ── Optimizing jobs (LLM) ──
+            #  —  —  Optimizing jobs (LLM)  —  — 
             if status == "optimizing":
                 if has_email:
                     continue  # batch mode: keep alive
@@ -6437,9 +5694,9 @@ def _cleanup_loop():
                     to_remove.append((jid, f"heartbeat lost during optimization ({int(now - last_poll)}s)"))
                 continue
 
-            # ── Optimized jobs: ottimizzazione completata, in attesa di export/download ──
+            #  —  —  Optimized jobs: ottimizzazione completata, in attesa di export/download  —  — 
             # Il progetto .abm va mantenuto per EMAIL_FILE_RETENTION_SEC (24h) dal termine
-            # dell'ottimizzazione in qualunque caso — sia che l'utente abbia lasciato il
+            # dell'ottimizzazione in qualunque caso  —  sia che l'utente abbia lasciato il
             # browser aperto, sia che sia stata registrata l'email per notifica batch.
             # La regola unifica lo scenario "no email" con quello email-batch: entrambi
             # hanno 24h dal completamento per scaricare il .abm tramite il bottone UI o
@@ -6452,7 +5709,7 @@ def _cleanup_loop():
                     to_remove.append((jid, reason))
                 continue
 
-            # ── Generating jobs ──
+            #  —  —  Generating jobs  —  — 
             if status == "generating":
                 # Con email registrata: non cancellare mai (continua in background)
                 if has_email:
@@ -6464,29 +5721,29 @@ def _cleanup_loop():
                     to_remove.append((jid, f"heartbeat lost during generation ({int(now - last_poll)}s)"))
                 continue
 
-            # ── Done jobs ──
+            #  —  —  Done jobs  —  — 
             if status == "done":
                 dl_at = job.get("downloaded_at")
                 email_sent_at = job.get("email_sent_at")
                 last_poll = job.get("last_poll", 0)
 
-                # REGOLA 3: Email inviata → mantieni 24h dall'invio
+                # REGOLA 3: Email inviata  →  mantieni 24h dall'invio
                 if has_email and email_sent_at:
                     if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
                         to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
                     continue
 
-                # Email registrata ma non ancora inviata → mantieni
+                # Email registrata ma non ancora inviata  →  mantieni
                 if has_email and not email_sent_at:
                     continue
 
-                # REGOLA 2: Download diretto dall'UI → cancella dopo breve grazia
+                # REGOLA 2: Download diretto dall'UI  →  cancella dopo breve grazia
                 if dl_at:
                     if (now - dl_at) > CLEANUP_GRACE_AFTER_DOWNLOAD_SEC:
                         to_remove.append((jid, f"downloaded {int(now - dl_at)}s ago"))
                     continue
 
-                # REGOLA 1: Nessun download, nessuna email, heartbeat perso → browser chiuso
+                # REGOLA 1: Nessun download, nessuna email, heartbeat perso  →  browser chiuso
                 if last_poll and (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
                     to_remove.append((jid, f"abandoned (heartbeat lost {int(now - last_poll)}s)"))
                     continue
@@ -6497,7 +5754,7 @@ def _cleanup_loop():
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-        # ── Cleanup expired download tokens ──
+        #  —  —  Cleanup expired download tokens  —  — 
         expired_tokens = [(t, info) for t, info in _download_tokens.items()
                           if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
         for t, t_info in expired_tokens:
@@ -6512,7 +5769,7 @@ def _cleanup_loop():
         if expired_tokens:
             _save_tokens()
 
-        # ── Cleanup cartelle orfane su disco ──
+        #  —  —  Cleanup cartelle orfane su disco  —  — 
         # Cartelle in UPLOAD_DIR non associate a nessun job né token attivo
         _known_job_ids = set(jobs.keys())
         _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
@@ -6540,9 +5797,9 @@ def _cleanup_loop():
         _try_send_admin_digest()
 
 
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 # ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════
+#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
@@ -6599,7 +5856,7 @@ def _ensure_background_threads():
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (DeepSeek {DEEPSEEK_MODEL})")
     if ADMIN_EMAIL:
-        print(f"[startup] Admin digest enabled → {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
+        print(f"[startup] Admin digest enabled  →  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
 

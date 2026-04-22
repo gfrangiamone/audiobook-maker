@@ -3,6 +3,7 @@ edge-tts>=6.1
 Pillow>=10.0
 ebooklib>=0.18
 beautifulsoup4>=4.12
+pymupdf>=1.26.0                   # PDF text extraction
 google-cloud-texttospeech>=2.17  # optional: Google Cloud TTS Chirp3-HD support
 google-cloud-monitoring>=2.18    # optional: real consumption reconciliation for Google TTS
 openai>=1.0                      # optional: DeepSeek LLM text optimization for TTS

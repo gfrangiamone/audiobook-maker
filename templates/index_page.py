@@ -103,6 +103,8 @@ def build_html_template(
             "__SEO_HREFLANG__":  hreflang_block,
             "__SEO_LD_NAME__":   seo.get("ld_name", "Audiobook Maker"),
             "__SEO_LD_DESC__":   seo.get("ld_desc", ""),
+            "__H1_TAGLINE__":    seo.get("tagline", ""),
+            "__SUBTITLE__":      seo.get("subtitle", ""),
         }
         for placeholder, value in replacements.items():
             html = html.replace(placeholder, value)

@@ -264,6 +264,7 @@ class BookInfo:
     language: str = ""
     publisher: str = ""
     description: str = ""
+    date: str = ""  # Data di pubblicazione (YYYY, YYYY-MM, YYYY-MM-DD da dc:date)
     chapters: list[Chapter] = field(default_factory=list)
     total_words: int = 0
     total_chars: int = 0
@@ -863,6 +864,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     info.language = _get_metadata(book, "language") or ""
     info.publisher = _get_metadata(book, "publisher") or ""
     info.description = _get_metadata(book, "description") or ""
+    info.date = _get_metadata(book, "date") or ""
 
     # Strategia: usa la spine (ordine di lettura) per ottenere i documenti nell'ordine giusto
     spine_items = []

@@ -44,7 +44,7 @@ _CONTENT = {
     # ─── ITALIANO ───────────────────────────────────────────────────
     "it": {
         "direct_answer": (
-            "Audiobook Maker è un convertitore gratuito da EPUB e PDF a audiolibro MP3 "
+            "Audiobook Maker è un convertitore gratuito da EPUB e PDF a audiolibro MP3 e M4B "
             "con oltre 400 voci AI neurali in decine di lingue (tecnologia Microsoft Edge TTS). "
             "Non richiede registrazione, non ha limiti di utilizzo e funziona interamente nel browser."
         ),
@@ -52,6 +52,7 @@ _CONTENT = {
             "title": "Punti Chiave",
             "items": [
                 "✅ <strong>Gratis al 100%</strong> — Nessuna registrazione, nessun limite",
+                "✅ <strong>Formato M4B</strong> — Supporto per audiolibri universali con capitoli incorporati",
                 "✅ <strong>400+ voci neurali AI</strong> — Microsoft Edge TTS di alta qualità",
                 "✅ <strong>50+ lingue</strong> — Italiano, Inglese, Francese, Spagnolo, Tedesco, Cinese e altre",
                 "✅ <strong>Nessuna installazione</strong> — Funziona direttamente nel browser",
@@ -59,10 +60,10 @@ _CONTENT = {
                 "✅ <strong>Open source</strong> — Progetto trasparente con licenza AGPL-3.0",
             ],
         },
-        "heading": "Converti i tuoi Ebook EPUB e PDF in Audiolibri MP3 — Gratis Online",
+        "heading": "Converti i tuoi Ebook EPUB e PDF in Audiolibri MP3 e M4B — Gratis Online",
         "text": (
             "Audiobook Maker è un convertitore online gratuito che trasforma i tuoi ebook EPUB e PDF "
-            "in audiolibri MP3 utilizzando voci AI naturali con tecnologia neural text-to-speech "
+            "in audiolibri MP3 e M4B utilizzando voci AI naturali con tecnologia neural text-to-speech "
             "(Microsoft Edge TTS). "
             "Carica il tuo libro in formato EPUB o PDF, scegli tra oltre 50 voci di sintesi vocale disponibili "
             "in italiano, inglese, francese, spagnolo, tedesco e cinese, e scarica il tuo audiolibro "
@@ -86,7 +87,7 @@ _CONTENT = {
             "Opzionalmente, ottimizza il testo tramite AI per una lettura più naturale (espansione di acronimi, numeri, date, pause e rimozione di artefatti tipografici)",
             "Avvia la conversione text-to-speech con un clic e attendi l'elaborazione",
             "Per conversioni lunghe, inserisci la tua email per ricevere una notifica al termine con il link per il download — puoi chiudere il browser e tornare quando l'audiolibro è pronto",
-            "Scarica l'audiolibro in formato MP3 pronto per l'ascolto su qualsiasi dispositivo",
+            "Scarica l'audiolibro in formato MP3 o M4B (con capitoli) pronto per l'ascolto su qualsiasi dispositivo",
             "Genera un feed RSS podcast per ascoltare i capitoli nella tua app preferita",
         ],
         "faq_heading": "Domande Frequenti — Convertitore EPUB/PDF Audiolibro",
@@ -99,6 +100,11 @@ _CONTENT = {
              "Audiobook Maker supporta la conversione diretta di file PDF in audiolibri MP3. "
              "Carica il tuo PDF, scegli una voce AI, e il convertitore estrarrà il testo e lo trasformerà "
              "in audio con sintesi vocale neurale."),
+             ("Supportate il formato M4B?",
+              "Sì, Audiobook Maker può generare audiolibri in formato M4B universale. "
+              "A differenza dei semplici file MP3, il formato M4B permette di incorporare "
+              "i capitoli direttamente nel file audio, mantenendo la suddivisione e i titoli "
+              "all'interno di app come Apple Books o VLC."),
             ("Quali formati di ebook sono supportati?",
              "Audiobook Maker supporta i formati EPUB, PDF e TXT. "
              "L'EPUB è il formato consigliato per risultati ottimali. "
@@ -143,7 +149,7 @@ _CONTENT = {
              "L'ottimizzazione AI è una fase opzionale, eseguita da un modello LLM, "
              "che riscrive il testo estratto dal libro per renderlo più naturale all'ascolto. "
              "Interviene prima della sintesi vocale su diversi aspetti: espande gli acronimi "
-             "(es. \"ONU\" → \"O.N.U.\" per forzare la corretta pronuncia lettera-per-lettera), "
+             "(es. "ONU" → "O.N.U." per forzare la corretta pronuncia lettera-per-lettera), "
              "scrive per esteso numeri, date, unità di misura e simboli, inserisce pause naturali "
              "dopo titoli e cambi di scena, rimuove artefatti tipografici (note a piè di pagina, "
              "riferimenti bibliografici inline, trattini di sillabazione, doppi spazi), corregge "
@@ -168,7 +174,7 @@ _CONTENT = {
     # ─── ENGLISH ────────────────────────────────────────────────────
     "en": {
         "direct_answer": (
-            "Audiobook Maker is a free, no-signup EPUB and PDF to MP3 audiobook converter "
+            "Audiobook Maker is a free, no-signup EPUB and PDF to MP3/M4B audiobook converter "
             "with 400+ neural AI voices in dozens of languages (Microsoft Edge TTS). "
             "It runs entirely in your browser with no usage limits."
         ),
@@ -176,6 +182,7 @@ _CONTENT = {
             "title": "Quick Summary",
             "items": [
                 "✅ <strong>100% Free</strong> — No signup, no limits",
+                "✅ <strong>M4B Format</strong> — Universal audiobook support with embedded chapters",
                 "✅ <strong>400+ neural AI voices</strong> — High-quality Microsoft Edge TTS",
                 "✅ <strong>50+ languages</strong> — English, Italian, French, Spanish, German, Chinese and more",
                 "✅ <strong>No installation</strong> — Works directly in your browser",
@@ -183,9 +190,9 @@ _CONTENT = {
                 "✅ <strong>Open source</strong> — Transparent project with AGPL-3.0 license",
             ],
         },
-        "heading": "Convert Your EPUB and PDF Ebooks to MP3 Audiobooks — Free Online",
+        "heading": "Convert Your EPUB and PDF Ebooks to MP3 and M4B Audiobooks — Free Online",
         "text": (
-            "Audiobook Maker is a free online converter that transforms your EPUB and PDF ebooks into MP3 audiobooks "
+            "Audiobook Maker is a free online converter that transforms your EPUB and PDF ebooks into MP3 and M4B audiobooks "
             "using natural AI voices powered by neural text-to-speech technology (Microsoft Edge TTS). "
             "Upload your book in EPUB or PDF format, choose from 50+ AI voices available in English, "
             "Italian, French, Spanish, German, and Chinese, and download your audiobook ready to listen. "
@@ -209,7 +216,7 @@ _CONTENT = {
             "Optionally, optimize the text with AI for more natural narration (expands acronyms, numbers, dates, inserts pauses and removes typographic artifacts)",
             "Start the text-to-speech conversion with one click and wait for processing",
             "For long conversions, enter your email to receive a notification when the audiobook is ready with a download link — you can close the browser and come back later",
-            "Download your audiobook in MP3 format ready to listen on any device",
+            "Download your audiobook in MP3 or M4B format (with chapters) ready to listen on any device",
             "Generate a podcast RSS feed to listen to chapters in your favorite app",
         ],
         "faq_heading": "Frequently Asked Questions — EPUB/PDF to Audiobook Converter",
@@ -219,9 +226,12 @@ _CONTENT = {
              "then click Convert. The free text-to-speech converter will generate the audiobook "
              "in MP3 format that you can download and listen to anywhere. No signup required."),
             ("How to convert a PDF to audiobook?",
-             "Audiobook Maker supports direct PDF to audiobook conversion. "
              "Upload your PDF file, choose an AI voice, and the converter will extract the text "
              "and transform it into audio using neural text-to-speech synthesis."),
+            ("Do you support the M4B format?",
+             "Yes, Audiobook Maker can generate audiobooks in universal M4B format. "
+             "Unlike standard MP3 files, M4B allows you to embed chapters directly into "
+             "the audio file, preserving the structure and titles in apps like Apple Books or VLC."),
             ("What ebook formats are supported?",
              "Audiobook Maker supports EPUB, PDF, and TXT formats. "
              "EPUB is recommended for best results. "
@@ -265,7 +275,7 @@ _CONTENT = {
              "AI text optimization is an optional step, powered by an LLM, that rewrites "
              "the text extracted from your book to make it sound natural when read aloud. It runs "
              "before speech synthesis and addresses several issues: it expands acronyms "
-             "(e.g. \"NASA\" → \"N.A.S.A.\" to force letter-by-letter pronunciation), spells out "
+             "(e.g. "NASA" → "N.A.S.A." to force letter-by-letter pronunciation), spells out "
              "numbers, dates, units of measure and symbols, inserts natural pauses after titles "
              "and scene breaks, strips typographic artifacts (footnotes, inline bibliographic "
              "references, hyphenation dashes, double spaces), and fixes quotes and punctuation "
@@ -289,7 +299,7 @@ _CONTENT = {
     # ─── FRANÇAIS ───────────────────────────────────────────────────
     "fr": {
         "direct_answer": (
-            "Audiobook Maker est un convertisseur gratuit d'EPUB et PDF en livres audio MP3 "
+            "Audiobook Maker est un convertisseur gratuit d'EPUB et PDF en livres audio MP3 et M4B "
             "avec plus de 400 voix IA neuronales dans des dizaines de langues (Microsoft Edge TTS). "
             "Sans inscription, sans limites, directement dans votre navigateur."
         ),
@@ -297,6 +307,7 @@ _CONTENT = {
             "title": "Points Clés",
             "items": [
                 "✅ <strong>100% Gratuit</strong> — Sans inscription, sans limites",
+                 "✅ <strong>Format M4B</strong> — Support des livres audio universels avec chapitres intégrés",
                 "✅ <strong>400+ voix IA neuronales</strong> — Microsoft Edge TTS de haute qualité",
                 "✅ <strong>50+ langues</strong> — Français, Anglais, Italien, Espagnol, Allemand, Chinois et plus",
                 "✅ <strong>Sans installation</strong> — Fonctionne directement dans votre navigateur",
@@ -304,10 +315,10 @@ _CONTENT = {
                 "✅ <strong>Open source</strong> — Projet transparent sous licence AGPL-3.0",
             ],
         },
-        "heading": "Convertissez vos Ebooks EPUB et PDF en Livres Audio MP3 — Gratuit en Ligne",
+        "heading": "Convertissez vos Ebooks EPUB et PDF en Livres Audio MP3 et M4B — Gratuit en Ligne",
         "text": (
             "Audiobook Maker est un convertisseur en ligne gratuit qui transforme vos ebooks EPUB et PDF en livres "
-            "audio MP3 en utilisant des voix IA naturelles (technologie neuronale Microsoft Edge TTS). "
+            "audio MP3 et M4B en utilisant des voix IA naturelles (technologie neuronale Microsoft Edge TTS). "
             "Téléchargez votre livre au format EPUB ou PDF, choisissez parmi plus de 50 voix de synthèse vocale "
             "disponibles en français, anglais, italien, espagnol, allemand et chinois, "
             "et téléchargez votre livre audio prêt à écouter. "
@@ -327,10 +338,10 @@ _CONTENT = {
             "Téléchargez votre fichier EPUB, PDF ou TXT — le convertisseur prend en charge les ebooks de toute taille",
             "Choisissez la voix IA et la langue de narration parmi plus de 50 options",
             "Sélectionnez les chapitres à convertir ou convertissez le livre entier",
-            "Optionnellement, optimisez le texte via IA pour une lecture plus naturelle (développement des acronymes, nombres, dates, ajout de pauses et suppression des artefacts typographiques)",
+            "Op tionnellement, optimisez le texte via IA pour une lecture plus naturelle (développement des acronymes, nombres, dates, ajout de pauses et suppression des artefacts typographiques)",
             "Lancez la conversion text-to-speech en un clic et attendez le traitement",
             "Pour les conversions longues, entrez votre email pour recevoir une notification avec un lien de téléchargement quand le livre audio est prêt — vous pouvez fermer le navigateur et revenir plus tard",
-            "Téléchargez votre livre audio au format MP3 prêt à écouter sur tout appareil",
+            "Téléchargez votre livre audio au format MP3 ou M4B (con chapitres) prêt à écouter sur tout appareil",
             "Générez un flux RSS podcast pour écouter les chapitres dans votre app préférée",
         ],
         "faq_heading": "Questions Fréquentes — Convertisseur EPUB/PDF Livre Audio",
@@ -343,6 +354,11 @@ _CONTENT = {
              "Audiobook Maker prend en charge la conversion directe de PDF en livres audio MP3. "
              "Téléchargez votre fichier PDF, choisissez une voix IA, et le convertisseur extraira le texte "
              "pour le transformer en audio avec synthèse vocale neuronale."),
+            ("Prenez-vous en charge le format M4B ?",
+             "Oui, Audiobook Maker peut générer des livres audio au format M4B universel. "
+             "Contrairement aux fichiers MP3 classiques, le format M4B permet d'intégrer "
+             "les chapitres directement dans le fichier audio, conservant les titres et la structure "
+             "dans des applications comme Apple Books ou VLC."),
             ("Quels formats d'ebook sont supportés ?",
              "Audiobook Maker prend en charge les formats EPUB, PDF et TXT. "
              "L'EPUB est recommandé pour de meilleurs résultats. "
@@ -374,7 +390,7 @@ _CONTENT = {
              "L'optimisation IA est une étape facultative, exécutée par un modèle LLM, "
              "qui réécrit le texte extrait de votre livre pour le rendre naturel à l'écoute. "
              "Elle intervient avant la synthèse vocale sur plusieurs aspects : elle développe les "
-             "acronymes (ex. \"ONU\" → \"O.N.U.\" pour forcer la prononciation lettre par lettre), "
+             "acronymes (ex. "ONU" → "O.N.U." pour forcer la prononciation lettre par lettre), "
              "écrit en toutes lettres les nombres, dates, unités de mesure et symboles, insère des "
              "pauses naturelles après les titres et les changements de scène, supprime les "
              "artefacts typographiques (notes de bas de page, références bibliographiques en "
@@ -384,7 +400,7 @@ _CONTENT = {
              "est un livre audio nettement plus agréable et professionnel, comparable à une "
              "narration soignée. Vous pouvez aussi télécharger le projet optimisé au format .abm "
              "pour le réutiliser, le modifier ou générer de nouvelles versions audio avec des "
-             "voix différentes sans relancer l'optimisation."),
+             "voix différentes sans relancer l'optimizzazione."),
         ],
         "privacy_heading": "Confidentialité et Sécurité",
         "privacy": (
@@ -398,7 +414,7 @@ _CONTENT = {
     # ─── ESPAÑOL ────────────────────────────────────────────────────
     "es": {
         "direct_answer": (
-            "Audiobook Maker es un convertidor gratuito de EPUB y PDF a audiolibro MP3 "
+            "Audiobook Maker es un convertidor gratuito de EPUB y PDF a audiolibro MP3 y M4B "
             "con más de 400 voces IA neuronales en decenas de idiomas (Microsoft Edge TTS). "
             "Sin registro, sin límites, directamente en tu navegador."
         ),
@@ -406,6 +422,7 @@ _CONTENT = {
             "title": "Puntos Clave",
             "items": [
                 "✅ <strong>100% Gratis</strong> — Sin registro, sin límites",
+                 "✅ <strong>Formato M4B</strong> — Soporte de audiolibros universales con capítulos integrados",
                 "✅ <strong>400+ voces IA neuronales</strong> — Microsoft Edge TTS de alta calidad",
                 "✅ <strong>50+ idiomas</strong> — Español, Inglés, Italiano, Francés, Alemán, Chino y más",
                 "✅ <strong>Sin instalación</strong> — Funciona directamente en tu navegador",
@@ -413,10 +430,10 @@ _CONTENT = {
                 "✅ <strong>Open source</strong> — Proyecto transparente con licencia AGPL-3.0",
             ],
         },
-        "heading": "Convierte tus Ebooks EPUB y PDF en Audiolibros MP3 — Gratis Online",
+        "heading": "Convierte tus Ebooks EPUB y PDF en Audiolibros MP3 y M4B — Gratis Online",
         "text": (
             "Audiobook Maker es un convertidor en línea gratuito que transforma tus ebooks EPUB y PDF en "
-            "audiolibros MP3 utilizando voces IA naturales (tecnología neuronal Microsoft Edge TTS). "
+            "audiolibros MP3 y M4B utilizando voces IA naturales (tecnología neuronal Microsoft Edge TTS). "
             "Sube tu libro en formato EPUB o PDF, elige entre más de 50 voces de síntesis de voz "
             "disponibles en español, inglés, italiano, francés, alemán y chino, "
             "y descarga tu audiolibro listo para escuchar. "
@@ -439,7 +456,7 @@ _CONTENT = {
             "Opcionalmente, optimiza el texto mediante IA para una lectura más natural (expande acrónimos, números, fechas, inserta pausas y elimina artefactos tipográficos)",
             "Inicia la conversión text-to-speech con un clic y espera el procesamiento",
             "Para conversiones largas, introduce tu email para recibir una notificación con un enlace de descarga cuando el audiolibro esté listo — puedes cerrar el navegador y volver más tarde",
-            "Descarga tu audiolibro en formato MP3 listo para escuchar en cualquier dispositivo",
+            "Descarga tu audiolibro en formato MP3 o M4B (con capítulos) listo para escuchar en cualquier dispositivo",
             "Genera un feed RSS podcast para escuchar los capítulos en tu app favorita",
         ],
         "faq_heading": "Preguntas Frecuentes — Convertidor EPUB/PDF a Audiolibro",
@@ -452,6 +469,11 @@ _CONTENT = {
              "Audiobook Maker admite la conversión directa de PDF a audiolibros MP3. "
              "Sube tu archivo PDF, elige una voz IA, y el convertidor extraerá el texto "
              "para transformarlo en audio con síntesis de voz neuronal."),
+            ("¿Es compatible con el formato M4B?",
+             "Sí, Audiobook Maker puede generar audiolibros en formato M4B universal. "
+             "A diferencia de los archivos MP3 estándar, el formato M4B permite incrustar "
+             "los capítulos directamente en el archivo de audio, manteniendo los títulos y la estructura "
+             "en aplicaciones como Apple Books o VLC."),
             ("¿Qué formatos de ebook son compatibles?",
              "Audiobook Maker admite los formatos EPUB, PDF y TXT. "
              "Se recomienda EPUB para mejores resultados. "
@@ -476,14 +498,14 @@ _CONTENT = {
              "Para la mejor experiencia en Android, recomendamos Smart AudioBook Player, "
              "una app diseñada específicamente para audiolibros que recuerda tu posición de escucha, "
              "permite ajustar la velocidad y organiza automáticamente los capítulos. "
-             "En iPhone, puedes usar la app Libros de Apple o cualquier reproductor MP3. "
+             "En iPhone, puedes usar la app Libri de Apple o cualquier reproductor MP3. "
              "También puedes usar el feed RSS podcast generado por la app para escuchar "
              "los capítulos directamente en tu app de podcast favorita."),
             ("¿Qué es la optimización IA del texto y qué ventajas ofrece?",
              "La optimización IA es una fase opcional, ejecutada por un modelo LLM, "
              "que reescribe el texto extraído del libro para que suene natural al escucharlo. "
              "Interviene antes de la síntesis de voz en varios aspectos: expande acrónimos "
-             "(ej. \"ONU\" → \"O.N.U.\" para forzar la pronunciación letra por letra), escribe "
+             "(ej. "ONU" → "O.N.U." para forzar la pronunciación letra por letra), escribe "
              "en palabras los números, fechas, unidades de medida y símbolos, inserta pausas "
              "naturales tras títulos y cambios de escena, elimina artefactos tipográficos "
              "(notas al pie, referencias bibliográficas en línea, guiones de silabación, dobles "
@@ -506,7 +528,7 @@ _CONTENT = {
     # ─── DEUTSCH ────────────────────────────────────────────────────
     "de": {
         "direct_answer": (
-            "Audiobook Maker ist ein kostenloser EPUB- und PDF-zu-MP3-Hörbuch-Konverter "
+            "Audiobook Maker ist ein kostenloser EPUB- und PDF-zu-MP3/M4B-Hörbuch-Konverter "
             "mit über 400 neuronalen KI-Stimmen in Dutzenden von Sprachen (Microsoft Edge TTS). "
             "Ohne Registrierung, ohne Limits, direkt im Browser."
         ),
@@ -514,6 +536,7 @@ _CONTENT = {
             "title": "Kurzübersicht",
             "items": [
                 "✅ <strong>100% Kostenlos</strong> — Keine Anmeldung, keine Limits",
+                 "✅ <strong>M4B-Format</strong> — Universelle Hörbuch-Unterstützung mit eingebetteten Kapiteln",
                 "✅ <strong>400+ neuronale KI-Stimmen</strong> — Microsoft Edge TTS hoher Qualität",
                 "✅ <strong>50+ Sprachen</strong> — Deutsch, Englisch, Italienisch, Französisch, Spanisch, Chinesisch und mehr",
                 "✅ <strong>Keine Installation</strong> — Funktioniert direkt in Ihrem Browser",
@@ -521,9 +544,9 @@ _CONTENT = {
                 "✅ <strong>Open source</strong> — Transparentes Projekt mit AGPL-3.0 Lizenz",
             ],
         },
-        "heading": "Konvertieren Sie Ihre EPUB- und PDF-E-Books in MP3-Hörbücher — Kostenlos Online",
+        "heading": "Konvertieren Sie Ihre EPUB- und PDF-E-Books in MP3- und M4B-Hörbücher — Kostenlos Online",
         "text": (
-            "Audiobook Maker ist ein kostenloser Online-Konverter, der Ihre EPUB- und PDF-E-Books in MP3-Hörbücher "
+            "Audiobook Maker ist ein kostenloser Online-Konverter, der Ihre EPUB- und PDF-E-Books in MP3- und M4B-Hörbücher "
             "umwandelt — mit natürlichen KI-Stimmen (neuronale Microsoft Edge TTS-Technologie). "
             "Laden Sie Ihr Buch im EPUB- oder PDF-Format hoch, wählen Sie aus über 50 Sprachsynthese-Stimmen "
             "auf Deutsch, Englisch, Italienisch, Französisch, Spanisch und Chinesisch, "
@@ -547,7 +570,7 @@ _CONTENT = {
             "Optional können Sie den Text per KI optimieren lassen, für eine natürlichere Lesart (Akronyme, Zahlen und Datumsangaben werden ausgeschrieben, natürliche Pausen eingefügt und typografische Artefakte entfernt)",
             "Starten Sie die Text-to-Speech-Konvertierung mit einem Klick",
             "Bei langen Konvertierungen geben Sie Ihre E-Mail ein, um eine Benachrichtigung mit Download-Link zu erhalten, wenn das Hörbuch fertig ist — Sie können den Browser schließen und später zurückkehren",
-            "Laden Sie Ihr Hörbuch im MP3-Format herunter, bereit zum Anhören auf jedem Gerät",
+            "Laden Sie Ihr Hörbuch im MP3- oder M4B-Format (mit Kapiteln) herunter, bereit zum Anhören auf jedem Gerät",
             "Erstellen Sie einen Podcast-RSS-Feed, um Kapitel in Ihrer Lieblings-App zu hören",
         ],
         "faq_heading": "Häufig Gestellte Fragen — EPUB/PDF-zu-Hörbuch-Konverter",
@@ -557,9 +580,14 @@ _CONTENT = {
              "gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter "
              "erstellt das Hörbuch im MP3-Format zum Herunterladen. Keine Registrierung nötig."),
             ("Wie konvertiert man ein PDF in ein Hörbuch?",
-             "Audiobook Maker unterstützt die direkte Konvertierung von PDF zu MP3-Hörbüchern. "
-             "Laden Sie Ihre PDF-Datei hoch, wählen Sie eine KI-Stimme, und der Konverter extrahiert "
-             "den Text und wandelt ihn mit neuronaler Sprachsynthese in Audio um."),
+             "Audiobook Maker unterstützt die direkte Konvertierung von PDF-Dateien in MP3-Hörbücher. "
+             "Laden Sie Ihr PDF hoch, wählen Sie eine KI-Stimme, und der Konverter extrahiert den Text "
+             "und verwandelt ihn in Audio mit neuraler Sprachsynthese."),
+            ("Wird das M4B-Format unterstützt?",
+             "Ja, Audiobook Maker kann Hörbücher im universellen M4B-Format erstellen. "
+             "Im Gegensatz zu einfachen MP3-Dateien ermöglicht das M4B-Format die Einbettung "
+             "von Kapiteln direkt in die Audiodatei, sodass Titel und Struktur in Apps wie "
+             "Apple Books oder VLC erhalten bleiben."),
             ("Welche E-Book-Formate werden unterstützt?",
              "Audiobook Maker unterstützt EPUB-, PDF- und TXT-Formate. "
              "EPUB wird für beste Ergebnisse empfohlen. "
@@ -591,7 +619,7 @@ _CONTENT = {
              "Die KI-Textoptimierung ist ein optionaler Schritt, der von einem LLM-Modell "
              "ausgeführt wird und den aus Ihrem Buch extrahierten Text so umschreibt, "
              "dass er beim Vorlesen natürlich klingt. Sie läuft vor der Sprachsynthese und greift "
-             "bei mehreren Aspekten ein: sie dehnt Akronyme aus (z. B. \"NASA\" → \"N.A.S.A.\", um "
+             "bei mehreren Aspekten ein: sie dehnt Akronyme aus (z. B. "NASA" → "N.A.S.A.", um "
              "eine buchstabenweise Aussprache zu erzwingen), schreibt Zahlen, Datumsangaben, "
              "Maßeinheiten und Symbole aus, fügt nach Titeln und Szenenwechseln natürliche Pausen "
              "ein, entfernt typografische Artefakte (Fußnoten, eingebundene Literaturverweise, "
@@ -616,7 +644,7 @@ _CONTENT = {
     # ─── 中文 ───────────────────────────────────────────────────────
     "zh": {
         "direct_answer": (
-            "Audiobook Maker是一款免费的EPUB和PDF转MP3有声书转换器，"
+            "Audiobook Maker是一款免费的EPUB和PDF转MP3及M4B有声书转换器，"
             "拥有超过400种神经网络AI语音，支持数十种语言（Microsoft Edge TTS）。"
             "无需注册，无使用限制，直接在浏览器中运行。"
         ),
@@ -624,6 +652,7 @@ _CONTENT = {
             "title": "快速总结",
             "items": [
                 "✅ <strong>100% 免费</strong> — 无需注册，无使用限制",
+                 "✅ <strong>M4B 格式</strong> — 支持带嵌入章节的通用有声书格式",
                 "✅ <strong>400+ 神经网络AI语音</strong> — 高质量 Microsoft Edge TTS",
                 "✅ <strong>50+ 语言</strong> — 中文、英语、意大利语、法语、西班牙语、德语等",
                 "✅ <strong>无需安装</strong> — 直接在浏览器中运行",
@@ -631,10 +660,10 @@ _CONTENT = {
                 "✅ <strong>开源</strong> — 透明项目，采用 AGPL-3.0 许可证",
             ],
         },
-        "heading": "免费在线将EPUB和PDF电子书转换为MP3有声书",
+        "heading": "免费在线将EPUB和PDF电子书转换为MP3及M4B有声书",
         "text": (
             "Audiobook Maker是一款免费在线转换器，利用神经网络AI文字转语音技术"
-            "（Microsoft Edge TTS），将您的EPUB和PDF电子书转换为MP3有声书。"
+            "（Microsoft Edge TTS），将您的EPUB和PDF电子书转换为MP3及M4B有声书。"
             "上传EPUB或PDF格式的书籍，从中文、英语、意大利语、法语、西班牙语和德语中"
             "选择超过50种AI语音，然后下载即可收听的有声书。"
             "无需安装任何软件或注册。与Speechify或Play.ht不同，"
@@ -656,7 +685,7 @@ _CONTENT = {
             "可选：通过AI优化文本以获得更自然的朗读效果（展开首字母缩略词、数字、日期，插入停顿并清除排版伪影）",
             "一键启动文字转语音转换，等待处理完成",
             "对于较长的转换，输入您的电子邮件以便在有声书准备就绪时收到带有下载链接的通知——您可以关闭浏览器，稍后再回来",
-            "下载MP3格式的有声书，可在任何设备上收听",
+            "下载MP3或M4B（含章节）格式的有声书，可在任何设备上收听",
             "生成播客RSS订阅源，在您喜爱的应用中收听章节",
         ],
         "faq_heading": "常见问题 — EPUB/PDF转有声书转换器",
@@ -665,8 +694,12 @@ _CONTENT = {
              "将EPUB文件上传到Audiobook Maker，选择AI语音和所需语言，"
              "然后点击转换。免费文字转语音转换器将生成MP3格式的有声书，可随时随地收听。无需注册。"),
             ("如何将PDF转换为有声书？",
-             "Audiobook Maker支持PDF直接转换为MP3有声书。"
-             "上传PDF文件，选择AI语音，转换器将提取文本并使用神经网络语音合成技术将其转换为音频。"),
+             "Audiobook Maker支持将PDF文件直接转换为MP3有声书。"
+             "上传您的PDF，选择AI语音，转换器将提取文本并使用神经网络语音合成技术将其转换为音频。"),
+            ("你们支持 M4B 格式吗？",
+             "支持。Audiobook Maker 可以生成通用的 M4B 格式有声书。"
+             "与普通的 MP3 文件不同，M4B 格式允许直接在音频文件中嵌入章节，"
+             "并在 Apple Books 或 VLC 等应用中保留章节标题和结构。"),
             ("支持哪些电子书格式？",
              "Audiobook Maker支持EPUB、PDF和TXT格式。"
              "推荐使用EPUB以获得最佳效果。"
@@ -683,7 +716,7 @@ _CONTENT = {
              "不需要，Audiobook Maker完全在浏览器中运行，无需下载或安装。"),
             ("服务真的免费吗？",
              "是的，Audiobook Maker完全免费。无需注册，无使用限制，生成的音频文件中也没有广告。"
-             "项目由自愿捐赠支持。"),
+             "项目由自愿捐署支持。"),
             ("可以用什么工具收听Audiobook Maker生成的有声书？",
              "Audiobook Maker生成的MP3文件可以用任何音频播放器播放。"
              "在Android上，我们推荐Smart AudioBook Player，"
@@ -696,7 +729,7 @@ _CONTENT = {
              "AI文本优化是一个可选步骤，由大语言模型（LLM）执行，"
              "用于对从书籍中提取的文本进行改写，使其在朗读时更加自然。"
              "它在语音合成之前运行，处理多个方面："
-             "展开首字母缩略词（例如\"NASA\" → \"N.A.S.A.\"以强制逐字母发音）、"
+             "展开首字母缩略词（例如"NASA" → "N.A.S.A."以强制逐字母发音）、"
              "将数字、日期、计量单位和符号以完整词形展开、"
              "在标题和场景切换后插入自然停顿、"
              "去除排版伪影（脚注、正文内参考文献、音节连字符、双空格）、"
@@ -740,9 +773,9 @@ _VOICE_TABLE = [
 _TABLE_HEADERS = {
     "it": ("Lingua", "Voci AI", "Tecnologia"),
     "en": ("Language", "AI Voices", "Technology"),
-    "fr": ("Langue", "Voix IA", "Technologie"),
-    "es": ("Idioma", "Voces IA", "Tecnología"),
-    "de": ("Sprache", "KI-Stimmen", "Technologie"),
+    "fr": ("Langue", "Voix IA", "Tecnologia"),
+    "es": ("Idioma", "Voces IA", "Tecnologia"),
+    "de": ("Sprache", "KI-Stimmen", "Tecnologia"),
     "zh": ("语言", "AI语音", "技术"),
 }
 
@@ -768,7 +801,7 @@ _HOWTO_STEPS = {
         ("Téléchargez votre ebook", "Téléchargez votre fichier EPUB, PDF ou TXT sur Audiobook Maker"),
         ("Choisissez une voix", "Sélectionnez une voix IA et la langue de narration parmi les options disponibles"),
         ("Sélectionnez les chapitres", "Choisissez les chapitres à convertir ou sélectionnez le livre entier"),
-        ("Lancez la conversion", "Cliquez sur Générer et attendez le traitement text-to-speech. Pour les longues conversions, vous pouvez entrer votre email pour être notifié quand c'est prêt"),
+        ("Lancez la conversion", "Clicquez sur Générer et attendez le traitement text-to-speech. Pour les longues conversions, vous pouvez entrer votre email pour être notifié quand c'est prêt"),
         ("Téléchargez le livre audio", "Téléchargez votre livre audio en MP3 depuis le navigateur ou via le lien email, ou générez un flux RSS podcast"),
     ],
     "es": [
@@ -808,7 +841,8 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     kt_items_html = ""
     if kt:
         for item in kt.get("items", []):
-            kt_items_html += f"            <li>{item}</li>\n"
+            kt_items_html += f"            <li>{item}</li>
+"
         kt_box_html = f"""
         <div class="key-takeaways">
             <h3>{escape(kt.get("title", ""))}</h3>
@@ -819,7 +853,8 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         kt_box_html = ""
 
     # Features <li> items
-    features_li = "\n".join(
+    features_li = "
+".join(
         f"            <li>{escape(f)}</li>" for f in c["features"]
     )
 
@@ -828,9 +863,12 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     faq_ld_items = []
     for q, a in c["faqs"]:
         faqs_html += (
-            f'            <details><summary>{escape(q)}</summary>\n'
-            f'                <p>{_linkify(escape(a))}</p>\n'
-            f'            </details>\n'
+            f'            <details><summary>{escape(q)}</summary>
+'
+            f'                <p>{_linkify(escape(a))}</p>
+'
+            f'            </details>
+'
         )
         faq_ld_items.append({
             "@type": "Question",
@@ -868,16 +906,21 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         table_rows += (
             f'            <tr><td>{escape(label)}</td>'
             f'<td>{escape(count)}</td>'
-            f'<td>Microsoft Edge TTS (Neural)</td></tr>\n'
+            f'<td>Microsoft Edge TTS (Neural)</td></tr>
+'
         )
 
     article_html = f"""
+        <div class="seo-summary">
+            {escape(c["direct_answer"])}
+        </div>
+
         {kt_box_html}
 
-        <details class="seo-section">
-            <summary><h2>{escape(c["heading"])}</h2></summary>
-            <p>{escape(c["text"])}</p>
-        </details>
+        <div class="seo-section" style="border-bottom:1px solid var(--brd,#d5d0c8); padding:0.8rem 0">
+            <h2 style="font-size:1.25rem; color:var(--tx,#2c2a26); font-weight:600; margin-bottom:0.5rem">{escape(c["heading"])}</h2>
+            <p style="margin-left:0.5rem">{escape(c["text"])}</p>
+        </div>
 
         <details class="seo-section">
             <summary><h3>{escape(c["audience_heading"])}</h3></summary>
@@ -969,7 +1012,7 @@ def build_seo_content_html(initial_lang: str) -> str:
   padding:0.4rem 0 }
 #seoContent .seo-section > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.5rem }
 #seoContent .seo-section > summary::-webkit-details-marker { display:none }
-#seoContent .seo-section > summary::before { content:'\\25B6'; font-size:0.6rem; color:var(--ac,#c47a2a);
+#seoContent .seo-section > summary::before { content:'\25B6'; font-size:0.6rem; color:var(--ac,#c47a2a);
   transition:transform 0.2s; flex-shrink:0 }
 #seoContent .seo-section[open] > summary::before { transform:rotate(90deg) }
 #seoContent .seo-section > summary:hover { color:var(--ac,#c47a2a) }
@@ -1022,13 +1065,15 @@ def build_seo_content_html(initial_lang: str) -> str:
         articles.append(
             f'    <article data-seo-lang="{lang}" style="display:{display}">'
             f'{article_html}'
-            f'\n    </article>'
+            f'
+    </article>'
         )
         if lang == initial_lang:
             initial_faq_ld = faq_ld
             initial_howto_ld = howto_ld
 
-    articles_html = "\n".join(articles)
+    articles_html = "
+".join(articles)
 
     # JS function to switch SEO content language (called from setLang)
     switch_js = """

@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(while read:*)",
+      "Bash(do grep:*)",
+      "Bash(done)",
+      "WebFetch(domain:audiobook-maker.com)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''audiobook_app.py''\\).read\\(\\)\\); print\\(''audiobook_app.py: OK''\\)\")",
+      "Bash(python -c \"import ast,io; ast.parse\\(open\\(''audiobook_app.py'',encoding=''utf-8''\\).read\\(\\)\\); print\\(''audiobook_app.py: OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''google_tts.py'',encoding=''utf-8''\\).read\\(\\)\\); ast.parse\\(open\\(''audiobook_app.py'',encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(cd:*)",
+      "Bash(echo \"ABM_DATA_DIR=$ABM_DATA_DIR\")",
+      "Read(//c/var/lib/audiobook-maker/data/**)",
+      "Bash(curl -s \"https://audiobook-maker.com/logs\")",
+      "Bash(curl -sk --max-time 10 \"https://audiobook-maker.com/logs\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('audiobook_app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('audiobook_app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Python syntax OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('audiobook_app.py', doraise=True\\)\")",
+      "Bash(python -m pytest test_smtp.py -v --tb=short)",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('audiobook_app.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('audiobook_app.py', doraise=True\\); print\\('Python OK'\\)\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('templates/_fragments/i18n_data.js','utf8'\\);new Function\\(c\\);console.log\\('JS OK'\\)\")",
+      "Bash(xxd)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('audiobook_app.py',encoding='utf-8'\\).read\\(\\)\\); print\\('audiobook_app.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/admin_voucher.py',encoding='utf-8'\\).read\\(\\)\\); print\\('admin_voucher.py: OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('audiobook_app.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('audiobook_app.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('scripts/admin_voucher.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python:*)",
+      "Bash(ls \"C:/Users/gfran/NEXT srl/Progetti - Documenti/AudioBook-Maker/\"*.md)",
+      "Bash(gh run *)",
+      "Bash(ssh root@80.211.136.211 \"cat /etc/nginx/sites-available/audiobook-maker\")",
+      "Bash(ssh *)",
+      "Bash(sed 's/\":$//')",
+      "Bash(sed 's/^\"//')",
+      "Bash(ls -la *.py)"
+    ]
+  }
+}

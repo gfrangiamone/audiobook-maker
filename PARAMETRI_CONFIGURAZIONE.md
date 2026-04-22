@@ -138,10 +138,43 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `CHUNK_MAX_CHARS` | `2000` (caratteri max per chunk TTS) | `audiobook_app.py` | 627 |
-| `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `audiobook_app.py` | 1595 |
-| `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual; sotto questa soglia le frasi vengono accorpate alla successiva per dare contesto sufficiente al motore) | `audiobook_app.py` | ~1090 |
-| `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `audiobook_app.py` | ~1092 |
+| `CHUNK_MAX_CHARS` | `2000` (caratteri max per chunk TTS) | `tts_split.py` | 37 |
+| `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `generation_engine.py` | 78 |
+| `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual) | `tts_split.py` | 41 |
+| `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `tts_split.py` | 43 |
+
+**Output M4B (v3.8.0+):**
+
+A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene generato automaticamente anche un file `.m4b` con capitoli embedded, copertina e metadati, oltre all'MP3. Il file M4B utilizza codec AAC tramite `ffmpeg`. Se `ffmpeg` non è installato, l'MP3 viene comunque generato normalmente. Il pulsante "Scarica M4B" appare nell'UI solo se il file è disponibile.
+
+**Fix v3.8.1**: timeout M4B aumentato a 3600s (audiolibri lunghi post-ottimizzazione AI), filtro capitoli zero-duration (ffprobe non disponibile), fallback cover art (`-c:v mjpeg`), reset `output_m4b` al ritorno ai capitoli, scan filesystem M4B nella pagina download email.
+
+**Fix v3.8.2**:
+- **Bitrate AAC adattivo** — `_get_audio_bitrate()` rileva tramite `ffprobe` il bitrate dell'MP3 sorgente (default edge-tts: 48 kbps) e lo usa per la codifica AAC, così il file M4B risulta di dimensioni sostanzialmente equivalenti alla somma degli MP3 originali. In precedenza il bitrate era fisso a 64kbps, rendendo il M4B ~33% più grande della sorgente.
+- **Metadati titolo e autore**: aggiunto parametro `author` a `_convert_mp3_to_m4b`; scritti i tag `title`, `album` (= titolo), `artist` e `album_artist` (= autore) nel FFMETADATA1. Il file di metadati viene creato anche quando non ci sono chapter markers validi (in precedenza title/author non venivano scritti se ffprobe era assente). Aggiornati tutti i call site in `audiobook_app.py` e `generation_engine.py`.
+- **Metadati estesi M4B**: aggiunti tag `date` (anno di pubblicazione, estratto da `dc:date` EPUB via `_extract_year_from_date`), `genre` (default `"Audiobook"`), `language` (codice ISO 639-2/B a livello **stream audio** via `-metadata:s:a:0`, mappato da ISO 639-1 via `_normalize_language_iso`), `comment`/`description` (troncati a 1000 char), `media_type=2` (iTunes `stik` atom → Apple Books classifica come "Audiobook"). Aggiunto campo `date: str` alla dataclass `BookInfo` in `epub_to_tts.py`.
+- **Cover art ad alta risoluzione**: nuova funzione `_prepare_m4b_cover_path(job, title, author, work_dir)` che restituisce una cover 1400×1400 per l'embedding. Strategia: (1) riusa `job["cover_hires"]` se cached, (2) estrae dal sorgente EPUB via `_extract_cover_from_epub` a 1400×1400 quadrata, (3) fallback al `cover_thumb` esistente, (4) ultima risorsa: genera cover branded "Audiobook Maker" con titolo e autore via `_generate_fallback_cover` (richiede Pillow). Garantisce che **ogni M4B abbia sempre una copertina**, anche per PDF/TXT o EPUB senza cover.
+
+**Fix v3.8.3 (integrità M4B)**:
+- **Validazione post-conversione**: nuova funzione `_validate_m4b_file(path)` in `audio_utils.py` che usa `ffprobe` per verificare, dopo ogni conversione M4B, che il container sia parsabile (`mp4/m4a/ipod/mov`), che esista almeno uno stream audio e che la durata sia > 0. Motivazione: `ffmpeg` può uscire con `returncode=0` lasciando un file troncato o senza stream audio in casi limite (disk pressure, OOM minore, buffer flush parziale, fallback cover non pulito). Senza questa validazione un M4B corrotto veniva considerato "OK" e offerto al download. Se ffprobe non è installato la validazione viene saltata (skip sicuro, mantiene compatibilità).
+- **Cleanup file parziali**: se `_convert_mp3_to_m4b` fallisce (ffmpeg rc≠0, timeout, eccezione) o la validazione rileva corruzione, il file M4B parziale viene rimosso dal disco. Questo evita che un M4B corrotto venga ripescato dal filesystem scan (`/api/events/<job_id>` L4098-4102, pagina email `/dl/<token>` L4835+).
+- **Pulizia M4B parziale prima dello ZIP (Chapter mode)**: aggiornati entrambi i call site (`audiobook_app.py` L2268+, `generation_engine.py` L1350+) per rimuovere esplicitamente l'M4B parziale da `output_dir` PRIMA di `shutil.make_archive`, se `output_m4b` non è stato impostato (conversione fallita o validazione negativa). Il `try/except/finally` garantisce anche la pulizia del `combined_mp3` temporaneo in ogni scenario.
+
+**Verifica flusso "status=done"**: confermato strutturalmente corretto in tutti i 4 percorsi (`audiobook_app.py` single-file L2166 + chapter L2279 → `status="done"` L2334; `generation_engine.py` single-file L1256 + chapter L1359 → `status="done"` L1411). Anche `progress_current = progress_total` (100%) e `completed_at` sono impostati DOPO la conversione M4B. Il client frontend riceve `status='done'` via SSE solo dopo che `job["output_m4b"]` è stato aggiornato, e l'endpoint `/api/download_m4b/<job_id>` controlla `status != "done"` → `400 Not ready`.
+
+| Parametro | Valore | File | Note |
+|-----------|--------|------|------|
+| Codec M4B | `aac`, bitrate adattivo (rilevato da ffprobe) | `audio_utils.py` | `_convert_mp3_to_m4b` + `_get_audio_bitrate` |
+| Bitrate AAC default | `48k` (fallback se ffprobe non disponibile) | `audio_utils.py` | = default edge-tts (audio-24khz-48kbitrate-mono-mp3) |
+| Formato container | `ipod` (M4B/M4A) | `audio_utils.py` | `-f ipod` ffmpeg |
+| TIMEBASE capitoli | `1/1000` (millisecondi) | `audio_utils.py` | Standard iTunes/Apple Books |
+| Codec cover art | `mjpeg` (con fallback senza cover) | `audio_utils.py` | Compatibile con container ipod |
+| Timeout conversione M4B | `3600` secondi | `audio_utils.py` | Supporto audiolibri molto lunghi |
+| Tag metadati globali | `title`, `album`, `artist`, `album_artist`, `date`, `genre`, `comment`, `description` | `audio_utils.py` | Scritti sempre quando disponibili |
+| Tag stream audio | `language=ita/eng/fra...` (ISO 639-2/B) | `audio_utils.py` | `-metadata:s:a:0 language=...` (MP4 usa language per-stream) |
+| Tag iTunes stik | `media_type=2` (Audiobook) | `audio_utils.py` | Apple Books classifica come audiolibro |
+| Risoluzione cover M4B | `1400×1400` quadrata (JPEG q=2 MJPEG embedded) | `audio_utils.py` | `_prepare_m4b_cover_path` + `_extract_cover_from_epub` |
+| Cover fallback branded | Generata automaticamente per PDF/TXT o EPUB senza cover | `audio_utils.py` | `_generate_fallback_cover`, richiede Pillow |
 
 **Mitigazione drift linguistico voci Multilingual:**
 
@@ -264,7 +297,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.7.1"` | `version.py` | 7 |
+| `__version__` | `"3.8.2"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
@@ -275,6 +308,22 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 |-----------|--------|------|------|
 | `_URL_RE` | Regex compilata per rilevamento URL nel testo | `seo_content.py` | 31 |
 | `_CONTENT` | Dict con contenuti SEO visibili per 6 lingue | `seo_content.py` | 43 |
+
+---
+
+## 9. Nuovi moduli (v3.8.0)
+
+### Architettura a moduli
+
+A partire dalla v3.8.0, il codice è distribuito su più file per migliorare la manutenibilità:
+
+| Modulo | Contenuto |
+|--------|-----------|
+| `audio_utils.py` | Utilities audio: concatenazione MP3, silenzio, cover, podcast RSS, **conversione M4B** (`_convert_mp3_to_m4b`) |
+| `tts_split.py` | Splitting testo per TTS, generazione chunk via edge-tts/Google TTS, anti-drift Multilingual |
+| `email_service.py` | SMTP, digest admin, ricevuta pagamento, buono rimborso |
+| `payment.py` | Gestione voucher, PayPal OAuth2/capture, validazione rate-limited |
+| `generation_engine.py` | Thread di ottimizzazione LLM e generazione TTS, `configure()`, `run_optimization`, `run_generation` |
 
 ---
 
@@ -290,4 +339,5 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | Google Cloud TTS (`google_tts.py`) | 5 |
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
-| **Totale** | **79** |
+| Nuovi moduli v3.8.0 | 6 |
+| **Totale** | **85** |

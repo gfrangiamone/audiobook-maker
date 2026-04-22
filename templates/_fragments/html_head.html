@@ -37,20 +37,57 @@ __SEO_HREFLANG__
   "@context":"https://schema.org",
   "@type":"SoftwareApplication",
   "name":"__SEO_LD_NAME__",
+  "alternateName": "Audiobook Maker Online",
   "applicationCategory":"MultimediaApplication",
   "applicationSubCategory":"Text-to-Speech Converter",
   "operatingSystem":"Any (Web Browser)",
   "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
   "description":"__SEO_LD_DESC__",
-  "featureList":["EPUB to MP3 audiobook conversion","PDF to MP3 audiobook conversion","TXT to MP3 audiobook conversion","400+ neural AI voices (Microsoft Edge TTS)","50+ languages supported","Chapter selection and preview","Podcast RSS feed generation","Email notification for long conversions","Batch processing","No registration required","No usage limits","Browser-based processing","Accessibility support for visually impaired and dyslexic users"],
+  "featureList":["EPUB to MP3/M4B audiobook conversion (with chapters)","PDF to MP3/M4B audiobook conversion (with chapters)","TXT to MP3/M4B audiobook conversion","400+ neural AI voices (Microsoft Edge TTS)","50+ languages supported","Chapter selection and preview","Podcast RSS feed generation","Email notification for long conversions","Batch processing","No registration required","No usage limits","Browser-based processing","Accessibility support for visually impaired and dyslexic users"],
   "softwareVersion":"__APP_VERSION__",
-  "dateModified":"2026-03",
+  "dateModified":"2026-04",
   "url":"https://audiobook-maker.com",
-  "author":{"@type":"Person","name":"Giuseppe Frangiamone","url":"https://github.com/gfrangiamone"},
+  "image": "https://audiobook-maker.com/favicon-192.png",
+  "author":{
+    "@type":"Person",
+    "name":"Giuseppe Frangiamone",
+    "url":"https://github.com/gfrangiamone",
+    "jobTitle": "Lead Developer",
+    "sameAs": [
+      "https://www.linkedin.com/in/giuseppe-frangiamone/",
+      "https://twitter.com/gfrangiamone"
+    ]
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Audiobook Maker Project",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://audiobook-maker.com/favicon-192.png"
+    }
+  },
   "license":"https://www.gnu.org/licenses/agpl-3.0.html",
   "isAccessibleForFree":true,
-  "aggregateRating":{"@type":"AggregateRating","ratingValue":"4.7","bestRating":"5","worstRating":"1","ratingCount":"386"},
+  "aggregateRating":{"@type":"AggregateRating","ratingValue":"4.8","bestRating":"5","worstRating":"1","ratingCount":"412"},
   "sameAs":["https://github.com/gfrangiamone/audiobook-maker","https://alternativeto.net/software/audiobook-maker/"]
+}
+</script>
+<!-- JSON-LD: BreadcrumbList (SEO Navigation) -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [{
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Audiobook Maker",
+    "item": "https://audiobook-maker.com"
+  }, {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Convert __HTML_LANG__",
+    "item": "__SEO_CANONICAL__"
+  }]
 }
 </script>
 <!-- JSON-LD: FAQPage (server-injected per language) -->
@@ -488,28 +525,29 @@ select:focus{outline:none;border-color:var(--ac)}
 <!-- Background decorative SVGs -->
 <div class="bg-deco">
   <!-- Open book -->
-  <svg class="deco-book1" viewBox="0 0 200 160" fill="currentColor"><path d="M100 20C80 10 40 5 10 8v120c30-3 70 0 90 12 20-12 60-15 90-12V8c-30-3-70 2-90 12z"/><line x1="100" y1="20" x2="100" y2="140" stroke="currentColor" stroke-width="2" fill="none"/><path d="M30 35h40M30 55h50M30 75h45M30 95h40" stroke="currentColor" stroke-width="1.5" opacity=".3" fill="none"/><path d="M120 35h40M120 55h50M120 75h45M120 95h40" stroke="currentColor" stroke-width="1.5" opacity=".3" fill="none"/></svg>
+  <svg class="deco-book1" viewBox="0 0 200 160" fill="currentColor" aria-hidden="true"><path d="M100 20C80 10 40 5 10 8v120c30-3 70 0 90 12 20-12 60-15 90-12V8c-30-3-70 2-90 12z"/><line x1="100" y1="20" x2="100" y2="140" stroke="currentColor" stroke-width="2" fill="none"/><path d="M30 35h40M30 55h50M30 75h45M30 95h40" stroke="currentColor" stroke-width="1.5" opacity=".3" fill="none"/><path d="M120 35h40M120 55h50M120 75h45M120 95h40" stroke="currentColor" stroke-width="1.5" opacity=".3" fill="none"/></svg>
   <!-- Stacked books -->
-  <svg class="deco-book2" viewBox="0 0 140 180" fill="currentColor"><rect x="15" y="120" width="110" height="22" rx="3" opacity=".7"/><rect x="10" y="95" width="115" height="22" rx="3" opacity=".55"/><rect x="20" y="70" width="100" height="22" rx="3" opacity=".4"/><rect x="25" y="45" width="90" height="22" rx="3" opacity=".3"/><path d="M60 10l30 30H30z" opacity=".2"/></svg>
+  <svg class="deco-book2" viewBox="0 0 140 180" fill="currentColor" aria-hidden="true"><rect x="15" y="120" width="110" height="22" rx="3" opacity=".7"/><rect x="10" y="95" width="115" height="22" rx="3" opacity=".55"/><rect x="20" y="70" width="100" height="22" rx="3" opacity=".4"/><rect x="25" y="45" width="90" height="22" rx="3" opacity=".3"/><path d="M60 10l30 30H30z" opacity=".2"/></svg>
   <!-- Audio wave -->
-  <svg class="deco-wave1" viewBox="0 0 260 80" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10 40h20M40 25v30M55 15v50M70 22v36M85 10v60M100 20v40M115 30v20M130 18v44M145 8v64M160 22v36M175 32v16M190 20v40M205 28v24M220 35v10M240 38v4"/></svg>
+  <svg class="deco-wave1" viewBox="0 0 260 80" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M10 40h20M40 25v30M55 15v50M70 22v36M85 10v60M100 20v40M115 30v20M130 18v44M145 8v64M160 22v36M175 32v16M190 20v40M205 28v24M220 35v10M240 38v4"/></svg>
   <!-- Audio wave 2 -->
-  <svg class="deco-wave2" viewBox="0 0 220 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 35h15M30 20v30M45 12v46M60 22v26M75 8v54M90 18v34M105 28v14M120 15v40M135 10v50M150 25v20M165 18v34M180 30v10M200 33v4"/></svg>
+  <svg class="deco-wave2" viewBox="0 0 220 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 35h15M30 20v30M45 12v46M60 22v26M75 8v54M90 18v34M105 28v14M120 15v40M135 10v50M150 25v20M165 18v34M180 30v10M200 33v4"/></svg>
   <!-- Headphones -->
-  <svg class="deco-phones" viewBox="0 0 120 120" fill="currentColor"><path d="M60 15C33 15 15 35 15 60v25c0 8 6 14 14 14h8V65h-8c-2 0-4 .4-6 1v-6c0-20 15-35 37-35s37 15 37 35v6c-2-.6-4-1-6-1h-8v34h8c8 0 14-6 14-14V60c0-25-18-45-45-45z" opacity=".6"/><rect x="19" y="68" width="14" height="28" rx="5" opacity=".4"/><rect x="87" y="68" width="14" height="28" rx="5" opacity=".4"/></svg>
+  <svg class="deco-phones" viewBox="0 0 120 120" fill="currentColor" aria-hidden="true"><path d="M60 15C33 15 15 35 15 60v25c0 8 6 14 14 14h8V65h-8c-2 0-4 .4-6 1v-6c0-20 15-35 37-35s37 15 37 35v6c-2-.6-4-1-6-1h-8v34h8c8 0 14-6 14-14V60c0-25-18-45-45-45z" opacity=".6"/><rect x="19" y="68" width="14" height="28" rx="5" opacity=".4"/><rect x="87" y="68" width="14" height="28" rx="5" opacity=".4"/></svg>
   <!-- Music note -->
-  <svg class="deco-note1" viewBox="0 0 60 80" fill="currentColor"><ellipse cx="18" cy="62" rx="14" ry="10" opacity=".5"/><rect x="30" y="12" width="3" height="52" opacity=".4"/><path d="M33 12c10-4 22-2 22 10-8-8-18-6-22-2z" opacity=".4"/></svg>
+  <svg class="deco-note1" viewBox="0 0 60 80" fill="currentColor" aria-hidden="true"><ellipse cx="18" cy="62" rx="14" ry="10" opacity=".5"/><rect x="30" y="12" width="3" height="52" opacity=".4"/><path d="M33 12c10-4 22-2 22 10-8-8-18-6-22-2z" opacity=".4"/></svg>
   <!-- Music note 2 -->
-  <svg class="deco-note2" viewBox="0 0 50 70" fill="currentColor"><ellipse cx="15" cy="55" rx="12" ry="8" opacity=".5"/><rect x="25" y="10" width="2.5" height="47" opacity=".4"/><path d="M27.5 10c8-3 18-1 18 8-7-7-15-5-18-1z" opacity=".4"/></svg>
+  <svg class="deco-note2" viewBox="0 0 50 70" fill="currentColor" aria-hidden="true"><ellipse cx="15" cy="55" rx="12" ry="8" opacity=".5"/><rect x="25" y="10" width="2.5" height="47" opacity=".4"/><path d="M27.5 10c8-3 18-1 18 8-7-7-15-5-18-1z" opacity=".4"/></svg>
   <!-- Turning pages -->
-  <svg class="deco-pages" viewBox="0 0 120 100" fill="currentColor"><path d="M10 90V15c25-5 45 0 50 10V90C50 80 35 77 10 80z" opacity=".25"/><path d="M60 25c5-10 25-15 50-10v75c-25-3-40 0-50 10z" opacity=".35"/><path d="M55 20Q70 5 90 10" stroke="currentColor" stroke-width="1.5" fill="none" opacity=".2"/></svg>
+  <svg class="deco-pages" viewBox="0 0 120 100" fill="currentColor" aria-hidden="true"><path d="M10 90V15c25-5 45 0 50 10V90C50 80 35 77 10 80z" opacity=".25"/><path d="M60 25c5-10 25-15 50-10v75c-25-3-40 0-50 10z" opacity=".35"/><path d="M55 20Q70 5 90 10" stroke="currentColor" stroke-width="1.5" fill="none" opacity=".2"/></svg>
 </div>
 
 <div class="app">
-  <div class="hdr">
-    <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
-    <p data-t="h1_tagline" style="font-size:.85rem;color:var(--txd);margin-top:2px"></p>
-    <p data-t="subtitle"></p>
+  <header class="hdr">
+    <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
+    <p data-t="h1_tagline" style="font-size:.85rem;color:var(--txd);margin-top:2px">__H1_TAGLINE__</p>
+    <p data-t="subtitle">__SUBTITLE__</p>
+
     <div class="toolbar">
       <!-- Language Switcher Dropdown -->
       <div class="lang-switcher" id="langSwitcher">
@@ -602,10 +640,11 @@ select:focus{outline:none;border-color:var(--ac)}
       <div class="fg" id="fgOut"><label data-t="lbl_out"></label>
         <div class="tg">
           <button class="on" data-v="single" id="toS" data-t="out_single"></button>
-          <button data-v="chapters" id="toC" data-t="out_ch"></button>
+          <button data-v="chapters" id="toC" data-t="out_zip"></button>
         </div>
         <div class="pod-hint" id="podHint" style="display:none">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
       </div>
+
     </div>
     </div>
   </div>
@@ -701,8 +740,9 @@ select:focus{outline:none;border-color:var(--ac)}
     </div>
     <div id="dlA" style="display:none;margin-top:20px">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-ok" id="btnD">&#x2B07;&#xFE0F; <span data-t="btn_dl"></span></button>
-        <button class="btn btn-ok" id="btnP" style="display:none;background:var(--ac);opacity:.85">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
+          <button class="btn btn-ok" id="btnD">&#x2B07;&#xFE0F; <span data-t="btn_dl"></span></button>
+          <button class="btn btn-ok" id="btnM" style="display:none;background:var(--ac);">&#x1F4D6;&#xFE0F; <span data-t="btn_dl_m4b"></span></button>
+          <button class="btn btn-ok" id="btnP" style="display:none;background:var(--ac);opacity:.85">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
       </div>
       <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-g" id="btnBackCh" onclick="goBackToChapters()" style="display:none">&#x1F4D6; <span data-t="btn_back_chapters"></span></button>

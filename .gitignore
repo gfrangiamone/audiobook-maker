@@ -4,6 +4,7 @@ _debug*
 *.py[cod]
 *.log
 *.egg-info/
+firebase*
 data/
 dist/
 build/
@@ -12,7 +13,9 @@ backup/
 .venv/
 .minimax/
 venv/
+public/
 CLAUDE.md
+GEMINI.md
 
 # App data (generated at runtime)
 data/
@@ -38,3 +41,4 @@ _payments.json
 voucher_admin.log
 **/ABM_DATA_DIR/
 
+.aider*

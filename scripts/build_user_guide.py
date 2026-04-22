@@ -358,7 +358,7 @@ def build_guide(output_path: Path) -> Path:
         doc,
         "Audiobook Maker utilizza il motore neurale Microsoft Edge TTS, che offre oltre "
         "400 voci con intonazione molto naturale. Le voci sono raggruppate per lingua e "
-        "identificate con codice locale (es. it-IT-GiuseppeNeural, en-US-AriaNeural).",
+        "identificate con codice locale (es. it-IT-IsabellaNeural, en-US-AriaNeural).",
     )
     add_heading(doc, "Parametri disponibili", level=2)
     add_kv_table(doc, [
@@ -373,7 +373,7 @@ def build_guide(output_path: Path) -> Path:
     add_callout(
         doc,
         "💡 Suggerimento voci",
-        "Le voci «Multilingual» (es. en-US-AvaMultilingualNeural) sanno pronunciare "
+        "Le voci «Multilingual» (es. it-IT-GiuseppeMultilingualNeural) sanno pronunciare "
         "testi misti in più lingue, ma possono occasionalmente leggere una frase "
         "nella lingua sbagliata. Per libri in italiano puro preferisci voci native "
         "(it-IT-*). Per contenuti misti valuta invece l'ottimizzazione AI che "
@@ -539,7 +539,7 @@ def build_guide(output_path: Path) -> Path:
     add_callout(
         doc,
         "🎯 Caso d'uso",
-        "Vuoi un audiolibro in italiano (voce Giuseppe) e una versione alternativa con "
+        "Vuoi un audiolibro in italiano (voce Isabella) e una versione alternativa con "
         "voce femminile (Elsa) per confrontarle? Ottimizza una volta, salva il .abm, "
         "poi rigenera l'audio due volte scegliendo voci diverse. Paghi/attendi "
         "l'ottimizzazione una sola volta.",
@@ -615,7 +615,7 @@ def build_guide(output_path: Path) -> Path:
         "ricucendo poi i file MP3 via ffmpeg.",
         "Ottimizzazione AI: l'LLM fonde righe troppo brevi, contestualizza loanword e inserisce punteggiatura "
         "che stabilizza la lingua della voce.",
-        "Consiglio pratico: per libri monolingua preferisci sempre la voce nativa (es. it-IT-GiuseppeNeural) "
+        "Consiglio pratico: per libri monolingua preferisci sempre la voce nativa (es. it-IT-IsabellaNeural) "
         "che non è soggetta al problema.",
     ])
     add_page_break(doc)

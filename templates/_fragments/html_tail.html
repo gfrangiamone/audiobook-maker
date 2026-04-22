@@ -132,6 +132,8 @@ let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=
 let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 let aiOptEnabled=false,llmAvailable=false,aiAlreadyOptimized=false;
+let lastVoucherEmail='';
+try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -199,13 +201,16 @@ document.addEventListener('DOMContentLoaded',()=>{
   
   setupUpload();loadVoices();
   document.getElementById('btnG').onclick=startGen;
-  document.getElementById('btnD').onclick=downloadFile;
+  document.getElementById('btnD').onclick=()=>downloadFile('zip');
+  document.getElementById('btnM').onclick=()=>downloadFile('m4b');
   document.getElementById('btnP').onclick=downloadPodcast;
   document.getElementById('btnN').onclick=resetAll;
   document.getElementById('btnC').onclick=cancelJob;
   window.addEventListener('beforeunload',onBeforeUnload);
   document.getElementById('toS').onclick=function(){toggleOut(this)};
   document.getElementById('toC').onclick=function(){toggleOut(this)};
+  // Initialize to M4B (toS) by default on load with a slight delay
+  setTimeout(() => toggleOut(document.getElementById('toS')), 50);
   // Chapter selection handlers
   document.getElementById('selAll').onclick=chSelAll;
   document.getElementById('selNone').onclick=chSelNone;
@@ -218,20 +223,8 @@ function toggleOut(el){
   el.closest('.tg').querySelectorAll('button').forEach(b=>b.classList.remove('on'));
   el.classList.add('on');singleFile=el.dataset.v==='single';
   document.getElementById('podHint').style.display=singleFile?'none':'';
-  // Show/hide chapter selection UI
-  const show=!singleFile;
-  document.getElementById('thSel').style.display=show?'':'none';
-  document.querySelectorAll('#chl .col-sel').forEach(td=>td.style.display=show?'':'none');
-  document.querySelectorAll('#chl tr').forEach(tr=>tr.style.cursor=show?'pointer':'');
-  document.getElementById('selBar').classList.toggle('vis',show);
-  if(show){updateSelection()}
-  else if(bookData){
-    // Restore full summary counts
-    document.getElementById('smC').textContent=bookData.total_chapters;
-    document.getElementById('smW').textContent=bookData.total_words.toLocaleString();
-    document.getElementById('smD').textContent=fmtDur(bookData.estimated_minutes);
-    document.getElementById('btnG').disabled=false;
-  }
+  // Chapter selection UI is now ALWAYS visible
+  updateSelection();
 }
 
 // ═══════════════════ UPLOAD + LOCK ═══════════════════
@@ -347,9 +340,9 @@ async function analyzeEpub(file){
       toggleOut(document.getElementById('toS'));
       document.getElementById('fgOut').style.display='none';
     }else{
-      // EPUB/PDF/ABM: default to chapters mode
+      // EPUB/PDF/ABM: default to M4B mode
       document.getElementById('fgOut').style.display='';
-      toggleOut(document.getElementById('toC'));
+      toggleOut(document.getElementById('toS'));
     }
     // Export button: always enabled after analysis
     const btnExp=document.getElementById('btnExport');
@@ -429,7 +422,7 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  const dv=edgeVoices.find(v=>v.id.includes('Giuseppe')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+  const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
   if(dv)sel.value=dv.id;
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();};
   _updateVoiceChip();checkVoiceMismatch();
@@ -636,19 +629,25 @@ function updateSelection(){
     if(cb.checked){cnt++;const tr=cb.closest('tr');words+=parseInt(tr.dataset.words||0);mins+=parseFloat(tr.dataset.mins||0)}
   });
   document.getElementById('selCnt').textContent=cnt;
+  
+  // Selection UI is now always visible
+  document.getElementById('thSel').style.display='';
+  document.querySelectorAll('#chl .col-sel').forEach(td=>td.style.display='');
+  document.querySelectorAll('#chl tr').forEach(tr=>tr.style.cursor='pointer');
+  document.getElementById('selBar').classList.add('vis');
+
   // Update summary to reflect selection
-  if(!singleFile){
-    document.getElementById('smC').textContent=cnt+' / '+(bookData?bookData.total_chapters:boxes.length);
-    document.getElementById('smW').textContent=words.toLocaleString();
-    document.getElementById('smD').textContent=fmtDur(mins);
-  }
+  document.getElementById('smC').textContent=cnt+' / '+(bookData?bookData.total_chapters:boxes.length);
+  document.getElementById('smW').textContent=words.toLocaleString();
+  document.getElementById('smD').textContent=fmtDur(mins);
+
   // Master checkbox state
   const all=boxes.length;
   const master=document.getElementById('chAll');
   master.checked=cnt===all;
   master.indeterminate=cnt>0&&cnt<all;
-  // Disable generate if none selected and in chapter mode
-  document.getElementById('btnG').disabled=(!singleFile&&cnt===0);
+  // Disable generate if none selected
+  document.getElementById('btnG').disabled=(cnt===0);
 }
 
 function chSelAll(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.remove('unchecked')});updateSelection()}
@@ -731,7 +730,7 @@ function _showOptEmailModal(){
     const btnsEl=document.getElementById('optBatchBtns');
     errEl.style.display='none';okEl.style.display='none';btnsEl.style.display='flex';
     document.getElementById('optAutoGen').checked=false;
-    document.getElementById('optBatchEmail').value='';
+    document.getElementById('optBatchEmail').value=lastVoucherEmail;
     applyI18n();
     modal.classList.add('open');
     document.getElementById('optBatchClose').onclick=function(){modal.classList.remove('open');resolve(null)};
@@ -742,6 +741,8 @@ function _showOptEmailModal(){
         errEl.textContent=t('opt_batch_email_err')||'Enter a valid email address';
         errEl.style.display='';return;
       }
+      lastVoucherEmail=email;
+      try{localStorage.setItem('abm_v_email',email)}catch(e){}
       errEl.style.display='none';
       var autoGen=document.getElementById('optAutoGen').checked;
       // Register email and batch params on the server
@@ -796,7 +797,7 @@ async function _showPaymentModal(costEur,chars){
     document.getElementById('payCostValue').textContent='€ '+costEur.toFixed(2);
     document.getElementById('payCostDetails').textContent=chars.toLocaleString()+' char × '+llmConfig.rate.toFixed(2)+' €/M';
     document.getElementById('payVoucherCode').value='';
-    document.getElementById('payVoucherEmail').value='';
+    document.getElementById('payVoucherEmail').value=lastVoucherEmail;
     applyI18n();
     // pay_desc contiene tag HTML (<b>) e placeholder {chars} → calcolo dinamico della soglia in caratteri
     // soglia_char = floor(threshold_eur / rate_eur_per_Mchar * 1_000_000), arrotondato per difetto a migliaia
@@ -817,6 +818,8 @@ async function _showPaymentModal(costEur,chars){
         var r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
         var d=await r.json();
         if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
+        lastVoucherEmail=email; // Save for pre-filling notification email
+        try{localStorage.setItem('abm_v_email',email)}catch(e){}
         okEl.textContent=t('pay_voucher_valid');okEl.style.display='';
         setTimeout(function(){done(d.payment_token)},800);
       }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
@@ -861,11 +864,25 @@ async function _showPaymentModal(costEur,chars){
 async function startOptimization(){
   if(!jobId){return}
   document.getElementById('s3err').innerHTML='';
+  
+  // Collect selected chapters if in chapter mode
+  let selectedChapters=null;
+  if(!singleFile){
+    selectedChapters=[];
+    document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
+      if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
+    });
+    if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
+  }
 
   // ── Check cost estimate first ──
   var paymentToken=null;
   try{
-    var est=await fetch('/api/optimize_estimate/'+jobId).then(function(r){return r.json()});
+    let url='/api/optimize_estimate/'+jobId;
+    if(selectedChapters&&selectedChapters.length>0){
+        url+='?selected_chapters='+selectedChapters.join('&selected_chapters=');
+    }
+    var est=await fetch(url).then(function(r){return r.json()});
     if(est.error){showS3Err(est.error);return}
     if(est.requires_payment){
       // Refresh config from server
@@ -908,6 +925,7 @@ async function startOptimization(){
   try{
     var payload={job_id:jobId,batch:false,lang:cl};
     if(paymentToken)payload.payment_token=paymentToken;
+    if(selectedChapters)payload.selected_chapters=selectedChapters;
     var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     var d=await r.json();
     if(d.error){
@@ -1124,15 +1142,15 @@ async function startGen(){
   }
   // Mark this generation so the modal can appear next time
   _markGeneration();
-  // Collect selected chapter indices when in chapter mode
-  let selectedChapters=null;
-  if(!singleFile){
-    selectedChapters=[];
-    document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
-      if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
-    });
-    if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
-  }
+  // Collect selected chapter indices
+  let selectedChapters=[];
+  document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
+    if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
+  });
+  if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
+  // Check if "all" chapters are selected to optionally send null or full list
+  // The backend supports filtering, so always sending them is safer.
+
   document.getElementById('s3err').innerHTML='';
   document.getElementById('btnG').disabled=true;
   // Set s2 summary for collapsed state
@@ -1228,6 +1246,13 @@ function listenProgress(){
       if(d.bytes_generated>0)
         document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
 
+      // Update progress message (including M4B conversion feedback)
+      let msg = d.progress_message || '';
+      if(msg === "Converting to M4B...") {
+          msg = t('converting_m4b') || msg;
+      }
+      document.getElementById('pMsg').textContent=msg;
+
       if(d.status==='done'){
         es.close();
         generating=false;
@@ -1236,6 +1261,16 @@ function listenProgress(){
         document.getElementById('pBar').style.width='100%';
         document.getElementById('pMsg').textContent=t('done_msg');
         document.getElementById('pMsg').style.color='var(--ok)';
+
+        // M4B retry/fallback warning
+        if(d.m4b_failed){
+          const warn = document.createElement('div');
+          warn.className = 'al al-warn';
+          warn.style.marginTop = '10px';
+          warn.textContent = t('m4b_warn_mp3');
+          document.getElementById('pra').appendChild(warn);
+        }
+
         if(d.failed_chunks>0){
           document.getElementById('pMsg').textContent=t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)';
           document.getElementById('pMsg').style.color='#d97706';
@@ -1243,7 +1278,22 @@ function listenProgress(){
         document.getElementById('xEta').textContent='-';
         document.getElementById('dlA').style.display='block';
         document.getElementById('dlA').classList.add('fi');
-        document.getElementById('btnP').style.display=d.has_podcast?'':'none';
+        
+        // Dynamic main download button (btnD) based on Step 2 selection
+        const btnD = document.getElementById('btnD');
+        if (singleFile) {
+          // M4B choice
+          btnD.innerHTML = '&#x1F4D6;&#xFE0F; ' + (t('btn_dl_m4b') || 'Download Audiolibro M4B');
+          btnD.onclick = () => downloadFile('m4b');
+        } else {
+          // ZIP choice
+          btnD.innerHTML = '&#x1F4C2;&#xFE0F; ' + t('out_zip');
+          btnD.onclick = () => downloadFile('zip');
+        }
+
+        // Secondary download buttons
+        document.getElementById('btnM').style.display = (singleFile ? false : d.output_m4b) ? '' : 'none';
+        document.getElementById('btnP').style.display = d.has_podcast ? '' : 'none';
         // Show "back to chapters" button if the book has multiple chapters
         document.getElementById('btnBackCh').style.display=(bookData&&bookData.total_chapters>1)?'':'none';
         document.getElementById('s4t').textContent=t('done_t');
@@ -1357,6 +1407,7 @@ function showEmailModal(){
   document.getElementById('emDlPodcastL').textContent=t('email_dl_podcast');
   document.getElementById('emBaseUrlLabel').textContent=t('email_base_url');
   document.getElementById('emEmail').placeholder=t('email_placeholder');
+  document.getElementById('emEmail').value=lastVoucherEmail;
   document.getElementById('emSubmit').textContent=t('email_btn');
   document.getElementById('emSkip').textContent=t('email_skip');
   document.getElementById('emErr').style.display='none';
@@ -1384,6 +1435,8 @@ async function submitEmail(){
   if(!email||!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)){
     errEl.textContent=t('email_invalid');errEl.style.display='block';return;
   }
+  lastVoucherEmail=email;
+  try{localStorage.setItem('abm_v_email',email)}catch(e){}
   const dlType=document.querySelector('input[name="emDl"]:checked').value;
   const baseUrl=document.getElementById('emBaseUrl').value.trim();
   if(dlType==='podcast'&&!baseUrl){
@@ -1427,44 +1480,46 @@ async function checkSmtp(){
 }
 checkSmtp();
 
-async function downloadFile(){
+async function downloadFile(type){
   if(!jobId)return;
-  const btn=document.getElementById('btnD');
+  const isM4b = type === 'm4b';
+  const btnId = isM4b ? 'btnM' : 'btnD';
+  const btn=document.getElementById(btnId);
+  const originalHtml = btn.innerHTML;
   btn.disabled=true;btn.textContent='⏳...';
   const maxDlRetries=3;
   for(let attempt=1;attempt<=maxDlRetries;attempt++){
     try{
-      // Heartbeat prima del download (assicura che il job sia ancora vivo)
       navigator.sendBeacon('/api/heartbeat/'+jobId);
-      const r=await fetch('/api/download/'+jobId);
+      const r=await fetch('/api/download/'+jobId + (type ? '?type='+type : ''));
       if(r.status===404){
         if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
         showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
-        btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        btn.disabled=false;btn.innerHTML=originalHtml;
         return;
       }
       if(!r.ok){
         const txt=await r.text();
         showPErr(txt||'Download failed');
-        btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+        btn.disabled=false;btn.innerHTML=originalHtml;
         return;
       }
       const blob=await r.blob();
       const cd=r.headers.get('Content-Disposition')||'';
       const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
-      const fname=m?m[1]:'audiobook.mp3';
+      const fname=m?m[1]:(isM4b ? 'audiobook.m4b' : 'audiobook.zip');
       const a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
       a.download=fname;
       document.body.appendChild(a);a.click();
       setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
-      btn.innerHTML='✅ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+      btn.innerHTML='✅ ' + (isM4b ? '<span data-t="btn_dl_m4b">'+t('btn_dl_m4b')+'</span>' : '<span data-t="btn_dl">'+t('btn_dl')+'</span>');
       btn.disabled=false;
       return;
     }catch(e){
       if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
       showPErr('Download error: '+e.message);
-      btn.disabled=false;btn.innerHTML='⬇️ <span data-t="btn_dl">'+t('btn_dl')+'</span>';
+      btn.disabled=false;btn.innerHTML=originalHtml;
     }
   }
 }
@@ -1529,6 +1584,7 @@ async function goBackToChapters(){
   // Hide step 4
   document.getElementById('s4').style.display='none';
   document.getElementById('dlA').style.display='none';
+  document.getElementById('btnM').style.display='none';
   document.getElementById('btnP').style.display='none';
   document.getElementById('btnBackCh').style.display='none';
   document.getElementById('cnA').style.display='';
@@ -1564,6 +1620,7 @@ function resetAll(){
   disableStep('s2');disableStep('s3');
   ['s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
   document.getElementById('dlA').style.display='none';
+  document.getElementById('btnM').style.display='none';
   document.getElementById('btnP').style.display='none';
   document.getElementById('btnBackCh').style.display='none';
   document.getElementById('podHint').style.display='none';
@@ -1589,7 +1646,7 @@ function resetAll(){
   emailPromptShown=false;emailRegistered=false;previewListened=false;
   document.getElementById('emailModal').classList.remove('open');
   // Reset email modal fields
-  document.getElementById('emEmail').value='';document.getElementById('emEmail').style.display='';
+  document.getElementById('emEmail').value=lastVoucherEmail;document.getElementById('emEmail').style.display='';
   document.getElementById('emBaseUrl').value='';
   document.getElementById('emDesc').style.display='';
   document.querySelectorAll('input[name="emDl"]').forEach((r,i)=>{r.checked=i===0});
