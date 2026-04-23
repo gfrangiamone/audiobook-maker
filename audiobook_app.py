@@ -2396,16 +2396,6 @@ def sitemap():
     return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
 
 
-@app.route("/robots.txt")
-def robots():
-    """Istruzioni per i crawler e link alla sitemap."""
-    if not BASE_URL:
-        return "User-agent: *\nAllow: /", 200, {"Content-Type": "text/plain"}
-    
-    txt = f"User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml"
-    return txt, 200, {"Content-Type": "text/plain"}
-
-
 #  —  —  —  robots.txt  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 @app.route("/robots.txt")
 def robots():
