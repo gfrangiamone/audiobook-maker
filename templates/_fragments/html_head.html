@@ -137,13 +137,16 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 @media(max-width:700px){.bg-deco svg{opacity:calc(var(--deco-opacity) * .5)}}
 
 /* ═══ LAYOUT ═══ */
-.app{max-width:720px;margin:0 auto;padding:40px 24px 80px;position:relative;z-index:1}
+.app{display:block;width:100%;max-width:720px!important;margin:0 auto!important;padding:40px 24px 80px;position:relative;z-index:1}
 .hdr{text-align:center;margin-bottom:48px}
 .hdr h1{font-family:'DM Serif Display',serif;font-size:2.2rem;font-weight:400;letter-spacing:-.02em;background:linear-gradient(135deg,var(--tx) 30%,var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px;justify-content:center}
 .hdr-icon{width:42px;height:42px;flex-shrink:0}
 .hdr-icon .ic-book{fill:var(--ac);opacity:.85}
 .hdr-icon .ic-wave{stroke:var(--ac);fill:none;stroke-width:2;stroke-linecap:round;opacity:.7}
 .hdr p{color:var(--txd);font-size:.95rem}
+
+/* Pannelli Steps e Disclaimer - Forza larghezza massima e centratura */
+.disc, .step { width:100%!important; max-width:720px!important; margin-left:auto!important; margin-right:auto!important; box-sizing:border-box!important; }
 
 /* ═══ TOOLBAR: language + theme ═══ */
 .toolbar{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
