@@ -24,6 +24,16 @@ import shutil
 import uuid
 
 
+def _check_audio_dependencies():
+    """Verifica la presenza di ffmpeg e ffprobe nel PATH di sistema.
+    
+    Ritorna una tupla (ffmpeg_ok, ffprobe_ok).
+    """
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    ffprobe_ok = shutil.which("ffprobe") is not None
+    return ffmpeg_ok, ffprobe_ok
+
+
 # ---------------------------------------------------------------------------
 # ZIP / EPUB helpers
 # ---------------------------------------------------------------------------
@@ -994,6 +1004,11 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
 def _safe_filename(name):
     """Sanitizza un nome file rimuovendo caratteri non consentiti."""
     import re
+    # Remove filesystem forbidden chars
     name = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Replace spaces with underscores
     name = re.sub(r'\s+', '_', name.strip())
+    # Security: prevent filename starting with '-' to avoid CLI argument injection
+    if name.startswith('-'):
+        name = '_' + name
     return name[:100]

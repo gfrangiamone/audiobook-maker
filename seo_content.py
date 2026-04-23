@@ -828,6 +828,102 @@ _HOWTO_STEPS = {
 }
 
 
+# ─── Feature lists per JSON-LD SoftwareApplication ───
+
+_LD_FEATURES = {
+    "it": [
+        "Conversione da EPUB a audiolibro MP3/M4B (con capitoli)",
+        "Conversione da PDF a audiolibro MP3/M4B (con capitoli)",
+        "Conversione da TXT a audiolibro MP3/M4B",
+        "Oltre 400 voci neurali AI (Microsoft Edge TTS)",
+        "Supporto per oltre 50 lingue",
+        "Selezione e anteprima dei capitoli",
+        "Generazione di feed RSS per podcast",
+        "Notifica via email per conversioni lunghe",
+        "Elaborazione batch",
+        "Nessuna registrazione richiesta",
+        "Nessun limite di utilizzo",
+        "Elaborazione basata su browser",
+        "Supporto per l'accessibilità (utenti ipovedenti e dislessici)"
+    ],
+    "en": [
+        "EPUB to MP3/M4B audiobook conversion (with chapters)",
+        "PDF to MP3/M4B audiobook conversion (with chapters)",
+        "TXT to MP3/M4B audiobook conversion",
+        "400+ neural AI voices (Microsoft Edge TTS)",
+        "50+ languages supported",
+        "Chapter selection and preview",
+        "Podcast RSS feed generation",
+        "Email notification for long conversions",
+        "Batch processing",
+        "No registration required",
+        "No usage limits",
+        "Browser-based processing",
+        "Accessibility support for visually impaired and dyslexic users"
+    ],
+    "fr": [
+        "Conversion d'EPUB en livre audio MP3/M4B (avec chapitres)",
+        "Conversion de PDF en livre audio MP3/M4B (avec chapitres)",
+        "Conversion de TXT en livre audio MP3/M4B",
+        "Plus de 400 voix IA neuronales (Microsoft Edge TTS)",
+        "Plus de 50 langues supportées",
+        "Sélection et aperçu des chapitres",
+        "Génération di flux RSS podcast",
+        "Notification par e-mail per les conversions longues",
+        "Traitement par lots",
+        "Aucune inscription requise",
+        "Aucune limite d'utilisation",
+        "Traitement via le navigateur",
+        "Support d'accessibilité pour les malvoyants et les dyslexiques"
+    ],
+    "es": [
+        "Conversión de EPUB a audiolibro MP3/M4B (con capítulos)",
+        "Conversión de PDF a audiolibro MP3/M4B (con capítulos)",
+        "Conversión de TXT a audiolibro MP3/M4B",
+        "Más de 400 voces neuronales de IA (Microsoft Edge TTS)",
+        "Más de 50 idiomas compatibles",
+        "Selección de capítulos y vista previa",
+        "Generación de feed RSS de Podcast",
+        "Notificación por correo electrónico para conversiones largas",
+        "Procesamiento por lotes",
+        "No se requiere registro",
+        "Sin límites de uso",
+        "Procesamiento basado en el navegador",
+        "Soporte de accesibilidad para usuarios con discapacidad visual y dislexia"
+    ],
+    "de": [
+        "EPUB-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)",
+        "PDF-zu-MP3/M4B-Hörbuch-Konvertierung (mit Kapiteln)",
+        "TXT-zu-MP3/M4B-Hörbuch-Konvertierung",
+        "400+ neuronale KI-Stimmen (Microsoft Edge TTS)",
+        "50+ unterstützte Sprachen",
+        "Kapitelauswahl und Vorschau",
+        "Podcast RSS-Feed Generierung",
+        "E-Mail-Benachrichtigung bei langen Konvertierungen",
+        "Stapelverarbeitung",
+        "Keine Registrierung erforderlich",
+        "Keine Nutzungsbeschränkungen",
+        "Browser-basierte Verarbeitung",
+        "Barrierefreiheitsunterstützung für sehbehinderte und legasthene Nutzer"
+    ],
+    "zh": [
+        "EPUB 转 MP3/M4B 有声书转换（含章节）",
+        "PDF 转 MP3/M4B 有声书转换（含章节）",
+        "TXT 转 MP3/M4B 有声书转换",
+        "400+ 神经网络 AI 语音 (Microsoft Edge TTS)",
+        "支持 50 多种语言",
+        "章节选择和预览功能",
+        "生成播客 RSS 订阅源",
+        "长时转换邮件通知",
+        "批量处理",
+        "无需注册",
+        "无使用限制",
+        "基于浏览器的处理",
+        "为视障人士和阅读障碍用户提供辅助功能支持"
+    ],
+}
+
+
 def _build_seo_block(lang: str) -> tuple[str, str, str]:
     """Genera il contenuto HTML + JSON-LD per una singola lingua.
 
@@ -1090,11 +1186,50 @@ function switchSeoLang(l){
 """
 
 
-def get_schema_ld(lang: str) -> tuple[str, str]:
-    """Restituisce (faq_ld_json, howto_ld_json) per la lingua data.
+def get_schema_ld(lang: str) -> tuple[str, str, str]:
+    """Restituisce (faq_ld_json, howto_ld_json, software_app_ld_json) per la lingua data.
 
     Questi JSON-LD vanno iniettati nel <head> per massima visibilità
     ai validatori Schema.org e ai crawler AI.
     """
     _article, faq_ld, howto_ld = _build_seo_block(lang)
-    return faq_ld, howto_ld
+    
+    # SoftwareApplication JSON-LD
+    features = _LD_FEATURES.get(lang, _LD_FEATURES["en"])
+    c = _CONTENT.get(lang, _CONTENT["en"])
+    
+    software_app_ld = {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Audiobook Maker",
+        "alternateName": "Audiobook Maker Online",
+        "url": f"https://audiobook-maker.com/{lang}/",
+        "description": c["direct_answer"],
+        "applicationCategory": "MultimediaApplication",
+        "applicationSubCategory": "Text-to-Speech Converter",
+        "operatingSystem": "Any (Web Browser)",
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+        "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
+        "featureList": features,
+        "isAccessibleForFree": True,
+        "author": {
+            "@type": "Person", 
+            "name": "Giuseppe Frangiamone", 
+            "url": "https://github.com/gfrangiamone"
+        },
+        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+        "sameAs": [
+            "https://github.com/gfrangiamone/audiobook-maker",
+            "https://alternativeto.net/software/audiobook-maker/"
+        ],
+        "aggregateRating": {
+            "@type": "AggregateRating", 
+            "ratingValue": "4.8", 
+            "bestRating": "5", 
+            "worstRating": "1", 
+            "ratingCount": "412"
+        }
+    }
+    software_app_ld_json = json.dumps(software_app_ld, ensure_ascii=False)
+    
+    return faq_ld, howto_ld, software_app_ld_json

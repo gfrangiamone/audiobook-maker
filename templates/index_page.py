@@ -109,11 +109,12 @@ def build_html_template(
         for placeholder, value in replacements.items():
             html = html.replace(placeholder, value)
 
-    # ── 3. Inject FAQPage + HowTo JSON-LD into <head> placeholders ──
+    # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──
     from seo_content import build_seo_content_html, get_schema_ld
-    faq_ld, howto_ld = get_schema_ld(lang)
+    faq_ld, howto_ld, app_ld = get_schema_ld(lang)
     html = html.replace("__SEO_FAQ_LD__", faq_ld)
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
+    html = html.replace("__SEO_APP_LD__", app_ld)
     html = html.replace("__APP_VERSION__", version or "3.3")
 
     # ── 4. Inject visible SEO content block before </body> ──

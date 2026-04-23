@@ -64,6 +64,7 @@ from audio_utils import (
     _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
     _generate_silence_mp3, _concatenate_mp3, _get_audio_duration_ms,
     _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
+    _check_audio_dependencies,
 )
 from tts_split import (
     CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
@@ -165,6 +166,18 @@ from favicon_data import (
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
+
+@app.after_request
+def add_security_headers(response):
+    """Aggiunge header di sicurezza alle risposte HTTP."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Content Security Policy (base)
+    # Permettiamo script inline per la nostra app (SPA-like) ma blocchiamo fonti esterne non autorizzate.
+    # Nota: per una configurazione più rigida, bisognerebbe usare i nonce.
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.paypal.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com; frame-src https://www.paypal.com;"
+    return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
 # Configurabile via ABM_DATA_DIR, default: /var/lib/audiobook-maker/data
@@ -2383,6 +2396,16 @@ def sitemap():
     return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
 
 
+@app.route("/robots.txt")
+def robots():
+    """Istruzioni per i crawler e link alla sitemap."""
+    if not BASE_URL:
+        return "User-agent: *\nAllow: /", 200, {"Content-Type": "text/plain"}
+    
+    txt = f"User-agent: *\nAllow: /\n\nSitemap: {BASE_URL}/sitemap.xml"
+    return txt, 200, {"Content-Type": "text/plain"}
+
+
 #  —  —  —  robots.txt  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
 @app.route("/robots.txt")
 def robots():
@@ -3551,10 +3574,17 @@ def api_analyze():
     if is_pdf and parse_pdf is None:
         return jsonify({"error": "PDF support not available. Install pymupdf: pip install pymupdf"}), 400
 
+    # Sanitize filename for disk storage (Security: prevent Path Traversal)
+    from werkzeug.utils import secure_filename
+    safe_name = secure_filename(file.filename)
+    if not safe_name:
+        # Fallback if secure_filename results in empty string (e.g. only non-ascii chars)
+        safe_name = str(uuid.uuid4())[:8] + "_" + fname_lower
+
     job_id = str(uuid.uuid4())[:8]
     work_dir = UPLOAD_DIR / job_id
     work_dir.mkdir(exist_ok=True)
-    file_path = work_dir / file.filename
+    file_path = work_dir / safe_name
     file.save(str(file_path))
 
     abm_cover_info = None  # cover data extracted from .abm file
@@ -4628,7 +4658,14 @@ def api_register_opt_email():
 
 @app.route("/api/active_jobs")
 def api_active_jobs():
-    """Return list of currently generating jobs (for admin monitor)."""
+    """Return list of currently generating jobs (for admin monitor).
+    Protected by admin token.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin monitor disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 401
+
     from datetime import datetime
     active = []
     for jid, job in list(jobs.items()):
@@ -5850,6 +5887,18 @@ def _ensure_background_threads():
     threading.Thread(target=_cleanup_loop, daemon=True).start()
     if google_tts is not None:
         threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
+    
+    # Verifica dipendenze audio (ffmpeg/ffprobe) per formato M4B
+    ffmpeg_ok, ffprobe_ok = _check_audio_dependencies()
+    if not ffmpeg_ok or not ffprobe_ok:
+        missing = []
+        if not ffmpeg_ok: missing.append("ffmpeg")
+        if not ffprobe_ok: missing.append("ffprobe")
+        print(f"WARNING: Missing critical audio dependencies: {', '.join(missing)}. "
+              "M4B generation and audio duration detection will be disabled.", file=sys.stderr)
+    else:
+        print("[startup] Audio dependencies (ffmpeg/ffprobe) found.")
+
     print(f"[startup] Background threads started (data dir: {UPLOAD_DIR})")
     print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
