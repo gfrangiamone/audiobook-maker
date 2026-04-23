@@ -155,6 +155,11 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 - **Metadati estesi M4B**: aggiunti tag `date` (anno di pubblicazione, estratto da `dc:date` EPUB via `_extract_year_from_date`), `genre` (default `"Audiobook"`), `language` (codice ISO 639-2/B a livello **stream audio** via `-metadata:s:a:0`, mappato da ISO 639-1 via `_normalize_language_iso`), `comment`/`description` (troncati a 1000 char), `media_type=2` (iTunes `stik` atom → Apple Books classifica come "Audiobook"). Aggiunto campo `date: str` alla dataclass `BookInfo` in `epub_to_tts.py`.
 - **Cover art ad alta risoluzione**: nuova funzione `_prepare_m4b_cover_path(job, title, author, work_dir)` che restituisce una cover 1400×1400 per l'embedding. Strategia: (1) riusa `job["cover_hires"]` se cached, (2) estrae dal sorgente EPUB via `_extract_cover_from_epub` a 1400×1400 quadrata, (3) fallback al `cover_thumb` esistente, (4) ultima risorsa: genera cover branded "Audiobook Maker" con titolo e autore via `_generate_fallback_cover` (richiede Pillow). Garantisce che **ogni M4B abbia sempre una copertina**, anche per PDF/TXT o EPUB senza cover.
 
+**Fix v3.8.4 (syntax errors seo_content.py)**:
+- **Virgolette ASCII in stringhe FAQ**: corretto syntax error in 6 righe (IT/EN/FR/ES/DE/ZH) dove le virgolette degli esempi acronimi (`"ONU"`, `"NASA"`) usavano lo stesso delimitatore `"` della stringa esterna. Risolto cambiando il delimitatore esterno in `'` per quelle righe.
+- **Doppia virgola**: rimossa virgola duplicata `"),,` nella voce FAQ italiana.
+- **F-string e stringhe multi-riga**: corretti 5 punti in cui stringhe/f-string su più righe usavano `"...\n"` con newline letterale invece di `\n` escaped (incompatibile con Python 3.12+ in alcuni contesti).
+
 **Fix v3.8.3 (integrità M4B)**:
 - **Validazione post-conversione**: nuova funzione `_validate_m4b_file(path)` in `audio_utils.py` che usa `ffprobe` per verificare, dopo ogni conversione M4B, che il container sia parsabile (`mp4/m4a/ipod/mov`), che esista almeno uno stream audio e che la durata sia > 0. Motivazione: `ffmpeg` può uscire con `returncode=0` lasciando un file troncato o senza stream audio in casi limite (disk pressure, OOM minore, buffer flush parziale, fallback cover non pulito). Senza questa validazione un M4B corrotto veniva considerato "OK" e offerto al download. Se ffprobe non è installato la validazione viene saltata (skip sicuro, mantiene compatibilità).
 - **Cleanup file parziali**: se `_convert_mp3_to_m4b` fallisce (ffmpeg rc≠0, timeout, eccezione) o la validazione rileva corruzione, il file M4B parziale viene rimosso dal disco. Questo evita che un M4B corrotto venga ripescato dal filesystem scan (`/api/events/<job_id>` L4098-4102, pagina email `/dl/<token>` L4835+).
@@ -297,7 +302,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.8.2"` | `version.py` | 7 |
+| `__version__` | `"3.8.4"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---

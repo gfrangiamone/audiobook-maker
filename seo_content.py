@@ -149,7 +149,7 @@ _CONTENT = {
              "L'ottimizzazione AI è una fase opzionale, eseguita da un modello LLM, "
              "che riscrive il testo estratto dal libro per renderlo più naturale all'ascolto. "
              "Interviene prima della sintesi vocale su diversi aspetti: espande gli acronimi "
-             "(es. "ONU" → "O.N.U." per forzare la corretta pronuncia lettera-per-lettera), "
+             '(es. "ONU" → "O.N.U." per forzare la corretta pronuncia lettera-per-lettera), '
              "scrive per esteso numeri, date, unità di misura e simboli, inserisce pause naturali "
              "dopo titoli e cambi di scena, rimuove artefatti tipografici (note a piè di pagina, "
              "riferimenti bibliografici inline, trattini di sillabazione, doppi spazi), corregge "
@@ -158,7 +158,7 @@ _CONTENT = {
              "lingue). Il risultato è un audiolibro decisamente più piacevole e professionale, "
              "paragonabile a una narrazione curata. Puoi scaricare anche la versione ottimizzata "
              "del progetto in formato .abm per riutilizzarla, modificarla o generare nuove "
-             "versioni audio con voci diverse senza ripetere l'ottimizzazione."),,
+             "versioni audio con voci diverse senza ripetere l'ottimizzazione."),
         ],
         "privacy_heading": "Privacy e Sicurezza",
         "privacy": (
@@ -275,7 +275,7 @@ _CONTENT = {
              "AI text optimization is an optional step, powered by an LLM, that rewrites "
              "the text extracted from your book to make it sound natural when read aloud. It runs "
              "before speech synthesis and addresses several issues: it expands acronyms "
-             "(e.g. "NASA" → "N.A.S.A." to force letter-by-letter pronunciation), spells out "
+             '(e.g. "NASA" → "N.A.S.A." to force letter-by-letter pronunciation), spells out '
              "numbers, dates, units of measure and symbols, inserts natural pauses after titles "
              "and scene breaks, strips typographic artifacts (footnotes, inline bibliographic "
              "references, hyphenation dashes, double spaces), and fixes quotes and punctuation "
@@ -390,7 +390,7 @@ _CONTENT = {
              "L'optimisation IA est une étape facultative, exécutée par un modèle LLM, "
              "qui réécrit le texte extrait de votre livre pour le rendre naturel à l'écoute. "
              "Elle intervient avant la synthèse vocale sur plusieurs aspects : elle développe les "
-             "acronymes (ex. "ONU" → "O.N.U." pour forcer la prononciation lettre par lettre), "
+             'acronymes (ex. "ONU" → "O.N.U." pour forcer la prononciation lettre par lettre), '
              "écrit en toutes lettres les nombres, dates, unités de mesure et symboles, insère des "
              "pauses naturelles après les titres et les changements de scène, supprime les "
              "artefacts typographiques (notes de bas de page, références bibliographiques en "
@@ -505,7 +505,7 @@ _CONTENT = {
              "La optimización IA es una fase opcional, ejecutada por un modelo LLM, "
              "que reescribe el texto extraído del libro para que suene natural al escucharlo. "
              "Interviene antes de la síntesis de voz en varios aspectos: expande acrónimos "
-             "(ej. "ONU" → "O.N.U." para forzar la pronunciación letra por letra), escribe "
+             '(ej. "ONU" → "O.N.U." para forzar la pronunciación letra por letra), escribe '
              "en palabras los números, fechas, unidades de medida y símbolos, inserta pausas "
              "naturales tras títulos y cambios de escena, elimina artefactos tipográficos "
              "(notas al pie, referencias bibliográficas en línea, guiones de silabación, dobles "
@@ -619,7 +619,7 @@ _CONTENT = {
              "Die KI-Textoptimierung ist ein optionaler Schritt, der von einem LLM-Modell "
              "ausgeführt wird und den aus Ihrem Buch extrahierten Text so umschreibt, "
              "dass er beim Vorlesen natürlich klingt. Sie läuft vor der Sprachsynthese und greift "
-             "bei mehreren Aspekten ein: sie dehnt Akronyme aus (z. B. "NASA" → "N.A.S.A.", um "
+             'bei mehreren Aspekten ein: sie dehnt Akronyme aus (z. B. "NASA" → "N.A.S.A.", um '
              "eine buchstabenweise Aussprache zu erzwingen), schreibt Zahlen, Datumsangaben, "
              "Maßeinheiten und Symbole aus, fügt nach Titeln und Szenenwechseln natürliche Pausen "
              "ein, entfernt typografische Artefakte (Fußnoten, eingebundene Literaturverweise, "
@@ -729,7 +729,7 @@ _CONTENT = {
              "AI文本优化是一个可选步骤，由大语言模型（LLM）执行，"
              "用于对从书籍中提取的文本进行改写，使其在朗读时更加自然。"
              "它在语音合成之前运行，处理多个方面："
-             "展开首字母缩略词（例如"NASA" → "N.A.S.A."以强制逐字母发音）、"
+             '展开首字母缩略词（例如"NASA" → "N.A.S.A."以强制逐字母发音）、'
              "将数字、日期、计量单位和符号以完整词形展开、"
              "在标题和场景切换后插入自然停顿、"
              "去除排版伪影（脚注、正文内参考文献、音节连字符、双空格）、"
@@ -841,8 +841,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     kt_items_html = ""
     if kt:
         for item in kt.get("items", []):
-            kt_items_html += f"            <li>{item}</li>
-"
+            kt_items_html += f"            <li>{item}</li>\n"
         kt_box_html = f"""
         <div class="key-takeaways">
             <h3>{escape(kt.get("title", ""))}</h3>
@@ -853,8 +852,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         kt_box_html = ""
 
     # Features <li> items
-    features_li = "
-".join(
+    features_li = "\n".join(
         f"            <li>{escape(f)}</li>" for f in c["features"]
     )
 
@@ -863,12 +861,9 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     faq_ld_items = []
     for q, a in c["faqs"]:
         faqs_html += (
-            f'            <details><summary>{escape(q)}</summary>
-'
-            f'                <p>{_linkify(escape(a))}</p>
-'
-            f'            </details>
-'
+            f'            <details><summary>{escape(q)}</summary>\n'
+            f'                <p>{_linkify(escape(a))}</p>\n'
+            f'            </details>\n'
         )
         faq_ld_items.append({
             "@type": "Question",
@@ -906,8 +901,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
         table_rows += (
             f'            <tr><td>{escape(label)}</td>'
             f'<td>{escape(count)}</td>'
-            f'<td>Microsoft Edge TTS (Neural)</td></tr>
-'
+            f'<td>Microsoft Edge TTS (Neural)</td></tr>\n'
         )
 
     article_html = f"""
@@ -1065,15 +1059,13 @@ def build_seo_content_html(initial_lang: str) -> str:
         articles.append(
             f'    <article data-seo-lang="{lang}" style="display:{display}">'
             f'{article_html}'
-            f'
-    </article>'
+            f'\n    </article>'
         )
         if lang == initial_lang:
             initial_faq_ld = faq_ld
             initial_howto_ld = howto_ld
 
-    articles_html = "
-".join(articles)
+    articles_html = "\n".join(articles)
 
     # JS function to switch SEO content language (called from setLang)
     switch_js = """
