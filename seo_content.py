@@ -861,7 +861,7 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
     faq_ld_items = []
     for q, a in c["faqs"]:
         faqs_html += (
-            f'            <details><summary>{escape(q)}</summary>\n'
+            f'            <details class="seo-section"><summary>{escape(q)}</summary>\n'
             f'                <p>{_linkify(escape(a))}</p>\n'
             f'            </details>\n'
         )
@@ -986,7 +986,7 @@ def build_seo_content_html(initial_lang: str) -> str:
     # CSS (emesso una sola volta)
     css = """
 <style>
-#seoContent { max-width:800px; margin:2.5rem auto 1rem; padding:0 1.5rem;
+#seoContent { max-width:720px; margin:2.5rem auto 1rem; padding:0 1.5rem;
   font-family:'DM Sans',system-ui,sans-serif; font-size:0.92rem; line-height:1.7; color:var(--txd,#6b6760) }
 #seoContent .seo-summary { background:var(--srf,#fff); border:1px solid var(--brd,#d5d0c8);
   border-radius:8px; padding:1rem 1.2rem; margin-bottom:1.2rem; font-weight:500; color:var(--tx,#2c2a26); line-height:1.6 }

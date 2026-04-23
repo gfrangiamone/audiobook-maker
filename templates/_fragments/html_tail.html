@@ -730,7 +730,9 @@ function _showOptEmailModal(){
     const btnsEl=document.getElementById('optBatchBtns');
     errEl.style.display='none';okEl.style.display='none';btnsEl.style.display='flex';
     document.getElementById('optAutoGen').checked=false;
-    document.getElementById('optBatchEmail').value=lastVoucherEmail;
+    var emailEl=document.getElementById('optBatchEmail');
+    emailEl.removeAttribute('readonly');emailEl.style.background='';emailEl.style.color='';
+    emailEl.value=lastVoucherEmail;
     applyI18n();
     modal.classList.add('open');
     document.getElementById('optBatchClose').onclick=function(){modal.classList.remove('open');resolve(null)};
@@ -762,6 +764,10 @@ function _showOptEmailModal(){
       .then(function(d){
         if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
         btnsEl.style.display='none';
+        var emailEl=document.getElementById('optBatchEmail');
+        emailEl.setAttribute('readonly','readonly');
+        emailEl.style.background='var(--srf2)';
+        emailEl.style.color='var(--txd)';
         var msgKey=autoGen?'opt_batch_started_auto':'opt_batch_started';
         okEl.textContent=t(msgKey)||'Email registered! You can close this page.';
         okEl.style.display='';

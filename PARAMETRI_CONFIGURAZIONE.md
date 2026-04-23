@@ -155,6 +155,11 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 - **Metadati estesi M4B**: aggiunti tag `date` (anno di pubblicazione, estratto da `dc:date` EPUB via `_extract_year_from_date`), `genre` (default `"Audiobook"`), `language` (codice ISO 639-2/B a livello **stream audio** via `-metadata:s:a:0`, mappato da ISO 639-1 via `_normalize_language_iso`), `comment`/`description` (troncati a 1000 char), `media_type=2` (iTunes `stik` atom → Apple Books classifica come "Audiobook"). Aggiunto campo `date: str` alla dataclass `BookInfo` in `epub_to_tts.py`.
 - **Cover art ad alta risoluzione**: nuova funzione `_prepare_m4b_cover_path(job, title, author, work_dir)` che restituisce una cover 1400×1400 per l'embedding. Strategia: (1) riusa `job["cover_hires"]` se cached, (2) estrae dal sorgente EPUB via `_extract_cover_from_epub` a 1400×1400 quadrata, (3) fallback al `cover_thumb` esistente, (4) ultima risorsa: genera cover branded "Audiobook Maker" con titolo e autore via `_generate_fallback_cover` (richiede Pillow). Garantisce che **ogni M4B abbia sempre una copertina**, anche per PDF/TXT o EPUB senza cover.
 
+**Fix v3.8.5 (UI fixes)**:
+- **Layout più stretto**: ridotto `max-width` da 800px a 720px per `.app` (html_head.html) e `#seoContent` (seo_content.py), ripristinando margini laterali visibili.
+- **Email readonly post-avvio ottimizzazione**: dopo la chiamata `/api/register_opt_email` il campo email diventa `readonly` con sfondo grigio; viene resettato alla riapertura del modal.
+- **Icona FAQ corretta**: aggiunta classe `seo-section` ai singoli `<details>` delle FAQ per usare l'icona CSS customizzata invece del widget nativo del browser.
+
 **Fix v3.8.4 (syntax errors seo_content.py)**:
 - **Virgolette ASCII in stringhe FAQ**: corretto syntax error in 6 righe (IT/EN/FR/ES/DE/ZH) dove le virgolette degli esempi acronimi (`"ONU"`, `"NASA"`) usavano lo stesso delimitatore `"` della stringa esterna. Risolto cambiando il delimitatore esterno in `'` per quelle righe.
 - **Doppia virgola**: rimossa virgola duplicata `"),,` nella voce FAQ italiana.
@@ -302,7 +307,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.8.4"` | `version.py` | 7 |
+| `__version__` | `"3.8.5"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
