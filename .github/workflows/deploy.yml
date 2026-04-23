@@ -14,4 +14,9 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: /opt/audiobook-maker/deploy.sh
+          script: |
+            cd /opt/audiobook-maker
+            git pull origin main
+            pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
+            systemctl restart audiobook-maker
+            echo "Deploy completato: $(date)"
