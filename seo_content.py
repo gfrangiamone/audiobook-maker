@@ -158,7 +158,7 @@ _CONTENT = {
              "lingue). Il risultato è un audiolibro decisamente più piacevole e professionale, "
              "paragonabile a una narrazione curata. Puoi scaricare anche la versione ottimizzata "
              "del progetto in formato .abm per riutilizzarla, modificarla o generare nuove "
-             "versioni audio con voci diverse senza ripetere l'ottimizzazione."),
+             "versioni audio con voci diverse senza ripetere l'ottimizzazione."),,
         ],
         "privacy_heading": "Privacy e Sicurezza",
         "privacy": (
