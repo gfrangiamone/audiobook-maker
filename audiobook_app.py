@@ -3128,17 +3128,19 @@ input[type=password]{{width:100%;padding:.625rem;border:1px solid #d1d5db;border
 .btn{{width:100%;padding:.75rem;background:#2563eb;color:#fff;border:none;border-radius:.375rem;font-weight:600;cursor:pointer}}
 .btn:hover{{background:#1d4ed8}}
 .hint{{font-size:.75rem;color:#6b7280;margin-top:1rem;text-align:center}}
-.err{{color:#dc2626;font-size:.875rem;margin-bottom:1rem;display:none}}
 </style>
 <script>
-function checkSaved(){{
-    const saved = localStorage.getItem('abm_admin_token');
-    const expiry = localStorage.getItem('abm_admin_expiry');
-    if(saved && expiry && Date.now() < parseInt(expiry)){{
-        sessionStorage.setItem('abm_admin_token', saved);
-        location.reload();
+// Interceptor to add token to all fetches/XHR if we were not already in a reload loop
+(function(){{
+    const tok = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token');
+    if(tok && !window.location.search.includes('token=')){{
+        // If we have a token but the server still showed us this gate, 
+        // it means the page load didn't include the token.
+        // We redirect once adding the token to the URL as a fallback for the main page load.
+        window.location.href = window.location.pathname + '?token=' + encodeURIComponent(tok);
     }}
-}}
+}})();
+
 function doLogin(){{
     const tok = document.getElementById('pw').value;
     const remember = document.getElementById('rem').checked;
@@ -3148,9 +3150,8 @@ function doLogin(){{
         localStorage.setItem('abm_admin_token', tok);
         localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
     }}
-    location.reload();
+    window.location.href = window.location.pathname + '?token=' + encodeURIComponent(tok);
 }}
-window.onload = checkSaved;
 </script>
 </head><body>
 <div class="card">
