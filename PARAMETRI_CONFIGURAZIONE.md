@@ -160,6 +160,39 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 - **Email readonly post-avvio ottimizzazione**: dopo la chiamata `/api/register_opt_email` il campo email diventa `readonly` con sfondo grigio; viene resettato alla riapertura del modal.
 - **Icona FAQ corretta**: aggiunta classe `seo-section` ai singoli `<details>` delle FAQ per usare l'icona CSS customizzata invece del widget nativo del browser.
 
+**Novità v3.9.8 (Robust Chapter Selection AI)**:
+- **Correzione Stima Costo**: risolto un problema per cui la stima dei caratteri e del costo dell'ottimizzazione AI poteva ignorare la selezione dei capitoli a causa di una formattazione non standard dei parametri. Ora il sistema utilizza `URLSearchParams` sul frontend e un parsing multi-formato sul backend per garantire la massima precisione.
+
+**Novità v3.9.7 (Definitive Chapter Selection AI)**:
+- **Stima Costo Precisa**: corretto il calcolo del costo nella fase di preventivo per l'ottimizzazione AI. Ora il sistema conta solo i caratteri dei capitoli effettivamente selezionati dall'utente.
+- **Filtraggio Risultati**: al termine dell'ottimizzazione AI, il libro viene ora limitato permanentemente ai soli capitoli scelti. Questo garantisce che la successiva generazione audio e l'esportazione del progetto (.abm) includano esclusivamente i contenuti ottimizzati, evitando sprechi di risorse e discrepanze nel risultato finale.
+
+**Novità v3.9.6 (Fix Chapter Selection AI)**:
+- **Ottimizzazione Capitoli Selezionati**: corretto un bug per cui l'ottimizzazione AI ignorava la selezione dei capitoli e processava sempre l'intero libro. Ora il thread di ottimizzazione filtra correttamente i capitoli basandosi sugli indici selezionati dall'utente.
+
+**Novità v3.9.5 (Remember Me Admin)**:
+- **Persistenza Accesso**: aggiunta l'opzione "Rimani connesso (30 giorni)" nel gate di accesso ai log. Se selezionata, l'autenticazione viene salvata in `localStorage` con scadenza a 30 giorni, evitando di dover reinserire il token ad ogni sessione.
+
+**Novità v3.9.4 (FAQ Update)**:
+- **Esempio acronimi**: aggiornato il testo delle FAQ sull'ottimizzazione AI sostituendo l'esempio "ONU" con "W3C" ("W3C" → "W-tre-C") per illustrare meglio la gestione degli acronimi tecnici e della pronuncia lettera-per-lettera.
+
+**Novità v3.9.3 (Extra Layout Compression)**:
+- **Riduzione spazi**: ulteriore dimezzamento del margine sopra il disclaimer (da 16px a 8px) per massimizzare la visibilità dei controlli su schermi piccoli.
+
+**Novità v3.9.2 (Layout Cleanup)**:
+- **Header semplificato**: rimossa la tagline duplicata sotto il logo ("Convertitore Gratuito...") per pulizia visiva.
+- **Riduzione spazi verticali**: ridotto il margine inferiore dell'header e lo spazio tra i pulsanti toolbar e il disclaimer per una UI più compatta, specialmente su mobile.
+
+**Novità v3.9.1 (Rimozione Active Jobs)**:
+- **Rimozione Monitor Active Jobs**: eliminata la funzionalità di monitoraggio "Active Jobs" (accessibile tramite i tre puntini in basso a destra) dalla home page. Questa funzionalità è ora sostituita e centralizzata nella pagina `/logs` protetta.
+
+**Novità v3.9.0 (Log Protection & Progress)**:
+- **Protezione /logs**: la pagina dei log è ora protetta da token. Se non autenticati, viene mostrato un "gate" per l'inserimento dell'Admin Token (memorizzato in `sessionStorage`).
+- **Percentuale Avanzamento**: nei log, per i task in corso, viene ora mostrata la percentuale di avanzamento (%) calcolata in tempo reale se il job è presente in memoria.
+
+**Fix v3.8.9 (marker FAQ)**:
+- **Marker CSS corretto**: corretto escape della sequenza unicode `\\25B6` nel blocco CSS iniettato da `seo_content.py`. In precedenza, l'assenza del doppio backslash in Python causava la visualizzazione di testo spurio ("B6") invece dell'icona a triangolo.
+
 **Fix v3.8.4 (syntax errors seo_content.py)**:
 - **Virgolette ASCII in stringhe FAQ**: corretto syntax error in 6 righe (IT/EN/FR/ES/DE/ZH) dove le virgolette degli esempi acronimi (`"ONU"`, `"NASA"`) usavano lo stesso delimitatore `"` della stringa esterna. Risolto cambiando il delimitatore esterno in `'` per quelle righe.
 - **Doppia virgola**: rimossa virgola duplicata `"),,` nella voce FAQ italiana.
@@ -307,7 +340,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.8.5"` | `version.py` | 7 |
+| `__version__` | `"3.9.8"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---

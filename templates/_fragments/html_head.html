@@ -99,7 +99,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 
 /* ═══ LAYOUT ═══ */
 .app{display:block;width:100%;max-width:720px!important;margin:0 auto!important;padding:40px 24px 80px;position:relative;z-index:1}
-.hdr{text-align:center;margin-bottom:48px}
+.hdr{text-align:center;margin-bottom:32px}
 .hdr h1{font-family:'DM Serif Display',serif;font-size:2.2rem;font-weight:400;letter-spacing:-.02em;background:linear-gradient(135deg,var(--tx) 30%,var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px;justify-content:center}
 .hdr-icon{width:42px;height:42px;flex-shrink:0}
 .hdr-icon .ic-book{fill:var(--ac);opacity:.85}
@@ -108,6 +108,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 
 /* Pannelli Steps e Disclaimer - Forza larghezza massima e centratura */
 .disc, .step { width:100%!important; max-width:720px!important; margin-left:auto!important; margin-right:auto!important; box-sizing:border-box!important; }
+.disc { margin-top:8px }
 
 /* ═══ TOOLBAR: language + theme ═══ */
 .toolbar{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
@@ -372,8 +373,9 @@ select:focus{outline:none;border-color:var(--ac)}
   .app{padding:20px 12px 60px}
   
   /* Header */
-  .hdr{margin-bottom:28px}
+  .hdr{margin-bottom:20px}
   .hdr h1{font-size:1.6rem;gap:8px}
+  .disc{margin-top:6px;margin-bottom:12px;padding:12px 14px}
   .hdr-icon{width:32px;height:32px}
   
   /* Step headers */
@@ -509,7 +511,6 @@ select:focus{outline:none;border-color:var(--ac)}
 <div class="app">
   <header class="hdr">
     <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
-    <p data-t="h1_tagline" style="font-size:.85rem;color:var(--txd);margin-top:2px">__H1_TAGLINE__</p>
     <p data-t="subtitle">__SUBTITLE__</p>
 
     <div class="toolbar">
@@ -666,8 +667,10 @@ select:focus{outline:none;border-color:var(--ac)}
     <div style="margin-top:24px;display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
       <button class="btn" id="btnOptimize" style="flex:1;min-width:200px;background:#8b5cf6;color:white;display:none" onclick="startOptimization()">&#x2728; <span data-t="btn_optimize"></span></button>
       <button class="btn btn-p" id="btnG" style="flex:1;min-width:200px">&#x1F3A7; <span data-t="btn_gen"></span></button>
-      <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="flex:0 1 auto;min-width:180px;width:auto;margin-top:0"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
-      <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="align-self:center">&#x2139;&#xFE0F;</button>
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:center;flex:0 1 auto;min-width:180px">
+        <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="width:100%;margin-top:0"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
+        <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="margin-top:0">&#x2139;&#xFE0F;</button>
+      </div>
     </div>
     </div>
   </div>
@@ -877,9 +880,6 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 </div>
 
-<!-- Admin: active jobs monitor -->
-<a href="#" id="monLink" onclick="openMonitor();return false" style="position:fixed;bottom:8px;right:12px;font-size:11px;color:rgba(150,150,150,.35);text-decoration:none;z-index:50;font-family:monospace;transition:color .3s" onmouseenter="this.style.color='rgba(150,150,150,.7)'" onmouseleave="this.style.color='rgba(150,150,150,.35)'">&bull;&bull;&bull;</a>
-
 <!-- Language warning modal -->
 
 <!-- Donate prompt modal (shown before generation for returning users) -->
@@ -953,17 +953,4 @@ select:focus{outline:none;border-color:var(--ac)}
     </div>
   </div>
 </div>
-<a href="#" id="monLink" onclick="openMonitor();return false" style="position:fixed;bottom:8px;right:12px;font-size:11px;color:rgba(150,150,150,.35);text-decoration:none;z-index:50;font-family:monospace;transition:color .3s" onmouseenter="this.style.color='rgba(150,150,150,.7)'" onmouseleave="this.style.color='rgba(150,150,150,.35)'">&bull;&bull;&bull;</a>
-<div class="modal-overlay" id="monModal">
-  <div class="modal" style="max-width:620px">
-    <div class="modal-head">
-      <span id="monTitle">Active Jobs</span>
-      <button class="modal-close" id="monClose">&times;</button>
-    </div>
-    <div class="modal-body" id="monBody" style="min-height:80px">
-      <div style="text-align:center;padding:20px;color:#999">Loading...</div>
-    </div>
-  </div>
-</div>
-
 <script>

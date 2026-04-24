@@ -149,9 +149,8 @@ _CONTENT = {
              "L'ottimizzazione AI è una fase opzionale, eseguita da un modello LLM, "
              "che riscrive il testo estratto dal libro per renderlo più naturale all'ascolto. "
              "Interviene prima della sintesi vocale su diversi aspetti: espande gli acronimi "
-             '(es. "ONU" → "O.N.U." per forzare la corretta pronuncia lettera-per-lettera), '
-             "scrive per esteso numeri, date, unità di misura e simboli, inserisce pause naturali "
-             "dopo titoli e cambi di scena, rimuove artefatti tipografici (note a piè di pagina, "
+             '(es. "W3C" → "W-tre-C" per forzare la corretta pronuncia lettera-per-lettera), '
+             "scrive per esteso numeri, date, unità di misura e simboli, inserisce pause naturali "             "dopo titoli e cambi di scena, rimuove artefatti tipografici (note a piè di pagina, "
              "riferimenti bibliografici inline, trattini di sillabazione, doppi spazi), corregge "
              "virgolette e punteggiatura per un ritmo di lettura scorrevole e previene la deriva "
              "linguistica delle voci Multilingual (che talvolta leggono frasi italiane in altre "
@@ -1102,7 +1101,7 @@ def build_seo_content_html(initial_lang: str) -> str:
   padding:0.4rem 0 }
 #seoContent .seo-section > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:0.5rem }
 #seoContent .seo-section > summary::-webkit-details-marker { display:none }
-#seoContent .seo-section > summary::before { content:'\25B6'; font-size:0.6rem; color:var(--ac,#c47a2a);
+#seoContent .seo-section > summary::before { content:'\\25B6'; font-size:0.6rem; color:var(--ac,#c47a2a);
   transition:transform 0.2s; flex-shrink:0 }
 #seoContent .seo-section[open] > summary::before { transform:rotate(90deg) }
 #seoContent .seo-section > summary:hover { color:var(--ac,#c47a2a) }

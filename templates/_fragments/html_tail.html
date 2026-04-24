@@ -1,54 +1,3 @@
-// ═══════════════════ ACTIVE JOBS MONITOR ═══════════════════
-let _monTimer=null;
-function openMonitor(){
-  document.getElementById('monModal').classList.add('open');
-  _fetchMonitor();
-  _monTimer=setInterval(_fetchMonitor,5000);
-}
-function closeMonitor(){
-  document.getElementById('monModal').classList.remove('open');
-  if(_monTimer){clearInterval(_monTimer);_monTimer=null}
-}
-function _fetchMonitor(){
-  fetch('/api/active_jobs').then(r=>r.json()).then(d=>{
-    const body=document.getElementById('monBody');
-    if(!d.jobs||d.jobs.length===0){
-      body.innerHTML='<div style="text-align:center;padding:24px;color:#999;font-size:.95rem">Nessuna generazione in corso</div>';
-      document.getElementById('monTitle').textContent='Active Jobs';
-      return;
-    }
-    document.getElementById('monTitle').textContent='Active Jobs ('+d.count+')';
-    let h='<table style="width:100%;border-collapse:collapse;font-size:.9rem">';
-    h+='<thead><tr style="background:var(--s2,#f0f5fa)">';
-    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Inizio</th>';
-    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Titolo</th>';
-    h+='<th style="padding:8px 10px;text-align:center;font-weight:600;border-bottom:2px solid var(--brd,#ddd)">Progresso</th>';
-    h+='</tr></thead><tbody>';
-    d.jobs.forEach(j=>{
-      const pct=j.total>0?Math.round(j.progress/j.total*100):0;
-      h+='<tr>';
-      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee);white-space:nowrap;font-family:monospace;font-size:.82rem;color:#888">'+esc(j.started)+'</td>';
-      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee)">';
-      h+='<div style="font-weight:600">'+esc(j.title)+'</div>';
-      if(j.chapter)h+='<div style="font-size:.8rem;color:#999;margin-top:2px">'+esc(j.chapter)+'</div>';
-      h+='</td>';
-      h+='<td style="padding:8px 10px;border-bottom:1px solid var(--brd,#eee);text-align:center">';
-      if(j.status==='generating'){
-        h+='<div style="background:var(--brd,#e5e7eb);border-radius:6px;height:8px;width:80px;display:inline-block;vertical-align:middle;overflow:hidden">';
-        h+='<div style="background:var(--ac,#2563eb);height:100%;width:'+pct+'%;border-radius:6px;transition:width .5s"></div></div>';
-        h+=' <span style="font-size:.8rem;color:#888;margin-left:4px">'+pct+'%</span>';
-      } else {
-        h+='<span style="font-size:.8rem;color:#aaa">'+esc(j.status)+'</span>';
-      }
-      h+='</td></tr>';
-    });
-    h+='</tbody></table>';
-    body.innerHTML=h;
-  }).catch(()=>{
-    document.getElementById('monBody').innerHTML='<div style="text-align:center;padding:20px;color:#c00">Errore di connessione</div>';
-  });
-}
-
 // ═══════════════════ LANGUAGE DROPDOWN ═══════════════════
 const LANG_FLAGS={'it':'🇮🇹','en':'🇬🇧','fr':'🇫🇷','es':'🇪🇸','de':'🇩🇪','zh':'🇨🇳'};
 function toggleLangDropdown(){
@@ -90,7 +39,6 @@ function setupKeyboardShortcuts(){
       closeFreeBooks();
       closePodcastGuide();
       closeAbmGuide();
-      closeMonitor();
       previewStop();
       const aboutModal=document.getElementById('aboutModal');
       if(aboutModal)aboutModal.classList.remove('open');
@@ -871,24 +819,21 @@ async function startOptimization(){
   if(!jobId){return}
   document.getElementById('s3err').innerHTML='';
   
-  // Collect selected chapters if in chapter mode
-  let selectedChapters=null;
-  if(!singleFile){
-    selectedChapters=[];
-    document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
-      if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
-    });
-    if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
-  }
+  // Collect selected chapters from UI
+  let selectedChapters=[];
+  document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
+    if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
+  });
+  if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
 
   // ── Check cost estimate first ──
   var paymentToken=null;
   try{
-    let url='/api/optimize_estimate/'+jobId;
+    let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
     if(selectedChapters&&selectedChapters.length>0){
-        url+='?selected_chapters='+selectedChapters.join('&selected_chapters=');
+        selectedChapters.forEach(idx => url.searchParams.append('selected_chapters', idx));
     }
-    var est=await fetch(url).then(function(r){return r.json()});
+    var est=await fetch(url.toString()).then(function(r){return r.json()});
     if(est.error){showS3Err(est.error);return}
     if(est.requires_payment){
       // Refresh config from server

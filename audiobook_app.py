@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audiobook Maker  —  Web app to convert EPUB/PDF into MP3 audiobooks.
+Audiobook Maker  -  Web app to convert EPUB/PDF into MP3 audiobooks.
 
 Requirements:
     pip install flask edge-tts ebooklib beautifulsoup4 lxml Pillow pymupdf
@@ -29,7 +29,7 @@ from flask import (
     send_file, Response, stream_with_context
 )
 
-#  —  —  Import epub_to_tts (must be in the same folder)  —  — 
+#  -  -  Import epub_to_tts (must be in the same folder)  -  - 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -44,7 +44,7 @@ try:
     from pdf_to_tts import parse_pdf
 except ImportError:
     parse_pdf = None
-    print("WARNING: pdf_to_tts.py not found  —  PDF support disabled.", file=sys.stderr)
+    print("WARNING: pdf_to_tts.py not found  -  PDF support disabled.", file=sys.stderr)
 
 try:
     import edge_tts
@@ -52,12 +52,12 @@ except ImportError:
     print("ERROR: edge-tts not installed. Run: pip install edge-tts", file=sys.stderr)
     sys.exit(1)
 
-#  —  —  Google Cloud TTS (Chirp3-HD)  —  opzionale  —  —
+#  -  -  Google Cloud TTS (Chirp3-HD)  -  opzionale  -  -
 try:
     import google_tts
 except ImportError:
     google_tts = None
-    print("WARNING: google_tts.py not found  —  Google Cloud TTS disabled.", file=sys.stderr)
+    print("WARNING: google_tts.py not found  -  Google Cloud TTS disabled.", file=sys.stderr)
 
 from audio_utils import (
     _zip_safe_read, _extract_cover_from_epub, _generate_fallback_cover,
@@ -84,7 +84,7 @@ try:
 except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
-#  —  —  DeepSeek LLM per ottimizzazione testo TTS  —  opzionale  —  —
+#  -  -  DeepSeek LLM per ottimizzazione testo TTS  -  opzionale  -  -
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -114,10 +114,10 @@ def _init_deepseek():
             _deepseek_prompt = prompt_path.read_text(encoding="utf-8").strip()
             print(f"[startup] DeepSeek LLM optimization enabled (prompt: {len(_deepseek_prompt)} chars)")
         else:
-            print(f"WARNING: prompt_tts_optimization.md not found  —  LLM optimization disabled.", file=sys.stderr)
+            print(f"WARNING: prompt_tts_optimization.md not found  -  LLM optimization disabled.", file=sys.stderr)
             _deepseek_client = None
     except ImportError:
-        print("WARNING: openai library not installed  —  LLM optimization disabled. Run: pip install openai", file=sys.stderr)
+        print("WARNING: openai library not installed  -  LLM optimization disabled. Run: pip install openai", file=sys.stderr)
         _deepseek_client = None
 
 def _llm_available():
@@ -125,7 +125,7 @@ def _llm_available():
     return _deepseek_client is not None and bool(_deepseek_prompt)
 
 
-#  —  —  PayPal payment config per LLM optimization  —  — 
+#  -  -  PayPal payment config per LLM optimization  -  - 
 PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
 PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
@@ -148,11 +148,11 @@ def _estimate_llm_cost_eur(char_count):
     return round((char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
 
 
-#  —  —  Import version and template builder  —  — 
+#  -  -  Import version and template builder  -  - 
 from version import __version__
 from templates.index_page import build_html_template
 
-#  —  —  Import favicon data (embedded, served via Flask routes for SEO)  —  — 
+#  -  -  Import favicon data (embedded, served via Flask routes for SEO)  -  - 
 from favicon_data import (
     get_favicon_ico, get_favicon_png_192,
     get_apple_touch_icon, get_favicon_svg,
@@ -160,9 +160,9 @@ from favicon_data import (
 
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # APP CONFIG
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
@@ -176,7 +176,15 @@ def add_security_headers(response):
     # Content Security Policy (base)
     # Permettiamo script inline per la nostra app (SPA-like) ma blocchiamo fonti esterne non autorizzate.
     # Nota: per una configurazione più rigida, bisognerebbe usare i nonce.
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.paypal.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com; frame-src https://www.paypal.com;"
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://www.paypal.com https://www.googletagmanager.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https://api.producthunt.com; "
+        "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://www.google-analytics.com; "
+        "frame-src https://www.paypal.com;"
+    )
     return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
@@ -224,14 +232,14 @@ from email_service import (
 
 EMAIL_FILE_RETENTION_SEC = 24 * 60 * 60  # 24 ore di retention dopo invio email
 
-#  —  —  Admin activity digest (email log)  —  — 
+#  -  -  Admin activity digest (email log)  -  - 
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
 # Token admin per UI web /admin/vouchers. Se vuoto, l'endpoint è disabilitato.
 ADMIN_TOKEN = os.environ.get("ABM_ADMIN_TOKEN", "").strip()
 
-#  —  —  Client tracking & rate limiting  —  — 
+#  -  -  Client tracking & rate limiting  -  - 
 # Max concurrent generating jobs per client device (cookie-based).
 # Set via ABM_MAX_CONCURRENT_PER_CLIENT env var; default 2.
 MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", "2"))
@@ -359,9 +367,9 @@ def _load_tokens():
         print(f"[tokens] Failed to load tokens: {e}")
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # PAYMENTS & VOUCHERS (for LLM optimization)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
 _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
@@ -371,7 +379,7 @@ _PAID_OPT_DONE_FILE = UPLOAD_DIR / "_paid_opt_done.json"
 _payments_lock = threading.Lock()
 _vouchers_lock = threading.Lock()
 
-#  —  Rate limit voucher_validate (Point 1)  — 
+#  -  Rate limit voucher_validate (Point 1)  - 
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
 _voucher_attempts_ip = {}
@@ -387,7 +395,7 @@ def _voucher_rl_check(ip, email):
     """Return (allowed, retry_after_sec, reason)."""
     now = time.time()
     with _voucher_rl_lock:
-        #  —  IP sliding window  — 
+        #  -  IP sliding window  - 
         hits = _voucher_attempts_ip.get(ip, [])
         hits = [t for t in hits if now - t < 3600]
         last_min = [t for t in hits if now - t < 60]
@@ -399,13 +407,13 @@ def _voucher_rl_check(ip, email):
             retry = 3600 - int(now - hits[0])
             _voucher_attempts_ip[ip] = hits
             return False, max(1, retry), "rate_limit_ip_hour"
-        #  —  Email lockout  — 
+        #  -  Email lockout  - 
         em = (email or "").lower().strip()
         if em:
             info = _voucher_attempts_email.get(em)
             if info and info.get("lockout_until", 0) > now:
                 return False, int(info["lockout_until"] - now), "email_locked"
-        # Record hit for IP  —  caller can trigger email-fail separately
+        # Record hit for IP  -  caller can trigger email-fail separately
         hits.append(now)
         _voucher_attempts_ip[ip] = hits
     return True, 0, None
@@ -522,7 +530,7 @@ def _create_voucher(email, amount_eur, origin_order_id=None, origin_job_id=None,
         "used_at": None,
         "origin_order_id": origin_order_id,
         "origin_job_id": origin_job_id,
-        #  —  Nuovi campi (Point 4)  — 
+        #  -  Nuovi campi (Point 4)  - 
         "kind": kind,                # "refund" | "promo" | "gift"
         "note": (note or "")[:500],
         "created_by": created_by,    # "auto_refund" | "admin"
@@ -560,7 +568,7 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
     if v.get("expires_at", 0) <= time.time():
         raise ValueError("voucher expired")
     remaining = _voucher_remaining(v)
-    # Arrotondamenti: se la differenza è ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ 0.01 permettiamo lo spend (evita errori di 1 cent)
+    # Arrotondamenti: se la differenza è ≤ 0.01 permettiamo lo spend (evita errori di 1 cent)
     if amount > remaining + 0.01:
         raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
     spent = round(min(amount, remaining), 2)
@@ -621,7 +629,7 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
     return new_remaining
 
 
-#  —  —  Tracking job pagati completati con successo (persistenza su disco)  —  — 
+#  -  -  Tracking job pagati completati con successo (persistenza su disco)  -  - 
 # Set di job_id per cui l'ottimizzazione a pagamento è terminata con successo.
 # Serve al recovery all'avvio per distinguere job completati da job interrotti.
 _paid_opt_done: set = set()
@@ -710,9 +718,9 @@ def _recover_orphaned_voucher_charges():
         print(f"[startup] Recovered {recovered} orphaned voucher charge(s)")
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # PAYPAL REST API v2
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 def _paypal_get_access_token():
     """Get OAuth2 access token (cached ~8h)."""
@@ -730,8 +738,8 @@ def _paypal_get_access_token():
         timeout=15,
     )
     if r.status_code != 200:
-        # Diagnostic info  —  don't leak the secret, but show ID prefix and mode
-        cid_hint = (PAYPAL_CLIENT_ID[:6] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" + PAYPAL_CLIENT_ID[-4:]) if len(PAYPAL_CLIENT_ID) > 12 else "(too short)"
+        # Diagnostic info  -  don't leak the secret, but show ID prefix and mode
+        cid_hint = (PAYPAL_CLIENT_ID[:6] + "…" + PAYPAL_CLIENT_ID[-4:]) if len(PAYPAL_CLIENT_ID) > 12 else "(too short)"
         body = (r.text or "")[:300]
         raise RuntimeError(
             f"PayPal OAuth failed: HTTP {r.status_code} on {PAYPAL_API_BASE} "
@@ -795,7 +803,7 @@ def _paypal_capture_order(order_id):
     return r.json()
 
 
-#  —  —  Admin activity digest  —  — 
+#  -  -  Admin activity digest  -  - 
 
 # (Functions imported from email_service)
 
@@ -848,10 +856,10 @@ def _send_completion_email(job_id):
     rss_filename = f"{safe_name}_podcast.xml"
     rss_url = f"{base_url}/{rss_filename}" if base_url else rss_filename
 
-    #  —  —  i18n email content  —  — 
+    #  -  -  i18n email content  -  - 
     _email_i18n = {
         "it": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" pronto per il download",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" pronto per il download",
             "heading": "&#x1F3A7; Il tuo audiolibro &egrave; pronto!",
             "body": f"La generazione di <strong>{book_title}</strong> &egrave; stata completata con successo.",
             "m4b_failed_msg": "<div style='margin:15px 0;padding:12px;background:#fffbeb;border:1px solid #fef3c7;color:#92400e;border-radius:6px;font-size:14px'>&#x26A0;&#xFE0F; La conversione in formato M4B non &egrave; andata a buon fine dopo diversi tentativi. Ti forniamo comunque la versione MP3 singola.</div>",
@@ -866,7 +874,7 @@ def _send_completion_email(job_id):
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
         "en": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" ready for download",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" ready for download",
             "heading": "&#x1F3A7; Your audiobook is ready!",
             "body": f"The generation of <strong>{book_title}</strong> has been completed successfully.",
             "m4b_failed_msg": "<div style='margin:15px 0;padding:12px;background:#fffbeb;border:1px solid #fef3c7;color:#92400e;border-radius:6px;font-size:14px'>&#x26A0;&#xFE0F; M4B conversion failed after several attempts. We are providing the single MP3 version instead.</div>",
@@ -881,7 +889,7 @@ def _send_completion_email(job_id):
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
         "fr": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
             "heading": "&#x1F3A7; Votre livre audio est pr&ecirc;t !",
             "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger l'audiolibro",
@@ -893,7 +901,7 @@ def _send_completion_email(job_id):
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
         "es": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" listo para descargar",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" listo para descargar",
             "heading": "&#x1F3A7; &iexcl;Tu audiolibro est&aacute; listo!",
             "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar audiolibro",
@@ -905,7 +913,7 @@ def _send_completion_email(job_id):
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
         "de": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" bereit zum Download",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" bereit zum Download",
             "heading": "&#x1F3A7; Dein H&ouml;rbuch ist fertig!",
             "body": f"Die Generierung von <strong>{book_title}</strong> wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Hörbuch herunterladen",
@@ -917,7 +925,7 @@ def _send_completion_email(job_id):
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
         "zh": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
             "heading": "&#x1F3A7; \u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
             "body": f"<strong>{book_title}</strong> \u5df2\u6210\u529f\u751f\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u6587\u4ef6",
@@ -946,7 +954,7 @@ def _send_completion_email(job_id):
         }
         t["btn"] = _btn_audio.get(lang, _btn_audio["en"])
 
-    #  —  —  Button and Warning logic based on job outcome  —  — 
+    #  -  -  Button and Warning logic based on job outcome  -  - 
     is_m4b = (dl_type == "audio" and job.get("output_m4b"))
     m4b_failed = job.get("m4b_failed", False)
     
@@ -961,7 +969,7 @@ def _send_completion_email(job_id):
         # ZIP or fallback
         t["btn_final"] = t["btn_zip"]
 
-    #  —  —  Podcast section (only for podcast downloads)  —  — 
+    #  -  -  Podcast section (only for podcast downloads)  -  - 
     podcast_section = ""
     if dl_type == "podcast" and base_url:
         podcast_section = f"""
@@ -978,7 +986,7 @@ def _send_completion_email(job_id):
         <p style="margin:0">{t['podcast_p3']}</p>
       </div>"""
 
-    #  —  —  Optional: link to optimized .abm file (only present when auto_generate flow produced one)  —  — 
+    #  -  -  Optional: link to optimized .abm file (only present when auto_generate flow produced one)  -  - 
     abm_section = ""
     has_abm = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
     if has_abm:
@@ -1032,7 +1040,7 @@ def _send_completion_email(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
 
-#  —  —  Activity log  —  — 
+#  -  -  Activity log  -  - 
 _log_lock = threading.Lock()
 
 
@@ -1056,9 +1064,9 @@ def _log_activity(session_id, filename, operation, client_id="", client_ip="", v
         pass
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # VOICE MANAGEMENT
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 _voices_cache = None
 _voices_lock = threading.Lock()
@@ -1118,7 +1126,7 @@ def get_voices():
             "engine": "edge",
         })
 
-    #  —  —  Merge voci Google Cloud TTS Chirp3-HD (se disponibili e budget non esaurito)  —  — 
+    #  -  -  Merge voci Google Cloud TTS Chirp3-HD (se disponibili e budget non esaurito)  -  - 
     if google_tts is not None and google_tts.is_available():
         gcloud_voices = google_tts.get_voices()
         for lang_code, voice_list in gcloud_voices.items():
@@ -1150,11 +1158,11 @@ def _invalidate_voices_cache():
         google_tts.invalidate_voices_cache()
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # AUDIO GENERATION
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
-# (Functions moved to tts_split.py — imported at top of file)
+# (Functions moved to tts_split.py - imported at top of file)
 
 
 class _CancelledError(Exception):
@@ -1293,9 +1301,9 @@ def parse_abm(file_path):
 
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # LLM TEXT OPTIMIZATION (DeepSeek)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 def _split_text_into_chunks(text, max_chars):
     """Split text into chunks respecting paragraph boundaries."""
@@ -1311,7 +1319,7 @@ def _split_text_into_chunks(text, max_chars):
                 chunks.append("\n\n".join(current_chunk))
                 current_chunk = []
                 current_size = 0
-            sentences = re.split(r'(?<=[.!?ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦])\s+', para)
+            sentences = re.split(r'(?<=[.!?…])\s+', para)
             sub_chunk = []
             sub_size = 0
             for sent in sentences:
@@ -1336,9 +1344,9 @@ def _split_text_into_chunks(text, max_chars):
 
 
 # Pattern di preamboli/postfazioni meta che il LLM a volte emette nonostante
-# il prompt vieti commenti (Understood, Sure, Ecco il testoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦, According to the
-# rulesÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦). Se presenti vengono scartati dal sanitizer: se finissero nell'audio,
-# il TTS leggerebbe "Understood, according to the ruleÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" come se fosse testo
+# il prompt vieti commenti (Understood, Sure, Ecco il testo…, According to the
+# rules…). Se presenti vengono scartati dal sanitizer: se finissero nell'audio,
+# il TTS leggerebbe "Understood, according to the rule…" come se fosse testo
 # del libro.
 _LLM_PREAMBLE_PATTERNS = (
     # Inglese
@@ -1347,12 +1355,12 @@ _LLM_PREAMBLE_PATTERNS = (
     r"below\s+is\s+the|following\s+the\s+rules?|according\s+to\s+the\s+rules?|"
     r"as\s+requested|as\s+instructed|noted)\b",
     # Italiano
-    r"^(capito|compreso|d['ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢]accordo|ho\s+capito|perfetto|va\s+bene|certo|"
+    r"^(capito|compreso|d['’]accordo|ho\s+capito|perfetto|va\s+bene|certo|"
     r"ecco\s+(?:il|la|una)?\s*(?:testo|versione)(?:\s+ottimizzata?|\s+rivista|\s+pulita|\s+corretta)?|"
     r"seguendo\s+le\s+regole|secondo\s+le\s+regole|come\s+richiesto)\b",
     # Francese / spagnolo / tedesco (difese minori ma utili)
-    r"^(compris|d['ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢]accord|voici\s+le\s+texte|suivant\s+les\s+r[èe]gles|"
-    r"entendido|de\s+acuerdo|aqu[iÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­]\s+est[ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡a]\s+el\s+texto|"
+    r"^(compris|d['’]accord|voici\s+le\s+texte|suivant\s+les\s+r[èe]gles|"
+    r"entendido|de\s+acuerdo|aquí\s+está\s+el\s+texto|"
     r"verstanden|hier\s+ist\s+der\s+text)\b",
 )
 _LLM_PREAMBLE_RE = re.compile(
@@ -1364,11 +1372,11 @@ def _sanitize_llm_output(text: str) -> str:
     """Rimuove contaminazioni tipiche dell'output LLM prima di passarlo al TTS.
 
     Due categorie di problemi mitigati:
-      1) Preamboli/postfazioni meta ("Understood, according to the rulesÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦",
-         "Ecco il testo ottimizzato:", "Here is the optimized version:"ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦)
+      1) Preamboli/postfazioni meta ("Understood, according to the rules…",
+         "Ecco il testo ottimizzato:", "Here is the optimized version:"…)
          che il modello emette nonostante il prompt li vieti. Se raggiungono
          il TTS vengono letti come se fossero testo del libro.
-      2) Paragrafi/righe duplicate consecutivamente  —  tipicamente il titolo
+      2) Paragrafi/righe duplicate consecutivamente  -  tipicamente il titolo
          del capitolo ripetuto sia in coda al chunk precedente sia in testa
          a quello successivo.
 
@@ -1379,7 +1387,7 @@ def _sanitize_llm_output(text: str) -> str:
     if not text:
         return text
 
-    #  —  —  1) Strip preamble: rimuovi, in testa, le prime righe che iniziano
+    #  -  -  1) Strip preamble: rimuovi, in testa, le prime righe che iniziano
     # con un marcatore meta (e l'eventuale riga che termina con ':').
     lines = text.splitlines()
     idx = 0
@@ -1408,7 +1416,7 @@ def _sanitize_llm_output(text: str) -> str:
             continue
         break
 
-    #  —  —  2) Strip trailing meta: ultime righe tipo "Note: ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" o
+    #  -  -  2) Strip trailing meta: ultime righe tipo "Note: …" o
     # "[End of optimized text]".
     end = len(lines)
     while end > idx:
@@ -1417,14 +1425,14 @@ def _sanitize_llm_output(text: str) -> str:
             end -= 1
             continue
         if tail.startswith(("Note:", "Nota:", "[Note", "[End", "[Fine",
-                            " —  End", " — End")):
+                            " -  End", " - End")):
             end -= 1
             continue
         break
 
     cleaned = "\n".join(lines[idx:end]).strip("\n")
 
-    #  —  —  3) Deduplica paragrafi consecutivi identici (titolo ripetuto a cavallo
+    #  -  -  3) Deduplica paragrafi consecutivi identici (titolo ripetuto a cavallo
     # di due chunk concatenati, o stesso blocco emesso due volte dal modello).
     paragraphs = re.split(r"\n{2,}", cleaned)
     deduped = []
@@ -1436,7 +1444,7 @@ def _sanitize_llm_output(text: str) -> str:
             continue
         deduped.append(p)
 
-    #  —  —  4) Deduplica anche righe consecutive identiche *all'interno* di un
+    #  -  -  4) Deduplica anche righe consecutive identiche *all'interno* di un
     # paragrafo (difesa in più contro doppie emissioni di singole righe).
     final_paragraphs = []
     for p in deduped:
@@ -1535,11 +1543,11 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             raise _CancelledError("Optimization cancelled between chunks")
         if len(chunks) > 1:
             if i == 0:
-                user_content = f"[Parte {i+1} di {len(chunks)}  —  inizio del testo]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  -  inizio del testo]\n\n{chunk}"
             elif i == len(chunks) - 1:
-                user_content = f"[Parte {i+1} di {len(chunks)}  —  fine del testo]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  -  fine del testo]\n\n{chunk}"
             else:
-                user_content = f"[Parte {i+1} di {len(chunks)}  —  continuazione]\n\n{chunk}"
+                user_content = f"[Parte {i+1} di {len(chunks)}  -  continuazione]\n\n{chunk}"
         else:
             user_content = chunk
         results.append(_call_deepseek(user_content, job=job))
@@ -1647,7 +1655,7 @@ def _send_optimization_email(job_id):
 
     _opt_email_i18n = {
         "it": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" ottimizzazione testo completata",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" ottimizzazione testo completata",
             "heading": "&#x2728; Ottimizzazione testo completata!",
             "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il progetto ottimizzato (.abm)",
@@ -1656,7 +1664,7 @@ def _send_optimization_email(job_id):
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
         "en": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" text optimization completed",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" text optimization completed",
             "heading": "&#x2728; Text optimization completed!",
             "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download optimized project (.abm)",
@@ -1665,7 +1673,7 @@ def _send_optimization_email(job_id):
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
         "fr": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" optimisation du texte termin&eacute;e",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" optimisation du texte termin&eacute;e",
             "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
             "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)",
@@ -1674,7 +1682,7 @@ def _send_optimization_email(job_id):
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
         "es": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" optimizaci&oacute;n de texto completada",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" optimizaci&oacute;n de texto completada",
             "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
             "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar proyecto optimizado (.abm)",
@@ -1683,7 +1691,7 @@ def _send_optimization_email(job_id):
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
         "de": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" Textoptimierung abgeschlossen",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" Textoptimierung abgeschlossen",
             "heading": "&#x2728; Textoptimierung abgeschlossen!",
             "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Optimiertes Projekt herunterladen (.abm)",
@@ -1692,7 +1700,7 @@ def _send_optimization_email(job_id):
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
         "zh": {
-            "subject": f"Audiobook Maker  —  \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
+            "subject": f"Audiobook Maker  -  \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
             "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
             "body": f"<strong>{book_title}</strong> \u7684AI\u6587\u672c\u4f18\u5316\u5df2\u6210\u529f\u5b8c\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u4f18\u5316\u9879\u76ee (.abm)",
@@ -1783,25 +1791,14 @@ def _refund_job_payment(job_id, job, reason="error"):
 
 
 def run_optimization(job_id, selected_chapters=None):
-    """Background thread: optimize text of all chapters via DeepSeek LLM.
-    If selected_chapters is provided (list of indices), only those are optimized.
-    """
-    job = jobs[job_id]
-    job["status"] = "optimizing"
-    job["opt_cancelled"] = False
-    job["last_poll"] = time.time()
-    start_time = time.time()
-    info = job["info"]
-    
-    selected_set = set(selected_chapters) if selected_chapters else None
-    
-    # Identify which chapters to optimize
-    chapters_to_opt = info.chapters
-    if selected_set:
-        chapters_to_opt = [ch for ch in info.chapters if ch.index in selected_set]
-    
-    total_chapters = len(chapters_to_opt)
-    total_chars = sum(ch.char_count for ch in chapters_to_opt)
+    job = jobs[job_id]; job["status"] = "optimizing"; job["opt_cancelled"] = False; job["last_poll"] = time.time(); start_time = time.time(); info = job["info"]
+    selected_indices = _parse_selected_chapters(selected_chapters)
+    if selected_indices:
+        from copy import copy
+        filtered = [ch for ch in info.chapters if ch.index in selected_indices]
+        if filtered:
+            new_info = copy(info); new_info.chapters = filtered; job["info"] = new_info; info = new_info
+    chapters_to_opt = info.chapters; total_chapters = len(chapters_to_opt); total_chars = sum(ch.char_count for ch in chapters_to_opt)
 
     # Log per confermare che il prompt di ottimizzazione è caricato
     if _deepseek_prompt:
@@ -1821,7 +1818,7 @@ def run_optimization(job_id, selected_chapters=None):
         for i, ch in enumerate(chapters_to_opt):
             if job.get("opt_cancelled"):
                 raise _CancelledError("Optimization cancelled")
-            # Heartbeat check (skip if email registered  —  batch mode)
+            # Heartbeat check (skip if email registered  -  batch mode)
             if not job.get("email_registered"):
                 last_poll = job.get("last_poll", start_time)
                 if time.time() - last_poll > 60:
@@ -1873,7 +1870,7 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
-        # Re-check auto_generate  —  may have been set mid-optimization via register_opt_email
+        # Re-check auto_generate  -  may have been set mid-optimization via register_opt_email
         auto_generate = job.get("opt_auto_generate", False)
         if auto_generate and job.get("email_registered"):
             # Batch mode: generate .abm snapshot first (so it can be linked from the final email),
@@ -2100,7 +2097,7 @@ def run_generation(job_id, info, voice, rate, single_file):
             current_chapter_parts = []
             current_chapter_idx = -1
             failed_chunks = 0
-            # Dict for O(1) lookup  —  supports non-contiguous indices (filtered chapters)
+            # Dict for O(1) lookup  -  supports non-contiguous indices (filtered chapters)
             chapter_by_idx = {ch.index: ch for ch in info.chapters}
             # Rinumerazione sequenziale output: il ch.index può essere non
             # contiguo (capitoli deselezionati via UI, o capitoli rimossi
@@ -2292,13 +2289,13 @@ def _google_tts_refund_unused(job_id, job):
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # ROUTES
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
-#  —  —  —  Rotte per lingua (/it/, /en/, /fr/, /es/, /de/, /zh/)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  Rotte per lingua (/it/, /en/, /fr/, /es/, /de/, /zh/)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 # Ogni URL ha HTML pre-renderizzato con meta tag, title, hreflang e canonical
-# corretti per quella lingua  —  indicizzabili da Google come pagine distinte.
+# corretti per quella lingua  -  indicizzabili da Google come pagine distinte.
 
 @app.route("/")
 def index():
@@ -2338,7 +2335,7 @@ def index_zh():
     return HTML_TEMPLATES["zh"], 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-#  —  —  —  sitemap.xml  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 @app.route("/sitemap.xml")
 def sitemap():
     """Sitemap con tutte le varianti linguistiche.
@@ -2396,7 +2393,7 @@ def sitemap():
     return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
 
 
-#  —  —  —  robots.txt  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  robots.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 @app.route("/robots.txt")
 def robots():
     sitemap_line = f"Sitemap: {BASE_URL}/sitemap.xml" if BASE_URL else ""
@@ -2412,7 +2409,7 @@ Disallow: /admin/
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
-#  —  —  —  Favicon routes (URL-based for search engine compatibility)  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  Favicon routes (URL-based for search engine compatibility)  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 # Google richiede che le favicon siano servite da URL reali e crawlabili,
 # NON inline come data URI. Senza queste route, nei risultati di ricerca
 # appare un'icona generica al posto della favicon del sito.
@@ -2440,7 +2437,7 @@ def favicon_svg():
 
 @app.route("/manifest.json")
 def web_manifest():
-    """Web App Manifest  —  Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""
+    """Web App Manifest  -  Google lo usa come fonte primaria per le favicon nei risultati di ricerca."""
     manifest = {
         "name": "Audiobook Maker",
         "short_name": "Audiobook Maker",
@@ -2460,7 +2457,7 @@ def web_manifest():
     }
 
 
-#  —  —  —  Admin log viewer (/logs)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  Admin log viewer (/logs)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 # URL: /logs?2026-03  (parametro = anno-mese)
 # Non indicizzato (Disallow: /logs in robots.txt consigliato)
 
@@ -2544,7 +2541,7 @@ def _session_in_progress(s, sid):
     """Return True if session has an active AI optimization or TTS generation.
 
     Un'attività è considerata "in corso" se:
-      - ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â  stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
+      - È stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
       - Non risulta fra gli eventi una conclusione (COMPLETE / DOWNLOAD* / OPT_COMPLETE),
       - Non risulta un'annullamento (CANCEL / OPT_CANCEL),
       - Il job esiste ancora in memoria con stato attivo (`generating`, `optimizing`,
@@ -2585,18 +2582,15 @@ def _session_in_progress(s, sid):
         # job esistente ma in stato finale  →  non più in corso
         return False
     # Fallback (job non più in memoria): non considerare "in corso" le sessioni
-    # storiche  —  ritorna False per evitare falsi positivi dopo un restart del server.
+    # storiche  -  ritorna False per evitare falsi positivi dopo un restart del server.
     return False
 
 
 @app.route("/logs")
 def admin_logs():
-    """Admin log viewer: card-based, mobile-friendly, with day grouping and Excel export."""
-    from datetime import datetime
-    from collections import defaultdict
-    import html as html_mod
-
-    #  —  —  i18n for log page labels  —  — 
+    if not ADMIN_TOKEN: return "Logs UI disabled.", 404
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token): return _render_admin_gate("Logs Viewer", "/logs"), 200, {"Content-Type": "text/html; charset=utf-8"}
     _log_i18n = {
         "it": {
             "sessions": "Sessioni", "gen_completed": "Gen. completata",
@@ -2639,7 +2633,7 @@ def admin_logs():
             "no_activity": "No hay actividad registrada para",
         },
         "zh": {
-            "sessions": "会话", "gen_completed": "生成完成",
+            "sessions": "会话", "gen_completed": "生�完�",
             "in_progress": "进行中", "cancelled": "已取消",
             "email_sent": "邮件已发送", "unique_clients": "唯一客户",
             "recurring": "常客", "months": "月份",
@@ -2754,7 +2748,7 @@ def admin_logs():
                 elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
                 start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
                 elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span> ⏱️'
-                last = " — "
+                last = " - "
             else:
                 delta = s["last_dt"] - s["first_dt"]
                 total_sec = int(delta.total_seconds())
@@ -2772,7 +2766,7 @@ def admin_logs():
             timeline = "  →  ".join(event_icons.get(e, e) for e in s["events"])
 
             cip = s.get("client_ip", "")
-            cid_short = cid[:8] if cid else " — "
+            cid_short = cid[:8] if cid else " - "
             cid_color = _client_color_map.get(cid, "var(--text-dim)")
             cid_badge = f' <span class="cid-count" style="color:{cid_color}">({cid_count})</span>' if cid_count >= 2 else ""
             cid_style = f'color:{cid_color};font-weight:600' if cid in _client_color_map else 'color:var(--text-dim)'
@@ -2789,7 +2783,7 @@ def admin_logs():
                     voice_short = html_mod.escape(voice_raw)
 
             blang = html_mod.escape(s.get("browser_lang", "") or "")
-            blang_display = f'<span class="card-blang">{blang}</span>' if blang else " — "
+            blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
 
             card_cls = "card card-in-progress" if is_progress else "card"
             data_attrs = (
@@ -2809,8 +2803,8 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
-<div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " — "}</span></div>
-<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
+<div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " - "}</span></div>
+<div class="meta-row"><span class="meta-label">�</span>{blang_display}</div>
 </div>
 </div>
 """
@@ -2837,7 +2831,7 @@ def admin_logs():
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
-<title>Audiobook Maker  —  Activity Log ({ym})</title>
+<title>Audiobook Maker  -  Activity Log ({ym})</title>
 <style>
 :root {{ --bg:#0f172a;--surface:#1e293b;--surface2:#334155;--border:#475569;--text:#e2e8f0;--text-dim:#94a3b8;--accent:#38bdf8;--accent2:#a78bfa;--green:#22c55e;--red:#ef4444;--orange:#f97316; }}
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -2927,7 +2921,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 </div>
 
 <div class="cards-container">
-{cards_html if cards_html else "<div class='empty'><div class='icon'>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
+{cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
 </div>
 
 <script>
@@ -3062,7 +3056,7 @@ def admin_logs_export():
         ret = sum(1 for c in client_session_count.values() if c >= 2)
 
         ws.merge_cells("A1:B1")
-        ws["A1"] = f"Audiobook Maker  —  Activity Log {ym}"
+        ws["A1"] = f"Audiobook Maker  -  Activity Log {ym}"
         ws["A1"].font = Font(name="Arial", bold=True, color="38bdf8", size=14)
         summary = [("Sessioni", total_s), ("Gen. completata", gen_c), ("In corso", gen_p),
                    ("Cancellati", gen_x), ("Email inviate", em_s), ("Client unici", uniq),
@@ -3088,9 +3082,9 @@ def admin_logs_export():
                         round(delta.total_seconds() / 60, 1), s["filename"], s["last_op"],
                         "  →  ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
                         s.get("voice", ""), s.get("browser_lang", ""),
-                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if _session_completed(s) else "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â",
-                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if _session_in_progress(s, sid) else "",
-                        "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
+                        "✅" if _session_completed(s) else "❌",
+                        "✅" if _session_in_progress(s, sid) else "",
+                        "✅" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
             for col_idx, val in enumerate(row_data, 1):
                 c = ws.cell(row=row_idx, column=col_idx, value=val)
                 c.font = data_font
@@ -3114,7 +3108,7 @@ def admin_logs_export():
             headers={"Content-Disposition": f'attachment; filename="activity_log_{ym}.csv"'})
 
 
-#  —  —  —  Admin voucher web UI (/admin/vouchers)  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+#  -  -  -  Admin voucher web UI (/admin/vouchers)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 # Protetta da token ABM_ADMIN_TOKEN. Se il token non è configurato, endpoint 404.
 # Il token viene inviato via header X-Admin-Token (dalle API) o nel form HTML.
 # Confronto a tempo costante tramite hmac.compare_digest.
@@ -3137,21 +3131,14 @@ def _admin_auth_from_request():
 
 @app.route("/admin/vouchers", methods=["GET"])
 def admin_vouchers_page():
-    """UI amministrativa per creare/elencare/revocare voucher.
-
-    Flusso:
-      1. GET /admin/vouchers   →  form di inserimento token
-      2. L'utente inserisce il token; JS lo salva in sessionStorage e lo allega come
-         header X-Admin-Token a ogni chiamata API successiva.
-    """
-    if not ADMIN_TOKEN:
-        return ("Admin voucher UI disabled. Set ABM_ADMIN_TOKEN env var to enable.",
-                404, {"Content-Type": "text/plain; charset=utf-8"})
+    if not ADMIN_TOKEN: return ("Admin voucher UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token): return _render_admin_gate("Voucher Admin", "/admin/vouchers"), 200, {"Content-Type": "text/html; charset=utf-8"}
     html = r"""<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Admin  —  Voucher</title>
+<title>Admin  -  Voucher</title>
 <style>
   :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
   *{box-sizing:border-box}
@@ -3462,7 +3449,7 @@ def admin_api_vouchers():
         apply_bonus=False,       # promo/gift: importo nominale, niente +10%
         code=custom_code,
     )
-    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦", email)
+    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "…", email)
     print(f"[admin] voucher created via UI: {code} kind={kind} email={email} amount={amount:.2f} days={days} ip={ip}")
     return jsonify({
         "code": code,
@@ -3491,7 +3478,7 @@ def admin_api_voucher_revoke(code):
     v["revoked"] = True
     v["revoke_reason"] = reason or "admin revoke"
     _save_vouchers()
-    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦", reason[:40])
+    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "…", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
 
@@ -3633,7 +3620,7 @@ def api_analyze():
             "estimated_minutes": round(ch.word_count / 150, 1),
         })
 
-    #  —  —  Preview text  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+    #  -  -  Preview text  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
     # EPUB: salta il front matter e usa un capitolo interno con contenuto narrativo reale.
     # TXT:  usa il primo contenuto disponibile.
     # Lunghezza target: 200-300 caratteri, troncata a fine frase.
@@ -3667,7 +3654,7 @@ def api_analyze():
         if len(text) <= max_chars:
             return text
         window = text[min_chars:max_chars]
-        m = _re.search(r'[.!?]["""ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»\)\s]', window)
+        m = _re.search(r'[.!?]["""»\)\s]', window)
         cut = (min_chars + m.start() + 1) if m else text.rfind(' ', min_chars, max_chars)
         if cut <= 0:
             cut = max_chars
@@ -3677,7 +3664,7 @@ def api_analyze():
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
-    #  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+    # ----------------------------------------------------------------------
 
     # Detect if .abm was already AI-optimized
     abm_ai_optimized = False
@@ -3710,7 +3697,7 @@ def api_analyze():
 @app.route("/api/preview_audio/<job_id>")
 def api_preview_audio(job_id):
     """Serve l'MP3 di anteprima come endpoint GET.
-    Il browser può usare l'URL direttamente come audio.src  —  nessun problema di autoplay policy.
+    Il browser può usare l'URL direttamente come audio.src  -  nessun problema di autoplay policy.
     Il timeout è gestito da concurrent.futures (funziona sempre, a differenza di asyncio.wait_for).
     """
     if not job_id or job_id not in jobs:
@@ -3738,7 +3725,7 @@ def api_preview_audio(job_id):
 
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
-    # da asyncio  —  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
+    # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
 
     def _generate():
@@ -3877,7 +3864,7 @@ def api_generate():
     if job["status"] not in ("analyzed", "optimized"):
         return jsonify({"error": "Generation already running or completed."}), 400
 
-    #  —  —  Concurrent generation limit per client  —  — 
+    #  -  -  Concurrent generation limit per client  -  - 
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
     if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
@@ -3907,7 +3894,7 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    #  —  —  Pre-allocazione atomica budget Google Cloud TTS  —  — 
+    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  - 
     # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
     # parallele non possono passare lo stesso check. Il refund della parte
     # non consumata avviene in run_generation in caso di errore/cancellazione.
@@ -4005,7 +3992,7 @@ def api_cancel(job_id):
         # Se l'utente ha registrato email per notifica, ignora cancel da beforeunload
         # ma permetti cancel esplicito (pulsante con force=1)
         if job.get("email_registered") and not force:
-            print(f"[{job_id}] Cancel ignored  —  email registered for background processing")
+            print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
         return jsonify({"status": "cancelling"})
@@ -4117,9 +4104,9 @@ def api_email_available():
     return jsonify({"available": _smtp_available()})
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # LLM TEXT OPTIMIZATION API
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 @app.route("/api/llm_available")
 def api_llm_available():
@@ -4136,28 +4123,41 @@ def api_llm_available():
     })
 
 
+def _parse_selected_chapters(raw_data):
+    """Utility ultra-robusta per estrarre indici interi da qualsiasi input."""
+    if raw_data is None: return []
+    indices = []
+    if isinstance(raw_data, str) and "," in raw_data:
+        items = raw_data.split(",")
+    elif isinstance(raw_data, list):
+        items = raw_data
+    else:
+        items = [raw_data]
+    for item in items:
+        if item is None: continue
+        if isinstance(item, (int, float)):
+            indices.append(int(item))
+        elif isinstance(item, str):
+            parts = item.replace("[", "").replace("]", "").split(",")
+            for p in parts:
+                p = p.strip()
+                if p.isdigit(): indices.append(int(p))
+    return sorted(list(set(indices)))
+
 @app.route("/api/optimize_estimate/<job_id>")
 def api_optimize_estimate(job_id):
-    """Return cost estimate for LLM optimization of a job."""
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]
-    info = job.get("info")
-    if not info or not info.chapters:
-        return jsonify({"error": "No book data"}), 400
-    
-    # Respect selected chapters if provided as query param (e.g. ?selected_chapters=1&selected_chapters=2)
-    selected_chapters = request.args.getlist("selected_chapters", type=int)
-    if selected_chapters:
-        selected_set = set(selected_chapters)
-        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_set)
+    if job_id not in jobs: return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]; info = job.get("info")
+    if not info or not info.chapters: return jsonify({"error": "No book data"}), 400
+    raw_sel = request.args.getlist("selected_chapters") + request.args.getlist("selected_chapters[]")
+    selected_indices = _parse_selected_chapters(raw_sel)
+    if raw_sel:
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_indices)
     else:
         total_chars = sum(ch.char_count for ch in info.chapters)
-        
     cost = _estimate_llm_cost_eur(total_chars)
     return jsonify({
-        "chars": total_chars,
-        "cost_eur": cost,
+        "chars": total_chars, "cost_eur": cost,
         "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
         "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
         "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
@@ -4166,24 +4166,22 @@ def api_optimize_estimate(job_id):
 
 @app.route("/api/paypal_create_order", methods=["POST"])
 def api_paypal_create_order():
-    """Create a PayPal order for LLM optimization payment."""
-    if not _paypal_available():
-        return jsonify({"error": "PayPal not configured"}), 503
-    data = request.json or {}
-    job_id = data.get("job_id", "")
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]
-    info = job.get("info")
-    if not info:
-        return jsonify({"error": "No book data"}), 400
-    total_chars = sum(ch.char_count for ch in info.chapters)
+    if not _paypal_available(): return jsonify({"error": "PayPal not configured"}), 503
+    data = request.json or {}; job_id = data.get("job_id", "")
+    if job_id not in jobs: return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]; info = job.get("info")
+    if not info: return jsonify({"error": "No book data"}), 400
+    selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
+    if selected_chapters:
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_chapters)
+    else:
+        total_chars = sum(ch.char_count for ch in info.chapters)
     cost = _estimate_llm_cost_eur(total_chars)
     if cost <= LLM_FREE_THRESHOLD_EUR:
         return jsonify({"error": "Payment not required for this job"}), 400
 
     book_title = getattr(info, "title", "") or "Audiobook"
-    description = f"AI text optimization  —  {book_title[:60]}"
+    description = f"AI text optimization  -  {book_title[:60]}"
     try:
         order = _paypal_create_order(cost, description, custom_id=job_id)
     except Exception as e:
@@ -4306,7 +4304,7 @@ def api_voucher_validate():
     email = (data.get("email") or "").strip().lower()
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
 
-    #  —  Rate limit check  — 
+    #  -  Rate limit check  - 
     allowed, retry_after, reason = _voucher_rl_check(ip, email)
     if not allowed:
         _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
@@ -4315,7 +4313,7 @@ def api_voucher_validate():
         resp.headers["Retry-After"] = str(retry_after)
         return resp
 
-    #  —  Validation logic  — 
+    #  -  Validation logic  - 
     outcome = "OK"
     status = 200
     body = None
@@ -4345,7 +4343,7 @@ def api_voucher_validate():
     success = (outcome == "OK")
     _voucher_rl_record_result(email, success)
     # Log in forma strutturata (usiamo i campi esistenti: voice=code masked, browser_lang=outcome)
-    code_masked = (code[:4] + "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦") if code else ""
+    code_masked = (code[:4] + "…") if code else ""
     _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
     return jsonify(body), status
 
@@ -4358,12 +4356,12 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
         book_title = getattr(info, "title", "") or ""
     lang = job.get("browser_lang", "en")[:2] if job else "en"
     subj_map = {
-        "it": f"Ricevuta pagamento Audiobook Maker  —  {amount_eur:.2f} EUR",
-        "en": f"Audiobook Maker payment receipt  —  EUR {amount_eur:.2f}",
-        "fr": f"ReÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§u de paiement Audiobook Maker  —  {amount_eur:.2f} EUR",
-        "es": f"Recibo de pago Audiobook Maker  —  {amount_eur:.2f} EUR",
-        "de": f"Zahlungsbeleg Audiobook Maker  —  {amount_eur:.2f} EUR",
-        "zh": f"Audiobook Maker ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®  —  {amount_eur:.2f} EUR",
+        "it": f"Ricevuta pagamento Audiobook Maker  -  {amount_eur:.2f} EUR",
+        "en": f"Audiobook Maker payment receipt  -  EUR {amount_eur:.2f}",
+        "fr": f"Reçu de paiement Audiobook Maker  -  {amount_eur:.2f} EUR",
+        "es": f"Recibo de pago Audiobook Maker  -  {amount_eur:.2f} EUR",
+        "de": f"Zahlungsbeleg Audiobook Maker  -  {amount_eur:.2f} EUR",
+        "zh": f"Audiobook Maker 支付收据  -  {amount_eur:.2f} EUR",
     }
     subject = subj_map.get(lang, subj_map["en"])
     body_map = {
@@ -4391,7 +4389,7 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
       <p>{info_txt}</p>
       <p style="font-size:.9em;color:#666">{refund}</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker  —  {BASE_URL or ''}</p>
+      <p style="color:#999;font-size:12px">Audiobook Maker  -  {BASE_URL or ''}</p>
     </div>"""
     _send_email(email, subject, html_body)
 
@@ -4402,7 +4400,7 @@ def _send_voucher_email(code, email, amount_eur, book_title):
         return
     from datetime import datetime, timedelta
     expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-    subject = f"Audiobook Maker  —  Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
+    subject = f"Audiobook Maker  -  Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
       <h2 style="color:#2c3e50">&#x1F381; Il tuo buono</h2>
       <p>L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine.</p>
@@ -4416,51 +4414,24 @@ def _send_voucher_email(code, email, amount_eur, book_title):
       <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
       <p style="font-size:.85em;color:#666">Il buono &egrave; nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker  —  {BASE_URL or ''}</p>
+      <p style="color:#999;font-size:12px">Audiobook Maker  -  {BASE_URL or ''}</p>
     </div>"""
     _send_email(email, subject, html_body)
 
 
 @app.route("/api/optimize", methods=["POST"])
 def api_optimize():
-    """Start LLM text optimization for a job's chapters."""
-    if not _llm_available():
-        return jsonify({"error": "LLM optimization not available"}), 503
-
-    data = request.json or {}
-    job_id = data.get("job_id")
-    batch = data.get("batch", False)
-    auto_generate = data.get("auto_generate", False)
-    email = (data.get("email") or "").strip().lower()
-
-    if job_id not in jobs:
-        return jsonify({"error": "Session expired. Re-upload file."}), 400
-    job = jobs[job_id]
-    if job["status"] not in ("analyzed",):
-        return jsonify({"error": "Optimization not available in current state."}), 400
-
-    #  —  —  LLM rate limiting per client  —  — 
+    if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
+    data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
+    if job_id not in jobs: return jsonify({"error": "Session expired"}), 400
+    job = jobs[job_id]; info = job.get("info")
     client_id = job.get("client_id", "")
-    if client_id and MAX_CONCURRENT_LLM_PER_CLIENT > 0:
-        active = _active_optimizing_for_client(client_id)
-        if active >= MAX_CONCURRENT_LLM_PER_CLIENT:
-            return jsonify({
-                "error": f"Concurrent LLM optimization limit reached ({MAX_CONCURRENT_LLM_PER_CLIENT}).",
-                "error_code": "llm_concurrent_limit",
-                "max": MAX_CONCURRENT_LLM_PER_CLIENT,
-                "active": active,
-            }), 429
-
-    #  —  —  Payment gate: if estimated cost > threshold, require a payment_token  —  — 
-    info = job.get("info")
-    selected_chapters = data.get("selected_chapters")
-    
+    if job["status"] not in ("analyzed",): return jsonify({"error": "Invalid state"}), 400
+    selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
     if selected_chapters:
-        selected_set = set(selected_chapters)
-        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_set)
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_chapters)
     else:
         total_chars = sum(ch.char_count for ch in info.chapters) if info else 0
-        
     estimated_cost = _estimate_llm_cost_eur(total_chars)
     if estimated_cost > LLM_FREE_THRESHOLD_EUR:
         payment_token = (data.get("payment_token") or "").strip()
@@ -4669,7 +4640,7 @@ def api_active_jobs():
             start_ts = job.get("start_time", 0)
             active.append({
                 "title": title,
-                "started": datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d %H:%M:%S") if start_ts else " — ",
+                "started": datetime.fromtimestamp(start_ts).strftime("%Y-%m-%d %H:%M:%S") if start_ts else " - ",
                 "status": job.get("status", ""),
                 "progress": job.get("progress_current", 0),
                 "total": job.get("progress_total", 0),
@@ -4758,7 +4729,7 @@ def token_do_download_abm(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
+        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
     abm_path = token_info.get("optimized_abm_path", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     if not abm_path or not os.path.exists(abm_path):
@@ -4786,7 +4757,7 @@ def token_do_download_m4b(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
+        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -4828,7 +4799,7 @@ def token_do_download(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  —  i file sono stati cancellati dopo 24 ore", 410
+        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -4847,7 +4818,7 @@ def token_do_download(token):
           f"UPLOAD_DIR={UPLOAD_DIR}")
 
     try:
-        #  —  —  OPTIMIZED ABM download  —  — 
+        #  -  -  OPTIMIZED ABM download  -  - 
         if dl_type == "optimized_abm":
             abm_path = token_info.get("optimized_abm_path", "")
             abm_name = token_info.get("optimized_abm_name", "optimized.abm")
@@ -4862,14 +4833,14 @@ def token_do_download(token):
                 return send_file(abm_path, as_attachment=True, download_name=abm_name)
             return "File not found", 404
 
-        #  —  —  PODCAST download  —  — 
+        #  -  -  PODCAST download  -  - 
         is_podcast = dl_type == "podcast" and (
             (job and job.get("podcast_ready")) or token_info.get("podcast_ready"))
 
         if is_podcast:
             return _serve_podcast_download(token_info, job, job_id)
 
-        #  —  —  AUDIO download  —  — 
+        #  -  -  AUDIO download  -  - 
         return _serve_audio_download(token_info, job, job_id)
 
     except Exception as e:
@@ -4983,24 +4954,24 @@ def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fna
                "footer": "Generated with Audiobook Maker"},
         "fr": {"heading": "Podcast", "by": "de", "subscribe": "S'abonner au Podcast",
                "copy": "Copier l'URL du flux", "copied": "Copié !",
-               "episodes": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°pisodes", "listen": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°couter",
+               "episodes": "Épisodes", "listen": "Écouter",
                "instructions": "Copiez l'URL du flux RSS et collez-la dans votre app podcast (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Généré avec Audiobook Maker"},
-        "es": {"heading": "Podcast", "by": "de", "subscribe": "SuscrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­bete al Podcast",
-               "copy": "Copiar URL del feed", "copied": "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡Copiado!",
+        "es": {"heading": "Podcast", "by": "de", "subscribe": "Suscríbete al Podcast",
+               "copy": "Copiar URL del feed", "copied": "¡Copiado!",
                "episodes": "Episodios", "listen": "Escuchar",
                "instructions": "Copia la URL del feed RSS y pégala en tu app de podcast favorita (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Generado con Audiobook Maker"},
         "de": {"heading": "Podcast", "by": "von", "subscribe": "Podcast abonnieren",
                "copy": "Feed-URL kopieren", "copied": "Kopiert!",
-               "episodes": "Episoden", "listen": "AnhÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ren",
-               "instructions": "Kopieren Sie die RSS-Feed-URL und fÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼gen Sie sie in Ihre Podcast-App ein (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
+               "episodes": "Episoden", "listen": "Anhören",
+               "instructions": "Kopieren Sie die RSS-Feed-URL und fügen Sie sie in Ihre Podcast-App ein (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Erstellt mit Audiobook Maker"},
-        "zh": {"heading": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢", "by": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦", "subscribe": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢",
-               "copy": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂURL", "copied": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â",
-               "episodes": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂºÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ", "listen": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬",
-               "instructions": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶RSSÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂURLÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¶ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â®ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Pocket CastsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂApple PodcastsÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂAntennaPodÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂOvercast...ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¼ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡",
-               "footer": "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±Audiobook MakerÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã¢â‚¬Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â"},
+        "zh": {"heading": "播客", "by": "作者", "subscribe": "订阅播客",
+               "copy": "复制订阅�URL", "copied": "已复制！",
+               "episodes": "章节", "listen": "收�",
+               "instructions": "复制RSS订阅�URL并将其粘贴到您的播客应用程序中（Pocket Casts，Apple Podcasts，AntennaPod，Overcast...）。",
+               "footer": "由Audiobook Maker生�"},
     }
     lb = _labels.get(lang, _labels["en"])
 
@@ -5216,7 +5187,7 @@ def _render_dl_expired_page(lang="en"):
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
-<title>Audiobook Maker  —  {t['title']}</title>
+<title>Audiobook Maker  -  {t['title']}</title>
 <style>
 body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
 align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
@@ -5276,7 +5247,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
-<title>Audiobook Maker — {t['title']}</title>
+<title>Audiobook Maker - {t['title']}</title>
 <style>
 body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
 align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
@@ -5398,7 +5369,7 @@ def api_download(job_id):
     
     download_type = request.args.get("type", "").lower()
     
-    # Refresh heartbeat  —  evita che il cleanup rimuova il job durante il download
+    # Refresh heartbeat  -  evita che il cleanup rimuova il job durante il download
     job["last_poll"] = time.time()
     job["downloaded_at"] = time.time()
     
@@ -5521,22 +5492,22 @@ def api_download_podcast(job_id):
                      download_name=f"{safe_name}_podcast.zip")
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # HTML TEMPLATE (i18n, upload lock, ETA)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # HTML TEMPLATE (assembled from modular components)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
-# SEO DATA  —  usato sia per il pre-rendering server-side che per sitemap.xml
+# ----------------------------------------------------------------------
+# SEO DATA  -  usato sia per il pre-rendering server-side che per sitemap.xml
 # Mantienilo allineato con seo_data.js (che gestisce il cambio lingua client-side)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 _SEO_DATA = {
     "it": {
-        "title":   "Audiobook Maker — EPUB/PDF a Audiolibro Gratis | MP3 e M4B con Capitoli",
+        "title":   "Audiobook Maker - EPUB/PDF a Audiolibro Gratis | MP3 e M4B con Capitoli",
         "tagline": "Convertitore Gratuito da EPUB e PDF in Audiolibro",
         "subtitle":"Converti i tuoi EPUB e PDF in audiolibri con voci neurali di alta qualità",
         "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B (con capitoli incorporati) gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro professionale. Nessuna installazione, funziona dal browser.",
@@ -5554,7 +5525,7 @@ _SEO_DATA = {
         "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 and M4B audiobooks (with chapters) using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
     "fr": {
-        "title":   "Audiobook Maker — EPUB/PDF en Livre Audio Gratuit | MP3 et M4B",
+        "title":   "Audiobook Maker - EPUB/PDF en Livre Audio Gratuit | MP3 et M4B",
         "tagline": "Convertisseur Gratuit EPUB & PDF en Livre Audio",
         "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurali",
         "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 et M4B (avec chapitres) gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio professionnel. Aucune installation, fonctionne dans le navigateur.",
@@ -5563,7 +5534,7 @@ _SEO_DATA = {
         "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB e PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
     "es": {
-        "title":   "Audiobook Maker — EPUB/PDF a Audiolibro Gratis | MP3 y M4B con Capítulos",
+        "title":   "Audiobook Maker - EPUB/PDF a Audiolibro Gratis | MP3 y M4B con Capítulos",
         "tagline": "Convertidor Gratuito de EPUB y PDF a Audiolibro",
         "subtitle":"Convierte tus EPUB y PDF en audiolibros con voces neurales de alta calidad",
         "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 y M4B (con capítulos incorporados) gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro profesional. Sin instalación, funciona desde el navegador.",
@@ -5581,13 +5552,13 @@ _SEO_DATA = {
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
     "zh": {
-        "title":   "Audiobook Maker — 免费 EPUB/PDF 转 MP3 及 M4B 有声书 | 支持章节和AI语音",
+        "title":   "Audiobook Maker - 免费 EPUB/PDF 转 MP3 及 M4B 有声书 | 支持章节和AI语音",
         "tagline": "免费EPUB和PDF转有声书转换器",
         "subtitle":"使用高品质神经语音将EPUB和PDF转换为有声读物",
-        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书转换为高质量 MP3 或 M4B（含章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
-        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电子书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电子书转换为有声书, tts有声书生成器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电子书转mp3, 听epub, 带音频的epub阅读器, 免费图书转有声书转换器",
+        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电�书转换为高质量 MP3 或 M4B（�章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
+        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电�书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电�书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电�书转换为有声书, tts有声书生�器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电�书转mp3, �epub, 带音频的epub阅读器, 免费图书转有声书转换器",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电子书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅源生成。",
+        "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电�书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅�生�。",
     },
 }
 
@@ -5655,9 +5626,9 @@ def _set_client_cookie(response):
 
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # AUTO-CLEANUP (deletes EPUB/PDF/TXT + MP3 files)
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 # Regole di cancellazione:
 # 1. Browser chiuso senza email registrata  →  cancella (heartbeat perso per 60s)
@@ -5692,26 +5663,26 @@ def _cleanup_loop():
             status = job.get("status", "")
             has_email = job.get("email_registered", False)
 
-            #  —  —  Cancelled jobs: immediate cleanup  —  — 
+            #  -  -  Cancelled jobs: immediate cleanup  -  - 
             if status == "cancelled":
                 to_remove.append((jid, "cancelled"))
                 continue
 
-            #  —  —  Error jobs: immediate cleanup  —  — 
+            #  -  -  Error jobs: immediate cleanup  -  - 
             if status == "error":
                 start = job.get("start_time", now)
                 if (now - start) > 120:  # grazia di 2 min per leggere l'errore
                     to_remove.append((jid, "error"))
                 continue
 
-            #  —  —  Analyzed but never started: cleanup if heartbeat lost  —  — 
+            #  -  -  Analyzed but never started: cleanup if heartbeat lost  -  - 
             if status == "analyzed":
                 last_poll = job.get("last_poll", job.get("start_time", now))
                 if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 3:  # 3 min per analyzed
                     to_remove.append((jid, "stale analyzed"))
                 continue
 
-            #  —  —  Optimizing jobs (LLM)  —  — 
+            #  -  -  Optimizing jobs (LLM)  -  - 
             if status == "optimizing":
                 if has_email:
                     continue  # batch mode: keep alive
@@ -5721,9 +5692,9 @@ def _cleanup_loop():
                     to_remove.append((jid, f"heartbeat lost during optimization ({int(now - last_poll)}s)"))
                 continue
 
-            #  —  —  Optimized jobs: ottimizzazione completata, in attesa di export/download  —  — 
+            #  -  -  Optimized jobs: ottimizzazione completata, in attesa di export/download  -  - 
             # Il progetto .abm va mantenuto per EMAIL_FILE_RETENTION_SEC (24h) dal termine
-            # dell'ottimizzazione in qualunque caso  —  sia che l'utente abbia lasciato il
+            # dell'ottimizzazione in qualunque caso  -  sia che l'utente abbia lasciato il
             # browser aperto, sia che sia stata registrata l'email per notifica batch.
             # La regola unifica lo scenario "no email" con quello email-batch: entrambi
             # hanno 24h dal completamento per scaricare il .abm tramite il bottone UI o
@@ -5736,7 +5707,7 @@ def _cleanup_loop():
                     to_remove.append((jid, reason))
                 continue
 
-            #  —  —  Generating jobs  —  — 
+            #  -  -  Generating jobs  -  - 
             if status == "generating":
                 # Con email registrata: non cancellare mai (continua in background)
                 if has_email:
@@ -5748,7 +5719,7 @@ def _cleanup_loop():
                     to_remove.append((jid, f"heartbeat lost during generation ({int(now - last_poll)}s)"))
                 continue
 
-            #  —  —  Done jobs  —  — 
+            #  -  -  Done jobs  -  - 
             if status == "done":
                 dl_at = job.get("downloaded_at")
                 email_sent_at = job.get("email_sent_at")
@@ -5781,7 +5752,7 @@ def _cleanup_loop():
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-        #  —  —  Cleanup expired download tokens  —  — 
+        #  -  -  Cleanup expired download tokens  -  - 
         expired_tokens = [(t, info) for t, info in _download_tokens.items()
                           if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
         for t, t_info in expired_tokens:
@@ -5796,7 +5767,7 @@ def _cleanup_loop():
         if expired_tokens:
             _save_tokens()
 
-        #  —  —  Cleanup cartelle orfane su disco  —  — 
+        #  -  -  Cleanup cartelle orfane su disco  -  - 
         # Cartelle in UPLOAD_DIR non associate a nessun job né token attivo
         _known_job_ids = set(jobs.keys())
         _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
@@ -5824,9 +5795,9 @@ def _cleanup_loop():
         _try_send_admin_digest()
 
 
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 # ENTRY POINT
-#  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  —  — 
+# ----------------------------------------------------------------------
 
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
