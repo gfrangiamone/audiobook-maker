@@ -3113,6 +3113,62 @@ def admin_logs_export():
 # Il token viene inviato via header X-Admin-Token (dalle API) o nel form HTML.
 # Confronto a tempo costante tramite hmac.compare_digest.
 
+def _render_admin_gate(title, target_url):
+    """Render a password gate for admin pages."""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Auth - {title}</title>
+<style>
+body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f3f4f6;color:#1f2937}}
+.card{{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);width:100%;max-width:360px}}
+h2{{margin:0 0 1.5rem;font-size:1.5rem;text-align:center}}
+.field{{margin-bottom:1rem}}
+label{{display:block;font-size:.875rem;font-weight:600;margin-bottom:.375rem}}
+input[type=password]{{width:100%;padding:.625rem;border:1px solid #d1d5db;border-radius:.375rem;box-sizing:border-box}}
+.btn{{width:100%;padding:.75rem;background:#2563eb;color:#fff;border:none;border-radius:.375rem;font-weight:600;cursor:pointer}}
+.btn:hover{{background:#1d4ed8}}
+.hint{{font-size:.75rem;color:#6b7280;margin-top:1rem;text-align:center}}
+.err{{color:#dc2626;font-size:.875rem;margin-bottom:1rem;display:none}}
+</style>
+<script>
+function checkSaved(){{
+    const saved = localStorage.getItem('abm_admin_token');
+    const expiry = localStorage.getItem('abm_admin_expiry');
+    if(saved && expiry && Date.now() < parseInt(expiry)){{
+        sessionStorage.setItem('abm_admin_token', saved);
+        location.reload();
+    }}
+}}
+function doLogin(){{
+    const tok = document.getElementById('pw').value;
+    const remember = document.getElementById('rem').checked;
+    if(!tok) return;
+    sessionStorage.setItem('abm_admin_token', tok);
+    if(remember){{
+        localStorage.setItem('abm_admin_token', tok);
+        localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
+    }}
+    location.reload();
+}}
+window.onload = checkSaved;
+</script>
+</head><body>
+<div class="card">
+    <h2>Admin Access</h2>
+    <div class="field">
+        <label for="pw">Admin Token</label>
+        <input type="password" id="pw" placeholder="Enter token..." onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div class="field" style="display:flex;align-items:center;gap:.5rem">
+        <input type="checkbox" id="rem">
+        <label for="rem" style="margin:0;font-weight:400">Rimani connesso (30 giorni)</label>
+    </div>
+    <button class="btn" onclick="doLogin()">Entra</button>
+    <div class="hint">Autenticazione richiesta per accedere a questa risorsa.</div>
+</div>
+</body></html>"""
+
+
 def _admin_auth_ok(provided):
     """Costante-time check del token admin."""
     import hmac
