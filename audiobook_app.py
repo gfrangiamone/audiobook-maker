@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 import hmac
+import html as html_mod
 from collections import defaultdict, OrderedDict
 from datetime import datetime
 from copy import copy
