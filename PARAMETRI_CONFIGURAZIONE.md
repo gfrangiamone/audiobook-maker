@@ -20,6 +20,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_ADMIN_EMAIL` | `""` (vuoto, se vuoto il digest admin e' disabilitato) | `audiobook_app.py` | 103 |
 | `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` | `audiobook_app.py` | 112 |
 | `ABM_DEEPSEEK_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 63 |
+| `ABM_DEEPSEEK_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 94 |
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 152 |
 | `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) | `google_tts.py` | 69 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
@@ -125,9 +126,9 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `DEEPSEEK_API_BASE` | `"https://api.deepseek.com"` | `audiobook_app.py` | 64 |
-| `DEEPSEEK_MODEL` | `"deepseek-chat"` (DeepSeek V3.2) | `audiobook_app.py` | 65 |
-| `DEEPSEEK_MAX_TOKENS` | `8192` | `audiobook_app.py` | 66 |
+| `DEEPSEEK_API_BASE` | `"https://api.deepseek.com"` | `audiobook_app.py` | 93 |
+| `DEEPSEEK_MODEL` | `"deepseek-chat"` (configurabile via `ABM_DEEPSEEK_MODEL`) | `audiobook_app.py` | 94 |
+| `DEEPSEEK_MAX_TOKENS` | `8192` | `audiobook_app.py` | 95 |
 | `DEEPSEEK_TEMPERATURE` | `0.3` | `audiobook_app.py` | 67 |
 | `DEEPSEEK_CHARS_PER_TOKEN` | `3.5` (stima per italiano) | `audiobook_app.py` | 68 |
 | `DEEPSEEK_MAX_INPUT_CHARS` | `~405.000` (calcolato da context 128K) | `audiobook_app.py` | 73 |

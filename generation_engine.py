@@ -47,7 +47,7 @@ from tts_split import (
 
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_TOKENS = 8192
 DEEPSEEK_TEMPERATURE = 0.3
 DEEPSEEK_CHARS_PER_TOKEN = 3.5
@@ -60,7 +60,6 @@ DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TO
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
 _deepseek_client = None
-_deepseek_prompt = ""
 
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
@@ -101,29 +100,28 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
 # ---------------------------------------------------------------------------
 
 def _init_deepseek():
-    """Initialize DeepSeek client and load TTS optimization prompt."""
-    global _deepseek_client, _deepseek_prompt
+    """Initialize DeepSeek client and verify presence of essential prompts."""
+    global _deepseek_client
     if not DEEPSEEK_API_KEY:
         print("[startup] DeepSeek LLM optimization disabled (ABM_DEEPSEEK_API_KEY not set)")
         return
     try:
         from openai import OpenAI
         _deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_API_BASE)
-        prompt_path = _SCRIPT_DIR / "prompt_tts_optimization.md"
-        if prompt_path.exists():
-            _deepseek_prompt = prompt_path.read_text(encoding="utf-8").strip()
-            print(f"[startup] DeepSeek LLM optimization enabled (prompt: {len(_deepseek_prompt)} chars)")
+        # Verifica almeno il prompt generico
+        generic_path = _SCRIPT_DIR / "prompt_opt_AI" / "prompt_tts_generic.md"
+        if not generic_path.exists():
+            print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
         else:
-            print(f"WARNING: prompt_tts_optimization.md not found \u2014 LLM optimization disabled.", flush=True)
-            _deepseek_client = None
+            print("[startup] DeepSeek LLM optimization enabled (multilingual suite)")
     except ImportError:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
         _deepseek_client = None
 
 
 def _llm_available():
-    """True se l'ottimizzazione LLM e disponibile."""
-    return _deepseek_client is not None and bool(_deepseek_prompt)
+    """True se l'ottimizzazione LLM è disponibile."""
+    return _deepseek_client is not None
 
 
 # ---------------------------------------------------------------------------
@@ -403,12 +401,50 @@ def _sanitize_llm_output(text: str) -> str:
     return "\n\n".join(final_paragraphs).strip()
 
 
+_deepseek_prompts = {} # Cache per i prompt multilingua
+
+def _get_deepseek_prompt(lang_code="it"):
+    """
+    Ritorna il prompt specifico per la lingua, o quello generico come fallback.
+    lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
+    """
+    global _deepseek_prompts
+    lang = (lang_code or "it").split("-")[0].lower()
+    if lang in _deepseek_prompts:
+        return _deepseek_prompts[lang]
+    
+    prompt_dir = _SCRIPT_DIR / "prompt_opt_AI"
+    filename = f"prompt_tts_{lang}.md"
+    path = prompt_dir / filename
+    
+    if not path.exists():
+        path = prompt_dir / "prompt_tts_generic.md"
+        
+    if path.exists():
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            _deepseek_prompts[lang] = content
+            return content
+        except Exception as e:
+            print(f"Error reading prompt {path}: {e}")
+            
+    return ""
+
 def _call_deepseek(user_content, job=None, max_retries=4):
     """Call DeepSeek API with streaming. Returns optimized text.
     Retries on transient network errors with exponential backoff.
     """
+    # Determina la lingua dal job (usando la voce selezionata)
+    lang = "it"
+    if job:
+        voice = job.get("voice") or job.get("opt_voice", "")
+        if voice:
+            lang = voice.split("-")[0].lower()
+            
+    prompt = _get_deepseek_prompt(lang)
+    
     messages = [
-        {"role": "system", "content": _deepseek_prompt},
+        {"role": "system", "content": prompt},
         {"role": "user", "content": user_content},
     ]
     last_exc = None

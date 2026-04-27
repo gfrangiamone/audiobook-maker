@@ -91,7 +91,7 @@ except Exception as _e:
 #  -  -  DeepSeek LLM per ottimizzazione testo TTS  -  opzionale  -  -
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_TOKENS = 8192
 DEEPSEEK_TEMPERATURE = 0.3
 DEEPSEEK_CHARS_PER_TOKEN = 3.5
@@ -102,31 +102,57 @@ DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTP
 DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
 
 _deepseek_client = None
-_deepseek_prompt = ""
+_deepseek_prompts = {} # Cache per i prompt multilingua
 
 def _init_deepseek():
-    """Initialize DeepSeek client and load TTS optimization prompt."""
-    global _deepseek_client, _deepseek_prompt
+    """Initialize DeepSeek client and verify presence of essential prompts."""
+    global _deepseek_client
     if not DEEPSEEK_API_KEY:
         print("[startup] DeepSeek LLM optimization disabled (ABM_DEEPSEEK_API_KEY not set)")
         return
     try:
         from openai import OpenAI
         _deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_API_BASE)
-        prompt_path = SCRIPT_DIR / "prompt_tts_optimization.md"
-        if prompt_path.exists():
-            _deepseek_prompt = prompt_path.read_text(encoding="utf-8").strip()
-            print(f"[startup] DeepSeek LLM optimization enabled (prompt: {len(_deepseek_prompt)} chars)")
+        # Verifica almeno il prompt generico
+        generic_path = SCRIPT_DIR / "prompt_opt_AI" / "prompt_tts_generic.md"
+        if not generic_path.exists():
+            print(f"WARNING: {generic_path} not found - LLM optimization may fail.", file=sys.stderr)
         else:
-            print(f"WARNING: prompt_tts_optimization.md not found  -  LLM optimization disabled.", file=sys.stderr)
-            _deepseek_client = None
+            print("[startup] DeepSeek LLM optimization enabled (multilingual suite)")
     except ImportError:
         print("WARNING: openai library not installed  -  LLM optimization disabled. Run: pip install openai", file=sys.stderr)
         _deepseek_client = None
 
+def _get_deepseek_prompt(lang_code="it"):
+    """
+    Ritorna il prompt specifico per la lingua, o quello generico come fallback.
+    lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
+    """
+    global _deepseek_prompts
+    lang = (lang_code or "it").split("-")[0].lower()
+    if lang in _deepseek_prompts:
+        return _deepseek_prompts[lang]
+    
+    prompt_dir = SCRIPT_DIR / "prompt_opt_AI"
+    filename = f"prompt_tts_{lang}.md"
+    path = prompt_dir / filename
+    
+    if not path.exists():
+        path = prompt_dir / "prompt_tts_generic.md"
+        
+    if path.exists():
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            _deepseek_prompts[lang] = content
+            return content
+        except Exception as e:
+            print(f"Error reading prompt {path}: {e}")
+            
+    return ""
+
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
-    return _deepseek_client is not None and bool(_deepseek_prompt)
+    return _deepseek_client is not None
 
 
 #  -  -  PayPal payment config per LLM optimization  -  - 
@@ -1108,11 +1134,27 @@ def get_voices():
         if _voices_cache is not None:
             return _voices_cache
 
-    loop = asyncio.new_event_loop()
-    try:
-        raw = loop.run_until_complete(_fetch_voices())
-    finally:
-        loop.close()
+    max_retries = 3
+    raw = []
+    
+    for attempt in range(max_retries):
+        loop = asyncio.new_event_loop()
+        try:
+            raw = loop.run_until_complete(_fetch_voices())
+            if raw:
+                break
+        except Exception as e:
+            print(f"[get_voices] Attempt {attempt+1}/{max_retries} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2) # Attesa breve prima del retry
+        finally:
+            loop.close()
+
+    if not raw:
+        print("[get_voices] CRITICAL: Could not fetch voices from Edge TTS after multiple attempts.")
+        # Se fallisce tutto, restituiamo un dizionario vuoto o potremmo usare un fallback cablato
+        # per non rompere il frontend. Per ora logghiamo e proseguiamo con Google (se presente).
+        raw = []
 
     languages = {}
     for v in raw:
@@ -1469,8 +1511,20 @@ def _call_deepseek(user_content, job=None, max_retries=4):
     Retries on transient network errors (connection reset, read timeout) with
     exponential backoff. The full chunk is re-sent on each retry since the
     LLM stream cannot be resumed mid-way."""
+    
+    # Determina la lingua dal job (usando la voce selezionata o la lingua del libro)
+    lang = "it"
+    if job:
+        voice = job.get("voice") or job.get("opt_voice", "")
+        if voice:
+            lang = voice.split("-")[0].lower()
+        elif job.get("info") and job["info"].language:
+            lang = job["info"].language.split("-")[0].lower()
+            
+    prompt = _get_deepseek_prompt(lang)
+    
     messages = [
-        {"role": "system", "content": _deepseek_prompt},
+        {"role": "system", "content": prompt},
         {"role": "user", "content": user_content},
     ]
     last_exc = None
@@ -1805,8 +1859,9 @@ def run_optimization(job_id, selected_chapters=None):
     chapters_to_opt = info.chapters; total_chapters = len(chapters_to_opt); total_chars = sum(ch.char_count for ch in chapters_to_opt)
 
     # Log per confermare che il prompt di ottimizzazione è caricato
-    if _deepseek_prompt:
-        prompt_len = len(_deepseek_prompt)
+    current_prompt = _get_deepseek_prompt(info.language or "it")
+    if current_prompt:
+        prompt_len = len(current_prompt)
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt caricato: {prompt_len} caratteri)")
     else:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt non caricato)")
@@ -2747,11 +2802,30 @@ def admin_logs():
             last = s["last_dt"].strftime("%H:%M")
 
             if is_progress:
+                job = jobs.get(sid)
+                pct_html = ""
+                if job:
+                    st = job.get("status", "")
+                    if st == "optimizing":
+                        total_chars = job.get("opt_total_chars", 1)
+                        done_chars = job.get("opt_processed_chars", 0)
+                        cur_ch_chars = job.get("opt_current_chapter_chars", 0)
+                        streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
+                        worked = done_chars + streamed
+                        pct = min(99, int(worked / total_chars * 100))
+                        pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+                    elif st == "generating":
+                        cur = job.get("progress_current", 0)
+                        tot = job.get("progress_total", 0)
+                        if tot > 0:
+                            pct = int(cur / tot * 100)
+                            pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+
                 delta = now - s["first_dt"]
                 total_sec = int(delta.total_seconds())
                 elapsed = f"{total_sec // 3600:02d}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
                 start_iso = s["first_dt"].strftime("%Y-%m-%dT%H:%M:%S")
-                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span> ⏱️'
+                elapsed_html = f'<span class="live-timer" data-start="{start_iso}">{elapsed}</span>{pct_html} ⏱️'
                 last = " - "
             else:
                 delta = s["last_dt"] - s["first_dt"]
@@ -2892,6 +2966,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .card-voice{{color:var(--text);font-size:.72rem}} .voice-lang{{opacity:.5;font-size:.62rem}}
 .cid-count{{font-size:.62rem;opacity:.8}}
 .card-blang{{font-size:.65rem;background:rgba(167,139,250,.12);color:var(--accent2);padding:1px 6px;border-radius:3px;font-weight:600;text-transform:uppercase}}
+.card-pct{{color:var(--orange);font-weight:700;margin-left:4px}}
 .empty{{text-align:center;padding:60px 20px;color:var(--text-dim)}} .empty .icon{{font-size:3rem;margin-bottom:12px}}
 @media(max-width:600px){{
 .header{{padding:12px 14px;gap:8px}} .header h1{{font-size:.78rem}} .header .period{{font-size:1.1rem}}
@@ -2990,9 +3065,34 @@ function updateLiveTimers() {{
     }});
 }}
 
-// Update timers every second
+// Live progress update for in-progress cards
+async function updateLiveProgress() {{
+    const pcts = document.querySelectorAll('.card-pct');
+    for (const el of pcts) {{
+        const sid = el.dataset.sid;
+        if (!sid) continue;
+        try {{
+            const r = await fetch('/api/job_status/' + sid);
+            if (r.ok) {{
+                const d = await r.json();
+                el.textContent = '(' + d.pct + '%)';
+                // Se il job è finito (done/error/cancelled), potremmo ricaricare la pagina o cambiare stile,
+                // ma per ora aggiorniamo solo la percentuale.
+                if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {{
+                    // smetti di aggiornare questa card (rimuovi sid)
+                    el.removeAttribute('data-sid');
+                    if (d.status === 'done') el.style.color = 'var(--green)';
+                }}
+            }}
+        }} catch(e) {{}}
+    }}
+}}
+
+// Update timers every second, progress every 5 seconds
 if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveTimers, 1000);
+    setInterval(updateLiveProgress, 5000);
+    updateLiveProgress();
 }}
 </script>
 
@@ -3989,6 +4089,37 @@ def api_generate():
     return jsonify({"status": "started"})
 
 
+@app.route("/api/job_status/<job_id>")
+def api_job_status(job_id):
+    job = jobs.get(job_id)
+    if not job:
+        return {"error": "Not found"}, 404
+    
+    st = job.get("status", "")
+    cur, tot = 0, 0
+    pct = 0
+    if st == "optimizing":
+        total_chars = job.get("opt_total_chars", 1)
+        done_chars = job.get("opt_processed_chars", 0)
+        cur_ch_chars = job.get("opt_current_chapter_chars", 0)
+        streamed = min(job.get("opt_streamed_chars", 0), cur_ch_chars)
+        worked = done_chars + streamed
+        pct = min(99, int(worked / total_chars * 100))
+        cur, tot = worked, total_chars
+    elif st == "generating":
+        cur = job.get("progress_current", 0)
+        tot = job.get("progress_total", 0)
+        pct = int(cur / tot * 100) if tot > 0 else 0
+    
+    return {
+        "status": st,
+        "current": cur,
+        "total": tot,
+        "pct": pct,
+        "message": job.get("progress_message", "") or job.get("opt_progress_message", "")
+    }
+
+
 @app.route("/api/progress/<job_id>")
 def api_progress(job_id):
     def stream():
@@ -4023,6 +4154,7 @@ def api_progress(job_id):
             if job.get("status") == "done":
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
+                payload["has_abm"] = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
                 # Se output_m4b non è impostato, prova a trovare il file su disco
                 # (può succedere se il client riconnette dopo che la generazione è già terminata)
                 if not job.get("output_m4b"):
@@ -4484,8 +4616,14 @@ def _send_voucher_email(code, email, amount_eur, book_title):
 def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
     data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
+    lang = data.get("lang")
     if job_id not in jobs: return jsonify({"error": "Session expired"}), 400
     job = jobs[job_id]; info = job.get("info")
+    
+    # Store language for optimization prompt selection
+    if lang:
+        job["opt_voice"] = lang  # _call_deepseek uses this if "voice" is missing
+
     client_id = job.get("client_id", "")
     if job["status"] not in ("analyzed",): return jsonify({"error": "Invalid state"}), 400
     selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
@@ -5439,10 +5577,20 @@ def api_download(job_id):
         log_type = "DOWNLOAD_M4B"
     elif download_type == "zip":
         log_type = "DOWNLOAD_ZIP"
-        
+    elif download_type == "abm":
+        log_type = "DOWNLOAD_ABM"
+
     _log_activity(job_id, job.get("original_filename", ""), log_type,
                   job.get("client_id", ""), job.get("client_ip", ""),
                   job.get("voice", ""), job.get("browser_lang", ""))
+
+    if download_type == "abm":
+        abm_path = job.get("optimized_abm_path")
+        if abm_path and os.path.exists(abm_path):
+            safe_name = _safe_filename(job["info"].title) or "progetto"
+            return send_file(abm_path, as_attachment=True, download_name=f"{safe_name}.abm")
+        else:
+            return "Optimized ABM project file not found", 404
 
     if download_type == "m4b":
         if job.get("output_m4b") and os.path.exists(job["output_m4b"]):

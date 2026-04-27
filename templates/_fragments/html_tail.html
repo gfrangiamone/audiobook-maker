@@ -51,13 +51,33 @@ let cl='en';
 function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
 function applyI18n(){
   document.querySelectorAll('[data-t]').forEach(e=>{
-    const k=e.getAttribute('data-t'),v=t(k);
-    if(e.tagName==='OPTION')e.textContent=v;
-    else e.textContent=v;
+    const k=e.getAttribute('data-t'), v=t(k);
+    if(e.tagName==='OPTION') {
+      e.textContent = v;
+    } else {
+      const tt = e.querySelector('.tooltip-trigger');
+      if (tt) {
+        // Cerca il nodo di testo che contiene il titolo (es. "Carica il file")
+        // Di solito è il primo figlio se la struttura è <div>Title<span tooltip>...</div>
+        let tn = Array.from(e.childNodes).find(n => n.nodeType === 3 && n.textContent.trim().length > 1);
+        if (tn) tn.textContent = v;
+        else e.insertBefore(document.createTextNode(v), tt);
+      } else {
+        // Caso normale: se non ha figli HTML, usa textContent (veloce)
+        if (e.children.length === 0) {
+          e.textContent = v;
+        } else {
+          // Se ha figli (es. icone), cerca il nodo di testo da aggiornare
+          let tn = Array.from(e.childNodes).find(n => n.nodeType === 3 && n.textContent.trim().length > 0);
+          if (tn) tn.textContent = v;
+          // Se non c'è un nodo di testo ma ci sono figli, aggiungiamo il testo alla fine (fallback)
+          else e.appendChild(document.createTextNode(v));
+        }
+      }
+    }
   });
   document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
   document.documentElement.lang=cl;
-  // Dynamic tooltips
   const btnExp=document.getElementById('btnExport');
   if(btnExp)btnExp.title=t('btn_export_abm_tip');
 }
@@ -322,10 +342,28 @@ async function loadVoices(){
 function fillLangs(){
   const sel=document.getElementById('vl');sel.innerHTML='';
   for(const[c,l]of Object.entries(voices)){
-    const o=document.createElement('option');o.value=c;o.textContent=l.name+' ('+l.voices.length+')';sel.appendChild(o);
+    const o=document.createElement('option');o.value=c;
+    // Traduzione localizzata del nome lingua
+    let ln = (L[cl] && L[cl].langs && L[cl].langs[c]) || (L['en'].langs[c]) || l.name || c;
+    o.textContent=ln+' ('+l.voices.length+')';
+    sel.appendChild(o);
   }
   sel.onchange=updVoices;
-  if(voices.it)sel.value='it';
+  
+  // Pre-selezione logica:
+  // 1. Se il libro ha una lingua rilevata, usa quella
+  // 2. Altrimenti usa la lingua dell'interfaccia (cl) se disponibile nelle voci
+  // 3. Altrimenti fallback su 'it' o la prima disponibile
+  let defaultLang = 'it';
+  if(bookData && bookData.language) {
+    defaultLang = bookData.language.split('-')[0].toLowerCase();
+  } else if(voices[cl]) {
+    defaultLang = cl;
+  }
+  
+  if(voices[defaultLang]) sel.value=defaultLang;
+  else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
+  
   updVoices();
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
@@ -815,8 +853,25 @@ async function _showPaymentModal(costEur,chars){
   });
 }
 
+async function _validateLanguage() {
+  if(!bookData) return true;
+  // 1. Case: Language unknown (no metadata and no AI detection)
+  if(!bookData.language && !previewListened) {
+    return await _showLangWarning();
+  }
+  // 2. Case: Mismatch between detected/metadata language and selected voice
+  const bookLang = bookData.language ? bookData.language.split('-')[0].toLowerCase() : '';
+  const voiceLang = document.getElementById('vl').value;
+  if(bookLang && voiceLang && bookLang !== voiceLang && !previewListened) {
+    // Show the same warning modal (it asks to verify voice/language)
+    return await _showLangWarning();
+  }
+  return true;
+}
+
 async function startOptimization(){
   if(!jobId){return}
+  if(!(await _validateLanguage())) return;
   document.getElementById('s3err').innerHTML='';
   
   // Collect selected chapters from UI
@@ -830,6 +885,8 @@ async function startOptimization(){
   var paymentToken=null;
   try{
     let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
+    const selLang = document.getElementById('vl').value || cl;
+    url.searchParams.append('lang', selLang);
     if(selectedChapters&&selectedChapters.length>0){
         selectedChapters.forEach(idx => url.searchParams.append('selected_chapters', idx));
     }
@@ -874,7 +931,8 @@ async function startOptimization(){
   lockUI();
   setTimeout(function(){const genPanel=document.getElementById('s3');if(genPanel)genPanel.scrollIntoView({behavior:'smooth',block:'start'})},200);
   try{
-    var payload={job_id:jobId,batch:false,lang:cl};
+    const selLang = document.getElementById('vl').value || cl;
+    var payload={job_id:jobId,batch:false,lang:selLang};
     if(paymentToken)payload.payment_token=paymentToken;
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1082,11 +1140,7 @@ function onDonateModal(action){
 }
 
 async function startGen(){
-  // Language warning: if book language unknown and user hasn't listened to preview
-  if(bookData&&!bookData.language&&!previewListened){
-    const proceed=await _showLangWarning();
-    if(!proceed)return;
-  }
+  if(!(await _validateLanguage())) return;
   // Donate modal: show for returning users before generation starts
   if(_shouldShowDonateModal()){
     await _showDonateModal();
@@ -1133,7 +1187,7 @@ async function startGen(){
         document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
         // Replace cancel button with retry
         document.getElementById('cnA').innerHTML=
-          '<button class="btn btn-ok" id="btnRetry">\u{1F504} '+(t('btn_retry')||'Retry generation')+'</button>';
+          '<button class="btn btn-ok" id="btnRetry">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
         document.getElementById('btnRetry').onclick=retryGen;
         unlockUI();return
       }
@@ -1145,7 +1199,7 @@ async function startGen(){
         document.getElementById('pCh').textContent='';
         document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
         document.getElementById('cnA').innerHTML=
-          '<button class="btn btn-ok" id="btnRetry">\u{1F504} '+(t('btn_retry')||'Retry generation')+'</button>';
+          '<button class="btn btn-ok" id="btnRetry">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
         document.getElementById('btnRetry').onclick=retryGen;
         unlockUI();return
       }
@@ -1244,6 +1298,8 @@ function listenProgress(){
 
         // Secondary download buttons
         document.getElementById('btnM').style.display = (singleFile ? false : d.output_m4b) ? '' : 'none';
+        document.getElementById('btnA').style.display = d.has_abm ? '' : 'none';
+        document.getElementById('btnA').onclick = () => downloadFile('abm');
         document.getElementById('btnP').style.display = d.has_podcast ? '' : 'none';
         // Show "back to chapters" button if the book has multiple chapters
         document.getElementById('btnBackCh').style.display=(bookData&&bookData.total_chapters>1)?'':'none';
@@ -1433,8 +1489,11 @@ checkSmtp();
 
 async function downloadFile(type){
   if(!jobId)return;
-  const isM4b = type === 'm4b';
-  const btnId = isM4b ? 'btnM' : 'btnD';
+  let btnId = 'btnD';
+  if(type === 'm4b') btnId = 'btnM';
+  if(type === 'abm') btnId = 'btnA';
+  if(type === 'zip') btnId = 'btnD';
+  
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;
   btn.disabled=true;btn.textContent='⏳...';
@@ -1458,13 +1517,21 @@ async function downloadFile(type){
       const blob=await r.blob();
       const cd=r.headers.get('Content-Disposition')||'';
       const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
-      const fname=m?m[1]:(isM4b ? 'audiobook.m4b' : 'audiobook.zip');
+      let defName = 'audiobook.zip';
+      if(type === 'm4b') defName = 'audiobook.m4b';
+      if(type === 'abm') defName = 'project.abm';
+      const fname=m?m[1]:defName;
+      
       const a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
       a.download=fname;
       document.body.appendChild(a);a.click();
       setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
-      btn.innerHTML='✅ ' + (isM4b ? '<span data-t="btn_dl_m4b">'+t('btn_dl_m4b')+'</span>' : '<span data-t="btn_dl">'+t('btn_dl')+'</span>');
+      
+      let successT = t('btn_dl');
+      if(type === 'm4b') successT = t('btn_dl_m4b');
+      if(type === 'abm') successT = t('btn_dl_abm');
+      btn.innerHTML='✅ <span>'+successT+'</span>';
       btn.disabled=false;
       return;
     }catch(e){

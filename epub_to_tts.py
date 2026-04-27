@@ -597,7 +597,9 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
 
 def format_heading_for_tts(heading: str) -> str:
     """Formatta un heading di capitolo per lettura TTS naturale."""
-    heading = heading.strip()
+    if not heading:
+        return ""
+    heading = str(heading).strip()
 
     # Ordinali italiani/inglesi per matching numerico
     _ORDINALS = (
@@ -664,6 +666,8 @@ def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> boo
     Questo è il principio: "meglio preservare in eccesso che perdere contenuto narrativo".
     Usato nel percorso di recupero (salvage) di sezioni da documenti misti.
     """
+    if text is None:
+        return False
     clean = text.strip()
 
     # Troppo corto — probabilmente frontespizio, colophon, ecc.
@@ -921,14 +925,14 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                 i_sec = 0
                 while i_sec < len(sections):
                     sec_title, sec_html = sections[i_sec]
-                    sec_text_raw = html_to_text(sec_html).strip()
+                    sec_text_raw = html_to_text(sec_html or "").strip()
 
                     # Rileva pattern "Capitolo/Chapter N" senza contenuto
                     is_chapter_number = bool(re.match(
                         r"^(Capitolo|Chapter|Cap\.?|Parte|Part|Sezione|Section)"
                         r"\s*(primo|secondo|terzo|quarto|quinto|sesto|settimo|"
                         r"ottavo|nono|decimo|\d+|[IVXLCDM]+)\s*$",
-                        sec_title.strip(), re.IGNORECASE
+                        str(sec_title or "").strip(), re.IGNORECASE
                     ))
 
                     if is_chapter_number and len(sec_text_raw) < 50:
@@ -1082,11 +1086,11 @@ def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
                     href = section.href.split("#")[0]
-                    toc_map[href] = section.title
+                    toc_map[href] = str(section.title or "").strip()
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
                 href = item.href.split("#")[0]
-                toc_map[href] = item.title
+                toc_map[href] = str(item.title or "").strip()
 
     try:
         walk_toc(book.toc)
@@ -1109,11 +1113,11 @@ def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
                     href_file = section.href.split("#")[0]
-                    file_titles.setdefault(href_file, []).append(section.title)
+                    file_titles.setdefault(href_file, []).append(str(section.title or "").strip())
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
                 href_file = item.href.split("#")[0]
-                file_titles.setdefault(href_file, []).append(item.title)
+                file_titles.setdefault(href_file, []).append(str(item.title or "").strip())
 
     try:
         walk_toc(book.toc)
@@ -1154,6 +1158,8 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
     # Normalizza i titoli TOC per matching
     def normalize(text: str) -> str:
         """Normalizza testo per confronto fuzzy."""
+        if text is None:
+            return ""
         text = re.sub(r"\s+", " ", text.strip().lower())
         text = re.sub(r"[^\w\s]", "", text)
         return text
@@ -1447,7 +1453,7 @@ def _remove_duplicate_heading(text: str, title: str) -> str:
         return text
 
     # Cerca titolo all'inizio del testo (con eventuale punto finale)
-    pattern = re.escape(title.rstrip("."))
+    pattern = re.escape(str(title or "").rstrip("."))
     text = re.sub(rf"^\s*{pattern}\.?\s*\n+", "", text, count=1, flags=re.IGNORECASE)
 
     return text
