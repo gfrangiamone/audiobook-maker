@@ -1728,7 +1728,13 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 // Re-update share links on language change (hook into existing applyI18n)
 var _origApplyI18n=applyI18n;
-applyI18n=function(){_origApplyI18n();updateShareLinks();checkVoiceMismatch();_updateVoiceChip()};
+applyI18n=function(){
+  _origApplyI18n();
+  updateShareLinks();
+  checkVoiceMismatch();
+  _updateVoiceChip();
+  if(typeof voices!=='undefined' && Object.keys(voices).length>0) fillLangs();
+};
 
 // ═══════════════════ VOICE CHIP + MISMATCH ═══════════════════
 function _updateVoiceChip(){
