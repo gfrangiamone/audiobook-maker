@@ -1125,7 +1125,24 @@ LANGUAGE_NAMES = {
 
 
 async def _fetch_voices():
-    return await edge_tts.list_voices()
+    print("[_fetch_voices] Starting fetch via edge_tts.list_voices()...")
+    try:
+        # Check connectivity
+        import socket
+        try:
+            socket.create_connection(("speech.platform.bing.com", 443), timeout=3)
+            print("[_fetch_voices] Connectivity check to Microsoft TTS OK")
+        except Exception as conn_err:
+            print(f"[_fetch_voices] Connectivity check FAILED: {conn_err}")
+            
+        v = await edge_tts.list_voices()
+        print(f"[_fetch_voices] Successfully retrieved {len(v)} voices")
+        return v
+    except Exception as e:
+        print(f"[_fetch_voices] ERROR in _fetch_voices: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 def get_voices():
@@ -1142,9 +1159,12 @@ def get_voices():
         try:
             raw = loop.run_until_complete(_fetch_voices())
             if raw:
+                print(f"[get_voices] Successfully fetched {len(raw)} voices on attempt {attempt+1}")
                 break
         except Exception as e:
             print(f"[get_voices] Attempt {attempt+1}/{max_retries} failed: {e}")
+            import traceback
+            traceback.print_exc()
             if attempt < max_retries - 1:
                 time.sleep(2) # Attesa breve prima del retry
         finally:

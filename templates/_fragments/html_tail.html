@@ -337,7 +337,10 @@ async function loadVoices(){
     else{_googleTtsBudget=null;}
     voices=data;
     fillLangs();
-  }catch(e){console.error(e)}
+  }catch(e){
+    console.error('loadVoices failed:', e);
+    alert('Failed to load TTS voices. Check server connection or logs. Error: ' + e.message);
+  }
 }
 function fillLangs(){
   const sel=document.getElementById('vl');sel.innerHTML='';
