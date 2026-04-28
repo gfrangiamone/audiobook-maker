@@ -343,11 +343,29 @@ async function loadVoices(){
   }
 }
 function fillLangs(){
+  console.log('[fillLangs] Current lang (cl):', cl);
+  console.log('[fillLangs] i18n object L keys:', Object.keys(L));
+  if (L[cl]) console.log(`[fillLangs] L[${cl}] keys:`, Object.keys(L[cl]));
+  if (L['en']) console.log(`[fillLangs] L['en'] keys:`, Object.keys(L['en']));
+
   const sel=document.getElementById('vl');sel.innerHTML='';
   for(const[c,l]of Object.entries(voices)){
     const o=document.createElement('option');o.value=c;
     // Traduzione localizzata del nome lingua
-    let ln = (L[cl] && L[cl].langs && L[cl].langs[c]) || (L['en'].langs[c]) || l.name || c;
+    let ln = c;
+    try {
+        if (L[cl] && L[cl].langs && L[cl].langs[c]) {
+            ln = L[cl].langs[c];
+        } else if (L['en'] && L['en'].langs && L['en'].langs[c]) {
+            ln = L['en'].langs[c];
+        } else {
+            ln = l.name || c;
+        }
+    } catch(err) {
+        console.error(`[fillLangs] Error translating lang ${c}:`, err);
+        ln = l.name || c;
+    }
+    
     o.textContent=ln+' ('+l.voices.length+')';
     sel.appendChild(o);
   }
