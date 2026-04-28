@@ -343,47 +343,44 @@ async function loadVoices(){
   }
 }
 function fillLangs(){
-  console.log('[fillLangs] Current lang (cl):', cl);
-  console.log('[fillLangs] i18n object L keys:', Object.keys(L));
-  if (L[cl]) console.log(`[fillLangs] L[${cl}] keys:`, Object.keys(L[cl]));
-  if (L['en']) console.log(`[fillLangs] L['en'] keys:`, Object.keys(L['en']));
-
-  const sel=document.getElementById('vl');sel.innerHTML='';
-  for(const[c,l]of Object.entries(voices)){
-    const o=document.createElement('option');o.value=c;
-    // Traduzione localizzata del nome lingua
+  const sel=document.getElementById('vl');
+  if(!sel) return;
+  const oldVal = sel.value;
+  sel.innerHTML='';
+  
+  // Ordine alfabetico basato sul nome tradotto
+  const sortedLangs = Object.entries(voices).map(([c, l]) => {
     let ln = c;
-    try {
-        if (L[cl] && L[cl].langs && L[cl].langs[c]) {
-            ln = L[cl].langs[c];
-        } else if (L['en'] && L['en'].langs && L['en'].langs[c]) {
-            ln = L['en'].langs[c];
-        } else {
-            ln = l.name || c;
-        }
-    } catch(err) {
-        console.error(`[fillLangs] Error translating lang ${c}:`, err);
-        ln = l.name || c;
+    if (L[cl] && L[cl].langs && L[cl].langs[c]) {
+      ln = L[cl].langs[c];
+    } else if (L['en'] && L['en'].langs && L['en'].langs[c]) {
+      ln = L['en'].langs[c];
+    } else {
+      ln = l.name || c;
     }
-    
-    o.textContent=ln+' ('+l.voices.length+')';
+    return { code: c, name: ln, count: l.voices.length };
+  }).sort((a, b) => a.name.localeCompare(b.name, cl));
+
+  for(const l of sortedLangs){
+    const o=document.createElement('option');
+    o.value=l.code;
+    o.textContent=l.name+' ('+l.count+')';
     sel.appendChild(o);
   }
   sel.onchange=updVoices;
   
-  // Pre-selezione logica:
-  // 1. Se il libro ha una lingua rilevata, usa quella
-  // 2. Altrimenti usa la lingua dell'interfaccia (cl) se disponibile nelle voci
-  // 3. Altrimenti fallback su 'it' o la prima disponibile
-  let defaultLang = 'it';
-  if(bookData && bookData.language) {
-    defaultLang = bookData.language.split('-')[0].toLowerCase();
-  } else if(voices[cl]) {
-    defaultLang = cl;
+  if(oldVal && voices[oldVal]) sel.value = oldVal;
+  else {
+    // Pre-selezione logica:
+    let defaultLang = 'it';
+    if(bookData && bookData.language) {
+      defaultLang = bookData.language.split('-')[0].toLowerCase();
+    } else if(voices[cl]) {
+      defaultLang = cl;
+    }
+    if(voices[defaultLang]) sel.value=defaultLang;
+    else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
   }
-  
-  if(voices[defaultLang]) sel.value=defaultLang;
-  else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
   
   updVoices();
 }
