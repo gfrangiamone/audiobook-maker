@@ -36,9 +36,32 @@ Wenn ein Abschnitt eindeutig das Resultat eines Formatierungs- oder Kodierungsfe
 **Rekonstruktion wird auch für Titel erwartet.** "Wandernde" Buchstaben sind Positionshinweise, kein zu erratender Inhalt.
 
 ### 2. Römische Zahlen, Daten, große Zahlen
-Schreibe römische Zahlen auf Deutsch aus: `Heinrich VIII` → `Heinrich der Achte`, `Kapitel III` → `Kapitel Drei` oder `drittes Kapitel` (kontextabhängig), `Papst Johannes Paul II` → `Papst Johannes Paul der Zweite`.
 
-Konvertiere Daten und große Kardinalzahlen in geschriebene Form, wenn die Ziffern-Aussprache mehrdeutig wäre: `1998` → `neunzehnhundertachtundneunzig`. Lass Telefonnummern, ID-Codes, Kontonummern als Ziffern.
+Schreibe römische Zahlen auf Deutsch aus, mit korrekter Kasusflexion je nach Kontext: `Heinrich VIII` → `Heinrich der Achte` (Nominativ) / `Heinrich den Achten` (Akkusativ), `Friedrich III.` → `Friedrich der Dritte` / `Friedrich den Dritten`, `Kapitel III` → `Kapitel Drei` oder `drittes Kapitel` (kontextabhängig), `Papst Johannes Paul II` → `Papst Johannes Paul der Zweite`, `16. Jahrhundert` → `sechzehntes Jahrhundert` / `sechzehnten Jahrhundert`.
+
+**Konvertiere ALLE folgenden Fälle in geschriebene deutsche Form:**
+
+- **Jahreszahlen**: `1998` → `neunzehnhundertachtundneunzig`, `2026` → `zweitausendsechsundzwanzig`, `1531` → `fünfzehnhunderteinunddreißig`
+- **Große Kardinalzahlen** (über etwa 20): `190 Werke` → `einhundertneunzig Werke`, `480 Seiten` → `vierhundertachtzig Seiten`, `290.000 Euro` → `zweihundertneunzigtausend Euro`
+- **Datumsangaben mit Tageszahl**: `15. März` → `fünfzehnter März` / `fünfzehnten März` (Kasus je nach Satzbau), `30. September` → `dreißigster September` / `dreißigsten September`
+- **Geldbeträge**: `16 Euro` → `sechzehn Euro`, `1,50 €` → `ein Euro fünfzig`
+- **Altersangaben**: `18 Jahren` → `achtzehn Jahren`, `unter 18` → `unter achtzehn`
+- **Seitenzahlen, Bandnummern, Ordinalia in Prosa**: `Band 5` → `Band fünf` oder `fünfter Band`
+- **Jahrhundertangaben**: `16. Jahrhundert` → `sechzehntes Jahrhundert` / `sechzehnten Jahrhundert`
+
+Beachte die deutsche Kasusflexion bei ausgeschriebenen Zahlwörtern: nach `am`, `vom`, `bis zum` werden Datumsangaben dekliniert (`am fünfzehnten März`), nach `der`, `die`, `das` werden Ordinalia angepasst.
+
+**Nur als Ziffern belassen:**
+
+- Telefonnummern
+- ID-Codes (Personalausweisnummern, Steuer-ID, Kontonummern, IBAN)
+- ISBN/ISSN-Codes
+- Postleitzahlen
+- IP-Adressen
+- Versionsnummern (`v2.5`, `Python 3.11`)
+- Seriennummern, Barcodes, Kennzeichen
+
+Beispiel: `ISBN 978-3-7757-4567-8` → `I.S.B.N. 978-3-7757-4567-8` (Akronym mit Punkten getrennt, Ziffern bleiben Ziffern).
 
 **Vorsicht bei Großbuchstabenfolgen, die wie römische Zahlen aussehen, aber keine sind.** Lass Eigennamen und Identifikatoren unverändert: `Xi Jinping`, `vi` (der Editor), `MIX` (Albumtitel). Konvertiere nur, wenn der Kontext eindeutig eine numerische Sequenz oder einen Rang anzeigt.
 
@@ -61,7 +84,7 @@ Deutsche Heteronyme sind oft Verben mit trennbarem vs. nicht trennbarem Präfix,
 
 Suche aktiv nach:
 
-- `umfahren` → `úmfahren` /ˈʊmfaːʁən/ (überfahren — trennbar, Betonung auf Präfix) vs. `umfáhren` /ʊmˈfaːʁən/ (umfahren — untrennbar, Betonung auf Stamm)
+- `umfahren` → `úmfahren` /ˈʊmfaːʁən/ (jemanden überfahren — trennbar, Betonung auf Präfix) vs. `umfáhren` /ʊmˈfaːʁən/ (etwas umfahren = vermeiden, ausweichen — untrennbar, Betonung auf Stamm). **Markiere im figurativen Sinn die untrennbare Form**: `Rivalen versuchten, ihn zu umfáhren und zu verdrängen` (= jemanden umgehen, ausschalten — untrennbar).
 - `übersetzen` → `übersètzen` /ˈyːbɐzɛtsən/ (über das Wasser setzen, trennbar) vs. `übersetzén` /yːbɐˈzɛtsən/ (in andere Sprache übertragen, untrennbar)
 - `durchschauen` → `dúrchschauen` (hindurchschauen, wörtlich) vs. `durchscháuen` (durchblicken, figurativ)
 - `umgehen` → `úmgehen` /ˈʊmɡeːən/ (verkehren mit, trennbar) vs. `umgéhen` /ʊmˈɡeːən/ (umgehen, vermeiden, untrennbar)

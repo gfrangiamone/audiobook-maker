@@ -332,9 +332,17 @@ async function loadVoices(){
   try{
     const r=await fetch('/api/voices');
     const data=await r.json();
+    console.log("[debug] loadVoices data keys:", Object.keys(data));
     // Estrai budget Google TTS e rimuovi la chiave speciale
-    if(data._google_tts){_googleTtsBudget=data._google_tts;delete data._google_tts;}
-    else{_googleTtsBudget=null;}
+    if(data._google_tts){
+        _googleTtsBudget=data._google_tts;
+        console.log("[debug] _googleTtsBudget:", _googleTtsBudget);
+        delete data._google_tts;
+    }
+    else{
+        console.warn("[debug] _google_tts info missing in API response");
+        _googleTtsBudget=null;
+    }
     voices=data;
     fillLangs();
   }catch(e){
@@ -1746,7 +1754,15 @@ function _updateVoiceChip(){
   const vv=document.getElementById('vv');
   if(!vl||!vv||!vl.value||!vl.options[vl.selectedIndex]){chip.classList.remove('vis');return;}
   const langName=vl.options[vl.selectedIndex].text.replace(/\s*\(\d+\)\s*$/,'');
-  const voiceName=vv.options[vv.selectedIndex]?vv.options[vv.selectedIndex].text:'';
+  let voiceName=vv.options[vv.selectedIndex]?vv.options[vv.selectedIndex].text:'';
+  if(voiceName){
+    // Clean up voice name: remove "Microsoft", "Online (Natural)", and all "(...)" parts
+    voiceName = voiceName.replace(/Microsoft\s+/g, '')
+                         .replace(/Online\s*\(Natural\)\s*/g, '')
+                         .replace(/\s*-\s*[\w\s]+\s*\([^)]+\)\s*/g, '')
+                         .replace(/\s*\(.*?\)/g, '')
+                         .trim();
+  }
   if(!langName){chip.classList.remove('vis');return;}
   const isGV=_isGoogleVoice(vv.value);
   const engineTag=isGV?' [Google HD]':'';

@@ -50,6 +50,12 @@ except ImportError:
     parse_pdf = None
     print("WARNING: pdf_to_tts.py not found  -  PDF support disabled.", file=sys.stderr)
 
+try:
+    import edge_tts
+except ImportError:
+    print("ERROR: edge-tts not installed. Run: pip install edge-tts", file=sys.stderr)
+    sys.exit(1)
+
 #  -  -  Google Cloud TTS (Chirp3-HD)  -  opzionale  -  -
 try:
     import google_tts
@@ -86,9 +92,6 @@ except Exception as _e:
 #  -  -  DeepSeek LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py)
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
-DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
@@ -152,7 +155,7 @@ def add_security_headers(response):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https://api.producthunt.com; "
-        "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
+        "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://www.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
     return response
@@ -166,8 +169,6 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Inizializza Google Cloud TTS (tracking utilizzo nella data dir)
 if google_tts is not None:
     google_tts.init(_DATA_DIR)
-    # Forza l'invalidazione della cache voci locale per includere Google all'avvio
-    _voices_cache = None 
 
 jobs = {}
 
@@ -779,121 +780,149 @@ def _paypal_capture_order(order_id):
 
 # (Functions imported from email_service)
 
-def _send_completion_email(job_id):
-    """Spostato in generation_engine.py"""
-    return generation_engine._send_completion_email(job_id)
-    pass
+_log_lock = threading.Lock()
 
-LOCALE_NAMES = {
-    "af": "Afrikaans", "am": "Amarico", "ar": "Arabo", "az": "Azero",
-    "bg": "Bulgaro", "bn": "Bengalese", "bs": "Bosniaco", "ca": "Catalano",
-    "cs": "Ceco", "cy": "Gallese", "da": "Danese", "de": "Tedesco",
-    "el": "Greco", "en": "Inglese", "es": "Spagnolo", "et": "Estone",
-    "fa": "Persiano", "fi": "Finlandese", "fil": "Filippino", "fr": "Francese",
-    "ga": "Irlandese", "gu": "Gujarati", "he": "Ebraico", "hi": "Hindi",
-    "hr": "Croato", "hu": "Ungherese", "id": "Indonesiano", "is": "Islandese",
-    "it": "Italiano", "ja": "Giapponese", "jv": "Giavanese", "ka": "Georgiano",
-    "kk": "Kazako", "km": "Khmer", "kn": "Kannada", "ko": "Coreano",
-    "lo": "Lao", "lt": "Lituano", "lv": "Lettone", "mk": "Macedone",
-    "ml": "Malayalam", "mr": "Marathi", "ms": "Malese", "mt": "Maltese",
-    "my": "Birmano", "nb": "Norvegese", "ne": "Nepalese", "nl": "Olandese",
-    "pl": "Polacco", "ps": "Pashto", "pt": "Portoghese", "ro": "Rumeno",
-    "ru": "Russo", "si": "Singalese", "sk": "Slovacco", "sl": "Sloveno",
-    "so": "Somalo", "sq": "Albanese", "sr": "Serbo", "sv": "Svedese",
-    "sw": "Swahili", "ta": "Tamil", "te": "Telugu", "th": "Thailandese",
-    "tr": "Turco", "uk": "Ucraino", "ur": "Urdu", "uz": "Uzbeco",
-    "vi": "Vietnamita", "zh": "Cinese", "zu": "Zulu",
-}
+
+def _log_activity(session_id, filename, operation, client_id="", client_ip="", voice="", browser_lang=""):
+    """Append one line to the activity log file (one file per month).
+
+    Format (# separated):
+        session_id # datetime # "filename" # operation # client_id # client_ip # voice # browser_lang
+    Operations: ANALYZE, GENERATE, COMPLETE, DOWNLOAD, DOWNLOAD_PODCAST
+    """
+    from datetime import datetime
+    now = datetime.now()
+    log_path = SCRIPT_DIR / f"activity_{now.strftime('%Y-%m')}.log"
+    ts = now.strftime("%Y-%m-%d %H:%M:%S")
+    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
+    try:
+        with _log_lock:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(line)
+    except OSError:
+        pass
+
+
+# ----------------------------------------------------------------------
+# VOICE MANAGEMENT
+# ----------------------------------------------------------------------
 
 _voices_cache = None
 _voices_lock = threading.Lock()
 
+LANGUAGE_NAMES = {
+    "af": "Afrikaans", "am": "Amarico", "ar": "Arabo", "az": "Azerbaigiano",
+    "bg": "Bulgaro", "bn": "Bengalese", "bs": "Bosniaco", "ca": "Catalano",
+    "cs": "Ceco", "cy": "Gallese", "da": "Danese", "de": "Tedesco",
+    "el": "Greco", "en": "Inglese", "es": "Spagnolo", "et": "Estone",
+    "fa": "Persiano", "fi": "Finlandese", "fil": "Filippino", "fr": "Francese",
+    "ga": "Irlandese", "gl": "Galiziano", "gu": "Gujarati", "he": "Ebraico",
+    "hi": "Hindi", "hr": "Croato", "hu": "Ungherese", "id": "Indonesiano",
+    "is": "Islandese", "it": "Italiano", "ja": "Giapponese", "jv": "Giavanese",
+    "ka": "Georgiano", "kk": "Kazako", "km": "Khmer", "kn": "Kannada",
+    "ko": "Coreano", "lo": "Lao", "lt": "Lituano", "lv": "Lettone",
+    "mk": "Macedone", "ml": "Malayalam", "mn": "Mongolo", "mr": "Marathi",
+    "ms": "Malese", "mt": "Maltese", "my": "Birmano", "nb": "Norvegese Bokmal",
+    "ne": "Nepalese", "nl": "Olandese", "pl": "Polacco", "ps": "Pashto",
+    "pt": "Portoghese", "ro": "Romeno", "ru": "Russo", "si": "Singalese",
+    "sk": "Slovacco", "sl": "Sloveno", "so": "Somalo", "sq": "Albanese",
+    "sr": "Serbo", "su": "Sundanese", "sv": "Svedese", "sw": "Swahili",
+    "ta": "Tamil", "te": "Telugu", "th": "Thailandese", "tr": "Turco",
+    "uk": "Ucraino", "ur": "Urdu", "uz": "Uzbeco", "vi": "Vietnamita",
+    "zh": "Cinese", "zu": "Zulu",
+}
+
+
 async def _fetch_voices():
-    """Fetches and categorizes Edge TTS and Google TTS voices."""
+    print("[_fetch_voices] Starting fetch via edge_tts.list_voices()...")
     try:
-        import edge_tts
-        vman = await edge_tts.VoicesManager.create()
-        edge_list = vman.voices
-    except Exception as e:
-        print(f"Error fetching Edge voices: {e}")
-        edge_list = []
-
-    languages = {} # lang_code -> { "name": "...", "voices": [] }
-    
-    # 1. Edge TTS
-    for v in edge_list:
-        lc_full = v["Locale"]
-        lc = lc_full.split("-")[0].lower()
-        region = lc_full.split("-")[-1].upper()
-        
-        if lc not in languages:
-            languages[lc] = {
-                "name": LOCALE_NAMES.get(lc, lc.upper()),
-                "voices": []
-            }
-        
-        # Pulizia nome: "Microsoft Isabella Online (Natural) - Italian (Italy)" -> "Isabella"
-        raw_name = v["FriendlyName"]
-        clean_name = raw_name.replace("Microsoft ", "").replace(" Online (Natural)", "")
-        # Rimuove l'eventuale suffisso della lingua dopo il trattino
-        if " - " in clean_name:
-            clean_name = clean_name.split(" - ")[0].strip()
-        
-        gender_icon = "👨" if v["Gender"] == "Male" else "👩"
-        languages[lc]["voices"].append({
-            "id": v["ShortName"],
-            "name": f"{clean_name} ({region})",
-            "gender": v["Gender"],
-            "gender_icon": gender_icon,
-            "locale": lc_full,
-            "engine": "edge"
-        })
-
-    # 2. Google TTS (Optional)
-    if google_tts is not None:
+        # Check connectivity
+        import socket
         try:
-            # get_voices restituisce { "it": [ {...}, ... ], "en": [...] }
-            g_dict = google_tts.get_voices()
-            for lc_short, v_list in g_dict.items():
-                if lc_short not in languages:
-                    languages[lc_short] = {
-                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
-                        "voices": []
-                    }
-                languages[lc_short]["voices"].extend(v_list)
-        except Exception as e:
-            print(f"Error merging Google voices: {e}")
+            socket.create_connection(("speech.platform.bing.com", 443), timeout=3)
+            print("[_fetch_voices] Connectivity check to Microsoft TTS OK")
+        except Exception as conn_err:
+            print(f"[_fetch_voices] Connectivity check FAILED: {conn_err}")
+            
+        v = await edge_tts.list_voices()
+        print(f"[_fetch_voices] Successfully retrieved {len(v)} voices")
+        return v
+    except Exception as e:
+        print(f"[_fetch_voices] ERROR in _fetch_voices: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
-    # Sorting
-    for lang in languages.values():
-        lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
-
-    # Priority sorting for languages
-    priority = {"it": 0, "en": 1, "fr": 2, "de": 3, "es": 4, "pt": 5}
-    sorted_langs = dict(sorted(languages.items(), key=lambda x: (priority.get(x[0], 99), x[1]["name"])))
-    
-    return sorted_langs
 
 def get_voices():
-    """Thread-safe access to the voices cache."""
     global _voices_cache
     with _voices_lock:
         if _voices_cache is not None:
             return _voices_cache
-            
-    import asyncio
-    try:
-        # Create new loop for this thread (or use existing if in main)
+
+    max_retries = 3
+    raw = []
+    
+    for attempt in range(max_retries):
         loop = asyncio.new_event_loop()
-        voices = loop.run_until_complete(_fetch_voices())
-        loop.close()
-        
-        with _voices_lock:
-            _voices_cache = voices
-        return voices
-    except Exception as e:
-        print(f"Error in get_voices: {e}")
-        return {}
+        try:
+            raw = loop.run_until_complete(_fetch_voices())
+            if raw:
+                print(f"[get_voices] Successfully fetched {len(raw)} voices on attempt {attempt+1}")
+                break
+        except Exception as e:
+            print(f"[get_voices] Attempt {attempt+1}/{max_retries} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            if attempt < max_retries - 1:
+                time.sleep(2) # Attesa breve prima del retry
+        finally:
+            loop.close()
+
+    if not raw:
+        print("[get_voices] CRITICAL: Could not fetch voices from Edge TTS after multiple attempts.")
+        # Se fallisce tutto, restituiamo un dizionario vuoto o potremmo usare un fallback cablato
+        # per non rompere il frontend. Per ora logghiamo e proseguiamo con Google (se presente).
+        raw = []
+
+    languages = {}
+    for v in raw:
+        locale = v["Locale"]
+        lang_code = locale.split("-")[0]
+        lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
+        if lang_code not in languages:
+            languages[lang_code] = {"code": lang_code, "name": lang_name, "voices": []}
+        languages[lang_code]["voices"].append({
+            "id": v["ShortName"],
+            "name": v["ShortName"].split("-")[-1].replace("Neural", ""),
+            "locale": locale,
+            "gender": v["Gender"],
+            "gender_icon": "\u2640" if v["Gender"] == "Female" else "\u2642",
+            "engine": "edge",
+        })
+
+    #  -  -  Merge voci Google Cloud TTS Chirp3-HD (se disponibili e budget non esaurito)  -  - 
+    if google_tts is not None and google_tts.is_available():
+        gcloud_voices = google_tts.get_voices()
+        for lang_code, voice_list in gcloud_voices.items():
+            lang_name = LANGUAGE_NAMES.get(lang_code, lang_code)
+            if lang_code not in languages:
+                languages[lang_code] = {"code": lang_code, "name": lang_name, "voices": []}
+            languages[lang_code]["voices"].extend(voice_list)
+
+    for lang in languages.values():
+        lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
+
+    priority = {"it": 0, "en": 1, "fr": 2, "de": 3, "es": 4, "pt": 5}
+    sorted_langs = dict(sorted(
+        languages.items(),
+        key=lambda x: (priority.get(x[0], 99), x[1]["name"])
+    ))
+
+    with _voices_lock:
+        _voices_cache = sorted_langs
+    return sorted_langs
+
 
 def _invalidate_voices_cache():
     """Invalida la cache voci (ricarica al prossimo get_voices())."""
@@ -903,50 +932,13 @@ def _invalidate_voices_cache():
     if google_tts is not None:
         google_tts.invalidate_voices_cache()
 
-# ----------------------------------------------------------------------
-# HELPER CLASSES & PARSERS (Moved to generation_engine.py)
-# ----------------------------------------------------------------------
-
-def parse_txt(file_path):
-    return generation_engine.parse_txt(file_path)
-
-def parse_abm(path):
-    return generation_engine.parse_abm(path)
 
 # ----------------------------------------------------------------------
-# GENERATION & OPTIMIZATION THREADS (Moved to generation_engine.py)
+# AUDIO GENERATION
 # ----------------------------------------------------------------------
 
-def run_optimization(job_id, selected_chapters=None):
-    return generation_engine.run_optimization(job_id, selected_chapters)
+# (Functions moved to tts_split.py - imported at top of file)
 
-def run_generation(job_id, info, voice, rate, single_file):
-    return generation_engine.run_generation(job_id, info, voice, rate, single_file)
-
-def _refund_job_payment(job_id, job, reason='error'):
-    return generation_engine._refund_job_payment(job_id, job, reason)
-
-def _google_tts_refund_unused(job_id, job):
-    return generation_engine._google_tts_refund_unused(job_id, job)
-
-def _send_optimization_email(job_id):
-    return generation_engine._send_optimization_email(job_id)
-
-#  -  -  Activity log  -  - 
-_log_lock = threading.Lock()
-
-def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang=''):
-    from datetime import datetime
-    now = datetime.now()
-    log_path = SCRIPT_DIR / f"activity_{now.strftime('%Y-%m')}.log"
-    ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
-    try:
-        with _log_lock:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(line)
-    except OSError:
-        pass
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -2757,20 +2749,15 @@ def api_progress(job_id):
             if job.get("status") == "done":
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
-                # Se output_m4b o optimized_abm_path non sono impostati, prova a trovare i file su disco
+                payload["has_abm"] = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
+                # Se output_m4b non è impostato, prova a trovare il file su disco
                 # (può succedere se il client riconnette dopo che la generazione è già terminata)
-                _work = UPLOAD_DIR / job_id
                 if not job.get("output_m4b"):
+                    _work = UPLOAD_DIR / job_id
                     _m4bs = list(_work.glob("*.m4b")) + list((_work / "output").glob("*.m4b"))
                     if _m4bs:
                         job["output_m4b"] = str(_m4bs[0])
-                if not job.get("optimized_abm_path"):
-                    _abms = list(_work.glob("*.abm"))
-                    if _abms:
-                        job["optimized_abm_path"] = str(_abms[0])
-
                 payload["output_m4b"] = bool(job.get("output_m4b"))
-                payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
                 payload["failed_chunks"] = job.get("failed_chunks", 0)
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
@@ -4201,52 +4188,22 @@ def api_download(job_id):
             return "Optimized ABM project file not found", 404
 
     if download_type == "m4b":
-        m4b_path = job.get("output_m4b")
-        print(f"[debug] Download M4B requested. Path in job: {m4b_path}")
-        
-        if m4b_path and os.path.exists(m4b_path):
+        if job.get("output_m4b") and os.path.exists(job["output_m4b"]):
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
-            print(f"[debug] M4B file found! Serving: {m4b_path}")
-            return send_file(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+            return send_file(job["output_m4b"], as_attachment=True, download_name=f"{safe_name}.m4b")
         else:
-            # Physical search fallback
-            print(f"[debug] M4B not found at registered path. Searching in directory...")
-            job_dir = UPLOAD_DIR / job_id
-            m4b_files = list(job_dir.glob("**/ *.m4b"))
-            if m4b_files:
-                actual_m4b = str(m4b_files[0])
-                job["output_m4b"] = actual_m4b
-                print(f"[debug] M4B found via physical search: {actual_m4b}")
-                safe_name = _safe_filename(job["info"].title) or "audiolibro"
-                return send_file(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b")
+            # Fallback to single MP3
+            return send_file(job["output_files"][0], as_attachment=True, download_name=job["output_name"])
             
-            print(f"[debug] M4B totally missing. Falling back to MP3.")
-            # Fallback to single MP3 if M4B is missing
-            mp3_path = job.get("output_files", [""])[0]
-            if mp3_path and os.path.exists(mp3_path):
-                return send_file(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3")
-            return "File not found", 404
-
-    if download_type == "zip":
-        if "output_zip" in job and os.path.exists(job["output_zip"]):
-            zip_name = job.get("output_name", "audiobook.zip")
-            if not zip_name.endswith(".zip"):
-                 zip_name = _safe_filename(job["info"].title) + ".zip"
-            return send_file(job["output_zip"], as_attachment=True, download_name=zip_name)
-        return "ZIP file not found", 404
-
-    # Default logic (compatibility or auto-detect)
-    # Prefer M4B if it seems to be the intended primary output
-    if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
-        return send_file(job["output_m4b"], as_attachment=True, download_name=job["output_name"])
-
-    if "output_zip" in job and os.path.exists(job["output_zip"]):
+    if download_type == "zip" and "output_zip" in job:
         return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
 
-    if job.get("output_files") and os.path.exists(job["output_files"][0]):
+    # Default logic (compatibility with old links)
+    if "output_zip" in job:
+        return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
+    else:
         return send_file(job["output_files"][0], as_attachment=True, download_name=job["output_name"])
 
-    return "File not found", 404
 
 @app.route("/api/download_podcast/<job_id>")
 def api_download_podcast(job_id):

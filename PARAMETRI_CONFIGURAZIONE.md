@@ -126,14 +126,16 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `DEEPSEEK_API_BASE` | `"https://api.deepseek.com"` | `audiobook_app.py` | 93 |
-| `DEEPSEEK_MODEL` | `"deepseek-chat"` (configurabile via `ABM_DEEPSEEK_MODEL`) | `audiobook_app.py` | 94 |
-| `DEEPSEEK_MAX_TOKENS` | `8192` | `audiobook_app.py` | 95 |
-| `DEEPSEEK_TEMPERATURE` | `0.3` | `audiobook_app.py` | 67 |
-| `DEEPSEEK_CHARS_PER_TOKEN` | `3.5` (stima per italiano) | `audiobook_app.py` | 68 |
-| `DEEPSEEK_MAX_INPUT_CHARS` | `~405.000` (calcolato da context 128K) | `audiobook_app.py` | 73 |
-| `_call_deepseek(max_retries)` | `4` tentativi con backoff esponenziale (1/2/4/8s) su errori transitori di rete (`ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`) | `audiobook_app.py` | 1279 |
-| `timeout` streaming DeepSeek | `120.0s` esplicito per evitare stall indefiniti | `audiobook_app.py` | 1299 |
+| `DEEPSEEK_API_BASE` | `"https://api.deepseek.com"` | `generation_engine.py` | 49 |
+| `DEEPSEEK_MODEL` | `"deepseek-chat"` (configurabile via `ABM_DEEPSEEK_MODEL`) | `generation_engine.py` | 50 |
+| `DEEPSEEK_THINKING` | `"false"` (configurabile via `ABM_DEEPSEEK_THINKING`) | `generation_engine.py` | 51 |
+| `DEEPSEEK_REASONING_EFFORT` | `"none"` (configurabile via `ABM_DEEPSEEK_REASONING_EFFORT`: none, low, medium, high) | `generation_engine.py` | 52 |
+| `DEEPSEEK_MAX_TOKENS` | `8192` | `generation_engine.py` | 53 |
+| `DEEPSEEK_TEMPERATURE` | `0.3` | `generation_engine.py` | 54 |
+| `DEEPSEEK_CHARS_PER_TOKEN` | `3.5` (stima per italiano) | `generation_engine.py` | 55 |
+| `DEEPSEEK_MAX_INPUT_CHARS` | `~405.000` (calcolato da context 128K) | `generation_engine.py` | 60 |
+| `_call_deepseek(max_retries)` | `4` tentativi con backoff esponenziale (1/2/4/8s) su errori transitori di rete (`ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`) | `generation_engine.py` | 438 |
+| `timeout` streaming DeepSeek | `120.0s` esplicito per evitare stall indefiniti | `generation_engine.py` | 451 |
 
 ### 3.4 Generazione audio
 

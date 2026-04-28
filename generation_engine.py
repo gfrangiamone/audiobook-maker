@@ -48,6 +48,8 @@ from tts_split import (
 DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
+DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
 DEEPSEEK_MAX_TOKENS = 8192
 DEEPSEEK_TEMPERATURE = 0.3
 DEEPSEEK_CHARS_PER_TOKEN = 3.5
@@ -93,6 +95,9 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _google_tts = google_tts_module
     if invalidate_voices_cache_fn is not None:
         _invalidate_voices_cache = invalidate_voices_cache_fn
+    
+    # Inizializza DeepSeek (se API key presente)
+    _init_deepseek()
 
 
 # ---------------------------------------------------------------------------
@@ -452,25 +457,39 @@ def _call_deepseek(user_content, job=None, max_retries=4):
         result_parts = []
         partial_streamed = 0
         try:
-            stream = _deepseek_client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=messages,
-                max_tokens=DEEPSEEK_MAX_TOKENS,
-                temperature=DEEPSEEK_TEMPERATURE,
-                stream=True,
-                timeout=120.0,
-            )
+            # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort)
+            kwargs = {
+                "model": DEEPSEEK_MODEL,
+                "messages": messages,
+                "max_tokens": DEEPSEEK_MAX_TOKENS,
+                "temperature": DEEPSEEK_TEMPERATURE,
+                "stream": True,
+                "timeout": 120.0,
+            }
+            if DEEPSEEK_REASONING_EFFORT != "none":
+                kwargs["reasoning_effort"] = DEEPSEEK_REASONING_EFFORT
+            if DEEPSEEK_THINKING:
+                kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+                
+            stream = _deepseek_client.chat.completions.create(**kwargs)
             for event in stream:
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
                     raise _CancelledError("Optimization cancelled during streaming")
+                
+                # Cattura il contenuto normale
                 if event.choices and event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
                     result_parts.append(chunk)
                     if job is not None:
                         job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(chunk)
                         partial_streamed += len(chunk)
+                
+                # Opzionale: cattura reasoning_content (non lo usiamo per il testo finale, ma evita errori)
+                # if hasattr(event.choices[0].delta, "reasoning_content") and event.choices[0].delta.reasoning_content:
+                #     pass 
+
             raw = "".join(result_parts)
             cleaned = _sanitize_llm_output(raw)
             if cleaned != raw:
@@ -712,6 +731,18 @@ def _send_completion_email(job_id):
             "podcast_p3": f"Um den Podcast in Apps wie <strong>Pocket Casts</strong>, <strong>Apple Podcasts (iTunes)</strong> oder anderen Aggregatoren verf&uuml;gbar zu machen, gib die URL der XML-Datei als Feed-URL an.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
+        "pt": {
+            "subject": f"Audiobook Maker \u2014 \"{book_title}\" pronto para o download",
+            "heading": "&#x1F3A7; Seu audiolivro est&aacute; pronto!",
+            "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da com sucesso.",
+            "btn": "&#x2B07;&#xFE0F; Baixar audiolivro",
+            "warn": "&#x23F0; Aten&ccedil;&atilde;o: os arquivos estar&atilde;o dispon&iacute;veis para download por apenas 24 horas a partir do recebimento deste e-mail. Ap&oacute;s esse per&iacute;odo, eles ser&atilde;o exclu&iacute;dos automaticamente.",
+            "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instru&ccedil;&otilde;es de publica&ccedil;&atilde;o do Podcast</strong>",
+            "podcast_p1": f"O arquivo ZIP baixato cont&eacute;m todos os arquivos necess&aacute;rios para o seu podcast. Para torn&aacute;-lo acess&iacute;vel online, <strong>descompacte o arquivo ZIP</strong> e envie todos os arquivos para o seu servidor web, para que sejam acess&iacute;veis em:",
+            "podcast_p2": f"O arquivo XML do feed RSS do podcast ser&aacute;:",
+            "podcast_p3": f"Para tornar o podcast dispon&iacute;vel em aplicativos como <strong>Pocket Casts</strong>, <strong>Apple Podcasts (iTunes)</strong> ou outros agregadores, forne&ccedil;a o URL do arquivo XML como o URL do feed.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
         "zh": {
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
             "heading": "&#x1F3A7; \u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
@@ -889,6 +920,15 @@ def _send_optimization_email(job_id):
             "warn": "&#x23F0; Hinweis: Die Datei steht nur 24 Stunden zum Download bereit.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
+        "pt": {
+            "subject": f"Audiobook Maker \u2014 \"{book_title}\" otimiza&ccedil;&atilde;o de texto conclu&iacute;da",
+            "heading": "&#x2728; Otimiza&ccedil;&atilde;o de texto conclu&iacute;da!",
+            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> para s&iacute;ntese de voz foi conclu&iacute;da com sucesso.",
+            "btn": "&#x2B07;&#xFE0F; Baixar projeto otimizado (.abm)",
+            "info": "O arquivo .abm baixado cont&eacute;m o texto otimizado para s&iacute;ntese de voz. Voc&ecirc; pode carreg&aacute;-lo novamente no Audiobook Maker para prosseguir com a gera&ccedil;&atilde;o do audiolivro.",
+            "warn": "&#x23F0; Aten&ccedil;&atilde;o: o arquivo estar&aacute; dispon&iacute;vel para download por apenas 24 horas.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
         "zh": {
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
             "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
@@ -1036,12 +1076,13 @@ def run_optimization(job_id, selected_chapters=None):
     total_chapters = len(chapters_to_opt)
     total_chars = sum(ch.char_count for ch in chapters_to_opt)
 
-    # Log per confermare che il prompt di ottimizzazione e caricato
-    if _deepseek_prompt:
-        prompt_len = len(_deepseek_prompt)
-        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt caricato: {prompt_len} caratteri)")
+    # Carica il prompt per la lingua del job
+    lang = job.get("lang", "it")
+    prompt = _get_deepseek_prompt(lang)
+    if prompt:
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri)")
     else:
-        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt non caricato)")
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!)")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
@@ -1300,9 +1341,9 @@ def run_generation(job_id, info, voice, rate, single_file):
                                            chapters=valid_m4b_ch or None,
                                            title=info.title, author=info.author or None,
                                            cover_path=cover_path,
-                                           date=getattr(info, "date", "") or None,
-                                           language=info.language or None,
-                                           description=info.description or None):
+                                           date=getattr(info, "date", None),
+                                           language=getattr(info, "language", None),
+                                           description=getattr(info, "description", None)):
                         job["output_m4b"] = final_m4b
                         job["m4b_failed"] = False
                         break # Success!
@@ -1469,6 +1510,17 @@ def run_generation(job_id, info, voice, rate, single_file):
             print(f"[{job_id}] Completed with {failed_chunks} failed chunk(s)")
         else:
             job["progress_message"] = "Done!"
+
+        # Generate .abm snapshot if AI optimized (so the user can download it)
+        if job.get("ai_optimized") and not job.get("optimized_abm_path"):
+            try:
+                abm_path, abm_name = _generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+                print(f"[{job_id}] Auto-generated .abm snapshot after generation")
+            except Exception as e:
+                print(f"[{job_id}] Failed to auto-generate .abm: {e}")
+
         job["status"] = "done"
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),

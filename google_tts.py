@@ -70,10 +70,12 @@ def is_available():
         # Check credenziali
         creds_file = os.environ.get("ABM_GOOGLE_CREDENTIALS_FILE", "") or \
                      os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        
+        print(f"[google-tts] init check: creds_file='{creds_file}'")
+        
         if not creds_file or not os.path.exists(creds_file):
             _gtts_available = False
-            print("[google-tts] Disabled: no credentials file found. "
-                  "Set GOOGLE_APPLICATION_CREDENTIALS or ABM_GOOGLE_CREDENTIALS_FILE.")
+            print(f"[google-tts] Disabled: no credentials file found at '{creds_file}'.")
             return False
 
         # Ensure GOOGLE_APPLICATION_CREDENTIALS is set (SDK lo richiede)
@@ -254,11 +256,16 @@ def get_voices():
         return {}
 
     languages = {}
+    voice_count = 0
+    chirp_count = 0
     for v in response.voices:
+        voice_count += 1
         name = v.name
         # Filtra solo voci Chirp3-HD
         if "Chirp3-HD" not in name:
             continue
+        
+        chirp_count += 1
 
         for lang_code_full in v.language_codes:
             lang_code_short = lang_code_full.split("-")[0]
@@ -304,11 +311,12 @@ def get_voices():
     for lang_voices in languages.values():
         lang_voices.sort(key=lambda x: (x["gender"], x["name"]))
 
+    print(f"[google-tts] get_voices: total={voice_count}, chirp3={chirp_count}, languages={list(languages.keys())}")
     with _google_voices_lock:
         _google_voices_cache = languages
         _google_voices_ts = time.time()
-
     return languages
+
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.mp3"):
