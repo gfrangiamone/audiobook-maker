@@ -12,6 +12,7 @@ Usage:
 
 import asyncio
 import concurrent.futures
+import logging
 import re
 import json
 import os
@@ -129,6 +130,17 @@ from favicon_data import (
 )
 
 
+
+# ----------------------------------------------------------------------
+# LOGGING CONFIG
+# ----------------------------------------------------------------------
+
+class HeartbeatFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return "/api/heartbeat" not in msg and "/api/job_status/" not in msg
+
+logging.getLogger("werkzeug").addFilter(HeartbeatFilter())
 
 # ----------------------------------------------------------------------
 # APP CONFIG
@@ -1491,6 +1503,38 @@ def admin_logs():
 """
         cards_html += "</div></div>\n"
 
+    # Hourly stats for chart
+    hourly_counts = [0] * 24
+    for sid, s in sessions.items():
+        if "first_dt" in s:
+            hourly_counts[s["first_dt"].hour] += 1
+    hourly_json = json.dumps(hourly_counts)
+
+    # Hourly stats with language breakdown
+    from collections import Counter
+    all_langs = [s.get("browser_lang", "??") for s in sessions.values()]
+    top_langs = [l for l, _ in Counter(all_langs).most_common(3)]
+    
+    # hourly_lang_data[hour][lang] = count
+    hourly_lang_data = []
+    for h in range(24):
+        # Initialize with top 3 + "Other"
+        row = {l: 0 for l in top_langs}
+        row["Other"] = 0
+        hourly_lang_data.append(row)
+        
+    for sid, s in sessions.items():
+        if "first_dt" in s:
+            h = s["first_dt"].hour
+            l = s.get("browser_lang", "??")
+            if l in top_langs:
+                hourly_lang_data[h][l] += 1
+            else:
+                hourly_lang_data[h]["Other"] += 1
+    
+    hourly_json = json.dumps(hourly_lang_data)
+    lang_labels_json = json.dumps(top_langs + ["Other"])
+
     available_months = []
     try:
         for f in sorted(SCRIPT_DIR.glob("activity_*.log"), reverse=True):
@@ -1586,6 +1630,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <h1>🎧 ACTIVITY LOG</h1>
     <span class="period">{ym}</span>
     <div class="header-actions">
+        <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
         <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
@@ -1606,7 +1651,126 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 {cards_html if cards_html else "<div class='empty'><div class='icon'>📮</div><p>" + t["no_activity"] + " <strong>" + ym + "</strong></p></div>"}
 </div>
 
+<div id="statsModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📊 Job Distribution (24h)</h2>
+            <button class="modal-close" onclick="hideStats()">&times;</button>
+        </div>
+        <div id="chartLegend" class="chart-legend"></div>
+        <div class="chart-container">
+            <div class="chart-y-axis">
+                <div id="yMax"></div>
+                <div>0</div>
+            </div>
+            <div class="chart-area" id="chartArea"></div>
+        </div>
+        <div class="chart-x-axis" id="chartXAxis"></div>
+    </div>
+</div>
+
+<style>
+.modal {{ display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px); }}
+.modal-content {{ background:var(--surface); margin:10% auto; padding:24px; border:1px solid var(--border); border-radius:16px; width:90%; max-width:850px; box-shadow:0 20px 50px rgba(0,0,0,0.5); }}
+.modal-header {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }}
+.modal-header h2 {{ font-size:1.1rem; color:var(--accent); }}
+.modal-close {{ background:none; border:none; color:var(--text-dim); font-size:2rem; cursor:pointer; line-height:1; }}
+.modal-close:hover {{ color:var(--text); }}
+
+.chart-legend {{ display:flex; gap:16px; margin-bottom:20px; justify-content:center; flex-wrap:wrap; }}
+.legend-item {{ display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-dim); }}
+.legend-color {{ width:12px; height:12px; border-radius:3px; }}
+
+.chart-container {{ display:flex; height:300px; gap:10px; margin-bottom:10px; border-left:2px solid var(--border); border-bottom:2px solid var(--border); padding:20px 10px 0 10px; }}
+.chart-y-axis {{ display:flex; flex-direction:column; justify-content:space-between; color:var(--text-dim); font-size:0.7rem; padding-right:5px; margin-left:-35px; width:30px; text-align:right; }}
+.chart-area {{ flex:1; display:flex; align-items:flex-end; gap:4px; }}
+
+.chart-bar-wrap {{ flex:1; display:flex; flex-direction:column; align-items:center; height:100%; justify-content:flex-end; position:relative; }}
+.chart-bar-seg {{ width:100%; min-height:0px; transition:height 0.5s ease; position:relative; }}
+.chart-bar-seg:first-child {{ border-radius:4px 4px 0 0; }}
+.chart-bar-seg:hover {{ filter:brightness(1.2); }}
+.chart-bar-seg:hover::after {{ content:attr(data-label); position:absolute; top:-25px; left:50%; transform:translateX(-50%); background:var(--surface2); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; white-space:nowrap; z-index:10; pointer-events:none; }}
+
+.chart-x-axis {{ display:flex; padding-left:45px; gap:4px; }}
+.chart-x-label {{ flex:1; text-align:center; font-size:0.6rem; color:var(--text-dim); }}
+</style>
+
 <script>
+const hourlyData = {hourly_json};
+const langLabels = {lang_labels_json};
+const langColors = ['var(--accent)', 'var(--accent2)', 'var(--green)', '#94a3b8'];
+
+function showStats() {{
+    const modal = document.getElementById('statsModal');
+    const area = document.getElementById('chartArea');
+    const xAxis = document.getElementById('chartXAxis');
+    const yMax = document.getElementById('yMax');
+    const legend = document.getElementById('chartLegend');
+    
+    area.innerHTML = '';
+    xAxis.innerHTML = '';
+    legend.innerHTML = '';
+    
+    // Legend
+    langLabels.forEach((l, i) => {{
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `<div class="legend-color" style="background:${{langColors[i]}}"></div><span>${{l.toUpperCase()}}</span>`;
+        legend.appendChild(item);
+    }});
+    
+    const totals = hourlyData.map(h => Object.values(h).reduce((a, b) => a + b, 0));
+    const maxVal = Math.max(...totals, 5);
+    yMax.textContent = maxVal;
+    
+    hourlyData.forEach((hData, hour) => {{
+        const wrap = document.createElement('div');
+        wrap.className = 'chart-bar-wrap';
+        
+        // Reverse labels for stacking order (top to bottom)
+        [...langLabels].reverse().forEach((lang) => {{
+            const val = hData[lang] || 0;
+            if (val > 0) {{
+                const seg = document.createElement('div');
+                seg.className = 'chart-bar-seg';
+                const langIdx = langLabels.indexOf(lang);
+                seg.style.backgroundColor = langColors[langIdx];
+                seg.style.height = (val / maxVal * 100) + '%';
+                seg.dataset.label = lang.toUpperCase() + ': ' + val;
+                wrap.appendChild(seg);
+            }}
+        }});
+        
+        if (totals[hour] === 0) {{
+            const stub = document.createElement('div');
+            stub.className = 'chart-bar-seg';
+            stub.style.height = '2px';
+            stub.style.backgroundColor = 'var(--border)';
+            stub.style.opacity = '0.2';
+            wrap.appendChild(stub);
+        }}
+        
+        area.appendChild(wrap);
+        
+        const label = document.createElement('div');
+        label.className = 'chart-x-label';
+        label.textContent = hour.toString().padStart(2, '0');
+        xAxis.appendChild(label);
+    }});
+    
+    modal.style.display = 'block';
+}}
+
+
+function hideStats() {{
+    document.getElementById('statsModal').style.display = 'none';
+}}
+
+window.onclick = function(event) {{
+    const modal = document.getElementById('statsModal');
+    if (event.target == modal) hideStats();
+}};
+
 function toggleAllDays() {{
     const groups = document.querySelectorAll('.day-group');
     const btn = document.getElementById('btnToggleDays');
@@ -1619,40 +1783,26 @@ function toggleAllDays() {{
 }}
 
 function filterCards(filter, el) {{
-    // Toggle active state on stat buttons
     document.querySelectorAll('.stat').forEach(s => s.classList.remove('active'));
     el.classList.add('active');
-
     const cards = document.querySelectorAll('.card');
     cards.forEach(card => {{
         let show = false;
-        if (filter === 'all') {{
-            show = true;
-        }} else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{
-            show = card.dataset.status === filter;
-        }} else if (filter === 'email') {{
-            show = card.dataset.email === '1';
-        }} else if (filter === 'identified') {{
-            show = card.dataset.identified === '1';
-        }} else if (filter === 'recurring') {{
-            show = card.dataset.recurring === '1';
-        }}
+        if (filter === 'all') {{ show = true; }} 
+        else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{ show = card.dataset.status === filter; }} 
+        else if (filter === 'email') {{ show = card.dataset.email === '1'; }} 
+        else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }} 
+        else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
         card.classList.toggle('card-hidden', !show);
     }});
-
-    // Hide day groups with no visible cards
     document.querySelectorAll('.day-group').forEach(group => {{
         const visibleCards = group.querySelectorAll('.card:not(.card-hidden)');
         group.classList.toggle('day-hidden', visibleCards.length === 0);
-        // Update day count badge
         const countBadge = group.querySelector('.day-count');
-        if (countBadge) {{
-            countBadge.textContent = visibleCards.length;
-        }}
+        if (countBadge) countBadge.textContent = visibleCards.length;
     }});
 }}
 
-// Live timer for in-progress sessions
 function updateLiveTimers() {{
     const timers = document.querySelectorAll('.live-timer');
     const now = new Date();
@@ -1668,7 +1818,6 @@ function updateLiveTimers() {{
     }});
 }}
 
-// Live progress update for in-progress cards
 async function updateLiveProgress() {{
     const pcts = document.querySelectorAll('.card-pct');
     for (const el of pcts) {{
@@ -1679,10 +1828,7 @@ async function updateLiveProgress() {{
             if (r.ok) {{
                 const d = await r.json();
                 el.textContent = '(' + d.pct + '%)';
-                // Se il job è finito (done/error/cancelled), potremmo ricaricare la pagina o cambiare stile,
-                // ma per ora aggiorniamo solo la percentuale.
                 if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {{
-                    // smetti di aggiornare questa card (rimuovi sid)
                     el.removeAttribute('data-sid');
                     if (d.status === 'done') el.style.color = 'var(--green)';
                 }}
@@ -1691,7 +1837,6 @@ async function updateLiveProgress() {{
     }}
 }}
 
-// Update timers every second, progress every 5 seconds
 if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveTimers, 1000);
     setInterval(updateLiveProgress, 5000);

@@ -311,7 +311,6 @@ def get_voices():
     for lang_voices in languages.values():
         lang_voices.sort(key=lambda x: (x["gender"], x["name"]))
 
-    print(f"[google-tts] get_voices: total={voice_count}, chirp3={chirp_count}, languages={list(languages.keys())}")
     with _google_voices_lock:
         _google_voices_cache = languages
         _google_voices_ts = time.time()

@@ -36,7 +36,9 @@ Se un passaggio è chiaramente il risultato di un errore di formattazione o codi
 ### 2. Numeri romani e date
 Scrivi i numeri romani per esteso in italiano: `Leone XIV` → `Leone Quattordicesimo`, `Capitolo III` → `Capitolo Terzo`, `Enrico VIII` → `Enrico Ottavo`.
 
-Converti date e numeri cardinali grandi in forma scritta quando il TTS rischierebbe di leggerli in modo ambiguo: `1998` → `millenovecentonovantotto`. Lascia invariati codici, codici fiscali, partite IVA, numeri di telefono.
+Converti date e numeri cardinali grandi in forma scritta quando il TTS rischierebbe di leggerli in modo ambiguo: `1998` → `millenovecentonovantotto`. 
+EVITA di tradurre numeri grandi in una sequenza di singoli numeri: 14000->uno-quattro-zero-zero-zero, piuttosto lasciali invariati. 
+Lascia invariati codici, codici fiscali, partite IVA, numeri di telefono.
 
 **Cautela su sequenze maiuscole che sembrano numeri romani.** Lascia invariati nomi e identificatori che coincidono con numeri romani ma non lo sono (`Xi Jinping`, `vi` come editor, `MIX` come titolo album). Converti solo quando il contesto indica chiaramente una sequenza numerica o un rango.
 

@@ -118,7 +118,7 @@ def _init_deepseek():
         if not generic_path.exists():
             print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
         else:
-            print("[startup] DeepSeek LLM optimization enabled (multilingual suite)")
+            print(f"[startup] DeepSeek LLM optimization enabled (Model: {DEEPSEEK_MODEL}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING})")
     except ImportError:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
         _deepseek_client = None
@@ -427,6 +427,7 @@ def _get_deepseek_prompt(lang_code="it"):
         
     if path.exists():
         try:
+            print(f"[DeepSeek] Using prompt file: {path.name}")
             content = path.read_text(encoding="utf-8").strip()
             _deepseek_prompts[lang] = content
             return content
@@ -1080,9 +1081,11 @@ def run_optimization(job_id, selected_chapters=None):
     lang = job.get("lang", "it")
     prompt = _get_deepseek_prompt(lang)
     if prompt:
-        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri)")
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
+              f"Model: {DEEPSEEK_MODEL}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
     else:
-        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!)")
+        print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!). "
+              f"Model: {DEEPSEEK_MODEL}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters

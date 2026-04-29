@@ -163,6 +163,12 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 - **Email readonly post-avvio ottimizzazione**: dopo la chiamata `/api/register_opt_email` il campo email diventa `readonly` con sfondo grigio; viene resettato alla riapertura del modal.
 - **Icona FAQ corretta**: aggiunta classe `seo-section` ai singoli `<details>` delle FAQ per usare l'icona CSS customizzata invece del widget nativo del browser.
 
+**Novità v3.10.0 (Analytics & Logging Overhaul)**:
+- **Analisi Carico Orario**: introdotto un nuovo grafico a barre nella pagina `/logs` che mostra la distribuzione dei job nelle 24 ore.
+- **Breakdown Linguistico**: il grafico orario suddivide i conteggi per lingua del browser (top 3 lingue + categoria "Other"), permettendo di analizzare la provenienza degli utenti.
+- **Logging Chirurgico**: eliminati i log ridondanti della console (`/api/heartbeat`, `GET /api/job_status/`, `[google-tts] get_voices`) per una migliore leggibilità del server.
+- **Tracciabilità Prompt**: il server ora logga esplicitamente quale file `.md` di prompt sta utilizzando per ogni sessione di ottimizzazione AI, insieme ai parametri del modello (Reasoning e Thinking).
+
 **Novità v3.9.8 (Robust Chapter Selection AI)**:
 - **Correzione Stima Costo**: risolto un problema per cui la stima dei caratteri e del costo dell'ottimizzazione AI poteva ignorare la selezione dei capitoli a causa di una formattazione non standard dei parametri. Ora il sistema utilizza `URLSearchParams` sul frontend e un parsing multi-formato sul backend per garantire la massima precisione.
 
@@ -343,7 +349,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.9.8"` | `version.py` | 7 |
+| `__version__` | `"3.10.0"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
