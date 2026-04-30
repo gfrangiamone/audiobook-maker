@@ -50,16 +50,16 @@ DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
 DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
-DEEPSEEK_MAX_TOKENS = 8192
+DEEPSEEK_MAX_TOKENS = 384000
 DEEPSEEK_TEMPERATURE = 0.3
 DEEPSEEK_CHARS_PER_TOKEN = 3.5
-DEEPSEEK_MAX_CONTEXT_TOKENS = 128000
-DEEPSEEK_RESERVED_OUTPUT_TOKENS = 8192
+DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000  # 1M context window (DeepSeek V4 Flash)
+DEEPSEEK_RESERVED_OUTPUT_TOKENS = 384000
 DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
 DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
 DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
-# Per-chunk safe size: input chunk small enough so optimized output fits in MAX_TOKENS.
-# 8192 tokens × 3.5 cpchar × 0.85 safety = ~24,370 chars. Prevents output truncation.
+# Per-chunk safe size: ~1.14M chars per chunk with 384k output tokens.
+# Single API call per chapter for virtually any real book — no chunking needed.
 DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.85)
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
