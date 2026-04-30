@@ -13,6 +13,10 @@ script/
 backup/
 .venv/
 .minimax/
+.claude/
+.gemini/
+.aider.tags.cache.v4/
+.pytest_cache/
 venv/
 public/
 CLAUDE.md

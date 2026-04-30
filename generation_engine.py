@@ -58,6 +58,9 @@ DEEPSEEK_RESERVED_OUTPUT_TOKENS = 8192
 DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
 DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
 DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
+# Per-chunk safe size: input chunk small enough so optimized output fits in MAX_TOKENS.
+# 8192 tokens × 3.5 cpchar × 0.7 safety = ~20,000 chars. Prevents output truncation.
+DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.7)
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
@@ -523,12 +526,12 @@ def _call_deepseek(user_content, job=None, max_retries=4):
 def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None):
     """Optimize a single chapter's text, using chunking if needed."""
     label = f"[ch {chapter_num}/{total_chapters}]" if chapter_num else ""
-    if len(text) <= DEEPSEEK_MAX_INPUT_CHARS:
+    # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
+    if len(text) <= DEEPSEEK_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
         return _call_deepseek(text, job=job)
-    # Chunk the chapter
-    chunks = _split_text_into_chunks(text, DEEPSEEK_MAX_INPUT_CHARS)
-    print(f"  {label} LLM chunked: {len(chunks)} chunks")
+    chunks = _split_text_into_chunks(text, DEEPSEEK_SAFE_OUTPUT_CHUNK)
+    print(f"  {label} LLM chunked: {len(chunks)} chunks ({len(text):,} chars total)")
     results = []
     for i, chunk in enumerate(chunks):
         if job is not None and job.get("opt_cancelled"):
