@@ -1570,10 +1570,11 @@ def admin_logs():
     except Exception:
         pass
 
+    token_qs = f"&token={token}" if token else ""
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
-        months_nav += f'<a href="/logs?{m}"{active_cls}>{m}</a> '
+        months_nav += f'<a href="/logs?{m}{token_qs}"{active_cls}>{m}</a> '
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1660,7 +1661,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📁 Excel</a>
+        <a class="btn btn-accent" href="/logs/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -1927,6 +1928,9 @@ checkSuspendStatus();
 @app.route("/logs/export")
 def admin_logs_export():
     """Export activity log as Excel (.xlsx) file."""
+    if not ADMIN_TOKEN: return "Export disabled.", 404
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token): return "Unauthorized", 401
     from datetime import datetime
     import io, csv
 
@@ -2061,10 +2065,10 @@ input[type=password]{{width:100%;padding:.625rem;border:1px solid #d1d5db;border
 (function(){{
     const tok = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token');
     if(tok && !window.location.search.includes('token=')){{
-        // If we have a token but the server still showed us this gate, 
-        // it means the page load didn't include the token.
-        // We redirect once adding the token to the URL as a fallback for the main page load.
-        window.location.href = window.location.pathname + '?token=' + encodeURIComponent(tok);
+        // Preserve existing query params (e.g., month) when adding token
+        const qs = window.location.search ? window.location.search + '&token=' + encodeURIComponent(tok)
+                                         : '?token=' + encodeURIComponent(tok);
+        window.location.href = window.location.pathname + qs;
     }}
 }})();
 
@@ -2077,7 +2081,9 @@ function doLogin(){{
         localStorage.setItem('abm_admin_token', tok);
         localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
     }}
-    window.location.href = window.location.pathname + '?token=' + encodeURIComponent(tok);
+    const qs = window.location.search ? window.location.search + '&token=' + encodeURIComponent(tok)
+                                     : '?token=' + encodeURIComponent(tok);
+    window.location.href = window.location.pathname + qs;
 }}
 </script>
 </head><body>
