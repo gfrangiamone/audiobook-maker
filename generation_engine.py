@@ -59,8 +59,8 @@ DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
 DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
 DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
 # Per-chunk safe size: input chunk small enough so optimized output fits in MAX_TOKENS.
-# 8192 tokens × 3.5 cpchar × 0.7 safety = ~20,000 chars. Prevents output truncation.
-DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.7)
+# 8192 tokens × 3.5 cpchar × 0.85 safety = ~24,370 chars. Prevents output truncation.
+DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.85)
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
@@ -547,7 +547,7 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             user_content = chunk
         results.append(_call_deepseek(user_content, job=job))
         if i < len(chunks) - 1:
-            time.sleep(2)  # rate limiting tra chunk
+            time.sleep(0.5)  # rate limiting tra chunk
     # Seconda passata di sanitizzazione sul testo ricomposto
     return _sanitize_llm_output("\n\n".join(results))
 
