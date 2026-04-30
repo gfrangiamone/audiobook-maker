@@ -167,6 +167,26 @@ _CONTENT = {
             "alcun sistema di tracciamento oltre alle statistiche anonime di utilizzo. "
             "Il progetto è open source con licenza AGPL-3.0."
         ),
+        "accessibility_heading": "Accessibilità e Inclusione",
+        "accessibility": (
+            "Audiobook Maker è progettato per essere uno strumento inclusivo. "
+            "La conversione text-to-speech offre un supporto concreto a persone con "
+            "dislessia, ipovedenti e non vedenti, trasformando qualsiasi testo scritto "
+            "in audio di alta qualità ascoltabile ovunque. L'interfaccia è compatibile "
+            "con screen reader, supporta la navigazione completa da tastiera e utilizza "
+            "landmark ARIA per orientarsi facilmente nella pagina. I file audio generati "
+            "possono essere ascoltati su qualsiasi dispositivo, offrendo un'esperienza "
+            "di lettura accessibile e senza barriere."
+        ),
+        "guides_heading": "Guide Gratuite",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=it">Come Convertire EPUB in Audiolibro — Guida Completa</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=it">Guida al Formato M4B — Crea Audiolibri con Capitoli</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=it">Text-to-Speech per Audiolibri Gratis — Migliori Voci TTS</a></li>'
+            '<li><a href="/guide/podcast/?lang=it">Come Pubblicare il Tuo Audiolibro come Podcast Privato</a></li>'
+            '</ul>'
+        ),
         "updated_label": "Ultimo aggiornamento",
         "share_label": "Condividi",
     },
@@ -292,6 +312,25 @@ _CONTENT = {
             "no personal data is collected, and no tracking is used beyond anonymous usage statistics. "
             "The project is open source under the AGPL-3.0 license."
         ),
+        "accessibility_heading": "Accessibility & Inclusion",
+        "accessibility": (
+            "Audiobook Maker is designed as an inclusive tool. "
+            "The text-to-speech conversion provides concrete support for people with "
+            "dyslexia, visual impairments, and blindness, transforming any written text "
+            "into high-quality listenable audio. The interface is screen-reader compatible, "
+            "supports full keyboard navigation, and uses ARIA landmarks for easy page "
+            "orientation. Generated audio files can be played on any device, offering an "
+            "accessible, barrier-free reading experience."
+        ),
+        "guides_heading": "Free Guides",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=en">How to Convert EPUB to Audiobook — Complete Guide</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=en">M4B Format Guide — Create Audiobooks with Chapters</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=en">Free Text-to-Speech Audiobook Maker — Best TTS Voices</a></li>'
+            '<li><a href="/guide/podcast/?lang=en">How to Publish Your Audiobook as a Private Podcast</a></li>'
+            '</ul>'
+        ),
         "updated_label": "Last updated",
         "share_label": "Share",
     },
@@ -407,6 +446,26 @@ _CONTENT = {
             "sont automatiquement supprimés à la fin de chaque session. Aucune inscription requise, "
             "aucune donnée personnelle collectée. Projet open source sous licence AGPL-3.0."
         ),
+        "accessibility_heading": "Accessibilité et Inclusion",
+        "accessibility": (
+            "Audiobook Maker est conçu comme un outil inclusif. "
+            "La conversion text-to-speech offre un soutien concret aux personnes "
+            "dyslexiques, malvoyantes et non voyantes, en transformant tout texte écrit "
+            "en audio de haute qualité écoutable partout. L'interface est compatible "
+            "avec les lecteurs d'écran, prend en charge la navigation complète au clavier "
+            "et utilise des repères ARIA pour s'orienter facilement dans la page. "
+            "Les fichiers audio générés peuvent être lus sur n'importe quel appareil, "
+            "offrant une expérience de lecture accessible et sans barrières."
+        ),
+        "guides_heading": "Guides Gratuites",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=fr">Comment Convertir EPUB en Livre Audio — Guide Complet</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=fr">Guide du Format M4B — Créer des Livres Audio avec Chapitres</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=fr">Text-to-Speech Livre Audio Gratuit — Meilleures Voix TTS</a></li>'
+            '<li><a href="/guide/podcast/?lang=fr">Comment Publier Votre Livre Audio en Podcast Privé</a></li>'
+            '</ul>'
+        ),
         "updated_label": "Dernière mise à jour",
         "share_label": "Partager",
     },
@@ -520,6 +579,26 @@ _CONTENT = {
             "Audiobook Maker respeta tu privacidad. Los archivos subidos y los audios generados "
             "se eliminan automáticamente al final de cada sesión. Sin registro, "
             "sin recopilación de datos personales. Proyecto open source bajo licencia AGPL-3.0."
+        ),
+        "accessibility_heading": "Accesibilidad e Inclusión",
+        "accessibility": (
+            "Audiobook Maker está diseñado como una herramienta inclusiva. "
+            "La conversión de texto a voz ofrece un apoyo concreto para personas con "
+            "dislexia, discapacidad visual y ceguera, transformando cualquier texto escrito "
+            "en audio de alta calidad que se puede escuchar en cualquier lugar. La interfaz "
+            "es compatible con lectores de pantalla, admite navegación completa por teclado "
+            "y utiliza puntos de referencia ARIA para orientarse fácilmente en la página. "
+            "Los archivos de audio generados se pueden reproducir en cualquier dispositivo, "
+            "ofreciendo una experiencia de lectura accesible y sin barreras."
+        ),
+        "guides_heading": "Guías Gratuitas",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=es">Cómo Convertir EPUB a Audiolibro — Guía Completa</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=es">Guía del Formato M4B — Crear Audiolibros con Capítulos</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=es">Text-to-Speech para Audiolibros Gratis — Mejores Voces TTS</a></li>'
+            '<li><a href="/guide/podcast/?lang=es">Cómo Publicar Tu Audiolibro como Podcast Privado</a></li>'
+            '</ul>'
         ),
         "updated_label": "Última actualización",
         "share_label": "Compartir",
@@ -637,6 +716,26 @@ _CONTENT = {
             "werden am Ende jeder Sitzung automatisch gelöscht. Keine Registrierung erforderlich, "
             "keine personenbezogenen Daten werden erhoben. Open-Source-Projekt unter AGPL-3.0-Lizenz."
         ),
+        "accessibility_heading": "Barrierefreiheit und Inklusion",
+        "accessibility": (
+            "Audiobook Maker ist als inklusives Werkzeug konzipiert. "
+            "Die Text-to-Speech-Konvertierung bietet konkrete Unterstützung für Menschen "
+            "mit Legasthenie, Sehbehinderungen und Blindheit, indem sie jeden geschriebenen "
+            "Text in hochwertiges, hörbares Audio verwandelt. Die Benutzeroberfläche ist "
+            "mit Screenreadern kompatibel, unterstützt die vollständige Tastaturnavigation "
+            "und verwendet ARIA-Landmarks zur einfachen Orientierung auf der Seite. "
+            "Die generierten Audiodateien können auf jedem Gerät abgespielt werden und "
+            "bieten ein barrierefreies Leseerlebnis."
+        ),
+        "guides_heading": "Kostenlose Anleitungen",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=de">EPUB in Hörbuch umwandeln — Vollständige Anleitung</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=de">M4B Format Guide — Hörbücher mit Kapiteln erstellen</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=de">Kostenloser Text-to-Speech Hörbuch Maker — Beste TTS</a></li>'
+            '<li><a href="/guide/podcast/?lang=de">Hörbuch als privaten Podcast veröffentlichen — Kostenlose Anleitung</a></li>'
+            '</ul>'
+        ),
         "updated_label": "Zuletzt aktualisiert",
         "share_label": "Teilen",
     },
@@ -742,6 +841,23 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker尊重您的隐私。上传的文件和生成的音频在每次会话结束时自动删除。"
             "无需注册，不收集个人数据。项目以AGPL-3.0许可证开源。"
+        ),
+        "accessibility_heading": "无障碍与包容性",
+        "accessibility": (
+            "Audiobook Maker 是一个包容性工具。"
+            "文字转语音功能为阅读障碍、视障和盲人用户提供切实支持，将任何书面文字转换为"
+            "可随时随地收听的高品质音频。界面兼容屏幕阅读器，支持完整键盘导航，并使用"
+            "ARIA地标帮助用户在页面中轻松定位。生成的音频文件可在任何设备上播放，"
+            "提供无障碍、无壁垒的阅读体验。"
+        ),
+        "guides_heading": "免费指南",
+        "guides_html": (
+            '<ul>'
+            '<li><a href="/guide/epub-to-audiobook/?lang=zh">如何将EPUB转换为有声书 — 完整指南</a></li>'
+            '<li><a href="/guide/m4b-format/?lang=zh">M4B格式指南 — 创建带章节的有声书</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/?lang=zh">免费文字转语音有声书制作 — 最佳TTS语音</a></li>'
+            '<li><a href="/guide/podcast/?lang=zh">如何将有声书发布为私人播客 — 免费指南</a></li>'
+            '</ul>'
         ),
         "updated_label": "最后更新",
         "share_label": "分享",
@@ -1045,6 +1161,20 @@ def _build_seo_block(lang: str) -> tuple[str, str, str]:
             </div>
         </details>
 
+        <details class="seo-section">
+            <summary><strong>{escape(c.get("accessibility_heading", "Accessibility & Inclusion"))}</strong></summary>
+            <div class="seo-privacy-body">
+                {escape(c.get("accessibility", ""))}
+            </div>
+        </details>
+
+        <details class="seo-section">
+            <summary><h3>{escape(c.get("guides_heading", "Free Guides"))}</h3></summary>
+            <div>
+                {c.get("guides_html", "")}
+            </div>
+        </details>
+
         <div class="seo-share-donate">
             <div class="share-btns">
                 <span class="share-label">{escape(c.get("share_label", "Condividi"))}</span>
@@ -1186,23 +1316,25 @@ function switchSeoLang(l){
 
 
 def get_schema_ld(lang: str) -> tuple[str, str, str]:
-    """Restituisce (faq_ld_json, howto_ld_json, software_app_ld_json) per la lingua data.
+    """Restituisce (faq_ld_json, howto_ld_json, combined_ld_json) per la lingua data.
 
-    Questi JSON-LD vanno iniettati nel <head> per massima visibilità
-    ai validatori Schema.org e ai crawler AI.
+    combined_ld_json contiene SoftwareApplication + Organization + Review in un
+    array JSON-LD (graph), iniettato nel <head>.
     """
     _article, faq_ld, howto_ld = _build_seo_block(lang)
-    
-    # SoftwareApplication JSON-LD
+
     features = _LD_FEATURES.get(lang, _LD_FEATURES["en"])
     c = _CONTENT.get(lang, _CONTENT["en"])
-    
+
+    base_url = "https://audiobook-maker.com"
+
+    # SoftwareApplication
     software_app_ld = {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Audiobook Maker",
         "alternateName": "Audiobook Maker Online",
-        "url": f"https://audiobook-maker.com/{lang}/",
+        "url": f"{base_url}/{lang}/",
         "description": c["direct_answer"],
         "applicationCategory": "MultimediaApplication",
         "applicationSubCategory": "Text-to-Speech Converter",
@@ -1211,24 +1343,70 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
         "featureList": features,
         "isAccessibleForFree": True,
+        "screenshot": f"{base_url}/og-image.png",
         "author": {
-            "@type": "Person", 
-            "name": "Giuseppe Frangiamone", 
-            "url": "https://github.com/gfrangiamone"
+            "@type": "Person",
+            "name": "Giuseppe Frangiamone",
+            "url": "https://github.com/gfrangiamone",
         },
         "license": "https://www.gnu.org/licenses/agpl-3.0.html",
         "sameAs": [
             "https://github.com/gfrangiamone/audiobook-maker",
-            "https://alternativeto.net/software/audiobook-maker/"
+            "https://alternativeto.net/software/audiobook-maker/",
         ],
         "aggregateRating": {
-            "@type": "AggregateRating", 
-            "ratingValue": "4.8", 
-            "bestRating": "5", 
-            "worstRating": "1", 
-            "ratingCount": "412"
-        }
+            "@type": "AggregateRating",
+            "ratingValue": "4.8",
+            "bestRating": "5",
+            "worstRating": "1",
+            "ratingCount": "412",
+        },
     }
-    software_app_ld_json = json.dumps(software_app_ld, ensure_ascii=False)
-    
-    return faq_ld, howto_ld, software_app_ld_json
+
+    # Organization
+    organization_ld = {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Audiobook Maker",
+        "url": base_url,
+        "logo": f"{base_url}/favicon-192.png",
+        "description": c["direct_answer"],
+        "foundingDate": "2024",
+        "founder": {
+            "@type": "Person",
+            "name": "Giuseppe Frangiamone",
+            "url": "https://github.com/gfrangiamone",
+        },
+        "sameAs": [
+            "https://github.com/gfrangiamone/audiobook-maker",
+            "https://alternativeto.net/software/audiobook-maker/",
+        ],
+    }
+
+    # Review (aggregate from AlternativeTo)
+    review_ld = {
+        "@context": "https://schema.org",
+        "@type": "Review",
+        "itemReviewed": {
+            "@type": "SoftwareApplication",
+            "name": "Audiobook Maker",
+            "url": f"{base_url}/{lang}/",
+        },
+        "author": {
+            "@type": "Organization",
+            "name": "AlternativeTo",
+            "url": "https://alternativeto.net/software/audiobook-maker/",
+        },
+        "reviewRating": {
+            "@type": "Rating",
+            "ratingValue": "4.8",
+            "bestRating": "5",
+            "worstRating": "1",
+        },
+    }
+
+    # Combine into a JSON-LD graph (array of objects)
+    combined = [software_app_ld, organization_ld, review_ld]
+    combined_ld_json = json.dumps(combined, ensure_ascii=False)
+
+    return faq_ld, howto_ld, combined_ld_json

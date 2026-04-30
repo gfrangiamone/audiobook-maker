@@ -154,6 +154,24 @@ def _ensure_heading_pause(text):
     return "\n".join(result)
 
 
+def _sanitize_tts_text(text: str):
+    """Pulisce il testo per TTS: rimuove caratteri di controllo/zero-width,
+    collassa whitespace eccessivo, normalizza newline.
+
+    Ritorna il testo pulito, oppure None se vuoto o diventato vuoto dopo pulizia
+    (il chiamante deve generare silenzio in quel caso).
+    """
+    clean = text.strip()
+    if not clean:
+        return None
+    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
+    clean = re.sub(r'\n{3,}', '\n\n', clean)
+    clean = re.sub(r' {3,}', ' ', clean)
+    if not clean.strip():
+        return None
+    return clean
+
+
 def _plan_chunks(info):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo."""
     plan = []
@@ -211,16 +229,8 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
     monolingua. Mitigazione: spezza in frasi e sintetizza una per volta.
     I singoli MP3 vengono poi concatenati nel file finale.
     """
-    clean = text.strip()
-    if not clean:
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-
-    # Rimuovi caratteri di controllo, zero-width, surrogati
-    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
-    clean = re.sub(r'\n{3,}', '\n\n', clean)
-    clean = re.sub(r' {3,}', ' ', clean)
-    if not clean.strip():
+    clean = _sanitize_tts_text(text)
+    if clean is None:
         _generate_silence_mp3(output_path, duration_sec=1)
         return
 
@@ -265,15 +275,8 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
 
 def generate_chunk_mp3_google(text, voice, rate, output_path, max_retries=3):
     """Genera MP3 da testo via Google Cloud TTS Chirp3-HD con retry e fallback."""
-    clean = text.strip()
-    if not clean:
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-
-    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
-    clean = re.sub(r'\n{3,}', '\n\n', clean)
-    clean = re.sub(r' {3,}', ' ', clean)
-    if not clean.strip():
+    clean = _sanitize_tts_text(text)
+    if clean is None:
         _generate_silence_mp3(output_path, duration_sec=1)
         return
 

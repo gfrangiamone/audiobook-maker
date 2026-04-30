@@ -2,18 +2,73 @@
 const LANG_FLAGS={'it':'🇮🇹','en':'🇬🇧','fr':'🇫🇷','es':'🇪🇸','de':'🇩🇪','zh':'🇨🇳'};
 function toggleLangDropdown(){
   const el=document.getElementById('langDropdown');
-  if(el)el.classList.toggle('open');
+  const trigger=document.getElementById('langCurrent');
+  if(!el)return;
+  const opening=!el.classList.contains('open');
+  el.classList.toggle('open');
+  if(trigger)trigger.setAttribute('aria-expanded',opening?'true':'false');
+  if(opening){
+    // Focus first option on open
+    const opts=el.querySelectorAll('.lang-option');
+    if(opts.length){opts[0].tabIndex=0;opts[0].focus();}
+  }
 }
 function closeLangDropdown(){
   const el=document.getElementById('langDropdown');
+  const trigger=document.getElementById('langCurrent');
+  const wasOpen=el&&el.classList.contains('open');
   if(el)el.classList.remove('open');
+  if(trigger)trigger.setAttribute('aria-expanded','false');
+  document.querySelectorAll('.lang-option').forEach(o=>o.tabIndex=-1);
+  if(wasOpen&&trigger)trigger.focus();
+}
+function handleLangKey(e){
+  const dropdown=document.getElementById('langDropdown');
+  const isOpen=dropdown&&dropdown.classList.contains('open');
+  if(e.key==='Enter'||e.key===' '||(e.key==='ArrowDown'&&!isOpen)){
+    e.preventDefault();
+    if(isOpen&&(e.key==='Enter'||e.key===' ')){
+      closeLangDropdown();
+    }else{
+      toggleLangDropdown();
+    }
+  }else if(e.key==='Escape'&&isOpen){
+    e.preventDefault();
+    closeLangDropdown();
+  }
+}
+function handleLangOptionKey(e,code){
+  const dropdown=document.getElementById('langDropdown');
+  const opts=dropdown?dropdown.querySelectorAll('.lang-option'):[];
+  let idx=Array.from(opts).indexOf(document.activeElement);
+  if(e.key==='Enter'||e.key===' '){
+    e.preventDefault();
+    selectLang(code);
+  }else if(e.key==='ArrowDown'){
+    e.preventDefault();
+    idx=Math.min(idx+1,opts.length-1);
+    opts.forEach(o=>o.tabIndex=-1);
+    opts[idx].tabIndex=0;opts[idx].focus();
+  }else if(e.key==='ArrowUp'){
+    e.preventDefault();
+    idx=Math.max(idx-1,0);
+    opts.forEach(o=>o.tabIndex=-1);
+    opts[idx].tabIndex=0;opts[idx].focus();
+  }else if(e.key==='Escape'){
+    e.preventDefault();
+    closeLangDropdown();
+  }
 }
 function selectLang(code){
   const codeEl=document.getElementById('langCode');
   const flagEl=document.getElementById('langFlag');
   if(codeEl)codeEl.textContent=code.toUpperCase();
   if(flagEl)flagEl.textContent=LANG_FLAGS[code]||'';
-  document.querySelectorAll('.lang-option').forEach(opt=>opt.classList.toggle('active',opt.dataset.lang===code));
+  document.querySelectorAll('.lang-option').forEach(opt=>{
+    const sel=opt.dataset.lang===code;
+    opt.classList.toggle('active',sel);
+    opt.setAttribute('aria-selected',sel?'true':'false');
+  });
   closeLangDropdown();
   setLang(code);
 }
@@ -25,11 +80,70 @@ function syncLangDropdown(){
   const flagEl=document.getElementById('langFlag');
   if(codeEl)codeEl.textContent=cur.toUpperCase();
   if(flagEl)flagEl.textContent=LANG_FLAGS[cur]||'';
-  document.querySelectorAll('.lang-option').forEach(opt=>opt.classList.toggle('active',opt.dataset.lang===cur));
+  document.querySelectorAll('.lang-option').forEach(opt=>{
+    const sel=opt.dataset.lang===cur;
+    opt.classList.toggle('active',sel);
+    opt.setAttribute('aria-selected',sel?'true':'false');
+  });
 }
 
 // Close dropdown when clicking outside
 document.addEventListener('click',function(e){if(!e.target.closest('.lang-switcher'))closeLangDropdown()});
+
+// ── Focus trap for modals (auto via MutationObserver) ──
+let _lastFocused=null;
+const _modalTraps=new Map();
+function _trapFocusIn(el){
+  const focusable=el.querySelectorAll(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  );
+  if(!focusable.length)return;
+  const handler=function(e){
+    if(e.key!=='Tab')return;
+    const first=focusable[0], last=focusable[focusable.length-1];
+    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+  };
+  el.addEventListener('keydown',handler);
+  _modalTraps.set(el,handler);
+}
+function _releaseFocusTrap(el){
+  const handler=_modalTraps.get(el);
+  if(handler){el.removeEventListener('keydown',handler);_modalTraps.delete(el);}
+}
+function restoreFocus(){
+  if(_lastFocused&&typeof _lastFocused.focus==='function'){
+    try{_lastFocused.focus();}catch(e){}
+  }
+  _lastFocused=null;
+}
+// Auto-detect modal open/close via MutationObserver
+(function(){
+  const observer=new MutationObserver(function(mutations){
+    for(const m of mutations){
+      if(m.type==='attributes'&&m.attributeName==='class'){
+        const el=m.target;
+        if(!el.classList.contains('modal-overlay'))continue;
+        if(el.classList.contains('open')){
+          _lastFocused=document.activeElement;
+          // Focus first focusable element after a tick (only if user hasn't already focused something inside)
+          setTimeout(()=>{
+            if(el.contains(document.activeElement))return;
+            const focusable=el.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+            if(focusable.length){focusable[0].focus();}
+            _trapFocusIn(el);
+          },80);
+        }else{
+          _releaseFocusTrap(el);
+          restoreFocus();
+        }
+      }
+    }
+  });
+  document.querySelectorAll('.modal-overlay').forEach(function(m){
+    observer.observe(m,{attributes:true,attributeFilter:['class']});
+  });
+})();
 
 // Keyboard shortcuts handler (inside DOMContentLoaded for safety)
 function setupKeyboardShortcuts(){
@@ -37,12 +151,12 @@ function setupKeyboardShortcuts(){
     if(e.key==='Escape'){
       closeDonateModalX();
       closeFreeBooks();
-      closePodcastGuide();
       closeAbmGuide();
       previewStop();
       const aboutModal=document.getElementById('aboutModal');
       if(aboutModal)aboutModal.classList.remove('open');
       closeLangDropdown();
+      restoreFocus();
     }
   });
 }
@@ -124,7 +238,49 @@ document.addEventListener('DOMContentLoaded',()=>{
   cl=detectLang();applyI18n();buildAbout();applySEO();
   syncLangDropdown();
   setupKeyboardShortcuts();
+  // Fix Chromium bug: nested <details> toggle scrolls page to top
+  var _seoX=0,_seoY=0;
+  var seoBlock=document.getElementById('seoContent');
+  if(seoBlock){
+    seoBlock.addEventListener('mousedown',function(){_seoX=window.scrollX;_seoY=window.scrollY});
+    seoBlock.addEventListener('toggle',function(e){
+      if(e.target.tagName==='DETAILS'){
+        // Double rAF + setTimeout: Chrome nested-details bug resets scroll asynchronously
+        var sx=_seoX,sy=_seoY;
+        requestAnimationFrame(function(){
+          requestAnimationFrame(function(){window.scrollTo(sx,sy)});
+        });
+        setTimeout(function(){window.scrollTo(sx,sy)},100);
+      }
+    }, true);
+  }
   
+
+  // Global scroll guard: Chrome loses scroll position on focus when page CSS
+  // creates complex overflow/position context. Save on mousedown, restore if
+  // focused element was already fully visible (no legitimate scroll needed).
+  var _gsx=0,_gsy=0,_skipUntil=0;
+  function _saveScroll(){_gsx=window.scrollX;_gsy=window.scrollY}
+  document.addEventListener("mousedown",_saveScroll);
+  document.addEventListener("keydown",function(e){if(e.key==="Tab")_saveScroll()});
+  document.addEventListener("focusin",function(e){
+    if(Date.now()<_skipUntil)return;
+    // Skip for elements inside open modals (position:fixed, unaffected by page scroll)
+    if(e.target.closest('.modal-overlay.open'))return;
+    var r=e.target.getBoundingClientRect();
+    if(r.top>=0&&r.left>=0&&r.bottom<=window.innerHeight&&r.right<=window.innerWidth){
+      var sx=_gsx,sy=_gsy;
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          if(window.scrollX!==sx||window.scrollY!==sy)window.scrollTo(sx,sy);
+        });
+      });
+    }
+  });
+  // Allow intentional scrollIntoView calls to bypass the guard for 600ms.
+  window._bypassScrollGuard=function(fn){
+    _skipUntil=Date.now()+600; fn();
+  };
   // Safe DOM element setup with null checks
   const lsw=document.getElementById('lsw');
   if(lsw)lsw.onclick=e=>{if(e.target.dataset.l)setLang(e.target.dataset.l)};
@@ -136,12 +292,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(fbClose)fbClose.onclick=closeFreeBooks;
   const fbModal=document.getElementById('fbModal');
   if(fbModal)fbModal.onclick=e=>{if(e.target===e.currentTarget)closeFreeBooks()};
-  const pgBtn=document.getElementById('pgBtn');
-  if(pgBtn)pgBtn.onclick=openPodcastGuide;
-  const pgClose=document.getElementById('pgClose');
-  if(pgClose)pgClose.onclick=closePodcastGuide;
-  const pgModal=document.getElementById('pgModal');
-  if(pgModal)pgModal.onclick=e=>{if(e.target===e.currentTarget)closePodcastGuide()};
   const aboutBtn=document.getElementById('aboutBtn');
   if(aboutBtn)aboutBtn.onclick=e=>{e.preventDefault();openAbout()};
   const aboutClose=document.getElementById('aboutClose');
@@ -897,6 +1047,19 @@ async function _validateLanguage() {
 
 async function startOptimization(){
   if(!jobId){return}
+
+  // Check sospensione nuovi processi (admin toggle)
+  try{
+    const sr = await fetch('/api/admin/suspend');
+    if(sr.ok){
+      const sd = await sr.json();
+      if(sd.suspended){
+        alert('System under maintenance. Please try again in a few minutes.');
+        return;
+      }
+    }
+  }catch(e){}
+
   if(!(await _validateLanguage())) return;
   document.getElementById('s3err').innerHTML='';
   
@@ -905,7 +1068,9 @@ async function startOptimization(){
   document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
     if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
   });
+  console.log('[optimize] selected chapters:', selectedChapters.length, '/', bookData?.total_chapters, 'indices:', JSON.stringify(selectedChapters));
   if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
+
 
   // ── Check cost estimate first ──
   var paymentToken=null;
@@ -1166,6 +1331,18 @@ function onDonateModal(action){
 }
 
 async function startGen(){
+  // Check sospensione nuovi processi (admin toggle) — prima di qualsiasi modifica UI
+  try{
+    const sr = await fetch('/api/admin/suspend');
+    if(sr.ok){
+      const sd = await sr.json();
+      if(sd.suspended){
+        alert('System under maintenance. Please try again in a few minutes.');
+        return;
+      }
+    }
+  }catch(e){}
+
   if(!(await _validateLanguage())) return;
   // Donate modal: show for returning users before generation starts
   if(_shouldShowDonateModal()){
@@ -1178,6 +1355,7 @@ async function startGen(){
   document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
     if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
   });
+  console.log('[generate] selected chapters:', selectedChapters.length, '/', bookData?.total_chapters, 'indices:', JSON.stringify(selectedChapters));
   if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
   // Check if "all" chapters are selected to optionally send null or full list
   // The backend supports filtering, so always sending them is safer.
@@ -1832,5 +2010,6 @@ function goToAudioSettings(){
   setTimeout(()=>s2.scrollIntoView({behavior:'smooth',block:'nearest'}),80);
 }
 </script>
+</main>
 </body>
 </html>

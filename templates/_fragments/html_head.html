@@ -24,13 +24,18 @@
 <meta property="og:description" id="ogDesc" content="__SEO_DESC__">
 <meta property="og:site_name" content="Audiobook Maker">
 <meta property="og:url" id="ogUrl" content="__SEO_CANONICAL__">
+<meta property="og:image" content="__SEO_OG_IMAGE__">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
 <link rel="canonical" href="__SEO_CANONICAL__">
 <!-- hreflang: versioni per lingua — indicizza l'app in 6 lingue su Google -->
 __SEO_HREFLANG__
 <!-- Twitter Card -->
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" id="twTitle" content="__SEO_TITLE__">
 <meta name="twitter:description" id="twDesc" content="__SEO_DESC__">
+<meta name="twitter:image" content="__SEO_OG_IMAGE__">
 <!-- JSON-LD Structured Data: SoftwareApplication -->
 <script type="application/ld+json" id="jsonLd">__SEO_APP_LD__</script>
 <!-- JSON-LD: BreadcrumbList (SEO Navigation) -->
@@ -46,7 +51,7 @@ __SEO_HREFLANG__
   }, {
     "@type": "ListItem",
     "position": 2,
-    "name": "Convert __HTML_LANG__",
+    "name": "__SEO_CRUMB__",
     "item": "__SEO_CANONICAL__"
   }]
 }
@@ -55,13 +60,37 @@ __SEO_HREFLANG__
 <script type="application/ld+json" id="seoFaqLd">__SEO_FAQ_LD__</script>
 <!-- JSON-LD: HowTo (server-injected per language) -->
 <script type="application/ld+json" id="seoHowtoLd">__SEO_HOWTO_LD__</script>
+<!-- JSON-LD: WebPage -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "__SEO_TITLE__",
+  "description": "__SEO_DESC__",
+  "url": "__SEO_CANONICAL__",
+  "inLanguage": "__HTML_LANG__",
+  "mainEntity": {
+    "@type": "SoftwareApplication",
+    "name": "Audiobook Maker",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Web",
+    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"},
+    "description": "__SEO_LD_DESC__"
+  },
+  "accessibilityFeature": ["displayTransformability", "audioDescription"],
+  "accessMode": ["textual", "visual", "auditory"],
+  "accessModeSufficient": ["auditory"],
+  "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Audiobook Maker", "item": "https://audiobook-maker.com"}, {"@type": "ListItem", "position": 2, "name": "__SEO_CRUMB__", "item": "__SEO_CANONICAL__"}]}
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
 /* ═══ LIGHT THEME (default) ═══ */
 :root{
   --bg:#f5f3ef;--srf:#ffffff;--srf2:#f0ede8;--srf3:#e6e2dc;--brd:#d5d0c8;--brdh:#bfb8ae;
-  --tx:#2c2a26;--txd:#6b6760;--txm:#9e9890;
+  --tx:#2c2a26;--txd:#6b6760;--txm:#767676;
   --ac:#c47a2a;--acs:rgba(196,122,42,.10);--ach:#d4903e;
   --ok:#3a9e5c;--oks:rgba(58,158,92,.10);
   --err:#c44040;--errs:rgba(196,64,64,.08);
@@ -73,7 +102,7 @@ __SEO_HREFLANG__
 /* ═══ DARK THEME ═══ */
 [data-theme="dark"]{
   --bg:#0e0e11;--srf:#18181d;--srf2:#222228;--srf3:#2c2c34;--brd:#333340;--brdh:#4a4a5a;
-  --tx:#e8e8ed;--txd:#9090a0;--txm:#606070;
+  --tx:#e8e8ed;--txd:#9090a0;--txm:#7a7a8a;
   --ac:#f0a050;--acs:rgba(240,160,80,.12);--ach:#f5b570;
   --ok:#50c878;--oks:rgba(80,200,120,.12);
   --err:#e05555;--errs:rgba(224,85,85,.12);
@@ -83,6 +112,7 @@ __SEO_HREFLANG__
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;line-height:1.6;transition:background .4s,color .3s;position:relative;overflow-x:hidden}
+.skip-link{position:absolute;top:-100px;left:16px;background:var(--ac);color:#fff;padding:8px 16px;border-radius:0 0 6px 6px;z-index:2000;font-weight:600;font-size:.9rem;text-decoration:none;transition:top .2s}.skip-link:focus{top:0}
 
 /* ═══ BG DECORATIONS ═══ */
 .bg-deco{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
@@ -99,7 +129,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 
 /* ═══ LAYOUT ═══ */
 .app{display:block;width:100%;max-width:720px!important;margin:0 auto!important;padding:40px 24px 80px;position:relative;z-index:1}
-.hdr{text-align:center;margin-bottom:32px}
+.hdr{text-align:center;margin-bottom:12px}
 .hdr h1{font-family:'DM Serif Display',serif;font-size:2.2rem;font-weight:400;letter-spacing:-.02em;background:linear-gradient(135deg,var(--tx) 30%,var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px;justify-content:center}
 .hdr-icon{width:42px;height:42px;flex-shrink:0}
 .hdr-icon .ic-book{fill:var(--ac);opacity:.85}
@@ -111,7 +141,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .disc { margin-top:8px }
 
 /* ═══ TOOLBAR: language + theme ═══ */
-.toolbar{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+.toolbar{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:8px;flex-wrap:wrap}
 
 /* Language Switcher Dropdown (compact) */
 .lang-switcher{position:relative;display:inline-block}
@@ -143,7 +173,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .theme-btn:hover{border-color:var(--ac);color:var(--ac)}
 
 /* ═══ FREE BOOKS BUTTON ═══ */
-.fb-btn{background:var(--acs);border:1px solid var(--ac);color:var(--ac);padding:6px 16px;border-radius:20px;font-size:.82rem;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;display:inline-flex;align-items:center;gap:6px;margin-top:14px}
+.fb-btn{background:var(--acs);border:1px solid var(--ac);color:var(--ac);padding:6px 16px;border-radius:20px;font-size:.82rem;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
 .fb-btn:hover{background:var(--ac);color:#fff}
 .fb-btn svg{width:16px;height:16px;fill:currentColor;flex-shrink:0}
 
@@ -179,7 +209,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .about-contact a:hover{text-decoration:underline}
 
 /* ═══ STEPS ═══ */
-.step{background:var(--srf);border:1px solid var(--brd);border-radius:var(--r);margin-bottom:16px;transition:all .3s;box-shadow:var(--shadow);overflow:hidden;border-left:3px solid transparent}
+.step{background:var(--srf);border:1px solid var(--brd);border-radius:var(--r);margin-bottom:16px;transition:all .3s;box-shadow:var(--shadow);overflow:clip;border-left:3px solid transparent}
 .step:not(.collapsed):not(.disabled){border-left-color:var(--ac)}
 .step:hover{border-color:var(--brdh)}
 .step.collapsed{opacity:.7}
@@ -189,7 +219,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .step.disabled .sh:hover{background:transparent}
 .step.locked{opacity:.35;pointer-events:none;position:relative}
 .step.locked::after{content:'\1F512';position:absolute;top:12px;right:16px;font-size:1.1rem}
-.step-body{max-height:2000px;overflow:hidden;padding:0 28px 28px;transition:max-height .45s ease,padding .35s ease,opacity .3s ease;opacity:1}
+.step-body{max-height:2000px;overflow:clip;padding:0 28px 28px;transition:max-height .45s ease,padding .35s ease,opacity .3s ease;opacity:1}
 .step.collapsed .step-body{max-height:0;padding:0 28px;opacity:0}
 .sh{display:flex;align-items:center;gap:12px;padding:20px 28px;margin:0;cursor:pointer;user-select:none;transition:background .2s}
 .sh:hover{background:var(--srf2);border-radius:var(--r) var(--r) 0 0}
@@ -223,8 +253,8 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .fg{margin-bottom:16px}.fg:last-child{margin-bottom:0}
 label{display:block;font-size:.85rem;font-weight:500;color:var(--txd);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
 select{width:100%;padding:10px 14px;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem;transition:border-color .2s;appearance:none;-webkit-appearance:none;background-image:var(--sel-arrow);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
-select:focus{outline:none;border-color:var(--ac)}
-.tg{display:flex;background:var(--srf2);border-radius:var(--rs);border:1px solid var(--brd);overflow:hidden}
+select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.tg{display:flex;background:var(--srf2);border-radius:var(--rs);border:1px solid var(--brd);overflow:clip}
 .tg button{flex:1;padding:10px 16px;text-align:center;font-size:.9rem;font-weight:500;cursor:pointer;color:var(--txd);transition:all .2s;border:none;background:transparent;font-family:inherit}
 .tg button.on{background:var(--acs);color:var(--ac)}
 .tg button:hover:not(.on){background:var(--srf3);color:var(--tx)}
@@ -268,6 +298,12 @@ select:focus{outline:none;border-color:var(--ac)}
 .btn-g:hover{border-color:var(--ac);color:var(--ac)}
 .btn-info{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;min-width:32px;border-radius:50%;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.9rem;cursor:pointer;transition:all .2s;padding:0;flex-shrink:0}
 .btn-info:hover{border-color:var(--ac);color:var(--ac);background:var(--srf)}
+/* Focus-visible: WCAG keyboard accessibility */
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.btn:focus-visible,.btn-p:focus-visible,.btn-g:focus-visible,.btn-ok:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.lang-current:focus-visible,.theme-btn:focus-visible,.fb-btn:focus-visible,.btn-preview:focus-visible,.modal-close:focus-visible,.btn-info:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.lang-option:focus-visible{outline:2px solid var(--ac);outline-offset:-2px;background:var(--srf2)}
+a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px}
 
 /* ── Preview button ── */
 .btn-preview{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;border-radius:8px;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.88rem;cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit}
@@ -373,7 +409,7 @@ select:focus{outline:none;border-color:var(--ac)}
   .app{padding:20px 12px 60px}
   
   /* Header */
-  .hdr{margin-bottom:20px}
+  .hdr{margin-bottom:12px}
   .hdr h1{font-size:1.6rem;gap:8px}
   .disc{margin-top:6px;margin-bottom:12px;padding:12px 14px}
   .hdr-icon{width:32px;height:32px}
@@ -488,6 +524,7 @@ select:focus{outline:none;border-color:var(--ac)}
 <script>var INIT_LANG="__LANG_CODE__";</script>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 <!-- Background decorative SVGs -->
 <div class="bg-deco">
   <!-- Open book -->
@@ -508,7 +545,7 @@ select:focus{outline:none;border-color:var(--ac)}
   <svg class="deco-pages" viewBox="0 0 120 100" fill="currentColor" aria-hidden="true"><path d="M10 90V15c25-5 45 0 50 10V90C50 80 35 77 10 80z" opacity=".25"/><path d="M60 25c5-10 25-15 50-10v75c-25-3-40 0-50 10z" opacity=".35"/><path d="M55 20Q70 5 90 10" stroke="currentColor" stroke-width="1.5" fill="none" opacity=".2"/></svg>
 </div>
 
-<div class="app">
+<main id="main" role="main"><div class="app">
   <header class="hdr">
     <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
     <p data-t="subtitle">__SUBTITLE__</p>
@@ -516,48 +553,37 @@ select:focus{outline:none;border-color:var(--ac)}
     <div class="toolbar">
       <!-- Language Switcher Dropdown -->
       <div class="lang-switcher" id="langSwitcher">
-        <div class="lang-current" id="langCurrent" onclick="toggleLangDropdown()">
+        <div class="lang-current" id="langCurrent" role="combobox" tabindex="0" aria-expanded="false" aria-haspopup="listbox" aria-label="Select language" onclick="toggleLangDropdown()" onkeydown="handleLangKey(event)">
           <span class="flag" id="langFlag">🇮🇹</span>
           <span class="lang-code" id="langCode">IT</span>
           <span class="chevron">▾</span>
         </div>
-        <div class="lang-dropdown" id="langDropdown">
-          <div class="lang-option active" data-lang="it" onclick="selectLang('it')"><span class="flag">🇮🇹</span>Italiano</div>
-          <div class="lang-option" data-lang="en" onclick="selectLang('en')"><span class="flag">🇬🇧</span>English</div>
-          <div class="lang-option" data-lang="fr" onclick="selectLang('fr')"><span class="flag">🇫🇷</span>Français</div>
-          <div class="lang-option" data-lang="es" onclick="selectLang('es')"><span class="flag">🇪🇸</span>Español</div>
-          <div class="lang-option" data-lang="de" onclick="selectLang('de')"><span class="flag">🇩🇪</span>Deutsch</div>
-          <div class="lang-option" data-lang="zh" onclick="selectLang('zh')"><span class="flag">🇨🇳</span>中文</div>
+        <div class="lang-dropdown" id="langDropdown" role="listbox" aria-label="Available languages">
+          <div class="lang-option active" role="option" aria-selected="true" data-lang="it" onclick="selectLang('it')" onkeydown="handleLangOptionKey(event,'it')" tabindex="-1"><span class="flag">🇮🇹</span>Italiano</div>
+          <div class="lang-option" role="option" aria-selected="false" data-lang="en" onclick="selectLang('en')" onkeydown="handleLangOptionKey(event,'en')" tabindex="-1"><span class="flag">🇬🇧</span>English</div>
+          <div class="lang-option" role="option" aria-selected="false" data-lang="fr" onclick="selectLang('fr')" onkeydown="handleLangOptionKey(event,'fr')" tabindex="-1"><span class="flag">🇫🇷</span>Français</div>
+          <div class="lang-option" role="option" aria-selected="false" data-lang="es" onclick="selectLang('es')" onkeydown="handleLangOptionKey(event,'es')" tabindex="-1"><span class="flag">🇪🇸</span>Español</div>
+          <div class="lang-option" role="option" aria-selected="false" data-lang="de" onclick="selectLang('de')" onkeydown="handleLangOptionKey(event,'de')" tabindex="-1"><span class="flag">🇩🇪</span>Deutsch</div>
+          <div class="lang-option" role="option" aria-selected="false" data-lang="zh" onclick="selectLang('zh')" onkeydown="handleLangOptionKey(event,'zh')" tabindex="-1"><span class="flag">🇨🇳</span>中文</div>
         </div>
       </div>
       <div class="theme-sep"></div>
-      <button class="theme-btn" id="themeBtn" title="Toggle theme">&#x2600;&#xFE0F;</button>
+      <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle dark/light theme">&#x2600;&#xFE0F;</button>
+      <button class="fb-btn" id="fbBtn"><svg viewBox="0 0 24 24"><path d="M21 5c-1.1-.3-2.3-.5-3.5-.5-1.9 0-4 .4-5.5 1.5C10.6 4.9 8.5 4.5 6.5 4.5 5.3 4.5 4.1 4.7 3 5v14.7c0 .2.2.4.5.4.1 0 .2 0 .3-.1C5 19.3 6.7 19 8.5 19c1.9 0 4 .4 5.5 1.5 1.3-.8 3.2-1.5 5.5-1.5 1.7 0 3.4.3 4.7.8.1 0 .2.1.3.1.3 0 .5-.2.5-.4V5.3c-.5-.2-1-.3-1.5-.4zM21 18.5c-1.3-.4-2.7-.6-4-.6-1.9 0-4 .4-5.5 1.5V8c1.5-1.1 3.6-1.5 5.5-1.5 1.4 0 2.7.2 4 .6v11.4z"/></svg><span data-t="btn_free_books"></span></button>
     </div>
-    <button class="fb-btn" id="fbBtn"><svg viewBox="0 0 24 24"><path d="M21 5c-1.1-.3-2.3-.5-3.5-.5-1.9 0-4 .4-5.5 1.5C10.6 4.9 8.5 4.5 6.5 4.5 5.3 4.5 4.1 4.7 3 5v14.7c0 .2.2.4.5.4.1 0 .2 0 .3-.1C5 19.3 6.7 19 8.5 19c1.9 0 4 .4 5.5 1.5 1.3-.8 3.2-1.5 5.5-1.5 1.7 0 3.4.3 4.7.8.1 0 .2.1.3.1.3 0 .5-.2.5-.4V5.3c-.5-.2-1-.3-1.5-.4zM21 18.5c-1.3-.4-2.7-.6-4-.6-1.9 0-4 .4-5.5 1.5V8c1.5-1.1 3.6-1.5 5.5-1.5 1.4 0 2.7.2 4 .6v11.4z"/></svg><span data-t="btn_free_books"></span></button>
-    <button class="fb-btn" id="pgBtn"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg><span data-t="btn_podcast_guide"></span></button>
   </div>
 
   <!-- FREE BOOKS MODAL -->
-  <div class="modal-overlay" id="fbModal">
+  <div class="modal-overlay" id="fbModal" role="dialog" aria-modal="true" aria-labelledby="fbModalTitle">
     <div class="modal">
       <div class="modal-head">
-        <h2 data-t="modal_free_title"></h2>
-        <button class="modal-close" id="fbClose">&times;</button>
+        <h2 data-t="modal_free_title" id="fbModalTitle"></h2>
+        <button class="modal-close" id="fbClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="fbBody"></div>
     </div>
   </div>
 
-  <!-- PODCAST GUIDE MODAL -->
-  <div class="modal-overlay" id="pgModal">
-    <div class="modal" style="max-width:720px">
-      <div class="modal-head">
-        <h2 data-t="modal_guide_title"></h2>
-        <button class="modal-close" id="pgClose">&times;</button>
-      </div>
-      <div class="modal-body" id="pgBody" style="max-height:70vh;overflow-y:auto"></div>
-    </div>
-  </div>
 
   <!-- DISCLAIMER -->
   <div class="disc" data-t="disclaimer"></div>
@@ -746,38 +772,38 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 
   <!-- FOOTER -->
-  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="#seoContent" data-t="footer_privacy" onclick="document.getElementById('seoContent').scrollIntoView({behavior:'smooth'});return false"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a>
+  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a>
     <div style="margin-top:12px"><a href="https://www.producthunt.com/products/audiobook-maker/reviews/new?utm_source=badge-product_review&utm_medium=badge&utm_source=badge-audiobook&#0045;maker" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/product_review.svg?product_id=1171356&theme=neutral" alt="Audiobook&#0032;Maker - Convert&#0032;EPUB&#0032;into&#0032;audiobook&#0032;with&#0032;high&#0045;quality&#0032;neural&#0032;voices | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a></div>
   </div>
 
   <!-- ABOUT MODAL -->
-  <div class="modal-overlay" id="aboutModal">
+  <div class="modal-overlay" id="aboutModal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
     <div class="modal" style="max-width:560px">
       <div class="modal-head">
         <h2 id="aboutTitle"></h2>
-        <button class="modal-close" id="aboutClose">&times;</button>
+        <button class="modal-close" id="aboutClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="aboutBody"></div>
     </div>
   </div>
 
   <!-- ABM EXPORT GUIDE MODAL -->
-  <div class="modal-overlay" id="abmGuideModal">
+  <div class="modal-overlay" id="abmGuideModal" role="dialog" aria-modal="true" aria-labelledby="abmGuideTitle">
     <div class="modal" style="max-width:620px">
       <div class="modal-head">
         <h2 id="abmGuideTitle"></h2>
-        <button class="modal-close" id="abmGuideClose" onclick="closeAbmGuide()">&times;</button>
+        <button class="modal-close" id="abmGuideClose" onclick="closeAbmGuide()" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="abmGuideBody" style="max-height:70vh;overflow-y:auto"></div>
     </div>
   </div>
 
   <!-- AI OPTIMIZATION BATCH MODAL -->
-  <div class="modal-overlay" id="optBatchModal">
+  <div class="modal-overlay" id="optBatchModal" role="dialog" aria-modal="true" aria-labelledby="optBatchModalTitle">
     <div class="modal" style="max-width:520px">
       <div class="modal-head">
-        <h2>&#x2728; <span data-t="opt_batch_title"></span></h2>
-        <button class="modal-close" id="optBatchClose">&times;</button>
+        <h2 id="optBatchModalTitle">&#x2728; <span data-t="opt_batch_title"></span></h2>
+        <button class="modal-close" id="optBatchClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
         <p data-t="opt_batch_desc" style="margin-bottom:16px"></p>
@@ -803,11 +829,11 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 
   <!-- OPTIMIZATION PAYMENT MODAL -->
-  <div class="modal-overlay" id="payModal">
+  <div class="modal-overlay" id="payModal" role="dialog" aria-modal="true" aria-labelledby="payModalTitle">
     <div class="modal" style="max-width:560px">
       <div class="modal-head">
-        <h2>&#x1F4B3; <span data-t="pay_title"></span></h2>
-        <button class="modal-close" id="payClose">&times;</button>
+        <h2 id="payModalTitle">&#x1F4B3; <span data-t="pay_title"></span></h2>
+        <button class="modal-close" id="payClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
         <p id="payDescText" style="margin-bottom:14px"></p>
@@ -846,11 +872,11 @@ select:focus{outline:none;border-color:var(--ac)}
   </div>
 
   <!-- EMAIL NOTIFICATION MODAL -->
-  <div class="modal-overlay" id="emailModal">
+  <div class="modal-overlay" id="emailModal" role="dialog" aria-modal="true" aria-labelledby="emTitle">
     <div class="modal" style="max-width:480px">
       <div class="modal-head">
         <h2 id="emTitle">&#x1F4E7;</h2>
-        <button class="modal-close" id="emClose">&times;</button>
+        <button class="modal-close" id="emClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
         <p id="emDesc" style="margin-bottom:16px"></p>
@@ -884,11 +910,11 @@ select:focus{outline:none;border-color:var(--ac)}
 <!-- Language warning modal -->
 
 <!-- Donate prompt modal (shown before generation for returning users) -->
-<div class="modal-overlay" id="donateModal" onclick="if(event.target===this)closeDonateModalX()">
+<div class="modal-overlay" id="donateModal" role="dialog" aria-modal="true" aria-labelledby="donateModalTitle" onclick="if(event.target===this)closeDonateModalX()">
   <div class="modal" style="max-width:460px">
     <div class="modal-head">
-      <h2 data-t="donate_modal_title"></h2>
-      <button class="modal-close" onclick="closeDonateModalX()">&times;</button>
+      <h2 data-t="donate_modal_title" id="donateModalTitle"></h2>
+      <button class="modal-close" onclick="closeDonateModalX()" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <div class="dm-icon">❤️</div>
@@ -910,11 +936,11 @@ select:focus{outline:none;border-color:var(--ac)}
 </div>
 
 <!-- Language warning modal -->
-<div class="modal-overlay" id="langWarnModal" onclick="if(event.target===this)_langWarnResolve(false)">
+<div class="modal-overlay" id="langWarnModal" role="dialog" aria-modal="true" aria-labelledby="langWarnTitle" onclick="if(event.target===this)_langWarnResolve(false)">
   <div class="modal" style="max-width:420px">
     <div class="modal-head">
-      <span data-t="lang_warn_title"></span>
-      <button class="modal-close" onclick="_langWarnResolve(false)">&times;</button>
+      <span data-t="lang_warn_title" id="langWarnTitle"></span>
+      <button class="modal-close" onclick="_langWarnResolve(false)" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p style="margin:0 0 18px;line-height:1.6;font-size:.92rem" data-t="lang_warn_body"></p>
@@ -927,11 +953,11 @@ select:focus{outline:none;border-color:var(--ac)}
 </div>
 
 <!-- Preview audio popup -->
-<div class="modal-overlay" id="prevModal" onclick="if(event.target===this)previewStop()">
+<div class="modal-overlay" id="prevModal" role="dialog" aria-modal="true" aria-labelledby="prevModalTitle" onclick="if(event.target===this)previewStop()">
   <div class="modal prev-modal">
     <div class="modal-head">
-      <span data-t="prev_modal_title"></span>
-      <button class="modal-close" onclick="previewStop()">&times;</button>
+      <span data-t="prev_modal_title" id="prevModalTitle"></span>
+      <button class="modal-close" onclick="previewStop()" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <div class="prev-audio-row">

@@ -39,11 +39,10 @@ _admin_queue_lock = threading.Lock()
 _admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
 
 # ---------------------------------------------------------------------------
-# Payment email config (solo per le email di ricevuta/buono)
+# Payment email config — imported from payment.py (single source of truth)
 # ---------------------------------------------------------------------------
 
-VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
-VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
+from payment import VOUCHER_BONUS_PERCENT, VOUCHER_EXPIRY_DAYS
 
 
 # ---------------------------------------------------------------------------

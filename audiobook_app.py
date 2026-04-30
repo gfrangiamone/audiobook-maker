@@ -101,8 +101,8 @@ PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
 PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
 PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
-LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10"))
-LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50"))
+LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
+LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
 VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
 PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
@@ -122,12 +122,14 @@ def _estimate_llm_cost_eur(char_count):
 #  -  -  Import version and template builder  -  - 
 from version import __version__
 from templates.index_page import build_html_template
+from guide_content import build_guide_html
 
 #  -  -  Import favicon data (embedded, served via Flask routes for SEO)  -  - 
 from favicon_data import (
     get_favicon_ico, get_favicon_png_192,
     get_apple_touch_icon, get_favicon_svg,
 )
+from og_image_data import get_og_image
 
 
 
@@ -362,6 +364,10 @@ _VOUCHERS_FILE = UPLOAD_DIR / "_vouchers.json"
 _PAID_OPT_DONE_FILE = UPLOAD_DIR / "_paid_opt_done.json"
 _payments_lock = threading.Lock()
 _vouchers_lock = threading.Lock()
+
+# Sospensione avvio nuovi processi (attivabile da admin via /logs)
+_suspend_new_jobs = False
+_suspend_lock = threading.Lock()
 
 #  -  Rate limit voucher_validate (Point 1)  - 
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
@@ -1009,6 +1015,20 @@ def index_zh():
     return HTML_TEMPLATES["zh"], 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+#  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast"}
+
+@app.route("/guide/<guide_id>/")
+def guide_page(guide_id):
+    if guide_id not in _VALID_GUIDES:
+        return "Guide not found", 404
+    lang = request.args.get("lang", _detect_lang_from_request()).strip()
+    if lang not in ("it", "en", "fr", "es", "de", "zh"):
+        lang = "en"
+    html = build_guide_html(guide_id, lang, BASE_URL, __version__)
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 #  -  -  -  sitemap.xml  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 @app.route("/sitemap.xml")
 def sitemap():
@@ -1106,6 +1126,12 @@ def apple_touch_icon():
 @app.route("/favicon.svg")
 def favicon_svg():
     return send_file(get_favicon_svg(), mimetype="image/svg+xml",
+                     max_age=86400 * 30)
+
+
+@app.route("/og-image.png")
+def og_image():
+    return send_file(get_og_image(), mimetype="image/png",
                      max_age=86400 * 30)
 
 
@@ -1307,7 +1333,7 @@ def admin_logs():
             "no_activity": "No hay actividad registrada para",
         },
         "zh": {
-            "sessions": "会话", "gen_completed": "生�完�",
+            "sessions": "会话", "gen_completed": "生成完成",
             "in_progress": "进行中", "cancelled": "已取消",
             "email_sent": "邮件已发送", "unique_clients": "唯一客户",
             "recurring": "常客", "months": "月份",
@@ -1497,7 +1523,7 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
 <div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " - "}</span></div>
-<div class="meta-row"><span class="meta-label">�</span>{blang_display}</div>
+<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
 </div>
 </div>
 """
@@ -1569,6 +1595,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .btn:hover{{background:var(--border)}}
 .btn-accent{{background:var(--accent);color:var(--bg);border-color:var(--accent)}}
 .btn-accent:hover{{opacity:.85}}
+.btn-suspend{{background:var(--green);color:var(--bg);border-color:var(--green)}}
+.btn-suspend.suspended{{background:var(--red);border-color:var(--red)}}
 .btn-toggle{{margin-left:auto;flex-shrink:0}}
 .months-nav{{padding:10px 20px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center}}
 .months-nav .label{{color:var(--text-dim);font-size:.7rem;margin-right:6px;text-transform:uppercase;letter-spacing:1px}}
@@ -1630,6 +1658,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <h1>🎧 ACTIVITY LOG</h1>
     <span class="period">{ym}</span>
     <div class="header-actions">
+        <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
         <a class="btn btn-accent" href="/logs/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
@@ -1842,6 +1871,52 @@ if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveProgress, 5000);
     updateLiveProgress();
 }}
+
+//  -  -  Admin: sospensione nuovi processi  -  -
+const ADMIN_TOKEN = new URLSearchParams(window.location.search).get('token') ||
+                    sessionStorage.getItem('abm_admin_token') || '';
+
+function updateSuspendButton(suspended) {{
+    const btn = document.getElementById('btnSuspend');
+    if (!btn) return;
+    if (suspended) {{
+        btn.textContent = '⏸ Sospesi';
+        btn.classList.add('suspended');
+    }} else {{
+        btn.textContent = '▶ Attivi';
+        btn.classList.remove('suspended');
+    }}
+}}
+
+async function checkSuspendStatus() {{
+    if (!ADMIN_TOKEN) return;
+    try {{
+        const r = await fetch('/api/admin/suspend?token=' + encodeURIComponent(ADMIN_TOKEN));
+        if (r.ok) {{
+            const d = await r.json();
+            updateSuspendButton(d.suspended);
+        }}
+    }} catch(e) {{}}
+}}
+
+async function toggleSuspend() {{
+    const btn = document.getElementById('btnSuspend');
+    if (!btn || !ADMIN_TOKEN) return;
+    const currentlySuspended = btn.classList.contains('suspended');
+    try {{
+        const r = await fetch('/api/admin/suspend?token=' + encodeURIComponent(ADMIN_TOKEN), {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{suspend: !currentlySuspended}})
+        }});
+        if (r.ok) {{
+            const d = await r.json();
+            updateSuspendButton(d.suspended);
+        }}
+    }} catch(e) {{}}
+}}
+
+checkSuspendStatus();
 </script>
 
 </body>
@@ -2020,6 +2095,25 @@ function doLogin(){{
     <div class="hint">Autenticazione richiesta per accedere a questa risorsa.</div>
 </div>
 </body></html>"""
+
+
+#  -  -  Admin API: sospensione nuovi processi  -  -
+
+@app.route("/api/admin/suspend", methods=["GET", "POST"])
+def admin_api_suspend():
+    """GET: restituisce stato sospensione (pubblico). POST: imposta sospensione (richiede admin token)."""
+    global _suspend_new_jobs
+    if request.method == "POST":
+        token = _admin_auth_from_request()
+        if not _admin_auth_ok(token):
+            return jsonify({"error": "Unauthorized"}), 401
+        data = request.json or {}
+        with _suspend_lock:
+            _suspend_new_jobs = bool(data.get("suspend", False))
+        return jsonify({"suspended": _suspend_new_jobs})
+    with _suspend_lock:
+        suspended = _suspend_new_jobs
+    return jsonify({"suspended": suspended})
 
 
 def _admin_auth_ok(provided):
@@ -2770,6 +2864,11 @@ def api_generate():
     if job_id not in jobs:
         return jsonify({"error": "Session expired. Re-upload file."}), 400
     job = jobs[job_id]
+
+    # Check sospensione nuovi processi (admin toggle)
+    if _suspend_new_jobs:
+        return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
+
     if job["status"] not in ("analyzed", "optimized"):
         return jsonify({"error": "Generation already running or completed."}), 400
 
@@ -3372,7 +3471,11 @@ def api_optimize():
     lang = data.get("lang")
     if job_id not in jobs: return jsonify({"error": "Session expired"}), 400
     job = jobs[job_id]; info = job.get("info")
-    
+
+    # Check sospensione nuovi processi (admin toggle)
+    if _suspend_new_jobs:
+        return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
+
     # Store language for optimization prompt selection
     if lang:
         job["opt_voice"] = lang  # _call_deepseek uses this if "voice" is missing
@@ -3920,10 +4023,10 @@ def _generate_podcast_index_html(podcast_dir, title, author, cover_file, rss_fna
                "instructions": "Kopieren Sie die RSS-Feed-URL und fügen Sie sie in Ihre Podcast-App ein (Pocket Casts, Apple Podcasts, AntennaPod, Overcast...).",
                "footer": "Erstellt mit Audiobook Maker"},
         "zh": {"heading": "播客", "by": "作者", "subscribe": "订阅播客",
-               "copy": "复制订阅�URL", "copied": "已复制！",
-               "episodes": "章节", "listen": "收�",
-               "instructions": "复制RSS订阅�URL并将其粘贴到您的播客应用程序中（Pocket Casts，Apple Podcasts，AntennaPod，Overcast...）。",
-               "footer": "由Audiobook Maker生�"},
+               "copy": "复制订阅URL", "copied": "已复制！",
+               "episodes": "章节", "listen": "收听",
+               "instructions": "复制RSS订阅URL并将其粘贴到您的播客应用程序中（Pocket Casts，Apple Podcasts，AntennaPod，Overcast...）。",
+               "footer": "由Audiobook Maker生成"},
     }
     lb = _labels.get(lang, _labels["en"])
 
@@ -4503,7 +4606,7 @@ _SEO_DATA = {
         "tagline": "Convertitore Gratuito da EPUB e PDF in Audiolibro",
         "subtitle":"Converti i tuoi EPUB e PDF in audiolibri con voci neurali di alta qualità",
         "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B (con capitoli incorporati) gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro professionale. Nessuna installazione, funziona dal browser.",
-        "kw":      "convertitore epub m4b, creare m4b con capitoli, convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to m4b, pdf to m4b, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis",
+        "kw":      "convertitore epub m4b, creare m4b con capitoli, convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to m4b, pdf to m4b, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis, audiolibri per dislessia, audiolibri per ipovedenti, sintesi vocale per non vedenti, strumento lettura dislessia, tts accessibilita, ascoltare documenti, ascoltare pdf, audio per studio, alternativa elevenlabs gratis, alternativa play.ht gratis",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 e M4B con capitoli e voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
@@ -4512,7 +4615,7 @@ _SEO_DATA = {
         "tagline": "Free EPUB & PDF to Audiobook Converter",
         "subtitle":"Convert your EPUBs and PDFs into audiobooks with high-quality neural voices",
         "desc":    "Convert your EPUB and PDF ebooks to MP3 or M4B audiobooks (with embedded chapters) for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your professional audiobook. No installation needed, works in your browser.",
-        "kw":      "epub to m4b converter, create m4b with chapters, pdf to m4b, epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf",
+        "kw":      "epub to m4b converter, create m4b with chapters, pdf to m4b, epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf, audiobook for dyslexia, text to speech for visually impaired, tts for learning disabilities, audio books for blind, screen reader alternative, dyslexia reading tool, adhd reading help, listen to PDF, convert textbook to audio, study aid audio, hands-free reading, accessible audiobook, elevenlabs alternative free, play.ht alternative free",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 and M4B audiobooks (with chapters) using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
@@ -4521,7 +4624,7 @@ _SEO_DATA = {
         "tagline": "Convertisseur Gratuit EPUB & PDF en Livre Audio",
         "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurali",
         "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 et M4B (avec chapitres) gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio professionnel. Aucune installation, fonctionne dans le navigateur.",
-        "kw":      "convertisseur epub m4b, créer m4b avec chapitres, convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers m4b, pdf vers m4b, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit",
+        "kw":      "convertisseur epub m4b, créer m4b avec chapitres, convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers m4b, pdf vers m4b, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit, livre audio dyslexie, livre audio malvoyants, texte a parole handicap visuel, outil lecture dyslexie, tts accessibilite, ecouter documents, ecouter pdf, alternative elevenlabs gratuit, alternative play.ht gratuit",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB e PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
@@ -4530,7 +4633,7 @@ _SEO_DATA = {
         "tagline": "Convertidor Gratuito de EPUB y PDF a Audiolibro",
         "subtitle":"Convierte tus EPUB y PDF en audiolibros con voces neurales de alta calidad",
         "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 y M4B (con capítulos incorporados) gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro profesional. Sin instalación, funciona desde el navegador.",
-        "kw":      "convertidor epub m4b, crear m4b con capítulos, convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a m4b, pdf a m4b, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis",
+        "kw":      "convertidor epub m4b, crear m4b con capítulos, convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a m4b, pdf a m4b, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis, audiolibro para dislexia, audiolibro para discapacidad visual, texto a voz para ciegos, tts accesibilidad, escuchar documentos, escuchar pdf, alternativa elevenlabs gratis, alternativa play.ht gratis",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
@@ -4539,7 +4642,7 @@ _SEO_DATA = {
         "tagline": "Kostenloser EPUB- & PDF-zu-Hörbuch-Konverter",
         "subtitle":"Konvertieren Sie EPUBs und PDFs in Hörbücher mit neuronalen Stimmen",
         "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3- und M4B-Hörbücher (mit eingebetteten Kapiteln) mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr professionelles Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
-        "kw":      "epub zu m4b konverter, m4b mit kapiteln erstellen, epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu m4b, pdf zu m4b, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos",
+        "kw":      "epub zu m4b konverter, m4b mit kapiteln erstellen, epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu m4b, pdf zu m4b, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos, horbuch fur legasthenie, horbuch fur sehbehinderte, text zu sprache behinderung, barrierefreies horbuch, dokumente anhoren, pdf anhoren, elevenlabs alternative kostenlos, play.ht alternative kostenlos",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
@@ -4547,10 +4650,10 @@ _SEO_DATA = {
         "title":   "Audiobook Maker - 免费 EPUB/PDF 转 MP3 及 M4B 有声书 | 支持章节和AI语音",
         "tagline": "免费EPUB和PDF转有声书转换器",
         "subtitle":"使用高品质神经语音将EPUB和PDF转换为有声读物",
-        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电�书转换为高质量 MP3 或 M4B（�章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
-        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电�书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电�书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电�书转换为有声书, tts有声书生�器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电�书转mp3, �epub, 带音频的epub阅读器, 免费图书转有声书转换器",
+        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书转换为高质量 MP3 或 M4B（含章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
+        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电子书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电子书转换为有声书, tts有声书生成器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电子书转mp3, 听epub, 带音频的epub阅读器, 免费图书转有声书转换器, 阅读障碍有声书, 盲人有声书, 视障文字转语音, 无障碍有声书, 听文档, 听PDF, elevenlabs替代品, play.ht替代品",
         "ld_name": "Audiobook Maker",
-        "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电�书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅�生�。",
+        "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电子书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅生成。",
     },
 }
 
@@ -4869,7 +4972,7 @@ def _ensure_background_threads():
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (DeepSeek {DEEPSEEK_MODEL})")
     if ADMIN_EMAIL:
-        print(f"[startup] Admin digest enabled  →  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
+        print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
 
