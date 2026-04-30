@@ -1185,6 +1185,9 @@ def _parse_log_sessions(ym):
             dt_str = parts[1]
             filename = parts[2].strip().strip('"')
             operation = parts[3].strip()
+            # Skip voucher audit entries — not conversion activity
+            if operation.startswith("VOUCHER_ATTEMPT"):
+                continue
             client_id = parts[4].strip() if len(parts) > 4 else ""
             client_ip = parts[5].strip() if len(parts) > 5 else ""
             voice = parts[6].strip() if len(parts) > 6 else ""
@@ -1570,7 +1573,8 @@ def admin_logs():
     except Exception:
         pass
 
-    token_qs = f"&token={token}" if token else ""
+    from urllib.parse import quote_plus
+    token_qs = f"&token={quote_plus(token)}" if token else ""
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
@@ -2458,7 +2462,7 @@ def admin_api_vouchers():
         apply_bonus=False,       # promo/gift: importo nominale, niente +10%
         code=custom_code,
     )
-    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "…", email)
+    _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "...", email)
     print(f"[admin] voucher created via UI: {code} kind={kind} email={email} amount={amount:.2f} days={days} ip={ip}")
     return jsonify({
         "code": code,
@@ -2487,7 +2491,7 @@ def admin_api_voucher_revoke(code):
     v["revoked"] = True
     v["revoke_reason"] = reason or "admin revoke"
     _save_vouchers()
-    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "…", reason[:40])
+    _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
 
@@ -3394,7 +3398,7 @@ def api_voucher_validate():
     success = (outcome == "OK")
     _voucher_rl_record_result(email, success)
     # Log in forma strutturata (usiamo i campi esistenti: voice=code masked, browser_lang=outcome)
-    code_masked = (code[:4] + "…") if code else ""
+    code_masked = (code[:4] + "...") if code else ""
     _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
     return jsonify(body), status
 
