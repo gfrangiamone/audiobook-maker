@@ -1079,6 +1079,38 @@ def sitemap():
 {alternates}
   </url>""")
 
+    # Guide pages — 4 guide × 6 lingue = 24 URL
+    # Guide route is /guide/<id>/?lang=xx, canonical URL has ?lang= param
+    for guide_id in sorted(_VALID_GUIDES):
+        # Per-language alternates
+        guide_alt_lines = []
+        for lc, hl in lang_hreflang_map.items():
+            guide_alt_lines.append(
+                f'      <xhtml:link rel="alternate" hreflang="{hl}" href="{BASE_URL}/guide/{guide_id}/?lang={lc}"/>'
+            )
+        guide_alt_lines.append(
+            f'      <xhtml:link rel="alternate" hreflang="x-default" href="{BASE_URL}/guide/{guide_id}/"/>'
+        )
+        guide_alternates = "\n".join(guide_alt_lines)
+
+        for lc in lang_hreflang_map:
+            urls.append(f"""  <url>
+    <loc>{BASE_URL}/guide/{guide_id}/?lang={lc}</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+{guide_alternates}
+  </url>""")
+
+        # URL senza lang param (x-default, serve inglese)
+        urls.append(f"""  <url>
+    <loc>{BASE_URL}/guide/{guide_id}/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+{guide_alternates}
+  </url>""")
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
@@ -3492,7 +3524,9 @@ def api_optimize():
 
     client_id = job.get("client_id", "")
     if job["status"] not in ("analyzed",): return jsonify({"error": "Invalid state"}), 400
-    selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
+    raw_selected = data.get("selected_chapters")
+    selected_chapters = _parse_selected_chapters(raw_selected)
+    print(f"[{job_id}] OPTIMIZE raw selected_chapters: {raw_selected!r} -> parsed: {selected_chapters!r}")
     if selected_chapters:
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_chapters)
     else:

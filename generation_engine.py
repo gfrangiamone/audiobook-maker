@@ -1070,12 +1070,15 @@ def run_optimization(job_id, selected_chapters=None):
     start_time = time.time()
     info = job["info"]
 
+    print(f"[{job_id}] run_optimization selected_chapters param: {selected_chapters!r}")
     selected_set = set(selected_chapters) if selected_chapters else None
+    print(f"[{job_id}] run_optimization selected_set: {selected_set!r}")
 
     # Identify which chapters to optimize
     chapters_to_opt = info.chapters
     if selected_set:
         chapters_to_opt = [ch for ch in info.chapters if ch.index in selected_set]
+        print(f"[{job_id}] run_optimization filtered chapters: {[ch.index for ch in chapters_to_opt]!r}")
 
     total_chapters = len(chapters_to_opt)
     total_chars = sum(ch.char_count for ch in chapters_to_opt)
