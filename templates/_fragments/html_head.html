@@ -271,7 +271,7 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 .ct .col-sel{width:36px;text-align:center!important;padding-left:6px;padding-right:2px}
 .ct .col-sel input[type=checkbox]{width:16px;height:16px;accent-color:var(--ac);cursor:pointer;vertical-align:middle}
 .ct tbody tr.unchecked td:not(.col-sel){opacity:.4;text-decoration:line-through;text-decoration-color:var(--txm)}
-.sel-bar{display:none;align-items:center;gap:12px;margin-top:14px;padding:8px 12px;background:var(--srf2);border-radius:var(--rs);font-size:.82rem;flex-wrap:wrap}
+.sel-bar{display:none;align-items:center;gap:12px;margin-top:14px;padding:8px 12px;background:var(--srf2);border-radius:var(--rs);font-size:.82rem;flex-wrap:nowrap}
 .sel-bar.vis{display:flex}
 .sel-bar .sel-info{color:var(--txd);margin-right:auto}
 .sel-bar .sel-info b{color:var(--ac)}
@@ -455,9 +455,15 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .col-words,.col-chars{font-size:.72rem;display:none!important}
   .ch-num{font-size:.7rem;min-width:24px}
   
-  /* Selection links - stack vertically */
-  .sel-bar{flex-wrap:wrap;gap:6px}
-  .sel-bar a{padding:8px 10px;font-size:.8rem}
+  /* Selection links - tighter spacing on mobile */
+  .sel-bar{gap:4px;font-size:.75rem}
+  .sel-bar a{padding:6px 6px;font-size:.76rem}
+  .sel-bar .sel-info{font-size:.75rem}
+}
+@media(max-width:380px){
+  .sel-bar{gap:2px;font-size:.7rem}
+  .sel-bar a{padding:5px 4px;font-size:.7rem}
+  .sel-bar .sel-info{font-size:.7rem}
 }
 
 @media(max-width:380px){
@@ -483,6 +489,22 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 @media(max-width:600px){
   #s3 .step-body{padding-bottom:100px}
   #s3err{margin-top:12px}
+  /* Keep AI opt label + toggle and button row on single line */
+  #fgOptimizeWrap > div:first-child{gap:4px}
+  #fgOptimizeWrap > div:first-child label{font-size:.72rem}
+  #fgOptimizeWrap .tg button{font-size:.72rem;padding:6px 8px}
+  #btnOptimize, #btnG{font-size:.75rem;padding:10px 4px}
+  #btnExport{font-size:.72rem;padding:10px 6px}
+  .btn-row{flex-direction:column!important}
+  .btn-row > button, .btn-row > div{flex:1 1 auto!important}
+}
+
+@media(max-width:400px){
+  #btnOptimize, #btnG{font-size:.7rem;padding:8px 3px}
+  #btnExport{font-size:.68rem;padding:8px 4px}
+  #btnAbmInfo{width:26px;height:26px;min-width:26px;font-size:.75rem}
+  #fgOptimizeWrap > div:first-child label{font-size:.68rem}
+  #fgOptimizeWrap .tg button{font-size:.68rem;padding:5px 6px}
 }
 
 /* Ensure generation panel stays visible after button press */
@@ -676,11 +698,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
     <div id="s3err"></div>
     <!-- AI Text Optimization (visible only if LLM is available) -->
     <div id="fgOptimizeWrap" style="display:none;margin-top:18px;padding:14px 18px;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs)">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <label style="font-weight:600;margin:0" data-t="lbl_ai_opt"></label>
-        <div class="tg" style="margin:0">
-          <button class="on" data-v="none" id="optNone" data-t="ai_opt_off"></button>
-          <button data-v="optimize" id="optEnable" data-t="ai_opt_on"></button>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
+        <label style="font-weight:600;margin:0;white-space:nowrap;font-size:.82rem" data-t="lbl_ai_opt"></label>
+        <div class="tg" style="margin:0;flex-shrink:0">
+          <button class="on" data-v="none" id="optNone" data-t="ai_opt_off" style="font-size:.82rem;padding:8px 12px;white-space:nowrap"></button>
+          <button data-v="optimize" id="optEnable" data-t="ai_opt_on" style="font-size:.82rem;padding:8px 12px;white-space:nowrap"></button>
         </div>
       </div>
       <div id="aiOptInfo" class="al" style="display:none;margin-top:8px;padding:10px 14px;font-size:.85rem;background:var(--acs);border:1px solid var(--ac);border-radius:var(--rs)">
@@ -690,12 +712,12 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
         <span data-t="ai_already_opt"></span>
       </div>
     </div>
-    <div style="margin-top:24px;display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
-      <button class="btn" id="btnOptimize" style="flex:1;min-width:200px;background:#8b5cf6;color:white;display:none" onclick="startOptimization()">&#x2728; <span data-t="btn_optimize"></span></button>
-      <button class="btn btn-p" id="btnG" style="flex:1;min-width:200px">&#x1F3A7; <span data-t="btn_gen"></span></button>
-      <div style="display:flex;flex-direction:column;gap:5px;align-items:center;flex:0 1 auto;min-width:180px">
-        <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="width:100%;margin-top:0"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
-        <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="margin-top:0">&#x2139;&#xFE0F;</button>
+    <div class="btn-row" style="margin-top:24px;display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
+      <button class="btn" id="btnOptimize" style="flex:1 1 0;min-width:0;background:#8b5cf6;color:white;display:none;font-size:.85rem;padding:12px 6px;white-space:nowrap" onclick="startOptimization()">&#x2728; <span data-t="btn_optimize"></span></button>
+      <button class="btn btn-p" id="btnG" style="flex:1 1 0;min-width:0;font-size:.85rem;padding:12px 6px;white-space:nowrap">&#x1F3A7; <span data-t="btn_gen"></span></button>
+      <div style="flex:1 1 0;min-width:0;position:relative">
+        <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="width:100%;margin-top:0;font-size:.82rem;padding:12px 8px;white-space:nowrap"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
+        <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="position:absolute;bottom:2px;right:2px;margin:0;font-size:.7rem;width:22px;height:22px;min-width:22px;padding:0;line-height:22px;border-radius:50%;background:rgba(255,255,255,.85)">&#x2139;&#xFE0F;</button>
       </div>
     </div>
     </div>

@@ -570,9 +570,15 @@ def _generate_optimized_abm(job_id):
     buf = io.BytesIO()
     safe_title = _safe_filename(info.title) or "project"
 
+    # Respect chapter subset if optimization was scoped
+    selected = job.get("selected_chapters")
+    selected_set = set(selected) if selected else None
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
         for ch in info.chapters:
+            if selected_set and ch.index not in selected_set:
+                continue
             ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
             zf.writestr(f"chapters/{ch_filename}", ch.text)
@@ -1072,6 +1078,7 @@ def run_optimization(job_id, selected_chapters=None):
 
     print(f"[{job_id}] run_optimization selected_chapters param: {selected_chapters!r}")
     selected_set = set(selected_chapters) if selected_chapters else None
+    job["selected_chapters"] = list(selected_set) if selected_set else None
     print(f"[{job_id}] run_optimization selected_set: {selected_set!r}")
 
     # Identify which chapters to optimize
