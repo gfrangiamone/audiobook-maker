@@ -1354,13 +1354,6 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
             "https://github.com/gfrangiamone/audiobook-maker",
             "https://alternativeto.net/software/audiobook-maker/",
         ],
-        "aggregateRating": {
-            "@type": "AggregateRating",
-            "ratingValue": "4.8",
-            "bestRating": "5",
-            "worstRating": "1",
-            "ratingCount": "412",
-        },
     }
 
     # Organization
@@ -1383,30 +1376,8 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         ],
     }
 
-    # Review (aggregate from AlternativeTo)
-    review_ld = {
-        "@context": "https://schema.org",
-        "@type": "Review",
-        "itemReviewed": {
-            "@type": "SoftwareApplication",
-            "name": "Audiobook Maker",
-            "url": f"{base_url}/{lang}/",
-        },
-        "author": {
-            "@type": "Organization",
-            "name": "AlternativeTo",
-            "url": "https://alternativeto.net/software/audiobook-maker/",
-        },
-        "reviewRating": {
-            "@type": "Rating",
-            "ratingValue": "4.8",
-            "bestRating": "5",
-            "worstRating": "1",
-        },
-    }
-
     # Combine into a JSON-LD graph (array of objects)
-    combined = [software_app_ld, organization_ld, review_ld]
+    combined = [software_app_ld, organization_ld]
     combined_ld_json = json.dumps(combined, ensure_ascii=False)
 
     return faq_ld, howto_ld, combined_ld_json

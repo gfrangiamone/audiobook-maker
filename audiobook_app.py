@@ -25,7 +25,7 @@ import uuid
 import hmac
 import html as html_mod
 from collections import defaultdict, OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from copy import copy
 from pathlib import Path
 
@@ -37,6 +37,9 @@ from flask import (
 #  -  -  Import epub_to_tts (must be in the same folder)  -  - 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
+
+# Startup timestamp for Last-Modified / Cache-Control on pre-rendered HTML pages
+_STARTUP_TIME = datetime.now(timezone.utc)
 
 try:
     from epub_to_tts import parse_epub, write_single_file, write_chapter_files, BookInfo
@@ -169,6 +172,11 @@ def add_security_headers(response):
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
+    # Cache-Control for pre-rendered HTML pages (change only at deploy)
+    ct = response.content_type or ''
+    if 'text/html' in ct and 'Cache-Control' not in response.headers:
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+        response.headers['Last-Modified'] = _STARTUP_TIME.strftime('%a, %d %b %Y %H:%M:%S GMT')
     return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)

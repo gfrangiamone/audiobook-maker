@@ -108,7 +108,7 @@ if(sc){sc.textContent=JSON.stringify({
 "isAccessibleForFree":true,
 "author":{"@type":"Person","name":"Giuseppe Frangiamone","url":"https://github.com/gfrangiamone"},
 "license":"https://www.gnu.org/licenses/agpl-3.0.html",
-"sameAs":["https://github.com/gfrangiamone/audiobook-maker","https://alternativeto.net/software/audiobook-maker/"],
-"aggregateRating":{"@type":"AggregateRating","ratingValue":"4.8","bestRating":"5","worstRating":"1","ratingCount":"412"}
+"sameAs":["https://github.com/gfrangiamone/audiobook-maker","https://alternativeto.net/software/audiobook-maker/"]
 })}
 }
+</script>
