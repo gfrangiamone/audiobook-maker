@@ -6,6 +6,7 @@ _debug*
 *.egg-info/
 firebase*
 data/
+mockup/
 test/
 dist/
 build/
