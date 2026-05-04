@@ -16,9 +16,24 @@ Server-side SEO:
   before </body> via seo_content.build_seo_content_html().
 """
 
+import os
 from pathlib import Path
 
 _FRAGMENTS_DIR = Path(__file__).parent / "_fragments"
+
+# Baidu Tongji analytics — attivo solo se ABM_BAIDU_TONGJI_ID configurato
+_BAIDU_TONGJI_ID = os.environ.get("ABM_BAIDU_TONGJI_ID", "")
+if _BAIDU_TONGJI_ID:
+    _BAIDU_TONGJI_SNIPPET = (
+        "<script>var _hmt=_hmt||[];"
+        "(function(){var hm=document.createElement('script');"
+        f"hm.src='https://hm.baidu.com/hm.js?{_BAIDU_TONGJI_ID}';"
+        "var s=document.getElementsByTagName('script')[0];"
+        "s.parentNode.insertBefore(hm,s);"
+        "})();</script>"
+    )
+else:
+    _BAIDU_TONGJI_SNIPPET = ""
 
 _FRAGMENT_ORDER = [
     "html_head.html",
@@ -33,6 +48,11 @@ _FRAGMENT_ORDER = [
 _HREFLANG_MAP = {
     "it": "it", "en": "en", "fr": "fr",
     "es": "es", "de": "de", "zh": "zh-Hans",
+}
+# Open Graph locale mapping
+_OG_LOCALE_MAP = {
+    "it": "it_IT", "en": "en_US", "fr": "fr_FR",
+    "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
 }
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 
@@ -106,6 +126,7 @@ def build_html_template(
             "__H1_TAGLINE__":    seo.get("tagline", ""),
             "__SUBTITLE__":      seo.get("subtitle", ""),
             "__SEO_OG_IMAGE__":  f"{base_url}/og-image.png" if base_url else "/og-image.png",
+            "__OG_LOCALE__":     _OG_LOCALE_MAP.get(lang, "en_US"),
             "__SEO_CRUMB__":     seo.get("crumb", "Online Converter"),
         }
         for placeholder, value in replacements.items():
@@ -118,6 +139,7 @@ def build_html_template(
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
     html = html.replace("__SEO_APP_LD__", app_ld)
     html = html.replace("__APP_VERSION__", version or "3.3")
+    html = html.replace("__BAIDU_TONGJI__", _BAIDU_TONGJI_SNIPPET)
 
     # ── 4. Inject visible SEO content block before </body> ──
     seo_block = build_seo_content_html(lang)

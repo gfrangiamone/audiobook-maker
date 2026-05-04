@@ -814,7 +814,7 @@ _CONTENT = {
              "不需要，Audiobook Maker完全在浏览器中运行，无需下载或安装。"),
             ("服务真的免费吗？",
              "是的，Audiobook Maker完全免费。无需注册，无使用限制，生成的音频文件中也没有广告。"
-             "项目由自愿捐署支持。"),
+             "项目由自愿捐赠支持。"),
             ("可以用什么工具收听Audiobook Maker生成的有声书？",
              "Audiobook Maker生成的MP3文件可以用任何音频播放器播放。"
              "在Android上，我们推荐Smart AudioBook Player，"
@@ -1376,8 +1376,18 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         ],
     }
 
+    # WebSite (Sitelinks Search Box)
+    website_ld = {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Audiobook Maker",
+        "url": base_url,
+        "description": c["direct_answer"],
+        "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
+    }
+
     # Combine into a JSON-LD graph (array of objects)
-    combined = [software_app_ld, organization_ld]
+    combined = [software_app_ld, organization_ld, website_ld]
     combined_ld_json = json.dumps(combined, ensure_ascii=False)
 
     return faq_ld, howto_ld, combined_ld_json

@@ -1,9 +1,35 @@
 <!DOCTYPE html>
 <html lang="__HTML_LANG__">
 <head>
-<!-- Google tag (gtag.js) -->
+<!-- Google tag (gtag.js) — Consent Mode v2 (GDPR/EU-compliant) -->
+<!-- Default denied PRIMA del caricamento script: nessun cookie/storage finché utente non concede consenso. -->
+<script>
+window.dataLayer=window.dataLayer||[];
+function gtag(){dataLayer.push(arguments);}
+gtag('consent','default',{
+  ad_storage:'denied',
+  ad_user_data:'denied',
+  ad_personalization:'denied',
+  analytics_storage:'denied',
+  functionality_storage:'granted',
+  security_storage:'granted',
+  wait_for_update:500
+});
+gtag('js',new Date());
+gtag('config','G-RBY3J76PDV',{anonymize_ip:true});
+try{
+  var __abm_c=localStorage.getItem('abm_cookie_consent');
+  if(__abm_c==='granted'){
+    gtag('consent','update',{
+      ad_storage:'granted',ad_user_data:'granted',
+      ad_personalization:'granted',analytics_storage:'granted'
+    });
+  }
+}catch(e){}
+</script>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-RBY3J76PDV"></script>
-<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-RBY3J76PDV');</script>
+<!-- Baidu Tongji analytics — abilitato solo se ABM_BAIDU_TONGJI_ID configurato -->
+__BAIDU_TONGJI__
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- Favicon: URL-based for search engine compatibility (Google requires crawlable URLs) -->
@@ -17,6 +43,10 @@
 <meta name="keywords" id="metaKw" content="__SEO_KW__">
 <meta name="author" content="Audiobook Maker">
 <meta name="robots" content="index, follow">
+<!-- Baidu: forza motore di rendering WebKit nel Baidu Browser -->
+<meta name="renderer" content="webkit">
+<!-- Baidu: dichiara adattamento mobile e desktop -->
+<meta name="applicable-device" content="pc,mobile">
 <meta name="theme-color" content="#c29a6c">
 <!-- Open Graph -->
 <meta property="og:type" content="website">
@@ -28,11 +58,14 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
+<meta property="og:locale" content="__OG_LOCALE__">
 <link rel="canonical" href="__SEO_CANONICAL__">
 <!-- hreflang: versioni per lingua — indicizza l'app in 6 lingue su Google -->
 __SEO_HREFLANG__
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@AudiobookMaker">
+<meta name="twitter:creator" content="@gfrangiamone">
 <meta name="twitter:title" id="twTitle" content="__SEO_TITLE__">
 <meta name="twitter:description" id="twDesc" content="__SEO_DESC__">
 <meta name="twitter:image" content="__SEO_OG_IMAGE__">
@@ -339,7 +372,7 @@ __SEO_HREFLANG__
   </div>
 
   <!-- FOOTER -->
-  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a>
+  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a> &middot; <a href="#" id="cookieSettingsBtn">Cookie</a>
     <div style="margin-top:12px"><a href="https://www.producthunt.com/products/audiobook-maker/reviews/new?utm_source=badge-product_review&utm_medium=badge&utm_source=badge-audiobook&#0045;maker" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/product_review.svg?product_id=1171356&theme=neutral" alt="Audiobook&#0032;Maker - Convert&#0032;EPUB&#0032;into&#0032;audiobook&#0032;with&#0032;high&#0045;quality&#0032;neural&#0032;voices | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a></div>
   </div>
 

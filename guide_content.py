@@ -2008,10 +2008,42 @@ _GUIDE_BODY = {"it": _GUIDE_BODY_IT, "fr": _GUIDE_BODY_FR, "es": _GUIDE_BODY_ES,
 
 
 
+# Date pubblicazione iniziale per guida (statica). dateModified = mtime del file sorgente.
+_GUIDE_PUBLISHED = {
+    "epub-to-audiobook": "2024-09-15",
+    "m4b-format": "2024-10-01",
+    "text-to-speech-audiobook": "2024-11-10",
+    "podcast": "2025-01-20",
+}
+
+_GUIDE_SECTION = {
+    "epub-to-audiobook": "Tutorials",
+    "m4b-format": "File Formats",
+    "text-to-speech-audiobook": "Text-to-Speech",
+    "podcast": "Podcast Publishing",
+}
+
+
 def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> str:
-    """Build Article JSON-LD schema for a guide page."""
+    """Build Article JSON-LD schema for a guide page.
+
+    Include datePublished/dateModified/image/keywords per AI citation engines
+    (ChatGPT, Perplexity, Google AI Overview) e ranking E-E-A-T.
+    """
     import json as _json
+    import os as _os
+    from datetime import datetime as _dt
+
     canonical = f"{base_url}/guide/{guide_id}/"
+    base = base_url or "https://audiobook-maker.com"
+
+    try:
+        _mtime = _os.path.getmtime(__file__)
+        date_modified = _dt.utcfromtimestamp(_mtime).strftime("%Y-%m-%d")
+    except OSError:
+        date_modified = _dt.utcnow().strftime("%Y-%m-%d")
+    date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
+
     ld = {
         "@context": "https://schema.org",
         "@type": "Article",
@@ -2019,6 +2051,14 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
         "description": meta["desc"],
         "url": canonical,
         "inLanguage": _HREFLANG_MAP.get(lang, "en"),
+        "datePublished": date_published,
+        "dateModified": date_modified,
+        "image": {
+            "@type": "ImageObject",
+            "url": f"{base}/og-image.png",
+            "width": 1200,
+            "height": 630,
+        },
         "author": {
             "@type": "Person",
             "name": "Giuseppe Frangiamone",
@@ -2027,11 +2067,22 @@ def _build_article_ld(guide_id: str, lang: str, base_url: str, meta: dict) -> st
         "publisher": {
             "@type": "Organization",
             "name": "Audiobook Maker",
-            "url": base_url or "https://audiobook-maker.com",
+            "url": base,
+            "logo": {
+                "@type": "ImageObject",
+                "url": f"{base}/favicon-192.png",
+                "width": 192,
+                "height": 192,
+            },
         },
         "isAccessibleForFree": True,
         "license": "https://www.gnu.org/licenses/agpl-3.0.html",
-        "mainEntityOfPage": canonical,
+        "mainEntityOfPage": {
+            "@type": "WebPage",
+            "@id": canonical,
+        },
+        "articleSection": _GUIDE_SECTION.get(guide_id, "Guide"),
+        "keywords": meta.get("kw", ""),
     }
     return _json.dumps(ld, ensure_ascii=False)
 
@@ -2078,6 +2129,30 @@ def build_guide_html(
 
     # Article JSON-LD
     article_ld = _build_article_ld(guide_id, lang, base_url, meta)
+
+    # Date visibili (datePublished/dateModified) per UX + AI scraping.
+    import os as _os
+    from datetime import datetime as _dt
+    try:
+        _mtime = _os.path.getmtime(__file__)
+        _date_modified = _dt.utcfromtimestamp(_mtime).strftime("%Y-%m-%d")
+    except OSError:
+        _date_modified = _dt.utcnow().strftime("%Y-%m-%d")
+    _date_published = _GUIDE_PUBLISHED.get(guide_id, "2024-09-01")
+    _updated_label = {
+        "it": "Ultimo aggiornamento", "en": "Last updated", "fr": "Dernière mise à jour",
+        "es": "Última actualización", "de": "Zuletzt aktualisiert", "zh": "最后更新",
+    }.get(lang, "Last updated")
+    _published_label = {
+        "it": "Pubblicato", "en": "Published", "fr": "Publié",
+        "es": "Publicado", "de": "Veröffentlicht", "zh": "发布于",
+    }.get(lang, "Published")
+    article_dates_html = (
+        f'<p class="article-dates" style="font-size:.85rem;color:var(--txm);margin:8px 0 16px">'
+        f'<time datetime="{_date_published}">{_published_label}: {_date_published}</time> &middot; '
+        f'<time datetime="{_date_modified}">{_updated_label}: {_date_modified}</time>'
+        f'</p>'
+    )
 
     # BreadcrumbList JSON-LD
     crumb_names = {
@@ -2135,11 +2210,12 @@ def build_guide_html(
 <script type="application/ld+json">{breadcrumb_ld}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet"></noscript>
 <style>
 :root{{--bg:#f5f3ef;--srf:#ffffff;--srf2:#f0ede8;--brd:#d5d0c8;--tx:#2c2a26;--txd:#6b6760;--txm:#9e9890;--ac:#c47a2a;--ach:#d4903e;--r:12px}}
 *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:'DM Sans',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.7;padding:20px;max-width:720px;margin:0 auto}}
+body{{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans SC',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.7;padding:20px;max-width:720px;margin:0 auto}}
 h1{{font-family:'DM Serif Display',Georgia,serif;font-size:2rem;color:var(--ac);margin:24px 0 16px;line-height:1.25}}
 h2{{font-family:'DM Serif Display',Georgia,serif;font-size:1.4rem;margin:32px 0 12px;color:var(--tx)}}
 p,li{{margin-bottom:10px;color:var(--txd)}}
@@ -2167,6 +2243,7 @@ footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-si
 </nav>
 <article>
 <h1>{meta["h1"]}</h1>
+{article_dates_html}
 {body}
 <a class="cta" href="{app_home}">Try Audiobook Maker Free &rarr;</a>
 </article>

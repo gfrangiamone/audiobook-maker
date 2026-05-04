@@ -1131,6 +1131,7 @@ def sitemap():
 @app.route("/robots.txt")
 def robots():
     sitemap_line = f"Sitemap: {BASE_URL}/sitemap.xml" if BASE_URL else ""
+    llms_line = f"# LLM/AI agents index: {BASE_URL}/llms.txt" if BASE_URL else ""
     body = f"""User-agent: *
 Allow: /
 Disallow: /api/
@@ -1139,8 +1140,82 @@ Disallow: /dl/
 Disallow: /logs
 Disallow: /admin/
 {sitemap_line}
+{llms_line}
 """.strip()
     return body, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+#  -  -  -  llms.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+# Spec: https://llmstxt.org — Markdown index per agenti AI (ChatGPT,
+# Perplexity, Claude, Gemini). Aiuta retrieval/citation espliciti.
+@app.route("/llms.txt")
+def llms_txt():
+    base = BASE_URL or "https://audiobook-maker.com"
+    body = f"""# Audiobook Maker
+
+> Free, open-source online converter that turns EPUB and PDF ebooks into MP3 and M4B audiobooks using 400+ neural AI voices (Microsoft Edge TTS) across 50+ languages. No signup, no usage limits, runs in the browser. Optional AI text optimization (DeepSeek LLM) for natural-sounding narration. AGPL-3.0 licensed.
+
+## Key facts
+
+- Pricing: 100% free, donor-supported. No ads.
+- Voices: 400+ neural TTS voices via Microsoft Edge TTS; optional Google Cloud Chirp3-HD.
+- Output formats: MP3 (single or ZIP), M4B with embedded chapters, podcast RSS 2.0 feed.
+- Input formats: EPUB, PDF, TXT, ABM (revisable project archive).
+- UI languages: Italian, English, French, Spanish, German, Chinese.
+- TTS supported languages: 50+ (Italian, English, French, Spanish, German, Chinese, Portuguese, Russian, Japanese, Korean, Arabic, Hindi, and more).
+- Privacy: uploaded files and generated audio auto-deleted at session end. No personal data collected. GA4 with Consent Mode v2 (denied by default in EU).
+- Accessibility: WAI-ARIA landmarks, keyboard navigation, screen-reader compatible. Designed for users with dyslexia, low vision, blindness.
+- License: AGPL-3.0-or-later. Source on GitHub.
+- Author: Giuseppe Frangiamone.
+
+## Application (homepage)
+
+- [Audiobook Maker — English]({base}/en/): Main app, English UI.
+- [Audiobook Maker — Italian]({base}/it/): App in italiano.
+- [Audiobook Maker — French]({base}/fr/): App en français.
+- [Audiobook Maker — Spanish]({base}/es/): App en español.
+- [Audiobook Maker — German]({base}/de/): App auf Deutsch.
+- [Audiobook Maker — Chinese]({base}/zh/): 中文界面.
+
+## Guides
+
+- [How to Convert EPUB to Audiobook]({base}/guide/epub-to-audiobook/): Step-by-step EPUB-to-audiobook conversion tutorial.
+- [M4B Format Guide]({base}/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
+- [Text-to-Speech for Audiobooks]({base}/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
+- [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
+
+## How it works
+
+1. Upload an EPUB, PDF or TXT file.
+2. Choose a neural TTS voice and language (50+ languages).
+3. Optionally enable AI text optimization for more natural narration (acronym expansion, number-to-word, sentence splitting, punctuation cleanup).
+4. Select chapters or convert the entire book.
+5. Generate audio — download MP3, M4B (with chapters), or get a podcast RSS feed.
+6. For long books, register an email to be notified when generation completes.
+
+## Comparison
+
+- vs **Speechify**: Audiobook Maker is fully free with no subscription, no character limits, supports M4B output and podcast feeds.
+- vs **ElevenLabs**: Audiobook Maker uses Microsoft Edge TTS (free, unlimited) instead of paid ElevenLabs API. No voice cloning but no usage cost.
+- vs **Play.ht**: No subscription, no watermarks, supports chapter-based audiobook output (M4B).
+- vs **NaturalReader**: Free without account, server-side processing, batch chapter generation.
+
+## Resources
+
+- [GitHub repository](https://github.com/gfrangiamone/audiobook-maker): Source code, AGPL-3.0.
+- [AlternativeTo listing](https://alternativeto.net/software/audiobook-maker/): Community reviews and comparisons.
+- [Sitemap]({base}/sitemap.xml): Full URL index.
+- [Privacy & data handling]({base}/en/#privacy): Data retention, cookies, consent.
+
+## Contact
+
+- Author: Giuseppe Frangiamone
+- Project: open-source community project, contributions via GitHub issues/PRs.
+"""
+    return body, 200, {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+    }
 
 
 #  -  -  -  Favicon routes (URL-based for search engine compatibility)  -  -  -  -  -  -  -  -  -  -  -  -  -  - 

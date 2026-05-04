@@ -22,7 +22,7 @@
   --sel-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath fill='%239090a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;line-height:1.6;transition:background .4s,color .3s;position:relative;overflow-x:hidden}
+body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans SC',-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;line-height:1.6;transition:background .4s,color .3s;position:relative;overflow-x:hidden}
 .skip-link{position:absolute;top:-100px;left:16px;background:var(--ac);color:#fff;padding:8px 16px;border-radius:0 0 6px 6px;z-index:2000;font-weight:600;font-size:.9rem;text-decoration:none;transition:top .2s}.skip-link:focus{top:0}
 
 /* ═══ BG DECORATIONS ═══ */
@@ -41,7 +41,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 /* ═══ LAYOUT ═══ */
 .app{display:block;width:100%;max-width:720px!important;margin:0 auto!important;padding:40px 24px 80px;position:relative;z-index:1}
 .hdr{text-align:center;margin-bottom:12px}
-.hdr h1{font-family:'DM Serif Display',serif;font-size:2.2rem;font-weight:400;letter-spacing:-.02em;background:linear-gradient(135deg,var(--tx) 30%,var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px;justify-content:center}
+.hdr h1{font-family:'DM Serif Display','Noto Serif SC','STSong','SimSun',serif;font-size:2.2rem;font-weight:400;letter-spacing:-.02em;background:linear-gradient(135deg,var(--tx) 30%,var(--ac));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;display:inline-flex;align-items:center;gap:12px;justify-content:center}
 .hdr-icon{width:42px;height:42px;flex-shrink:0}
 .hdr-icon .ic-book{fill:var(--ac);opacity:.85}
 .hdr-icon .ic-wave{stroke:var(--ac);fill:none;stroke-width:2;stroke-linecap:round;opacity:.7}
@@ -93,7 +93,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .modal-overlay.open{display:flex}
 .modal{background:var(--srf);border-radius:var(--r);max-width:640px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.25);border:1px solid var(--brd)}
 .modal-head{display:flex;justify-content:space-between;align-items:center;padding:20px 24px 16px;border-bottom:1px solid var(--brd)}
-.modal-head h2{font-family:'DM Serif Display',serif;font-size:1.3rem;font-weight:400;color:var(--tx);margin:0}
+.modal-head h2{font-family:'DM Serif Display','Noto Serif SC','STSong','SimSun',serif;font-size:1.3rem;font-weight:400;color:var(--tx);margin:0}
 .modal-close{background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--txm);padding:0 4px;line-height:1;transition:color .2s}
 .modal-close:hover{color:var(--tx)}
 .modal-body{overflow-y:auto;padding:16px 24px 24px}
@@ -453,3 +453,16 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .vc-badge span.vc-label{font-size:.68rem}
   .bk-meta{font-size:.78rem}
 }
+
+/* ═══ COOKIE CONSENT BANNER (GDPR / Consent Mode v2) ═══ */
+#cookieBanner{position:fixed;left:16px;right:16px;bottom:16px;max-width:720px;margin:0 auto;background:var(--srf);border:1px solid var(--brd);border-radius:var(--r);box-shadow:0 8px 32px rgba(0,0,0,.18);padding:18px 20px;z-index:3000;display:none;font-size:.92rem;line-height:1.5}
+#cookieBanner.show{display:block}
+#cookieBanner h3{font-family:'DM Serif Display','Noto Serif SC','STSong','SimSun',serif;font-weight:400;font-size:1.15rem;margin-bottom:6px;color:var(--tx)}
+#cookieBanner p{color:var(--txd);margin-bottom:12px}
+#cookieBanner p a{color:var(--ac);text-decoration:underline}
+#cookieBanner .cb-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#cookieBanner button{padding:8px 16px;border-radius:var(--rs);border:1px solid var(--brd);background:var(--srf2);color:var(--tx);font-family:inherit;font-size:.88rem;cursor:pointer;transition:all .2s;font-weight:500}
+#cookieBanner button:hover{border-color:var(--brdh);background:var(--srf3)}
+#cookieBanner button.cb-accept{background:var(--ac);color:#fff;border-color:var(--ac)}
+#cookieBanner button.cb-accept:hover{background:var(--ach);border-color:var(--ach)}
+@media(max-width:600px){#cookieBanner{left:8px;right:8px;bottom:8px;padding:14px 14px}#cookieBanner .cb-actions{justify-content:stretch}#cookieBanner button{flex:1;min-width:96px}}
