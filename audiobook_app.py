@@ -2862,6 +2862,7 @@ def api_preview_audio(job_id):
             # Deduce i caratteri dell'anteprima dal budget
             google_tts.deduct_chars(len(preview_text))
         else:
+            import edge_tts
             loop = asyncio.new_event_loop()
             try:
                 async def _run():
