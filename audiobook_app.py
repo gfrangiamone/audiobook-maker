@@ -78,6 +78,7 @@ import email_service
 import payment
 import generation_engine
 import community_store
+import community_translator
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -2293,10 +2294,44 @@ def api_community_news():
             "title": it.get("title", ""),
             "body": it.get("body", ""),
             "lang": it.get("lang", "en"),
+            "title_i18n": it.get("title_i18n") or {},
+            "body_i18n": it.get("body_i18n") or {},
             "banner": bool(it.get("banner", False)),
             "created_at": it.get("created_at", 0),
         })
     return jsonify({"items": out})
+
+
+def _translate_news_async(item_id: str, title: str, body: str) -> None:
+    """Background: translate a news item title+body, persist."""
+    payload = {}
+    if title and title.strip():
+        payload["title"] = title
+    if body and body.strip():
+        payload["body"] = body
+    if not payload:
+        return
+    if not community_translator.is_available():
+        return
+    result = community_translator.translate(payload)
+    if not result:
+        return
+    patch: dict = {}
+    if "title" in payload:
+        patch["title_i18n"] = {
+            lg: (result.get(lg) or {}).get("title", "")
+            for lg in community_translator.LANGS
+        }
+    if "body" in payload:
+        patch["body_i18n"] = {
+            lg: (result.get(lg) or {}).get("body", "")
+            for lg in community_translator.LANGS
+        }
+    if patch:
+        try:
+            community_store.news().update(item_id, patch)
+        except Exception as e:
+            print(f"[news] translation persist failed for {item_id}: {e!s}")
 
 
 @app.route("/admin/api/news", methods=["POST"])
@@ -2319,6 +2354,12 @@ def admin_api_news_create():
         "tag": tag, "title": title, "body": text,
         "lang": lang, "banner": banner,
     })
+    # translate title+body into all UI langs (best-effort, async)
+    threading.Thread(
+        target=_translate_news_async,
+        args=(item["id"], title, text),
+        daemon=True,
+    ).start()
     return jsonify(item), 200
 
 
@@ -2440,9 +2481,33 @@ def api_community_feedback_list():
             "rating": it.get("rating"),
             "name": it.get("name") or "",
             "comment": it.get("comment") or "",
+            "comment_lang": it.get("comment_lang") or "",
+            "comment_i18n": it.get("comment_i18n") or {},
             "created_at": it.get("created_at", 0),
         })
     return jsonify({"items": public_items, "avg": avg, "total": total, "histogram": histogram})
+
+
+def _translate_feedback_async(item_id: str, comment: str) -> None:
+    """Background: translate a feedback comment into all UI langs, persist."""
+    if not comment or not comment.strip():
+        return
+    if not community_translator.is_available():
+        return
+    result = community_translator.translate({"comment": comment})
+    if not result:
+        return
+    patch = {
+        "comment_lang": result.get("source_lang") or "",
+        "comment_i18n": {
+            lg: (result.get(lg) or {}).get("comment", "")
+            for lg in community_translator.LANGS
+        },
+    }
+    try:
+        community_store.feedback().update(item_id, patch)
+    except Exception as e:
+        print(f"[feedback] translation persist failed for {item_id}: {e!s}")
 
 
 @app.route("/api/community/feedback", methods=["POST"])
@@ -2474,6 +2539,13 @@ def api_community_feedback_create():
     })
     # notify admin (throttled, fire-and-forget)
     threading.Thread(target=_notify_admin_new_feedback, args=(item,), daemon=True).start()
+    # translate comment into all UI langs (best-effort, async)
+    if comment:
+        threading.Thread(
+            target=_translate_feedback_async,
+            args=(item["id"], comment),
+            daemon=True,
+        ).start()
     return jsonify({"id": item["id"]}), 200
 
 

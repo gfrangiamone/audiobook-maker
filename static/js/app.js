@@ -2406,18 +2406,59 @@ function goToAudioSettings(){goToStep(3)}
     return (dict&&dict[k])||fb||k;
   }
   function tagLabel(tag){return tt('news_tag_'+tag,tag);}
+  function uiLang(){return (document.documentElement.lang||'en').slice(0,2).toLowerCase();}
+  function pickI18n(orig,i18n,srcLang){
+    const ui=uiLang();
+    const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
+    const src=(srcLang||'').toLowerCase();
+    const hasTr=!!localized && localized!==orig && (!src || src!==ui);
+    return {text:hasTr?localized:orig, hasTr, orig, localized};
+  }
+  function attachI18nToggle(btn,onSet,info){
+    if(!info.hasTr){btn.hidden=true;return;}
+    btn.hidden=false;
+    let showOrig=false;
+    const sync=()=>{
+      const lbl=tt(showOrig?'comment_show_translation':'comment_show_original','');
+      btn.title=lbl||(showOrig?'Show translation':'Show original');
+      btn.setAttribute('aria-label',btn.title);
+      btn.classList.toggle('active',showOrig);
+    };
+    sync();
+    btn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      showOrig=!showOrig;
+      onSet(showOrig);
+      sync();
+    });
+  }
   function buildItem(it){
     const div=document.createElement('div');
     div.className='news-item';
+    const titleInfo=pickI18n(it.title||'',it.title_i18n||{},it.lang||'');
+    const bodyInfo=pickI18n(it.body||'',it.body_i18n||{},it.lang||'');
+    const hasTr=titleInfo.hasTr||bodyInfo.hasTr;
     div.innerHTML=`
       <div class="news-item-head">
         <span class="news-item-tag ${it.tag}">${tagLabel(it.tag)}</span>
         <span class="news-item-date">${fmtDate(it.created_at)}</span>
       </div>
       <h4 class="news-item-title"></h4>
-      <p class="news-item-body"></p>`;
-    div.querySelector('.news-item-title').textContent=it.title||'';
-    div.querySelector('.news-item-body').textContent=it.body||'';
+      <p class="news-item-body"></p>
+      <div class="news-item-foot">
+        <button type="button" class="news-i18n-btn" hidden aria-label="">🌐</button>
+      </div>`;
+    const titleEl=div.querySelector('.news-item-title');
+    const bodyEl=div.querySelector('.news-item-body');
+    titleEl.textContent=titleInfo.text;
+    bodyEl.textContent=bodyInfo.text;
+    if(hasTr){
+      const btn=div.querySelector('.news-i18n-btn');
+      attachI18nToggle(btn,(showOrig)=>{
+        titleEl.textContent=showOrig?titleInfo.orig:titleInfo.localized||titleInfo.orig;
+        bodyEl.textContent=showOrig?bodyInfo.orig:bodyInfo.localized||bodyInfo.orig;
+      },{hasTr:true,orig:'',localized:''});
+    }
     return div;
   }
   function showModal(item){
@@ -2429,8 +2470,10 @@ function goToAudioSettings(){goToStep(3)}
     const okBtn=document.getElementById('newsModalOk');
     const closeBtn=document.getElementById('newsModalClose');
     if(tagEl){tagEl.className='news-modal-tag '+item.tag;tagEl.textContent=tagLabel(item.tag);}
-    if(titleEl) titleEl.textContent=item.title||'';
-    if(bodyEl) bodyEl.textContent=item.body||'';
+    const tInfo=pickI18n(item.title||'',item.title_i18n||{},item.lang||'');
+    const bInfo=pickI18n(item.body||'',item.body_i18n||{},item.lang||'');
+    if(titleEl) titleEl.textContent=tInfo.text;
+    if(bodyEl) bodyEl.textContent=bInfo.text;
     if(okBtn) okBtn.textContent=tt('news_modal_ok','OK');
     overlay.hidden=false;
     document.body.style.overflow='hidden';
@@ -2551,6 +2594,32 @@ function goToAudioSettings(){goToStep(3)}
       }));
     }
   }
+  function uiLang(){return (document.documentElement.lang||'en').slice(0,2).toLowerCase();}
+  function pickI18n(orig,i18n,srcLang){
+    const ui=uiLang();
+    const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
+    const src=(srcLang||'').toLowerCase();
+    const hasTr=!!localized && localized!==orig && (!src || src!==ui);
+    return {text:hasTr?localized:orig, hasTr, orig, localized};
+  }
+  function attachI18nToggle(btn,bodyEl,info){
+    if(!info.hasTr){btn.hidden=true;return;}
+    btn.hidden=false;
+    let showOrig=false;
+    const sync=()=>{
+      const lbl=tt(showOrig?'comment_show_translation':'comment_show_original','');
+      btn.title=lbl||(showOrig?'Show translation':'Show original');
+      btn.setAttribute('aria-label',btn.title);
+      btn.classList.toggle('active',showOrig);
+    };
+    sync();
+    btn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      showOrig=!showOrig;
+      bodyEl.textContent=showOrig?info.orig:info.localized;
+      sync();
+    });
+  }
   function renderRecent(items){
     const list=document.getElementById('fbRecent');
     if(!list) return;
@@ -2560,18 +2629,21 @@ function goToAudioSettings(){goToStep(3)}
       const div=document.createElement('div');
       div.className='fbw-comment';
       const stars='★'.repeat(it.rating||0)+'☆'.repeat(5-(it.rating||0));
+      const info=pickI18n(it.comment||'',it.comment_i18n||{},it.comment_lang||'');
       div.innerHTML=`
         <div class="fbw-comment-head">
           <span class="fbw-comment-name"></span>
           <span class="fbw-comment-rating">${stars}</span>
         </div>
         <p class="fbw-comment-body"></p>
-        <div class="fbw-comment-head" style="margin-top:4px">
-          <span></span>
-          <span>${fmtDate(it.created_at)}</span>
+        <div class="fbw-comment-foot">
+          <button type="button" class="fbw-i18n-btn" hidden aria-label="">🌐</button>
+          <span class="fbw-comment-date">${fmtDate(it.created_at)}</span>
         </div>`;
       div.querySelector('.fbw-comment-name').textContent=it.name||tt('fb_anonymous','Anonymous');
-      div.querySelector('.fbw-comment-body').textContent=it.comment||'';
+      const body=div.querySelector('.fbw-comment-body');
+      body.textContent=info.text;
+      attachI18nToggle(div.querySelector('.fbw-i18n-btn'),body,info);
       list.appendChild(div);
     }
   }
