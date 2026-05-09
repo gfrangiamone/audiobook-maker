@@ -725,7 +725,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 }
 
 /* ─── LIVE STATS & MODAL ─── */
-.live-stats{display:flex;justify-content:center;align-items:center;gap:10px;max-width:760px;margin:18px auto 24px;padding:10px 16px;font-size:.88rem;color:var(--txd);flex-wrap:wrap;background:var(--srf);border:1px solid var(--brd);border-radius:999px}
+.live-stats{display:flex;justify-content:center;align-items:center;gap:10px;max-width:760px;margin:-4px auto 16px;padding:2px 12px;font-size:.85rem;color:var(--txd);flex-wrap:wrap;background:transparent;border:0;border-radius:0}
 .live-stats[hidden]{display:none}
 .live-stats-icon{flex:0 0 auto;color:var(--ac)}
 .live-stats #lsToday{font-weight:700;color:var(--ac);font-variant-numeric:tabular-nums}
