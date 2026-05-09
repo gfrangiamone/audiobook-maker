@@ -2218,9 +2218,9 @@ function goToAudioSettings(){
   }
   function tagLabel(tag){
     const k='news_tag_'+tag;
-    const v=(window.L&&window.L[document.documentElement.lang||'en'])
-      ? window.L[document.documentElement.lang][k]||window.L[document.documentElement.lang]['news_tag_info']
-      : tag;
+    const lang=document.documentElement.lang||'en';
+    const dict=(typeof L!=='undefined'&&L[lang])?L[lang]:null;
+    const v=dict?(dict[k]||dict['news_tag_info']||tag):tag;
     return v;
   }
   function applyT(node){
@@ -2228,7 +2228,7 @@ function goToAudioSettings(){
     node.querySelectorAll('[data-t]').forEach(el=>{
       const k=el.getAttribute('data-t');
       const lang=document.documentElement.lang||'en';
-      const t=window.L&&window.L[lang]&&window.L[lang][k];
+      const t=(typeof L!=='undefined')&&L[lang]&&L[lang][k];
       if(t!==undefined) el.textContent=t;
     });
   }
@@ -2307,7 +2307,8 @@ function goToAudioSettings(){
   let currentRating=0;
   function tt(k,fb){
     const lang=document.documentElement.lang||'en';
-    return (window.L&&window.L[lang]&&window.L[lang][k])||fb||k;
+    const dict=(typeof L!=='undefined')?L[lang]:null;
+    return (dict&&dict[k])||fb||k;
   }
   function fmtDate(ts){try{return new Date(ts*1000).toLocaleDateString();}catch(e){return '';}}
   function applyPlaceholders(node){
