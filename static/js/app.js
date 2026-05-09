@@ -2386,35 +2386,68 @@ function goToAudioSettings(){goToStep(3)}
 
 /* ─── NEWS ─── */
 (function(){
-  const DISMISS_KEY='abm_news_dismissed_v1';
-  const SESSION_KEY='abm_news_session_seen';
-  function loadDismissed(){
-    try{return JSON.parse(localStorage.getItem(DISMISS_KEY)||'{"ids":[],"sessions":0}');}
-    catch(e){return {ids:[],sessions:0};}
+  const SEEN_KEY='abm_news_seen_v2';
+  function loadSeen(){
+    try{return JSON.parse(localStorage.getItem(SEEN_KEY)||'[]');}
+    catch(e){return [];}
   }
-  function saveDismissed(d){try{localStorage.setItem(DISMISS_KEY,JSON.stringify(d));}catch(e){}}
+  function markSeen(id){
+    try{
+      const seen=loadSeen();
+      if(!seen.includes(id)){seen.push(id);localStorage.setItem(SEEN_KEY,JSON.stringify(seen));}
+    }catch(e){}
+  }
   function fmtDate(ts){
     try{const d=new Date(ts*1000);return d.toLocaleDateString();}catch(e){return '';}
   }
-  function tagLabel(tag){
-    const k='news_tag_'+tag;
+  function tt(k,fb){
     const lang=document.documentElement.lang||'en';
     const dict=(typeof L!=='undefined'&&L[lang])?L[lang]:null;
-    const v=dict?(dict[k]||dict['news_tag_info']||tag):tag;
-    return v;
+    return (dict&&dict[k])||fb||k;
   }
-  function applyT(node){
-    if(window.applyTranslations){window.applyTranslations(node);return;}
-    node.querySelectorAll('[data-t]').forEach(el=>{
-      const k=el.getAttribute('data-t');
-      const lang=document.documentElement.lang||'en';
-      const t=(typeof L!=='undefined')&&L[lang]&&L[lang][k];
-      if(t!==undefined) el.textContent=t;
-    });
+  function tagLabel(tag){return tt('news_tag_'+tag,tag);}
+  function buildItem(it){
+    const div=document.createElement('div');
+    div.className='news-item';
+    div.innerHTML=`
+      <div class="news-item-head">
+        <span class="news-item-tag ${it.tag}">${tagLabel(it.tag)}</span>
+        <span class="news-item-date">${fmtDate(it.created_at)}</span>
+      </div>
+      <h4 class="news-item-title"></h4>
+      <p class="news-item-body"></p>`;
+    div.querySelector('.news-item-title').textContent=it.title||'';
+    div.querySelector('.news-item-body').textContent=it.body||'';
+    return div;
+  }
+  function showModal(item){
+    const overlay=document.getElementById('newsModal');
+    if(!overlay) return;
+    const tagEl=document.getElementById('newsModalTag');
+    const titleEl=document.getElementById('newsModalTitle');
+    const bodyEl=document.getElementById('newsModalBody');
+    const okBtn=document.getElementById('newsModalOk');
+    const closeBtn=document.getElementById('newsModalClose');
+    if(tagEl){tagEl.className='news-modal-tag '+item.tag;tagEl.textContent=tagLabel(item.tag);}
+    if(titleEl) titleEl.textContent=item.title||'';
+    if(bodyEl) bodyEl.textContent=item.body||'';
+    if(okBtn) okBtn.textContent=tt('news_modal_ok','OK');
+    overlay.hidden=false;
+    document.body.style.overflow='hidden';
+    function close(){
+      overlay.hidden=true;
+      document.body.style.overflow='';
+      markSeen(item.id);
+    }
+    if(okBtn) okBtn.onclick=close;
+    if(closeBtn) closeBtn.onclick=close;
+    overlay.onclick=(e)=>{if(e.target===overlay) close();};
   }
   async function loadNews(){
     const card=document.getElementById('newsCard');
     const list=document.getElementById('newsList');
+    const listMore=document.getElementById('newsListMore');
+    const toggleMore=document.getElementById('newsToggleMore');
     const empty=document.getElementById('newsEmpty');
     if(!card||!list) return;
     let data;
@@ -2430,52 +2463,33 @@ function goToAudioSettings(){goToStep(3)}
     }
     card.hidden=false;
     list.innerHTML='';
+    if(listMore) listMore.innerHTML='';
     if(empty) empty.hidden=true;
-    for(const it of items){
-      const div=document.createElement('div');
-      div.className='news-item';
-      div.innerHTML=`
-        <div class="news-item-head">
-          <span class="news-item-tag ${it.tag}">${tagLabel(it.tag)}</span>
-          <span class="news-item-date">${fmtDate(it.created_at)}</span>
-        </div>
-        <h4 class="news-item-title"></h4>
-        <p class="news-item-body"></p>`;
-      div.querySelector('.news-item-title').textContent=it.title||'';
-      div.querySelector('.news-item-body').textContent=it.body||'';
-      list.appendChild(div);
-    }
-    // banner: most recent with banner=true, not yet dismissed
-    const dismissed=loadDismissed();
-    const banner=items.find(it=>it.banner && !dismissed.ids.includes(it.id));
-    const bannerEl=document.getElementById('newsBanner');
-    if(banner&&bannerEl){
-      const tagEl=document.getElementById('newsBannerTag');
-      const txtEl=document.getElementById('newsBannerText');
-      const closeBtn=document.getElementById('newsBannerClose');
-      if(tagEl){tagEl.className='news-banner-tag '+banner.tag;tagEl.textContent=tagLabel(banner.tag);}
-      if(txtEl) txtEl.textContent=banner.title;
-      bannerEl.hidden=false;
-      // auto-dismiss after 2 sessions seen without click
-      const seen=parseInt(sessionStorage.getItem(SESSION_KEY+'_'+banner.id)||'0',10);
-      if(!seen){
-        sessionStorage.setItem(SESSION_KEY+'_'+banner.id,'1');
-        dismissed.sessions=(dismissed.sessions||0)+1;
-        saveDismissed(dismissed);
-        if(dismissed.sessions>=2){
-          dismissed.ids.push(banner.id);
-          dismissed.sessions=0;
-          saveDismissed(dismissed);
+    // Show only the latest by default
+    list.appendChild(buildItem(items[0]));
+    // Hide rest behind expand button
+    const rest=items.slice(1);
+    if(rest.length&&listMore&&toggleMore){
+      for(const it of rest) listMore.appendChild(buildItem(it));
+      toggleMore.hidden=false;
+      listMore.hidden=true;
+      toggleMore.onclick=()=>{
+        const open=!listMore.hidden;
+        listMore.hidden=open;
+        toggleMore.classList.toggle('open',!open);
+        const lbl=toggleMore.querySelector('[data-t]');
+        if(lbl){
+          lbl.setAttribute('data-t',open?'news_show_more':'news_show_less');
+          lbl.textContent=tt(open?'news_show_more':'news_show_less');
         }
-      }
-      if(closeBtn){
-        closeBtn.onclick=()=>{
-          bannerEl.hidden=true;
-          dismissed.ids.push(banner.id);
-          saveDismissed(dismissed);
-        };
-      }
+      };
+    }else if(toggleMore){
+      toggleMore.hidden=true;
     }
+    // One-time modal popup for items flagged as banner, never seen before
+    const seen=loadSeen();
+    const popup=items.find(it=>it.banner && !seen.includes(it.id));
+    if(popup) showModal(popup);
   }
   function init(){loadNews();}
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);

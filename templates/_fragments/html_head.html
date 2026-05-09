@@ -174,18 +174,19 @@ __SEO_HREFLANG__
     </div>
   </header>
 
-  <!-- NEWS BANNER -->
-  <div class="news-banner" id="newsBanner" hidden>
-    <span class="news-banner-tag" id="newsBannerTag"></span>
-    <span class="news-banner-text" id="newsBannerText"></span>
-    <button type="button" class="news-banner-close" id="newsBannerClose" aria-label="Dismiss">&times;</button>
-  </div>
-
-  <!-- LIVE STATS -->
-  <div class="live-stats" id="liveStats" hidden>
-    <span>📚 <span id="lsToday">0</span> <span data-t="ls_books_today"></span></span>
-    <span class="ls-sep" aria-hidden="true">·</span>
-    <a href="#" class="ls-link" id="lsMore" data-t="ls_more"></a>
+  <!-- NEWS MODAL POPUP (one-time per user) -->
+  <div class="news-modal-overlay" id="newsModal" role="dialog" aria-modal="true" aria-labelledby="newsModalTitle" hidden>
+    <div class="news-modal" role="document">
+      <div class="news-modal-head">
+        <span class="news-modal-tag" id="newsModalTag"></span>
+        <button class="news-modal-close" id="newsModalClose" type="button" aria-label="Close">&times;</button>
+      </div>
+      <h3 id="newsModalTitle" class="news-modal-title"></h3>
+      <p id="newsModalBody" class="news-modal-body"></p>
+      <div class="news-modal-footer">
+        <button class="btn btn-p btn-sm" id="newsModalOk" type="button" data-t="news_modal_ok"></button>
+      </div>
+    </div>
   </div>
 
   <!-- STATS MODAL -->
@@ -570,6 +571,14 @@ __SEO_HREFLANG__
 
   </main>
 
+  <!-- LIVE STATS (under the wizard, centered) -->
+  <div class="live-stats" id="liveStats" hidden>
+    <svg class="live-stats-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
+    <span><span id="lsToday">0</span> <span data-t="ls_books_today"></span></span>
+    <span class="ls-sep" aria-hidden="true">·</span>
+    <a href="#" class="ls-link" id="lsMore" data-t="ls_more"></a>
+  </div>
+
   <!-- Feedback Widget (under the wizard) -->
   <section class="community-card fbw" id="fbWidget">
     <button type="button" class="fbw-toggle" id="fbToggle" aria-expanded="false">
@@ -612,6 +621,21 @@ __SEO_HREFLANG__
   <!-- RESOURCES SECTION -->
   <section class="resources-section" aria-label="Risorse e guide">
 
+    <!-- News Card (above guides/FAQ) -->
+    <section class="community-card news-card" id="newsCard" hidden>
+      <h3>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/></svg>
+        <span data-t="news_panel_title"></span>
+      </h3>
+      <div class="news-list" id="newsList"></div>
+      <div class="news-list news-list-more" id="newsListMore" hidden></div>
+      <button type="button" class="news-toggle-more" id="newsToggleMore" hidden>
+        <span data-t="news_show_more"></span>
+        <svg class="news-toggle-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="news-empty" id="newsEmpty" hidden data-t="news_empty"></div>
+    </section>
+
     <!-- Donation Card -->
     <div class="community-card donate-card" id="donateCard">
       <h3><span data-t="donate_title"></span></h3>
@@ -639,16 +663,6 @@ __SEO_HREFLANG__
         <details class="faq-item"><summary data-t="faq_free_books_q"></summary><div class="faq-answer" data-t="faq_free_books_a"></div></details>
       </div>
     </div>
-
-    <!-- News Card -->
-    <section class="community-card news-card" id="newsCard" hidden>
-      <h3>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/></svg>
-        <span data-t="news_panel_title"></span>
-      </h3>
-      <div class="news-list" id="newsList"></div>
-      <div class="news-empty" id="newsEmpty" hidden data-t="news_empty"></div>
-    </section>
 
     <!-- Social Sharing Bar (full-width below guides & FAQ) -->
     <div class="community-card social-card">
