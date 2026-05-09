@@ -206,6 +206,9 @@ function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.se
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
   // Switch visible SEO content block to match selected language
   if(typeof switchSeoLang==='function')switchSeoLang(l);
+  // Notify widgets that render i18n-aware content (feedback, news) so
+  // they can re-render with the freshly selected UI language.
+  try{window.dispatchEvent(new CustomEvent('abm:langchange',{detail:{lang:l}}));}catch(e){}
 }
 function detectLang(){
   // INIT_LANG è iniettato server-side: rispetta la lingua della URL (/it/, /en/, ecc.)
@@ -2534,7 +2537,12 @@ function goToAudioSettings(){goToStep(3)}
     const popup=items.find(it=>it.banner && !seen.includes(it.id));
     if(popup) showModal(popup);
   }
-  function init(){loadNews();}
+  function init(){
+    loadNews();
+    // Re-fetch + re-render when the UI language changes so headlines and
+    // bodies pick up the freshly selected localized variants.
+    window.addEventListener('abm:langchange',()=>{ loadNews(); });
+  }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
@@ -2542,6 +2550,7 @@ function goToAudioSettings(){goToStep(3)}
 /* ─── FEEDBACK ─── */
 (function(){
   let currentRating=0;
+  let lastItems=[];
   const MY_FB_KEY='abm_my_feedbacks';
   function tt(k,fb){
     const lang=document.documentElement.lang||'en';
@@ -2717,7 +2726,8 @@ function goToAudioSettings(){goToStep(3)}
     }
     if(tot) tot.textContent=data.total?'· '+data.total+' '+tt('fb_total_reviews'):'';
     renderHistogram(data.histogram||[0,0,0,0,0],data.total||0);
-    renderRecent(data.items||[]);
+    lastItems=data.items||[];
+    renderRecent(lastItems);
   }
   function showMsg(text,kind){
     const el=document.getElementById('fbMsg');
@@ -2780,6 +2790,8 @@ function goToAudioSettings(){goToStep(3)}
     }
     const form=document.getElementById('fbForm');
     if(form) form.addEventListener('submit',submitFeedback);
+    // Re-render the comment list when the user picks a different UI lang.
+    window.addEventListener('abm:langchange',()=>{ renderRecent(lastItems); });
     loadFeedback();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
