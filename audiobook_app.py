@@ -123,7 +123,7 @@ def _estimate_llm_cost_eur(char_count):
 
 
 #  -  -  Import version and template builder  -  - 
-from version import __version__
+from version import __version__, get_formatted_date
 from templates.index_page import build_html_template
 from guide_content import build_guide_html
 
@@ -946,8 +946,10 @@ def parse_abm(path):
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
-def run_generation(job_id, info, voice, rate, single_file):
-    return generation_engine.run_generation(job_id, info, voice, rate, single_file)
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+    return generation_engine.run_generation(job_id, info, voice, rate, single_file,
+                                           output_format=output_format,
+                                           podcast_base_url=podcast_base_url)
 
 def _refund_job_payment(job_id, job, reason='error'):
     return generation_engine._refund_job_payment(job_id, job, reason)
@@ -2857,6 +2859,7 @@ def api_preview_audio(job_id):
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
 
     def _generate():
+        import edge_tts
         if use_google_preview:
             google_tts.synthesize(preview_text, voice, rate, str(preview_path))
             # Deduce i caratteri dell'anteprima dal budget
@@ -2997,11 +3000,19 @@ def api_generate():
     voice = data.get("voice", "it-IT-IsabellaNeural")
     rate = data.get("rate", "+0%")
     single_file = data.get("single_file", True)
+    output_format = data.get("output_format", "m4b")
+    podcast_base_url = (data.get("podcast_base_url") or "").strip()
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
 
     if job_id not in jobs:
         return jsonify({"error": "Session expired. Re-upload file."}), 400
     job = jobs[job_id]
+
+    # Store format and podcast URL for email/download handlers
+    job["output_format"] = output_format
+    if output_format == "zip_rss":
+        job["notify_download_type"] = "podcast"
+        job["notify_base_url"] = podcast_base_url
 
     # Check sospensione nuovi processi (admin toggle)
     if _suspend_new_jobs:
@@ -3064,8 +3075,12 @@ def api_generate():
         # potrebbero scomparire al prossimo /api/voices
         _invalidate_voices_cache()
 
+    # Increment generation epoch to invalidate any stale threads
+    job["gen_epoch"] = job.get("gen_epoch", 0) + 1
     thread = threading.Thread(
-        target=run_generation, args=(job_id, info, voice, rate, single_file), daemon=True
+        target=run_generation, args=(job_id, info, voice, rate, single_file),
+        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url},
+        daemon=True
     )
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
@@ -3133,7 +3148,7 @@ def api_progress(job_id):
                 payload["error"] = job.get("error", "Unknown error")
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
-            if job.get("status") == "cancelled":
+            if job.get("status") == "cancelled" or job.get("cancelled"):
                 payload["status"] = "cancelled"
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
@@ -3179,6 +3194,8 @@ def api_cancel(job_id):
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
+        job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+        job["status"] = "analyzed"
         return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
 
@@ -3232,7 +3249,18 @@ def api_reset_to_chapters(job_id):
                 "start_time", "elapsed_seconds", "current_chapter",
                 "current_chapter_num", "total_chapters",
                 "downloaded_at", "email_sent_at", "email_registered",
-                "failed_chunks", "cancelled"):
+                "failed_chunks", "cancelled",
+                # AI optimization state — cleared so re-optimization is possible
+                "ai_optimized",
+                "opt_cancelled", "opt_progress_current", "opt_progress_total",
+                "opt_progress_message", "opt_current_chapter", "opt_current_chapter_num",
+                "opt_processed_chars", "opt_total_chars", "opt_streamed_chars",
+                "opt_current_chapter_chars", "opt_elapsed_seconds", "opt_completed_at",
+                "optimized_abm_path", "optimized_abm_name",
+                "selected_chapters",
+                "opt_auto_generate", "opt_single_file", "opt_output_format",
+                "opt_podcast_base_url", "opt_voice", "opt_rate",
+                "email_token"):
         job.pop(key, None)
     # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
     #        client_id, client_ip, voice (so preview still works)
@@ -3692,8 +3720,14 @@ def api_optimize():
         job["opt_voice"] = data.get("voice", "it-IT-IsabellaNeural")
         job["opt_rate"] = data.get("rate", "+0%")
         job["opt_single_file"] = data.get("single_file", True)
-        job["notify_download_type"] = data.get("download_type", "audio")
-        job["notify_base_url"] = (data.get("base_url") or "").strip()
+        job["opt_output_format"] = data.get("output_format", "m4b")
+        job["opt_podcast_base_url"] = (data.get("podcast_base_url") or "").strip()
+        if job["opt_output_format"] == "zip_rss":
+            job["notify_download_type"] = "podcast"
+            job["notify_base_url"] = job["opt_podcast_base_url"]
+        else:
+            job["notify_download_type"] = "audio"
+            job["notify_base_url"] = ""
     else:
         job["opt_auto_generate"] = False
 
@@ -3737,7 +3771,8 @@ def api_optimize_progress(job_id):
                 payload["error"] = job.get("error", "Unknown error")
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
-            if status == "cancelled":
+            if status == "cancelled" or job.get("opt_cancelled"):
+                payload["status"] = "cancelled"
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if status == "optimized":
@@ -3769,48 +3804,6 @@ def api_cancel_optimize(job_id):
             job["opt_cancelled"] = True
             return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
-
-
-@app.route("/api/register_opt_email", methods=["POST"])
-def api_register_opt_email():
-    """Register email on an already-running optimization (background mode)."""
-    import re as _re
-    data = request.json or {}
-    job_id = data.get("job_id", "")
-    email = (data.get("email") or "").strip().lower()
-    auto_generate = data.get("auto_generate", False)
-
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]
-
-    if job.get("status") != "optimizing":
-        return jsonify({"error": "Optimization not in progress"}), 400
-
-    if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
-        return jsonify({"error": "Invalid email address"}), 400
-
-    if not _smtp_available():
-        return jsonify({"error": "Email service not configured on this server"}), 503
-
-    job["notify_email"] = email
-    job["notify_lang"] = data.get("lang", "en")
-    job["notify_download_type"] = data.get("download_type", "audio")
-    job["notify_base_url"] = (data.get("base_url") or "").strip()
-    job["email_registered"] = True
-
-    if auto_generate:
-        job["opt_auto_generate"] = True
-        job["opt_voice"] = data.get("voice", "it-IT-IsabellaNeural")
-        job["opt_rate"] = data.get("rate", "+0%")
-        job["opt_single_file"] = data.get("single_file", True)
-
-    print(f"[{job_id}] Optimization email registered: {email} (auto_generate: {auto_generate})")
-    _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_REGISTERED",
-                  job.get("client_id", ""), job.get("client_ip", ""),
-                  "", browser_lang=job.get("browser_lang", ""))
-
-    return jsonify({"status": "registered", "email": email})
 
 
 @app.route("/api/active_jobs")
@@ -3912,8 +3905,28 @@ def token_download_page(token):
             m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
             m4b_available = len(m4bs) > 0
 
+    # ABM availability: from job in memory (ai_optimized flag) or token snapshot
+    has_abm = False
+    if job_in_memory:
+        has_abm = jobs[job_id].get("ai_optimized", False) or (
+            bool(jobs[job_id].get("optimized_abm_path"))
+            and os.path.exists(jobs[job_id].get("optimized_abm_path", ""))
+        )
+    if not has_abm:
+        abm_path_tok = token_info.get("optimized_abm_path", "")
+        has_abm = bool(abm_path_tok) and os.path.exists(abm_path_tok)
+
+    # Output format: from job in memory, fallback to token snapshot
+    output_format = ""
+    if job_in_memory:
+        output_format = jobs[job_id].get("output_format", "")
+    if not output_format:
+        output_format = token_info.get("output_format", "")
+
     return _render_dl_page(token, book_title, remaining_str,
-                           token_info["download_type"], lang, m4b_available=m4b_available)
+                           token_info["download_type"], lang,
+                           m4b_available=m4b_available, has_abm=has_abm,
+                           output_format=output_format)
 
 
 @app.route("/dl/<token>/abm")
@@ -4259,6 +4272,24 @@ window.addEventListener('load',()=>{{
 
 def _serve_podcast_download(token_info, job, job_id):
     """Serve podcast download from job in memory or token snapshot on disk."""
+
+    # If output ZIP already has RSS embedded (zip_rss format), serve it directly
+    output_zip = token_info.get("output_zip", "")
+    if output_zip and os.path.exists(output_zip):
+        # Check if RSS is embedded (job in memory) or trust the zip_rss output
+        if (job and job.get("podcast_rss_included")) or not job:
+            print(f"[dl] Podcast: serving existing ZIP with embedded RSS: {output_zip}")
+            if job:
+                job["last_poll"] = time.time()
+                job["downloaded_at"] = time.time()
+            orig = token_info.get("original_filename", job.get("original_filename", "") if job else "")
+            _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
+                          job.get("client_id", "") if job else "",
+                          job.get("client_ip", "") if job else "",
+                          job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            return send_file(output_zip, as_attachment=True,
+                             download_name=os.path.basename(output_zip))
+
     base_url = token_info.get("base_url", "")
 
     # Get podcast data from job (memory) or token snapshot (disk)
@@ -4404,36 +4435,84 @@ a:hover{{text-decoration:underline}}
 </div></body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format=""):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
-    
-    # If M4B is available and it was the requested type, use M4B button label
-    # or if it's the only thing we have (fallback/auto).
-    # However, if user chose ZIP, we might have both.
-    
-    is_m4b_primary = (dl_type == "audio" and m4b_available)
-    
-    if is_m4b_primary:
-        primary_btn_label = t.get("btn_m4b", "Download M4B")
-        primary_url = f"/dl/{token}/m4b"
-        secondary_btn_html = "" # Don't show MP3/ZIP if M4B is primary unless requested
-    else:
-        primary_btn_label = t.get("btn_no_m4b", t.get("btn", "Download ZIP"))
-        primary_url = f"/dl/{token}/download"
-        secondary_btn_html = ""
-        # If M4B is available but NOT primary, show it as secondary
-        if m4b_available:
-            secondary_btn_html = f'<p><a href="/dl/{token}/m4b" class="btn btn-m4b">{t.get("btn_m4b", "Download M4B")}</a></p>'
+
+    # Single audio button matching post-generation page style
+    # SVG download icon for single-file formats, emoji for ZIP
+
+    audio_btn_html = ""
+    type_label = ""
+
+    _format_labels = {
+        "m4b": {
+            "it": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Scarica audiolibro (M4B)</span>', "Audiobook (M4B)"),
+            "en": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Download audiobook (M4B)</span>', "Audiobook (M4B)"),
+            "fr": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>T&eacute;l&eacute;charger l&rsquo;audiobook (M4B)</span>', "Audiobook (M4B)"),
+            "es": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Descargar audiolibro (M4B)</span>', "Audiobook (M4B)"),
+            "de": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>H&ouml;rbuch herunterladen (M4B)</span>', "Audiobook (M4B)"),
+            "zh": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>下载有声读物 (M4B)</span>', "Audiobook (M4B)"),
+        },
+        "mp3": {
+            "it": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Scarica audiolibro (MP3)</span>', "Audiobook (MP3)"),
+            "en": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Download audiobook (MP3)</span>', "Audiobook (MP3)"),
+            "fr": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>T&eacute;l&eacute;charger l&rsquo;audiobook (MP3)</span>', "Audiobook (MP3)"),
+            "es": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Descargar audiolibro (MP3)</span>', "Audiobook (MP3)"),
+            "de": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>H&ouml;rbuch herunterladen (MP3)</span>', "Audiobook (MP3)"),
+            "zh": ('<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>下载有声读物 (MP3)</span>', "Audiobook (MP3)"),
+        },
+        "zip": {
+            "it": ("&#x2B07;&#xFE0F; <span>Scarica audiolibro (ZIP)</span>", "Audiobook (ZIP)"),
+            "en": ("&#x2B07;&#xFE0F; <span>Download audiobook (ZIP)</span>", "Audiobook (ZIP)"),
+            "fr": ("&#x2B07;&#xFE0F; <span>T&eacute;l&eacute;charger l&rsquo;audiobook (ZIP)</span>", "Audiobook (ZIP)"),
+            "es": ("&#x2B07;&#xFE0F; <span>Descargar audiolibro (ZIP)</span>", "Audiobook (ZIP)"),
+            "de": ("&#x2B07;&#xFE0F; <span>H&ouml;rbuch herunterladen (ZIP)</span>", "Audiobook (ZIP)"),
+            "zh": ("&#x2B07;&#xFE0F; <span>下载有声读物 (ZIP)</span>", "Audiobook (ZIP)"),
+        },
+    }
 
     if dl_type == "optimized_abm":
         type_label = "Optimized Project (.abm)"
     elif dl_type == "podcast":
-        type_label = "Podcast ZIP"
-    elif is_m4b_primary:
-        type_label = "Audiobook (M4B)"
-    else:
-        type_label = "Audio ZIP"
+        # Podcast: ZIP with chapter MP3s + RSS
+        audio_btn_html = '<a href="/dl/{}/download" class="btn">{}</a>'.format(
+            token, t.get("btn_no_m4b", "&#x2B07;&#xFE0F; Download podcast"))
+        type_label = "Podcast"
+    elif dl_type == "audio":
+        # Determine format: prefer output_format from job, fallback to m4b detection
+        fmt = output_format if output_format in ("m4b", "mp3", "zip", "zip_rss") else None
+        if not fmt and m4b_available:
+            fmt = "m4b"
+        elif not fmt:
+            fmt = "zip"
+
+        if fmt == "m4b":
+            label_data = _format_labels["m4b"]
+            btn_url = f"/dl/{token}/m4b"
+        elif fmt == "mp3":
+            label_data = _format_labels["mp3"]
+            btn_url = f"/dl/{token}/download"
+        else:
+            label_data = _format_labels["zip"]
+            btn_url = f"/dl/{token}/download"
+
+        btn_label, type_label = label_data.get(lang, label_data.get("en", label_data.get("it")))
+        audio_btn_html = f'<p><a href="{btn_url}" class="btn">{btn_label}</a></p>'
+
+    # ABM button (only if AI optimization was active)
+    abm_btn_html = ""
+    if has_abm:
+        _abm_labels = {
+            "it": "&#x1F4DD;&#xFE0F; Scarica testo ottimizzato (.abm)",
+            "en": "&#x1F4DD;&#xFE0F; Download optimized text (.abm)",
+            "fr": "&#x1F4DD;&#xFE0F; T&eacute;l&eacute;charger le texte optimis&eacute; (.abm)",
+            "es": "&#x1F4DD;&#xFE0F; Descargar texto optimizado (.abm)",
+            "de": "&#x1F4DD;&#xFE0F; Optimierten Text herunterladen (.abm)",
+            "zh": "&#x1F4DD;&#xFE0F; 下载优化文本 (.abm)",
+        }
+        abm_label = _abm_labels.get(lang, _abm_labels["en"])
+        abm_btn_html = f'<p><a href="/dl/{token}/abm" class="btn btn-abm">{abm_label}</a></p>'
 
     warn_text = t["warn"].replace("{r}", remaining_str)
 
@@ -4456,8 +4535,9 @@ h2{{color:#2c3e50;margin:0 0 8px}}
 text-decoration:none;border-radius:8px;font-weight:600;font-size:18px;
 transition:background .2s;border:none;cursor:pointer}}
 .btn:hover{{background:#2563eb}}
-.btn-m4b{{background:#8b5cf6;margin-top:12px}}
-.btn-m4b:hover{{background:#7c3aed}}
+.btn-abm{{background:rgba(196,122,42,.10);color:#b8804a;border:1px solid #d4b68c;padding:15px 28px;font-size:1rem;font-weight:600;max-width:300px;margin-top:12px;white-space:normal;word-break:keep-all}}
+.btn-abm:hover{{background:rgba(196,122,42,.14);color:#c47a2a;border-color:#c47a2a}}
+.btn-icon{{vertical-align:middle;margin-right:4px}}
 .warn{{color:#e74c3c;font-weight:600;margin-top:24px;font-size:.9rem}}
 .type{{display:inline-block;padding:4px 12px;background:#e8f4f8;border-radius:12px;
 font-size:.85rem;color:#2980b9;margin-bottom:16px}}
@@ -4467,14 +4547,15 @@ font-size:.85rem;color:#2980b9;margin-bottom:16px}}
 .share-icons a,.share-icons button{{width:40px;height:40px;border-radius:50%;display:inline-flex;
 align-items:center;justify-content:center;border:1px solid #ddd;background:#f8f9fa;color:#666;
 cursor:pointer;transition:all .2s;text-decoration:none;padding:0}}
-.share-icons a:hover,.share-icons button:hover{{border-color:#3b82f6;color:#3b82f6;
+.share-icons a:hover,.share-icons button:hover{{border-color:currentColor;
 transform:translateY(-2px);box-shadow:0 3px 10px rgba(0,0,0,.08)}}
 .share-icons svg{{width:20px;height:20px;fill:currentColor}}
-.copy-wrap{{position:relative;display:inline-flex}}
-.copy-tip{{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+#shX{{color:#14171a}}#shFb{{color:#1877F2}}#shWa{{color:#25D366}}#shTg{{color:#26A5E4}}#shLi{{color:#0A66C2}}#shRd{{color:#FF4500}}
+.share-copy-wrap{{position:relative;display:inline-flex}}
+.share-copied{{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
 background:#333;color:#fff;font-size:.72rem;padding:3px 8px;border-radius:4px;
 white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}}
-.copy-tip.show{{opacity:1}}
+.share-copied.show{{opacity:1}}
 .donate-panel{{margin-top:20px;padding:18px 20px;background:linear-gradient(135deg,#fffaf4,#fff3e0);
 border:1px solid #e8c99a;border-radius:12px;text-align:center}}
 .donate-title{{font-size:.97rem;font-weight:700;color:#2c2a26;margin-bottom:6px}}
@@ -4492,12 +4573,12 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <h2>{t['h2']}</h2>
 <p class="title">{book_title}</p>
 <p class="type">{type_label}</p>
-<p><a href="{primary_url}" class="btn">{primary_btn_label}</a></p>
-{secondary_btn_html}
+{audio_btn_html}
+{abm_btn_html}
 <div class="warn">{warn_text}</div>
 <div class="donate-panel">
   <div class="donate-title" id="donTitle"></div>
-  <div class="donate-body" id="donBody"></div>
+  <div class="donate-body"><span id="donBody"></span> <b id="donBodyBold"></b></div>
   <div class="donate-btns">
     <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span id="donCoffee"></span></a>
     <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span id="donPaypal"></span></a>
@@ -4506,13 +4587,15 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <div class="share-row">
 <div class="share-label">{t['share']}</div>
 <div class="share-icons">
-  <a id="shWa" href="#" target="_blank" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.512-2.961-2.628-.086-.117-.718-.953-.718-1.816 0-.862.448-1.289.607-1.453.159-.164.346-.205.462-.205.115 0 .23 0 .33.006.107.006.252-.04.394.303.144.35.494 1.205.536 1.291.041.086.068.187.011.3-.058.113-.086.184-.173.283-.086.1-.184.223-.263.303-.098.098-.198.205-.086.398.111.193.494.814 1.059 1.315.728.645 1.341.844 1.53.938.189.094.301.078.414-.05.113-.129.482-.562.61-.754.128-.193.256-.164.431-.098.175.066 1.111.523 1.303.62.193.097.322.144.368.225.047.08.047.462-.097.867zM12.211 20C6.605 20 2 15.395 2 9.789 2 4.184 6.605-0.375 12.211-0.375 17.816-0.375 22 4.184 22 9.789c0 5.605-4.605 10.211-10.211 10.211z"/></svg></a>
-  <a id="shFb" href="#" target="_blank" title="Facebook"><svg viewBox="0 0 24 24"><path d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1v2h3v3h-3v6.95c5.05-.5 9-4.76 9-9.95z"/></svg></a>
-  <a id="shTw" href="#" target="_blank" title="X"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
-  <a id="shTg" href="#" target="_blank" title="Telegram"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.35-.01-1.02-.2-1.52-.37-.61-.21-1.1-.33-1.06-.69.02-.19.29-.39.81-.6.32-.14 1.89-.78 4.69-1.93 1.03-.43 1.73-.71 2.1-.84.37-.13.86-.33 1.18-.33.22 0 .44.06.63.15.22.12.33.29.35.5.02.13.01.26.01.39z"/></svg></a>
-  <div class="copy-wrap">
-    <button id="btnCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-    <span class="copy-tip" id="copyTip">{t['copied']}</span>
+  <a id="shX" href="#" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+  <a id="shFb" href="#" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
+  <a id="shWa" href="#" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg></a>
+  <a id="shTg" href="#" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
+  <a id="shLi" href="#" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
+  <a id="shRd" href="#" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 01.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg></a>
+  <div class="share-copy-wrap">
+    <button id="shCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
+    <span class="share-copied" id="shCopiedTip">{t['copied']}</span>
   </div>
 </div>
 </div>
@@ -4521,17 +4604,18 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 (function(){{
   /* ── Donate i18n (browser language) ── */
   var DL={{
-    it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'AudiobookMaker \u00e8 gratuito, senza pubblicit\u00e0 e vorrei poterlo mantenere cos\u00ec! Aiutami a coprire i costi del server e della manutenzione. Anche una piccola donazione di \u20ac1 o \u20ac2 \u00e8 gi\u00e0 un grande contributo:',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
-    fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'AudiobookMaker est gratuit, sans publicit\u00e9 et j\u2019aimerais pouvoir le maintenir ainsi\u00a0! Aidez-moi \u00e0 couvrir les co\u00fbts du serveur et de la maintenance. Un petit don de 1 o 2\u00a0\u20ac est d\u00e9j\u00e0 una grande contribution\u00a0:',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
-    es:{{title:'\u2764\ufe0f \u00bfTe ha resultado \u00fatil esta herramienta?',body:'AudiobookMaker es gratuito, sin publicidad y me gustar\u00eda poder mantenerlo as\u00ed. Ay\u00fadame a cubrir los costes del servidor y mantenimiento. \u00a1Una peque\u00f1a donaci\u00f3n de 1 o 2\u00a0\u20ac ya es una gran contribuci\u00f3n!:',coffee:'Inv\u00edtame a un caf\u00e9',paypal:'Donaci\u00f3n PayPal'}},
-    de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'AudiobookMaker ist kostenlos, werbefrei \u2013 und ich m\u00f6chte es gerne so beibehalten! Hilf mir, die Server- und Wartungskosten zu decken. Eine kleine Spende von 1 oder 2\u00a0\u20ac ist schon ein gro\u00dfere Beitrag:',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
-    zh:{{title:'\u2764\ufe0f \u8fd9\u4e2a\u5de5\u5177\u5bf9\u60a8\u6709\u5e2e\u52a9\u5417\uff1f',body:'AudiobookMaker \u514d\u8d39\u3001\u65e0\u5e7f\u544a\uff0c\u6211\u5e0c\u671b\u80fd\u7ee7\u7eed\u4fdd\u6301\u4e0b\u53bb\uff01\u8bf7\u5e2e\u52a9\u6211\u652f\u4ed8\u670d\u52a1\u5668\u548c\u7ef4\u62a4\u8D39\u7528\u3002\u54ea\u6015 1 \u6216 2 \u6b27\u5143\u7684\u5c0f\u989d\u6350\u8d60\uff0c\u4e5f\u662f\u5de8\u5927\u7684\u8d21\u732e\uff1a',coffee:'\u8bf7\u6211\u559D\u5496\u5561',paypal:'PayPal \u6350\u6b3e'}},
-    en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'AudiobookMaker is free, ad-free, and I\u2019d like to keep it that way! Help me cover server and maintenance costs. A small donation of \u20ac1 or \u20ac2 is already a great contribution:',coffee:'Buy me a coffee',paypal:'PayPal donation'}}
+    it:{{title:'\u2764\ufe0f Ti \u00e8 stato utile questo strumento?',body:'Audiobook Maker \u00e8 un\u2019app gratuita, non richiede iscrizione ed \u00e8 senza pubblicit\u00e0. Una donazione aiuta a coprire i costi di esercizio e lo sviluppo di nuove funzionalit\u00e0.',bodyBold:'Per donazioni da \u20ac5 o pi\u00f9, riceverai un coupon di valore equivalente da utilizzare per i servizi PREMIUM.',coffee:'Offrimi un caff\u00e8',paypal:'Donazione PayPal'}},
+    fr:{{title:'\u2764\ufe0f Cet outil vous a \u00e9t\u00e9 utile\u00a0?',body:'Audiobook Maker est un logiciel open source, gratuit, sans inscription et sans publicit\u00e9. Un don aide \u00e0 couvrir les frais d\u2019exploitation et le d\u00e9veloppement de nouvelles fonctionnalit\u00e9s.',bodyBold:'Pour les dons de 5\u20ac ou plus, vous recevrez un coupon de valeur \u00e9quivalente \u00e0 utiliser pour les services PREMIUM.',coffee:'Offrez-moi un caf\u00e9',paypal:'Don PayPal'}},
+    es:{{title:'\u2764\ufe0f \u00bfTe ha resultado \u00fatil esta herramienta?',body:'Audiobook Maker es software open source, gratuito, sin registro y sin publicidad. Una donaci\u00f3n ayuda a cubrir los costes operativos y el desarrollo de nuevas funciones.',bodyBold:'Para donaciones de 5\u20ac o m\u00e1s, recibir\u00e1s un cup\u00f3n de valor equivalente para usar en los servicios PREMIUM.',coffee:'Inv\u00edtame a un caf\u00e9',paypal:'Donaci\u00f3n PayPal'}},
+    de:{{title:'\u2764\ufe0f War dieses Tool n\u00fctzlich f\u00fcr dich?',body:'Audiobook Maker ist Open Source, kostenlos, ohne Registrierung und werbefrei. Eine Spende hilft, die Betriebskosten und die Entwicklung neuer Funktionen zu decken.',bodyBold:'F\u00fcr Spenden ab 5\u20ac erhalten Sie einen Gutschein im gleichen Wert f\u00fcr PREMIUM-Dienste.',coffee:'Kauf mir einen Kaffee',paypal:'PayPal-Spende'}},
+    zh:{{title:'\u2764\ufe0f \u8fd9\u4e2a\u5de5\u5177\u5bf9\u60a8\u6709\u5e2e\u52a9\u5417\uff1f',body:'Audiobook Maker \u662f\u5f00\u6e90\u8f6f\u4ef6\uff0c\u514d\u8d39\u3001\u65e0\u9700\u6ce8\u518c\u4e14\u65e0\u5e7f\u544a\u3002\u6350\u8d60\u6709\u52a9\u4e8e\u652f\u4ed8\u8fd0\u8425\u6210\u672c\u548c\u65b0\u529f\u80fd\u7684\u5f00\u53d1\u3002',bodyBold:'\u6350\u8d605\u6b27\u5143\u6216\u4ee5\u4e0a\uff0c\u60a8\u5c06\u83b7\u5f97\u7b49\u503c\u4f18\u60e0\u5238\u7528\u4e8e\u9ad8\u7ea7\u670d\u52a1\u3002',coffee:'\u8bf7\u6211\u559D\u5496\u5561',paypal:'PayPal \u6350\u6b3e'}},
+    en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'Audiobook Maker is open source, free, no registration required and ad-free. A donation helps cover operating costs and the development of new features.',bodyBold:'For donations of \u20ac5 or more, you\u2019ll receive a coupon of equal value to use for PREMIUM services.',coffee:'Buy me a coffee',paypal:'PayPal donation'}}
   }};
   var bl=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
   var d=DL[bl]||DL['en'];
   document.getElementById('donTitle').textContent=d.title;
   document.getElementById('donBody').textContent=d.body;
+  document.getElementById('donBodyBold').textContent=d.bodyBold;
   document.getElementById('donCoffee').textContent=d.coffee;
   document.getElementById('donPaypal').textContent=d.paypal;
   /* ── Share links ── */
@@ -4540,13 +4624,15 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
   var u=encodeURIComponent(S);
   var tx=encodeURIComponent(T);
   var f=encodeURIComponent(T+' '+S);
-  document.getElementById('shWa').href='https://wa.me/?text='+f;
+  document.getElementById('shX').href='https://x.com/intent/tweet?text='+tx+'&url='+u;
   document.getElementById('shFb').href='https://www.facebook.com/sharer/sharer.php?u='+u;
-  document.getElementById('shTw').href='https://twitter.com/intent/tweet?text='+tx+'&url='+u;
+  document.getElementById('shWa').href='https://wa.me/?text='+f;
   document.getElementById('shTg').href='https://t.me/share/url?url='+u+'&text='+tx;
-  document.getElementById('btnCopy').onclick=function(){{
+  document.getElementById('shLi').href='https://www.linkedin.com/sharing/share-offsite/?url='+u;
+  document.getElementById('shRd').href='https://www.reddit.com/submit?url='+u+'&title='+tx;
+  document.getElementById('shCopy').onclick=function(){{
     navigator.clipboard.writeText(S).then(function(){{
-      var tip=document.getElementById('copyTip');
+      var tip=document.getElementById('shCopiedTip');
       tip.classList.add('show');
       setTimeout(function(){{tip.classList.remove('show')}},2000);
     }});
@@ -4646,6 +4732,17 @@ def api_download_podcast(job_id):
         return "Not ready", 400
     if not job.get("podcast_ready"):
         return "Podcast not available for this job", 400
+
+    # If RSS already embedded in output ZIP (zip_rss format), serve it directly
+    if job.get("podcast_rss_included") and job.get("output_zip") and os.path.exists(job["output_zip"]):
+        print(f"[{job_id}] Podcast download: serving existing ZIP with embedded RSS")
+        job["last_poll"] = time.time()
+        job["downloaded_at"] = time.time()
+        _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""), job.get("browser_lang", ""))
+        return send_file(job["output_zip"], as_attachment=True,
+                         download_name=job.get("output_name", "podcast.zip"))
 
     base_url = request.args.get("base_url", "").strip()
     if not base_url:
@@ -4808,6 +4905,7 @@ HTML_TEMPLATES: dict[str, str] = {
         seo=seo,
         base_url=BASE_URL,
         version=__version__,
+        updated_date=get_formatted_date(),
     )
     for lang, seo in _SEO_DATA.items()
 }
@@ -4824,6 +4922,7 @@ HTML_ROOT_TEMPLATES: dict[str, str] = {
         base_url=BASE_URL,
         version=__version__,
         canonical_url=f"{BASE_URL}/" if BASE_URL else "",
+        updated_date=get_formatted_date(),
     )
     for lang, seo in _SEO_DATA.items()
 }
@@ -4914,7 +5013,7 @@ def _cleanup_loop():
             #  -  -  Analyzed but never started: cleanup if heartbeat lost  -  - 
             if status == "analyzed":
                 last_poll = job.get("last_poll", job.get("start_time", now))
-                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 3:  # 3 min per analyzed
+                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:  # 30 min per analyzed
                     to_remove.append((jid, "stale analyzed"))
                 continue
 
@@ -5129,4 +5228,4 @@ if __name__ == "__main__":
     print(f"  Data folder:   {UPLOAD_DIR}")
     print(f"  Activity log:  {SCRIPT_DIR / 'activity_YYYY-MM.log'}")
     print(f"{'='*50}\n")
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    app.run(host="127.0.0.1", port=PORT, debug=True)

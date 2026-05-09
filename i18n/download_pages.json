@@ -31,78 +31,66 @@
       "p2": "Um das H&ouml;rbuch erneut zu erstellen, besuche:"
     },
     "zh": {
-      "title": "\u94fe\u63a5\u5df2\u8fc7\u671f",
-      "h2": "\u94fe\u63a5\u5df2\u8fc7\u671f",
-      "p1": "\u90ae\u4ef6\u53d1\u9001\u5df2\u8d85\u8fc724\u5c0f\u65f6\u3002\u751f\u6210\u7684\u6587\u4ef6\u5df2\u81ea\u52a8\u5220\u9664\u4ee5\u91ca\u653e\u670d\u52a1\u5668\u7a7a\u95f4\u3002",
-      "p2": "\u8981\u91cd\u65b0\u751f\u6210\u6709\u58f0\u8bfb\u7269\uff0c\u8bf7\u8bbf\u95ee\uff1a"
+      "title": "链接已过期",
+      "h2": "链接已过期",
+      "p1": "邮件发送已超过24小时。生成的文件已自动删除以释放服务器空间。",
+      "p2": "要重新生成有声读物，请访问："
     }
   },
   "download": {
     "it": {
       "title": "Download",
       "h2": "Il tuo audiolibro &egrave; pronto!",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; Scarica Zip-MP3",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; Scarica audiolibro",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; Scarica M4B",
+      "btn_no_m4b": "⬇️ Scarica audiolibro",
       "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati.",
       "share": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
-      "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker \u2014 gratis e direttamente dal browser!",
+      "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker — gratis e direttamente dal browser!",
       "copied": "Copiato!"
     },
     "en": {
       "title": "Download",
       "h2": "Your audiobook is ready!",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; Download Zip-MP3",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; Download audiobook",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; Download M4B",
+      "btn_no_m4b": "⬇️ Download audiobook",
       "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent.",
       "share": "Like it? Share with your friends!",
-      "share_text": "I just turned an ebook into an audiobook with Audiobook Maker \u2014 free and right in the browser!",
+      "share_text": "I just turned an ebook into an audiobook with Audiobook Maker — free and right in the browser!",
       "copied": "Copied!"
     },
     "fr": {
       "title": "T&eacute;l&eacute;chargement",
       "h2": "Votre livre audio est pr&ecirc;t !",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger Zip-MP3",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger livre audio",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; T&eacute;l&eacute;charger M4B",
+      "btn_no_m4b": "⬇️ T&eacute;l&eacute;charger le livre audio",
       "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email.",
       "share": "Vous avez aim&eacute; ? Partagez avec vos amis !",
-      "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker \u2014 gratuit et directement depuis le navigateur !",
+      "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker — gratuit et directement depuis le navigateur !",
       "copied": "Copi&eacute; !"
     },
     "es": {
       "title": "Descarga",
       "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; Descargar Zip-MP3",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; Descargar audiolibro",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; Descargar M4B",
+      "btn_no_m4b": "⬇️ Descargar audiolibro",
       "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email.",
       "share": "&iexcl;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
-      "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker \u2014 \u00a1gratis y desde el navegador!",
+      "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker — ¡gratis y desde el navegador!",
       "copied": "&iexcl;Copiado!"
     },
     "de": {
       "title": "Download",
       "h2": "Dein H&ouml;rbuch ist fertig!",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; Zip-MP3 herunterladen",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; H&ouml;rbuch herunterladen",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; M4B herunterladen",
+      "btn_no_m4b": "⬇️ H&ouml;rbuch herunterladen",
       "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht.",
       "share": "Hat es dir gefallen? Teile es mit deinen Freunden!",
-      "share_text": "Ich habe gerade ein Ebook mit Audiobook Maker in ein H\u00f6rbuch umgewandelt \u2014 kostenlos und direkt im Browser!",
+      "share_text": "Ich habe gerade ein Ebook mit Audiobook Maker in ein Hörbuch umgewandelt — kostenlos und direkt im Browser!",
       "copied": "Kopiert!"
     },
     "zh": {
-      "title": "\u4e0b\u8f7d",
-      "h2": "\u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
-      "btn_with_m4b": "&#x2B07;&#xFE0F; \u4e0b\u8f7d Zip-MP3",
-      "btn_no_m4b": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u6709\u58f0\u8bfb\u7269",
-      "btn_m4b": "&#x1F4D6;&#xFE0F; \u4e0b\u8f7d M4B",
-      "warn": "&#x23F0; \u60a8\u8fd8\u6709 {r} \u7684\u65f6\u95f4\u4e0b\u8f7d\u6587\u4ef6\u3002<br>\u6587\u4ef6\u5c06\u5728\u90ae\u4ef6\u53d1\u9001\u540e24\u5c0f\u65f6\u5220\u9664\u3002",
-      "share": "\u89c9\u5f97\u4e0d\u9519\uff1f\u5206\u4eab\u7ed9\u4f60\u7684\u670b\u53cb\uff01",
-      "share_text": "\u6211\u521a\u7528 Audiobook Maker \u628a\u4e00\u672c\u7535\u5b50\u4e66\u8f6c\u6210\u4e86\u6709\u58f0\u4e66\u2014\u2014\u514d\u8d39\u4e14\u5728\u6d4f\u89c8\u5668\u5373\u53ef\u5b8c\u6210\uff01",
-      "copied": "\u5df2\u590d\u5236\uff01"
+      "title": "下载",
+      "h2": "您的有声读物已准备好！",
+      "btn_no_m4b": "⬇️ 下载有声读物",
+      "warn": "&#x23F0; 您还有 {r} 的时间下载文件。<br>文件将在邮件发送后24小时删除。",
+      "share": "觉得不错？分享给你的朋友！",
+      "share_text": "我刚用 Audiobook Maker 把一本电子书转成了有声书——免费且在浏览器即可完成！",
+      "copied": "已复制！"
     }
   }
 }
