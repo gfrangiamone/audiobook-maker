@@ -387,7 +387,6 @@ def _generate_silence_mp3(output_path, duration_sec=3):
         pass
     # Fallback: silenzio MP3 minimo (frame MPEG1 Layer3 32kbps mono @ 24000Hz)
     # 1 frame = 1152 samples → ~48ms → ~21 frame/s → n_frames per duration_sec
-    import struct
     frame_header = b'\xff\xf3\x90\x04'
     frame_body = b'\x00' * 413
     frame = frame_header + frame_body
@@ -859,7 +858,6 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
     """Generate an RSS 2.0 podcast feed XML file compliant with iTunes specs."""
     from datetime import datetime, timezone, timedelta
     import xml.etree.ElementTree as ET
-    import struct
 
     def _mp3_duration_seconds(path):
         try:

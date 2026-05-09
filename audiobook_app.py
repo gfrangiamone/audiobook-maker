@@ -18,7 +18,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -42,7 +41,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 _STARTUP_TIME = datetime.now(timezone.utc)
 
 try:
-    from epub_to_tts import parse_epub, write_single_file, write_chapter_files, BookInfo
+    from epub_to_tts import parse_epub
 except ImportError:
     print("ERROR: epub_to_tts.py not found in the same folder.", file=sys.stderr)
     print(f"  Script folder: {SCRIPT_DIR}", file=sys.stderr)
@@ -283,16 +282,6 @@ def _active_generating_for_client(client_id):
     return sum(
         1 for j in jobs.values()
         if j.get("client_id") == client_id and j.get("status") == "generating"
-    )
-
-
-def _active_optimizing_for_client(client_id):
-    """Count how many LLM optimization jobs are running for the given client_id."""
-    if not client_id:
-        return 0
-    return sum(
-        1 for j in jobs.values()
-        if j.get("client_id") == client_id and j.get("status") == "optimizing"
     )
 
 
@@ -809,11 +798,6 @@ def _paypal_capture_order(order_id):
 
 # (Functions imported from email_service)
 
-def _send_completion_email(job_id):
-    """Spostato in generation_engine.py"""
-    return generation_engine._send_completion_email(job_id)
-    pass
-
 LOCALE_NAMES = {
     "af": "Afrikaans", "am": "Amarico", "ar": "Arabo", "az": "Azero",
     "bg": "Bulgaro", "bn": "Bengalese", "bs": "Bosniaco", "ca": "Catalano",
@@ -950,21 +934,10 @@ def parse_abm(path):
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
-    return generation_engine.run_generation(job_id, info, voice, rate, single_file,
-                                           output_format=output_format,
-                                           podcast_base_url=podcast_base_url)
+def run_generation(job_id, info, voice, rate, single_file):
+    return generation_engine.run_generation(job_id, info, voice, rate, single_file)
 
-def _refund_job_payment(job_id, job, reason='error'):
-    return generation_engine._refund_job_payment(job_id, job, reason)
-
-def _google_tts_refund_unused(job_id, job):
-    return generation_engine._google_tts_refund_unused(job_id, job)
-
-def _send_optimization_email(job_id):
-    return generation_engine._send_optimization_email(job_id)
-
-#  -  -  Activity log  -  - 
+#  -  -  Activity log  -  -
 _log_lock = threading.Lock()
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang=''):
@@ -4121,77 +4094,6 @@ def api_voucher_validate():
     code_masked = (code[:4] + "...") if code else ""
     _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
     return jsonify(body), status
-
-
-def _send_payment_receipt_email(order_id, email, amount_eur, job):
-    """Send payment receipt email to buyer."""
-    book_title = ""
-    info = job.get("info")
-    if info:
-        book_title = getattr(info, "title", "") or ""
-    lang = job.get("browser_lang", "en")[:2] if job else "en"
-    subj_map = {
-        "it": f"Ricevuta pagamento Audiobook Maker  -  {amount_eur:.2f} EUR",
-        "en": f"Audiobook Maker payment receipt  -  EUR {amount_eur:.2f}",
-        "fr": f"Reçu de paiement Audiobook Maker  -  {amount_eur:.2f} EUR",
-        "es": f"Recibo de pago Audiobook Maker  -  {amount_eur:.2f} EUR",
-        "de": f"Zahlungsbeleg Audiobook Maker  -  {amount_eur:.2f} EUR",
-        "zh": f"Audiobook Maker 支付收据  -  {amount_eur:.2f} EUR",
-    }
-    subject = subj_map.get(lang, subj_map["en"])
-    body_map = {
-        "it": ("Grazie per il tuo pagamento.",
-               f"Importo: <strong>{amount_eur:.2f} EUR</strong><br>ID transazione: <code>{order_id}</code>"
-               f"<br>Progetto: <strong>{book_title}</strong>",
-               "Il pagamento copre l'ottimizzazione AI del testo per la sintesi vocale. "
-               "Conserva questa email come ricevuta. Per fatturazione contattaci.",
-               "In caso di fallimento dell'ottimizzazione riceverai un buono di valore maggiorato del "
-               f"{VOUCHER_BONUS_PERCENT}% riutilizzabile entro {VOUCHER_EXPIRY_DAYS} giorni."),
-        "en": ("Thank you for your payment.",
-               f"Amount: <strong>EUR {amount_eur:.2f}</strong><br>Transaction ID: <code>{order_id}</code>"
-               f"<br>Project: <strong>{book_title}</strong>",
-               "This payment covers AI text optimization for speech synthesis. "
-               "Keep this email as receipt. Contact us for invoicing.",
-               f"If optimization fails, you will receive a voucher worth {VOUCHER_BONUS_PERCENT}% more, "
-               f"valid for {VOUCHER_EXPIRY_DAYS} days."),
-    }
-    heading, details, info_txt, refund = body_map.get(lang, body_map["en"])
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-      <h2 style="color:#2c3e50">&#x1F4B3; {heading}</h2>
-      <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
-        <p style="margin:0">{details}</p>
-      </div>
-      <p>{info_txt}</p>
-      <p style="font-size:.9em;color:#666">{refund}</p>
-      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker  -  {BASE_URL or ''}</p>
-    </div>"""
-    _send_email(email, subject, html_body)
-
-
-def _send_voucher_email(code, email, amount_eur, book_title):
-    """Send voucher email after optimization failure."""
-    if not (email and _smtp_available()):
-        return
-    from datetime import datetime, timedelta
-    expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
-    subject = f"Audiobook Maker  -  Buono {amount_eur:.2f} EUR (ottimizzazione non riuscita)"
-    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-      <h2 style="color:#2c3e50">&#x1F381; Il tuo buono</h2>
-      <p>L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine.</p>
-      <p>Come convenuto, ti inviamo un buono di valore maggiorato del {VOUCHER_BONUS_PERCENT}%:</p>
-      <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
-        <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono:</div>
-        <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code}</div>
-        <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
-        <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
-      </div>
-      <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
-      <p style="font-size:.85em;color:#666">Il buono &egrave; nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
-      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-      <p style="color:#999;font-size:12px">Audiobook Maker  -  {BASE_URL or ''}</p>
-    </div>"""
-    _send_email(email, subject, html_body)
 
 
 @app.route("/api/optimize", methods=["POST"])
