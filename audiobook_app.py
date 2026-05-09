@@ -2431,8 +2431,13 @@ def _feedback_check_rate(ip_hash: str) -> bool:
         return True
 
 
-def _notify_admin_new_feedback(item: dict) -> None:
-    """Throttled (30 min) email all'admin per nuovo feedback."""
+def _notify_admin_new_feedback(item: dict, comment_it: str | None = None) -> None:
+    """Throttled (30 min) email all'admin per nuovo feedback.
+
+    Se ``comment_it`` è fornito, viene usato come corpo del commento
+    (tipicamente la traduzione italiana prodotta dall'LLM); altrimenti
+    si usa il commento originale presente in ``item``.
+    """
     global _feedback_email_last
     if not ADMIN_EMAIL:
         return
@@ -2445,18 +2450,30 @@ def _notify_admin_new_feedback(item: dict) -> None:
         rating = int(item.get("rating", 0))
         stars = "★" * rating + "☆" * (5 - rating)
         name = html_mod.escape(item.get("name") or "Anonimo")
-        comment = html_mod.escape(item.get("comment") or "")
+        original = item.get("comment") or ""
+        chosen_text = comment_it if (comment_it and comment_it.strip()) else original
+        comment = html_mod.escape(chosen_text)
+        # mostra anche l'originale se diverso dalla traduzione usata
+        original_block = ""
+        if comment_it and original and comment_it.strip() != original.strip():
+            original_block = (
+                f"<p style='font-size:.9em;color:#666;margin-top:10px'>"
+                f"<b>Originale:</b></p>"
+                f"<p style='border-left:3px solid #ccc;padding-left:8px;color:#666'>"
+                f"{html_mod.escape(original)}</p>"
+            )
         body = (
             f"<p><b>Nuovo feedback ricevuto:</b></p>"
             f"<p>Voto: <span style='font-size:1.2em'>{stars}</span> ({rating}/5)</p>"
             f"<p>Nome: {name}</p>"
-            f"<p>Commento:</p><p style='border-left:3px solid #d9a441;padding-left:8px'>"
+            f"<p>Commento (IT):</p><p style='border-left:3px solid #d9a441;padding-left:8px'>"
             f"{comment or '<i>(nessun commento)</i>'}</p>"
+            f"{original_block}"
             f"<p style='font-size:.85em;color:#888'>ID: {item.get('id','')}</p>"
         )
         email_service._send_email(ADMIN_EMAIL, f"[ABM] Nuovo feedback: {rating}★", body)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[feedback] admin email failed: {e!s}")
 
 
 @app.route("/api/community/feedback", methods=["GET"])
@@ -2488,26 +2505,40 @@ def api_community_feedback_list():
     return jsonify({"items": public_items, "avg": avg, "total": total, "histogram": histogram})
 
 
-def _translate_feedback_async(item_id: str, comment: str) -> None:
-    """Background: translate a feedback comment into all UI langs, persist."""
-    if not comment or not comment.strip():
-        return
-    if not community_translator.is_available():
-        return
-    result = community_translator.translate({"comment": comment})
-    if not result:
-        return
-    patch = {
-        "comment_lang": result.get("source_lang") or "",
-        "comment_i18n": {
-            lg: (result.get(lg) or {}).get("comment", "")
-            for lg in community_translator.LANGS
-        },
-    }
+def _process_new_feedback(item: dict) -> None:
+    """Background: translate the comment (best-effort), persist the i18n
+    fields, then send the admin email using the Italian translation.
+
+    Always emails the admin (subject to the existing throttle), even if
+    translation is unavailable or empty.
+    """
+    item_id = item.get("id") or ""
+    comment = (item.get("comment") or "").strip()
+    comment_it: str | None = None
+    if comment and community_translator.is_available():
+        try:
+            result = community_translator.translate({"comment": comment})
+        except Exception as e:
+            print(f"[feedback] translation call raised: {e!s}")
+            result = None
+        if result:
+            patch = {
+                "comment_lang": result.get("source_lang") or "",
+                "comment_i18n": {
+                    lg: (result.get(lg) or {}).get("comment", "")
+                    for lg in community_translator.LANGS
+                },
+            }
+            try:
+                community_store.feedback().update(item_id, patch)
+            except Exception as e:
+                print(f"[feedback] translation persist failed for {item_id}: {e!s}")
+            comment_it = (patch["comment_i18n"].get("it") or "").strip() or None
+    # admin email — always, throttled internally
     try:
-        community_store.feedback().update(item_id, patch)
+        _notify_admin_new_feedback(item, comment_it=comment_it)
     except Exception as e:
-        print(f"[feedback] translation persist failed for {item_id}: {e!s}")
+        print(f"[feedback] admin notify failed: {e!s}")
 
 
 @app.route("/api/community/feedback", methods=["POST"])
@@ -2537,15 +2568,8 @@ def api_community_feedback_create():
         "comment": comment,
         "ip_hash": ip_hash,
     })
-    # notify admin (throttled, fire-and-forget)
-    threading.Thread(target=_notify_admin_new_feedback, args=(item,), daemon=True).start()
-    # translate comment into all UI langs (best-effort, async)
-    if comment:
-        threading.Thread(
-            target=_translate_feedback_async,
-            args=(item["id"], comment),
-            daemon=True,
-        ).start()
+    # background: translate comment (if any) then email admin with IT version
+    threading.Thread(target=_process_new_feedback, args=(item,), daemon=True).start()
     return jsonify({"id": item["id"]}), 200
 
 
