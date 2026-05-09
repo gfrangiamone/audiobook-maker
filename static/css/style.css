@@ -768,6 +768,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 }
 
 /* ─── NEWS CARD + MODAL ─── */
+#newsCard{width:100%;max-width:760px;margin:0 auto 24px}
 .news-card .news-list{display:flex;flex-direction:column;gap:14px;margin-top:8px}
 .news-card .news-list[hidden]{display:none}
 .news-item{padding:12px 14px;border-radius:10px;background:var(--srf);border:1px solid var(--brd)}

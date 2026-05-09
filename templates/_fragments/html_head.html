@@ -594,7 +594,6 @@ __SEO_HREFLANG__
     </button>
     <div class="fbw-panel" id="fbPanel" hidden>
       <form class="fbw-form" id="fbForm">
-        <h4 data-t="fb_form_title"></h4>
         <div class="fbw-stars-row">
           <span class="fbw-stars-label" data-t="fb_stars_label"></span>
           <div class="fbw-stars" id="fbStars" role="radiogroup" aria-label="Rating"></div>
@@ -618,23 +617,23 @@ __SEO_HREFLANG__
     </div>
   </section>
 
+  <!-- News Card (above guides/FAQ, outside resources-section) -->
+  <section class="community-card news-card" id="newsCard" hidden>
+    <h3>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/></svg>
+      <span data-t="news_panel_title"></span>
+    </h3>
+    <div class="news-list" id="newsList"></div>
+    <div class="news-list news-list-more" id="newsListMore" hidden></div>
+    <button type="button" class="news-toggle-more" id="newsToggleMore" hidden>
+      <span data-t="news_show_more"></span>
+      <svg class="news-toggle-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="news-empty" id="newsEmpty" hidden data-t="news_empty"></div>
+  </section>
+
   <!-- RESOURCES SECTION -->
   <section class="resources-section" aria-label="Risorse e guide">
-
-    <!-- News Card (above guides/FAQ) -->
-    <section class="community-card news-card" id="newsCard" hidden>
-      <h3>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/></svg>
-        <span data-t="news_panel_title"></span>
-      </h3>
-      <div class="news-list" id="newsList"></div>
-      <div class="news-list news-list-more" id="newsListMore" hidden></div>
-      <button type="button" class="news-toggle-more" id="newsToggleMore" hidden>
-        <span data-t="news_show_more"></span>
-        <svg class="news-toggle-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="news-empty" id="newsEmpty" hidden data-t="news_empty"></div>
-    </section>
 
     <!-- Donation Card -->
     <div class="community-card donate-card" id="donateCard">
