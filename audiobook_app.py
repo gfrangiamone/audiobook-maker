@@ -2515,6 +2515,8 @@ def _process_new_feedback(item: dict) -> None:
     """
     item_id = item.get("id") or ""
     comment = (item.get("comment") or "").strip()
+    print(f"[feedback] post-process id={item_id} comment_len={len(comment)} "
+          f"llm_available={community_translator.is_available()}")
     comment_it: str | None = None
     if comment and community_translator.is_available():
         try:
@@ -2522,6 +2524,8 @@ def _process_new_feedback(item: dict) -> None:
         except Exception as e:
             print(f"[feedback] translation call raised: {e!s}")
             result = None
+        print(f"[feedback] translation result id={item_id}: "
+              f"{'ok' if result else 'FAILED'}")
         if result:
             patch = {
                 "comment_lang": result.get("source_lang") or "",
@@ -2602,6 +2606,56 @@ def admin_api_feedback_list():
     items = community_store.feedback().all(include_archived=True)
     items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
     return jsonify({"items": items})
+
+
+@app.route("/admin/api/feedback/translate-missing", methods=["POST"])
+def admin_api_feedback_translate_missing():
+    """Backfill: translate any feedback items that have a comment but no
+    populated comment_i18n. Synchronous; returns a summary so the admin
+    can confirm what happened.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    if not community_translator.is_available():
+        return jsonify({"error": "llm unavailable"}), 503
+    items = community_store.feedback().all(include_archived=True)
+    updated = 0
+    failed = 0
+    skipped = 0
+    for it in items:
+        comment = (it.get("comment") or "").strip()
+        if not comment:
+            skipped += 1
+            continue
+        i18n = it.get("comment_i18n") or {}
+        # consider populated if at least one non-empty translation exists
+        has_any = any((i18n.get(lg) or "").strip() for lg in community_translator.LANGS)
+        if has_any:
+            skipped += 1
+            continue
+        try:
+            result = community_translator.translate({"comment": comment})
+        except Exception as e:
+            print(f"[feedback-backfill] translate raised for {it.get('id')}: {e!s}")
+            result = None
+        if not result:
+            failed += 1
+            continue
+        patch = {
+            "comment_lang": result.get("source_lang") or "",
+            "comment_i18n": {
+                lg: (result.get(lg) or {}).get("comment", "")
+                for lg in community_translator.LANGS
+            },
+        }
+        try:
+            community_store.feedback().update(it.get("id"), patch)
+            updated += 1
+        except Exception as e:
+            print(f"[feedback-backfill] persist failed for {it.get('id')}: {e!s}")
+            failed += 1
+    return jsonify({"updated": updated, "failed": failed, "skipped": skipped,
+                    "total": len(items)})
 
 
 @app.route("/admin/api/feedback/<item_id>", methods=["POST"])
