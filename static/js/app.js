@@ -201,7 +201,7 @@ function applyI18n(){
   const btnAbmInfo=document.getElementById('btnAbmInfo');
   if(btnAbmInfo)btnAbmInfo.title=t('btn_export_abm_tip');
 }
-function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}
+function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
   // Switch visible SEO content block to match selected language
@@ -244,7 +244,7 @@ function toggleTheme(){
 // ═══════════════════ INIT ═══════════════════
 document.addEventListener('DOMContentLoaded',()=>{
   applyTheme(detectTheme());
-  cl=detectLang();applyI18n();buildAbout();applySEO();
+  cl=detectLang();applyI18n();buildAbout();applySEO(cl);
   syncLangDropdown();
   setupKeyboardShortcuts();
   // Fix Chromium bug: nested <details> toggle scrolls page to top
@@ -2409,7 +2409,13 @@ function goToAudioSettings(){goToStep(3)}
     return (dict&&dict[k])||fb||k;
   }
   function tagLabel(tag){return tt('news_tag_'+tag,tag);}
-  function uiLang(){return (document.documentElement.lang||'en').slice(0,2).toLowerCase();}
+  function uiLang(){
+    // Prefer the JS-side current-language variable (cl) when available;
+    // it is the canonical source of truth set by setLang(). Fall back to
+    // the html lang attribute for early-page or out-of-context calls.
+    if(typeof cl!=='undefined'&&cl) return String(cl).slice(0,2).toLowerCase();
+    return (document.documentElement.lang||'en').slice(0,2).toLowerCase();
+  }
   function pickI18n(orig,i18n,srcLang){
     const ui=uiLang();
     const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
@@ -2625,7 +2631,10 @@ function goToAudioSettings(){goToStep(3)}
       }));
     }
   }
-  function uiLang(){return (document.documentElement.lang||'en').slice(0,2).toLowerCase();}
+  function uiLang(){
+    if(typeof cl!=='undefined'&&cl) return String(cl).slice(0,2).toLowerCase();
+    return (document.documentElement.lang||'en').slice(0,2).toLowerCase();
+  }
   function pickI18n(orig,i18n,srcLang){
     const ui=uiLang();
     const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
