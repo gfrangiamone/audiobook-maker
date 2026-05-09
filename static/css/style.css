@@ -726,6 +726,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ─── LIVE STATS & MODAL ─── */
 .live-stats{display:flex;justify-content:center;align-items:center;gap:10px;padding:10px 16px 0;font-size:.85rem;color:var(--txd);flex-wrap:wrap}
+.live-stats[hidden]{display:none}
 .live-stats #lsToday{font-weight:700;color:var(--ac);font-variant-numeric:tabular-nums}
 .live-stats .ls-sep{color:var(--txm);opacity:.6}
 .live-stats .ls-link{color:var(--ac);text-decoration:none;border-bottom:1px dashed var(--ac);transition:opacity .15s}
@@ -767,6 +768,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ─── NEWS BANNER + CARD ─── */
 .news-banner{display:flex;align-items:center;gap:10px;max-width:1100px;margin:0 auto 14px;padding:10px 14px;border-radius:10px;background:linear-gradient(90deg,rgba(217,164,65,.12),rgba(217,164,65,.04));border:1px solid var(--brd);font-size:.9rem;color:var(--tx);animation:nbFadeIn .3s ease-out}
+.news-banner[hidden]{display:none}
 @keyframes nbFadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .news-banner-tag{flex:0 0 auto;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 8px;border-radius:999px;background:var(--ac);color:#fff}
 .news-banner-tag.fix{background:#5b9b5b}
