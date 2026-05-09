@@ -2584,7 +2584,12 @@ function goToAudioSettings(){goToStep(3)}
     }catch(e){return;}
     const avg=document.getElementById('fbAvg');
     const tot=document.getElementById('fbTotal');
-    if(avg) avg.textContent=data.total?data.avg.toFixed(1):'—';
+    if(avg){
+      const v=data.total?Math.max(0,Math.min(5,Number(data.avg)||0)):0;
+      const fg=avg.querySelector('.fbw-rating-fg');
+      if(fg) fg.style.width=(v/5*100)+'%';
+      avg.setAttribute('aria-label',data.total?v.toFixed(1)+' / 5':'0 / 5');
+    }
     if(tot) tot.textContent=data.total?'· '+data.total+' '+tt('fb_total_reviews'):'';
     renderHistogram(data.histogram||[0,0,0,0,0],data.total||0);
     renderRecent(data.items||[]);
