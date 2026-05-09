@@ -846,6 +846,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-comment-date{margin-left:auto}
 .fbw-i18n-btn,.news-i18n-btn{background:transparent;border:1px solid var(--brd);border-radius:4px;color:var(--txm);font-size:.85rem;padding:1px 6px;cursor:pointer;transition:all .15s;line-height:1.2;flex-shrink:0}
 .fbw-i18n-btn:hover,.news-i18n-btn:hover,.fbw-i18n-btn.active,.news-i18n-btn.active{border-color:var(--ac);color:var(--ac);background:var(--acs)}
+.fbw-del-btn{background:transparent;border:1px solid var(--brd);border-radius:4px;color:var(--txm);font-size:.85rem;padding:1px 6px;cursor:pointer;transition:all .15s;line-height:1.2;flex-shrink:0}
+.fbw-del-btn:hover{border-color:#c0392b;color:#c0392b;background:rgba(192,57,43,.08)}
+.fbw-del-btn:disabled{opacity:.5;cursor:default}
 .news-item-foot{display:flex;justify-content:flex-end;margin-top:6px}
 @media (max-width:480px){
   .fbw-toggle{padding:12px 14px;font-size:.92rem}

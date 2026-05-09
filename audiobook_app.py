@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 import hmac
+import secrets
 import html as html_mod
 from collections import defaultdict, OrderedDict
 from datetime import datetime, timezone
@@ -2562,15 +2563,36 @@ def api_community_feedback_create():
     ip_hash = _hash_ip(ip)
     if not _feedback_check_rate(ip_hash):
         return jsonify({"error": "rate_limit"}), 429
+    delete_token = secrets.token_urlsafe(24)
     item = community_store.feedback().add({
         "rating": rating,
         "name": name,
         "comment": comment,
         "ip_hash": ip_hash,
+        "delete_token": delete_token,
     })
     # background: translate comment (if any) then email admin with IT version
     threading.Thread(target=_process_new_feedback, args=(item,), daemon=True).start()
-    return jsonify({"id": item["id"]}), 200
+    # Return the delete_token so the client can store it locally (only the
+    # original poster, who has it, can later delete the comment).
+    return jsonify({"id": item["id"], "delete_token": delete_token}), 200
+
+
+@app.route("/api/community/feedback/<item_id>", methods=["DELETE"])
+def api_community_feedback_delete(item_id: str):
+    """Self-delete: requires the delete_token returned at creation time."""
+    body = request.get_json(silent=True) or {}
+    token = (body.get("token") or request.headers.get("X-Delete-Token") or "").strip()
+    if not token:
+        return jsonify({"error": "missing token"}), 400
+    item = community_store.feedback().get(item_id)
+    if not item:
+        return jsonify({"error": "not found"}), 404
+    expected = item.get("delete_token") or ""
+    if not expected or not hmac.compare_digest(expected, token):
+        return jsonify({"error": "forbidden"}), 403
+    community_store.feedback().delete(item_id)
+    return jsonify({"ok": True}), 200
 
 
 @app.route("/admin/api/feedback/list", methods=["GET"])

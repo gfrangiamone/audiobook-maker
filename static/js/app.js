@@ -2542,12 +2542,34 @@ function goToAudioSettings(){goToStep(3)}
 /* ─── FEEDBACK ─── */
 (function(){
   let currentRating=0;
+  const MY_FB_KEY='abm_my_feedbacks';
   function tt(k,fb){
     const lang=document.documentElement.lang||'en';
     const dict=(typeof L!=='undefined')?L[lang]:null;
     return (dict&&dict[k])||fb||k;
   }
   function fmtDate(ts){try{return new Date(ts*1000).toLocaleDateString();}catch(e){return '';}}
+  function loadMyFeedbacks(){
+    try{const raw=localStorage.getItem(MY_FB_KEY);if(!raw) return [];
+      const arr=JSON.parse(raw);return Array.isArray(arr)?arr:[];
+    }catch(e){return [];}
+  }
+  function saveMyFeedbacks(list){
+    try{localStorage.setItem(MY_FB_KEY,JSON.stringify(list.slice(0,30)));}catch(e){}
+  }
+  function rememberMyFeedback(id,token){
+    if(!id||!token) return;
+    const list=loadMyFeedbacks().filter(e=>e&&e.id!==id);
+    list.unshift({id,token,ts:Date.now()});
+    saveMyFeedbacks(list);
+  }
+  function tokenForFeedback(id){
+    const e=loadMyFeedbacks().find(x=>x&&x.id===id);
+    return e?e.token:null;
+  }
+  function forgetMyFeedback(id){
+    saveMyFeedbacks(loadMyFeedbacks().filter(e=>e&&e.id!==id));
+  }
   function applyPlaceholders(node){
     node.querySelectorAll('[data-t-ph]').forEach(el=>{
       el.setAttribute('placeholder',tt(el.getAttribute('data-t-ph')));
@@ -2620,6 +2642,21 @@ function goToAudioSettings(){goToStep(3)}
       sync();
     });
   }
+  async function deleteOwnFeedback(id){
+    const token=tokenForFeedback(id);
+    if(!token) return false;
+    try{
+      const r=await fetch('/api/community/feedback/'+encodeURIComponent(id),{
+        method:'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token}),
+      });
+      if(r.ok){forgetMyFeedback(id);return true;}
+      // 404/403: stale entry, drop the local token anyway
+      if(r.status===404||r.status===403) forgetMyFeedback(id);
+    }catch(e){}
+    return false;
+  }
   function renderRecent(items){
     const list=document.getElementById('fbRecent');
     if(!list) return;
@@ -2630,6 +2667,7 @@ function goToAudioSettings(){goToStep(3)}
       div.className='fbw-comment';
       const stars='★'.repeat(it.rating||0)+'☆'.repeat(5-(it.rating||0));
       const info=pickI18n(it.comment||'',it.comment_i18n||{},it.comment_lang||'');
+      const owned=!!tokenForFeedback(it.id);
       div.innerHTML=`
         <div class="fbw-comment-head">
           <span class="fbw-comment-name"></span>
@@ -2639,11 +2677,26 @@ function goToAudioSettings(){goToStep(3)}
         <div class="fbw-comment-foot">
           <button type="button" class="fbw-i18n-btn" hidden aria-label="">🌐</button>
           <span class="fbw-comment-date">${fmtDate(it.created_at)}</span>
+          ${owned?'<button type="button" class="fbw-del-btn" aria-label="">🗑</button>':''}
         </div>`;
       div.querySelector('.fbw-comment-name').textContent=it.name||tt('fb_anonymous','Anonymous');
       const body=div.querySelector('.fbw-comment-body');
       body.textContent=info.text;
       attachI18nToggle(div.querySelector('.fbw-i18n-btn'),body,info);
+      const delBtn=div.querySelector('.fbw-del-btn');
+      if(delBtn){
+        const lbl=tt('comment_delete','Delete your comment');
+        delBtn.title=lbl;delBtn.setAttribute('aria-label',lbl);
+        delBtn.addEventListener('click',async(e)=>{
+          e.stopPropagation();
+          const msg=tt('comment_delete_confirm','Delete your comment? This cannot be undone.');
+          if(!window.confirm(msg)) return;
+          delBtn.disabled=true;
+          const ok=await deleteOwnFeedback(it.id);
+          if(ok){loadFeedback();}
+          else{delBtn.disabled=false;showMsg(tt('comment_delete_failed','Could not delete the comment.'),'err');}
+        });
+      }
       list.appendChild(div);
     }
   }
@@ -2692,6 +2745,10 @@ function goToAudioSettings(){goToStep(3)}
       });
       if(r.status===429){showMsg(tt('fb_rate_limit'),'err');return;}
       if(!r.ok){showMsg(tt('fb_invalid'),'err');return;}
+      try{
+        const data=await r.json();
+        if(data&&data.id&&data.delete_token) rememberMyFeedback(data.id,data.delete_token);
+      }catch(e){}
       showMsg(tt('fb_thanks'),'ok');
       const form=document.getElementById('fbForm');
       if(form) form.reset();
