@@ -2088,3 +2088,371 @@ function goToAudioSettings(){
     init();
   }
 })();
+
+// ─── Community Live Stats + Modal ──────────────────────────────────────
+(function(){
+  const FLAGS={it:'🇮🇹',en:'🇬🇧',fr:'🇫🇷',es:'🇪🇸',de:'🇩🇪',zh:'🇨🇳',pt:'🇵🇹',ja:'🇯🇵',ru:'🇷🇺',ko:'🇰🇷',ar:'🇸🇦',hi:'🇮🇳',nl:'🇳🇱',pl:'🇵🇱',tr:'🇹🇷',sv:'🇸🇪',cs:'🇨🇿',el:'🇬🇷',he:'🇮🇱',th:'🇹🇭',uk:'🇺🇦',vi:'🇻🇳',id:'🇮🇩',ro:'🇷🇴',hu:'🇭🇺',da:'🇩🇰',fi:'🇫🇮',no:'🇳🇴',nb:'🇳🇴',sk:'🇸🇰'};
+
+  function animateCount(el,target,duration){
+    if(!el) return;
+    const start=performance.now();
+    (function tick(now){
+      const t=Math.min(1,(now-start)/duration);
+      const eased=1-Math.pow(1-t,4);
+      el.textContent=Math.round(target*eased);
+      if(t<1) requestAnimationFrame(tick);
+    })(performance.now());
+  }
+
+  async function loadLiveStats(){
+    const ls=document.getElementById('liveStats');
+    const numEl=document.getElementById('lsToday');
+    if(!ls||!numEl) return;
+    try{
+      const r=await fetch('/api/community/stats/today');
+      if(!r.ok) return;
+      const data=await r.json();
+      const count=parseInt(data.count,10)||0;
+      if(count>0){
+        ls.hidden=false;
+        animateCount(numEl,count,1200);
+      }
+    }catch(e){/* silent */}
+  }
+
+  function renderStatsRows(data){
+    const rows=document.getElementById('smRows');
+    const empty=document.getElementById('smEmpty');
+    if(!rows) return;
+    const top=Array.isArray(data.top)?data.top:[];
+    const other=parseInt(data.other,10)||0;
+    if(top.length===0 && other===0){
+      rows.innerHTML='';
+      if(empty) empty.hidden=false;
+      return;
+    }
+    if(empty) empty.hidden=true;
+    const max=Math.max(...top.map(r=>r.count),other,1);
+    const rowHtml=(flag,code,pct,count,other)=>{
+      const cls=other?' other':'';
+      return '<div class="stats-row">'+
+        '<span class="stats-row-label"><span class="flag">'+flag+'</span><span class="code">'+code+'</span></span>'+
+        '<div class="stats-row-bar"><div class="stats-row-bar-fill'+cls+'" data-target="'+pct+'" style="width:0%"></div></div>'+
+        '<span class="stats-row-num" data-target="'+count+'">0</span>'+
+      '</div>';
+    };
+    let html='';
+    for(const r of top){
+      const lang=String(r.lang||'').toLowerCase();
+      const flag=FLAGS[lang]||'🌐';
+      const code=lang.toUpperCase().slice(0,3)||'??';
+      const pct=Math.round(r.count/max*100);
+      html+=rowHtml(flag,code,pct,r.count,false);
+    }
+    if(other>0){
+      const pct=Math.round(other/max*100);
+      html+=rowHtml('🌐','ALT',pct,other,true);
+    }
+    rows.innerHTML=html;
+  }
+
+  async function openStatsModal(ev){
+    if(ev) ev.preventDefault();
+    const modal=document.getElementById('statsModal');
+    if(!modal) return;
+    modal.hidden=false;
+    const big=document.getElementById('smBigNum');
+    if(big) big.textContent='0';
+    const rows=document.getElementById('smRows');
+    if(rows) rows.innerHTML='';
+    try{
+      const r=await fetch('/api/community/stats/month');
+      if(!r.ok) throw new Error('http '+r.status);
+      const data=await r.json();
+      renderStatsRows(data);
+      animateCount(big,parseInt(data.monthly,10)||0,1400);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        modal.querySelectorAll('.stats-row-bar-fill').forEach(b=>{
+          b.style.width=(b.dataset.target||'0')+'%';
+        });
+      }));
+      modal.querySelectorAll('.stats-row-num').forEach(n=>{
+        animateCount(n,parseInt(n.dataset.target,10)||0,1400);
+      });
+    }catch(e){/* error inline non bloccante */}
+  }
+
+  function closeStatsModal(){
+    const modal=document.getElementById('statsModal');
+    if(modal) modal.hidden=true;
+  }
+
+  function init(){
+    loadLiveStats();
+    const more=document.getElementById('lsMore');
+    if(more) more.addEventListener('click',openStatsModal);
+    const close=document.getElementById('statsModalClose');
+    if(close) close.addEventListener('click',closeStatsModal);
+    const overlay=document.getElementById('statsModal');
+    if(overlay) overlay.addEventListener('click',e=>{ if(e.target===overlay) closeStatsModal(); });
+    document.addEventListener('keydown',e=>{
+      if(e.key==='Escape' && overlay && !overlay.hidden) closeStatsModal();
+    });
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();
+
+/* ─── NEWS ─── */
+(function(){
+  const DISMISS_KEY='abm_news_dismissed_v1';
+  const SESSION_KEY='abm_news_session_seen';
+  function loadDismissed(){
+    try{return JSON.parse(localStorage.getItem(DISMISS_KEY)||'{"ids":[],"sessions":0}');}
+    catch(e){return {ids:[],sessions:0};}
+  }
+  function saveDismissed(d){try{localStorage.setItem(DISMISS_KEY,JSON.stringify(d));}catch(e){}}
+  function fmtDate(ts){
+    try{const d=new Date(ts*1000);return d.toLocaleDateString();}catch(e){return '';}
+  }
+  function tagLabel(tag){
+    const k='news_tag_'+tag;
+    const v=(window.L&&window.L[document.documentElement.lang||'en'])
+      ? window.L[document.documentElement.lang][k]||window.L[document.documentElement.lang]['news_tag_info']
+      : tag;
+    return v;
+  }
+  function applyT(node){
+    if(window.applyTranslations){window.applyTranslations(node);return;}
+    node.querySelectorAll('[data-t]').forEach(el=>{
+      const k=el.getAttribute('data-t');
+      const lang=document.documentElement.lang||'en';
+      const t=window.L&&window.L[lang]&&window.L[lang][k];
+      if(t!==undefined) el.textContent=t;
+    });
+  }
+  async function loadNews(){
+    const card=document.getElementById('newsCard');
+    const list=document.getElementById('newsList');
+    const empty=document.getElementById('newsEmpty');
+    if(!card||!list) return;
+    let data;
+    try{
+      const r=await fetch('/api/community/news');
+      if(!r.ok) return;
+      data=await r.json();
+    }catch(e){return;}
+    const items=(data&&data.items)||[];
+    if(!items.length){
+      card.hidden=true;
+      return;
+    }
+    card.hidden=false;
+    list.innerHTML='';
+    if(empty) empty.hidden=true;
+    for(const it of items){
+      const div=document.createElement('div');
+      div.className='news-item';
+      div.innerHTML=`
+        <div class="news-item-head">
+          <span class="news-item-tag ${it.tag}">${tagLabel(it.tag)}</span>
+          <span class="news-item-date">${fmtDate(it.created_at)}</span>
+        </div>
+        <h4 class="news-item-title"></h4>
+        <p class="news-item-body"></p>`;
+      div.querySelector('.news-item-title').textContent=it.title||'';
+      div.querySelector('.news-item-body').textContent=it.body||'';
+      list.appendChild(div);
+    }
+    // banner: most recent with banner=true, not yet dismissed
+    const dismissed=loadDismissed();
+    const banner=items.find(it=>it.banner && !dismissed.ids.includes(it.id));
+    const bannerEl=document.getElementById('newsBanner');
+    if(banner&&bannerEl){
+      const tagEl=document.getElementById('newsBannerTag');
+      const txtEl=document.getElementById('newsBannerText');
+      const closeBtn=document.getElementById('newsBannerClose');
+      if(tagEl){tagEl.className='news-banner-tag '+banner.tag;tagEl.textContent=tagLabel(banner.tag);}
+      if(txtEl) txtEl.textContent=banner.title;
+      bannerEl.hidden=false;
+      // auto-dismiss after 2 sessions seen without click
+      const seen=parseInt(sessionStorage.getItem(SESSION_KEY+'_'+banner.id)||'0',10);
+      if(!seen){
+        sessionStorage.setItem(SESSION_KEY+'_'+banner.id,'1');
+        dismissed.sessions=(dismissed.sessions||0)+1;
+        saveDismissed(dismissed);
+        if(dismissed.sessions>=2){
+          dismissed.ids.push(banner.id);
+          dismissed.sessions=0;
+          saveDismissed(dismissed);
+        }
+      }
+      if(closeBtn){
+        closeBtn.onclick=()=>{
+          bannerEl.hidden=true;
+          dismissed.ids.push(banner.id);
+          saveDismissed(dismissed);
+        };
+      }
+    }
+  }
+  function init(){loadNews();}
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();
+
+/* ─── FEEDBACK ─── */
+(function(){
+  let currentRating=0;
+  function tt(k,fb){
+    const lang=document.documentElement.lang||'en';
+    return (window.L&&window.L[lang]&&window.L[lang][k])||fb||k;
+  }
+  function fmtDate(ts){try{return new Date(ts*1000).toLocaleDateString();}catch(e){return '';}}
+  function applyPlaceholders(node){
+    node.querySelectorAll('[data-t-ph]').forEach(el=>{
+      el.setAttribute('placeholder',tt(el.getAttribute('data-t-ph')));
+    });
+  }
+  function renderStars(){
+    const wrap=document.getElementById('fbStars');
+    if(!wrap) return;
+    wrap.innerHTML='';
+    for(let i=1;i<=5;i++){
+      const b=document.createElement('button');
+      b.type='button';
+      b.className='fbw-star';
+      b.dataset.val=String(i);
+      b.setAttribute('role','radio');
+      b.setAttribute('aria-checked','false');
+      b.setAttribute('aria-label',i+' / 5');
+      b.textContent='★';
+      b.addEventListener('click',()=>{
+        currentRating=i;
+        wrap.querySelectorAll('.fbw-star').forEach((s,idx)=>{
+          const on=(idx<i);
+          s.classList.toggle('active',on);
+          s.setAttribute('aria-checked',on?'true':'false');
+        });
+      });
+      wrap.appendChild(b);
+    }
+  }
+  function renderHistogram(hist,total){
+    const c=document.getElementById('fbHistogram');
+    if(!c) return;
+    c.innerHTML='';
+    for(let r=5;r>=1;r--){
+      const cnt=hist[r-1]||0;
+      const pct=total?Math.round((cnt/total)*100):0;
+      const row=document.createElement('div');
+      row.className='fbw-hist-row';
+      row.innerHTML=`<span>${r}★</span><div class="fbw-hist-bar"><div class="fbw-hist-fill" style="width:0"></div></div><span>${cnt}</span>`;
+      c.appendChild(row);
+      // animate next frame
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        row.querySelector('.fbw-hist-fill').style.width=pct+'%';
+      }));
+    }
+  }
+  function renderRecent(items){
+    const list=document.getElementById('fbRecent');
+    if(!list) return;
+    list.innerHTML='';
+    const withComment=items.filter(it=>it.comment).slice(0,15);
+    for(const it of withComment){
+      const div=document.createElement('div');
+      div.className='fbw-comment';
+      const stars='★'.repeat(it.rating||0)+'☆'.repeat(5-(it.rating||0));
+      div.innerHTML=`
+        <div class="fbw-comment-head">
+          <span class="fbw-comment-name"></span>
+          <span class="fbw-comment-rating">${stars}</span>
+        </div>
+        <p class="fbw-comment-body"></p>
+        <div class="fbw-comment-head" style="margin-top:4px">
+          <span></span>
+          <span>${fmtDate(it.created_at)}</span>
+        </div>`;
+      div.querySelector('.fbw-comment-name').textContent=it.name||tt('fb_anonymous','Anonymous');
+      div.querySelector('.fbw-comment-body').textContent=it.comment||'';
+      list.appendChild(div);
+    }
+  }
+  async function loadFeedback(){
+    let data;
+    try{
+      const r=await fetch('/api/community/feedback');
+      if(!r.ok) return;
+      data=await r.json();
+    }catch(e){return;}
+    const avg=document.getElementById('fbAvg');
+    const tot=document.getElementById('fbTotal');
+    if(avg) avg.textContent=data.total?data.avg.toFixed(1):'—';
+    if(tot) tot.textContent=data.total?'· '+data.total+' '+tt('fb_total_reviews'):'';
+    renderHistogram(data.histogram||[0,0,0,0,0],data.total||0);
+    renderRecent(data.items||[]);
+  }
+  function showMsg(text,kind){
+    const el=document.getElementById('fbMsg');
+    if(!el) return;
+    el.className='fbw-msg '+kind;
+    el.textContent=text;
+    el.hidden=false;
+    if(kind==='ok') setTimeout(()=>{el.hidden=true;},4000);
+  }
+  async function submitFeedback(ev){
+    ev.preventDefault();
+    if(currentRating<1){
+      showMsg(tt('fb_invalid','Invalid data.'),'err');return;
+    }
+    const name=(document.getElementById('fbName')||{}).value||'';
+    const comment=(document.getElementById('fbComment')||{}).value||'';
+    const honeypot=(document.getElementById('fbHoneypot')||{}).value||'';
+    const submitBtn=document.getElementById('fbSubmit');
+    if(submitBtn) submitBtn.disabled=true;
+    try{
+      const r=await fetch('/api/community/feedback',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({rating:currentRating,name,comment,website:honeypot}),
+      });
+      if(r.status===429){showMsg(tt('fb_rate_limit'),'err');return;}
+      if(!r.ok){showMsg(tt('fb_invalid'),'err');return;}
+      showMsg(tt('fb_thanks'),'ok');
+      const form=document.getElementById('fbForm');
+      if(form) form.reset();
+      currentRating=0;
+      document.querySelectorAll('#fbStars .fbw-star').forEach(s=>{
+        s.classList.remove('active');
+        s.setAttribute('aria-checked','false');
+      });
+      loadFeedback();
+    }catch(e){
+      showMsg(tt('fb_invalid'),'err');
+    }finally{
+      if(submitBtn) submitBtn.disabled=false;
+    }
+  }
+  function init(){
+    const w=document.getElementById('fbWidget');
+    if(!w) return;
+    applyPlaceholders(w);
+    renderStars();
+    const toggle=document.getElementById('fbToggle');
+    const panel=document.getElementById('fbPanel');
+    if(toggle&&panel){
+      toggle.addEventListener('click',()=>{
+        const open=!panel.hidden;
+        panel.hidden=open;
+        toggle.setAttribute('aria-expanded',(!open).toString());
+      });
+    }
+    const form=document.getElementById('fbForm');
+    if(form) form.addEventListener('submit',submitFeedback);
+    loadFeedback();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();

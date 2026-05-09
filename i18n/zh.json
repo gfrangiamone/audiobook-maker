@@ -1,6 +1,13 @@
 {
   "ui": {
     "subtitle": "使用高品质神经语音将EPUB转换为有声读物",
+    "ls_books_today": "本日已处理的有声书",
+    "ls_more": "更多统计",
+    "stats_modal_title": "使用统计",
+    "stats_modal_monthly": "本月完成的有声书",
+    "stats_modal_by_lang": "热门 TTS 语言",
+    "stats_modal_empty": "本月尚未完成任何有声书。",
+    "stats_modal_footer": "匿名汇总数据 · 每 5 分钟更新一次",
     "disclaimer": "⚠️ 本工具仅供个人使用，适用于您合法拥有的EPUB文件。上传的EPUB文件和生成的音频不会被系统保存，并在会话结束后自动删除。",
     "s1_title": "上传文件",
     "upload_text": "拖拽EPUB或TXT文件，或点击选择",

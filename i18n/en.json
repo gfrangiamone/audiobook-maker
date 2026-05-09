@@ -1,6 +1,13 @@
 {
   "ui": {
     "subtitle": "Convert your EPUBs into audiobooks with high-quality neural voices",
+    "ls_books_today": "books processed today",
+    "ls_more": "more stats",
+    "stats_modal_title": "Usage statistics",
+    "stats_modal_monthly": "audiobooks completed this month",
+    "stats_modal_by_lang": "Top TTS languages",
+    "stats_modal_empty": "No audiobooks completed this month yet.",
+    "stats_modal_footer": "Anonymous, aggregated data · refreshed every 5 minutes",
     "disclaimer": "⚠️ This tool is intended solely for personal use on EPUB files you legitimately own. Uploaded EPUB files and generated audio are not stored by the system and are automatically deleted at the end of the session.",
     "s1_title": "Upload file",
     "upload_text": "Drag your EPUB or TXT file here, or click to select",

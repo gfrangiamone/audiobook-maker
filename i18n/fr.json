@@ -1,6 +1,13 @@
 {
   "ui": {
     "subtitle": "Convertissez vos EPUB en livres audio avec des voix neuronales",
+    "ls_books_today": "livres traités aujourd'hui",
+    "ls_more": "plus de stats",
+    "stats_modal_title": "Statistiques d'utilisation",
+    "stats_modal_monthly": "livres audio terminés ce mois-ci",
+    "stats_modal_by_lang": "Langues TTS principales",
+    "stats_modal_empty": "Aucun livre audio terminé ce mois-ci.",
+    "stats_modal_footer": "Données anonymes et agrégées · mises à jour toutes les 5 minutes",
     "disclaimer": "⚠️ Cet outil est destiné exclusivement à un usage personnel sur des fichiers EPUB dont vous êtes légitimement propriétaire. Les fichiers EPUB et les fichiers audio générés ne sont pas conservés par le système et sont automatiquement supprimés à la fin de la session.",
     "s1_title": "Charger le fichier",
     "upload_text": "Glissez votre EPUB ou TXT ici, ou cliquez pour sélectionner",

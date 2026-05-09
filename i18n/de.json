@@ -1,6 +1,13 @@
 {
   "ui": {
     "subtitle": "Konvertieren Sie EPUBs in Hörbücher mit neuronalen Stimmen",
+    "ls_books_today": "Hörbücher heute erstellt",
+    "ls_more": "mehr Statistiken",
+    "stats_modal_title": "Nutzungsstatistik",
+    "stats_modal_monthly": "Hörbücher in diesem Monat abgeschlossen",
+    "stats_modal_by_lang": "Top TTS-Sprachen",
+    "stats_modal_empty": "Diesen Monat wurden noch keine Hörbücher abgeschlossen.",
+    "stats_modal_footer": "Anonyme, aggregierte Daten · alle 5 Minuten aktualisiert",
     "disclaimer": "⚠️ Dieses Tool ist ausschließlich für den persönlichen Gebrauch mit EPUB-Dateien bestimmt, die Sie rechtmäßig besitzen. Hochgeladene EPUB-Dateien und erzeugte Audiodateien werden vom System nicht gespeichert und am Ende der Sitzung automatisch gelöscht.",
     "s1_title": "Datei hochladen",
     "upload_text": "EPUB oder TXT hierher ziehen, oder klicken",

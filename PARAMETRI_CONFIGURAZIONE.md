@@ -349,7 +349,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `__version__` | `"3.10.0"` | `version.py` | 7 |
+| `__version__` | `"3.13.0"` | `version.py` | 7 |
 | `__updated_date__` | Dinamico: `datetime.now().strftime("%Y-%m")` | `version.py` | 10 |
 
 ---
@@ -376,6 +376,27 @@ A partire dalla v3.8.0, il codice è distribuito su più file per migliorare la 
 | `email_service.py` | SMTP, digest admin, ricevuta pagamento, buono rimborso |
 | `payment.py` | Gestione voucher, PayPal OAuth2/capture, validazione rate-limited |
 | `generation_engine.py` | Thread di ottimizzazione LLM e generazione TTS, `configure()`, `run_optimization`, `run_generation` |
+| `community_store.py` | JSON store per widget community: news (`news.json`) e feedback utenti (`feedback.json`) su `ABM_DATA_DIR`. Atomic write tmp+rename, lock per file, backup `.bak` |
+
+---
+
+## 10. Community widget (v3.13.0)
+
+Live Stats, News e Feedback aggiungono questi file su `ABM_DATA_DIR`:
+
+| File | Contenuto |
+|------|-----------|
+| `news.json` | Lista news pubblicate dagli admin (tag, title, body, lang, banner, archived) |
+| `news.json.bak` | Backup automatico della versione precedente |
+| `feedback.json` | Feedback utenti pubblici (rating 1-5, name, comment, ip_hash) |
+| `feedback.json.bak` | Backup automatico della versione precedente |
+
+Gli IP raw degli autori dei feedback non vengono persistiti: viene salvato solo `sha256(salt + ip)[:16]`. Il salt è configurabile via `ABM_IP_SALT` (default fisso). Le statistiche live (`/api/community/stats/today` e `/month`) sono derivate dal log `activity_YYYY-MM.log` esistente, nessun nuovo file.
+
+Endpoint pubblici: `/api/community/stats/today`, `/api/community/stats/month`, `/api/community/news` (GET), `/api/community/feedback` (GET, POST).
+Endpoint admin (richiedono `X-Admin-Token` o `?token=...`): `/admin/community` (UI con tab News + Feedback), `/admin/api/news`, `/admin/api/news/<id>`, `/admin/api/news/list`, `/admin/api/feedback/list`, `/admin/api/feedback/<id>`.
+
+Anti-spam feedback (in-memory, no DB): rate-limit `1/h, 5/24h` per IP-hash, honeypot `website` field, sanitize HTML server-side, cap lunghezze (name 80, comment 1000). Notifica email all'admin throttled a 30 min.
 
 ---
 

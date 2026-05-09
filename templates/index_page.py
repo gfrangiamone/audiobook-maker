@@ -63,6 +63,7 @@ def build_html_template(
     base_url: str = "",
     version: str = "",
     canonical_url: str = "",
+    updated_date: str = "",
 ) -> str:
     """Assemble the full HTML template from fragments with server-side SEO.
 
