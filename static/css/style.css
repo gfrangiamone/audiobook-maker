@@ -824,6 +824,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-msg{padding:8px 10px;border-radius:6px;font-size:.85rem}
 .fbw-msg.ok{background:rgba(91,155,91,.1);color:#5b9b5b;border:1px solid rgba(91,155,91,.2)}
 .fbw-msg.err{background:rgba(180,80,80,.1);color:#b45050;border:1px solid rgba(180,80,80,.2)}
+.fbw-others{margin-top:18px;padding-top:18px;border-top:1px solid var(--brd)}
+.fbw-others>h4{margin:0 0 12px;font-size:1rem;color:var(--tx)}
 .fbw-recent h4{margin:0 0 8px;font-size:.95rem;color:var(--tx)}
 .fbw-recent-list{display:flex;flex-direction:column;gap:10px;max-height:300px;overflow-y:auto}
 .fbw-comment{padding:8px 10px;background:var(--srf);border:1px solid var(--brd);border-radius:6px;font-size:.85rem}
