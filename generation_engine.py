@@ -36,6 +36,7 @@ from audio_utils import (
     _generate_silence_mp3, _concatenate_mp3,
     _get_audio_duration_ms, _convert_mp3_to_m4b,
     _prepare_m4b_cover_path,
+    _generate_podcast_rss,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
@@ -482,17 +483,18 @@ def _call_deepseek(user_content, job=None, max_retries=4):
                     stream.close()
                     raise _CancelledError("Optimization cancelled during streaming")
                 
-                # Cattura il contenuto normale
+                # Capture normal content
                 if event.choices and event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
                     result_parts.append(chunk)
                     if job is not None:
                         job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(chunk)
                         partial_streamed += len(chunk)
-                
-                # Opzionale: cattura reasoning_content (non lo usiamo per il testo finale, ma evita errori)
-                # if hasattr(event.choices[0].delta, "reasoning_content") and event.choices[0].delta.reasoning_content:
-                #     pass 
+
+                # Count reasoning tokens toward progress (but not output)
+                if hasattr(event.choices[0].delta, "reasoning_content") and event.choices[0].delta.reasoning_content:
+                    if job is not None:
+                        job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(event.choices[0].delta.reasoning_content)
 
             raw = "".join(result_parts)
             cleaned = _sanitize_llm_output(raw)
@@ -664,6 +666,8 @@ def _send_completion_email(job_id):
         "podcast_info_language": info.language if info else "",
         "original_filename": job.get("original_filename", ""),
         "lang": lang,
+        "output_format": job.get("output_format", ""),
+        "ai_optimized": job.get("ai_optimized", False),
         # Optional: optimized .abm snapshot (when auto_generate flow produced one)
         "optimized_abm_path": job.get("optimized_abm_path", ""),
         "optimized_abm_name": job.get("optimized_abm_name", ""),
@@ -685,7 +689,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" pronto per il download",
             "heading": "&#x1F3A7; Il tuo audiolibro &egrave; pronto!",
             "body": f"La generazione di <strong>{book_title}</strong> &egrave; stata completata con successo.",
-            "btn": "&#x2B07;&#xFE0F; Scarica audiolibro",
+            "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
             "warn": "&#x23F0; Attenzione: i file saranno disponibili per il download soltanto per 24 ore a partire dalla ricezione di questa email. Dopo tale periodo verranno cancellati automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Istruzioni per la pubblicazione del Podcast</strong>",
             "podcast_p1": f"Il file ZIP scaricato contiene tutti i file necessari per il tuo podcast. Per renderlo fruibile online, <strong>decomprimi il file ZIP</strong> e carica tutti i file contenuti sul tuo server web, in modo che siano raggiungibili all'indirizzo:",
@@ -697,7 +701,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" ready for download",
             "heading": "&#x1F3A7; Your audiobook is ready!",
             "body": f"The generation of <strong>{book_title}</strong> has been completed successfully.",
-            "btn": "&#x2B07;&#xFE0F; Download audiobook",
+            "btn": "&#x2B07;&#xFE0F; Download your book",
             "warn": "&#x23F0; Please note: the files will be available for download for 24 hours only from the time you receive this email. After that, they will be automatically deleted.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Podcast Publishing Instructions</strong>",
             "podcast_p1": f"The downloaded ZIP file contains all the files needed for your podcast. To make it available online, <strong>extract the ZIP file</strong> and upload all files to your web server so they are reachable at:",
@@ -709,7 +713,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" pr&ecirc;t au t&eacute;l&eacute;chargement",
             "heading": "&#x1F3A7; Votre livre audio est pr&ecirc;t !",
             "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
-            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger l'audiolibro",
+            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
             "warn": "&#x23F0; Attention : les fichiers seront disponibles au t&eacute;l&eacute;chargement pendant 24 heures seulement &agrave; compter de la r&eacute;ception de cet email. Pass&eacute; ce d&eacute;lai, ils seront automatiquement supprim&eacute;s.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instructions de publication du podcast</strong>",
             "podcast_p1": f"Le fichier ZIP t&eacute;l&eacute;charg&eacute; contient tous les fichiers n&eacute;cessaires &agrave; votre podcast. Pour le rendre accessible en ligne, <strong>d&eacute;compressez le fichier ZIP</strong> et t&eacute;l&eacute;versez tous les fichiers sur votre serveur web, de sorte qu'ils soient accessibles &agrave; l'adresse :",
@@ -721,7 +725,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" listo para descargar",
             "heading": "&#x1F3A7; &iexcl;Tu audiolibro est&aacute; listo!",
             "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se ha completado con &eacute;xito.",
-            "btn": "&#x2B07;&#xFE0F; Descargar audiolibro",
+            "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
             "warn": "&#x23F0; Atenci&oacute;n: los archivos estar&aacute;n disponibles para descargar solo durante 24 horas desde la recepci&oacute;n de este email. Despu&eacute;s de ese periodo se eliminar&aacute;n autom&aacute;ticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instrucciones para publicar el podcast</strong>",
             "podcast_p1": f"El archivo ZIP descargado contiene todos los archivos necesarios para tu podcast. Para hacerlo accesible en l&iacute;nea, <strong>descomprime el archivo ZIP</strong> y sube todos los archivos a tu servidor web para que sean accesibles en:",
@@ -733,7 +737,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" bereit zum Download",
             "heading": "&#x1F3A7; Dein H&ouml;rbuch ist fertig!",
             "body": f"Die Generierung von <strong>{book_title}</strong> wurde erfolgreich abgeschlossen.",
-            "btn": "&#x2B07;&#xFE0F; H\u00f6rbuch herunterladen",
+            "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
             "warn": "&#x23F0; Hinweis: Die Dateien stehen nur 24 Stunden ab Erhalt dieser E-Mail zum Download bereit. Danach werden sie automatisch gel&ouml;scht.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Anleitung zur Podcast-Ver&ouml;ffentlichung</strong>",
             "podcast_p1": f"Die heruntergeladene ZIP-Datei enth&auml;lt alle Dateien f&uuml;r deinen Podcast. Um ihn online verf&uuml;gbar zu machen, <strong>entpacke die ZIP-Datei</strong> und lade alle Dateien auf deinen Webserver hoch, sodass sie unter folgender Adresse erreichbar sind:",
@@ -745,7 +749,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" pronto para o download",
             "heading": "&#x1F3A7; Seu audiolivro est&aacute; pronto!",
             "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da com sucesso.",
-            "btn": "&#x2B07;&#xFE0F; Baixar audiolivro",
+            "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
             "warn": "&#x23F0; Aten&ccedil;&atilde;o: os arquivos estar&atilde;o dispon&iacute;veis para download por apenas 24 horas a partir do recebimento deste e-mail. Ap&oacute;s esse per&iacute;odo, eles ser&atilde;o exclu&iacute;dos automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instru&ccedil;&otilde;es de publica&ccedil;&atilde;o do Podcast</strong>",
             "podcast_p1": f"O arquivo ZIP baixato cont&eacute;m todos os arquivos necess&aacute;rios para o seu podcast. Para torn&aacute;-lo acess&iacute;vel online, <strong>descompacte o arquivo ZIP</strong> e envie todos os arquivos para o seu servidor web, para que sejam acess&iacute;veis em:",
@@ -757,7 +761,7 @@ def _send_completion_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" \u5df2\u51c6\u5907\u597d\u4e0b\u8f7d",
             "heading": "&#x1F3A7; \u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
             "body": f"<strong>{book_title}</strong> \u5df2\u6210\u529f\u751f\u6210\u3002",
-            "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u6587\u4ef6",
+            "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u4e66\u7c4d",
             "warn": "&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u5728\u6536\u5230\u6b64\u90ae\u4ef6\u540e24\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002\u4e4b\u540e\u5c06\u81ea\u52a8\u5220\u9664\u3002",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>\u64ad\u5ba2\u53d1\u5e03\u8bf4\u660e</strong>",
             "podcast_p1": f"\u4e0b\u8f7d\u7684ZIP\u6587\u4ef6\u5305\u542b\u64ad\u5ba2\u6240\u9700\u7684\u6240\u6709\u6587\u4ef6\u3002\u8981\u5728\u7ebf\u53d1\u5e03\uff0c\u8bf7<strong>\u89e3\u538bZIP\u6587\u4ef6</strong>\uff0c\u5e76\u5c06\u6240\u6709\u6587\u4ef6\u4e0a\u4f20\u5230\u60a8\u7684\u7f51\u7edc\u670d\u52a1\u5668\uff0c\u4f7f\u5176\u53ef\u901a\u8fc7\u4ee5\u4e0b\u5730\u5740\u8bbf\u95ee\uff1a",
@@ -768,19 +772,6 @@ def _send_completion_email(job_id):
     }
 
     t = dict(_email_i18n.get(lang, _email_i18n["en"]))
-
-    # Se il job ha incluso ottimizzazione AI + generazione TTS nel medesimo flusso,
-    # l'utente si aspetta di scaricare anche l'audio
-    if job.get("ai_optimized"):
-        _btn_audio = {
-            "it": "&#x2B07;&#xFE0F; Scarica audiolibro",
-            "en": "&#x2B07;&#xFE0F; Download audiobook",
-            "fr": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger l'audiolibro",
-            "es": "&#x2B07;&#xFE0F; Descargar audiolibro",
-            "de": "&#x2B07;&#xFE0F; H\u00f6rbuch herunterladen",
-            "zh": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u97f3\u9891\u6587\u4ef6",
-        }
-        t["btn"] = _btn_audio.get(lang, _btn_audio["en"])
 
     # Podcast section (only for podcast downloads)
     podcast_section = ""
@@ -799,29 +790,6 @@ def _send_completion_email(job_id):
         <p style="margin:0">{t['podcast_p3']}</p>
       </div>"""
 
-    # Optional: link to optimized .abm file
-    abm_section = ""
-    has_abm = bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", ""))
-    if has_abm:
-        abm_url = f"{BASE_URL}/dl/{token}/abm" if BASE_URL else f"/dl/{token}/abm"
-        _abm_labels = {
-            "it": ("&#x1F4DD; Scarica progetto ottimizzato (.abm)", "Contiene il testo ottimizzato dall'AI, utile per future ri-generazioni audio o revisioni manuali."),
-            "en": ("&#x1F4DD; Download optimized project (.abm)", "Contains the AI-optimized text, useful for future audio re-generations or manual revisions."),
-            "fr": ("&#x1F4DD; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)", "Contient le texte optimis&eacute; par l'IA, utile pour les futures re-g&eacute;n&eacute;rations audio ou r&eacute;visions manuelles."),
-            "es": ("&#x1F4DD; Descargar proyecto optimizado (.abm)", "Contiene el texto optimizado por IA, &uacute;til para futuras regeneraciones de audio o revisiones manuales."),
-            "de": ("&#x1F4DD; Optimiertes Projekt herunterladen (.abm)", "Enth&auml;lt den KI-optimierten Text, n&uuml;tzlich f&uuml;r zuk&uuml;nftige Audio-Regenerierung oder manuelle &Uuml;berarbeitung."),
-            "zh": ("&#x1F4DD; \u4e0b\u8f7d\u4f18\u5316\u540e\u7684\u9879\u76ee\u6587\u4ef6 (.abm)", "\u5305\u542bAI\u4f18\u5316\u540e\u7684\u6587\u672c\uff0c\u53ef\u7528\u4e8e\u672a\u6765\u97f3\u9891\u91cd\u65b0\u751f\u6210\u6216\u624b\u52a8\u4fee\u8ba2\u3002"),
-        }
-        abm_btn, abm_hint = _abm_labels.get(lang, _abm_labels["en"])
-        abm_section = f"""
-      <p style="margin:16px 0 6px">
-        <a href="{abm_url}" style="display:inline-block;padding:12px 24px;background:#8b5cf6;color:white;
-           text-decoration:none;border-radius:8px;font-weight:600;font-size:15px">
-          {abm_btn}
-        </a>
-      </p>
-      <p style="margin:0 0 16px;color:#666;font-size:13px">{abm_hint}</p>"""
-
     subject = t["subject"]
     html_body = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
@@ -833,7 +801,6 @@ def _send_completion_email(job_id):
           {t['btn']}
         </a>
       </p>
-      {abm_section}
       <p style="color:#e74c3c;font-weight:600">{t['warn']}</p>
       {podcast_section}
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
@@ -877,6 +844,8 @@ def _send_optimization_email(job_id):
         "optimized_abm_name": abm_name,
         "original_filename": job.get("original_filename", ""),
         "lang": lang,
+        "output_format": "",
+        "ai_optimized": True,
     }
     _save_tokens()
     job["email_token"] = token
@@ -889,8 +858,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" ottimizzazione testo completata",
             "heading": "&#x2728; Ottimizzazione testo completata!",
             "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
-            "btn": "&#x2B07;&#xFE0F; Scarica il progetto ottimizzato (.abm)",
-            "info": "Il file .abm scaricato contiene il testo ottimizzato per la sintesi vocale. Puoi caricarlo nuovamente su Audiobook Maker per procedere alla generazione dell'audiolibro.",
+            "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
             "warn": "&#x23F0; Attenzione: il file sar&agrave; disponibile per il download soltanto per 24 ore.",
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
@@ -898,8 +866,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" text optimization completed",
             "heading": "&#x2728; Text optimization completed!",
             "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
-            "btn": "&#x2B07;&#xFE0F; Download optimized project (.abm)",
-            "info": "The downloaded .abm file contains text optimized for speech synthesis. You can upload it back to Audiobook Maker to proceed with audiobook generation.",
+            "btn": "&#x2B07;&#xFE0F; Download your book",
             "warn": "&#x23F0; Please note: the file will be available for download for 24 hours only.",
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
@@ -907,8 +874,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" optimisation du texte termin&eacute;e",
             "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
             "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
-            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger le projet optimis&eacute; (.abm)",
-            "info": "Le fichier .abm t&eacute;l&eacute;charg&eacute; contient le texte optimis&eacute; pour la synth&egrave;se vocale. Vous pouvez le recharger sur Audiobook Maker pour g&eacute;n&eacute;rer le livre audio.",
+            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
             "warn": "&#x23F0; Attention : le fichier sera disponible au t&eacute;l&eacute;chargement pendant 24 heures seulement.",
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
@@ -916,8 +882,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" optimizaci&oacute;n de texto completada",
             "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
             "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
-            "btn": "&#x2B07;&#xFE0F; Descargar proyecto optimizado (.abm)",
-            "info": "El archivo .abm descargado contiene el texto optimizado para la s&iacute;ntesis de voz. Puedes cargarlo nuevamente en Audiobook Maker para generar el audiolibro.",
+            "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
             "warn": "&#x23F0; Atenci&oacute;n: el archivo estar&aacute; disponible para descargar solo durante 24 horas.",
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
@@ -925,8 +890,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" Textoptimierung abgeschlossen",
             "heading": "&#x2728; Textoptimierung abgeschlossen!",
             "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
-            "btn": "&#x2B07;&#xFE0F; Optimiertes Projekt herunterladen (.abm)",
-            "info": "Die heruntergeladene .abm-Datei enth&auml;lt den f&uuml;r die Sprachsynthese optimierten Text. Du kannst sie erneut in Audiobook Maker hochladen, um das H&ouml;rbuch zu generieren.",
+            "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
             "warn": "&#x23F0; Hinweis: Die Datei steht nur 24 Stunden zum Download bereit.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
@@ -934,8 +898,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" otimiza&ccedil;&atilde;o de texto conclu&iacute;da",
             "heading": "&#x2728; Otimiza&ccedil;&atilde;o de texto conclu&iacute;da!",
             "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> para s&iacute;ntese de voz foi conclu&iacute;da com sucesso.",
-            "btn": "&#x2B07;&#xFE0F; Baixar projeto otimizado (.abm)",
-            "info": "O arquivo .abm baixado cont&eacute;m o texto otimizado para s&iacute;ntese de voz. Voc&ecirc; pode carreg&aacute;-lo novamente no Audiobook Maker para prosseguir com a gera&ccedil;&atilde;o do audiolivro.",
+            "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
             "warn": "&#x23F0; Aten&ccedil;&atilde;o: o arquivo estar&aacute; dispon&iacute;vel para download por apenas 24 horas.",
             "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
         },
@@ -943,8 +906,7 @@ def _send_optimization_email(job_id):
             "subject": f"Audiobook Maker \u2014 \"{book_title}\" \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210",
             "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
             "body": f"<strong>{book_title}</strong> \u7684AI\u6587\u672c\u4f18\u5316\u5df2\u6210\u529f\u5b8c\u6210\u3002",
-            "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u4f18\u5316\u9879\u76ee (.abm)",
-            "info": "\u4e0b\u8f7d\u7684.abm\u6587\u4ef6\u5305\u542b\u4e3a\u8bed\u97f3\u5408\u6210\u4f18\u5316\u7684\u6587\u672c\u3002\u60a8\u53ef\u4ee5\u5c06\u5176\u91cd\u65b0\u4e0a\u4f20\u5230Audiobook Maker\u4ee5\u7ee7\u7eed\u751f\u6210\u6709\u58f0\u8bfb\u7269\u3002",
+            "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u4e66\u7c4d",
             "warn": "&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u572824\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002",
             "footer": "\u6b64\u90ae\u4ef6\u7531 Audiobook Maker \u81ea\u52a8\u751f\u6210\u3002",
         },
@@ -957,14 +919,11 @@ def _send_optimization_email(job_id):
       <h2 style="color:#2c3e50">{t['heading']}</h2>
       <p>{t['body']}</p>
       <p style="margin:24px 0">
-        <a href="{dl_url}" style="display:inline-block;padding:14px 28px;background:#8b5cf6;color:white;
+        <a href="{dl_url}" style="display:inline-block;padding:14px 28px;background:#3b82f6;color:white;
            text-decoration:none;border-radius:8px;font-weight:600;font-size:16px">
           {t['btn']}
         </a>
       </p>
-      <div style="margin:16px 0;padding:12px 16px;background:#f0f5ff;border-left:4px solid #8b5cf6;border-radius:4px">
-        <p style="margin:0;font-size:14px">{t['info']}</p>
-      </div>
       <p style="color:#e74c3c;font-weight:600">{t['warn']}</p>
       <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
       <p style="color:#999;font-size:12px">
@@ -1106,6 +1065,7 @@ def run_optimization(job_id, selected_chapters=None):
     job["opt_processed_chars"] = 0
     job["opt_streamed_chars"] = 0
     job["opt_start_time"] = start_time
+    job["opt_progress_message"] = "Starting optimization..."
 
     try:
         for i, ch in enumerate(chapters_to_opt):
@@ -1151,7 +1111,6 @@ def run_optimization(job_id, selected_chapters=None):
         job["opt_progress_current"] = total_chapters
         job["opt_elapsed_seconds"] = round(total_elapsed)
         job["opt_completed_at"] = time.time()
-        job["opt_progress_message"] = "Optimization complete!"
         job["ai_optimized"] = True
         # Segna il job come completato per il recovery voucher all'avvio
         if job.get("payment_type"):
@@ -1162,20 +1121,24 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
-        # Re-check auto_generate — may have been set mid-optimization via register_opt_email
+        # Re-check auto_generate — may have been set via the unified optimization+generation flow
         auto_generate = job.get("opt_auto_generate", False)
-        if auto_generate and job.get("email_registered"):
-            # Batch mode: generate .abm snapshot first, then proceed to TTS generation
+        if auto_generate:
+            job["opt_progress_message"] = "Optimization complete! Preparing audio generation..."
+            # Generate .abm snapshot first, then proceed to TTS generation
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
-            job["status"] = "optimized"
+            # Go directly to generating — skip intermediate "optimized" status
+            # to avoid race condition in SSE polling
             voice = job.get("opt_voice", "it-IT-IsabellaNeural")
             rate = job.get("opt_rate", "+0%")
             single_file = job.get("opt_single_file", True)
+            output_format = job.get("opt_output_format", "m4b")
+            podcast_base_url = job.get("opt_podcast_base_url", "")
             print(f"[{job_id}] Auto-generating after optimization (voice: {voice})")
 
             # Filter info if only a subset was optimized
@@ -1189,7 +1152,9 @@ def run_optimization(job_id, selected_chapters=None):
                     info.total_chars = sum(ch.char_count for ch in filtered)
                     info.estimated_duration_minutes = info.total_words / 150
 
-            run_generation(job_id, info, voice, rate, single_file)
+            run_generation(job_id, info, voice, rate, single_file,
+                           output_format=output_format,
+                           podcast_base_url=podcast_base_url)
         elif job.get("email_registered"):
             # Batch mode, no auto-generate: create .abm and send email
             abm_path, abm_name = _generate_optimized_abm(job_id)
@@ -1206,7 +1171,8 @@ def run_optimization(job_id, selected_chapters=None):
             job["last_poll"] = time.time()
 
     except _CancelledError:
-        job["status"] = "cancelled"
+        # Revert to analyzed so cleanup doesn't nuke the job — user can retry
+        job["status"] = "analyzed"
         job["opt_progress_message"] = "Optimization cancelled"
         print(f"[{job_id}] LLM optimization cancelled")
         _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
@@ -1225,10 +1191,11 @@ def run_optimization(job_id, selected_chapters=None):
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, info, voice, rate, single_file):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
     job = _jobs[job_id]
     job["status"] = "generating"
     job["cancelled"] = False
+    my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
     work_dir = _upload_dir / job_id
     work_dir.mkdir(exist_ok=True)
@@ -1262,6 +1229,8 @@ def run_generation(job_id, info, voice, rate, single_file):
 
         def _check_cancelled():
             """Controlla se il job e stato cancellato o il client disconnesso."""
+            if job.get("gen_epoch", 0) != my_epoch:
+                return True
             if job.get("cancelled"):
                 return True
             if job.get("email_registered"):
@@ -1340,38 +1309,39 @@ def run_generation(job_id, info, voice, rate, single_file):
             final_mp3 = str(output_dir / f"{safe_name}.mp3")
             _concatenate_mp3(all_parts, final_mp3)
 
-            # Generate M4B too (filtra capitoli con durata zero se ffprobe non disponibile)
-            final_m4b = str(output_dir / f"{safe_name}.m4b")
-            job["progress_message"] = "Converting to M4B..."
-            # Cover hi-res: EPUB 1400x1400 → thumb esistente → branded fallback (PDF/TXT)
-            cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
-            valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
+            # Generate M4B too (skip for mp3-only format)
+            if output_format != 'mp3':
+                final_m4b = str(output_dir / f"{safe_name}.m4b")
+                job["progress_message"] = "Converting to M4B..."
+                # Cover hi-res: EPUB 1400x1400 → thumb esistente → branded fallback (PDF/TXT)
+                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+                valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
 
-            # Retry logic: max 2 attempts
-            for attempt in range(1, 3):
-                try:
-                    if attempt > 1:
-                        print(f"[{job_id}] Retrying M4B generation (attempt {attempt})...")
-                    
-                    if _convert_mp3_to_m4b(final_mp3, final_m4b,
-                                           chapters=valid_m4b_ch or None,
-                                           title=info.title, author=info.author or None,
-                                           cover_path=cover_path,
-                                           date=getattr(info, "date", None),
-                                           language=getattr(info, "language", None),
-                                           description=getattr(info, "description", None)):
-                        job["output_m4b"] = final_m4b
-                        job["m4b_failed"] = False
-                        break # Success!
-                    else:
-                        raise Exception("Conversion returned False")
-                except Exception as e:
-                    print(f"[{job_id}] M4B conversion attempt {attempt} failed: {e}")
-                    if attempt == 2:
-                        job["m4b_failed"] = True
-                        if os.path.exists(final_m4b):
-                            try: os.remove(final_m4b)
-                            except OSError: pass
+                # Retry logic: max 2 attempts
+                for attempt in range(1, 3):
+                    try:
+                        if attempt > 1:
+                            print(f"[{job_id}] Retrying M4B generation (attempt {attempt})...")
+
+                        if _convert_mp3_to_m4b(final_mp3, final_m4b,
+                                               chapters=valid_m4b_ch or None,
+                                               title=info.title, author=info.author or None,
+                                               cover_path=cover_path,
+                                               date=getattr(info, "date", None),
+                                               language=getattr(info, "language", None),
+                                               description=getattr(info, "description", None)):
+                            job["output_m4b"] = final_m4b
+                            job["m4b_failed"] = False
+                            break # Success!
+                        else:
+                            raise Exception("Conversion returned False")
+                    except Exception as e:
+                        print(f"[{job_id}] M4B conversion attempt {attempt} failed: {e}")
+                        if attempt == 2:
+                            job["m4b_failed"] = True
+                            if os.path.exists(final_m4b):
+                                try: os.remove(final_m4b)
+                                except OSError: pass
 
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
@@ -1462,38 +1432,59 @@ def run_generation(job_id, info, voice, rate, single_file):
             # Include book cover in ZIP if available
             _include_cover_in_dir(job, output_dir)
 
+            # Generate RSS XML for zip_rss format (before ZIP so it gets included)
+            if output_format == 'zip_rss':
+                try:
+                    rss_fname = "podcast.xml"
+                    rss_path = str(output_dir / rss_fname)
+                    cover_file = ""
+                    for _ext in ("jpg", "jpeg", "png"):
+                        _candidate = output_dir / f"cover.{_ext}"
+                        if _candidate.exists():
+                            cover_file = _candidate.name
+                            break
+                    _generate_podcast_rss(info, mp3_files, rss_path,
+                                          base_url=podcast_base_url,
+                                          cover_filename=cover_file,
+                                          rss_filename=rss_fname)
+                    print(f"[{job_id}] RSS XML embedded in ZIP ({rss_fname})")
+                    job["podcast_rss_included"] = True
+                except Exception as e:
+                    print(f"[{job_id}] RSS generation failed (non-fatal): {e}")
+
             zip_path = shutil.make_archive(str(work_dir / safe_name), "zip", str(output_dir))
             job["output_files"] = mp3_files
             job["output_name"] = f"{safe_name}.zip"
             job["output_zip"] = zip_path
 
-            # background M4B generation even in ZIP mode
-            try:
-                # Concatenate all MP3s into one for M4B conversion
-                temp_full_mp3 = str(work_dir / "full_temp.mp3")
-                _concatenate_mp3(mp3_files, temp_full_mp3)
-                final_m4b = str(output_dir / f"{safe_name}.m4b")
-                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
-                
-                for attempt in range(1, 3):
-                    if _convert_mp3_to_m4b(temp_full_mp3, final_m4b,
-                                           chapters=m4b_chapters or None,
-                                           title=info.title, author=info.author or None,
-                                           cover_path=cover_path):
-                        job["output_m4b"] = final_m4b
-                        job["m4b_failed"] = False
-                        break
-                    else:
-                        if attempt == 2: job["m4b_failed"] = True
-                
-                if os.path.exists(temp_full_mp3):
-                    os.remove(temp_full_mp3)
-            except Exception as e:
-                print(f"[{job_id}] Background M4B generation failed: {e}")
-                job["m4b_failed"] = True
+            # background M4B generation even in ZIP mode (skip for mp3, zip and zip_rss formats)
+            if output_format not in ('mp3', 'zip', 'zip_rss'):
+                try:
+                    # Concatenate all MP3s into one for M4B conversion
+                    temp_full_mp3 = str(work_dir / "full_temp.mp3")
+                    _concatenate_mp3(mp3_files, temp_full_mp3)
+                    final_m4b = str(output_dir / f"{safe_name}.m4b")
+                    cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
 
-            # Flag: podcast available (built on-demand with user-provided base URL)
-            job["podcast_ready"] = True
+                    for attempt in range(1, 3):
+                        if _convert_mp3_to_m4b(temp_full_mp3, final_m4b,
+                                               chapters=m4b_chapters or None,
+                                               title=info.title, author=info.author or None,
+                                               cover_path=cover_path):
+                            job["output_m4b"] = final_m4b
+                            job["m4b_failed"] = False
+                            break
+                        else:
+                            if attempt == 2: job["m4b_failed"] = True
+
+                    if os.path.exists(temp_full_mp3):
+                        os.remove(temp_full_mp3)
+                except Exception as e:
+                    print(f"[{job_id}] Background M4B generation failed: {e}")
+                    job["m4b_failed"] = True
+
+            # Flag: podcast available (RSS included in ZIP for zip_rss; downloadable separately)
+            job["podcast_ready"] = (output_format == 'zip_rss')
             job["podcast_info"] = info
             job["podcast_mp3s"] = mp3_files
             job["podcast_safe_name"] = safe_name
@@ -1550,18 +1541,21 @@ def run_generation(job_id, info, voice, rate, single_file):
                 print(f"[{job_id}] Email notification error: {e}")
 
     except _CancelledError:
-        job["status"] = "cancelled"
-        job["progress_message"] = "Cancelled"
+        still_current = job.get("gen_epoch", 0) == my_epoch
+        if still_current:
+            job["status"] = "analyzed"
+            job["progress_message"] = "Cancelled"
         # Refund caratteri Google TTS non consumati e forza riconciliazione
         if use_google:
             _google_tts_refund_unused(job_id, job)
-        # Cleanup temp files
-        try:
-            if work_dir.exists():
-                shutil.rmtree(str(work_dir), ignore_errors=True)
-        except Exception:
-            pass
-        print(f"[{job_id}] Generation cancelled, resources freed.")
+        # Cleanup temp files (solo se nessuna nuova generazione è partita)
+        if still_current:
+            try:
+                if work_dir.exists():
+                    shutil.rmtree(str(work_dir), ignore_errors=True)
+            except Exception:
+                pass
+        print(f"[{job_id}] Generation cancelled, resources freed{' (stale)' if not still_current else ''}.")
         _log_activity(job_id, job.get("original_filename", ""), "CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))

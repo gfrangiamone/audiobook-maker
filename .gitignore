@@ -7,10 +7,10 @@ _debug*
 firebase*
 data/
 mockup/
+scripts/
 test/
 dist/
 build/
-script/
 backup/
 .venv/
 .minimax/

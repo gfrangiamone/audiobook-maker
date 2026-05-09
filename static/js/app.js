@@ -150,7 +150,6 @@ function setupKeyboardShortcuts(){
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){
       closeDonateModalX();
-      closeFreeBooks();
       closeAbmGuide();
       previewStop();
       const aboutModal=document.getElementById('aboutModal');
@@ -179,7 +178,12 @@ function applyI18n(){
       } else {
         // Caso normale: se non ha figli HTML, usa textContent (veloce)
         if (e.children.length === 0) {
-          e.textContent = v;
+          // FAQ answers may contain HTML links (e.g. free books list)
+          if (e.classList.contains('faq-answer') && /<[a-z][\s\S]*>/i.test(v)) {
+            e.innerHTML = v;
+          } else {
+            e.textContent = v;
+          }
         } else {
           // Se ha figli (es. icone), cerca il nodo di testo da aggiornare
           let tn = Array.from(e.childNodes).find(n => n.nodeType === 3 && n.textContent.trim().length > 0);
@@ -194,6 +198,8 @@ function applyI18n(){
   document.documentElement.lang=cl;
   const btnExp=document.getElementById('btnExport');
   if(btnExp)btnExp.title=t('btn_export_abm_tip');
+  const btnAbmInfo=document.getElementById('btnAbmInfo');
+  if(btnAbmInfo)btnAbmInfo.title=t('btn_export_abm_tip');
 }
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO();try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
@@ -210,7 +216,7 @@ function detectLang(){
 }
 
 // ═══════════════════ STATE ═══════════════════
-let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,isTxtFile=false,emailPromptShown=false,emailRegistered=false,emailCheckTimer=null,smtpAvailable=false;
+let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,_analyzedHbInterval=null,isTxtFile=false,emailRegistered=false;
 let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 let aiOptEnabled=false,llmAvailable=false,aiAlreadyOptimized=false;
@@ -286,12 +292,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(lsw)lsw.onclick=e=>{if(e.target.dataset.l)setLang(e.target.dataset.l)};
   const themeBtn=document.getElementById('themeBtn');
   if(themeBtn)themeBtn.onclick=toggleTheme;
-  const fbBtn=document.getElementById('fbBtn');
-  if(fbBtn)fbBtn.onclick=openFreeBooks;
-  const fbClose=document.getElementById('fbClose');
-  if(fbClose)fbClose.onclick=closeFreeBooks;
-  const fbModal=document.getElementById('fbModal');
-  if(fbModal)fbModal.onclick=e=>{if(e.target===e.currentTarget)closeFreeBooks()};
   const aboutBtn=document.getElementById('aboutBtn');
   if(aboutBtn)aboutBtn.onclick=e=>{e.preventDefault();openAbout()};
   const aboutClose=document.getElementById('aboutClose');
@@ -306,43 +306,84 @@ document.addEventListener('DOMContentLoaded',()=>{
   // ABM guide modal handlers
   const abmGuideModal=document.getElementById('abmGuideModal');
   if(abmGuideModal)abmGuideModal.onclick=e=>{if(e.target===e.currentTarget)closeAbmGuide()};
-  // Email modal handlers
-  const emSubmit=document.getElementById('emSubmit');
-  if(emSubmit)emSubmit.onclick=submitEmail;
-  const emSkip=document.getElementById('emSkip');
-  if(emSkip)emSkip.onclick=skipEmail;
-  const emClose=document.getElementById('emClose');
-  if(emClose)emClose.onclick=skipEmail;
-  // Email modal: persistent — no dismiss on overlay click (only explicit Skip or Submit)
-  const emailModal=document.getElementById('emailModal');
-  if(emailModal)emailModal.onclick=e=>{if(e.target===e.currentTarget)e.stopPropagation()};
-  
+  var dc=document.getElementById('donateCard');if(dc)dc.style.display='';
   setupUpload();loadVoices();
-  document.getElementById('btnG').onclick=startGen;
-  document.getElementById('btnD').onclick=()=>downloadFile('zip');
-  document.getElementById('btnM').onclick=()=>downloadFile('m4b');
-  document.getElementById('btnP').onclick=downloadPodcast;
-  document.getElementById('btnN').onclick=resetAll;
-  document.getElementById('btnC').onclick=cancelJob;
+  // Wizard generation button
+  const btnGenerate=document.getElementById('btnGenerate');
+  if(btnGenerate)btnGenerate.onclick=startCombinedGeneration;
+  // Download buttons (panel 5)
+  const btnD=document.getElementById('btnD');
+  if(btnD)btnD.onclick=()=>downloadFile('zip');
+  const btnM=document.getElementById('btnM');
+  if(btnM)btnM.onclick=()=>downloadFile('m4b');
+  const btnA=document.getElementById('btnA');
+  if(btnA)btnA.onclick=()=>downloadFile('abm');
+  const btnP=document.getElementById('btnP');
+  if(btnP)btnP.onclick=downloadPodcast;
+  const btnN=document.getElementById('btnN');
+  if(btnN)btnN.onclick=confirmReset;
+  // Cancel buttons (panel 4)
+  const btnC=document.getElementById('btnC');
+  if(btnC)btnC.onclick=cancelJob;
+  const btnCancelOpt=document.getElementById('btnCancelOpt');
+  if(btnCancelOpt)btnCancelOpt.onclick=cancelOptimization;
   window.addEventListener('beforeunload',onBeforeUnload);
-  document.getElementById('toS').onclick=function(){toggleOut(this)};
-  document.getElementById('toC').onclick=function(){toggleOut(this)};
-  // Initialize to M4B (toS) by default on load with a slight delay
-  setTimeout(() => toggleOut(document.getElementById('toS')), 50);
+  const vOutSel=document.getElementById('vOut');
+  if(vOutSel)vOutSel.addEventListener('change',onOutputChange);
+  // Speed slider: sync slider → hidden #vr select (mockup-inspired)
+  const speedSlider=document.getElementById('speedSlider');
+  const speedLabel=document.getElementById('speedLabel');
+  const vrSel=document.getElementById('vr');
+  const SPEED_LABEL_KEYS=['sp_vs','sp_s','sp_ss','sp_n','sp_sf','sp_f','sp_vf'];
+  const SPEED_VALUES=['-30%','-20%','-10%','+0%','+10%','+20%','+30%'];
+  function _setSpeed(idx){
+    vrSel.value=SPEED_VALUES[idx];
+    speedLabel.textContent=t(SPEED_LABEL_KEYS[idx]);
+  }
+  if(speedSlider&&speedLabel&&vrSel){
+    speedSlider.addEventListener('input',function(){
+      var idx=parseInt(this.value)+3;
+      _setSpeed(idx);
+      if(_previewGenerated)_resetPreviewState();
+    });
+    // Also sync on change (for keyboard/accessibility)
+    speedSlider.addEventListener('change',function(){
+      var idx=parseInt(this.value)+3;
+      _setSpeed(idx);
+    });
+  }
+  // Initialize output format to M4B by default
+  setTimeout(()=>{const s=document.getElementById('vOut');if(s){s.value='m4b';onOutputChange();}},50);
   // Chapter selection handlers
-  document.getElementById('selAll').onclick=chSelAll;
-  document.getElementById('selNone').onclick=chSelNone;
-  document.getElementById('selInv').onclick=chSelInvert;
-  document.getElementById('chAll').onchange=chMasterToggle;
+  const selAll=document.getElementById('selAll');if(selAll)selAll.onclick=chSelAll;
+  const selNone=document.getElementById('selNone');if(selNone)selNone.onclick=chSelNone;
+  const selInv=document.getElementById('selInv');if(selInv)selInv.onclick=chSelInvert;
+  const chAll=document.getElementById('chAll');if(chAll)chAll.onchange=chMasterToggle;
+  // AI toggle init
   _initAiOptToggle();
+  // Initialize wizard
+  updateWizardSteps(1);
 });
 
-function toggleOut(el){
-  el.closest('.tg').querySelectorAll('button').forEach(b=>b.classList.remove('on'));
-  el.classList.add('on');singleFile=el.dataset.v==='single';
-  document.getElementById('podHint').style.display=singleFile?'none':'';
-  // Chapter selection UI is now ALWAYS visible
+let outputFormat='m4b';
+let podcastBaseUrl='';
+function onOutputChange(){
+  const sel=document.getElementById('vOut');
+  outputFormat=sel?sel.value:'m4b';
+  singleFile=(outputFormat==='m4b'||outputFormat==='mp3');
+  const podcastUrlGroup=document.getElementById('podcastUrlGroup');
+  if(podcastUrlGroup)podcastUrlGroup.style.display=(outputFormat==='zip_rss')?'':'none';
+  const podcastUrlInput=document.getElementById('podcastUrlInput');
+  if(podcastUrlInput)podcastBaseUrl=podcastUrlInput.value.trim();
+  _updateSummary&&_updateSummary();
   updateSelection();
+}
+// Backward-compat shim for old toggle button refs
+function toggleOut(el){
+  if(!el)return;
+  const v=el.dataset?el.dataset.v:null;
+  const sel=document.getElementById('vOut');
+  if(sel){sel.value=(v==='single')?'m4b':'zip';onOutputChange();}
 }
 
 // ═══════════════════ UPLOAD + LOCK ═══════════════════
@@ -355,37 +396,75 @@ function setupUpload(){
   fi.addEventListener('change',()=>{if(!generating&&!jobDone&&fi.files.length)handleFile(fi.files[0])});
 }
 
-// ═══════════════════ ACCORDION ═══════════════════
-function toggleStep(id){
-  const el=document.getElementById(id);
-  if(el.classList.contains('disabled')||el.classList.contains('locked'))return;
-  el.classList.toggle('collapsed');
-  if(!el.classList.contains('collapsed')){
-    setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'nearest'}),100);
-  }
+// ═══════════════════ WIZARD NAVIGATION ═══════════════════
+let _wizStep=1, _wizMaxStep=1;
+function goToStep(n){
+  if(n<1||n>5)return;
+  if(n>_wizMaxStep+1)return; // can always go to next step
+  if(n===_wizMaxStep+1)_unlockStep(n); // auto-unlock next step
+  // Pause preview audio when switching panels (don't invalidate generated preview)
+  if(n!==_wizStep){const a=document.getElementById('previewAudioWiz');if(a)a.pause();}
+  const panels=document.querySelectorAll('.panel');
+  panels.forEach(p=>p.classList.remove('active'));
+  const target=document.getElementById('panel'+n);
+  if(target)target.classList.add('active');
+  _wizStep=n;
+  updateWizardSteps(n);
+  // Auto-update summary when entering panel 4
+  if(n===4)_updateSummary();
+  var dc=document.getElementById('donateCard');
+  if(dc)dc.style.display=n===1?'':'none';
+  // Scroll to top so header + wizard dots are visible
+  window.scrollTo({top:0,behavior:'instant'});
+  const hdr=document.querySelector('header');
+  if(hdr)hdr.scrollIntoView({behavior:'smooth',block:'start'});
+  // Focus management
+  setTimeout(()=>{
+    const focusable=target?target.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled])'):[];
+    if(focusable.length)focusable[0].focus();
+  },150);
 }
-function activateStep(id){
-  const el=document.getElementById(id);
-  el.classList.remove('collapsed','disabled');
-  el.style.display='';
-  setTimeout(()=>el.scrollIntoView({behavior:'smooth',block:'nearest'}),150);
+function updateWizardSteps(n){
+  const dots=document.querySelectorAll('.wizard-step-dot');
+  const connectors=document.querySelectorAll('.wizard-connector');
+  dots.forEach((d,i)=>{
+    const step=i+1;
+    d.classList.remove('active','done','locked');
+    if(step===n)d.classList.add('active');
+    else if(step<n)d.classList.add('done');
+    else if(step>_wizMaxStep)d.classList.add('locked');
+  });
+  connectors.forEach(c=>{
+    const cn=parseInt(c.dataset.connector);
+    c.classList.toggle('done',cn<n);
+  });
 }
-function collapseStep(id){document.getElementById(id).classList.add('collapsed')}
-function disableStep(id){const el=document.getElementById(id);el.classList.add('collapsed','disabled')}
+function _unlockStep(n){if(n>_wizMaxStep)_wizMaxStep=n;updateWizardSteps(_wizStep)}
 
 function lockUI(){
   generating=true;
-  ['s1','s2','s3'].forEach(id=>{const el=document.getElementById(id);el.classList.add('locked','collapsed','done')});
   document.getElementById('fi').disabled=true;
   const btnExp=document.getElementById('btnExport');if(btnExp)btnExp.disabled=true;
+  const card=document.getElementById('mainCard');if(card)card.classList.add('locked');
   previewStop(); _updatePreviewBtn();
+  // Hide back buttons during generation
+  ['btnBack4','btnUploadAnother','btnGoToAudio','btnGoToGenerate'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.style.display='none';
+  });
+  // Show cancel area
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='';
 }
 function unlockUI(){
   generating=false;
-  ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('locked'));
   document.getElementById('fi').disabled=false;
   const btnExp=document.getElementById('btnExport');if(btnExp)btnExp.disabled=!bookData;
+  const card=document.getElementById('mainCard');if(card)card.classList.remove('locked');
   _updatePreviewBtn();
+  // Restore back buttons
+  const btnBack4=document.getElementById('btnBack4');if(btnBack4)btnBack4.style.display='';
+  const btnUploadAnother=document.getElementById('btnUploadAnother');if(btnUploadAnother)btnUploadAnother.style.display='';
+  const btnGoToAudio=document.getElementById('btnGoToAudio');if(btnGoToAudio)btnGoToAudio.style.display='';
+  const btnGoToGenerate=document.getElementById('btnGoToGenerate');if(btnGoToGenerate)btnGoToGenerate.style.display='';
 }
 
 function handleFile(file){
@@ -395,7 +474,7 @@ function handleFile(file){
   document.getElementById('uz').classList.add('ok');
   document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
-  document.getElementById('s1sum').textContent='✓ '+file.name;
+  const s1sum=document.getElementById('s1sum');if(s1sum)s1sum.textContent='✓ '+file.name;
   document.getElementById('utx').textContent=t('upload_ok');
   document.getElementById('aerr').innerHTML='';
   // Show upload progress
@@ -433,13 +512,13 @@ function hideUploadProgress(){
 
 async function analyzeEpub(file){
   const lo=document.getElementById('alo');lo.classList.add('vis');
-  disableStep('s2');disableStep('s3');
   const fd=new FormData();fd.append('epub',file);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
     const d=await r.json();
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
+    _startAnalyzedHeartbeat();
     isTxtFile=(d.file_type==='txt');
     const isAbmFile=(d.file_type==='abm');
     llmAvailable=!!d.llm_available;aiAlreadyOptimized=!!d.ai_optimized;aiOptEnabled=false;
@@ -449,31 +528,22 @@ async function analyzeEpub(file){
       const sel=document.getElementById('vl');
       if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;}
     }
-    // Rigenera la lista voci ora che bookData.total_chars è noto: serve a
-    // nascondere proattivamente le voci Google se il libro supera il budget mensile.
     updVoices();
-    // Set output mode based on file type
+    const _vOut=document.getElementById('vOut');
     if(isTxtFile){
-      // TXT: force single file, hide output toggle and chapter table
-      toggleOut(document.getElementById('toS'));
+      if(_vOut){_vOut.value='m4b';onOutputChange();}
       document.getElementById('fgOut').style.display='none';
     }else{
-      // EPUB/PDF/ABM: default to M4B mode
       document.getElementById('fgOut').style.display='';
-      toggleOut(document.getElementById('toS'));
+      if(_vOut){_vOut.value='m4b';onOutputChange();}
     }
-    // Export button: always enabled after analysis
     const btnExp=document.getElementById('btnExport');
     if(btnExp)btnExp.disabled=false;
     fillPreview(d);
     _updatePreviewBtn();
-    collapseStep('s1');document.getElementById('s1').classList.add('done');
-    activateStep('s2');
-    if(!isTxtFile)activateStep('s3');
-    else{
-      // TXT single chapter: skip step 3 preview, go straight to generate from s2
-      activateStep('s3');
-    }
+    // Unlock panel 2 and navigate to it
+    _unlockStep(2);
+    goToStep(2);
   }catch(e){showErr('aerr','Error: '+e.message);lo.classList.remove('vis')}
 }
 
@@ -586,15 +656,19 @@ function updVoices(){
   }
   const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
   if(dv)sel.value=dv.id;
-  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();};
+  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();if(_previewGenerated)_resetPreviewState();};
   _updateVoiceChip();checkVoiceMismatch();
   // Reset speed to "Normal" (+0%) whenever language or voice changes
-  const vrSel=document.getElementById('vr');
-  if(vrSel)vrSel.value='+0%';
+  var vrSel2=document.getElementById('vr');
+  if(vrSel2)vrSel2.value='+0%';
+  var ss=document.getElementById('speedSlider');
+  if(ss)ss.value=0;
+  var sl=document.getElementById('speedLabel');
+  if(sl)sl.textContent=t('sp_n');
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
-let _prevWords=[], _prevText='', _prevDuration=0, _prevLoading=false;
+let _prevLoading=false, _previewGenerated=false;
 
 function _updatePreviewBtn(){
   const btn=document.getElementById('btnPrev');
@@ -602,86 +676,30 @@ function _updatePreviewBtn(){
   const ok=!!(bookData&&bookData.preview_text&&!generating&&!jobDone);
   btn.disabled=!ok;
   btn.classList.remove('loading');
+  const txt=document.getElementById('prevTxt');
+  if(txt)txt.textContent=t(_previewGenerated?'btn_regen_preview':'btn_gen_preview');
 }
 
-// Mostra: 'loading' (spinner) | 'play' (icona ▶) | 'pause' (icona ⏸)
-function _prevShowState(state){
-  const spinner=document.getElementById('prevSpinner');
-  const btn    =document.getElementById('prevPlayBtn');
-  const iPlay  =document.getElementById('prevIconPlay');
-  const iPause =document.getElementById('prevIconPause');
-  spinner.style.display = state==='loading' ? '' : 'none';
-  btn.style.display     = state!=='loading' ? '' : 'none';
-  iPlay.style.display   = state==='play'    ? '' : 'none';
-  iPause.style.display  = state==='pause'   ? '' : 'none';
-}
-
-// Toglie play/pausa — se l'audio è finito, ricomincia dall'inizio
-function prevPlayPause(){
-  const audio=document.getElementById('prevAudio');
-  if(!audio.src)return;
-  if(audio.paused){
-    if(audio.ended||audio.currentTime>=audio.duration-0.1){
-      audio.currentTime=0;
-      _prevWords.forEach(w=>w.classList.remove('hi'));
-      document.getElementById('prevProgressFill').style.width='0%';
-      document.getElementById('prevTime').textContent='0:00';
-    }
-    audio.play().catch(e=>console.error('[preview]',e));
-  } else {
-    audio.pause();
-  }
-}
-
-function _prevBuildText(text){
-  _prevText=text; _prevWords=[];
-  const box=document.getElementById('prevText');
-  box.innerHTML='';
-  text.split(/(\s+)/).forEach(tok=>{
-    if(/^\s+$/.test(tok)){
-      box.appendChild(document.createTextNode(tok));
-    } else {
-      const sp=document.createElement('span');
-      sp.className='pw'; sp.textContent=tok;
-      _prevWords.push(sp); box.appendChild(sp);
-    }
-  });
-}
-
-function _prevHighlightAt(currentTime){
-  if(!_prevWords.length||!_prevDuration)return;
-  const idx=Math.min(
-    Math.floor((currentTime/_prevDuration)*_prevWords.length),
-    _prevWords.length-1
-  );
-  _prevWords.forEach((w,i)=>w.classList.toggle('hi',i===idx));
-  _prevWords[idx].scrollIntoView({block:'nearest',behavior:'smooth'});
-}
-
-function prevSeek(ev){
-  const audio=document.getElementById('prevAudio');
-  if(!audio.src||!_prevDuration)return;
-  const rect=ev.currentTarget.getBoundingClientRect();
-  const ratio=(ev.clientX-rect.left)/rect.width;
-  audio.currentTime=Math.max(0,Math.min(1,ratio))*_prevDuration;
+function _resetPreviewState(){
+  _previewGenerated=false;
+  const wrap=document.getElementById('previewAudioWrap');
+  if(wrap)wrap.classList.remove('visible');
+  const audio=document.getElementById('previewAudioWiz');
+  if(audio){audio.pause();audio.removeAttribute('src');audio.load();}
+  _updatePreviewBtn();
+  // Re-enable button
+  const btn=document.getElementById('btnPrev');
+  if(btn)btn.disabled=false;
+  _prevLoading=false;
 }
 
 function previewStop(){
   _prevLoading=false;
-  const audio=document.getElementById('prevAudio');
-  audio.pause(); audio.removeAttribute('src'); audio.load();
-  _prevWords.forEach(w=>w.classList.remove('hi'));
-  const m=document.getElementById('prevModal');
-  if(m)m.classList.remove('open');
-  const pf=document.getElementById('prevProgressFill');
-  if(pf)pf.style.width='0%';
-  const pt=document.getElementById('prevTime');
-  if(pt)pt.textContent='0:00';
-  _prevDuration=0;
-  const spinner=document.getElementById('prevSpinner');
-  const playBtn=document.getElementById('prevPlayBtn');
-  if(spinner)spinner.style.display='none';
-  if(playBtn)playBtn.style.display='none';
+  _previewGenerated=false;
+  const audio=document.getElementById('previewAudioWiz');
+  if(audio){audio.pause();audio.removeAttribute('src');audio.load();}
+  const wrap=document.getElementById('previewAudioWrap');
+  if(wrap)wrap.classList.remove('visible');
   _updatePreviewBtn();
 }
 
@@ -690,52 +708,39 @@ async function previewRead(){
   if(!bookData||!bookData.preview_text)return;
 
   _prevLoading=true;
-  document.getElementById('btnPrev').disabled=true;
-  document.getElementById('btnPrev').classList.add('loading');
+  const btn=document.getElementById('btnPrev');
+  btn.disabled=true;
+  btn.classList.add('loading');
 
-  _prevShowState('loading');
-  _prevBuildText(bookData.preview_text);
-  document.getElementById('prevModal').classList.add('open');
+  // Hide previous player if any
+  const wrap=document.getElementById('previewAudioWrap');
+  if(wrap)wrap.classList.remove('visible');
 
   const voice=document.getElementById('vv').value;
   const rate =document.getElementById('vr').value;
-  const audio=document.getElementById('prevAudio');
+  const audio=document.getElementById('previewAudioWiz');
 
   const url='/api/preview_audio/'+bookData.job_id
     +'?voice='+encodeURIComponent(voice)
     +'&rate='+encodeURIComponent(rate);
 
-  audio.ontimeupdate=()=>{
-    const dur=audio.duration;
-    if(!dur||!isFinite(dur))return;
-    _prevDuration=dur;
-    document.getElementById('prevProgressFill').style.width=(audio.currentTime/dur*100)+'%';
-    const s=Math.floor(audio.currentTime);
-    document.getElementById('prevTime').textContent=Math.floor(s/60)+':'+(s%60<10?'0':'')+(s%60);
-    _prevHighlightAt(audio.currentTime);
-  };
-  // Sincronizza icona con stato audio
-  audio.onplay  =()=>{previewListened=true;_prevShowState('pause')};
-  audio.onpause =()=>{ if(!audio.ended) _prevShowState('play'); };
-  audio.onended =()=>{
+  audio.oncanplay=()=>{
     _prevLoading=false;
-    _prevShowState('play');  // ▶ per replay
-    _prevWords.forEach(w=>w.classList.remove('hi'));
+    btn.classList.remove('loading');
+    btn.disabled=true;
+    _previewGenerated=true;
     _updatePreviewBtn();
+    if(wrap)wrap.classList.add('visible');
+    previewListened=true;
+    audio.oncanplay=null;
   };
   audio.onerror=()=>{
     if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
     _prevLoading=false;
-    document.getElementById('prevModal').classList.remove('open');
-    _updatePreviewBtn();
+    btn.classList.remove('loading');
+    btn.disabled=false;
+    if(wrap)wrap.classList.remove('visible');
     alert(t('prev_error'));
-  };
-  // Pronto: mostra ▶ senza avviare automaticamente
-  audio.oncanplay=()=>{
-    _prevLoading=false;
-    _prevShowState('play');
-    _updatePreviewBtn();
-    audio.oncanplay=null;
   };
 
   audio.src=url;
@@ -744,85 +749,144 @@ async function previewRead(){
 
 // ═══════════════════ PREVIEW (Book info - Step 3) ═══════════════════
 function fillPreview(d){
+  // Panel 2: book info bar
   document.getElementById('bkT').textContent=d.title;
   document.getElementById('bkA').textContent=d.author?(t('by')+' '+d.author):'';
-  // Cover image
   const coverImg=document.getElementById('bkCover');
+  const coverPlaceholder=document.getElementById('coverPlaceholder');
   console.log('[cover] has_cover='+d.has_cover+', job_id='+d.job_id);
   if(d.has_cover&&d.job_id){
     coverImg.src='/api/cover/'+d.job_id;
     coverImg.style.display='';
+    if(coverPlaceholder)coverPlaceholder.style.display='none';
     coverImg.onload=function(){console.log('[cover] loaded OK: '+this.naturalWidth+'x'+this.naturalHeight)};
-    coverImg.onerror=function(){console.log('[cover] load FAILED');this.style.display='none'};
-  }else{coverImg.style.display='none';coverImg.src=''}
-  document.getElementById('smC').textContent=d.total_chapters;
-  document.getElementById('smW').textContent=d.total_words.toLocaleString();
-  document.getElementById('smD').textContent=fmtDur(d.estimated_minutes);
-  document.getElementById('selTot').textContent=d.total_chapters;  const tb=document.getElementById('chl');tb.innerHTML='';
+    coverImg.onerror=function(){console.log('[cover] load FAILED');this.style.display='none';if(coverPlaceholder)coverPlaceholder.style.display=''};
+  }else{coverImg.style.display='none';coverImg.src='';if(coverPlaceholder)coverPlaceholder.style.display=''}
+  // Stats in book info bar
+  const chCount=document.getElementById('bookChCount');
+  if(chCount)chCount.textContent=d.total_chapters+' '+(d.total_chapters===1?(t('sum_c')||'chapter'):(t('sum_cs')||'chapters'));
+  const totalChars=document.getElementById('bookTotalChars');
+  if(totalChars)totalChars.textContent=d.total_words.toLocaleString()+' '+(t('sum_w')||'words');
+  const bookLangEl=document.getElementById('bookLang');
+  if(bookLangEl&&d.language)bookLangEl.textContent=d.language.toUpperCase();
+  else if(bookLangEl)bookLangEl.textContent='';
+
+  const smC=document.getElementById('smC');if(smC)smC.textContent=d.total_chapters;
+  const smW=document.getElementById('smW');if(smW)smW.textContent=d.total_words.toLocaleString();
+  const smD=document.getElementById('smD');if(smD)smD.textContent=fmtDur(d.estimated_minutes);
+  const selTot=document.getElementById('selTot');if(selTot)selTot.textContent=d.total_chapters;
+
+  // Build chapter rows as divs + populate old #chl table for backward compat
+  const rows=document.getElementById('chapterRows');
+  const chl=document.getElementById('chl');
+  if(rows)rows.innerHTML='';
+  if(chl)chl.innerHTML='';
   for(const ch of d.chapters){
-    const tr=document.createElement('tr');
-    tr.dataset.idx=ch.index;
-    tr.dataset.words=ch.words;
-    tr.dataset.mins=ch.estimated_minutes;
-    const selTd=document.createElement('td');
-    selTd.className='col-sel';
-    selTd.style.display=singleFile?'none':'';
-    const cb=document.createElement('input');
-    cb.type='checkbox';cb.checked=true;cb.dataset.idx=ch.index;
-    cb.addEventListener('change',()=>{tr.classList.toggle('unchecked',!cb.checked);updateSelection()});
-    selTd.appendChild(cb);
-    tr.innerHTML='<td><span class="cn">'+ch.index+'.</span>'+esc(ch.title.substring(0,60))+'</td><td>'+ch.words.toLocaleString()+'</td><td>'+fmtDur(ch.estimated_minutes)+'</td>';
-    tr.insertBefore(selTd,tr.firstChild);
-    tr.style.cursor=singleFile?'':'pointer';
-    tr.addEventListener('click',e=>{if(singleFile||e.target.tagName==='INPUT')return;cb.checked=!cb.checked;tr.classList.toggle('unchecked',!cb.checked);updateSelection()});
-    tb.appendChild(tr);
+    // New wizard chapter rows
+    if(rows){
+      const row=document.createElement('div');
+      row.className='chapter-row';
+      row.dataset.idx=ch.index;
+      row.dataset.words=ch.words;
+      row.dataset.mins=ch.estimated_minutes;
+      const cb=document.createElement('input');
+      cb.type='checkbox';cb.checked=true;cb.dataset.idx=ch.index;
+      cb.addEventListener('change',()=>{row.classList.toggle('unchecked',!cb.checked);updateSelection()});
+      const num=document.createElement('span');
+      num.className='ch-num';num.textContent=ch.index+'.';
+      const title=document.createElement('span');
+      title.className='ch-title';title.textContent=ch.title.substring(0,60);
+      const chars=document.createElement('span');
+      chars.className='ch-chars';chars.textContent=fmtDur(ch.estimated_minutes);
+      row.appendChild(cb);row.appendChild(num);row.appendChild(title);row.appendChild(chars);
+      row.addEventListener('click',e=>{if(e.target.tagName==='INPUT')return;cb.checked=!cb.checked;row.classList.toggle('unchecked',!cb.checked);updateSelection()});
+      rows.appendChild(row);
+    }
+    // Old #chl table (backward compat for selection queries)
+    if(chl){
+      const tr=document.createElement('tr');
+      tr.dataset.idx=ch.index;
+      tr.dataset.words=ch.words;
+      tr.dataset.mins=ch.estimated_minutes;
+      const selTd=document.createElement('td');
+      selTd.className='col-sel';
+      const tcb=document.createElement('input');
+      tcb.type='checkbox';tcb.checked=true;tcb.dataset.idx=ch.index;
+      tcb.addEventListener('change',()=>{tr.classList.toggle('unchecked',!tcb.checked);updateSelection()});
+      selTd.appendChild(tcb);
+      tr.innerHTML='<td><span class="cn">'+ch.index+'.</span>'+esc(ch.title.substring(0,60))+'</td><td>'+ch.words.toLocaleString()+'</td><td>'+fmtDur(ch.estimated_minutes)+'</td>';
+      tr.insertBefore(selTd,tr.firstChild);
+      tr.addEventListener('click',e=>{if(e.target.tagName==='INPUT')return;tcb.checked=!tcb.checked;tr.classList.toggle('unchecked',!tcb.checked);updateSelection()});
+      chl.appendChild(tr);
+    }
   }
   // Master checkbox
-  document.getElementById('chAll').checked=true;
+  const chAll=document.getElementById('chAll');
+  if(chAll)chAll.checked=true;
   updateSelection();
-  document.getElementById('s3sum').textContent=d.title.substring(0,25)+(d.title.length>25?'..':'')+' — '+d.total_chapters+' cap., '+d.total_words.toLocaleString()+' '+t('sum_w').toLowerCase();
   _updateVoiceChip();checkVoiceMismatch();
 }
 
 function updateSelection(){
-  const boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
+  let boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
+  if(!boxes.length)boxes=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');
   let cnt=0,words=0,mins=0;
   boxes.forEach(cb=>{
-    if(cb.checked){cnt++;const tr=cb.closest('tr');words+=parseInt(tr.dataset.words||0);mins+=parseFloat(tr.dataset.mins||0)}
+    if(cb.checked){cnt++;const row=cb.closest('tr')||cb.closest('.chapter-row');words+=parseInt(row.dataset.words||0);mins+=parseFloat(row.dataset.mins||0)}
   });
-  document.getElementById('selCnt').textContent=cnt;
-  
-  // Selection UI is now always visible
-  document.getElementById('thSel').style.display='';
+  // Update wizard counter
+  const selCnt=document.getElementById('selCnt');if(selCnt)selCnt.textContent=cnt;
+  const selectedCount=document.getElementById('selectedCount');
+  if(selectedCount)selectedCount.innerHTML='<b>'+cnt+'</b> <span data-t="sel_selected">'+t('sel_selected')+'</span>';
+
+  // Selection bar
+  const selBar=document.getElementById('selBar');if(selBar)selBar.classList.add('vis');
   document.querySelectorAll('#chl .col-sel').forEach(td=>td.style.display='');
   document.querySelectorAll('#chl tr').forEach(tr=>tr.style.cursor='pointer');
-  document.getElementById('selBar').classList.add('vis');
 
   // Update summary to reflect selection
-  document.getElementById('smC').textContent=cnt+' / '+(bookData?bookData.total_chapters:boxes.length);
-  document.getElementById('smW').textContent=words.toLocaleString();
-  document.getElementById('smD').textContent=fmtDur(mins);
+  const smC=document.getElementById('smC');if(smC)smC.textContent=cnt+' / '+(bookData?bookData.total_chapters:boxes.length);
+  const smW=document.getElementById('smW');if(smW)smW.textContent=words.toLocaleString();
+  const smD=document.getElementById('smD');if(smD)smD.textContent=fmtDur(mins);
+
+  // Sync wizard chapter rows with their checkboxes
+  document.querySelectorAll('#chapterRows .chapter-row').forEach(row=>{
+    const wizardCb=row.querySelector('input[type=checkbox]');
+    if(wizardCb)row.classList.toggle('unchecked',!wizardCb.checked);
+  });
 
   // Master checkbox state
   const all=boxes.length;
   const master=document.getElementById('chAll');
-  master.checked=cnt===all;
-  master.indeterminate=cnt>0&&cnt<all;
-  // Disable generate if none selected
-  document.getElementById('btnG').disabled=(cnt===0);
+  if(master){master.checked=cnt===all;master.indeterminate=cnt>0&&cnt<all}
+  // Disable generate buttons if none selected
+  const btnGenerate=document.getElementById('btnGenerate');
+  if(btnGenerate)btnGenerate.disabled=(cnt===0);
+  const btnGoToGenerate=document.getElementById('btnGoToGenerate');
+  if(btnGoToGenerate)btnGoToGenerate.disabled=(cnt===0);
+  const btnGoToAudio=document.getElementById('btnGoToAudio');
+  if(btnGoToAudio)btnGoToAudio.disabled=(cnt===0);
+  // Reset AI optimization on chapter selection change — cost estimate must be recomputed
+  if(aiOptEnabled){
+    const aiToggle=document.getElementById('aiToggle');
+    if(aiToggle)aiToggle.checked=false;
+    toggleAIOptimization();
+  }
 }
 
-function chSelAll(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.remove('unchecked')});updateSelection()}
-function chSelNone(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=false;cb.closest('tr').classList.add('unchecked')});updateSelection()}
-function chSelInvert(){document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=!cb.checked;cb.closest('tr').classList.toggle('unchecked',!cb.checked)});updateSelection()}
-function chMasterToggle(){const v=document.getElementById('chAll').checked;document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{cb.checked=v;cb.closest('tr').classList.toggle('unchecked',!v)});updateSelection()}
+function _getAllCheckboxes(){let cbs=document.querySelectorAll('#chl .col-sel input[type=checkbox]');if(!cbs.length)cbs=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');return cbs}
+function _getSelectedChapterIndexes(){const idxs=[];_getAllCheckboxes().forEach(cb=>{if(cb.checked)idxs.push(parseInt(cb.dataset.idx))});return idxs}
+function chSelAll(){_getAllCheckboxes().forEach(cb=>{cb.checked=true;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.remove('unchecked')});updateSelection()}
+function chSelNone(){_getAllCheckboxes().forEach(cb=>{cb.checked=false;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.add('unchecked')});updateSelection()}
+function chSelInvert(){_getAllCheckboxes().forEach(cb=>{cb.checked=!cb.checked;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!cb.checked)});updateSelection()}
+function chMasterToggle(){const v=document.getElementById('chAll').checked;_getAllCheckboxes().forEach(cb=>{cb.checked=v;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!v)});updateSelection()}
 
 // ═══════════════════ EXPORT ABM ═══════════════════
 function exportAbm(){
   if(!jobId){showErr('s3err','No file analyzed yet');return}
   const a=document.createElement('a');
   a.href='/api/export_abm/'+jobId;
-  a.download='';
+  a.download=(bookData&&bookData.title?bookData.title:'project')+'.abm';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -836,109 +900,172 @@ function closeAbmGuide(){document.getElementById('abmGuideModal').classList.remo
 
 // ═══════════════════ AI TEXT OPTIMIZATION ═══════════════════
 function _initAiOptToggle(){
-  // Toggle buttons for AI optimization
+  // New wizard toggle switch
+  const aiToggle=document.getElementById('aiToggle');
+  if(aiToggle){
+    aiToggle.checked=false;
+    aiToggle.onchange=function(){toggleAIOptimization()};
+  }
+  // Legacy toggle buttons (backward compat for old accordion UI)
   const btnOff=document.getElementById('optNone');
   const btnOn=document.getElementById('optEnable');
-  if(!btnOff||!btnOn)return;
-  btnOff.onclick=function(){
+  if(btnOff)btnOff.onclick=function(){
     aiOptEnabled=false;
-    btnOff.classList.add('on');btnOn.classList.remove('on');
-    document.getElementById('aiOptInfo').style.display='none';
-    _updateOptButtons();
+    btnOff.classList.add('on');if(btnOn)btnOn.classList.remove('on');
+    const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
+    const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
+    const aiToggle=document.getElementById('aiToggle');if(aiToggle)aiToggle.checked=false;
+    _updateAiOptCard();
   };
-  btnOn.onclick=function(){
+  if(btnOn)btnOn.onclick=function(){
     aiOptEnabled=true;
-    btnOn.classList.add('on');btnOff.classList.remove('on');
-    document.getElementById('aiOptInfo').style.display='';
-    _updateOptButtons();
+    btnOn.classList.add('on');if(btnOff)btnOff.classList.remove('on');
+    const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='';
+    const aiToggle=document.getElementById('aiToggle');if(aiToggle)aiToggle.checked=true;
+    toggleAIOptimization();
   };
 }
 
-function _updateOptButtons(){
-  var btnOpt=document.getElementById('btnOptimize');
-  if(btnOpt)btnOpt.style.display=(aiOptEnabled&&!aiAlreadyOptimized)?'':'none';
+function toggleAIOptimization(){
+  const aiToggle=document.getElementById('aiToggle');
+  aiOptEnabled=aiToggle?aiToggle.checked:!aiOptEnabled;
+  if(aiToggle)aiToggle.checked=aiOptEnabled;
+
+  // Legacy toggle sync
+  const btnOff=document.getElementById('optNone'),btnOn=document.getElementById('optEnable');
+  if(btnOff&&btnOn){
+    if(aiOptEnabled){btnOn.classList.add('on');btnOff.classList.remove('on')}
+    else{btnOff.classList.add('on');btnOn.classList.remove('on')}
+  }
+
+  const aiOptInfo=document.getElementById('aiOptInfo');
+  const costEstimate=document.getElementById('costEstimate');
+  if(aiOptEnabled){
+    if(aiOptInfo)aiOptInfo.style.display='';
+    _fetchCostEstimate();
+  }else{
+    if(aiOptInfo)aiOptInfo.style.display='none';
+    if(costEstimate)costEstimate.classList.remove('visible');
+    const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+    const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
+    window._couponPaymentToken=null;
+  }
+  _updateAiOptCard();
+  _updateSummary();
+}
+
+function _updateAiOptCard(){
+  const card=document.getElementById('aiOptCard');
+  if(!card)return;
+  if(aiOptEnabled&&!aiAlreadyOptimized)card.classList.add('enabled');
+  else card.classList.remove('enabled');
+}
+
+async function _fetchCostEstimate(){
+  if(!jobId)return;
+  try{
+    let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
+    const selLang=document.getElementById('vl').value||cl;
+    url.searchParams.append('lang',selLang);
+    // Collect selected chapters
+    _getSelectedChapterIndexes().forEach(idx=>url.searchParams.append('selected_chapters',idx));
+    const est=await fetch(url.toString()).then(r=>r.json());
+    if(est.error){return}
+    const costEl=document.getElementById('costEstimate');
+    if(est.requires_payment){
+      // Onerous: hide cost UI and open the rich popup directly
+      if(costEl)costEl.classList.remove('visible');
+      if(!window._couponPaymentToken){
+        try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
+          llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
+          llmConfig.threshold=cfg.free_threshold_eur||0.5;
+          llmConfig.bonus=cfg.voucher_bonus_percent||10;
+          llmConfig.expiry=cfg.voucher_expiry_days||180;
+          llmConfig.paypalClientId=cfg.paypal_client_id||"";
+          llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
+          llmConfig.paypalAvailable=!!cfg.paypal_available;
+        }catch(e){}
+        const token=await _showPaymentModal(est.cost_eur,est.chars);
+        if(token){
+          window._couponPaymentToken=token;
+          const result=document.getElementById('couponResult');
+          if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
+        }else{
+          // Popup closed without validating: turn AI optimization off
+          const aiToggle=document.getElementById('aiToggle');
+          if(aiToggle)aiToggle.checked=false;
+          aiOptEnabled=false;
+          const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
+          _updateAiOptCard();_updateSummary();
+        }
+      }
+    }else{
+      // Free (below threshold): hide cost UI completely — say nothing
+      if(costEl)costEl.classList.remove('visible');
+      const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+      const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
+    }
+  }catch(e){/* ignore estimate errors */}
 }
 
 function _updateAiOptUI(){
-  const wrap=document.getElementById('fgOptimizeWrap');
-  if(!wrap)return;
+  const card=document.getElementById('aiOptCard');
+  if(!card)return;
   if(llmAvailable){
-    wrap.style.display='';
+    card.style.display='';
     if(aiAlreadyOptimized){
-      document.getElementById('aiAlreadyOpt').style.display='';
-      document.getElementById('aiOptInfo').style.display='none';
+      const already=document.getElementById('aiAlreadyOpt');if(already)already.style.display='';
+      const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
       aiOptEnabled=false;
-      document.getElementById('optNone').classList.add('on');
-      document.getElementById('optEnable').classList.remove('on');
+      const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=true}
+      // Legacy
+      const optNone=document.getElementById('optNone');if(optNone)optNone.classList.add('on');
+      const optEnable=document.getElementById('optEnable');if(optEnable)optEnable.classList.remove('on');
     }else{
-      document.getElementById('aiAlreadyOpt').style.display='none';
+      const already=document.getElementById('aiAlreadyOpt');if(already)already.style.display='none';
+      const aiToggle=document.getElementById('aiToggle');if(aiToggle)aiToggle.disabled=false;
     }
   }else{
-    wrap.style.display='none';
+    card.style.display='none';
     aiOptEnabled=false;
   }
-  _updateOptButtons();
+  _updateAiOptCard();
 }
 
-// Track whether the optimization email prompt has been shown
-let optEmailPromptShown=false;
+function _updateSummary(){
+  // Book title + author
+  const sumTitle=document.getElementById('summaryBookTitle');
+  if(sumTitle){
+    let t=bookData?bookData.title:'—';
+    if(bookData&&bookData.author)t+=' ('+bookData.author+')';
+    sumTitle.textContent=t;
+  }
 
-function _showOptEmailModal(){
-  // Reuse the existing email modal but with optimization-specific content
-  return new Promise(function(resolve){
-    const modal=document.getElementById('optBatchModal');
-    const errEl=document.getElementById('optBatchErr');
-    const okEl=document.getElementById('optBatchOk');
-    const btnsEl=document.getElementById('optBatchBtns');
-    errEl.style.display='none';okEl.style.display='none';btnsEl.style.display='flex';
-    document.getElementById('optAutoGen').checked=false;
-    var emailEl=document.getElementById('optBatchEmail');
-    emailEl.removeAttribute('readonly');emailEl.style.background='';emailEl.style.color='';
-    emailEl.value=lastVoucherEmail;
-    applyI18n();
-    modal.classList.add('open');
-    document.getElementById('optBatchClose').onclick=function(){modal.classList.remove('open');resolve(null)};
-    document.getElementById('optBatchCancel').onclick=function(){modal.classList.remove('open');resolve(null)};
-    document.getElementById('optBatchSubmit').onclick=function(){
-      var email=document.getElementById('optBatchEmail').value.trim();
-      if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-        errEl.textContent=t('opt_batch_email_err')||'Enter a valid email address';
-        errEl.style.display='';return;
-      }
-      lastVoucherEmail=email;
-      try{localStorage.setItem('abm_v_email',email)}catch(e){}
-      errEl.style.display='none';
-      var autoGen=document.getElementById('optAutoGen').checked;
-      // Register email and batch params on the server
-      var payload={
-        job_id:jobId,batch:true,
-        email:email,
-        auto_generate:autoGen,
-        lang:cl
-      };
-      if(autoGen){
-        payload.voice=document.getElementById('vv').value;
-        payload.rate=document.getElementById('vr').value;
-        payload.single_file=singleFile;
-      }
-      fetch('/api/register_opt_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      .then(function(r){return r.json()})
-      .then(function(d){
-        if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
-        btnsEl.style.display='none';
-        var emailEl=document.getElementById('optBatchEmail');
-        emailEl.setAttribute('readonly','readonly');
-        emailEl.style.background='var(--srf2)';
-        emailEl.style.color='var(--txd)';
-        var msgKey=autoGen?'opt_batch_started_auto':'opt_batch_started';
-        okEl.textContent=t(msgKey)||'Email registered! You can close this page.';
-        okEl.style.display='';
-        optEmailPromptShown=true;
-        resolve({email:email,autoGenerate:autoGen});
-      })
-      .catch(function(e){errEl.textContent='Error: '+e.message;errEl.style.display=''});
-    };
-  });
+  // Count selected chapters
+  let cnt=0;
+  let boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
+  if(!boxes.length)boxes=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');
+  boxes.forEach(cb=>{if(cb.checked)cnt++});
+  const sumCh=document.getElementById('summaryChapters');
+  if(sumCh)sumCh.textContent=cnt+'/'+(bookData?bookData.total_chapters:'—');
+
+  const vv=document.getElementById('vv'),vr=document.getElementById('vr');
+  const sumVoice=document.getElementById('summaryVoice');
+  if(sumVoice&&vv){
+    const vSel=vv.options[vv.selectedIndex];
+    const voiceName=vSel?vSel.text.replace(/\s*\(.*?\)\s*/g,'').replace(/Microsoft\s+/g,'').trim():'—';
+    const rate=vr?vr.options[vr.selectedIndex].text:'Normal';
+    sumVoice.textContent=voiceName+' — '+rate;
+  }
+
+  const sumFormat=document.getElementById('summaryFormat');
+  if(sumFormat){
+    const fmtKey={m4b:'out_m4b',zip:'out_zip',zip_rss:'out_zip_rss',mp3:'out_mp3'}[outputFormat]||'out_m4b';
+    sumFormat.textContent=t(fmtKey)||outputFormat.toUpperCase();
+  }
+
+  const sumAI=document.getElementById('summaryAI');
+  if(sumAI)sumAI.innerHTML=aiOptEnabled?'<span style="color:#16a34a">&#x25CF; '+((t('ai_opt_on')||'Enabled').split(',')[0])+'</span>':'<span style="color:var(--txm)">&#x25CB; '+(t('ai_opt_off')||'Disabled')+'</span>';
 }
 
 // ═══════════════════ PAYMENT (LLM optimization) ═══════════════════
@@ -1045,106 +1172,146 @@ async function _validateLanguage() {
   return true;
 }
 
-async function startOptimization(){
-  if(!jobId){return}
+async function startCombinedGeneration(){
+  if(!jobId||generating)return;
 
-  // Check sospensione nuovi processi (admin toggle)
+  // Check admin suspend
   try{
-    const sr = await fetch('/api/admin/suspend');
-    if(sr.ok){
-      const sd = await sr.json();
-      if(sd.suspended){
-        alert('System under maintenance. Please try again in a few minutes.');
-        return;
-      }
-    }
+    const sr=await fetch('/api/admin/suspend');
+    if(sr.ok){const sd=await sr.json();if(sd.suspended){alert('System under maintenance. Please try again in a few minutes.');return}}
   }catch(e){}
 
-  if(!(await _validateLanguage())) return;
-  document.getElementById('s3err').innerHTML='';
-  
-  // Collect selected chapters from UI
-  let selectedChapters=[];
-  document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
-    if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
-  });
-  console.log('[optimize] selected chapters:', selectedChapters.length, '/', bookData?.total_chapters, 'indices:', JSON.stringify(selectedChapters));
+  if(!(await _validateLanguage()))return;
+  // Donate modal for returning users
+  if(_shouldShowDonateModal()){await _showDonateModal();}
+  _markGeneration();
+
+  // Collect selected chapters
+  let selectedChapters=_getSelectedChapterIndexes();
   if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
+  document.getElementById('s3err').innerHTML='';
 
+  // Generate button → loading state
+  const btnGen=document.getElementById('btnGenerate');
+  const genBtns=document.getElementById('genButtons');
+  if(btnGen)btnGen.disabled=true;
+  if(btnGen)btnGen.innerHTML='<div class="sp"></div><span>'+t('btn_gen')+'...</span>';
 
-  // ── Check cost estimate first ──
-  var paymentToken=null;
-  try{
-    let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-    const selLang = document.getElementById('vl').value || cl;
-    url.searchParams.append('lang', selLang);
-    if(selectedChapters&&selectedChapters.length>0){
-        selectedChapters.forEach(idx => url.searchParams.append('selected_chapters', idx));
-    }
-    var est=await fetch(url.toString()).then(function(r){return r.json()});
-    if(est.error){showS3Err(est.error);return}
-    if(est.requires_payment){
-      // Refresh config from server
-      try{var cfg=await fetch('/api/llm_available').then(function(r){return r.json()});
-        llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
-        llmConfig.threshold=cfg.free_threshold_eur||0.5;
-        llmConfig.bonus=cfg.voucher_bonus_percent||10;
-        llmConfig.expiry=cfg.voucher_expiry_days||180;
-        llmConfig.paypalClientId=cfg.paypal_client_id||"";
-        llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
-        llmConfig.paypalAvailable=!!cfg.paypal_available;
-      }catch(e){}
-      paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
-      if(!paymentToken){return} // user cancelled
-    }
-  }catch(e){showS3Err('Estimate error: '+e.message);return}
+  if(aiOptEnabled&&!aiAlreadyOptimized){
+    // ── AI optimization flow ──
+    // Payment check
+    var paymentToken=null;
+    try{
+      let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
+      const selLang=document.getElementById('vl').value||cl;
+      url.searchParams.append('lang',selLang);
+      if(selectedChapters&&selectedChapters.length>0){
+        selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
+      }
+      var est=await fetch(url.toString()).then(r=>r.json());
+      if(est.error){showS3Err(est.error);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
+      if(est.requires_payment){
+        // Reuse token already validated via the popup (showCoupon)
+        if(window._couponPaymentToken){
+          paymentToken=window._couponPaymentToken;
+        }else{
+          try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
+            llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
+            llmConfig.threshold=cfg.free_threshold_eur||0.5;
+            llmConfig.bonus=cfg.voucher_bonus_percent||10;
+            llmConfig.expiry=cfg.voucher_expiry_days||180;
+            llmConfig.paypalClientId=cfg.paypal_client_id||"";
+            llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
+            llmConfig.paypalAvailable=!!cfg.paypal_available;
+          }catch(e){}
+          paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
+          if(!paymentToken){if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
+        }
+      }
+    }catch(e){showS3Err('Estimate error: '+e.message);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
 
-  document.getElementById('btnG').disabled=true;
-  document.getElementById('btnOptimize').disabled=true;
-  optEmailPromptShown=false;
-  // Show step 4 with optimization progress
-  var s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
-  document.getElementById('s4t').textContent=t('s4_opt_title')||'AI Text Optimization';
-  if(bookData){
-    document.getElementById('s4bkT').textContent=bookData.title||'';
-    document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';
-    var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');
-    if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display=''}
-    else{sc.style.display='none';sc.src=''}
+    _showWizProgress();
+    _setCancelButtonMode('opt');
+    lockUI();
+    try{
+      const selLang=document.getElementById('vl').value||cl;
+      var payload={job_id:jobId,batch:false,lang:selLang};
+      if(paymentToken)payload.payment_token=paymentToken;
+      if(selectedChapters)payload.selected_chapters=selectedChapters;
+      // Always use auto_generate in wizard flow
+      payload.auto_generate=true;
+      payload.voice=document.getElementById('vv').value;
+      payload.rate=document.getElementById('vr').value;
+      payload.single_file=singleFile;
+      payload.output_format=outputFormat;
+      payload.podcast_base_url=podcastBaseUrl;
+      var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      var d=await r.json();
+      if(d.error){
+        if(d.error_code==='llm_concurrent_limit'){
+          document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
+          document.getElementById('pMsg').style.color='var(--err)';
+        }else{showPErr(d.error)}
+        unlockUI();return;
+      }
+      _listenOptProgressWiz();
+    }catch(e){showPErr('Error: '+e.message);unlockUI()}
+  }else{
+    // ── Direct TTS generation ──
+    _showWizProgress();
+    _setCancelButtonMode('gen');
+    lockUI();
+    try{
+      var genPayload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+      if(selectedChapters)genPayload.selected_chapters=selectedChapters;
+      var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
+      var gd=await gr.json();
+      if(gd.error){
+        if(gd.error_code==='concurrent_limit'){
+          document.getElementById('pMsg').textContent=t('concurrent_limit')||gd.error;
+          document.getElementById('pMsg').style.color='var(--err)';
+          document.getElementById('pBar').style.width='0%';
+          document.getElementById('pPct').textContent='';
+          document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
+          document.getElementById('btnRetryWiz').onclick=retryGeneration;
+          unlockUI();return;
+        }
+        if(gd.error_code==='google_tts_budget'){
+          document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||gd.error);
+          document.getElementById('pMsg').style.color='var(--err)';
+          document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
+          document.getElementById('btnRetryWiz').onclick=retryGeneration;
+          unlockUI();return;
+        }
+        showPErr(gd.error);unlockUI();return;
+      }
+      listenProgress();
+    }catch(e){showPErr('Error: '+e.message);unlockUI()}
   }
-  document.getElementById('pMsg').textContent=t('opt_starting')||'Starting AI text optimization...';
+}
+
+function _showWizProgress(){
+  _stopAnalyzedHeartbeat();
+  const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='';
+  const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='none';
+  const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='flex';
+  const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='none';
+  const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='none';
+  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.add('visible');
   document.getElementById('pBar').style.width='0%';
   document.getElementById('pPct').textContent='0%';
-  // Hide generation-specific stats
-  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
-  // Riallinea il bottone Annulla al contesto ottimizzazione AI: cambia label e handler
-  _setCancelButtonMode('opt');
-  lockUI();
-  setTimeout(function(){const genPanel=document.getElementById('s3');if(genPanel)genPanel.scrollIntoView({behavior:'smooth',block:'start'})},200);
-  try{
-    const selLang = document.getElementById('vl').value || cl;
-    var payload={job_id:jobId,batch:false,lang:selLang};
-    if(paymentToken)payload.payment_token=paymentToken;
-    if(selectedChapters)payload.selected_chapters=selectedChapters;
-    var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    var d=await r.json();
-    if(d.error){
-      if(d.error_code==='llm_concurrent_limit'){
-        document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
-        document.getElementById('pMsg').style.color='var(--err)';
-      }else{showPErr(d.error)}
-      unlockUI();return;
-    }
-    listenOptProgress();
-  }catch(e){showPErr('Error: '+e.message);unlockUI()}
+  document.getElementById('pMsg').textContent=t('starting');
+  const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
+  const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
+  const progressPhase=document.getElementById('progressPhase');
+  if(progressPhase){
+    const phaseLabel=(aiOptEnabled&&!aiAlreadyOptimized)?(t('s4_opt_title')||'AI Optimization + Generation'):(t('s4_title')||'Generation');
+    progressPhase.textContent=phaseLabel;
+  }
+  const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
 }
 
-function showS3Err(msg){
-  var s3err=document.getElementById('s3err');
-  if(s3err){s3err.textContent=msg;s3err.style.color='var(--err)'}
-}
-
-function listenOptProgress(){
+function _listenOptProgressWiz(){
   var es=new EventSource('/api/optimize_progress/'+jobId);
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
@@ -1152,8 +1319,7 @@ function listenOptProgress(){
       es.close();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
     }
     if(d.status==='cancelled'){
-      es.close();
-      _setCancelButtonMode('gen');
+      es.close();_setCancelButtonMode('gen');
       document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
       unlockUI();return;
     }
@@ -1165,32 +1331,24 @@ function listenOptProgress(){
       document.getElementById('pMsg').textContent=t('opt_done')||'Text optimization complete!';
       document.getElementById('pBar').style.width='100%';
       document.getElementById('pPct').textContent='100%';
-      // Show buttons: generate audiobook + download .ABM
+      const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
+      const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
+      const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('opt_done')||'Optimization complete';
+      // Show proceed button in cnA
       var cnA=document.getElementById('cnA');
       cnA.innerHTML='<div style="display:flex;flex-direction:column;gap:10px;align-items:center;margin-top:12px">'
-        +'<button class="btn btn-ok" id="btnProceedGen" style="width:100%;max-width:400px">&#x1F3A7; '+(t('opt_proceed_gen')||'Generate audiobook')+'</button>'
-        +'<button class="btn btn-g" id="btnDownloadAbm" style="width:100%;max-width:400px">&#x1F4E5; '+(t('opt_download_abm')||'Download optimized project (.abm)')+'</button>'
+        +'<button class="btn btn-ok" id="btnProceedGen" style="width:100%;max-width:400px">🎧 '+(t('opt_proceed_gen')||'Generate audiobook')+'</button>'
+        +'<button class="btn btn-g" id="btnDownloadAbm" style="width:100%;max-width:400px">📥 '+(t('opt_download_abm')||'Download optimized project (.abm)')+'</button>'
         +'</div>';
       document.getElementById('btnProceedGen').onclick=function(){
-        var bpg=document.getElementById('btnProceedGen');
-        if(bpg.disabled)return;
-        bpg.disabled=true;
-        bpg.style.opacity='0.6';
-        bpg.style.cursor='not-allowed';
-        var bda=document.getElementById('btnDownloadAbm');
-        if(bda){bda.disabled=true;bda.style.opacity='0.6';bda.style.cursor='not-allowed';}
-        document.getElementById('s4').style.display='none';
-        unlockUI();
-        document.getElementById('btnG').disabled=false;
-        if(document.getElementById('btnOptimize'))document.getElementById('btnOptimize').disabled=false;
+        var bpg=document.getElementById('btnProceedGen');if(bpg.disabled)return;
+        bpg.disabled=true;bpg.style.opacity='0.6';bpg.style.cursor='not-allowed';
+        var bda=document.getElementById('btnDownloadAbm');if(bda){bda.disabled=true;bda.style.opacity='0.6';bda.style.cursor='not-allowed';}
         startGen();
       };
       document.getElementById('btnDownloadAbm').onclick=function(){
-        fetch('/api/export_abm/'+jobId).then(function(r){
-          if(!r.ok)throw new Error('Export failed');
-          return r.blob();
-        }).then(function(blob){
-          var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+        fetch('/api/export_abm/'+jobId).then(function(r){if(!r.ok)throw new Error('Export failed');return r.blob();})
+        .then(function(blob){var a=document.createElement('a');a.href=URL.createObjectURL(blob);
           a.download=(bookData&&bookData.title?bookData.title:'project')+'_optimized.abm';
           a.click();URL.revokeObjectURL(a.href);
         }).catch(function(e){alert('Error: '+e.message)});
@@ -1200,69 +1358,86 @@ function listenOptProgress(){
     if(d.auto_generate_started){
       es.close();
       _setCancelButtonMode('gen');
-      document.getElementById('s4t').textContent=t('s4_title')||'Generation';
-      // L'email è già registrata lato server (batch mode). Evita il re-prompt nella fase TTS.
-      emailRegistered=true;emailPromptShown=true;
+      const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('s4_title')||'Generation';
       listenProgress();
       return;
     }
-    // Update optimization progress (character-based for smooth updates).
-    // IMPORTANTE: sia numeratore sia denominatore devono essere in unità di
-    // caratteri di INPUT. opt_processed_chars somma i char *originali* dei
-    // capitoli completati; opt_streamed_chars è output LLM (espanso), quindi
-    // lo limitiamo alla dimensione del capitolo corrente per evitare che la
-    // barra sfori prima che il capitolo termini.
+    // Update wizard + old progress
     var totalChars=d.opt_total_chars||1;
     var doneChars=d.opt_processed_chars||0;
     var curChChars=d.opt_current_chapter_chars||0;
     var streamedChars=Math.min(d.opt_streamed_chars||0,curChChars);
     var workedChars=doneChars+streamedChars;
-    var pct=Math.min(99,Math.round(workedChars/totalChars*100));
+    var pct=doneChars>=totalChars?100:Math.min(99,Math.round(workedChars/totalChars*100));
     document.getElementById('pBar').style.width=pct+'%';
     document.getElementById('pPct').textContent=pct+'%';
     document.getElementById('pMsg').textContent=d.opt_progress_message||'';
+    const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
+    const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
+    const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.opt_progress_message)progressPhase.textContent=d.opt_progress_message;
 
-    // Chapter title (pCh)
     var pChEl=document.getElementById('pCh');
-    if(pChEl&&d.opt_current_chapter){
-      pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);
-    }
-
-    // Chapter counter (xCh)
-    if(d.opt_progress_total>0){
-      var xChEl=document.getElementById('xCh');
-      if(xChEl){xChEl.textContent=(d.opt_current_chapter_num||0)+' / '+d.opt_progress_total;xChEl.closest('.ps').style.display=''}
-    }
-
-    // Elapsed (xEl)
-    if(d.opt_elapsed_seconds>0){
-      var el=document.getElementById('xEl');
-      if(el){el.textContent=fmtTime(d.opt_elapsed_seconds);el.closest('.ps').style.display=''}
-    }
-
-    // ETA (xEta) + Speed (xSpd) — calcolati sui char/sec reali
+    if(pChEl&&d.opt_current_chapter){pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);}
+    if(d.opt_progress_total>0){var xChEl=document.getElementById('xCh');if(xChEl){xChEl.textContent=(d.opt_current_chapter_num||0)+' / '+d.opt_progress_total;xChEl.closest('.ps').style.display=''}}
+    if(d.opt_elapsed_seconds>0){var el=document.getElementById('xEl');if(el){el.textContent=fmtTime(d.opt_elapsed_seconds);el.closest('.ps').style.display=''}}
     if(workedChars>0&&d.opt_elapsed_seconds>1&&totalChars>0){
       var cps=workedChars/d.opt_elapsed_seconds;
       var left=Math.max(0,totalChars-workedChars);
       var eta=Math.round(left/cps);
-      var xEtaEl=document.getElementById('xEta');
-      if(xEtaEl){xEtaEl.textContent=eta>0?'~'+fmtTime(eta):t('almost');xEtaEl.closest('.ps').style.display=''}
-      var xSpdEl=document.getElementById('xSpd');
-      if(xSpdEl){xSpdEl.textContent=Math.round(cps)+' '+t('cps');xSpdEl.closest('.ps').style.display=''}
+      var xEtaEl=document.getElementById('xEta');if(xEtaEl){xEtaEl.textContent=eta>0?'~'+fmtTime(eta):t('almost');xEtaEl.closest('.ps').style.display=''}
+      var xSpdEl=document.getElementById('xSpd');if(xSpdEl){xSpdEl.textContent=Math.round(cps)+' '+t('cps');xSpdEl.closest('.ps').style.display=''}
     }
-
-    // Generated chars so far (xSz) — mostrato come numero di caratteri ottimizzati
-    if(workedChars>0){
-      var xSzEl=document.getElementById('xSz');
-      if(xSzEl){xSzEl.textContent=workedChars.toLocaleString(cl||'it')+' char';xSzEl.closest('.ps').style.display=''}
-    }
-    // After 5 seconds, show email modal if SMTP available and not yet shown
-    if(!optEmailPromptShown&&smtpAvailable&&d.opt_elapsed_seconds>=5){
-      optEmailPromptShown=true;
-      _showOptEmailModal();
-    }
+    if(workedChars>0){var xSzEl=document.getElementById('xSz');if(xSzEl){xSzEl.textContent=workedChars.toLocaleString(cl||'it')+' char';xSzEl.closest('.ps').style.display=''}}
   };
   es.onerror=function(){es.close()};
+}
+
+function showS3Err(msg){
+  var s3err=document.getElementById('s3err');
+  if(s3err){s3err.textContent=msg;s3err.style.color='var(--err)'}
+}
+
+// Old startOptimization kept for backward compat (called from batch flow, etc.)
+async function startOptimization(){
+  if(!jobId)return;
+  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){alert('System under maintenance. Please try again in a few minutes.');return}}}catch(e){}
+  if(!(await _validateLanguage()))return;
+  document.getElementById('s3err').innerHTML='';
+  let selectedChapters=_getSelectedChapterIndexes();
+  if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
+  var paymentToken=null;
+  try{
+    let url=new URL('/api/optimize_estimate/'+jobId,window.location.origin);
+    const selLang=document.getElementById('vl').value||cl;url.searchParams.append('lang',selLang);
+    if(selectedChapters&&selectedChapters.length>0)selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
+    var est=await fetch(url.toString()).then(r=>r.json());
+    if(est.error){showS3Err(est.error);return}
+    if(est.requires_payment){
+      try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
+        llmConfig.rate=cfg.rate_eur_per_mchar||1.1;llmConfig.threshold=cfg.free_threshold_eur||0.5;
+        llmConfig.bonus=cfg.voucher_bonus_percent||10;llmConfig.expiry=cfg.voucher_expiry_days||180;
+        llmConfig.paypalClientId=cfg.paypal_client_id||"";llmConfig.paypalMode=cfg.paypal_mode||"sandbox";llmConfig.paypalAvailable=!!cfg.paypal_available;
+      }catch(e){}
+      paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
+      if(!paymentToken)return;
+    }
+  }catch(e){showS3Err('Estimate error: '+e.message);return}
+  _showWizProgress();
+  _setCancelButtonMode('opt');
+  lockUI();
+  try{
+    const selLang=document.getElementById('vl').value||cl;
+    var payload={job_id:jobId,batch:false,lang:selLang};
+    if(paymentToken)payload.payment_token=paymentToken;
+    if(selectedChapters)payload.selected_chapters=selectedChapters;
+    var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var d=await r.json();
+    if(d.error){
+      if(d.error_code==='llm_concurrent_limit'){document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';}
+      else{showPErr(d.error)}unlockUI();return;
+    }
+    _listenOptProgressWiz();
+  }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
 
 // ═══════════════════ GENERATION ═══════════════════
@@ -1285,7 +1460,7 @@ function _shouldShowDonateModal(){
   // Show only if client has generated before (not first time) and not suppressed
   try{
     const gen=localStorage.getItem('abm_gen_count');
-    if(!gen||parseInt(gen)<1)return false; // first-time user → skip
+    if(!gen||parseInt(gen)<2)return false; // need 2+ generations
     const suppress=localStorage.getItem('abm_donate_dismiss');
     if(suppress){
       const until=parseInt(suppress);
@@ -1320,7 +1495,7 @@ function closeDonateModalX(){
   const m=document.getElementById('donateModal');
   if(!m||!m.classList.contains('open'))return;
   m.classList.remove('open');
-  _suppressDonate(3); // X close → reappear after 3 days
+  _suppressDonate(7); // X close → reappear after 7 days
   if(_donateModalResolve){_donateModalResolve(true);_donateModalResolve=null}
 }
 
@@ -1330,85 +1505,39 @@ function onDonateModal(action){
   if(_donateModalResolve){_donateModalResolve(true);_donateModalResolve=null}
 }
 
+function openDonateFromFooter(){
+  applyI18n();
+  document.getElementById('donateModal').classList.add('open');
+}
+
 async function startGen(){
-  // Check sospensione nuovi processi (admin toggle) — prima di qualsiasi modifica UI
-  try{
-    const sr = await fetch('/api/admin/suspend');
-    if(sr.ok){
-      const sd = await sr.json();
-      if(sd.suspended){
-        alert('System under maintenance. Please try again in a few minutes.');
-        return;
-      }
-    }
-  }catch(e){}
-
-  if(!(await _validateLanguage())) return;
-  // Donate modal: show for returning users before generation starts
-  if(_shouldShowDonateModal()){
-    await _showDonateModal();
-  }
-  // Mark this generation so the modal can appear next time
-  _markGeneration();
-  // Collect selected chapter indices
-  let selectedChapters=[];
-  document.querySelectorAll('#chl .col-sel input[type=checkbox]').forEach(cb=>{
-    if(cb.checked)selectedChapters.push(parseInt(cb.dataset.idx));
-  });
-  console.log('[generate] selected chapters:', selectedChapters.length, '/', bookData?.total_chapters, 'indices:', JSON.stringify(selectedChapters));
+  // Direct TTS generation (called from startCombinedGeneration or from old optimize→proceed flow)
+  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){alert('System under maintenance. Please try again in a few minutes.');return}}}catch(e){}
+  if(!(await _validateLanguage()))return;
+  let selectedChapters=_getSelectedChapterIndexes();
   if(selectedChapters.length===0){showErr('s3err',t('sel_err_none'));return}
-  // Check if "all" chapters are selected to optionally send null or full list
-  // The backend supports filtering, so always sending them is safer.
-
   document.getElementById('s3err').innerHTML='';
-  document.getElementById('btnG').disabled=true;
-  // Set s2 summary for collapsed state
-  const vSel=document.getElementById('vv');
-  const vName=vSel.options[vSel.selectedIndex]?vSel.options[vSel.selectedIndex].text:'';
-  const rSel=document.getElementById('vr');
-  const rName=rSel.options[rSel.selectedIndex]?rSel.options[rSel.selectedIndex].text:'';
-  document.getElementById('s2sum').textContent=vName+' — '+rName;
+  _showWizProgress();
+  _setCancelButtonMode('gen');
   lockUI();
-  const s4=document.getElementById('s4');s4.style.display='';s4.classList.remove('collapsed');s4.classList.add('fi');
-  if(bookData){document.getElementById('s4bkT').textContent=bookData.title||'';document.getElementById('s4bkA').textContent=bookData.author?(t('by')+' '+bookData.author):'';var sc=document.getElementById('s4bkCover'),s3c=document.getElementById('bkCover');if(s3c.src&&s3c.style.display!=='none'){sc.src=s3c.src;sc.style.display='';sc.onerror=function(){this.style.display='none'}}else{sc.style.display='none';sc.src=''}}
-  document.getElementById('pMsg').textContent=t('starting');
-  // Scroll to generation panel (s3 or btnG) instead of step 4 to keep button visible
-  setTimeout(()=>{const genPanel=document.getElementById('s3');const btnG=document.getElementById('btnG');if(genPanel)genPanel.scrollIntoView({behavior:'smooth',block:'start'})},200);
   try{
-    const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile};
+    const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
-    const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload)});
+    const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
       if(d.error_code==='concurrent_limit'){
-        // Show error in pMsg without destroying pra DOM structure
-        document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;
-        document.getElementById('pMsg').style.color='var(--err)';
-        document.getElementById('pBar').style.width='0%';
-        document.getElementById('pPct').textContent='';
-        document.getElementById('pCh').textContent='';
-        document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
-        // Replace cancel button with retry
-        document.getElementById('cnA').innerHTML=
-          '<button class="btn btn-ok" id="btnRetry">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-        document.getElementById('btnRetry').onclick=retryGen;
-        unlockUI();return
+        document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';
+        document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='';
+        document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
+        document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
       }
       if(d.error_code==='google_tts_budget'){
-        document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);
-        document.getElementById('pMsg').style.color='var(--err)';
-        document.getElementById('pBar').style.width='0%';
-        document.getElementById('pPct').textContent='';
-        document.getElementById('pCh').textContent='';
-        document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display='none'});
-        document.getElementById('cnA').innerHTML=
-          '<button class="btn btn-ok" id="btnRetry">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-        document.getElementById('btnRetry').onclick=retryGen;
-        unlockUI();return
+        document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);document.getElementById('pMsg').style.color='var(--err)';
+        document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
+        document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
       }
-      showPErr(d.error);
-      unlockUI();return
+      showPErr(d.error);unlockUI();return
     }
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -1420,15 +1549,19 @@ function listenProgress(){
   function connect(){
     const es=new EventSource('/api/progress/'+jobId);
     es.onmessage=ev=>{
-      retries=0;  // Reset su messaggio ricevuto
+      retries=0;
       const d=JSON.parse(ev.data);
-      if(d.status==='error'){es.close();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';document.getElementById('emailModal').classList.remove('open');return}
-      if(d.status==='cancelled'){es.close();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';document.getElementById('emailModal').classList.remove('open');unlockUI();generating=false;return}
+      if(d.status==='error'){es.close();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
+      if(d.status==='cancelled'){es.close();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
+      // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
       document.getElementById('pBar').style.width=pct+'%';
       document.getElementById('pMsg').textContent=d.progress_message||'';
+      const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
+      const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
+      const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.progress_message)progressPhase.textContent=d.progress_message;
 
       if(d.current_chapter)
         document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
@@ -1439,98 +1572,116 @@ function listenProgress(){
       if(d.elapsed_seconds>0)
         document.getElementById('xEl').textContent=fmtTime(d.elapsed_seconds);
 
-      // ETA basata su chars/sec reale
       if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
         const cps=d.processed_chars/d.elapsed_seconds;
         const left=d.total_chars-d.processed_chars;
         const eta=Math.round(left/cps);
         document.getElementById('xEta').textContent=eta>0?'~'+fmtTime(eta):t('almost');
         document.getElementById('xSpd').textContent=Math.round(cps)+' '+t('cps');
-        // Email prompt: after 5s elapsed, ETA > 1min, chapter mode, SMTP available
-        if(!emailPromptShown&&!emailRegistered&&smtpAvailable&&d.elapsed_seconds>=5&&(d.elapsed_seconds+eta)>60){
-          emailPromptShown=true;
-          showEmailModal();
-        }
       }
       if(d.bytes_generated>0)
         document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
 
-      // Update progress message (including M4B conversion feedback)
-      let msg = d.progress_message || '';
-      if(msg === "Converting to M4B...") {
-          msg = t('converting_m4b') || msg;
-      }
+      let msg=d.progress_message||'';
+      if(msg==="Converting to M4B..."){msg=t('converting_m4b')||msg}
       document.getElementById('pMsg').textContent=msg;
 
       if(d.status==='done'){
         es.close();
-        generating=false;
-        jobDone=true;
+        generating=false;jobDone=true;
+        unlockUI();
         document.getElementById('pPct').textContent='100%';
         document.getElementById('pBar').style.width='100%';
         document.getElementById('pMsg').textContent=t('done_msg');
         document.getElementById('pMsg').style.color='var(--ok)';
+        const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
+        const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
+        const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('done_t');
 
-        // M4B retry/fallback warning
         if(d.m4b_failed){
-          const warn = document.createElement('div');
-          warn.className = 'al al-warn';
-          warn.style.marginTop = '10px';
-          warn.textContent = t('m4b_warn_mp3');
-          document.getElementById('pra').appendChild(warn);
+          const warn=document.createElement('div');warn.className='al al-warn';warn.style.marginTop='10px';
+          warn.textContent=t('m4b_warn_mp3');document.getElementById('pra').appendChild(warn);
         }
-
         if(d.failed_chunks>0){
           document.getElementById('pMsg').textContent=t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)';
           document.getElementById('pMsg').style.color='#d97706';
         }
         document.getElementById('xEta').textContent='-';
-        document.getElementById('dlA').style.display='block';
-        document.getElementById('dlA').classList.add('fi');
-        
-        // Dynamic main download button (btnD) based on Step 2 selection
-        const btnD = document.getElementById('btnD');
-        if (singleFile) {
-          // M4B choice
-          btnD.innerHTML = '&#x1F4D6;&#xFE0F; ' + (t('btn_dl_m4b') || 'Download Audiolibro M4B');
-          btnD.onclick = () => downloadFile('m4b');
-        } else {
-          // ZIP choice
-          btnD.innerHTML = '&#x1F4C2;&#xFE0F; ' + t('out_zip');
-          btnD.onclick = () => downloadFile('zip');
-        }
 
-        // Secondary download buttons
-        document.getElementById('btnM').style.display = (singleFile ? false : d.output_m4b) ? '' : 'none';
-        document.getElementById('btnA').style.display = d.has_abm ? '' : 'none';
-        document.getElementById('btnA').onclick = () => downloadFile('abm');
-        document.getElementById('btnP').style.display = d.has_podcast ? '' : 'none';
-        // Show "back to chapters" button if the book has multiple chapters
-        document.getElementById('btnBackCh').style.display=(bookData&&bookData.total_chapters>1)?'':'none';
-        document.getElementById('s4t').textContent=t('done_t');
+        // Navigate to panel 5 (completion)
+        _unlockStep(5);
+        // Populate panel 5 download buttons
+        const btnD=document.getElementById('btnD');
+        const btnM=document.getElementById('btnM');
+        const btnA=document.getElementById('btnA');
+        const btnP=document.getElementById('btnP');
+        const dlA=document.getElementById('dlA');
+        if(dlA)dlA.style.display=''; // ensure visible (may have been hidden by goBackToChapters)
+        if(btnD)btnD.style.display='none';
+        if(btnM)btnM.style.display='none';
+        if(btnA)btnA.style.display='none';
+        if(btnP)btnP.style.display='none';
+        if(outputFormat==='zip_rss'){
+          // Podcast: ZIP with chapter MP3s + RSS XML — btnP is the only primary download
+          if(btnP){btnP.style.display=d.has_podcast?'':'none';btnP.onclick=()=>downloadPodcastZip();}
+        } else if(singleFile){
+          if(btnD)btnD.style.display='';
+          // Single file (M4B / MP3): btnD repurposed as primary download button
+          if(btnD){
+            if(outputFormat==='mp3'){
+              btnD.innerHTML='<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>'+t('btn_dl_mp3')+'</span>';
+              btnD.onclick=()=>downloadFile('mp3');
+            } else {
+              btnD.innerHTML='<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>'+t('btn_dl_m4b')+'</span>';
+              btnD.onclick=()=>downloadFile('m4b');
+            }
+          }
+        } else {
+          // Chapter ZIP: btnD is the primary ZIP download
+          if(btnD){
+            btnD.style.display='';
+            btnD.innerHTML='&#x2B07;&#xFE0F; <span>'+t('btn_dl')+'</span>';
+            btnD.onclick=()=>downloadFile('zip');
+          }
+        }
+        // ABM button (always supplementary, when optimized text is available)
+        if(btnA&&d.has_abm){btnA.style.display='';btnA.onclick=()=>downloadFile('abm');}
+        const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display=(bookData&&bookData.total_chapters>1)?'':'none';
+        // Expiry info
+        const expiryRow=document.getElementById('expiryRow');
+        if(expiryRow&&d.expires_at){
+          expiryRow.style.display='';
+          const expiryInfo=document.getElementById('expiryInfo');
+          if(expiryInfo){
+            const expDate=new Date(d.expires_at*1000);
+            expiryInfo.textContent=(t('expiry_info')||'File available until')+' '+expDate.toLocaleString();
+          }
+        }
         document.getElementById('cnA').style.display='none';
-        document.getElementById('emailModal').classList.remove('open');
-        // Heartbeat: segnala al server che il client è ancora sulla pagina
+        goToStep(5);
+
+        // Heartbeat
         hbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},10000);
-        // Manda subito il primo heartbeat (evita gap iniziale)
         if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId);
-        // Heartbeat extra quando la tab torna in primo piano
-        // (Chrome throttla setInterval in background, ma visibilitychange NO)
         document._hbVis=()=>{if(!document.hidden&&jobId&&jobDone)navigator.sendBeacon('/api/heartbeat/'+jobId)};
         document.addEventListener('visibilitychange',document._hbVis);
-        // UI resta locked fino a "nuovo"
       }
     };
     es.onerror=()=>{
       es.close();
-      if(retries<maxRetries&&generating){
-        retries++;
-        // Riconnessione progressiva: 2s, 4s, 6s, 8s, 10s
-        setTimeout(connect,retries*2000);
-      }
+      if(retries<maxRetries&&generating){retries++;setTimeout(connect,retries*2000);}
     };
   }
   connect();
+}
+
+function retryGeneration(){
+  document.getElementById('cnA').innerHTML='<button class="btn btn-danger" id="btnC">⏹️ '+(t('btn_cancel')||'Cancel')+'</button>';
+  document.getElementById('btnC').onclick=cancelJob;
+  document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
+  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
+  document.getElementById('pPct').textContent='0%';
+  startGen();
 }
 
 // Imposta label + handler del bottone Annulla in base al contesto:
@@ -1538,26 +1689,30 @@ function listenProgress(){
 //   'gen' = generazione audio TTS       →  'Annulla' / cancelJob
 function _setCancelButtonMode(mode){
   var btnC=document.getElementById('btnC');
-  if(!btnC)return;
+  var btnCancelOpt=document.getElementById('btnCancelOpt');
   if(mode==='opt'){
-    btnC.innerHTML='\u23F9\uFE0F '+(t('btn_cancel_opt')||'Cancel optimization');
-    btnC.onclick=cancelOptimization;
+    if(btnC)btnC.style.display='none';
+    if(btnCancelOpt){btnCancelOpt.style.display='';btnCancelOpt.onclick=cancelOptimization}
   }else{
-    btnC.innerHTML='\u23F9\uFE0F '+(t('btn_cancel')||'Cancel');
-    btnC.onclick=cancelJob;
+    if(btnC){btnC.style.display='';btnC.onclick=cancelJob}
+    if(btnCancelOpt)btnCancelOpt.style.display='none';
   }
 }
 
 function cancelOptimization(){
   if(!jobId)return;
   try{navigator.sendBeacon('/api/cancel_optimize/'+jobId);}catch(e){}
-  document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
-  // Ripristina label di default per i cicli successivi
+  document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimisation cancelled';
   _setCancelButtonMode('gen');
   unlockUI();
-  document.getElementById('btnG').disabled=false;
-  if(document.getElementById('btnOptimize'))document.getElementById('btnOptimize').disabled=false;
-  var s4=document.getElementById('s4');if(s4)s4.style.display='none';
+  const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
+  const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
+  const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
+  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='';
+  const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='';
+  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
 }
 
 function cancelJob(){
@@ -1565,131 +1720,24 @@ function cancelJob(){
   navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
   generating=false;
   unlockUI();
-  document.getElementById('s4').style.display='none';
-  document.getElementById('dlA').style.display='none';
-  document.getElementById('btnP').style.display='none';
-  document.getElementById('btnBackCh').style.display='none';
-  document.getElementById('cnA').style.display='';
-  document.getElementById('pBar').style.width='0%';
-  document.getElementById('pPct').textContent='0%';
-  document.getElementById('pCh').textContent='';
-  document.getElementById('xBlk').textContent='—';
-  document.getElementById('xCh').textContent='—';
-  document.getElementById('xEl').textContent='—';
-  document.getElementById('xEta').textContent='—';
-  document.getElementById('xSz').textContent='—';
-  document.getElementById('xSpd').textContent='—';
-  // Restore progress area if it was hidden
-  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display=''});
-  document.getElementById('pMsg').textContent='';
-  document.getElementById('pMsg').style.color='';
-  document.getElementById('btnG').disabled=false;
-  // Keep step 3 OPEN (remove collapsed class) so user can restart generation
-  const s3=document.getElementById('s3');
-  if(s3){
-    s3.classList.remove('collapsed');
-    s3.classList.remove('locked');
-  }
-  // Scroll to step 3 to show the panel
-  setTimeout(()=>{if(s3)s3.scrollIntoView({behavior:'smooth',block:'start'})},100);
+  const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
+  const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
+  const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
+  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  const aiOptCard2=document.getElementById('aiOptCard');if(aiOptCard2)aiOptCard2.style.display='';
+  const summaryBox2=document.getElementById('summaryBox');if(summaryBox2)summaryBox2.style.display='';
+  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
+  const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
+  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
+  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
+  document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
+  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
+  updateSelection();
 }
 
-function retryGen(){
-  // Restore cancel button
-  document.getElementById('cnA').innerHTML=
-    '<button class="btn btn-g" id="btnC" style="border-color:var(--err);color:var(--err)">\u23F9\uFE0F '+(t('btn_cancel')||'Cancel')+'</button>';
-  document.getElementById('btnC').onclick=cancelJob;
-  // Restore progress area
-  document.querySelectorAll('#pra .ps').forEach(function(el){el.style.display=''});
-  document.getElementById('pMsg').textContent='';
-  document.getElementById('pMsg').style.color='';
-  document.getElementById('pPct').textContent='0%';
-  // Retry generation
-  startGen();
-}
-
-// ═══════════════════ EMAIL NOTIFICATION ═══════════════════
-function showEmailModal(){
-  const m=document.getElementById('emailModal');
-  document.getElementById('emTitle').textContent='📧 '+t('email_title');
-  document.getElementById('emDesc').textContent=t('email_desc');
-  document.getElementById('emDlLabel').textContent=t('email_dl_type');
-  document.getElementById('emDlAudioL').textContent=t('email_dl_audio');
-  document.getElementById('emDlPodcastL').textContent=t('email_dl_podcast');
-  document.getElementById('emBaseUrlLabel').textContent=t('email_base_url');
-  document.getElementById('emEmail').placeholder=t('email_placeholder');
-  document.getElementById('emEmail').value=lastVoucherEmail;
-  document.getElementById('emSubmit').textContent=t('email_btn');
-  document.getElementById('emSkip').textContent=t('email_skip');
-  document.getElementById('emErr').style.display='none';
-  document.getElementById('emOk').style.display='none';
-  document.getElementById('emBtns').style.display='flex';
-  document.getElementById('emDlType').style.display=singleFile?'none':'';
-  document.getElementById('emBaseUrlWrap').style.display='none';
-  // Reset radio to "audio" every time modal opens
-  document.querySelectorAll('input[name="emDl"]').forEach((r,i)=>{r.checked=i===0});
-  // Radio change: show/hide base URL field
-  document.querySelectorAll('input[name="emDl"]').forEach(r=>{
-    r.onchange=()=>{
-      document.getElementById('emBaseUrlWrap').style.display=
-        document.querySelector('input[name="emDl"]:checked').value==='podcast'?'':'none';
-    };
-  });
-  m.classList.add('open');
-}
-
-async function submitEmail(){
-  const email=document.getElementById('emEmail').value.trim();
-  const errEl=document.getElementById('emErr');
-  errEl.style.display='none';
-  // Validate email client-side
-  if(!email||!/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)){
-    errEl.textContent=t('email_invalid');errEl.style.display='block';return;
-  }
-  lastVoucherEmail=email;
-  try{localStorage.setItem('abm_v_email',email)}catch(e){}
-  const dlType=document.querySelector('input[name="emDl"]:checked').value;
-  const baseUrl=document.getElementById('emBaseUrl').value.trim();
-  if(dlType==='podcast'&&!baseUrl){
-    errEl.textContent=t('email_base_url');errEl.style.display='block';return;
-  }
-  try{
-    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({job_id:jobId,email:email,download_type:dlType,base_url:baseUrl,lang:cl})});
-    const d=await r.json();
-    if(d.error){
-      errEl.textContent=d.error==='Email service not configured on this server'?t('email_unavail'):d.error;
-      errEl.style.display='block';return;
-    }
-    emailRegistered=true;
-    document.getElementById('emBtns').style.display='none';
-    document.getElementById('emDlType').style.display='none';
-    document.getElementById('emBaseUrlWrap').style.display='none';
-    document.getElementById('emEmail').style.display='none';
-    document.getElementById('emDesc').style.display='none';
-    document.getElementById('emOk').textContent=t('email_ok');
-    document.getElementById('emOk').style.display='block';
-    // Show inline status indicator in step 4
-    document.getElementById('emailStatusText').textContent=t('email_ok');
-    document.getElementById('emailStatus').style.display='block';
-    // Auto-close after 5 seconds
-    setTimeout(()=>{document.getElementById('emailModal').classList.remove('open')},5000);
-  }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display='block'}
-}
-
-function skipEmail(){
-  document.getElementById('emailModal').classList.remove('open');
-}
-
-// Check SMTP availability on page load
-async function checkSmtp(){
-  try{
-    const r=await fetch('/api/email_available');
-    const d=await r.json();
-    smtpAvailable=d.available===true;
-  }catch(e){smtpAvailable=false}
-}
-checkSmtp();
+function retryGen(){retryGeneration()}
 
 async function downloadFile(type){
   if(!jobId)return;
@@ -1697,7 +1745,8 @@ async function downloadFile(type){
   if(type === 'm4b') btnId = 'btnM';
   if(type === 'abm') btnId = 'btnA';
   if(type === 'zip') btnId = 'btnD';
-  
+  if(type === 'mp3') btnId = 'btnD';
+
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;
   btn.disabled=true;btn.textContent='⏳...';
@@ -1724,6 +1773,7 @@ async function downloadFile(type){
       let defName = 'audiobook.zip';
       if(type === 'm4b') defName = 'audiobook.m4b';
       if(type === 'abm') defName = 'project.abm';
+      if(type === 'mp3') defName = 'audiobook.mp3';
       const fname=m?m[1]:defName;
       
       const a=document.createElement('a');
@@ -1735,6 +1785,7 @@ async function downloadFile(type){
       let successT = t('btn_dl');
       if(type === 'm4b') successT = t('btn_dl_m4b');
       if(type === 'abm') successT = t('btn_dl_abm');
+      if(type === 'mp3') successT = t('btn_dl_mp3');
       btn.innerHTML='✅ <span>'+successT+'</span>';
       btn.disabled=false;
       return;
@@ -1778,6 +1829,26 @@ async function downloadPodcast(){
   }
 }
 
+async function downloadPodcastZip(){
+  if(!jobId)return;
+  const btn=document.getElementById('btnP');
+  btn.disabled=true;btn.textContent='⏳...';
+  try{
+    navigator.sendBeacon('/api/heartbeat/'+jobId);
+    const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));
+    if(!r.ok){const t=await r.text();showPErr(t||'Download failed');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
+    const blob=await r.blob();
+    const cd=r.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename[^;=\n]*=['\"]?([^'\";\n]*)/);
+    const fname=m?m[1]:'podcast.zip';
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=fname;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+  }catch(e){showPErr('Download error: '+e.message)}
+  btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+}
+
 function onBeforeUnload(e){
   if(generating&&!jobDone&&jobId&&!emailRegistered){
     // Cancel solo se la generazione è in corso E l'utente NON ha registrato email
@@ -1787,95 +1858,200 @@ function onBeforeUnload(e){
 
 async function goBackToChapters(){
   if(!jobId||!bookData)return;
-  // Stop heartbeat
+  _stopAnalyzedHeartbeat();
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
-  // Ask backend to reset job status
-  try{
-    const r=await fetch('/api/reset_to_chapters/'+jobId,{method:'POST'});
-    const d=await r.json();
-    if(d.error){showErr('s3err',d.error);return}
-  }catch(e){
-    // If backend fails, still allow UI reset (job data might be lost on restart)
-    console.warn('[goBack] reset endpoint failed:',e);
-  }
-  // Reset UI state
-  jobDone=false;
-  generating=false;
-  emailPromptShown=false;emailRegistered=false;
-  // Hide step 4
-  document.getElementById('s4').style.display='none';
-  document.getElementById('dlA').style.display='none';
-  document.getElementById('btnM').style.display='none';
-  document.getElementById('btnP').style.display='none';
-  document.getElementById('btnBackCh').style.display='none';
-  document.getElementById('cnA').style.display='';
-  document.getElementById('pBar').style.width='0%';
-  document.getElementById('pPct').textContent='0%';
+  try{await fetch('/api/reset_to_chapters/'+jobId,{method:'POST'})}catch(e){console.warn('[goBack] reset failed:',e)}
+  jobDone=false;generating=false;
+  emailRegistered=false;
+  // Reset chapter selection — uncheck all
+  _getAllCheckboxes().forEach(cb=>{cb.checked=false});
+  // Reset AI optimization state
+  aiAlreadyOptimized=false;aiOptEnabled=false;
+  const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
+  const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
+  const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
+  const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
+  const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+  _updateAiOptCard();
+  // Hide generation/download UI
+  const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
+  const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
+  const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
+  const btnP=document.getElementById('btnP');if(btnP)btnP.style.display='none';
+  const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
+  const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
+  const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
+  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
   document.getElementById('pMsg').style.color='';
-  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>document.getElementById(id).textContent='-');
-  document.getElementById('emailModal').classList.remove('open');
-  // Unlock steps and reopen chapter selection
+  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
+  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  // Reset wizard progress
+  const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
+  const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
+  const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent='—';
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
+  const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
+  const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='';
+  const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='';
+  const expiryRow=document.getElementById('expiryRow');if(expiryRow)expiryRow.style.display='none';
   unlockUI();
-  ['s1','s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
-  document.getElementById('s1').classList.add('collapsed');
-  document.getElementById('s1').classList.add('done');
-  document.getElementById('s2').classList.add('collapsed');
-  document.getElementById('s2').classList.add('done');
-  // Re-activate step 3 (chapter selection)
-  activateStep('s3');
-  // Re-enable generate button
-  document.getElementById('btnG').disabled=false;
-  updateSelection();
-  _updatePreviewBtn();
+  updateSelection();_updatePreviewBtn();_updateSummary();
+  goToStep(2);
 }
 
+function _startAnalyzedHeartbeat(){
+  if(_analyzedHbInterval)clearInterval(_analyzedHbInterval);
+  _analyzedHbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},25000);
+}
+function _stopAnalyzedHeartbeat(){
+  if(_analyzedHbInterval){clearInterval(_analyzedHbInterval);_analyzedHbInterval=null}
+}
 function resetAll(){
+  _stopAnalyzedHeartbeat();
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
-  generating=false;
-  jobDone=false;
+  generating=false;jobDone=false;
   unlockUI();
-  document.getElementById('s4').style.display='none';
-  // Accordion: s1 open, s2+s3 disabled collapsed
-  document.getElementById('s1').classList.remove('collapsed','disabled','done');
-  disableStep('s2');disableStep('s3');
-  ['s2','s3'].forEach(id=>document.getElementById(id).classList.remove('done'));
-  document.getElementById('dlA').style.display='none';
-  document.getElementById('btnM').style.display='none';
-  document.getElementById('btnP').style.display='none';
-  document.getElementById('btnBackCh').style.display='none';
-  document.getElementById('podHint').style.display='none';
-  document.getElementById('cnA').style.display='';
-  document.getElementById('btnG').disabled=false;
-  document.getElementById('pBar').style.width='0%';
-  document.getElementById('pPct').textContent='0%';
-  document.getElementById('pMsg').style.color='';
-  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>document.getElementById(id).textContent='-');
+  _wizStep=1;_wizMaxStep=1;
+  updateWizardSteps(1);
+  const panels=document.querySelectorAll('.panel');
+  panels.forEach(p=>p.classList.remove('active'));
+  const panel1=document.getElementById('panel1');if(panel1)panel1.classList.add('active');
   document.getElementById('uz').classList.remove('ok');
   document.getElementById('ufn').style.display='none';
   document.getElementById('fi').value='';
-  document.getElementById('chl').innerHTML='';
+  const chl=document.getElementById('chl');if(chl)chl.innerHTML='';
+  const chapterRows=document.getElementById('chapterRows');if(chapterRows)chapterRows.innerHTML='';
   document.getElementById('s3err').innerHTML='';
-  document.getElementById('selBar').classList.remove('vis');
-  document.getElementById('thSel').style.display='none';
-  singleFile=true;isTxtFile=false;
+  const selBar=document.getElementById('selBar');if(selBar)selBar.classList.remove('vis');
+  singleFile=true;isTxtFile=false;outputFormat='m4b';podcastBaseUrl='';
   document.getElementById('fgOut').style.display='';
-  document.querySelectorAll('.tg button').forEach(b=>b.classList.remove('on'));
-  document.getElementById('toS').classList.add('on');
-  previewStop(); _prevText=''; _prevWords=[];
+  const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
+  previewStop();
   bookData=null;jobId=null;
-  emailPromptShown=false;emailRegistered=false;previewListened=false;
-  document.getElementById('emailModal').classList.remove('open');
-  // Reset email modal fields
-  document.getElementById('emEmail').value=lastVoucherEmail;document.getElementById('emEmail').style.display='';
-  document.getElementById('emBaseUrl').value='';
-  document.getElementById('emDesc').style.display='';
-  document.querySelectorAll('input[name="emDl"]').forEach((r,i)=>{r.checked=i===0});
-  ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);el.style.display='none';el.src=''});
-  ['s1sum','s2sum','s3sum'].forEach(id=>document.getElementById(id).textContent='');
+  emailRegistered=false;previewListened=false;
+  ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
+  const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';
+  // Reset wizard generation UI
+  const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
+  const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
+  const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
+  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
+  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
+  const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
+  const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
+  const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
+  const btnP=document.getElementById('btnP');if(btnP)btnP.style.display='none';
+  const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
+  // Reset AI toggle
+  const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
+  aiOptEnabled=false;aiAlreadyOptimized=false;
+  const aiOptCard3=document.getElementById('aiOptCard');if(aiOptCard3){aiOptCard3.classList.remove('enabled');aiOptCard3.style.display='';}
+  const summaryBox3=document.getElementById('summaryBox');if(summaryBox3)summaryBox3.style.display='';
+  const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
+  const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
+  const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
+  const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+  const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.innerHTML='';
+  // Reset old progress
+  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  document.getElementById('pMsg').style.color='';
+  ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
+  // Reset wizard progress
+  const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
+  const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
+  const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent='—';
+  // Reset book info
+  document.getElementById('bkT').textContent='';document.getElementById('bkA').textContent='';
+  const bookChCount=document.getElementById('bookChCount');if(bookChCount)bookChCount.textContent='—';
+  const bookTotalChars=document.getElementById('bookTotalChars');if(bookTotalChars)bookTotalChars.textContent='—';
+  const bookLangEl=document.getElementById('bookLang');if(bookLangEl)bookLangEl.textContent='—';
+  const selCnt=document.getElementById('selCnt');if(selCnt)selCnt.textContent='0';
+  const selectedCount=document.getElementById('selectedCount');if(selectedCount)selectedCount.innerHTML='<b>0</b> <span data-t="sel_selected">'+t('sel_selected')+'</span>';
+  // Reset summary
+  const sumCh=document.getElementById('summaryChapters');if(sumCh)sumCh.textContent='—';
+  const sumVoice=document.getElementById('summaryVoice');if(sumVoice)sumVoice.textContent='—';
+  const sumFormat=document.getElementById('summaryFormat');if(sumFormat)sumFormat.textContent='—';
+  const sumAI=document.getElementById('summaryAI');if(sumAI)sumAI.textContent='—';
+  const expiryRow=document.getElementById('expiryRow');if(expiryRow)expiryRow.style.display='none';
   applyI18n();
   window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ═══════════════════ WIZARD HELPERS ═══════════════════
+function confirmReset(){
+  if(generating){if(!confirm(t('confirm_reset_warn')||'Generation in progress. Are you sure?'))return}
+  resetAll();
+}
+
+async function showCoupon(){
+  // Open the rich payment modal (more explanatory space) for voucher entry
+  if(!jobId)return;
+  try{
+    let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
+    const selLang=document.getElementById('vl').value||cl;
+    url.searchParams.append('lang',selLang);
+    _getSelectedChapterIndexes().forEach(idx=>url.searchParams.append('selected_chapters',idx));
+    const est=await fetch(url.toString()).then(r=>r.json());
+    if(est.error||!est.requires_payment)return;
+    try{
+      var cfg=await fetch('/api/llm_available').then(r=>r.json());
+      llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
+      llmConfig.threshold=cfg.free_threshold_eur||0.5;
+      llmConfig.bonus=cfg.voucher_bonus_percent||10;
+      llmConfig.expiry=cfg.voucher_expiry_days||180;
+      llmConfig.paypalClientId=cfg.paypal_client_id||"";
+      llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
+      llmConfig.paypalAvailable=!!cfg.paypal_available;
+    }catch(e){}
+    const token=await _showPaymentModal(est.cost_eur,est.chars);
+    if(token){
+      window._couponPaymentToken=token;
+      const result=document.getElementById('couponResult');
+      if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
+      const amountEl=document.getElementById('costAmount');if(amountEl)amountEl.textContent='€ 0.00';
+    }
+  }catch(e){/* ignore */}
+}
+
+async function validateCoupon(){
+  const code=(document.getElementById('couponCode').value||'').trim().toUpperCase();
+  const email=(document.getElementById('couponEmail').value||'').trim()||lastVoucherEmail||prompt('Email:','');
+  if(!code||!email)return;
+  const result=document.getElementById('couponResult');
+  if(result){result.innerHTML='<div class="sp"></div>';result.className='coupon-result'}
+  try{
+    const r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
+    const d=await r.json();
+    if(d.error){if(result){result.textContent=d.error;result.className='coupon-result error'}return}
+    lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
+    if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
+    const amountEl=document.getElementById('costAmount');if(amountEl)amountEl.textContent='€ 0.00';
+    window._couponPaymentToken=d.payment_token;
+  }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
+}
+
+async function submitEmailLate(){
+  const email=(document.getElementById('notifyEmailLate').value||'').trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return;
+  lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
+  try{
+    const dlType=(outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters');
+    const latePayload={job_id:jobId,email:email,download_type:dlType,lang:cl};
+    if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');latePayload.base_url=urlInput?urlInput.value.trim():'';}
+    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(latePayload)});
+    const d=await r.json();
+    if(d.error){alert(d.error);return}
+    emailRegistered=true;
+    const noticeEl=document.getElementById('genActiveNoticeText');
+    if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',email);
+    const area=document.getElementById('emailLateArea');
+    if(area)area.innerHTML='<span style="color:var(--ok);font-size:.84rem">✅ '+(t('email_late_ok')||'Email registered!')+'</span>';
+  }catch(e){alert('Error: '+e.message)}
 }
 
 // ═══════════════════ HELPERS ═══════════════════
@@ -1900,16 +2076,25 @@ function updateShareLinks(){
   el=document.getElementById('shTg');if(el)el.href='https://t.me/share/url?url='+url+'&text='+txt;
   el=document.getElementById('shLi');if(el)el.href='https://www.linkedin.com/sharing/share-offsite/?url='+url;
   el=document.getElementById('shRd');if(el)el.href='https://www.reddit.com/submit?url='+url+'&title='+txt;
+  // Footer share buttons
+  el=document.getElementById('fShX');if(el)el.href='https://x.com/intent/tweet?text='+txt+'&url='+url;
+  el=document.getElementById('fShFb');if(el)el.href='https://www.facebook.com/sharer/sharer.php?u='+url;
+  el=document.getElementById('fShWa');if(el)el.href='https://wa.me/?text='+full;
+  el=document.getElementById('fShTg');if(el)el.href='https://t.me/share/url?url='+url+'&text='+txt;
+  el=document.getElementById('fShLi');if(el)el.href='https://www.linkedin.com/sharing/share-offsite/?url='+url;
+  el=document.getElementById('fShRd');if(el)el.href='https://www.reddit.com/submit?url='+url+'&title='+txt;
 }
-function copyShareLink(){
+function copyShareLink(e){
+  var tipId=e&&e.target&&e.target.id==='fShCopy'?'fShCopiedTip':'shCopiedTip';
   navigator.clipboard.writeText(SHARE_URL).then(function(){
-    var tip=document.getElementById('shCopiedTip');
+    var tip=document.getElementById(tipId);
     if(tip){tip.classList.add('show');setTimeout(function(){tip.classList.remove('show')},2000)}
   }).catch(function(){});
 }
-// Init share copy button
+// Init share buttons (panel 5 + footer)
 document.addEventListener('DOMContentLoaded',function(){
   var cb=document.getElementById('shCopy');if(cb)cb.onclick=copyShareLink;
+  var fcb=document.getElementById('fShCopy');if(fcb)fcb.onclick=copyShareLink;
   updateShareLinks();
 });
 // Re-update share links on language change (hook into existing applyI18n)
@@ -2003,12 +2188,7 @@ function autoFixVoice(langCode){
   });
 }
 
-function goToAudioSettings(){
-  const s2=document.getElementById('s2');
-  if(!s2||s2.classList.contains('disabled'))return;
-  s2.classList.remove('collapsed');
-  setTimeout(()=>s2.scrollIntoView({behavior:'smooth',block:'nearest'}),80);
-}
+function goToAudioSettings(){goToStep(3)}
 
 // ═══════════════════ COOKIE CONSENT BANNER (Consent Mode v2) ═══════════════════
 (function(){

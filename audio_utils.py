@@ -1004,8 +1004,8 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
 def _safe_filename(name):
     """Sanitizza un nome file rimuovendo caratteri non consentiti."""
     import re
-    # Remove filesystem forbidden chars
-    name = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Remove filesystem forbidden chars and dots (dots break extension detection in downloads)
+    name = re.sub(r'[<>:"/\\|?*.]', '', name)
     # Replace spaces with underscores
     name = re.sub(r'\s+', '_', name.strip())
     # Security: prevent filename starting with '-' to avoid CLI argument injection

@@ -63,6 +63,7 @@ def build_html_template(
     base_url: str = "",
     version: str = "",
     canonical_url: str = "",
+    updated_date: str = "",
 ) -> str:
     """Assemble the full HTML template from fragments with server-side SEO.
 
@@ -133,7 +134,7 @@ def build_html_template(
             html = html.replace(placeholder, value)
 
     # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──
-    from seo_content import build_seo_content_html, get_schema_ld
+    from seo_content import get_schema_ld
     faq_ld, howto_ld, app_ld = get_schema_ld(lang)
     html = html.replace("__SEO_FAQ_LD__", faq_ld)
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
@@ -141,10 +142,7 @@ def build_html_template(
     html = html.replace("__APP_VERSION__", version or "3.3")
     html = html.replace("__BAIDU_TONGJI__", _BAIDU_TONGJI_SNIPPET)
 
-    # ── 4. Inject visible SEO content block before </body> ──
-    seo_block = build_seo_content_html(lang)
-
-    # ── 5. Inject version badge ──
+    # ── 4. Inject version badge ──
     version_badge = ""
     if version:
         version_badge = (
@@ -154,7 +152,17 @@ def build_html_template(
             f'user-select:none">v{version}</div>'
         )
 
+    # ── 5. Inject updated date badge (bottom-right) ──
+    updated_badge = ""
+    if updated_date:
+        updated_badge = (
+            '<div id="appUpdated" style="position:fixed;bottom:8px;right:12px;'
+            'font-size:11px;color:var(--txm,#9e9890);opacity:0.6;'
+            'font-family:monospace;z-index:1;pointer-events:none;'
+            f'user-select:none">Updated: {updated_date}</div>'
+        )
+
     # Insert both blocks before </body>
-    html = html.replace("</body>", seo_block + version_badge + "\n</body>", 1)
+    html = html.replace("</body>", version_badge + updated_badge + "\n</body>", 1)
 
     return html
