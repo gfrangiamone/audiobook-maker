@@ -147,11 +147,13 @@ __SEO_HREFLANG__
 
 <main id="main" role="main"><div class="app">
   <header class="hdr">
-    <h1><svg class="hdr-icon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path class="ic-book" d="M6 10c0-1.1.9-2 2-2h10c2.2 0 4 1.8 4 4v24a3 3 0 0 0-3-3H8a2 2 0 0 1-2-2V10z"/><path class="ic-book" d="M42 10c0-1.1-.9-2-2-2H30c-2.2 0-4 1.8-4 4v24a3 3 0 0 1 3-3h11a2 2 0 0 0 2-2V10z" opacity=".65"/><path class="ic-wave" d="M33 18c1.7 1.3 3 3.5 3 6s-1.3 4.7-3 6"/><path class="ic-wave" d="M37 14c2.8 2.3 5 6 5 10s-2.2 7.7-5 10"/></svg>Audiobook Maker</h1>
-    <p data-t="subtitle">__SUBTITLE__</p>
+    <svg class="hdr-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#c29a6c"/><path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/><rect x="13" y="34" width="7" height="10" rx="3" fill="white"/><rect x="44" y="34" width="7" height="10" rx="3" fill="white"/><path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/><path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/></svg>
+    <div class="hdr-inner">
+      <h1>Audiobook Maker</h1>
+      <span class="tagline" data-t="subtitle">__SUBTITLE__</span>
+    </div>
 
     <div class="toolbar">
-      <!-- Language Switcher Dropdown -->
       <div class="lang-switcher" id="langSwitcher">
         <div class="lang-current" id="langCurrent" role="combobox" tabindex="0" aria-expanded="false" aria-haspopup="listbox" aria-label="Select language" onclick="toggleLangDropdown()" onkeydown="handleLangKey(event)">
           <span class="flag" id="langFlag">🇮🇹</span>
@@ -169,212 +171,433 @@ __SEO_HREFLANG__
       </div>
       <div class="theme-sep"></div>
       <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle dark/light theme">&#x2600;&#xFE0F;</button>
-      <button class="fb-btn" id="fbBtn"><svg viewBox="0 0 24 24"><path d="M21 5c-1.1-.3-2.3-.5-3.5-.5-1.9 0-4 .4-5.5 1.5C10.6 4.9 8.5 4.5 6.5 4.5 5.3 4.5 4.1 4.7 3 5v14.7c0 .2.2.4.5.4.1 0 .2 0 .3-.1C5 19.3 6.7 19 8.5 19c1.9 0 4 .4 5.5 1.5 1.3-.8 3.2-1.5 5.5-1.5 1.7 0 3.4.3 4.7.8.1 0 .2.1.3.1.3 0 .5-.2.5-.4V5.3c-.5-.2-1-.3-1.5-.4zM21 18.5c-1.3-.4-2.7-.6-4-.6-1.9 0-4 .4-5.5 1.5V8c1.5-1.1 3.6-1.5 5.5-1.5 1.4 0 2.7.2 4 .6v11.4z"/></svg><span data-t="btn_free_books"></span></button>
     </div>
-  </div>
+  </header>
 
-  <!-- FREE BOOKS MODAL -->
-  <div class="modal-overlay" id="fbModal" role="dialog" aria-modal="true" aria-labelledby="fbModalTitle">
-    <div class="modal">
-      <div class="modal-head">
-        <h2 data-t="modal_free_title" id="fbModalTitle"></h2>
-        <button class="modal-close" id="fbClose" aria-label="Close">&times;</button>
+  <!-- WIZARD STEPS INDICATOR -->
+  <nav class="wizard-steps" id="wizardSteps" aria-label="Avanzamento wizard">
+    <div class="wizard-step-dot active" data-step="1"><div class="circle">1</div><div class="label" data-t="wiz_step1"></div></div>
+    <div class="wizard-connector" data-connector="1" aria-hidden="true"></div>
+    <div class="wizard-step-dot" data-step="2"><div class="circle">2</div><div class="label" data-t="wiz_step2"></div></div>
+    <div class="wizard-connector" data-connector="2" aria-hidden="true"></div>
+    <div class="wizard-step-dot" data-step="3"><div class="circle">3</div><div class="label" data-t="wiz_step3"></div></div>
+    <div class="wizard-connector" data-connector="3" aria-hidden="true"></div>
+    <div class="wizard-step-dot" data-step="4"><div class="circle">4</div><div class="label" data-t="wiz_step4"></div></div>
+    <div class="wizard-connector" data-connector="4" aria-hidden="true"></div>
+    <div class="wizard-step-dot" data-step="5"><div class="circle">5</div><div class="label" data-t="wiz_step5"></div></div>
+  </nav>
+
+  <!-- MAIN CARD -->
+  <main class="main-card" id="mainCard">
+
+    <!-- ═══ PANEL 1: Upload ═══ -->
+    <section class="panel active" id="panel1" aria-labelledby="panel1Heading">
+      <h2 id="panel1Heading" data-t="s1_title"></h2>
+      <p class="subtitle" data-t="p1_subtitle"></p>
+      <div class="uz" id="uz">
+        <input type="file" id="fi" accept=".epub,.pdf,.txt,.abm">
+        <svg class="upload-icon-svg" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <div class="main-text" id="utx"><strong data-t="upload_drag"></strong> <span data-t="upload_or"></span> <span class="link" data-t="upload_click"></span></div>
+        <div class="supported" data-t="upload_supported"></div>
+        <div class="fn" id="ufn" style="display:none"></div>
+        <div class="upload-disclaimer" data-t="disclaimer"></div>
       </div>
-      <div class="modal-body" id="fbBody"></div>
-    </div>
-  </div>
-
-
-  <!-- DISCLAIMER -->
-  <div class="disc" data-t="disclaimer"></div>
-
-  <!-- STEP 1 -->
-  <div class="step" id="s1">
-    <div class="sh" onclick="toggleStep('s1')"><div class="sn">1</div><div class="st" data-t="s1_title"><span class="tooltip-trigger">?<span class="tooltip-content">Carica un EPUB, PDF o TXT. Il sistema estrarrà automaticamente il testo.</span></span></div><span class="sh-sum" id="s1sum"></span><div class="sh-chev">&#x25BC;</div></div>
-    <div class="step-body">
-    <div class="uz" id="uz">
-      <input type="file" id="fi" accept=".epub,.pdf,.txt,.abm">
-      <div class="ic">&#x1F4DA;</div>
-      <div class="tx" id="utx" data-t="upload_text"></div>
-      <div class="fn" id="ufn" style="display:none"></div>
-    </div>
-    <div class="upload-progress" id="uploadProgress">
-      <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
-      <div class="upload-progress-text"><span id="uploadStatus">Caricamento...</span><span id="uploadPercent">0%</span></div>
-    </div>
-    <div class="lo" id="alo"><div class="sp"></div><div class="tx" data-t="analyzing"></div></div>
-    <div id="aerr"></div>
-    </div>
-  </div>
-
-  <!-- STEP 2 -->
-  <div class="step collapsed disabled" id="s2">
-    <div class="sh" onclick="toggleStep('s2')"><div class="sn">2</div><div class="st" data-t="s2_title"><span class="tooltip-trigger">?<span class="tooltip-content">Scegli la lingua e la voce neurale Microsoft. Regola la velocità di lettura.</span></span></div><span class="sh-sum" id="s2sum"></span><div class="sh-chev">&#x25BC;</div></div>
-    <div class="step-body">
-    <div id="voiceMismatch" class="al al-w" style="display:none"></div>
-    <div class="fr">
-      <div class="fg"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
-      <div class="fg"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
-    </div>
-    <div class="fr">
-      <div class="fg"><label data-t="lbl_speed"></label>
-        <select id="vr">
-          <option value="-30%" data-t="sp_vs"></option>
-          <option value="-20%" data-t="sp_s"></option>
-          <option value="-10%" data-t="sp_ss"></option>
-          <option value="+0%" selected data-t="sp_n"></option>
-          <option value="+10%" data-t="sp_sf"></option>
-          <option value="+20%" data-t="sp_f"></option>
-          <option value="+30%" data-t="sp_vf"></option>
-        </select>
+      <div class="upload-progress" id="uploadProgress">
+        <div class="upload-progress-bar"><div class="upload-progress-fill" id="uploadProgressFill"></div></div>
+        <div class="upload-progress-text"><span id="uploadStatus">Caricamento...</span><span id="uploadPercent">0%</span></div>
       </div>
-      <div class="fg" id="fgOut"><label data-t="lbl_out"></label>
-        <div class="tg">
-          <button class="on" data-v="single" id="toS" data-t="out_single"></button>
-          <button data-v="chapters" id="toC" data-t="out_zip"></button>
+      <div class="lo" id="alo"><div class="sp"></div><div class="tx" data-t="analyzing"></div></div>
+      <div id="aerr"></div>
+      <div id="s1err"></div>
+    </section>
+
+    <!-- ═══ PANEL 2: Chapter Selection ═══ -->
+    <section class="panel" id="panel2" aria-labelledby="panel2Heading">
+      <h2 id="panel2Heading" data-t="p2_title"></h2>
+      <p class="subtitle" data-t="p2_subtitle"></p>
+
+      <div class="book-info-bar">
+        <div class="cover">
+          <span class="no-cover" id="coverPlaceholder">&#x1F4D6;</span>
+          <img id="bkCover" src="" alt="Copertina" style="display:none">
         </div>
-        <div class="pod-hint" id="podHint" style="display:none">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
-      </div>
-
-    </div>
-    </div>
-  </div>
-
-  <!-- STEP 3 -->
-  <div class="step collapsed disabled" id="s3">
-    <div class="sh" onclick="toggleStep('s3')"><div class="sn">3</div><div class="st" data-t="s3_title"><span class="tooltip-trigger">?<span class="tooltip-content">Visualizza l'anteprima, seleziona i capitoli da includere e avvia la generazione.</span></span></div><span class="sh-sum" id="s3sum"></span><div class="sh-chev">&#x25BC;</div></div>
-    <div class="step-body">
-    <div class="bk-info">
-      <img id="bkCover" class="bk-cover" style="display:none" alt="">
-      <div class="bk-meta">
-        <div style="font-family:'DM Serif Display',serif;font-size:1.3rem" id="bkT"></div>
-        <div style="color:var(--txd);font-size:.9rem" id="bkA"></div>
-        <button type="button" class="btn-preview" id="btnPrev" onclick="previewRead()" disabled>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-          <span id="prevTxt" data-t="btn_preview"></span>
-        </button>
-        <div class="voice-chip" id="voiceChip">
-          <div class="vc-badge"><span class="vc-icon">🎙</span><span class="vc-label" id="voiceChipTxt"></span></div><a class="vc-link" id="voiceChipLink" onclick="goToAudioSettings()"></a>
-        </div>
-      </div>
-    </div>
-    <div class="sb">
-      <div class="si"><span class="sl" data-t="sum_ch"></span><span class="sv" id="smC">-</span></div>
-      <div class="si"><span class="sl" data-t="sum_w"></span><span class="sv" id="smW">-</span></div>
-      <div class="si"><span class="sl" data-t="sum_d"></span><span class="sv" id="smD">-</span></div>
-    </div>
-    <div class="sel-bar" id="selBar">
-      <span class="sel-info"><b id="selCnt">0</b> / <span id="selTot">0</span> <span data-t="sel_selected"></span></span>
-      <a id="selAll" data-t="sel_all"></a>
-      <a id="selNone" data-t="sel_none"></a>
-      <a id="selInv" data-t="sel_invert"></a>
-    </div>
-    <div style="max-height:320px;overflow-y:auto;border-radius:var(--rs)">
-      <table class="ct"><thead><tr><th class="col-sel" id="thSel" style="display:none"><input type="checkbox" id="chAll" checked></th><th data-t="col_ch"></th><th data-t="col_w"></th><th data-t="col_d"></th></tr></thead>
-      <tbody id="chl"></tbody></table>
-    </div>
-    <div id="s3err"></div>
-    <!-- AI Text Optimization (visible only if LLM is available) -->
-    <div id="fgOptimizeWrap" style="display:none;margin-top:18px;padding:14px 18px;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs)">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
-        <label style="font-weight:600;margin:0;white-space:nowrap;font-size:.82rem" data-t="lbl_ai_opt"></label>
-        <div class="tg" style="margin:0;flex-shrink:0">
-          <button class="on" data-v="none" id="optNone" data-t="ai_opt_off" style="font-size:.82rem;padding:8px 12px;white-space:nowrap"></button>
-          <button data-v="optimize" id="optEnable" data-t="ai_opt_on" style="font-size:.82rem;padding:8px 12px;white-space:nowrap"></button>
-        </div>
-      </div>
-      <div id="aiOptInfo" class="al" style="display:none;margin-top:8px;padding:10px 14px;font-size:.85rem;background:var(--acs);border:1px solid var(--ac);border-radius:var(--rs)">
-        <span data-t="ai_opt_info"></span>
-      </div>
-      <div id="aiAlreadyOpt" class="al al-ok" style="display:none;margin-top:8px;padding:10px 14px;font-size:.85rem">
-        <span data-t="ai_already_opt"></span>
-      </div>
-    </div>
-    <div class="btn-row" style="margin-top:24px;display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
-      <button class="btn" id="btnOptimize" style="flex:1 1 0;min-width:0;background:#8b5cf6;color:white;display:none;font-size:.85rem;padding:12px 6px;white-space:nowrap" onclick="startOptimization()">&#x2728; <span data-t="btn_optimize"></span></button>
-      <button class="btn btn-p" id="btnG" style="flex:1 1 0;min-width:0;font-size:.85rem;padding:12px 6px;white-space:nowrap">&#x1F3A7; <span data-t="btn_gen"></span></button>
-      <div style="flex:1 1 0;min-width:0;position:relative">
-        <button class="btn btn-g" id="btnExport" onclick="exportAbm()" style="width:100%;margin-top:0;font-size:.82rem;padding:12px 8px;white-space:nowrap"><span id="btnExportTip">&#x270F;&#xFE0F; <span data-t="btn_export_abm"></span></span></button>
-        <button class="btn-info" id="btnAbmInfo" onclick="openAbmGuide()" title="Info" style="position:absolute;bottom:2px;right:2px;margin:0;font-size:.7rem;width:22px;height:22px;min-width:22px;padding:0;line-height:22px;border-radius:50%;background:rgba(255,255,255,.85)">&#x2139;&#xFE0F;</button>
-      </div>
-    </div>
-    </div>
-  </div>
-
-  <!-- STEP 4 -->
-  <div class="step" id="s4" style="display:none">
-    <div class="sh"><div class="sn">4</div><div class="st" id="s4t" data-t="s4_title"></div></div>
-    <div class="step-body">
-    <div class="bk-info" id="s4book" style="padding-bottom:12px;border-bottom:1px solid var(--brd)">
-      <img id="s4bkCover" class="bk-cover" style="display:none" alt="">
-      <div class="bk-meta">
-        <div style="font-family:'DM Serif Display',serif;font-size:1.2rem" id="s4bkT"></div>
-        <div style="color:var(--txd);font-size:.88rem" id="s4bkA"></div>
-      </div>
-    </div>
-    <div class="pa" id="pra">
-      <div class="pt"><div class="pp" id="pPct">0%</div><div class="pc" id="pCh"></div></div>
-      <div class="pb"><div class="pf" id="pBar"></div></div>
-      <div class="pm" id="pMsg"></div>
-      <div class="ps">
-        <div class="pi"><span class="pl" data-t="st_blk"></span><span class="pv" id="xBlk">-</span></div>
-        <div class="pi"><span class="pl" data-t="st_ch"></span><span class="pv" id="xCh">-</span></div>
-        <div class="pi"><span class="pl" data-t="st_el"></span><span class="pv" id="xEl">-</span></div>
-        <div class="pi"><span class="pl" data-t="st_rem"></span><span class="pv" id="xEta">-</span></div>
-        <div class="pi"><span class="pl" data-t="st_sz"></span><span class="pv" id="xSz">-</span></div>
-        <div class="pi"><span class="pl" data-t="st_spd"></span><span class="pv" id="xSpd">-</span></div>
-      </div>
-    </div>
-    <div id="cnA" style="margin-top:16px">
-      <button class="btn btn-g" id="btnC" style="border-color:var(--err);color:var(--err)">&#x23F9;&#xFE0F; <span data-t="btn_cancel"></span></button>
-    </div>
-    <div id="emailStatus" style="display:none;margin-top:12px;padding:10px 16px;border-radius:8px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);font-size:.88rem;color:var(--ok)">
-      &#x2709;&#xFE0F; <span id="emailStatusText"></span>
-    </div>
-    <div id="dlA" style="display:none;margin-top:20px">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <button class="btn btn-ok" id="btnD">&#x2B07;&#xFE0F; <span data-t="btn_dl"></span></button>
-          <button class="btn btn-ok" id="btnM" style="display:none;background:var(--ac);">&#x1F4D6;&#xFE0F; <span data-t="btn_dl_m4b"></span></button>
-          <button class="btn btn-ok" id="btnA" style="display:none;background:var(--ac);">&#x1F4DD;&#xFE0F; <span data-t="btn_dl_abm"></span></button>
-          <button class="btn btn-ok" id="btnP" style="display:none;background:var(--ac);opacity:.85">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
-      </div>
-      <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-g" id="btnBackCh" onclick="goBackToChapters()" style="display:none">&#x1F4D6; <span data-t="btn_back_chapters"></span></button>
-        <button class="btn btn-g" id="btnN">&#x1F4DA; <span data-t="btn_new"></span></button>
-      </div>
-      <!-- Donation panel — shown after conversion completes -->
-      <div class="donate-panel" id="donatePanel">
-        <div class="donate-title" data-t="donate_title"></div>
-        <div class="donate-body" data-t="donate_body"></div>
-        <div class="donate-btns">
-          <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
-          <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
-        </div>
-      </div>
-      <!-- Social share row -->
-      <div class="share-row" id="shareRow">
-        <div class="share-label" data-t="share_label"></div>
-        <div class="share-icons">
-          <a id="shX" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
-          <a id="shFb" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
-          <a id="shWa" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg></a>
-          <a id="shTg" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
-          <a id="shLi" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
-          <a id="shRd" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 01.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.631-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg></a>
-          <div class="share-copy-wrap">
-            <button id="shCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-            <span class="share-copied" id="shCopiedTip" data-t="share_copied"></span>
+        <div class="meta">
+          <h3 id="bkT"></h3>
+          <p class="author" id="bkA"></p>
+          <div class="stats">
+            <span id="bookChCount">—</span>
+            <span id="bookTotalChars">—</span>
+            <span id="bookLang">—</span>
           </div>
         </div>
       </div>
-    </div>
-    </div>
-  </div>
 
-  <!-- FOOTER -->
-  <div class="footer"><a href="#" id="aboutBtn"></a> &middot; <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a> &middot; <a href="#" id="cookieSettingsBtn">Cookie</a>
-    <div style="margin-top:12px"><a href="https://www.producthunt.com/products/audiobook-maker/reviews/new?utm_source=badge-product_review&utm_medium=badge&utm_source=badge-audiobook&#0045;maker" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/product_review.svg?product_id=1171356&theme=neutral" alt="Audiobook&#0032;Maker - Convert&#0032;EPUB&#0032;into&#0032;audiobook&#0032;with&#0032;high&#0045;quality&#0032;neural&#0032;voices | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a></div>
-  </div>
+      <div class="sel-bar" id="selBar">
+        <span class="sel-info"><b id="selCnt">0</b> / <span id="selTot">0</span> <span data-t="sel_selected"></span></span>
+        <a id="selAll" data-t="sel_all"></a>
+        <a id="selNone" data-t="sel_none"></a>
+        <a id="selInv" data-t="sel_invert"></a>
+      </div>
+
+      <div class="chapter-list-wiz" id="chapterListWrap">
+        <div id="chapterRows"></div>
+      </div>
+
+      <div id="p2info" style="margin-top:16px"></div>
+
+      <div class="panel-footer">
+        <div class="left">
+          <button class="btn btn-ghost" id="btnUploadAnother" onclick="resetAll()">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span data-t="btn_upload_another"></span>
+          </button>
+          <div class="export-group">
+            <button class="btn btn-outline" id="btnExport" onclick="exportAbm()">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              <span data-t="btn_export_abm"></span>
+            </button>
+            <button class="abm-info-btn" id="btnAbmInfo" onclick="openAbmGuide()" title="" aria-label="Info esportazione ABM">&#x2139;</button>
+          </div>
+        </div>
+        <div class="right">
+          <button class="btn btn-p" id="btnGoToAudio" onclick="goToStep(3)">
+            <span data-t="btn_next"></span>
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PANEL 3: Audio Settings ═══ -->
+    <section class="panel" id="panel3" aria-labelledby="panel3Heading">
+      <h2 id="panel3Heading" data-t="s2_title"></h2>
+      <p class="subtitle" data-t="p3_subtitle"></p>
+
+      <div id="voiceMismatch" class="al al-w" style="display:none"></div>
+
+      <div class="form-row">
+        <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
+        <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group speed-slider-group" style="flex:1 1 100%">
+          <div class="speed-label-row">
+            <label data-t="lbl_speed"></label>
+            <span class="speed-value" id="speedLabel" data-t="sp_n"></span>
+          </div>
+          <div class="speed-slider-wrap">
+            <span class="speed-emoji">🐢</span>
+            <input type="range" id="speedSlider" min="-3" max="3" step="1" value="0" aria-label="Velocità narrazione">
+            <span class="speed-emoji">🐇</span>
+          </div>
+          <div class="speed-labels">
+            <span>-30%</span><span>-20%</span><span>-10%</span><span>0%</span><span>+10%</span><span>+20%</span><span>+30%</span>
+          </div>
+          <select id="vr" style="display:none" aria-hidden="true">
+            <option value="-30%" data-t="sp_vs"></option>
+            <option value="-20%" data-t="sp_s"></option>
+            <option value="-10%" data-t="sp_ss"></option>
+            <option value="+0%" selected data-t="sp_n"></option>
+            <option value="+10%" data-t="sp_sf"></option>
+            <option value="+20%" data-t="sp_f"></option>
+            <option value="+30%" data-t="sp_vf"></option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" id="fgOut" style="flex:1 1 100%"><label data-t="lbl_out"></label>
+          <select id="vOut" onchange="onOutputChange()">
+            <option value="m4b" data-t="out_m4b" selected></option>
+            <option value="zip" data-t="out_zip"></option>
+            <option value="zip_rss" data-t="out_zip_rss"></option>
+            <option value="mp3" data-t="out_mp3"></option>
+          </select>
+          <div id="podcastUrlGroup" style="display:none;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <input type="url" id="podcastUrlInput" placeholder="https://example.com/podcast/" style="flex:1;padding:8px 10px;border:1px solid var(--brd);border-radius:6px;font-size:.85rem;background:var(--srf);color:var(--tx);box-sizing:border-box">
+            </div>
+            <div class="pod-hint" id="podHint">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
+          </div>
+          </div>
+        </div>
+
+      <div class="preview-section" id="previewSection">
+        <div class="preview-header">
+          <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>
+          <button class="btn btn-outline btn-sm" id="btnPrev" onclick="previewRead()" disabled>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+            <span id="prevTxt" data-t="btn_gen_preview"></span>
+          </button>
+        </div>
+        <div class="preview-audio-wrap" id="previewAudioWrap">
+          <audio id="previewAudioWiz" controls></audio>
+        </div>
+      </div>
+
+
+      <div class="panel-footer">
+        <div class="left">
+          <button class="btn btn-g" onclick="goToStep(2)">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="15 18 9 12 15 6"/></svg>
+            <span data-t="btn_back"></span>
+          </button>
+        </div>
+        <div class="right">
+          <button class="btn btn-p" id="btnGoToGenerate" onclick="goToStep(4)">
+            <span data-t="btn_next"></span>
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PANEL 4: Generation ═══ -->
+    <section class="panel" id="panel4" aria-labelledby="panel4Heading">
+      <h2 id="panel4Heading" data-t="s4_title"></h2>
+      <p class="subtitle" data-t="p4_subtitle"></p>
+
+      <div class="ai-opt-card" id="aiOptCard">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">
+              <svg class="ai-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" opacity="0.3"/></svg>
+              <span data-t="lbl_ai_opt"></span>
+            </div>
+            <div class="toggle-desc" data-t="ai_opt_desc"></div>
+          </div>
+          <label class="toggle-switch" aria-label="Attiva ottimizzazione AI">
+            <input type="checkbox" id="aiToggle" onchange="toggleAIOptimization()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div id="aiOptInfo" class="al" style="display:none;margin-top:8px;font-size:.82rem;background:var(--acs);border:1px solid var(--ac);border-radius:var(--rs);padding:10px 14px">
+          <span data-t="ai_opt_info"></span>
+        </div>
+        <div id="aiAlreadyOpt" class="al al-ok" style="display:none;margin-top:8px;font-size:.85rem">
+          <span data-t="ai_already_opt"></span>
+        </div>
+
+        <div class="cost-estimate" id="costEstimate">
+          <div style="flex:1">
+            <div class="cost-amount" id="costAmount">—</div>
+            <div class="cost-detail" id="costDetail"></div>
+          </div>
+          <button class="btn btn-outline btn-sm" id="btnApplyCoupon" onclick="showCoupon()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="11.5" r="1.5"/><circle cx="16" cy="11.5" r="1.5"/></svg>
+            <span data-t="pay_tab_voucher"></span>
+          </button>
+        </div>
+
+        <div class="coupon-row" id="couponRow">
+          <input type="text" id="couponCode" placeholder="XXXX-XXXX-XXXX" aria-label="Codice coupon">
+          <input type="email" id="couponEmail" placeholder="Email associata" aria-label="Email buono">
+          <button class="btn btn-p btn-sm" id="btnValidateCoupon" onclick="validateCoupon()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span data-t="pay_voucher_submit"></span>
+          </button>
+        </div>
+        <div class="coupon-result" id="couponResult"></div>
+      </div>
+
+      <div class="summary-box">
+        <div class="summary-book-title" id="summaryBookTitle" style="font-weight:700;font-size:.92rem;color:var(--tx);padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--br);text-align:center;word-break:break-word">—</div>
+        <div class="summary-row">
+          <span class="summary-label" data-t="summary_chapters"></span>
+          <span class="summary-value" id="summaryChapters">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label" data-t="summary_voice"></span>
+          <span class="summary-value" id="summaryVoice">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label" data-t="summary_format"></span>
+          <span class="summary-value" id="summaryFormat">—</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label" data-t="summary_ai"></span>
+          <span class="summary-value" id="summaryAI">—</span>
+        </div>
+      </div>
+
+      <div id="s3err"></div>
+
+      <!-- Progress Area -->
+      <div class="progress-area-wiz" id="generationProgress" style="display:none">
+        <div class="generation-active-notice" id="generationActiveNotice">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span id="genActiveNoticeText" data-t="gen_active_notice"></span>
+        </div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill" style="width:0%" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="progress-stats-wiz">
+          <span class="phase" id="progressPhase">—</span>
+          <span class="pct" id="progressPct">0%</span>
+        </div>
+        <!-- Old progress elements (hidden, kept for JS compatibility) -->
+        <div style="display:none">
+          <div class="pa" id="pra">
+            <div class="pt"><div class="pp" id="pPct">0%</div><div class="pc" id="pCh"></div></div>
+            <div class="pb"><div class="pf" id="pBar"></div></div>
+            <div class="pm" id="pMsg"></div>
+            <div class="ps">
+              <div class="pi"><span class="pl" data-t="st_blk"></span><span class="pv" id="xBlk">-</span></div>
+              <div class="pi"><span class="pl" data-t="st_ch"></span><span class="pv" id="xCh">-</span></div>
+              <div class="pi"><span class="pl" data-t="st_el"></span><span class="pv" id="xEl">-</span></div>
+              <div class="pi"><span class="pl" data-t="st_rem"></span><span class="pv" id="xEta">-</span></div>
+              <div class="pi"><span class="pl" data-t="st_sz"></span><span class="pv" id="xSz">-</span></div>
+              <div class="pi"><span class="pl" data-t="st_spd"></span><span class="pv" id="xSpd">-</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="email-late-area" id="emailLateArea">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--txm)"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          <input type="email" id="notifyEmailLate" placeholder="" aria-label="Email per notifica">
+          <button class="btn btn-p btn-sm" id="btnSubmitEmailLate" onclick="submitEmailLate()"><span data-t="email_late_btn"></span></button>
+        </div>
+      </div>
+
+      <div class="panel-footer" id="panel4Footer">
+        <div class="left">
+          <button class="btn btn-g" id="btnBack4" onclick="goToStep(3)">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="15 18 9 12 15 6"/></svg>
+            <span data-t="btn_back"></span>
+          </button>
+        </div>
+        <div class="right" id="genButtons">
+          <button class="btn btn-p btn-lg" id="btnGenerate" onclick="startCombinedGeneration()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+            <span data-t="btn_gen"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cancel area (shown during generation) -->
+      <div id="cnA" style="margin-top:16px;display:none">
+        <button class="btn btn-outline" id="btnC">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          <span data-t="btn_cancel"></span>
+        </button>
+        <button class="btn btn-outline" id="btnCancelOpt" style="display:none">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          <span data-t="btn_cancel_opt"></span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══ PANEL 5: Completion ═══ -->
+    <section class="panel" id="panel5" aria-labelledby="panel5Heading">
+      <div class="completion-result">
+        <div class="success-icon" aria-hidden="true">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h3 id="panel5Heading" data-t="p5_title"></h3>
+        <p data-t="p5_desc"></p>
+
+        <div id="dlA" style="margin-top:0">
+          <div class="download-buttons" style="margin-top:28px">
+            <button class="btn btn-outline btn-lg" id="btnD" style="display:none">&#x2B07;&#xFE0F; <span data-t="btn_dl"></span></button>
+            <button class="btn btn-outline btn-lg" id="btnM" style="display:none">&#x1F4D6;&#xFE0F; <span data-t="btn_dl_m4b"></span></button>
+            <button class="btn btn-outline btn-lg" id="btnA" style="display:none">&#x1F4DD;&#xFE0F; <span data-t="btn_dl_abm"></span></button>
+            <button class="btn btn-outline btn-lg" id="btnP" style="display:none">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
+          </div>
+          <div class="expiry" id="expiryRow" style="display:none">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="expiryInfo"></span>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn btn-outline btn-lg" id="btnBackCh" onclick="goBackToChapters()" style="display:none">&#x1F4D6;&#xFE0F; <span data-t="btn_back_chapters"></span></button>
+          <button class="btn btn-g btn-lg" id="btnRetry" onclick="retryGeneration()" style="display:none">&#x1F504; <span data-t="btn_retry"></span></button>
+        </div>
+
+        <div class="actions-row" style="margin-top:10px">
+          <button class="btn btn-ghost btn-lg" id="btnN" onclick="confirmReset()">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span data-t="btn_upload_another"></span>
+          </button>
+        </div>
+
+        <div class="donate-panel donate-panel-full">
+          <div class="donate-title"><span data-t="donate_title"></span></div>
+          <div class="donate-body"><span data-t="donate_footer_desc"></span> <b data-t="donate_footer_bold"></b></div>
+          <div class="donate-btns">
+            <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
+            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+
+  <!-- RESOURCES SECTION -->
+  <section class="resources-section" aria-label="Risorse e guide">
+
+    <!-- Donation Card -->
+    <div class="community-card donate-card" id="donateCard">
+      <h3><span data-t="donate_title"></span></h3>
+      <p class="community-desc"><span data-t="donate_footer_desc"></span> <b data-t="donate_footer_bold"></b></p>
+      <button class="btn btn-p btn-sm" onclick="openDonateFromFooter()" style="align-self:flex-end;margin-top:auto"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg> <span data-t="donate_footer_btn"></span></button>
+    </div>
+
+    <!-- Resources Grid: Guide + FAQ -->
+    <div class="resources-grid">
+      <div class="resources-card">
+        <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <span data-t="guides_heading"></span></h3>
+        <a class="resource-link" href="/guide/epub-to-audiobook/?lang=__LANG_CODE__"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 16 12 8"/><polyline points="8 12 12 8 16 12"/></svg> <span data-t="guide_epub"></span></a>
+        <a class="resource-link" href="/guide/m4b-format/?lang=__LANG_CODE__"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 16 12 8"/><polyline points="8 12 12 8 16 12"/></svg> <span data-t="guide_m4b"></span></a>
+        <a class="resource-link" href="/guide/text-to-speech-audiobook/?lang=__LANG_CODE__"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 16 12 8"/><polyline points="8 12 12 8 16 12"/></svg> <span data-t="guide_tts"></span></a>
+        <a class="resource-link" href="/guide/podcast/?lang=__LANG_CODE__"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 16 12 8"/><polyline points="8 12 12 8 16 12"/></svg> <span data-t="guide_podcast"></span></a>
+      </div>
+
+      <div class="resources-card faq-card">
+        <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> <span data-t="faq_heading_short"></span></h3>
+        <details class="faq-item"><summary data-t="faq_q1"></summary><div class="faq-answer" data-t="faq_a1"></div></details>
+        <details class="faq-item"><summary data-t="faq_q2"></summary><div class="faq-answer" data-t="faq_a2"></div></details>
+        <details class="faq-item"><summary data-t="faq_q3"></summary><div class="faq-answer" data-t="faq_a3"></div></details>
+        <details class="faq-item"><summary data-t="faq_q4"></summary><div class="faq-answer" data-t="faq_a4"></div></details>
+        <details class="faq-item"><summary data-t="faq_q5"></summary><div class="faq-answer" data-t="faq_a5"></div></details>
+        <details class="faq-item"><summary data-t="faq_free_books_q"></summary><div class="faq-answer" data-t="faq_free_books_a"></div></details>
+      </div>
+    </div>
+
+    <!-- Social Sharing Bar (full-width below guides & FAQ) -->
+    <div class="community-card social-card">
+      <h3><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> <span data-t="share_label"></span></h3>
+      <p class="community-desc" data-t="share_desc"></p>
+      <div class="share-icons">
+        <a id="fShX" target="_blank" rel="noopener" title="X / Twitter"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>
+        <a id="fShFb" target="_blank" rel="noopener" title="Facebook"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>
+        <a id="fShWa" target="_blank" rel="noopener" title="WhatsApp"><svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg></a>
+        <a id="fShTg" target="_blank" rel="noopener" title="Telegram"><svg viewBox="0 0 24 24"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg></a>
+        <a id="fShLi" target="_blank" rel="noopener" title="LinkedIn"><svg viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg></a>
+        <a id="fShRd" target="_blank" rel="noopener" title="Reddit"><svg viewBox="0 0 512 512"><path d="M373 138.6c-25.2 0-46.3-17.5-51.9-41l0 0c-30.6 4.3-54.2 30.7-54.2 62.4l0 .2c47.4 1.8 90.6 15.1 124.9 36.3c12.6-9.7 28.4-15.5 45.5-15.5c41.3 0 74.7 33.4 74.7 74.7c0 29.8-17.4 55.5-42.7 67.5c-2.4 86.8-97 156.6-213.2 156.6S45.5 410.1 43 323.4C17.6 311.5 0 285.7 0 255.7c0-41.3 33.4-74.7 74.7-74.7c17.2 0 33 5.8 45.7 15.6c34-21.1 76.8-34.4 123.7-36.4l0-.3c0-44.3 33.7-80.9 76.8-85.5C325.8 50.2 347.2 32 373 32c29.4 0 53.3 23.9 53.3 53.3s-23.9 53.3-53.3 53.3zM157.5 255.3c-20.9 0-38.9 20.8-40.2 47.9s17.1 38.1 38 38.1s36.6-9.8 37.8-36.9s-14.7-49.1-35.7-49.1zM395 303.1c-1.2-27.1-19.2-47.9-40.2-47.9s-36.9 22-35.7 49.1c1.2 27.1 16.9 36.9 37.8 36.9s39.3-11 38-38.1zm-60.1 70.8c1.5-3.6-1-7.7-4.9-8.1c-23-2.3-47.9-3.6-73.8-3.6s-50.8 1.3-73.8 3.6c-3.9 .4-6.4 4.5-4.9 8.1c12.9 30.8 43.3 52.4 78.7 52.4s65.8-21.6 78.7-52.4z"/></svg></a>
+        <div class="share-copy-wrap">
+          <button id="fShCopy" title="Copy link"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
+          <span class="share-copied" id="fShCopiedTip" data-t="share_copied"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER BAR -->
+  <footer class="footer-bar">
+    <div class="footer-links">
+      <a href="#" id="aboutBtn"></a>
+      <span>&middot;</span>
+      <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a>
+      <span>&middot;</span>
+      <a href="#" id="cookieSettingsBtn">Cookie</a>
+    </div>
+    <span>Audiobook Maker</span>
+  </footer>
 
   <!-- ABOUT MODAL -->
   <div class="modal-overlay" id="aboutModal" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
@@ -398,36 +621,6 @@ __SEO_HREFLANG__
     </div>
   </div>
 
-  <!-- AI OPTIMIZATION BATCH MODAL -->
-  <div class="modal-overlay" id="optBatchModal" role="dialog" aria-modal="true" aria-labelledby="optBatchModalTitle">
-    <div class="modal" style="max-width:520px">
-      <div class="modal-head">
-        <h2 id="optBatchModalTitle">&#x2728; <span data-t="opt_batch_title"></span></h2>
-        <button class="modal-close" id="optBatchClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p data-t="opt_batch_desc" style="margin-bottom:16px"></p>
-        <div style="margin-bottom:14px">
-          <label style="display:block;cursor:pointer;margin-bottom:10px;padding:10px 14px;background:var(--srf2);border-radius:8px;border:1px solid var(--brd)">
-            <input type="checkbox" id="optAutoGen" style="margin-right:8px">
-            <strong data-t="opt_auto_gen"></strong>
-            <div style="font-size:.82rem;color:var(--txd);margin-top:4px;padding-left:24px" data-t="opt_auto_gen_desc"></div>
-          </label>
-        </div>
-        <div style="margin-bottom:14px">
-          <label style="display:block;font-weight:600;margin-bottom:4px" data-t="opt_batch_email_label"></label>
-          <input type="email" id="optBatchEmail" style="width:100%;padding:12px;border:1px solid var(--brd);border-radius:6px;font-size:1rem;box-sizing:border-box">
-        </div>
-        <div id="optBatchErr" style="color:var(--err);font-size:.85rem;margin-bottom:10px;display:none"></div>
-        <div id="optBatchOk" style="color:var(--ok);font-size:.95rem;padding:12px;background:rgba(34,197,94,.08);border-radius:8px;display:none"></div>
-        <div id="optBatchBtns" style="display:flex;gap:10px;margin-top:12px">
-          <button class="btn" id="optBatchSubmit" style="flex:1;background:#8b5cf6;color:white;border:none;padding:12px;border-radius:8px;font-weight:600;cursor:pointer" data-t="opt_batch_start"></button>
-          <button class="btn btn-g" id="optBatchCancel" style="flex:1;padding:12px;border-radius:8px;cursor:pointer" data-t="opt_batch_cancel"></button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- OPTIMIZATION PAYMENT MODAL -->
   <div class="modal-overlay" id="payModal" role="dialog" aria-modal="true" aria-labelledby="payModalTitle">
     <div class="modal" style="max-width:560px">
@@ -437,12 +630,11 @@ __SEO_HREFLANG__
       </div>
       <div class="modal-body">
         <p id="payDescText" style="margin-bottom:14px"></p>
-        <div id="payCostBox" style="padding:16px;background:#f0f5ff;border-left:4px solid #8b5cf6;border-radius:6px;margin-bottom:16px">
-          <div style="font-size:.85em;color:#666" data-t="pay_cost_label"></div>
-          <div style="font-size:1.6em;font-weight:700;color:#8b5cf6" id="payCostValue">—</div>
+        <div id="payCostBox" style="padding:16px;background:var(--acs);border-left:4px solid var(--ac);border-radius:6px;margin-bottom:16px">
+          <div style="font-size:.85em;color:var(--txd)" data-t="pay_cost_label"></div>
+          <div style="font-size:1.6em;font-weight:700;color:var(--ac)" id="payCostValue">—</div>
           <div style="font-size:.8em;color:#666;margin-top:4px" id="payCostDetails"></div>
         </div>
-        <!-- Donor info panel -->
         <div id="payDonorInfo" style="padding:16px 18px;background:linear-gradient(135deg,var(--srf2) 0%,#fff8f0 100%);border:1px solid #e8c99a;border-radius:12px;margin-bottom:16px;text-align:center">
           <div style="font-size:.92em;color:var(--tx);font-weight:500;line-height:1.5;margin-bottom:14px" data-t="pay_donors_info"></div>
           <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
@@ -450,16 +642,14 @@ __SEO_HREFLANG__
             <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
           </div>
         </div>
-        <!-- Voucher pane (always visible, no tabs) -->
         <div id="payVoucherPane">
           <p style="font-size:.9em;color:var(--txd);margin-bottom:12px" data-t="pay_voucher_hint"></p>
           <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_code_label"></label>
           <input type="text" id="payVoucherCode" placeholder="XXXX-XXXX-XXXX" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;font-family:monospace;text-transform:uppercase;box-sizing:border-box;margin-bottom:10px">
           <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_email_label"></label>
           <input type="email" id="payVoucherEmail" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;box-sizing:border-box;margin-bottom:12px">
-          <button class="btn" id="payVoucherSubmit" style="width:100%;padding:12px;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600" data-t="pay_voucher_submit"></button>
+          <button class="btn" id="payVoucherSubmit" style="width:100%;padding:12px;background:var(--ac);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600" data-t="pay_voucher_submit"></button>
         </div>
-        <!-- Hidden PayPal pane (kept for future use) -->
         <div id="payPaypalPane" style="display:none">
           <div id="paypal-button-container" style="min-height:48px"></div>
           <div id="payPaypalLoading" style="text-align:center;padding:12px;color:var(--txd);font-size:.9em" data-t="pay_loading"></div>
@@ -471,113 +661,42 @@ __SEO_HREFLANG__
     </div>
   </div>
 
-  <!-- EMAIL NOTIFICATION MODAL -->
-  <div class="modal-overlay" id="emailModal" role="dialog" aria-modal="true" aria-labelledby="emTitle">
-    <div class="modal" style="max-width:480px">
+  <!-- DONATE PROMPT MODAL -->
+  <div class="modal-overlay" id="donateModal" role="dialog" aria-modal="true" aria-labelledby="donateModalTitle" onclick="if(event.target===this)closeDonateModalX()">
+    <div class="modal" style="max-width:460px">
       <div class="modal-head">
-        <h2 id="emTitle">&#x1F4E7;</h2>
-        <button class="modal-close" id="emClose" aria-label="Close">&times;</button>
+        <h2 data-t="donate_modal_title" id="donateModalTitle"></h2>
+        <button class="modal-close" onclick="closeDonateModalX()" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
-        <p id="emDesc" style="margin-bottom:16px"></p>
-        <div id="emDlType" style="margin-bottom:14px">
-          <label style="display:block;font-weight:600;margin-bottom:8px" id="emDlLabel"></label>
-          <label style="display:block;cursor:pointer;margin-bottom:6px">
-            <input type="radio" name="emDl" value="audio" checked> <span id="emDlAudioL"></span>
-          </label>
-          <label style="display:block;cursor:pointer;margin-bottom:6px">
-            <input type="radio" name="emDl" value="podcast"> <span id="emDlPodcastL"></span>
-          </label>
-        </div>
-        <div id="emBaseUrlWrap" style="display:none;margin-bottom:14px">
-          <label style="display:block;font-weight:600;margin-bottom:4px" id="emBaseUrlLabel"></label>
-          <input type="url" id="emBaseUrl" placeholder="https://example.com/podcast/" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;font-size:.95rem;box-sizing:border-box">
-        </div>
-        <div style="margin-bottom:14px">
-          <input type="email" id="emEmail" style="width:100%;padding:12px;border:1px solid var(--brd);border-radius:6px;font-size:1rem;box-sizing:border-box">
-        </div>
-        <div id="emErr" style="color:var(--err);font-size:.85rem;margin-bottom:10px;display:none"></div>
-        <div id="emOk" style="color:var(--ok);font-size:.95rem;padding:12px;background:rgba(34,197,94,.08);border-radius:8px;display:none"></div>
-        <div id="emBtns" style="display:flex;gap:10px;margin-top:12px">
-          <button class="btn" id="emSubmit" style="flex:1;background:var(--ac);color:white;border:none;padding:12px;border-radius:8px;font-weight:600;cursor:pointer"></button>
-          <button class="btn btn-g" id="emSkip" style="flex:1;padding:12px;border-radius:8px;cursor:pointer"></button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Language warning modal -->
-
-<!-- Donate prompt modal (shown before generation for returning users) -->
-<div class="modal-overlay" id="donateModal" role="dialog" aria-modal="true" aria-labelledby="donateModalTitle" onclick="if(event.target===this)closeDonateModalX()">
-  <div class="modal" style="max-width:460px">
-    <div class="modal-head">
-      <h2 data-t="donate_modal_title" id="donateModalTitle"></h2>
-      <button class="modal-close" onclick="closeDonateModalX()" aria-label="Close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="dm-icon">❤️</div>
-      <div class="dm-subtitle" data-t="donate_modal_subtitle"></div>
-      <div class="dm-body" data-t="donate_body"></div>
-      <div class="dm-btns">
-        <div class="dm-row">
-          <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener"
-             class="donate-btn donate-coffee" onclick="onDonateModal('donate')">☕ <span data-t="donate_coffee"></span></a>
-          <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener"
-             class="donate-btn donate-paypal" onclick="onDonateModal('donate')">💙 <span data-t="donate_paypal"></span></a>
-        </div>
-        <button class="dm-already" onclick="onDonateModal('already')">
-          ✅ <span data-t="donate_modal_already"></span>
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Language warning modal -->
-<div class="modal-overlay" id="langWarnModal" role="dialog" aria-modal="true" aria-labelledby="langWarnTitle" onclick="if(event.target===this)_langWarnResolve(false)">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-head">
-      <span data-t="lang_warn_title" id="langWarnTitle"></span>
-      <button class="modal-close" onclick="_langWarnResolve(false)" aria-label="Close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <p style="margin:0 0 18px;line-height:1.6;font-size:.92rem" data-t="lang_warn_body"></p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn btn-g" onclick="_langWarnResolve(false)" data-t="lang_warn_cancel"></button>
-        <button class="btn btn-ok" onclick="_langWarnResolve(true)" data-t="lang_warn_confirm"></button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Preview audio popup -->
-<div class="modal-overlay" id="prevModal" role="dialog" aria-modal="true" aria-labelledby="prevModalTitle" onclick="if(event.target===this)previewStop()">
-  <div class="modal prev-modal">
-    <div class="modal-head">
-      <span data-t="prev_modal_title" id="prevModalTitle"></span>
-      <button class="modal-close" onclick="previewStop()" aria-label="Close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="prev-audio-row">
-        <audio id="prevAudio"></audio>
-        <div class="prev-player" id="prevPlayer">
-          <div class="prev-spinner" id="prevSpinner"></div>
-          <button class="prev-play-btn" id="prevPlayBtn" onclick="prevPlayPause()" style="display:none" aria-label="Play/Pausa">
-            <svg class="prev-play-icon" id="prevIconPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <svg class="prev-play-icon" id="prevIconPause" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-          </button>
-          <span class="prev-time" id="prevTime">0:00</span>
-          <div class="prev-progress-wrap" onclick="prevSeek(event)">
-            <div class="prev-progress-bg">
-              <div class="prev-progress-fill" id="prevProgressFill"></div>
-            </div>
+        <p style="font-size:.88rem;color:var(--txd);margin:0 0 6px" data-t="donate_modal_subtitle"></p>
+        <p style="font-size:.82rem;line-height:1.55;color:var(--tx);margin:0 0 16px"><span data-t="donate_footer_desc"></span> <b data-t="donate_footer_bold"></b></p>
+        <div class="dm-btns">
+          <div class="dm-row">
+            <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee" onclick="onDonateModal('donate')">☕ <span data-t="donate_coffee"></span></a>
+            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal" onclick="onDonateModal('donate')">💙 <span data-t="donate_paypal"></span></a>
           </div>
+          <button class="dm-already" onclick="onDonateModal('already')" data-t="donate_modal_already"></button>
         </div>
       </div>
-      <div class="prev-text-box" id="prevText" aria-live="polite"></div>
     </div>
   </div>
-</div>
+
+  <!-- LANGUAGE WARNING MODAL -->
+  <div class="modal-overlay" id="langWarnModal" role="dialog" aria-modal="true" aria-labelledby="langWarnTitle" onclick="if(event.target===this)_langWarnResolve(false)">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <span data-t="lang_warn_title" id="langWarnTitle"></span>
+        <button class="modal-close" onclick="_langWarnResolve(false)" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 18px;line-height:1.6;font-size:.92rem" data-t="lang_warn_body"></p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-g" onclick="_langWarnResolve(false)" data-t="lang_warn_cancel"></button>
+          <button class="btn btn-ok" onclick="_langWarnResolve(true)" data-t="lang_warn_confirm"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
