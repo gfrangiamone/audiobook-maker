@@ -570,6 +570,41 @@ __SEO_HREFLANG__
 
   </main>
 
+  <!-- Feedback Widget (under the wizard) -->
+  <section class="community-card fbw" id="fbWidget">
+    <button type="button" class="fbw-toggle" id="fbToggle" aria-expanded="false">
+      <span class="fbw-toggle-left">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 14.85 8.7l7.15.6-5.45 4.7 1.65 7-6.2-3.7L5.8 21l1.65-7L2 9.3l7.15-.6L12 2z"/></svg>
+        <span data-t="fb_title"></span>
+      </span>
+      <span class="fbw-toggle-right">
+        <span class="fbw-avg" id="fbAvg">—</span>
+        <span class="fbw-total" id="fbTotal"></span>
+        <svg class="fbw-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+    </button>
+    <div class="fbw-panel" id="fbPanel" hidden>
+      <div class="fbw-stats">
+        <div class="fbw-histogram" id="fbHistogram"></div>
+      </div>
+      <form class="fbw-form" id="fbForm">
+        <h4 data-t="fb_form_title"></h4>
+        <div class="fbw-stars-row">
+          <span class="fbw-stars-label" data-t="fb_stars_label"></span>
+          <div class="fbw-stars" id="fbStars" role="radiogroup" aria-label="Rating"></div>
+        </div>
+        <input type="text" id="fbName" maxlength="80" data-t-ph="fb_name_ph" autocomplete="name">
+        <textarea id="fbComment" rows="3" maxlength="1000" data-t-ph="fb_comment_ph"></textarea>
+        <input type="text" id="fbHoneypot" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px">
+        <button type="submit" class="btn btn-p btn-sm" id="fbSubmit" data-t="fb_submit"></button>
+        <div class="fbw-msg" id="fbMsg" hidden></div>
+      </form>
+      <div class="fbw-recent">
+        <h4 data-t="fb_recent_label"></h4>
+        <div class="fbw-recent-list" id="fbRecent"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- RESOURCES SECTION -->
   <section class="resources-section" aria-label="Risorse e guide">
@@ -601,42 +636,6 @@ __SEO_HREFLANG__
         <details class="faq-item"><summary data-t="faq_free_books_q"></summary><div class="faq-answer" data-t="faq_free_books_a"></div></details>
       </div>
     </div>
-
-    <!-- Feedback Widget -->
-    <section class="community-card fbw" id="fbWidget">
-      <button type="button" class="fbw-toggle" id="fbToggle" aria-expanded="false">
-        <span class="fbw-toggle-left">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 14.85 8.7l7.15.6-5.45 4.7 1.65 7-6.2-3.7L5.8 21l1.65-7L2 9.3l7.15-.6L12 2z"/></svg>
-          <span data-t="fb_title"></span>
-        </span>
-        <span class="fbw-toggle-right">
-          <span class="fbw-avg" id="fbAvg">—</span>
-          <span class="fbw-total" id="fbTotal"></span>
-          <svg class="fbw-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </span>
-      </button>
-      <div class="fbw-panel" id="fbPanel" hidden>
-        <div class="fbw-stats">
-          <div class="fbw-histogram" id="fbHistogram"></div>
-        </div>
-        <form class="fbw-form" id="fbForm">
-          <h4 data-t="fb_form_title"></h4>
-          <div class="fbw-stars-row">
-            <span class="fbw-stars-label" data-t="fb_stars_label"></span>
-            <div class="fbw-stars" id="fbStars" role="radiogroup" aria-label="Rating"></div>
-          </div>
-          <input type="text" id="fbName" maxlength="80" data-t-ph="fb_name_ph" autocomplete="name">
-          <textarea id="fbComment" rows="3" maxlength="1000" data-t-ph="fb_comment_ph"></textarea>
-          <input type="text" id="fbHoneypot" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px">
-          <button type="submit" class="btn btn-p btn-sm" id="fbSubmit" data-t="fb_submit"></button>
-          <div class="fbw-msg" id="fbMsg" hidden></div>
-        </form>
-        <div class="fbw-recent">
-          <h4 data-t="fb_recent_label"></h4>
-          <div class="fbw-recent-list" id="fbRecent"></div>
-        </div>
-      </div>
-    </section>
 
     <!-- News Card -->
     <section class="community-card news-card" id="newsCard" hidden>
