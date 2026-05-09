@@ -174,6 +174,40 @@ __SEO_HREFLANG__
     </div>
   </header>
 
+  <!-- NEWS BANNER -->
+  <div class="news-banner" id="newsBanner" hidden>
+    <span class="news-banner-tag" id="newsBannerTag"></span>
+    <span class="news-banner-text" id="newsBannerText"></span>
+    <button type="button" class="news-banner-close" id="newsBannerClose" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <!-- LIVE STATS -->
+  <div class="live-stats" id="liveStats" hidden>
+    <span>📚 <span id="lsToday">0</span> <span data-t="ls_books_today"></span></span>
+    <span class="ls-sep" aria-hidden="true">·</span>
+    <a href="#" class="ls-link" id="lsMore" data-t="ls_more"></a>
+  </div>
+
+  <!-- STATS MODAL -->
+  <div class="stats-modal-overlay" id="statsModal" role="dialog" aria-modal="true" aria-labelledby="statsModalTitle" hidden>
+    <div class="stats-modal" role="document">
+      <div class="stats-modal-head">
+        <h3 id="statsModalTitle" data-t="stats_modal_title"></h3>
+        <button class="stats-modal-close" id="statsModalClose" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="stats-modal-body">
+        <div class="stats-big">
+          <div class="stats-big-num" id="smBigNum">0</div>
+          <div class="stats-big-label" data-t="stats_modal_monthly"></div>
+        </div>
+        <div class="stats-section-title" data-t="stats_modal_by_lang"></div>
+        <div id="smRows"></div>
+        <div class="stats-empty" id="smEmpty" hidden data-t="stats_modal_empty"></div>
+        <div class="stats-modal-footer" data-t="stats_modal_footer"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- WIZARD STEPS INDICATOR -->
   <nav class="wizard-steps" id="wizardSteps" aria-label="Avanzamento wizard">
     <div class="wizard-step-dot active" data-step="1"><div class="circle">1</div><div class="label" data-t="wiz_step1"></div></div>
@@ -567,6 +601,52 @@ __SEO_HREFLANG__
         <details class="faq-item"><summary data-t="faq_free_books_q"></summary><div class="faq-answer" data-t="faq_free_books_a"></div></details>
       </div>
     </div>
+
+    <!-- Feedback Widget -->
+    <section class="community-card fbw" id="fbWidget">
+      <button type="button" class="fbw-toggle" id="fbToggle" aria-expanded="false">
+        <span class="fbw-toggle-left">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 14.85 8.7l7.15.6-5.45 4.7 1.65 7-6.2-3.7L5.8 21l1.65-7L2 9.3l7.15-.6L12 2z"/></svg>
+          <span data-t="fb_title"></span>
+        </span>
+        <span class="fbw-toggle-right">
+          <span class="fbw-avg" id="fbAvg">—</span>
+          <span class="fbw-total" id="fbTotal"></span>
+          <svg class="fbw-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </span>
+      </button>
+      <div class="fbw-panel" id="fbPanel" hidden>
+        <div class="fbw-stats">
+          <div class="fbw-histogram" id="fbHistogram"></div>
+        </div>
+        <form class="fbw-form" id="fbForm">
+          <h4 data-t="fb_form_title"></h4>
+          <div class="fbw-stars-row">
+            <span class="fbw-stars-label" data-t="fb_stars_label"></span>
+            <div class="fbw-stars" id="fbStars" role="radiogroup" aria-label="Rating"></div>
+          </div>
+          <input type="text" id="fbName" maxlength="80" data-t-ph="fb_name_ph" autocomplete="name">
+          <textarea id="fbComment" rows="3" maxlength="1000" data-t-ph="fb_comment_ph"></textarea>
+          <input type="text" id="fbHoneypot" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px">
+          <button type="submit" class="btn btn-p btn-sm" id="fbSubmit" data-t="fb_submit"></button>
+          <div class="fbw-msg" id="fbMsg" hidden></div>
+        </form>
+        <div class="fbw-recent">
+          <h4 data-t="fb_recent_label"></h4>
+          <div class="fbw-recent-list" id="fbRecent"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- News Card -->
+    <section class="community-card news-card" id="newsCard" hidden>
+      <h3>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/></svg>
+        <span data-t="news_panel_title"></span>
+      </h3>
+      <div class="news-list" id="newsList"></div>
+      <div class="news-empty" id="newsEmpty" hidden data-t="news_empty"></div>
+    </section>
 
     <!-- Social Sharing Bar (full-width below guides & FAQ) -->
     <div class="community-card social-card">

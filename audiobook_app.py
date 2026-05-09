@@ -78,6 +78,7 @@ from tts_split import (
 import email_service
 import payment
 import generation_engine
+import community_store
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -189,7 +190,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 if google_tts is not None:
     google_tts.init(_DATA_DIR)
     # Forza l'invalidazione della cache voci locale per includere Google all'avvio
-    _voices_cache = None 
+    _voices_cache = None
+
+# Inizializza JSON store community (news, feedback)
+community_store.init(_DATA_DIR)
 
 jobs = {}
 
@@ -977,6 +981,84 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
         pass
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
+
+
+# ----------------------------------------------------------------------
+# COMMUNITY STATS — derivate dai log activity_YYYY-MM.log esistenti
+# ----------------------------------------------------------------------
+# Conta operation=='COMPLETE' (audiolibri generati con successo) e aggrega
+# per lingua TTS (voice.split('-')[0]). Cache in-memory: 60s today, 5min mese.
+
+_stats_lock = threading.Lock()
+_stats_today_cache = {"value": None, "expires": 0.0}
+_stats_month_cache = {"value": None, "expires": 0.0}
+
+
+def _parse_activity_lines(yyyymm: str):
+    """Itera (ts_str, operation, voice) dalle righe del log mensile.
+    Formato: '<sid> # <ts> # "<file>" # <op> # <cid> # <ip> # <voice> # <lang>'.
+    Resiliente a righe malformate."""
+    log_path = SCRIPT_DIR / f"activity_{yyyymm}.log"
+    if not log_path.exists():
+        return
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip("\n").split(" # ")
+                if len(parts) < 7:
+                    continue
+                yield parts[1], parts[3], parts[6]
+    except OSError:
+        return
+
+
+def _stats_today_count() -> int:
+    """Conta COMPLETE odierni. Cache 60s."""
+    now = time.time()
+    with _stats_lock:
+        if _stats_today_cache["value"] is not None and now < _stats_today_cache["expires"]:
+            return _stats_today_cache["value"]
+    today = datetime.now()
+    yyyymm = today.strftime("%Y-%m")
+    today_str = today.strftime("%Y-%m-%d")
+    count = 0
+    for ts, op, _voice in _parse_activity_lines(yyyymm):
+        if op == "COMPLETE" and ts.startswith(today_str):
+            count += 1
+    with _stats_lock:
+        _stats_today_cache["value"] = count
+        _stats_today_cache["expires"] = now + 60.0
+    return count
+
+
+def _stats_month_by_lang() -> dict:
+    """Aggrega COMPLETE del mese corrente per lingua TTS.
+    Restituisce {monthly: int, top: [{lang, count}], other: int}.
+    Cache 5min."""
+    now = time.time()
+    with _stats_lock:
+        if _stats_month_cache["value"] is not None and now < _stats_month_cache["expires"]:
+            return _stats_month_cache["value"]
+    yyyymm = datetime.now().strftime("%Y-%m")
+    by_lang: dict[str, int] = defaultdict(int)
+    total = 0
+    for _ts, op, voice in _parse_activity_lines(yyyymm):
+        if op != "COMPLETE":
+            continue
+        total += 1
+        if not voice:
+            continue
+        lang = voice.split("-")[0].strip().lower()
+        if lang:
+            by_lang[lang] += 1
+    sorted_langs = sorted(by_lang.items(), key=lambda kv: kv[1], reverse=True)
+    top = [{"lang": k, "count": v} for k, v in sorted_langs[:4]]
+    other = sum(v for _, v in sorted_langs[4:])
+    result = {"monthly": total, "top": top, "other": other}
+    with _stats_lock:
+        _stats_month_cache["value"] = result
+        _stats_month_cache["expires"] = now + 300.0
+    return result
 
 
 # ----------------------------------------------------------------------
@@ -2628,6 +2710,487 @@ def api_voices():
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/community/stats/today")
+def api_community_stats_today():
+    """Conteggio audiolibri completati oggi (cache 60s)."""
+    return jsonify({"count": _stats_today_count()})
+
+
+@app.route("/api/community/stats/month")
+def api_community_stats_month():
+    """Aggregato mensile per lingua TTS (cache 5min).
+    Schema: {monthly: int, top: [{lang, count}, ...], other: int}."""
+    return jsonify(_stats_month_by_lang())
+
+
+# ─── COMMUNITY: NEWS ────────────────────────────────────────────────
+_NEWS_TAGS = {"feature", "fix", "info"}
+_NEWS_LANGS = {"it", "en", "fr", "es", "de", "zh"}
+
+
+def _sanitize_text(s, maxlen):
+    """Strip HTML tags + collapse whitespace + truncate."""
+    if not isinstance(s, str):
+        return ""
+    s = re.sub(r"<[^>]+>", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:maxlen]
+
+
+@app.route("/api/community/news", methods=["GET"])
+def api_community_news():
+    """Lista news pubbliche (top 10 non archiviate, sort desc per created_at)."""
+    items = community_store.news().all(include_archived=False)
+    items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)[:10]
+    out = []
+    for it in items:
+        out.append({
+            "id": it.get("id"),
+            "tag": it.get("tag", "info"),
+            "title": it.get("title", ""),
+            "body": it.get("body", ""),
+            "lang": it.get("lang", "en"),
+            "banner": bool(it.get("banner", False)),
+            "created_at": it.get("created_at", 0),
+        })
+    return jsonify({"items": out})
+
+
+@app.route("/admin/api/news", methods=["POST"])
+def admin_api_news_create():
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    body = request.get_json(silent=True) or {}
+    tag = (body.get("tag") or "info").strip().lower()
+    if tag not in _NEWS_TAGS:
+        return jsonify({"error": "invalid tag"}), 400
+    title = _sanitize_text(body.get("title"), 200)
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    text = _sanitize_text(body.get("body"), 2000)
+    lang = (body.get("lang") or "en").strip().lower()
+    if lang not in _NEWS_LANGS:
+        return jsonify({"error": "invalid lang"}), 400
+    banner = bool(body.get("banner", False))
+    item = community_store.news().add({
+        "tag": tag, "title": title, "body": text,
+        "lang": lang, "banner": banner,
+    })
+    return jsonify(item), 200
+
+
+@app.route("/admin/api/news/<item_id>", methods=["POST"])
+def admin_api_news_update(item_id):
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    store = community_store.news()
+    if action == "archive":
+        ok = store.archive(item_id)
+    elif action == "unarchive":
+        ok = store.unarchive(item_id)
+    elif action == "delete":
+        ok = store.delete(item_id)
+    elif action == "toggle_banner":
+        cur = store.get(item_id)
+        if not cur:
+            return ("not found", 404)
+        ok = store.update(item_id, {"banner": not cur.get("banner", False)}) is not None
+    else:
+        return jsonify({"error": "invalid action"}), 400
+    return ("ok", 200) if ok else ("not found", 404)
+
+
+@app.route("/admin/api/news/list", methods=["GET"])
+def admin_api_news_list():
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    items = community_store.news().all(include_archived=True)
+    items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
+    return jsonify({"items": items})
+
+
+# ─── COMMUNITY: FEEDBACK ────────────────────────────────────────────
+import hashlib
+
+_feedback_rate_lock = threading.Lock()
+_feedback_rate: dict[str, list[float]] = {}  # ip_hash -> list[ts]
+_FB_LIMIT_HOUR = 1
+_FB_LIMIT_DAY = 5
+_feedback_email_lock = threading.Lock()
+_feedback_email_last = 0.0
+_FB_EMAIL_THROTTLE = 1800.0  # 30 min
+
+_IP_SALT = os.environ.get("ABM_IP_SALT") or "abm-default-salt-v1"
+
+
+def _hash_ip(ip: str) -> str:
+    h = hashlib.sha256((_IP_SALT + ":" + (ip or "")).encode("utf-8")).hexdigest()
+    return h[:16]
+
+
+def _feedback_check_rate(ip_hash: str) -> bool:
+    """True se il client può inviare ora; False se sopra il limite."""
+    now = time.time()
+    with _feedback_rate_lock:
+        hist = _feedback_rate.get(ip_hash, [])
+        # cleanup > 24h
+        hist = [t for t in hist if now - t < 86400]
+        last_hour = sum(1 for t in hist if now - t < 3600)
+        last_day = len(hist)
+        if last_hour >= _FB_LIMIT_HOUR or last_day >= _FB_LIMIT_DAY:
+            _feedback_rate[ip_hash] = hist
+            return False
+        hist.append(now)
+        _feedback_rate[ip_hash] = hist
+        return True
+
+
+def _notify_admin_new_feedback(item: dict) -> None:
+    """Throttled (30 min) email all'admin per nuovo feedback."""
+    global _feedback_email_last
+    if not ADMIN_EMAIL:
+        return
+    now = time.time()
+    with _feedback_email_lock:
+        if now - _feedback_email_last < _FB_EMAIL_THROTTLE:
+            return
+        _feedback_email_last = now
+    try:
+        rating = int(item.get("rating", 0))
+        stars = "★" * rating + "☆" * (5 - rating)
+        name = html_mod.escape(item.get("name") or "Anonimo")
+        comment = html_mod.escape(item.get("comment") or "")
+        body = (
+            f"<p><b>Nuovo feedback ricevuto:</b></p>"
+            f"<p>Voto: <span style='font-size:1.2em'>{stars}</span> ({rating}/5)</p>"
+            f"<p>Nome: {name}</p>"
+            f"<p>Commento:</p><p style='border-left:3px solid #d9a441;padding-left:8px'>"
+            f"{comment or '<i>(nessun commento)</i>'}</p>"
+            f"<p style='font-size:.85em;color:#888'>ID: {item.get('id','')}</p>"
+        )
+        email_service._send_email(ADMIN_EMAIL, f"[ABM] Nuovo feedback: {rating}★", body)
+    except Exception:
+        pass
+
+
+@app.route("/api/community/feedback", methods=["GET"])
+def api_community_feedback_list():
+    """Lista feedback pubblici + statistiche aggregate."""
+    items = community_store.feedback().all(include_archived=False)
+    items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
+    total = len(items)
+    if total > 0:
+        avg = round(sum(int(it.get("rating", 0)) for it in items) / total, 2)
+    else:
+        avg = 0.0
+    histogram = [0, 0, 0, 0, 0]  # rating 1..5 -> idx 0..4
+    for it in items:
+        r = int(it.get("rating", 0))
+        if 1 <= r <= 5:
+            histogram[r - 1] += 1
+    public_items = []
+    for it in items[:50]:
+        public_items.append({
+            "id": it.get("id"),
+            "rating": it.get("rating"),
+            "name": it.get("name") or "",
+            "comment": it.get("comment") or "",
+            "created_at": it.get("created_at", 0),
+        })
+    return jsonify({"items": public_items, "avg": avg, "total": total, "histogram": histogram})
+
+
+@app.route("/api/community/feedback", methods=["POST"])
+def api_community_feedback_create():
+    body = request.get_json(silent=True) or {}
+    # honeypot
+    if body.get("website"):
+        return ("", 204)
+    # validate rating
+    try:
+        rating = int(body.get("rating", 0))
+    except (TypeError, ValueError):
+        rating = 0
+    if rating < 1 or rating > 5:
+        return jsonify({"error": "invalid rating"}), 400
+    name = _sanitize_text(body.get("name"), 80)
+    comment = _sanitize_text(body.get("comment"), 1000)
+    # rate limit
+    ip = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+          or request.remote_addr or "")
+    ip_hash = _hash_ip(ip)
+    if not _feedback_check_rate(ip_hash):
+        return jsonify({"error": "rate_limit"}), 429
+    item = community_store.feedback().add({
+        "rating": rating,
+        "name": name,
+        "comment": comment,
+        "ip_hash": ip_hash,
+    })
+    # notify admin (throttled, fire-and-forget)
+    threading.Thread(target=_notify_admin_new_feedback, args=(item,), daemon=True).start()
+    return jsonify({"id": item["id"]}), 200
+
+
+@app.route("/admin/api/feedback/list", methods=["GET"])
+def admin_api_feedback_list():
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    items = community_store.feedback().all(include_archived=True)
+    items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
+    return jsonify({"items": items})
+
+
+@app.route("/admin/api/feedback/<item_id>", methods=["POST"])
+def admin_api_feedback_update(item_id):
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    store = community_store.feedback()
+    if action == "archive":
+        ok = store.archive(item_id)
+    elif action == "unarchive":
+        ok = store.unarchive(item_id)
+    elif action == "delete":
+        ok = store.delete(item_id)
+    else:
+        return jsonify({"error": "invalid action"}), 400
+    return ("ok", 200) if ok else ("not found", 404)
+
+
+@app.route("/admin/community", methods=["GET"])
+def admin_community_page():
+    if not ADMIN_TOKEN:
+        return ("Admin community UI disabled.", 404,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return (_render_admin_gate("Community Admin", "/admin/community"),
+                200, {"Content-Type": "text/html; charset=utf-8"})
+    html = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin · Community</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1200px;margin:0 auto}
+h1{margin:0 0 20px;font-size:1.5rem}
+.tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid #334155}
+.tab{padding:10px 18px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+.panel h2{margin:0 0 14px;font-size:1.05rem;color:var(--accent)}
+label{display:block;font-size:.85rem;color:var(--muted);margin:8px 0 4px}
+input,select,textarea{width:100%;padding:9px 12px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font:inherit;font-size:.95rem}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.9rem}
+button:hover{filter:brightness(1.1)}
+button.sm{padding:5px 10px;font-size:.75rem;font-weight:500}
+button.secondary{background:#334155}
+button.danger{background:var(--err)}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:700px){.row3{grid-template-columns:1fr}}
+.msg{padding:8px 12px;border-radius:6px;margin:10px 0;font-size:.85rem}
+.msg.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid var(--ok)}
+.msg.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid var(--err)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+td{padding:8px;border-bottom:1px solid #1e293b;vertical-align:top}
+tr.archived{opacity:.45}
+.tag-feature{background:#8b5cf6;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.tag-fix{background:#10b981;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.tag-info{background:#64748b;color:#fff;padding:2px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.stars{color:#e6a92a;letter-spacing:1px}
+.kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:18px}
+.kpi{flex:1;min-width:140px;background:var(--panel);border-radius:8px;padding:12px}
+.kpi-label{font-size:.75rem;color:var(--muted)}
+.kpi-val{font-size:1.4rem;font-weight:700;color:var(--ink)}
+.section{display:none}
+.section.active{display:block}
+.toolbar{display:flex;gap:10px;align-items:center;margin:10px 0}
+.toolbar label{margin:0;display:flex;align-items:center;gap:6px;font-size:.85rem}
+.toolbar input[type=checkbox]{width:auto}
+.banner-pill{background:var(--warn);color:#000;padding:1px 6px;border-radius:999px;font-size:.7rem;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Admin · Community</h1>
+<div class="tabs">
+  <button class="tab active" data-tab="feedback">Feedback</button>
+  <button class="tab" data-tab="news">News</button>
+</div>
+
+<section class="section active" id="sectFeedback">
+  <div class="kpis" id="fbKpis"></div>
+  <div class="toolbar">
+    <label><input type="checkbox" id="fbShowArch"> Mostra archiviati</label>
+    <button class="secondary sm" onclick="loadFb()">Aggiorna</button>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>★</th><th>Nome</th><th>Commento</th><th>IP</th><th></th></tr></thead>
+    <tbody id="fbBody"></tbody>
+  </table>
+</section>
+
+<section class="section" id="sectNews">
+  <div class="panel">
+    <h2>Nuova news</h2>
+    <div class="row3">
+      <div>
+        <label>Tag</label>
+        <select id="nTag"><option value="feature">feature</option><option value="fix">fix</option><option value="info">info</option></select>
+      </div>
+      <div>
+        <label>Lingua</label>
+        <select id="nLang"><option>it</option><option>en</option><option>fr</option><option>es</option><option>de</option><option>zh</option></select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--ink)"><input type="checkbox" id="nBanner"> Mostra come banner</label>
+      </div>
+    </div>
+    <label>Titolo</label>
+    <input id="nTitle" maxlength="200">
+    <label>Testo</label>
+    <textarea id="nBody" rows="4" maxlength="2000"></textarea>
+    <div style="margin-top:10px"><button onclick="createNews()">Pubblica</button></div>
+    <div id="nMsg"></div>
+  </div>
+  <div class="toolbar">
+    <label><input type="checkbox" id="nShowArch"> Mostra archiviate</label>
+    <button class="secondary sm" onclick="loadNews()">Aggiorna</button>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>Lang</th><th>Tag</th><th>Titolo</th><th>Banner</th><th></th></tr></thead>
+    <tbody id="nBody2"></tbody>
+  </table>
+</section>
+
+<script>
+const TOKEN=localStorage.getItem('abm_admin_token')||new URLSearchParams(location.search).get('token')||'';
+if(!TOKEN){alert('Admin token mancante');}else{localStorage.setItem('abm_admin_token',TOKEN);}
+const HDR={'X-Admin-Token':TOKEN,'Content-Type':'application/json'};
+function esc(s){return (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+function fmtDate(ts){return new Date(ts*1000).toLocaleString();}
+
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('sect'+t.dataset.tab[0].toUpperCase()+t.dataset.tab.slice(1)).classList.add('active');
+  if(t.dataset.tab==='feedback') loadFb();
+  else loadNews();
+}));
+
+async function loadFb(){
+  const r=await fetch('/admin/api/feedback/list',{headers:HDR});
+  if(!r.ok){document.getElementById('fbBody').innerHTML='<tr><td colspan=6>Errore</td></tr>';return;}
+  const d=await r.json();
+  const showArch=document.getElementById('fbShowArch').checked;
+  let items=d.items||[];
+  if(!showArch) items=items.filter(it=>!it.archived);
+  // KPI
+  const all=d.items||[];
+  const tot=all.length;
+  const avg=tot?(all.reduce((a,it)=>a+(it.rating||0),0)/tot).toFixed(2):'—';
+  const hist=[0,0,0,0,0]; all.forEach(it=>{const r=it.rating||0;if(r>=1&&r<=5) hist[r-1]++;});
+  document.getElementById('fbKpis').innerHTML=`
+    <div class="kpi"><div class="kpi-label">Totale</div><div class="kpi-val">${tot}</div></div>
+    <div class="kpi"><div class="kpi-label">Media</div><div class="kpi-val">${avg}</div></div>
+    <div class="kpi"><div class="kpi-label">5★</div><div class="kpi-val">${hist[4]}</div></div>
+    <div class="kpi"><div class="kpi-label">4★</div><div class="kpi-val">${hist[3]}</div></div>
+    <div class="kpi"><div class="kpi-label">≤3★</div><div class="kpi-val">${hist[0]+hist[1]+hist[2]}</div></div>`;
+  const tb=document.getElementById('fbBody');
+  tb.innerHTML='';
+  for(const it of items){
+    const tr=document.createElement('tr');
+    if(it.archived) tr.className='archived';
+    const stars='★'.repeat(it.rating||0)+'☆'.repeat(5-(it.rating||0));
+    tr.innerHTML=`<td>${fmtDate(it.created_at)}</td>
+      <td><span class="stars">${stars}</span></td>
+      <td>${esc(it.name||'')}</td>
+      <td>${esc(it.comment||'')}</td>
+      <td><code style="font-size:.75rem">${esc(it.ip_hash||'')}</code></td>
+      <td>
+        <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
+        <button class="sm danger" data-id="${it.id}" data-act="delete">Elimina</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{
+    if(b.dataset.act==='delete'&&!confirm('Eliminare definitivamente?')) return;
+    const r=await fetch('/admin/api/feedback/'+b.dataset.id,{method:'POST',headers:HDR,body:JSON.stringify({action:b.dataset.act})});
+    if(r.ok) loadFb(); else alert('Errore');
+  }));
+}
+
+async function loadNews(){
+  const r=await fetch('/admin/api/news/list',{headers:HDR});
+  if(!r.ok){document.getElementById('nBody2').innerHTML='<tr><td colspan=6>Errore</td></tr>';return;}
+  const d=await r.json();
+  const showArch=document.getElementById('nShowArch').checked;
+  let items=d.items||[];
+  if(!showArch) items=items.filter(it=>!it.archived);
+  const tb=document.getElementById('nBody2');
+  tb.innerHTML='';
+  for(const it of items){
+    const tr=document.createElement('tr');
+    if(it.archived) tr.className='archived';
+    tr.innerHTML=`<td>${fmtDate(it.created_at)}</td>
+      <td>${esc(it.lang||'')}</td>
+      <td><span class="tag-${esc(it.tag)}">${esc(it.tag)}</span></td>
+      <td>${esc(it.title||'')}</td>
+      <td>${it.banner?'<span class="banner-pill">BANNER</span>':''}</td>
+      <td>
+        <button class="sm secondary" data-id="${it.id}" data-act="toggle_banner">Toggle banner</button>
+        <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
+        <button class="sm danger" data-id="${it.id}" data-act="delete">Elimina</button>
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{
+    if(b.dataset.act==='delete'&&!confirm('Eliminare definitivamente?')) return;
+    const r=await fetch('/admin/api/news/'+b.dataset.id,{method:'POST',headers:HDR,body:JSON.stringify({action:b.dataset.act})});
+    if(r.ok) loadNews(); else alert('Errore');
+  }));
+}
+
+async function createNews(){
+  const body={
+    tag:document.getElementById('nTag').value,
+    lang:document.getElementById('nLang').value,
+    banner:document.getElementById('nBanner').checked,
+    title:document.getElementById('nTitle').value,
+    body:document.getElementById('nBody').value,
+  };
+  const msg=document.getElementById('nMsg');
+  if(!body.title.trim()){msg.innerHTML='<div class="msg err">Titolo richiesto</div>';return;}
+  const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
+  if(r.ok){
+    msg.innerHTML='<div class="msg ok">Pubblicata</div>';
+    document.getElementById('nTitle').value='';
+    document.getElementById('nBody').value='';
+    document.getElementById('nBanner').checked=false;
+    loadNews();
+  } else {
+    const e=await r.json().catch(()=>({error:'errore'}));
+    msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+  }
+}
+
+document.getElementById('fbShowArch').addEventListener('change',loadFb);
+document.getElementById('nShowArch').addEventListener('change',loadNews);
+loadFb();
+</script>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/api/admin/google_tts_status")

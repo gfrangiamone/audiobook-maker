@@ -1,6 +1,13 @@
 {
   "ui": {
     "subtitle": "Converti i tuoi EPUB in audiolibri con voci neurali di alta qualità",
+    "ls_books_today": "libri elaborati oggi",
+    "ls_more": "altre stats",
+    "stats_modal_title": "Statistiche di utilizzo",
+    "stats_modal_monthly": "audiolibri completati questo mese",
+    "stats_modal_by_lang": "Top lingue TTS",
+    "stats_modal_empty": "Nessun audiolibro completato questo mese.",
+    "stats_modal_footer": "Dati aggregati e anonimi · aggiornati ogni 5 minuti",
     "disclaimer": "⚠️ Questo strumento è destinato esclusivamente all'uso personale su file EPUB di cui si è in legittimo possesso. I file EPUB caricati e gli audio generati non vengono conservati dal sistema e sono eliminati automaticamente al termine della sessione.",
     "s1_title": "Carica il file",
     "upload_text": "Trascina qui il file EPUB o TXT, o clicca per selezionarlo",
