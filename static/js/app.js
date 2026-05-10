@@ -2296,9 +2296,11 @@ function goToAudioSettings(){goToStep(3)}
       if(!r.ok) return;
       const data=await r.json();
       const count=parseInt(data.count,10)||0;
+      ls.hidden=false;
       if(count>0){
-        ls.hidden=false;
         animateCount(numEl,count,1200);
+      }else{
+        numEl.textContent=count;
       }
     }catch(e){/* silent */}
   }
