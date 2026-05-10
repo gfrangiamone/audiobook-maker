@@ -208,8 +208,7 @@ function applyI18n(){
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
   var p='/'+l+'/';if(location.pathname!==p)history.replaceState(null,'',p);
-  // Switch visible SEO content block to match selected language
-  if(typeof switchSeoLang==='function')switchSeoLang(l);
+  // Visible SEO block removed from template — language sync handled by UI only
   // Notify widgets that render i18n-aware content (feedback, news) so
   // they can re-render with the freshly selected UI language.
   try{window.dispatchEvent(new CustomEvent('abm:langchange',{detail:{lang:l}}));}catch(e){}
@@ -2739,8 +2738,12 @@ function goToAudioSettings(){goToStep(3)}
       const fg=avg.querySelector('.fbw-rating-fg');
       if(fg) fg.style.width=(v/5*100)+'%';
       avg.setAttribute('aria-label',data.total?v.toFixed(1)+' / 5':'0 / 5');
+      avg.setAttribute('content',data.total?v.toFixed(1):'0');
     }
-    if(tot) tot.textContent=data.total?'· '+data.total+' '+tt('fb_total_reviews'):'';
+    if(tot){
+      tot.textContent=data.total?'· '+data.total+' '+tt('fb_total_reviews'):'';
+      tot.setAttribute('content',data.total?String(data.total):'0');
+    }
     renderHistogram(data.histogram||[0,0,0,0,0],data.total||0);
     lastItems=data.items||[];
     renderRecent(lastItems);

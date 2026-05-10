@@ -12,8 +12,7 @@ The template is assembled from modular fragments at startup:
 Server-side SEO:
   Meta tags (title, description, OG, hreflang, canonical, JSON-LD) are injected
   via placeholder replacement in html_head.html at startup.
-  Visible SEO content (heading, text, features, FAQ + FAQPage schema) is injected
-  before </body> via seo_content.build_seo_content_html().
+  JSON-LD schema (FAQPage, HowTo, SoftwareApplication) is injected into <head>.
 """
 
 import os
@@ -144,7 +143,7 @@ def build_html_template(
             html = html.replace(placeholder, value)
 
     # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──
-    from seo_content import get_schema_ld, build_seo_content_html
+    from seo_content import get_schema_ld
     faq_ld, howto_ld, app_ld = get_schema_ld(lang)
     html = html.replace("__SEO_FAQ_LD__", faq_ld)
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
@@ -182,20 +181,14 @@ def build_html_template(
     html = prefill_seo_text(html, lang)
 
     # ── 6. Build the multilingual visible SEO content block ──
-    # `build_seo_content_html(lang)` returns a <section id="seoContent"> with
-    # one <article> per supported language (only the active one is display:block
-    # on first render; the rest are display:none and toggled by the lang
-    # switcher). All six articles are baked into the HTML so crawlers index
-    # localized H2/H3/FAQ content without executing JS.
-    seo_content_html = build_seo_content_html(lang)
+    # Removed: server-rendered visible SEO block duplicated content already
+    # present in the app interface. JSON-LD schema remains in <head>.
+    seo_content_html = ""
 
-    # Insert SEO content + version/updated badges + reviews placeholder before
-    # </body>. __REVIEWS_HTML__ is left as a placeholder so the route can swap
-    # in fresh AggregateRating + Review[] markup per request (cheap; community
-    # feedback changes too often to bake into the startup template).
+    # Insert version/updated badges before </body>
     html = html.replace(
         "</body>",
-        seo_content_html + "\n__REVIEWS_HTML__\n" + version_badge + updated_badge + "\n</body>",
+        version_badge + updated_badge + "\n</body>",
         1,
     )
 
