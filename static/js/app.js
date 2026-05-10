@@ -2763,6 +2763,15 @@ function goToAudioSettings(){goToStep(3)}
         body:JSON.stringify({rating:currentRating,name,comment,website:honeypot}),
       });
       if(r.status===429){showMsg(tt('fb_rate_limit'),'err');return;}
+      if(r.status===400){
+        try{
+          const errData=await r.json();
+          if(errData && errData.error==='inappropriate_content'){
+            showMsg(tt('fb_inappropriate'),'err');return;
+          }
+        }catch(e){}
+        showMsg(tt('fb_invalid'),'err');return;
+      }
       if(!r.ok){showMsg(tt('fb_invalid'),'err');return;}
       try{
         const data=await r.json();
