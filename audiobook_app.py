@@ -5081,13 +5081,15 @@ def api_download(job_id):
     elif download_type == "abm":
         log_type = "DOWNLOAD_ABM"
 
-    _log_activity(job_id, job.get("original_filename", ""), log_type,
-                  job.get("client_id", ""), job.get("client_ip", ""),
-                  job.get("voice", ""), job.get("browser_lang", ""))
+    def _do_log():
+        _log_activity(job_id, job.get("original_filename", ""), log_type,
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""), job.get("browser_lang", ""))
 
     if download_type == "abm":
         abm_path = job.get("optimized_abm_path")
         if abm_path and os.path.exists(abm_path):
+            _do_log()
             safe_name = _safe_filename(job["info"].title) or "progetto"
             return send_file(abm_path, as_attachment=True, download_name=f"{safe_name}.abm")
         else:
@@ -5096,8 +5098,9 @@ def api_download(job_id):
     if download_type == "m4b":
         m4b_path = job.get("output_m4b")
         print(f"[debug] Download M4B requested. Path in job: {m4b_path}")
-        
+
         if m4b_path and os.path.exists(m4b_path):
+            _do_log()
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
             print(f"[debug] M4B file found! Serving: {m4b_path}")
             return send_file(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
@@ -5110,9 +5113,10 @@ def api_download(job_id):
                 actual_m4b = str(m4b_files[0])
                 job["output_m4b"] = actual_m4b
                 print(f"[debug] M4B found via physical search: {actual_m4b}")
+                _do_log()
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
                 return send_file(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b")
-            
+
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
             mp3_path = job.get("output_files", [""])[0]
@@ -5122,6 +5126,7 @@ def api_download(job_id):
 
     if download_type == "zip":
         if "output_zip" in job and os.path.exists(job["output_zip"]):
+            _do_log()
             zip_name = job.get("output_name", "audiobook.zip")
             if not zip_name.endswith(".zip"):
                  zip_name = _safe_filename(job["info"].title) + ".zip"
@@ -5131,12 +5136,15 @@ def api_download(job_id):
     # Default logic (compatibility or auto-detect)
     # Prefer M4B if it seems to be the intended primary output
     if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
+        _do_log()
         return send_file(job["output_m4b"], as_attachment=True, download_name=job["output_name"])
 
     if "output_zip" in job and os.path.exists(job["output_zip"]):
+        _do_log()
         return send_file(job["output_zip"], as_attachment=True, download_name=job["output_name"])
 
     if job.get("output_files") and os.path.exists(job["output_files"][0]):
+        _do_log()
         return send_file(job["output_files"][0], as_attachment=True, download_name=job["output_name"])
 
     return "File not found", 404
