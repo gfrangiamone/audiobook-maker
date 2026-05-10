@@ -1418,7 +1418,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "inLanguage": lang if lang != "zh" else "zh-Hans",
         "isPartOf": {"@type": "WebSite", "url": base_url, "name": "Audiobook Maker"},
         "primaryImageOfPage": f"{base_url}/og-image.png",
-        "datePublished": "2024-01-01",
+        "datePublished": "2022-06-01",
         "dateModified": iso_modified,
         "accessibilityFeature": ["displayTransformability", "audioDescription"],
         "accessMode": ["textual", "visual", "auditory"],

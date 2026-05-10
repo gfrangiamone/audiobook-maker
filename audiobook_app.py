@@ -5286,7 +5286,8 @@ _SEO_DATA = {
     "fr": {
         "title":   "EPUB/PDF en Livre Audio Gratuit MP3/M4B | Audiobook Maker",
         "tagline": "Convertisseur Gratuit EPUB & PDF en Livre Audio",
-        "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurali",
+        "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurales",
+        "crumb":   "Convertisseur en ligne",
         "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 et M4B (avec chapitres) gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio professionnel. Aucune installation, fonctionne dans le navigateur.",
         "kw":      "convertisseur epub livre audio, pdf en livre audio, créer m4b avec chapitres, livre audio gratuit en ligne, text to speech français, synthèse vocale livre, ebook en audio, livre audio dyslexie, livre audio malvoyants, alternative elevenlabs gratuit, générateur podcast rss, audiobook maker",
         "ld_name": "Audiobook Maker",
@@ -5300,6 +5301,7 @@ _SEO_DATA = {
         "kw":      "convertidor epub audiolibro, pdf a audiolibro, crear m4b con capítulos, audiolibro gratis online, text to speech español, síntesis de voz libro, ebook en audio, audiolibro para dislexia, audiolibro para ciegos, alternativa elevenlabs gratis, generador podcast rss, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
+        "crumb":   "Convertidor online",
     },
     "de": {
         "title":   "EPUB/PDF zu Hörbuch Gratis MP3/M4B | Audiobook Maker",
@@ -5309,15 +5311,17 @@ _SEO_DATA = {
         "kw":      "epub zu hörbuch konverter, pdf zu hörbuch, m4b mit kapiteln erstellen, hörbuch erstellen kostenlos, text to speech deutsch, sprachsynthese buch, ebook in audio umwandeln, hörbuch für legasthenie, barrierefreies hörbuch, elevenlabs alternative kostenlos, podcast rss generator, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
+        "crumb":   "Online-Konverter",
     },
     "zh": {
-        "title":   "免费 EPUB/PDF 转 MP3/M4B 有声书 | Audiobook Maker",
+        "title":   "免费在线EPUB/PDF转MP3/M4B有声书转换器 | Audiobook Maker",
         "tagline": "免费EPUB和PDF转有声书转换器",
-        "subtitle":"使用高品质神经语音将EPUB和PDF转换为有声读物",
-        "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书转换为高质量 MP3 或 M4B（含章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
-        "kw":      "epub转有声书, pdf转有声书, m4b章节制作, 免费有声书制作, 文字转语音有声书, 电子书转mp3, ai语音朗读, 阅读障碍有声书, 无障碍有声书, elevenlabs替代品, 播客rss生成器, audiobook maker",
+        "subtitle":"使用高品质神经网络AI语音将EPUB和PDF电子书免费转换为有声读物",
+        "desc":    "在您的浏览器中免费、安全、快速地将EPUB和PDF电子书转换为高质量MP3或M4B（含章节）有声读物。由AI神经网络语音驱动。无需安装，支持章节选择和专业M4B格式输出。免费在线文字转语音转换器，支持50多种语言。",
+        "kw":      "epub转有声书, pdf转有声书, m4b章节制作, 免费有声书制作, 免费在线文字转语音, 文字转语音有声书, 电子书转mp3, 电子书转音频, ai语音朗读, 阅读障碍有声书, 无障碍有声书, 有声书转换器, elevenlabs替代品, 播客rss生成器, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电子书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅生成。",
+        "crumb":   "在线转换器",
     },
 }
 

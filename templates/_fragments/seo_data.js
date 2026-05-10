@@ -46,6 +46,9 @@ features:["EPUB 转 MP3/M4B 有声书转换（含章节）","PDF 转 MP3/M4B 有
 
 function applySEO(lang){
 const s=SEO[lang]||SEO.en;
+let _canEl=document.querySelector('link[rel="canonical"]');
+let baseUrl="https://audiobook-maker.com";
+if(_canEl){let m=_canEl.href.match(/^(https?:\/\/[^/]+)\//);if(m)baseUrl=m[1];}
 document.title=s.title;
 let m=document.querySelector('meta[name="description"]');
 if(!m){m=document.createElement("meta");m.name="description";document.head.appendChild(m)}
@@ -65,28 +68,31 @@ if(!og_type){og_type=document.createElement("meta");og_type.setAttribute("proper
 og_type.content="website";
 let og_url=document.querySelector('meta[property="og:url"]');
 if(!og_url){og_url=document.createElement("meta");og_url.setAttribute("property","og:url");document.head.appendChild(og_url)}
-og_url.content="https://audiobook-maker.com/" + lang + "/";
+og_url.content=baseUrl + "/" + lang + "/";
 let og_img=document.querySelector('meta[property="og:image"]');
 if(!og_img){og_img=document.createElement("meta");og_img.setAttribute("property","og:image");document.head.appendChild(og_img)}
-og_img.content="https://audiobook-maker.com/og-image.png";
+og_img.content=baseUrl + "/og-image.png";
 let tw_img=document.querySelector('meta[name="twitter:image"]');
 if(!tw_img){tw_img=document.createElement("meta");tw_img.setAttribute("name","twitter:image");document.head.appendChild(tw_img)}
-tw_img.content="https://audiobook-maker.com/og-image.png";
+tw_img.content=baseUrl + "/og-image.png";
+let tw_img_alt=document.querySelector('meta[name="twitter:image:alt"]');
+if(!tw_img_alt){tw_img_alt=document.createElement("meta");tw_img_alt.setAttribute("name","twitter:image:alt");document.head.appendChild(tw_img_alt)}
+tw_img_alt.content=s.title;
 // Canonical
 let can=document.querySelector('link[rel="canonical"]');
 if(!can){can=document.createElement("link");can.rel="canonical";document.head.appendChild(can)}
-can.href="https://audiobook-maker.com/" + lang + "/";
+can.href=baseUrl + "/" + lang + "/";
 // Hreflang tags
 const langs=["it","en","fr","es","de","zh"];
 const hreflangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans"};
 langs.forEach(function(l){
 let hl=document.querySelector('link[hreflang="'+hreflangMap[l]+'"]');
 if(!hl){hl=document.createElement("link");hl.rel="alternate";hl.hreflang=hreflangMap[l];document.head.appendChild(hl)}
-hl.href="https://audiobook-maker.com/"+l+"/";
+hl.href=baseUrl+"/"+l+"/";
 });
 let hlx=document.querySelector('link[hreflang="x-default"]');
 if(!hlx){hlx=document.createElement("link");hlx.rel="alternate";hlx.hreflang="x-default";document.head.appendChild(hlx)}
-hlx.href="https://audiobook-maker.com/";
+hlx.href=baseUrl+"/";
 // HTML lang attribute
 const htmlLangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans"};
 document.documentElement.lang=htmlLangMap[lang]||"en";
@@ -97,7 +103,7 @@ if(sc){sc.textContent=JSON.stringify({
 "@type":"SoftwareApplication",
 "name":s.ld,
 "alternateName": "Audiobook Maker Online",
-"url":"https://audiobook-maker.com/" + lang + "/",
+"url":baseUrl + "/" + lang + "/",
 "description":s.desc,
 "applicationCategory":"MultimediaApplication",
 "applicationSubCategory":"Text-to-Speech Converter",
