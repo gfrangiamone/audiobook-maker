@@ -2566,18 +2566,20 @@ def _hash_ip(ip: str) -> str:
 def _feedback_check_rate(ip_hash: str) -> bool:
     """True se il client può inviare ora; False se sopra il limite."""
     now = time.time()
+    # consulta il persistent store: i feedback cancellati (hard-delete)
+    # non devono bloccare il re-inserimento
+    items = community_store.feedback().all(include_archived=False)
+    recent = [it for it in items if it.get("ip_hash") == ip_hash and (now - it.get("created_at", 0)) < 86400]
+    last_hour = sum(1 for it in recent if (now - it.get("created_at", 0)) < 3600)
+    last_day = len(recent)
+    if last_hour >= _FB_LIMIT_HOUR or last_day >= _FB_LIMIT_DAY:
+        return False
     with _feedback_rate_lock:
         hist = _feedback_rate.get(ip_hash, [])
-        # cleanup > 24h
         hist = [t for t in hist if now - t < 86400]
-        last_hour = sum(1 for t in hist if now - t < 3600)
-        last_day = len(hist)
-        if last_hour >= _FB_LIMIT_HOUR or last_day >= _FB_LIMIT_DAY:
-            _feedback_rate[ip_hash] = hist
-            return False
         hist.append(now)
         _feedback_rate[ip_hash] = hist
-        return True
+    return True
 
 
 def _notify_admin_new_feedback(item: dict, comment_it: str | None = None, unvalidated: bool = False) -> None:
