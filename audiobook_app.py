@@ -573,7 +573,7 @@ def _parse_activity_lines(yyyymm: str):
 
 
 def _stats_today_count() -> int:
-    """Conta COMPLETE odierni. Cache 60s."""
+    """Conta COMPLETE e OPT_COMPLETE odierni. Cache 60s."""
     now = time.time()
     with _stats_lock:
         if _stats_today_cache["value"] is not None and now < _stats_today_cache["expires"]:
@@ -583,7 +583,7 @@ def _stats_today_count() -> int:
     today_str = today.strftime("%Y-%m-%d")
     count = 0
     for ts, op, _voice in _parse_activity_lines(yyyymm):
-        if op == "COMPLETE" and ts.startswith(today_str):
+        if op in ("COMPLETE", "OPT_COMPLETE") and ts.startswith(today_str):
             count += 1
     with _stats_lock:
         _stats_today_cache["value"] = count
@@ -592,7 +592,7 @@ def _stats_today_count() -> int:
 
 
 def _stats_month_by_lang() -> dict:
-    """Aggrega COMPLETE del mese corrente per lingua TTS.
+    """Aggrega COMPLETE e OPT_COMPLETE del mese corrente per lingua TTS.
     Restituisce {monthly: int, top: [{lang, count}], other: int}.
     Cache 5min."""
     now = time.time()
@@ -603,7 +603,7 @@ def _stats_month_by_lang() -> dict:
     by_lang: dict[str, int] = defaultdict(int)
     total = 0
     for _ts, op, voice in _parse_activity_lines(yyyymm):
-        if op != "COMPLETE":
+        if op not in ("COMPLETE", "OPT_COMPLETE"):
             continue
         total += 1
         if not voice:
@@ -2722,8 +2722,14 @@ def api_community_feedback_create():
         rating = 0
     if rating < 1 or rating > 5:
         return jsonify({"error": "missing_rating"}), 400
-    name = _sanitize_text(body.get("name"), 80)
-    comment = _sanitize_text(body.get("comment"), 1000)
+    raw_name = (body.get("name") or "").strip()
+    if len(raw_name) > 100:
+        return jsonify({"error": "name_too_long"}), 400
+    raw_comment = (body.get("comment") or "").strip()
+    if len(raw_comment) > 500:
+        return jsonify({"error": "comment_too_long"}), 400
+    name = _sanitize_text(raw_name, 100)
+    comment = _sanitize_text(raw_comment, 500)
     # rate limit
     ip = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
           or request.remote_addr or "")
@@ -2997,7 +3003,14 @@ async function loadFb(){
     tr.innerHTML=`<td>${fmtDate(it.created_at)}</td>
       <td><span class="stars">${stars}</span></td>
       <td>${esc(it.name||'')}</td>
-      <td>${esc(it.comment||'')}</td>
+      <td>
+        <div class="fb-it">${esc(((it.comment_i18n||{}).it)||it.comment||'')}</div>
+        <div class="fb-orig" style="display:none;font-size:.85rem;color:var(--muted);margin-top:4px;">
+          <span style="font-size:.7rem;text-transform:uppercase;border:1px solid var(--muted);padding:1px 4px;border-radius:4px;">${esc(it.comment_lang||'orig')}</span>
+          ${esc(it.comment||'')}
+        </div>
+        <button class="sm secondary fb-toggle" style="margin-top:6px;">Originale</button>
+      </td>
       <td><code style="font-size:.75rem">${esc(it.ip_hash||'')}</code></td>
       <td>
         <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
@@ -3009,6 +3022,12 @@ async function loadFb(){
     if(b.dataset.act==='delete'&&!confirm('Eliminare definitivamente?')) return;
     const r=await fetch('/admin/api/feedback/'+b.dataset.id,{method:'POST',headers:HDR,body:JSON.stringify({action:b.dataset.act})});
     if(r.ok) loadFb(); else alert('Errore');
+  }));
+  tb.querySelectorAll('.fb-toggle').forEach(b=>b.addEventListener('click',()=>{
+    const wrap=b.closest('td').querySelector('.fb-orig');
+    const hidden=wrap.style.display==='none';
+    wrap.style.display=hidden?'block':'none';
+    b.textContent=hidden?'Nascondi originale':'Originale';
   }));
 }
 

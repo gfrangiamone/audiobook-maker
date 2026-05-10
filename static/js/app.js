@@ -421,15 +421,16 @@ function goToStep(n){
   if(n===4)_updateSummary();
   var dc=document.getElementById('donateCard');
   if(dc)dc.style.display=n===1?'':'none';
-  // Scroll to top so header + wizard dots are visible
-  window.scrollTo({top:0,behavior:'instant'});
-  const hdr=document.querySelector('header');
-  if(hdr)hdr.scrollIntoView({behavior:'smooth',block:'start'});
-  // Focus management
-  setTimeout(()=>{
+  // Scroll to top so header + wizard dots are visible; bypass the global
+  // focusin scroll-guard so the scroll restore doesn't fight this move.
+  window._bypassScrollGuard(function(){
+    window.scrollTo({top:0,behavior:'instant'});
+    const hdr=document.querySelector('header');
+    if(hdr)hdr.scrollIntoView({behavior:'smooth',block:'start'});
+    // Move focus to first focusable element inside new panel
     const focusable=target?target.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled])'):[];
     if(focusable.length)focusable[0].focus();
-  },150);
+  });
 }
 function updateWizardSteps(n){
   const dots=document.querySelectorAll('.wizard-step-dot');
@@ -2782,6 +2783,12 @@ function goToAudioSettings(){goToStep(3)}
           }
           if(errData && errData.error==='missing_rating'){
             showMsg(tt('fb_missing_rating'),'err');return;
+          }
+          if(errData && errData.error==='name_too_long'){
+            showMsg(tt('fb_name_too_long'),'err');return;
+          }
+          if(errData && errData.error==='comment_too_long'){
+            showMsg(tt('fb_comment_too_long'),'err');return;
           }
         }catch(e){}
         showMsg(tt('fb_invalid'),'err');return;
