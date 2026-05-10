@@ -194,6 +194,10 @@ function applyI18n(){
       }
     }
   });
+  document.querySelectorAll('[data-t-title]').forEach(e=>{
+    const k=e.getAttribute('data-t-title'), v=t(k);
+    if(v) e.title=v;
+  });
   document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
   document.documentElement.lang=cl;
   const btnExp=document.getElementById('btnExport');
