@@ -4379,9 +4379,11 @@ def token_do_download_m4b(token):
     if not m4b_path or not os.path.exists(m4b_path):
         return "M4B file not available", 404
 
-    _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
-                  "", "", "", "")
-    
+    # Log solo sulla prima richiesta completa, non su HEAD o range request
+    if request.method != "HEAD" and not request.headers.get("Range"):
+        _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
+                      "", "", "", "")
+
     safe_name = _safe_filename(token_info.get("book_title", "audiolibro"))
     return send_file(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
 
