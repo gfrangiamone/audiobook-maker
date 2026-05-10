@@ -1216,14 +1216,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
+        job["progress_current"] = 1
+        job["progress_message"] = "Analisi testo..."
 
         # Genera file di silenzio da preporre a ogni capitolo
         silence_path = str(work_dir / "_silence.mp3")
         silence_ok = _generate_silence_mp3(silence_path, CHAPTER_SILENCE_SEC)
         print(f"[{job_id}] Silence file: {silence_path}, ok={silence_ok}")
+        job["progress_current"] = 2
+        job["progress_message"] = "Preparazione audio..."
 
-        job["progress_current"] = 0
-        job["progress_total"] = total_chunks
+        job["progress_total"] = total_chunks + 2
         job["total_chars"] = total_chars
         job["processed_chars"] = 0
         job["bytes_generated"] = 0
@@ -1248,7 +1251,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         def _update_progress(i, block):
             elapsed = time.time() - start_time
-            job["progress_current"] = i
+            job["progress_current"] = 2 + i
             job["progress_message"] = (
                 f"Cap. {block['chapter_index']}/{len(info.chapters)}: "
                 f"{block['chapter_title'][:35]}... \u2014 "

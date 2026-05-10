@@ -521,8 +521,19 @@ def parse_abm(path):
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
-def run_generation(job_id, info, voice, rate, single_file):
-    return generation_engine.run_generation(job_id, info, voice, rate, single_file)
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+    try:
+        return generation_engine.run_generation(job_id, info, voice, rate, single_file,
+                                                 output_format=output_format, podcast_base_url=podcast_base_url)
+    except Exception as e:
+        print(f"[{job_id}] CRITICAL: run_generation wrapper crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        job = jobs.get(job_id)
+        if job:
+            job["status"] = "error"
+            job["progress_message"] = f"Internal error: {e}"
+            job["last_poll"] = time.time()
 
 #  -  -  Activity log  -  -
 _log_lock = threading.Lock()
@@ -657,21 +668,18 @@ def _stats_month_by_lang() -> dict:
 # corretti per quella lingua  -  indicizzabili da Google come pagine distinte.
 
 def _inject_reviews(template_html: str, lang: str) -> str:
-    """Swap __REVIEWS_LD__ + __REVIEWS_HTML__ placeholders with fresh
-    AggregateRating + Review markup built from the live feedback store.
+    """Swap __REVIEWS_LD__ placeholder with fresh AggregateRating + Review
+    JSON-LD built from the live feedback store.
 
-    Cost ≤ 1 ms per request. Falls back to empty replacements if the store
+    Cost ≤ 1 ms per request. Falls back to empty replacement if the store
     is unavailable so the page still renders cleanly."""
     try:
         rev = seo_reviews.build_reviews(lang)
         ld = rev.get("ld_block", "") or ""
-        body = rev.get("html_block", "") or ""
     except Exception as e:
         print(f"[seo_reviews] inject failed: {e!s}")
-        ld, body = "", ""
-    return (template_html
-            .replace("__REVIEWS_LD__", ld)
-            .replace("__REVIEWS_HTML__", body))
+        ld = ""
+    return template_html.replace("__REVIEWS_LD__", ld)
 
 
 @app.route("/")
