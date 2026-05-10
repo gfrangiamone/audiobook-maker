@@ -526,19 +526,46 @@ def run_generation(job_id, info, voice, rate, single_file):
 
 #  -  -  Activity log  -  -
 _log_lock = threading.Lock()
+_logged_month: str = ""
+_logged_sids_ops: set[tuple[str, str]] = set()
+
+def _init_log_dedup():
+    """Popola il set di dedup dal file di log del mese corrente."""
+    global _logged_month, _logged_sids_ops
+    from datetime import datetime
+    _logged_month = datetime.now().strftime('%Y-%m')
+    log_path = SCRIPT_DIR / f"activity_{_logged_month}.log"
+    if not log_path.exists():
+        return
+    with _log_lock:
+        _logged_sids_ops.clear()
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(" # ")
+                if len(parts) >= 4:
+                    _logged_sids_ops.add((parts[0], parts[3]))
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang=''):
+    global _logged_month
     from datetime import datetime
     now = datetime.now()
-    log_path = SCRIPT_DIR / f"activity_{now.strftime('%Y-%m')}.log"
+    current_month = now.strftime('%Y-%m')
+    log_path = SCRIPT_DIR / f"activity_{current_month}.log"
     ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
-    try:
-        with _log_lock:
+    key = (session_id, operation)
+    with _log_lock:
+        if current_month != _logged_month:
+            _logged_month = current_month
+            _logged_sids_ops.clear()
+        if key in _logged_sids_ops:
+            return
+        line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
+        try:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(line)
-    except OSError:
-        pass
+            _logged_sids_ops.add(key)
+        except OSError:
+            pass
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -5607,6 +5634,7 @@ def _ensure_background_threads():
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
 
+_init_log_dedup()
 _ensure_background_threads()
 
 if __name__ == "__main__":
