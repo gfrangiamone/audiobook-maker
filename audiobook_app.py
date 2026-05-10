@@ -2719,7 +2719,7 @@ def api_community_feedback_create():
     except (TypeError, ValueError):
         rating = 0
     if rating < 1 or rating > 5:
-        return jsonify({"error": "invalid rating"}), 400
+        return jsonify({"error": "missing_rating"}), 400
     name = _sanitize_text(body.get("name"), 80)
     comment = _sanitize_text(body.get("comment"), 1000)
     # rate limit

@@ -2749,13 +2749,18 @@ function goToAudioSettings(){goToStep(3)}
   async function submitFeedback(ev){
     ev.preventDefault();
     if(currentRating<1){
-      showMsg(tt('fb_invalid','Invalid data.'),'err');return;
+      showMsg(tt('fb_missing_rating'),'err');return;
     }
     const name=(document.getElementById('fbName')||{}).value||'';
     const comment=(document.getElementById('fbComment')||{}).value||'';
     const honeypot=(document.getElementById('fbHoneypot')||{}).value||'';
     const submitBtn=document.getElementById('fbSubmit');
-    if(submitBtn) submitBtn.disabled=true;
+    const originalBtnText=submitBtn?submitBtn.textContent:'';
+    if(submitBtn){
+      submitBtn.disabled=true;
+      submitBtn.classList.add('btn-loading');
+      submitBtn.textContent=tt('fb_sending','Sending...');
+    }
     try{
       const r=await fetch('/api/community/feedback',{
         method:'POST',
@@ -2768,6 +2773,9 @@ function goToAudioSettings(){goToStep(3)}
           const errData=await r.json();
           if(errData && errData.error==='inappropriate_content'){
             showMsg(tt('fb_inappropriate'),'err');return;
+          }
+          if(errData && errData.error==='missing_rating'){
+            showMsg(tt('fb_missing_rating'),'err');return;
           }
         }catch(e){}
         showMsg(tt('fb_invalid'),'err');return;
@@ -2789,7 +2797,11 @@ function goToAudioSettings(){goToStep(3)}
     }catch(e){
       showMsg(tt('fb_invalid'),'err');
     }finally{
-      if(submitBtn) submitBtn.disabled=false;
+      if(submitBtn){
+        submitBtn.disabled=false;
+        submitBtn.classList.remove('btn-loading');
+        submitBtn.textContent=originalBtnText;
+      }
     }
   }
   function init(){
