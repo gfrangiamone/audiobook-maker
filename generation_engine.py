@@ -1209,13 +1209,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
     try:
         job["progress_message"] = "Preparing..."
+        print(f"[{job_id}] Generation started: voice={voice}, rate={rate}, "
+              f"chapters={len(info.chapters)}, single_file={single_file}, "
+              f"output_format={output_format}, google={use_google}")
         plan = _plan_chunks(info)
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
+        print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
 
         # Genera file di silenzio da preporre a ogni capitolo
         silence_path = str(work_dir / "_silence.mp3")
-        _generate_silence_mp3(silence_path, CHAPTER_SILENCE_SEC)
+        silence_ok = _generate_silence_mp3(silence_path, CHAPTER_SILENCE_SEC)
+        print(f"[{job_id}] Silence file: {silence_path}, ok={silence_ok}")
 
         job["progress_current"] = 0
         job["progress_total"] = total_chunks
@@ -1291,6 +1296,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     failed_chunks += 1
                 all_parts.append(part_path)
 
+                # Log sul primo chunk per confermare che il TTS sta procedendo
+                if i == 0:
+                    print(f"[{job_id}] First chunk done: {part_path}, "
+                          f"size={os.path.getsize(part_path) if os.path.exists(part_path) else 0}, "
+                          f"failed={failed_chunks}")
+
                 # Aggiorna timing per capitolo M4B
                 duration = _get_audio_duration_ms(part_path)
                 if m4b_chapters:
@@ -1304,15 +1315,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if m4b_chapters:
                 m4b_chapters[-1]["end"] = current_ms
 
+            print(f"[{job_id}] All chunks processed: {total_chunks} total, {failed_chunks} failed")
             job["progress_message"] = "Merging audio..."
             safe_name = _safe_filename(info.title) or "audiolibro"
             final_mp3 = str(output_dir / f"{safe_name}.mp3")
             _concatenate_mp3(all_parts, final_mp3)
+            print(f"[{job_id}] MP3 merged: {final_mp3}, size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
 
             # Generate M4B too (skip for mp3-only format)
             if output_format != 'mp3':
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 job["progress_message"] = "Converting to M4B..."
+                print(f"[{job_id}] Starting M4B conversion: {final_m4b}")
                 # Cover hi-res: EPUB 1400x1400 → thumb esistente → branded fallback (PDF/TXT)
                 cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
                 valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
@@ -1402,9 +1416,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if result is False:
                     failed_chunks += 1
                 current_chapter_parts.append(part_path)
+
+                # Log sul primo chunk per confermare che il TTS sta procedendo
+                if i == 0:
+                    print(f"[{job_id}] First chunk done (multi-file): {part_path}, "
+                          f"size={os.path.getsize(part_path) if os.path.exists(part_path) else 0}, "
+                          f"failed={failed_chunks}")
+
                 job["processed_chars"] += block["chars"]
                 if os.path.exists(part_path):
                     job["bytes_generated"] += os.path.getsize(part_path)
+
+            print(f"[{job_id}] All chunks processed (multi-file): {total_chunks} total, {failed_chunks} failed, {len(mp3_files)} chapters assembled")
 
             if current_chapter_parts and current_chapter_idx >= 0:
                 ch = chapter_by_idx[current_chapter_idx]

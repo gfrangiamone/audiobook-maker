@@ -21,7 +21,11 @@ Nessuna dipendenza da altri moduli del progetto.
 
 import os
 import shutil
+import sys
 import uuid
+
+# Windows: evita che ffmpeg/ffprobe apra finestre console nascoste
+_SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
 
 def _check_audio_dependencies():
@@ -379,7 +383,7 @@ def _generate_silence_mp3(output_path, duration_sec=3):
              f"anullsrc=r=24000:cl=mono",
              "-t", str(duration_sec), "-c:a", "libmp3lame",
              "-b:a", "48k", "-q:a", "9", output_path],
-            capture_output=True, text=True
+            capture_output=True, text=True, **_SUBPROCESS_FLAGS
         )
         if result.returncode == 0 and os.path.exists(output_path):
             return True
@@ -408,7 +412,7 @@ def _concatenate_mp3(parts, output):
         result = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
              "-i", list_file, "-c", "copy", output],
-            capture_output=True, text=True
+            capture_output=True, text=True, **_SUBPROCESS_FLAGS
         )
         os.remove(list_file)
         if result.returncode == 0:
@@ -429,7 +433,7 @@ def _get_audio_duration_ms(file_path):
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, **_SUBPROCESS_FLAGS)
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip()) * 1000
     except Exception as e:
@@ -451,7 +455,7 @@ def _get_audio_bitrate(file_path):
             "ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, **_SUBPROCESS_FLAGS)
         if result.returncode == 0 and result.stdout.strip():
             bps = int(float(result.stdout.strip()))
             # Converti bps → kbps, clampa a range ragionevole [32, 320]
@@ -496,7 +500,7 @@ def _validate_m4b_file(file_path):
             "-of", "default=noprint_wrappers=1",
             file_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_SUBPROCESS_FLAGS)
         if result.returncode != 0:
             print(f"[_validate_m4b_file] ffprobe rc={result.returncode}: "
                   f"{result.stderr[-300:] if result.stderr else '(no output)'}")
@@ -781,7 +785,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
 
         # Tentativo 1: con cover art
         cmd = _build_cmd(use_cover=True)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
 
         # Fallback: se la conversione con cover fallisce, riprova senza cover
         if result.returncode != 0 and cover_path and os.path.exists(cover_path):
@@ -793,7 +797,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
                 except OSError:
                     pass
             cmd = _build_cmd(use_cover=False)
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
 
         if metadata_file and os.path.exists(metadata_file):
             os.remove(metadata_file)
@@ -865,7 +869,7 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
             r = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
-                capture_output=True, text=True
+                capture_output=True, text=True, **_SUBPROCESS_FLAGS
             )
             if r.returncode == 0 and r.stdout.strip():
                 return int(float(r.stdout.strip()))

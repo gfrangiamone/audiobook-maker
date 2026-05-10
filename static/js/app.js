@@ -2408,7 +2408,7 @@ function goToAudioSettings(){goToStep(3)}
     }catch(e){}
   }
   function fmtDate(ts){
-    try{const d=new Date(ts*1000);return d.toLocaleDateString();}catch(e){return '';}
+    try{const d=new Date(ts*1000);return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}
   }
   function tt(k,fb){
     const lang=document.documentElement.lang||'en';
@@ -2570,7 +2570,7 @@ function goToAudioSettings(){goToStep(3)}
     const dict=(typeof L!=='undefined')?L[lang]:null;
     return (dict&&dict[k])||fb||k;
   }
-  function fmtDate(ts){try{return new Date(ts*1000).toLocaleDateString();}catch(e){return '';}}
+  function fmtDate(ts){try{const d=new Date(ts*1000);return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}catch(e){return '';}}
   function loadMyFeedbacks(){
     try{const raw=localStorage.getItem(MY_FB_KEY);if(!raw) return [];
       const arr=JSON.parse(raw);return Array.isArray(arr)?arr:[];
