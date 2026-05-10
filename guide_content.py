@@ -15,6 +15,10 @@ _HREFLANG_MAP = {
     "it": "it", "en": "en", "fr": "fr",
     "es": "es", "de": "de", "zh": "zh-Hans",
 }
+_OG_LOCALE_MAP = {
+    "it": "it_IT", "en": "en_US", "fr": "fr_FR",
+    "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
+}
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 
 # ── Guide metadata per language ──────────────────────────────────────────────
@@ -2112,7 +2116,9 @@ def build_guide_html(
 
     meta = guide_meta_all.get(lang, guide_meta_all["en"])
     html_lang = _HREFLANG_MAP.get(lang, "en")
-    canonical = f"{base_url}/guide/{guide_id}/" if base_url else ""
+    # Self-canonical per language: matches the URL form indexed in sitemap.xml
+    # (?lang={lang}) so each language version is treated as a distinct page.
+    canonical = f"{base_url}/guide/{guide_id}/?lang={lang}" if base_url else ""
 
     # Hreflang tags
     hreflang_lines = []
@@ -2178,6 +2184,13 @@ def build_guide_html(
     # App home URL for internal links
     app_home = f"{base_url}/{lang}/" if base_url else "/"
 
+    # Open Graph locale + alternates
+    og_locale = _OG_LOCALE_MAP.get(lang, "en_US")
+    og_locale_alt_block = "\n".join(
+        f'<meta property="og:locale:alternate" content="{loc}">'
+        for loc in _OG_LOCALE_MAP.values() if loc != og_locale
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="{html_lang}">
 <head>
@@ -2202,6 +2215,8 @@ def build_guide_html(
 <meta property="og:image" content="{base_url}/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:locale" content="{og_locale}">
+{og_locale_alt_block}
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{meta["title"]}">
 <meta name="twitter:description" content="{meta["desc"]}">

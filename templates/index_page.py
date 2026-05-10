@@ -114,6 +114,15 @@ def build_html_template(
         )
         hreflang_block = "\n".join(hreflang_lines)
 
+        # Build og:locale:alternate tags (all locales except the current one)
+        current_locale = _OG_LOCALE_MAP.get(lang, "en_US")
+        og_locale_alt_lines = [
+            f'<meta property="og:locale:alternate" content="{loc}">'
+            for code, loc in _OG_LOCALE_MAP.items()
+            if loc != current_locale
+        ]
+        og_locale_alt_block = "\n".join(og_locale_alt_lines)
+
         replacements = {
             "__HTML_LANG__":     html_lang,
             "__LANG_CODE__":     lang,          # ← inietta INIT_LANG per il JS
@@ -127,14 +136,15 @@ def build_html_template(
             "__H1_TAGLINE__":    seo.get("tagline", ""),
             "__SUBTITLE__":      seo.get("subtitle", ""),
             "__SEO_OG_IMAGE__":  f"{base_url}/og-image.png" if base_url else "/og-image.png",
-            "__OG_LOCALE__":     _OG_LOCALE_MAP.get(lang, "en_US"),
+            "__OG_LOCALE__":     current_locale,
+            "__OG_LOCALE_ALT__": og_locale_alt_block,
             "__SEO_CRUMB__":     seo.get("crumb", "Online Converter"),
         }
         for placeholder, value in replacements.items():
             html = html.replace(placeholder, value)
 
     # ── 3. Inject FAQPage + HowTo + SoftwareApplication JSON-LD into <head> placeholders ──
-    from seo_content import get_schema_ld
+    from seo_content import get_schema_ld, build_seo_content_html
     faq_ld, howto_ld, app_ld = get_schema_ld(lang)
     html = html.replace("__SEO_FAQ_LD__", faq_ld)
     html = html.replace("__SEO_HOWTO_LD__", howto_ld)
@@ -162,7 +172,31 @@ def build_html_template(
             f'user-select:none">Updated: {updated_date}</div>'
         )
 
-    # Insert both blocks before </body>
-    html = html.replace("</body>", version_badge + updated_badge + "\n</body>", 1)
+    # ── 5b. Server-side prefill of i18n placeholders for SEO-critical text ──
+    # Crawlers and AI scrapers that don't run JS would otherwise see empty
+    # <span data-t="…">/<summary> nodes for the FAQ block and guide-card link
+    # labels. We mirror the relevant subset of the JS i18n into Python and
+    # fill the elements before serving. Client-side applyI18n() runs after
+    # and overwrites idempotently, so no behavior change for human visitors.
+    from templates.seo_i18n import prefill_seo_text
+    html = prefill_seo_text(html, lang)
+
+    # ── 6. Build the multilingual visible SEO content block ──
+    # `build_seo_content_html(lang)` returns a <section id="seoContent"> with
+    # one <article> per supported language (only the active one is display:block
+    # on first render; the rest are display:none and toggled by the lang
+    # switcher). All six articles are baked into the HTML so crawlers index
+    # localized H2/H3/FAQ content without executing JS.
+    seo_content_html = build_seo_content_html(lang)
+
+    # Insert SEO content + version/updated badges + reviews placeholder before
+    # </body>. __REVIEWS_HTML__ is left as a placeholder so the route can swap
+    # in fresh AggregateRating + Review[] markup per request (cheap; community
+    # feedback changes too often to bake into the startup template).
+    html = html.replace(
+        "</body>",
+        seo_content_html + "\n__REVIEWS_HTML__\n" + version_badge + updated_badge + "\n</body>",
+        1,
+    )
 
     return html

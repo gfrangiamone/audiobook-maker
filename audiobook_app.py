@@ -123,10 +123,11 @@ from payment import (
 )
 
 
-#  -  -  Import version and template builder  -  - 
+#  -  -  Import version and template builder  -  -
 from version import __version__, get_formatted_date
 from templates.index_page import build_html_template
 from guide_content import build_guide_html
+import seo_reviews
 
 #  -  -  Import favicon data (embedded, served via Flask routes for SEO)  -  - 
 from favicon_data import (
@@ -154,6 +155,8 @@ logging.getLogger("werkzeug").addFilter(HeartbeatFilter())
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
+# Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
 
 @app.after_request
 def add_security_headers(response):
@@ -173,11 +176,24 @@ def add_security_headers(response):
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
-    # Cache-Control for pre-rendered HTML pages (change only at deploy)
+    # Cache-Control:
+    #  - HTML: 1h cache + 1d stale-while-revalidate (lets CDN serve stale while
+    #    refreshing in the background; reduces TTFB on Google crawls)
+    #  - sitemap.xml / robots.txt / llms.txt: 1h cache (short — they may change
+    #    when guides/translations are added)
     ct = response.content_type or ''
-    if 'text/html' in ct and 'Cache-Control' not in response.headers:
-        response.headers['Cache-Control'] = 'public, max-age=3600'
-        response.headers['Last-Modified'] = _STARTUP_TIME.strftime('%a, %d %b %Y %H:%M:%S GMT')
+    path = (request.path or '') if request else ''
+    if 'Cache-Control' not in response.headers:
+        if 'text/html' in ct:
+            # 5-min cache + 1h stale-while-revalidate: lets new approved
+            # reviews surface in the embedded JSON-LD/visible block within a
+            # few minutes while keeping repeat-visit perf high.
+            response.headers['Cache-Control'] = (
+                'public, max-age=300, stale-while-revalidate=3600'
+            )
+            response.headers['Last-Modified'] = _STARTUP_TIME.strftime('%a, %d %b %Y %H:%M:%S GMT')
+        elif path in ('/sitemap.xml', '/robots.txt', '/llms.txt'):
+            response.headers['Cache-Control'] = 'public, max-age=3600'
     return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
@@ -612,6 +628,24 @@ def _stats_month_by_lang() -> dict:
 # Ogni URL ha HTML pre-renderizzato con meta tag, title, hreflang e canonical
 # corretti per quella lingua  -  indicizzabili da Google come pagine distinte.
 
+def _inject_reviews(template_html: str, lang: str) -> str:
+    """Swap __REVIEWS_LD__ + __REVIEWS_HTML__ placeholders with fresh
+    AggregateRating + Review markup built from the live feedback store.
+
+    Cost ≤ 1 ms per request. Falls back to empty replacements if the store
+    is unavailable so the page still renders cleanly."""
+    try:
+        rev = seo_reviews.build_reviews(lang)
+        ld = rev.get("ld_block", "") or ""
+        body = rev.get("html_block", "") or ""
+    except Exception as e:
+        print(f"[seo_reviews] inject failed: {e!s}")
+        ld, body = "", ""
+    return (template_html
+            .replace("__REVIEWS_LD__", ld)
+            .replace("__REVIEWS_HTML__", body))
+
+
 @app.route("/")
 def index():
     """Root: serve la lingua rilevata dall'Accept-Language, senza redirect.
@@ -620,34 +654,42 @@ def index():
     Questo garantisce che l'URL x-default negli hreflang sia auto-canonicalizzante.
     """
     lang = _detect_lang_from_request()
-    resp = app.make_response(HTML_ROOT_TEMPLATES.get(lang, HTML_ROOT_TEMPLATES["en"]))
+    base = HTML_ROOT_TEMPLATES.get(lang, HTML_ROOT_TEMPLATES["en"])
+    resp = app.make_response(_inject_reviews(base, lang))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Vary"] = "Accept-Language"
     return resp
 
+def _serve_lang(lang: str):
+    return (
+        _inject_reviews(HTML_TEMPLATES[lang], lang),
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
 @app.route("/it/")
 def index_it():
-    return HTML_TEMPLATES["it"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("it")
 
 @app.route("/en/")
 def index_en():
-    return HTML_TEMPLATES["en"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("en")
 
 @app.route("/fr/")
 def index_fr():
-    return HTML_TEMPLATES["fr"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("fr")
 
 @app.route("/es/")
 def index_es():
-    return HTML_TEMPLATES["es"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("es")
 
 @app.route("/de/")
 def index_de():
-    return HTML_TEMPLATES["de"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("de")
 
 @app.route("/zh/")
 def index_zh():
-    return HTML_TEMPLATES["zh"], 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _serve_lang("zh")
 
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
@@ -675,8 +717,34 @@ def sitemap():
             "Content-Type": "text/xml; charset=utf-8"
         }
 
-    from datetime import date
-    today = date.today().isoformat()
+    import os as _os
+    from datetime import date, datetime as _dt
+
+    def _file_lastmod(path: str) -> str:
+        """Return ISO date of file mtime, or today as a safe fallback."""
+        try:
+            return _dt.utcfromtimestamp(_os.path.getmtime(path)).strftime("%Y-%m-%d")
+        except OSError:
+            return date.today().isoformat()
+
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    # The home page reflects content from app + visible SEO + live user
+    # reviews; pick the most recent of all three so Google sees a real change
+    # signal whenever new feedback is approved.
+    candidates = [
+        _file_lastmod(_os.path.join(_here, "audiobook_app.py")),
+        _file_lastmod(_os.path.join(_here, "seo_content.py")),
+    ]
+    try:
+        latest_review_ts = seo_reviews.build_reviews("en").get("latest_ts", 0)
+        if latest_review_ts:
+            candidates.append(
+                _dt.utcfromtimestamp(latest_review_ts).strftime("%Y-%m-%d")
+            )
+    except Exception:
+        pass
+    home_lastmod = max(candidates)
+    guide_lastmod = _file_lastmod(_os.path.join(_here, "guide_content.py"))
 
     lang_hreflang_map = {
         "it": "it", "en": "en", "fr": "fr",
@@ -698,7 +766,7 @@ def sitemap():
     # Root (x-default)
     urls.append(f"""  <url>
     <loc>{BASE_URL}/</loc>
-    <lastmod>{today}</lastmod>
+    <lastmod>{home_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
 {alternates}
@@ -708,7 +776,7 @@ def sitemap():
     for lc in lang_hreflang_map:
         urls.append(f"""  <url>
     <loc>{BASE_URL}/{lc}/</loc>
-    <lastmod>{today}</lastmod>
+    <lastmod>{home_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
 {alternates}
@@ -731,7 +799,7 @@ def sitemap():
         for lc in lang_hreflang_map:
             urls.append(f"""  <url>
     <loc>{BASE_URL}/guide/{guide_id}/?lang={lc}</loc>
-    <lastmod>{today}</lastmod>
+    <lastmod>{guide_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}
@@ -740,7 +808,7 @@ def sitemap():
         # URL senza lang param (x-default, serve inglese)
         urls.append(f"""  <url>
     <loc>{BASE_URL}/guide/{guide_id}/</loc>
-    <lastmod>{today}</lastmod>
+    <lastmod>{guide_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
 {guide_alternates}
@@ -766,6 +834,60 @@ Disallow: /data/
 Disallow: /dl/
 Disallow: /logs
 Disallow: /admin/
+Disallow: /community/api/
+Disallow: /*?job=
+Disallow: /*?token=
+
+# Allow major AI/LLM crawlers to index content for citations
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+# Block aggressive scrapers / non-search crawlers
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
 {sitemap_line}
 {llms_line}
 """.strip()
@@ -778,6 +900,31 @@ Disallow: /admin/
 @app.route("/llms.txt")
 def llms_txt():
     base = BASE_URL or "https://audiobook-maker.com"
+    # Live "User feedback" block — empty string when no approved reviews exist,
+    # so the section silently degrades instead of emitting a stub. The block
+    # itself is fully formed Markdown bullets (headline + up to 3 dated
+    # excerpts) so AI assistants can cite specific reviews verbatim.
+    try:
+        _feedback_md = seo_reviews.llms_txt_block()
+    except Exception:
+        _feedback_md = ""
+    rating_block = f"\n## User feedback\n\n{_feedback_md}\n" if _feedback_md else ""
+
+    # Citations section — gives AI agents a stable list of canonical URLs
+    # they can attribute when quoting facts from this site. Each citation
+    # is a permanent endpoint (not an HTML page that may be redesigned).
+    citations_block = f"""
+## Citations
+
+When quoting facts from this site, cite one of:
+
+- [Audiobook Maker (canonical home)]({base}/): SoftwareApplication entity, primary URL.
+- [JSON-LD structured data](https://schema.org/SoftwareApplication): @type SoftwareApplication, applicationCategory MultimediaApplication, isAccessibleForFree true, license AGPL-3.0-or-later.
+- [Sitemap]({base}/sitemap.xml): Authoritative URL index with lastmod dates.
+- [GitHub source](https://github.com/gfrangiamone/audiobook-maker): Verifiable source code under AGPL-3.0-or-later.
+- [License (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html): Full license text.
+- [Reviews & ratings]({base}/#reviews): User-submitted reviews with AggregateRating schema (refreshes per request).
+"""
     body = f"""# Audiobook Maker
 
 > Free, open-source online converter that turns EPUB and PDF ebooks into MP3 and M4B audiobooks using 400+ neural AI voices (Microsoft Edge TTS) across 50+ languages. No signup, no usage limits, runs in the browser. Optional AI text optimization (DeepSeek LLM) for natural-sounding narration. AGPL-3.0 licensed.
@@ -794,7 +941,7 @@ def llms_txt():
 - Accessibility: WAI-ARIA landmarks, keyboard navigation, screen-reader compatible. Designed for users with dyslexia, low vision, blindness.
 - License: AGPL-3.0-or-later. Source on GitHub.
 - Author: Giuseppe Frangiamone.
-
+{rating_block}
 ## Application (homepage)
 
 - [Audiobook Maker — English]({base}/en/): Main app, English UI.
@@ -833,7 +980,7 @@ def llms_txt():
 - [AlternativeTo listing](https://alternativeto.net/software/audiobook-maker/): Community reviews and comparisons.
 - [Sitemap]({base}/sitemap.xml): Full URL index.
 - [Privacy & data handling]({base}/en/#privacy): Data retention, cookies, consent.
-
+{citations_block}
 ## Contact
 
 - Author: Giuseppe Frangiamone
@@ -5045,56 +5192,56 @@ def api_download_podcast(job_id):
 
 _SEO_DATA = {
     "it": {
-        "title":   "Audiobook Maker - EPUB/PDF a Audiolibro Gratis | MP3 e M4B con Capitoli",
+        "title":   "EPUB/PDF in Audiolibro Gratis MP3/M4B | Audiobook Maker",
         "tagline": "Convertitore Gratuito da EPUB e PDF in Audiolibro",
         "subtitle":"Converti i tuoi EPUB e PDF in audiolibri con voci neurali di alta qualità",
         "desc":    "Converti i tuoi ebook EPUB e PDF in audiolibri MP3 e M4B (con capitoli incorporati) gratis con voci AI naturali. Convertitore online gratuito text-to-speech: carica il tuo libro, scegli la voce e scarica l'audiolibro professionale. Nessuna installazione, funziona dal browser.",
-        "kw":      "convertitore epub m4b, creare m4b con capitoli, convertitore epub audiolibro, epub in audiolibro gratis, pdf in audiolibro, convertire pdf in audiolibro online, convertire ebook in audiolibro online, creare audiolibro da epub, creare audiolibro da pdf, text to speech italiano, da libro a audiolibro gratis, convertitore audiolibro online gratuito, epub to m4b, pdf to m4b, trasformare ebook in audio, sintesi vocale libro, audiolibro maker, convertire libro in audio gratis, ebook to audiobook italiano, tts italiano gratis, creare audiolibro gratis online, convertitore testo in voce, epub reader audio, da testo ad audiolibro, ascoltare ebook, libro parlato gratis, audiolibri per dislessia, audiolibri per ipovedenti, sintesi vocale per non vedenti, strumento lettura dislessia, tts accessibilita, ascoltare documenti, ascoltare pdf, audio per studio, alternativa elevenlabs gratis, alternativa play.ht gratis",
+        "kw":      "convertitore epub audiolibro, pdf in audiolibro, creare m4b con capitoli, audiolibro gratis online, text to speech italiano, sintesi vocale libro, ebook in audio, audiolibri per dislessia, audiolibri per ipovedenti, alternativa elevenlabs gratis, generatore podcast rss, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Convertitore online gratuito per trasformare ebook EPUB e PDF in audiolibri MP3 e M4B con capitoli e voci neurali TTS AI. Supporta 6 lingue, selezione capitoli e generazione feed podcast RSS.",
     },
     "en": {
-        "title":   "Audiobook Maker: Free EPUB/PDF to MP3 & M4B | Chapters & AI Voices",
+        "title":   "Free EPUB/PDF to MP3 & M4B Audiobook | Audiobook Maker",
         "tagline": "Free EPUB & PDF to Audiobook Converter",
         "subtitle":"Convert your EPUBs and PDFs into audiobooks with high-quality neural voices",
         "desc":    "Convert your EPUB and PDF ebooks to MP3 or M4B audiobooks (with embedded chapters) for free with natural AI voices. Free online text-to-speech converter: upload your book, choose a voice, and download your professional audiobook. No installation needed, works in your browser.",
-        "kw":      "epub to m4b converter, create m4b with chapters, pdf to m4b, epub to audiobook converter, pdf to audiobook converter, free epub to audiobook, free pdf to audiobook, convert ebook to audiobook online free, epub to mp3 converter, pdf to mp3 converter, text to speech audiobook, free audiobook maker online, ebook to audiobook converter, epub to audio, pdf to audio, online audiobook creator free, turn ebook into audiobook, tts audiobook generator, convert epub to mp3 free, convert pdf to mp3 free, free text to speech book reader, ai audiobook maker, epub audiobook converter online, ebook to mp3, listen to epub, epub reader with audio, book to audiobook converter free, create audiobook from epub, create audiobook from pdf, audiobook for dyslexia, text to speech for visually impaired, tts for learning disabilities, audio books for blind, screen reader alternative, dyslexia reading tool, adhd reading help, listen to PDF, convert textbook to audio, study aid audio, hands-free reading, accessible audiobook, elevenlabs alternative free, play.ht alternative free",
+        "kw":      "epub to audiobook converter, pdf to audiobook, m4b with chapters, free audiobook maker, text to speech audiobook, ai audiobook generator, ebook to mp3, audiobook for dyslexia, accessible audiobook, listen to PDF, elevenlabs alternative free, podcast rss generator",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Free online tool to convert EPUB and PDF ebooks into MP3 and M4B audiobooks (with chapters) using neural AI TTS voices. Supports 6 languages, chapter selection, and podcast RSS feed generation.",
     },
     "fr": {
-        "title":   "Audiobook Maker - EPUB/PDF en Livre Audio Gratuit | MP3 et M4B",
+        "title":   "EPUB/PDF en Livre Audio Gratuit MP3/M4B | Audiobook Maker",
         "tagline": "Convertisseur Gratuit EPUB & PDF en Livre Audio",
         "subtitle":"Convertissez vos EPUB et PDF en livres audio avec des voix neurali",
         "desc":    "Convertissez vos ebooks EPUB et PDF en livres audio MP3 et M4B (avec chapitres) gratuitement avec des voix IA naturelles. Convertisseur en ligne gratuit text-to-speech : téléchargez votre livre, choisissez une voix et téléchargez votre livre audio professionnel. Aucune installation, fonctionne dans le navigateur.",
-        "kw":      "convertisseur epub m4b, créer m4b avec chapitres, convertisseur epub livre audio, convertisseur pdf livre audio, epub en livre audio gratuit, pdf en livre audio gratuit, convertir ebook en livre audio en ligne, créer livre audio gratuit, text to speech français, convertisseur livre audio en ligne gratuit, epub vers m4b, pdf vers m4b, transformer ebook en audio, synthèse vocale livre, audiobook maker, convertir livre en audio gratuit, ebook to audiobook français, tts français gratuit, créer livre audio en ligne, convertisseur texte en voix, epub lecteur audio, de texte à livre audio, écouter ebook, livre parlé gratuit, epub en audio gratuit, pdf en audio gratuit, livre audio dyslexie, livre audio malvoyants, texte a parole handicap visuel, outil lecture dyslexie, tts accessibilite, ecouter documents, ecouter pdf, alternative elevenlabs gratuit, alternative play.ht gratuit",
+        "kw":      "convertisseur epub livre audio, pdf en livre audio, créer m4b avec chapitres, livre audio gratuit en ligne, text to speech français, synthèse vocale livre, ebook en audio, livre audio dyslexie, livre audio malvoyants, alternative elevenlabs gratuit, générateur podcast rss, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Outil en ligne gratuit pour convertir des ebooks EPUB e PDF en livres audio MP3 avec des voix neuronales TTS IA. Prend en charge 6 langues et la génération de flux RSS podcast.",
     },
     "es": {
-        "title":   "Audiobook Maker - EPUB/PDF a Audiolibro Gratis | MP3 y M4B con Capítulos",
+        "title":   "EPUB/PDF a Audiolibro Gratis MP3/M4B | Audiobook Maker",
         "tagline": "Convertidor Gratuito de EPUB y PDF a Audiolibro",
         "subtitle":"Convierte tus EPUB y PDF en audiolibros con voces neurales de alta calidad",
         "desc":    "Convierte tus ebooks EPUB y PDF en audiolibros MP3 y M4B (con capítulos incorporados) gratis con voces IA naturales. Convertidor online gratuito text-to-speech: sube tu libro, elige una voz y descarga tu audiolibro profesional. Sin instalación, funciona desde el navegador.",
-        "kw":      "convertidor epub m4b, crear m4b con capítulos, convertidor epub audiolibro, convertidor pdf audiolibro, epub a audiolibro gratis, pdf a audiolibro gratis, convertir ebook a audiolibro online, crear audiolibro gratis, text to speech español, convertidor audiolibro online gratuito, epub a m4b, pdf a m4b, transformar ebook en audio, síntesis de voz libro, audiobook maker, convertir libro a audio gratis, ebook to audiobook español, tts español gratis, crear audiolibro en línea gratis, convertidor texto a voz, lector epub con audio, de texto a audiolibro, escuchar ebook, libro hablado gratis, epub a audio gratis, pdf a audio gratis, audiolibro para dislexia, audiolibro para discapacidad visual, texto a voz para ciegos, tts accesibilidad, escuchar documentos, escuchar pdf, alternativa elevenlabs gratis, alternativa play.ht gratis",
+        "kw":      "convertidor epub audiolibro, pdf a audiolibro, crear m4b con capítulos, audiolibro gratis online, text to speech español, síntesis de voz libro, ebook en audio, audiolibro para dislexia, audiolibro para ciegos, alternativa elevenlabs gratis, generador podcast rss, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Herramienta online gratuita para convertir ebooks EPUB y PDF en audiolibros MP3 con voces neuronales TTS IA. Soporta 6 idiomas y generación de feed podcast RSS.",
     },
     "de": {
-        "title":   "Audiobook Maker: EPUB/PDF zu Hörbuch Gratis | MP3 & M4B mit Kapiteln",
+        "title":   "EPUB/PDF zu Hörbuch Gratis MP3/M4B | Audiobook Maker",
         "tagline": "Kostenloser EPUB- & PDF-zu-Hörbuch-Konverter",
         "subtitle":"Konvertieren Sie EPUBs und PDFs in Hörbücher mit neuronalen Stimmen",
         "desc":    "Konvertieren Sie Ihre EPUB- und PDF-E-Books kostenlos in MP3- und M4B-Hörbücher (mit eingebetteten Kapiteln) mit natürlichen KI-Stimmen. Kostenloser Online Text-to-Speech Konverter: Laden Sie Ihr Buch hoch, wählen Sie eine Stimme und laden Sie Ihr professionelles Hörbuch herunter. Keine Installation nötig, funktioniert im Browser.",
-        "kw":      "epub zu m4b konverter, m4b mit kapiteln erstellen, epub zu hörbuch konverter, pdf zu hörbuch konverter, epub in hörbuch umwandeln kostenlos, pdf in hörbuch umwandeln kostenlos, ebook in hörbuch umwandeln online, hörbuch erstellen kostenlos, text to speech deutsch, hörbuch konverter online kostenlos, epub zu m4b, pdf zu m4b, ebook in audio umwandeln, sprachsynthese buch, audiobook maker, buch in hörbuch umwandeln kostenlos, ebook to audiobook deutsch, tts deutsch kostenlos, hörbuch erstellen online gratis, text in sprache konverter, epub vorlesen lassen, text zu hörbuch, ebook anhören, hörbuch maker kostenlos, epub zu audio kostenlos, pdf zu audio kostenlos, horbuch fur legasthenie, horbuch fur sehbehinderte, text zu sprache behinderung, barrierefreies horbuch, dokumente anhoren, pdf anhoren, elevenlabs alternative kostenlos, play.ht alternative kostenlos",
+        "kw":      "epub zu hörbuch konverter, pdf zu hörbuch, m4b mit kapiteln erstellen, hörbuch erstellen kostenlos, text to speech deutsch, sprachsynthese buch, ebook in audio umwandeln, hörbuch für legasthenie, barrierefreies hörbuch, elevenlabs alternative kostenlos, podcast rss generator, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "Kostenloses Online-Tool zum Konvertieren von EPUB- und PDF-E-Books in MP3-Hörbücher mit neuronalen KI-TTS-Stimmen. Unterstützt 6 Sprachen und Podcast-RSS-Feed-Generierung.",
     },
     "zh": {
-        "title":   "Audiobook Maker - 免费 EPUB/PDF 转 MP3 及 M4B 有声书 | 支持章节和AI语音",
+        "title":   "免费 EPUB/PDF 转 MP3/M4B 有声书 | Audiobook Maker",
         "tagline": "免费EPUB和PDF转有声书转换器",
         "subtitle":"使用高品质神经语音将EPUB和PDF转换为有声读物",
         "desc":    "在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书转换为高质量 MP3 或 M4B（含章节）有声读物。由 AI 神经语音驱动。无需安装，支持章节选择和专业 M4B 格式输出。",
-        "kw":      "epub转m4b, m4b有声书制作, epub转有声书, pdf转有声书, 免费epub转有声书, 免费pdf转有声书, 在线电子书转有声书, epub转mp3, pdf转mp3, 文字转语音有声书, 在线有声书制作, 电子书转有声书转换器, epub音频, pdf音频, 在线有声书制作工具, 将电子书转换为有声书, tts有声书生成器, 免费epub转mp3, 免费pdf转mp3, 免费文字转语音阅读器, ai有声书制作, epub有声书转换器, 电子书转mp3, 听epub, 带音频的epub阅读器, 免费图书转有声书转换器, 阅读障碍有声书, 盲人有声书, 视障文字转语音, 无障碍有声书, 听文档, 听PDF, elevenlabs替代品, play.ht替代品",
+        "kw":      "epub转有声书, pdf转有声书, m4b章节制作, 免费有声书制作, 文字转语音有声书, 电子书转mp3, ai语音朗读, 阅读障碍有声书, 无障碍有声书, elevenlabs替代品, 播客rss生成器, audiobook maker",
         "ld_name": "Audiobook Maker",
         "ld_desc": "免费在线工具，利用神经网络AI文字转语音技术将EPUB和PDF电子书转换为MP3有声书。支持6种语言、章节选择和播客RSS订阅生成。",
     },

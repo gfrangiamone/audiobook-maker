@@ -59,6 +59,7 @@ __BAIDU_TONGJI__
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/png">
 <meta property="og:locale" content="__OG_LOCALE__">
+__OG_LOCALE_ALT__
 <link rel="canonical" href="__SEO_CANONICAL__">
 <!-- hreflang: versioni per lingua — indicizza l'app in 6 lingue su Google -->
 __SEO_HREFLANG__
@@ -71,55 +72,24 @@ __SEO_HREFLANG__
 <meta name="twitter:image" content="__SEO_OG_IMAGE__">
 <!-- JSON-LD Structured Data: SoftwareApplication -->
 <script type="application/ld+json" id="jsonLd">__SEO_APP_LD__</script>
-<!-- JSON-LD: BreadcrumbList (SEO Navigation) -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "BreadcrumbList",
-  "itemListElement": [{
-    "@type": "ListItem",
-    "position": 1,
-    "name": "Audiobook Maker",
-    "item": "https://audiobook-maker.com"
-  }, {
-    "@type": "ListItem",
-    "position": 2,
-    "name": "__SEO_CRUMB__",
-    "item": "__SEO_CANONICAL__"
-  }]
-}
-</script>
+<!-- BreadcrumbList is embedded inline as `breadcrumb` on the WebPage block
+     below — Google deduplicates, but emitting it twice wastes bytes and
+     occasionally trips schema validators. -->
 <!-- JSON-LD: FAQPage (server-injected per language) -->
 <script type="application/ld+json" id="seoFaqLd">__SEO_FAQ_LD__</script>
 <!-- JSON-LD: HowTo (server-injected per language) -->
 <script type="application/ld+json" id="seoHowtoLd">__SEO_HOWTO_LD__</script>
-<!-- JSON-LD: WebPage -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "WebPage",
-  "name": "__SEO_TITLE__",
-  "description": "__SEO_DESC__",
-  "url": "__SEO_CANONICAL__",
-  "inLanguage": "__HTML_LANG__",
-  "mainEntity": {
-    "@type": "SoftwareApplication",
-    "name": "Audiobook Maker",
-    "applicationCategory": "MultimediaApplication",
-    "operatingSystem": "Web",
-    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"},
-    "description": "__SEO_LD_DESC__"
-  },
-  "accessibilityFeature": ["displayTransformability", "audioDescription"],
-  "accessMode": ["textual", "visual", "auditory"],
-  "accessModeSufficient": ["auditory"],
-  "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Audiobook Maker", "item": "https://audiobook-maker.com"}, {"@type": "ListItem", "position": 2, "name": "__SEO_CRUMB__", "item": "__SEO_CANONICAL__"}]}
-}
-</script>
+<!-- WebPage (incl. Speakable + Accessibility + Breadcrumb + dateModified)
+     is part of the JSON-LD graph injected at the top of <head> via the
+     SoftwareApplication script — single source of truth, no duplicate. -->
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=DM+Serif+Display&display=swap" rel="stylesheet"></noscript>
+<!-- AggregateRating + Review JSON-LD (injected per-request from real user feedback) -->
+__REVIEWS_LD__
 <link rel="stylesheet" href="/static/css/style.css?v=__APP_VERSION__">
 <script>var INIT_LANG="__LANG_CODE__";</script>
 </head>
@@ -254,7 +224,7 @@ __SEO_HREFLANG__
       <div class="book-info-bar">
         <div class="cover">
           <span class="no-cover" id="coverPlaceholder">&#x1F4D6;</span>
-          <img id="bkCover" src="" alt="Copertina" style="display:none">
+          <img id="bkCover" src="" alt="Book cover" style="display:none">
         </div>
         <div class="meta">
           <h3 id="bkT"></h3>

@@ -376,10 +376,10 @@ _CONTENT = {
             "Téléchargez votre fichier EPUB, PDF ou TXT — le convertisseur prend en charge les ebooks de toute taille",
             "Choisissez la voix IA et la langue de narration parmi plus de 50 options",
             "Sélectionnez les chapitres à convertir ou convertissez le livre entier",
-            "Op tionnellement, optimisez le texte via IA pour une lecture plus naturelle (développement des acronymes, nombres, dates, ajout de pauses et suppression des artefacts typographiques)",
+            "Optionnellement, optimisez le texte via IA pour une lecture plus naturelle (développement des acronymes, nombres, dates, ajout de pauses et suppression des artefacts typographiques)",
             "Lancez la conversion text-to-speech en un clic et attendez le traitement",
             "Pour les conversions longues, entrez votre email pour recevoir une notification avec un lien de téléchargement quand le livre audio est prêt — vous pouvez fermer le navigateur et revenir plus tard",
-            "Téléchargez votre livre audio au format MP3 ou M4B (con chapitres) prêt à écouter sur tout appareil",
+            "Téléchargez votre livre audio au format MP3 ou M4B (avec chapitres) prêt à écouter sur tout appareil",
             "Générez un flux RSS podcast pour écouter les chapitres dans votre app préférée",
         ],
         "faq_heading": "Questions Fréquentes — Convertisseur EPUB/PDF Livre Audio",
@@ -438,7 +438,7 @@ _CONTENT = {
              "est un livre audio nettement plus agréable et professionnel, comparable à une "
              "narration soignée. Vous pouvez aussi télécharger le projet optimisé au format .abm "
              "pour le réutiliser, le modifier ou générer de nouvelles versions audio avec des "
-             "voix différentes sans relancer l'optimizzazione."),
+             "voix différentes sans relancer l'optimisation."),
         ],
         "privacy_heading": "Confidentialité et Sécurité",
         "privacy": (
@@ -457,7 +457,7 @@ _CONTENT = {
             "Les fichiers audio générés peuvent être lus sur n'importe quel appareil, "
             "offrant une expérience de lecture accessible et sans barrières."
         ),
-        "guides_heading": "Guides Gratuites",
+        "guides_heading": "Guides Gratuits",
         "guides_html": (
             '<ul>'
             '<li><a href="/guide/epub-to-audiobook/?lang=fr">Comment Convertir EPUB en Livre Audio — Guide Complet</a></li>'
@@ -888,9 +888,9 @@ _VOICE_TABLE = [
 _TABLE_HEADERS = {
     "it": ("Lingua", "Voci AI", "Tecnologia"),
     "en": ("Language", "AI Voices", "Technology"),
-    "fr": ("Langue", "Voix IA", "Tecnologia"),
-    "es": ("Idioma", "Voces IA", "Tecnologia"),
-    "de": ("Sprache", "KI-Stimmen", "Tecnologia"),
+    "fr": ("Langue", "Voix IA", "Technologie"),
+    "es": ("Idioma", "Voces IA", "Tecnología"),
+    "de": ("Sprache", "KI-Stimmen", "Technologie"),
     "zh": ("语言", "AI语音", "技术"),
 }
 
@@ -916,7 +916,7 @@ _HOWTO_STEPS = {
         ("Téléchargez votre ebook", "Téléchargez votre fichier EPUB, PDF ou TXT sur Audiobook Maker"),
         ("Choisissez une voix", "Sélectionnez une voix IA et la langue de narration parmi les options disponibles"),
         ("Sélectionnez les chapitres", "Choisissez les chapitres à convertir ou sélectionnez le livre entier"),
-        ("Lancez la conversion", "Clicquez sur Générer et attendez le traitement text-to-speech. Pour les longues conversions, vous pouvez entrer votre email pour être notifié quand c'est prêt"),
+        ("Lancez la conversion", "Cliquez sur Générer et attendez le traitement text-to-speech. Pour les longues conversions, vous pouvez entrer votre email pour être notifié quand c'est prêt"),
         ("Téléchargez le livre audio", "Téléchargez votre livre audio en MP3 depuis le navigateur ou via le lien email, ou générez un flux RSS podcast"),
     ],
     "es": [
@@ -983,8 +983,8 @@ _LD_FEATURES = {
         "Plus de 400 voix IA neuronales (Microsoft Edge TTS)",
         "Plus de 50 langues supportées",
         "Sélection et aperçu des chapitres",
-        "Génération di flux RSS podcast",
-        "Notification par e-mail per les conversions longues",
+        "Génération de flux RSS podcast",
+        "Notification par e-mail pour les conversions longues",
         "Traitement par lots",
         "Aucune inscription requise",
         "Aucune limite d'utilisation",
@@ -1322,12 +1322,17 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
     combined_ld_json contiene SoftwareApplication + Organization + Review in un
     array JSON-LD (graph), iniettato nel <head>.
     """
-    _article, faq_ld, howto_ld = _build_seo_block(lang)
+    article_html, faq_ld_raw, howto_ld_raw = _build_seo_block(lang)
 
     features = _LD_FEATURES.get(lang, _LD_FEATURES["en"])
     c = _CONTENT.get(lang, _CONTENT["en"])
 
     base_url = "https://audiobook-maker.com"
+
+    # ISO-8601 dateModified — refreshed at startup. Tells crawlers and AI
+    # assistants when the page content was last revised, which boosts
+    # freshness signals in Google AI Overview / Perplexity citations.
+    iso_modified = datetime.now().strftime("%Y-%m-%d")
 
     # SoftwareApplication
     software_app_ld = {
@@ -1345,6 +1350,7 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         "featureList": features,
         "isAccessibleForFree": True,
         "screenshot": f"{base_url}/og-image.png",
+        "dateModified": iso_modified,
         "author": {
             "@type": "Person",
             "name": "Giuseppe Frangiamone",
@@ -1377,18 +1383,78 @@ def get_schema_ld(lang: str) -> tuple[str, str, str]:
         ],
     }
 
-    # WebSite (Sitelinks Search Box)
+    # WebSite (Sitelinks Search Box). potentialAction points at the converter
+    # itself — schema.org allows a `UseAction` to represent the primary
+    # action a user takes on the page, which Google AI Overview uses to
+    # surface "use" / "try" CTAs. We don't claim a SearchAction because the
+    # site has no on-site search.
     website_ld = {
         "@context": "https://schema.org",
         "@type": "WebSite",
         "name": "Audiobook Maker",
+        "alternateName": "Audiobook Maker Online",
         "url": base_url,
         "description": c["direct_answer"],
         "inLanguage": ["it", "en", "fr", "es", "de", "zh-Hans"],
+        "publisher": {"@type": "Organization", "name": "Audiobook Maker", "url": base_url},
+        "potentialAction": {
+            "@type": "UseAction",
+            "name": "Convert ebook to audiobook",
+            "target": f"{base_url}/{lang}/",
+        },
     }
 
+    # WebPage — single canonical block for this page. Combines:
+    #   • Speakable (voice-first surfaces)
+    #   • Accessibility metadata (a11y rich-results)
+    #   • Breadcrumb (avoids the second top-level BreadcrumbList block)
+    #   • dateModified for freshness signals
+    webpage_ld = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "url": f"{base_url}/{lang}/",
+        "name": c.get("heading", "Audiobook Maker"),
+        "description": c["direct_answer"],
+        "inLanguage": lang if lang != "zh" else "zh-Hans",
+        "isPartOf": {"@type": "WebSite", "url": base_url, "name": "Audiobook Maker"},
+        "primaryImageOfPage": f"{base_url}/og-image.png",
+        "datePublished": "2024-01-01",
+        "dateModified": iso_modified,
+        "accessibilityFeature": ["displayTransformability", "audioDescription"],
+        "accessMode": ["textual", "visual", "auditory"],
+        "accessModeSufficient": ["auditory"],
+        "breadcrumb": {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {"@type": "ListItem", "position": 1, "name": "Audiobook Maker", "item": base_url},
+                {"@type": "ListItem", "position": 2,
+                 "name": c.get("crumb", "Online Converter"),
+                 "item": f"{base_url}/{lang}/"},
+            ],
+        },
+        "speakable": {
+            "@type": "SpeakableSpecification",
+            "cssSelector": ["h1", "h2", ".seo-summary"],
+        },
+    }
+
+    # Inject dateModified into FAQPage + HowTo (parse the strings produced by
+    # _build_seo_block, mutate, re-serialize). Cheap — these dicts are small.
+    try:
+        faq_obj = json.loads(faq_ld_raw)
+        faq_obj["dateModified"] = iso_modified
+        faq_ld = json.dumps(faq_obj, ensure_ascii=False)
+    except Exception:
+        faq_ld = faq_ld_raw
+    try:
+        howto_obj = json.loads(howto_ld_raw)
+        howto_obj["dateModified"] = iso_modified
+        howto_ld = json.dumps(howto_obj, ensure_ascii=False)
+    except Exception:
+        howto_ld = howto_ld_raw
+
     # Combine into a JSON-LD graph (array of objects)
-    combined = [software_app_ld, organization_ld, website_ld]
+    combined = [software_app_ld, organization_ld, website_ld, webpage_ld]
     combined_ld_json = json.dumps(combined, ensure_ascii=False)
 
     return faq_ld, howto_ld, combined_ld_json
