@@ -80,6 +80,7 @@ import payment
 import generation_engine
 import community_store
 import community_translator
+import community_moderator
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -2579,7 +2580,7 @@ def _feedback_check_rate(ip_hash: str) -> bool:
         return True
 
 
-def _notify_admin_new_feedback(item: dict, comment_it: str | None = None) -> None:
+def _notify_admin_new_feedback(item: dict, comment_it: str | None = None, unvalidated: bool = False) -> None:
     """Throttled (30 min) email all'admin per nuovo feedback.
 
     Se ``comment_it`` è fornito, viene usato come corpo del commento
@@ -2596,6 +2597,7 @@ def _notify_admin_new_feedback(item: dict, comment_it: str | None = None) -> Non
         _feedback_email_last = now
     try:
         rating = int(item.get("rating", 0))
+        unvalidated_flag = unvalidated or bool(item.get("moderation_unvalidated", False))
         stars = "★" * rating + "☆" * (5 - rating)
         name = html_mod.escape(item.get("name") or "Anonimo")
         original = item.get("comment") or ""
@@ -2610,7 +2612,16 @@ def _notify_admin_new_feedback(item: dict, comment_it: str | None = None) -> Non
                 f"<p style='border-left:3px solid #ccc;padding-left:8px;color:#666'>"
                 f"{html_mod.escape(original)}</p>"
             )
+        unvalidated_banner = ""
+        if unvalidated_flag:
+            unvalidated_banner = (
+                "<p style='background:#fff3cd;border:1px solid #ffc107;padding:8px 12px;"
+                "border-radius:4px;color:#856404;margin-bottom:12px'>"
+                "<b>Attenzione:</b> questo commento non è stato validato dal sistema LLM."
+                "</p>"
+            )
         body = (
+            f"{unvalidated_banner}"
             f"<p><b>Nuovo feedback ricevuto:</b></p>"
             f"<p>Voto: <span style='font-size:1.2em'>{stars}</span> ({rating}/5)</p>"
             f"<p>Nome: {name}</p>"
@@ -2619,7 +2630,10 @@ def _notify_admin_new_feedback(item: dict, comment_it: str | None = None) -> Non
             f"{original_block}"
             f"<p style='font-size:.85em;color:#888'>ID: {item.get('id','')}</p>"
         )
-        email_service._send_email(ADMIN_EMAIL, f"[ABM] Nuovo feedback: {rating}★", body)
+        subject = f"[ABM] Nuovo feedback: {rating}★"
+        if unvalidated_flag:
+            subject = "[NON VALIDATO — LLM offline] " + subject
+        email_service._send_email(ADMIN_EMAIL, subject, body)
     except Exception as e:
         print(f"[feedback] admin email failed: {e!s}")
 
@@ -2688,7 +2702,7 @@ def _process_new_feedback(item: dict) -> None:
             comment_it = (patch["comment_i18n"].get("it") or "").strip() or None
     # admin email — always, throttled internally
     try:
-        _notify_admin_new_feedback(item, comment_it=comment_it)
+        _notify_admin_new_feedback(item, comment_it=comment_it, unvalidated=item.get("moderation_unvalidated", False))
     except Exception as e:
         print(f"[feedback] admin notify failed: {e!s}")
 
@@ -2714,6 +2728,10 @@ def api_community_feedback_create():
     ip_hash = _hash_ip(ip)
     if not _feedback_check_rate(ip_hash):
         return jsonify({"error": "rate_limit"}), 429
+    # moderation gate
+    mod_result = community_moderator.validate(name, comment)
+    if not mod_result.get("approved", True):
+        return jsonify({"error": "inappropriate_content"}), 400
     delete_token = secrets.token_urlsafe(24)
     item = community_store.feedback().add({
         "rating": rating,
@@ -2721,6 +2739,7 @@ def api_community_feedback_create():
         "comment": comment,
         "ip_hash": ip_hash,
         "delete_token": delete_token,
+        "moderation_unvalidated": mod_result.get("unvalidated", False),
     })
     # background: translate comment (if any) then email admin with IT version
     threading.Thread(target=_process_new_feedback, args=(item,), daemon=True).start()
