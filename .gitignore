@@ -19,6 +19,8 @@ backup/
 .aider.tags.cache.v4/
 .pytest_cache/
 venv/
+node_modules/
+backup/
 public/
 CLAUDE.md
 GEMINI.md
