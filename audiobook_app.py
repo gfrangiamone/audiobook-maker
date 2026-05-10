@@ -3730,9 +3730,6 @@ def api_register_email():
     if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
         return jsonify({"error": "Invalid email address"}), 400
 
-    if download_type == "podcast" and not base_url:
-        return jsonify({"error": "base_url required for podcast"}), 400
-
     if not _smtp_available():
         return jsonify({"error": "Email service not configured on this server"}), 503
 
