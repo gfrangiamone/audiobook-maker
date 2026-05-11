@@ -3612,21 +3612,22 @@ def api_export_abm(job_id):
     buf = io.BytesIO()
     safe_title = _safe_filename(info.title) or "project"
 
-    # Respect chapter subset if optimization was scoped
+    # Align with _generate_optimized_abm: prefer cumulative optimized_chapters,
+    # fall back to current selected_chapters, else include all.
+    optimized = job.get("optimized_chapters")
     selected = job.get("selected_chapters")
-    selected_set = set(selected) if selected else None
-    print(f"[{job_id}] EXPORT_ABM selected_chapters from job: {selected!r}")
-    print(f"[{job_id}] EXPORT_ABM selected_set: {selected_set!r}")
-    print(f"[{job_id}] EXPORT_ABM info.chapters count: {len(info.chapters)}")
-    for ch in info.chapters:
-        print(f"[{job_id}] EXPORT_ABM chapter index={ch.index!r} type={type(ch.index).__name__}")
+    if optimized:
+        chapter_set = set(optimized)
+    elif selected:
+        chapter_set = set(selected)
+    else:
+        chapter_set = None
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # Build chapter files and manifest entries
         chapters_manifest = []
         for ch in info.chapters:
-            if selected_set and ch.index not in selected_set:
-                print(f"[{job_id}] EXPORT_ABM SKIP chapter {ch.index}")
+            if chapter_set and ch.index not in chapter_set:
                 continue
             ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
