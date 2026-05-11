@@ -510,6 +510,15 @@ __REVIEWS_LD__
             <button class="btn btn-outline btn-lg" id="btnA" style="display:none">&#x1F4DD;&#xFE0F; <span data-t="btn_dl_abm"></span></button>
             <button class="btn btn-outline btn-lg" id="btnP" style="display:none">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
           </div>
+          <div class="al al-w dl-last-notice" id="dlLastNotice" role="status" aria-live="polite" style="display:none;margin-top:18px;text-align:left">
+            <div style="display:flex;align-items:flex-start;gap:10px">
+              <span aria-hidden="true" style="font-size:1.2rem;line-height:1;flex-shrink:0">&#x26A0;&#xFE0F;</span>
+              <div>
+                <strong data-t="dl_last_title"></strong>
+                <div data-t="dl_last_body" style="margin-top:4px;opacity:.92"></div>
+              </div>
+            </div>
+          </div>
           <div class="expiry" id="expiryRow" style="display:none">
             <span class="dot" aria-hidden="true"></span>
             <span id="expiryInfo"></span>
@@ -675,6 +684,19 @@ __REVIEWS_LD__
         <button class="modal-close" id="aboutClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="aboutBody"></div>
+    </div>
+  </div>
+
+  <!-- JOB ALREADY RUNNING MODAL (live progress %) -->
+  <div class="modal-overlay" id="jobRunningModal" role="dialog" aria-modal="true" aria-labelledby="jobRunningTitle">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-head">
+        <h2 id="jobRunningTitle" data-t="job_already_running_title"></h2>
+        <button class="modal-close" id="jobRunningClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="jobRunningMsg" style="line-height:1.5"></div>
+      </div>
     </div>
   </div>
 
