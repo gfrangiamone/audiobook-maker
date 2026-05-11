@@ -53,6 +53,23 @@ def _smtp_available():
     return bool(SMTP_HOST and SMTP_USER and SMTP_PASS and BASE_URL)
 
 
+def _sanitize_header(value, max_len=200):
+    """Rimuove CR/LF da un valore di header per impedire SMTP header injection.
+
+    Sec: alcuni chiamanti interpolano metadati controllati dall'utente
+    (es. titolo EPUB nel Subject). Un newline non escapato consentirebbe di iniettare
+    header come Bcc:, From:, ecc. usando il dominio mittente fidato (SPF/DKIM OK)
+    per inviare phishing massivo.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    # Rimuove ogni CR/LF e tabulazione iniziale (folding indicator)
+    s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    # Tronca a una lunghezza ragionevole per evitare header gigante
+    return s[:max_len].strip()
+
+
 def _send_email(to_addr, subject, html_body):
     """Send an HTML email via SMTP. Returns True on success."""
     import smtplib
@@ -63,10 +80,20 @@ def _send_email(to_addr, subject, html_body):
         print(f"[email] SMTP not configured, cannot send to {to_addr}")
         return False
 
+    # Sec: validazione difensiva degli header (CRLF injection)
+    to_addr_clean = _sanitize_header(to_addr, max_len=320)
+    subject_clean = _sanitize_header(subject, max_len=200)
+    # Validazione di base sull'indirizzo destinatario (i chiamanti già filtrano con regex,
+    # ma applichiamo un check di sicurezza centrale).
+    import re as _re_email
+    if not _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', to_addr_clean):
+        print(f"[email] Refused invalid recipient: {to_addr_clean!r}")
+        return False
+
     msg = MIMEMultipart("alternative")
     msg["From"] = SMTP_FROM
-    msg["To"] = to_addr
-    msg["Subject"] = subject
+    msg["To"] = to_addr_clean
+    msg["Subject"] = subject_clean
     # Disable TurboSMTP link/open tracking to avoid redirect issues
     msg["X-TurboSMTP-Tracking"] = "0"
     msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
@@ -77,7 +104,7 @@ def _send_email(to_addr, subject, html_body):
             # SSL diretto (porta 465)
             with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
                 server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr, msg.as_string())
+                server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
         else:
             # STARTTLS (porta 587) o plain (porta 25)
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
@@ -86,11 +113,11 @@ def _send_email(to_addr, subject, html_body):
                     server.starttls()
                     server.ehlo()
                 server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr, msg.as_string())
-        print(f"[email] Sent to {to_addr}: {subject}")
+                server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
+        print(f"[email] Sent to {to_addr_clean}: {subject_clean}")
         return True
     except Exception as e:
-        print(f"[email] Failed to send to {to_addr}: {e}")
+        print(f"[email] Failed to send to {to_addr_clean}: {e}")
         return False
 
 

@@ -276,6 +276,33 @@ def _get_client_id():
     return request.cookies.get(_CLIENT_COOKIE_NAME, "")
 
 
+def _new_job_id():
+    """Generate a high-entropy job identifier (128 bit, URL-safe)."""
+    import secrets as _secrets
+    return _secrets.token_urlsafe(16)
+
+
+def _check_job_owner(job_id):
+    """Validate that the calling client owns the requested job.
+
+    Returns (job, error_response, status_code). On success error_response is None
+    and the caller may use `job`. On failure caller must `return error_response, status_code`.
+
+    Ownership rule: the cookie-stored client_id must match jobs[job_id]['client_id'].
+    Jobs predating this enforcement (no client_id stored) are allowed through to preserve
+    backward compatibility, but new jobs always store it at creation.
+    """
+    if job_id not in jobs:
+        return None, jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]
+    owner = job.get("client_id", "")
+    if owner:
+        caller = _get_client_id()
+        if not caller or caller != owner:
+            return None, jsonify({"error": "Forbidden"}), 403
+    return job, None, 0
+
+
 def _get_client_ip():
     """Return client IP address, respecting reverse proxy headers."""
     # X-Forwarded-For: client, proxy1, proxy2  →  take the first
@@ -2174,14 +2201,21 @@ input[type=password]{{width:100%;padding:.625rem;border:1px solid #d1d5db;border
 .hint{{font-size:.75rem;color:#6b7280;margin-top:1rem;text-align:center}}
 </style>
 <script>
-// Interceptor to add token to all fetches/XHR if we were not already in a reload loop
+// Sec: il token admin non viaggia più nell'URL. POSTa a /admin/login che imposta
+// un cookie HttpOnly+Secure+SameSite=Strict; per le fetch API la pagina admin usa
+// header X-Admin-Token da sessionStorage (cookie non leggibile da JS).
 (function(){{
     const tok = sessionStorage.getItem('abm_admin_token') || localStorage.getItem('abm_admin_token');
-    if(tok && !window.location.search.includes('token=')){{
-        // Preserve existing query params (e.g., month) when adding token
-        const qs = window.location.search ? window.location.search + '&token=' + encodeURIComponent(tok)
-                                         : '?token=' + encodeURIComponent(tok);
-        window.location.href = window.location.pathname + qs;
+    if(tok && !sessionStorage.getItem('abm_admin_gate_retry')){{
+        sessionStorage.setItem('abm_admin_gate_retry', '1');
+        fetch('/admin/login', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{token: tok}}),
+            credentials: 'same-origin',
+        }}).then(r => {{
+            if(r.ok){{ window.location.reload(); }}
+        }}).catch(()=>{{}});
     }}
 }})();
 
@@ -2189,14 +2223,21 @@ function doLogin(){{
     const tok = document.getElementById('pw').value;
     const remember = document.getElementById('rem').checked;
     if(!tok) return;
-    sessionStorage.setItem('abm_admin_token', tok);
-    if(remember){{
-        localStorage.setItem('abm_admin_token', tok);
-        localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
-    }}
-    const qs = window.location.search ? window.location.search + '&token=' + encodeURIComponent(tok)
-                                     : '?token=' + encodeURIComponent(tok);
-    window.location.href = window.location.pathname + qs;
+    fetch('/admin/login', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{token: tok}}),
+        credentials: 'same-origin',
+    }}).then(r => {{
+        if(!r.ok){{ alert('Token non valido'); return; }}
+        sessionStorage.setItem('abm_admin_token', tok);
+        if(remember){{
+            localStorage.setItem('abm_admin_token', tok);
+            localStorage.setItem('abm_admin_expiry', (Date.now() + 30 * 86400000).toString());
+        }}
+        sessionStorage.removeItem('abm_admin_gate_retry');
+        window.location.reload();
+    }}).catch(()=>{{ alert('Errore di rete'); }});
 }}
 </script>
 </head><body>
@@ -2243,12 +2284,55 @@ def _admin_auth_ok(provided):
     return hmac.compare_digest(str(provided), ADMIN_TOKEN)
 
 
+_ADMIN_COOKIE_NAME = "abm_admin_session"
+
+
 def _admin_auth_from_request():
-    """Estrae il token da header X-Admin-Token, form 'token' o query 'token'."""
+    """Estrae il token admin dall'header X-Admin-Token o dal cookie HttpOnly abm_admin_session.
+
+    Sec: NON accettiamo più il token da query string (`?token=`) né da form GET/POST:
+    il valore comparirebbe in access log nginx, history browser, Referer verso domini esterni.
+    Il cookie è settato esclusivamente dall'endpoint POST /admin/login con HttpOnly+SameSite=Strict.
+    """
     tok = request.headers.get("X-Admin-Token", "")
     if not tok:
-        tok = (request.form.get("token") if request.method == "POST" else "") or request.args.get("token", "")
+        tok = request.cookies.get(_ADMIN_COOKIE_NAME, "")
     return tok
+
+
+@app.route("/admin/login", methods=["POST"])
+def admin_login():
+    """Login admin: valida il token e lo deposita in cookie HttpOnly Secure SameSite=Strict.
+    Il client JS POSTa qui invece di mettere il token nell'URL."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin disabled"}), 404
+    data = request.json or {}
+    tok = (data.get("token") or "").strip()
+    if not _admin_auth_ok(tok):
+        return jsonify({"error": "Invalid token"}), 401
+    resp = jsonify({"ok": True})
+    is_https = (request.scheme == "https") or (request.headers.get("X-Forwarded-Proto", "") == "https")
+    resp.set_cookie(
+        _ADMIN_COOKIE_NAME, tok,
+        max_age=8 * 3600,
+        httponly=True,
+        secure=is_https,
+        samesite="Strict",
+        path="/",
+    )
+    return resp
+
+
+@app.route("/admin/logout", methods=["POST", "GET"])
+def admin_logout():
+    """Logout admin: cancella il cookie di sessione."""
+    resp = jsonify({"ok": True}) if request.method == "POST" else ("Logged out", 200)
+    if isinstance(resp, tuple):
+        from flask import make_response
+        body, code = resp
+        resp = make_response(body, code)
+    resp.set_cookie(_ADMIN_COOKIE_NAME, "", max_age=0, httponly=True, samesite="Strict", path="/")
+    return resp
 
 
 @app.route("/admin/vouchers", methods=["GET"])
@@ -3383,7 +3467,7 @@ def api_analyze():
         # Fallback if secure_filename results in empty string (e.g. only non-ascii chars)
         safe_name = str(uuid.uuid4())[:8] + "_" + fname_lower
 
-    job_id = str(uuid.uuid4())[:8]
+    job_id = _new_job_id()
     work_dir = UPLOAD_DIR / job_id
     work_dir.mkdir(exist_ok=True)
     file_path = work_dir / safe_name
@@ -3583,8 +3667,11 @@ def api_preview_audio(job_id):
     Il browser può usare l'URL direttamente come audio.src  -  nessun problema di autoplay policy.
     Il timeout è gestito da concurrent.futures (funziona sempre, a differenza di asyncio.wait_for).
     """
-    if not job_id or job_id not in jobs:
+    if not job_id:
         return jsonify({"error": "Job non trovato"}), 404
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
 
     preview_text = jobs[job_id].get("preview_text", "")
     if not preview_text:
@@ -3653,9 +3740,9 @@ def api_preview_audio(job_id):
 @app.route("/api/cover/<job_id>")
 def api_cover(job_id):
     """Serve the extracted cover thumbnail for preview."""
-    if job_id not in jobs:
-        return "", 404
-    job = jobs[job_id]
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return "", sc if sc == 404 else 403
     cover_path = job.get("cover_thumb")
     if not cover_path or not os.path.exists(cover_path):
         return "", 404
@@ -3666,6 +3753,9 @@ def api_cover(job_id):
 @app.route("/api/export_abm/<job_id>")
 def api_export_abm(job_id):
     """Export cleaned text as .abm project file (ZIP with manifest + chapters + cover)."""
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
     with _jobs_lock:
         if job_id not in jobs:
             return jsonify({"error": "Job not found"}), 404
@@ -3765,9 +3855,11 @@ def api_generate():
     podcast_base_url = (data.get("podcast_base_url") or "").strip()
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
 
-    if job_id not in jobs:
-        return jsonify({"error": "Session expired. Re-upload file."}), 400
-    job = jobs[job_id]
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        if sc == 404:
+            return jsonify({"error": "Session expired. Re-upload file."}), 400
+        return err, sc
 
     # Store format and podcast URL for email/download handlers
     job["output_format"] = output_format
@@ -3862,10 +3954,10 @@ def api_generate():
 
 @app.route("/api/job_status/<job_id>")
 def api_job_status(job_id):
-    job = jobs.get(job_id)
-    if not job:
-        return {"error": "Not found"}, 404
-    
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return ({"error": "Not found"} if sc == 404 else {"error": "Forbidden"}), sc
+
     st = job.get("status", "")
     cur, tot = 0, 0
     pct = 0
@@ -3893,6 +3985,11 @@ def api_job_status(job_id):
 
 @app.route("/api/progress/<job_id>")
 def api_progress(job_id):
+    # Ownership check fuori dallo stream (la `request` non è disponibile dentro il generator).
+    _job_pre, _err_pre, _sc_pre = _check_job_owner(job_id)
+    if _err_pre is not None:
+        return _err_pre, _sc_pre
+
     def stream():
         while True:
             if job_id not in jobs:
@@ -3915,7 +4012,8 @@ def api_progress(job_id):
                 "total_chars": job.get("total_chars", 0),
             }
             if job.get("status") == "error":
-                payload["error"] = job.get("error", "Unknown error")
+                # Errore generico verso il client: il dettaglio resta nei log server-side.
+                payload["error"] = "generation_failed"
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("status") == "cancelled" or job.get("cancelled"):
@@ -3955,23 +4053,29 @@ def api_progress(job_id):
 @app.route("/api/cancel/<job_id>", methods=["POST"])
 def api_cancel(job_id):
     """Cancella un job in corso."""
-    if job_id in jobs:
-        with _jobs_lock:
-            job = jobs[job_id]
-            force = request.args.get("force") == "1"
-            if job.get("email_registered") and not force:
-                print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
-                return jsonify({"status": "ignored_email_registered"})
-            job["cancelled"] = True
-            job["gen_epoch"] = job.get("gen_epoch", 0) + 1
-            job["status"] = "analyzed"
-        return jsonify({"status": "cancelling"})
-    return jsonify({"status": "not_found"}), 404
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        if _sc == 404:
+            return jsonify({"status": "not_found"}), 404
+        return _err, _sc
+    with _jobs_lock:
+        job = jobs[job_id]
+        force = request.args.get("force") == "1"
+        if job.get("email_registered") and not force:
+            print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
+            return jsonify({"status": "ignored_email_registered"})
+        job["cancelled"] = True
+        job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+        job["status"] = "analyzed"
+    return jsonify({"status": "cancelling"})
 
 
 @app.route("/api/heartbeat/<job_id>", methods=["POST"])
 def api_heartbeat(job_id):
     """Keep-alive: il client segnala che è ancora sulla pagina."""
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return "", _sc
     with _jobs_lock:
         if job_id in jobs:
             jobs[job_id]["last_poll"] = time.time()
@@ -3982,6 +4086,9 @@ def api_heartbeat(job_id):
 @app.route("/api/reset_to_chapters/<job_id>", methods=["POST"])
 def api_reset_to_chapters(job_id):
     """Reset a completed job back to 'analyzed' so the user can select different chapters."""
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        return _err, _sc
     with _jobs_lock:
         if job_id not in jobs:
             return jsonify({"error": "Job not found"}), 404
@@ -4060,8 +4167,9 @@ def api_register_email():
     download_type = data.get("download_type", "audio")  # "audio" or "podcast"
     base_url = (data.get("base_url") or "").strip()
 
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
 
     if not email or not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
         return jsonify({"error": "Invalid email address"}), 400
@@ -4069,7 +4177,6 @@ def api_register_email():
     if not _smtp_available():
         return jsonify({"error": "Email service not configured on this server"}), 503
 
-    job = jobs[job_id]
     job["notify_email"] = email
     job["notify_download_type"] = download_type
     job["notify_base_url"] = base_url
@@ -4133,8 +4240,9 @@ def _parse_selected_chapters(raw_data):
 
 @app.route("/api/optimize_estimate/<job_id>")
 def api_optimize_estimate(job_id):
-    if job_id not in jobs: return jsonify({"error": "Job not found"}), 404
-    job = jobs[job_id]; info = job.get("info")
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None: return err, sc
+    info = job.get("info")
     if not info or not info.chapters: return jsonify({"error": "No book data"}), 400
     raw_sel = request.args.getlist("selected_chapters") + request.args.getlist("selected_chapters[]")
     selected_indices = _parse_selected_chapters(raw_sel)
@@ -4196,7 +4304,10 @@ def api_paypal_create_order():
 
 @app.route("/api/paypal_debug_order/<order_id>", methods=["GET"])
 def api_paypal_debug_order(order_id):
-    """Diagnostic: fetch order from PayPal to inspect payee/status/etc."""
+    """Diagnostic: fetch order from PayPal to inspect payee/status/etc.
+    Admin-only: returns payer PII (email, name, address) — must never be public."""
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
     import requests
     if not _paypal_available():
         return jsonify({"error": "PayPal not configured"}), 503
@@ -4342,8 +4453,12 @@ def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
     data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
     lang = data.get("lang")
-    if job_id not in jobs: return jsonify({"error": "Session expired"}), 400
-    job = jobs[job_id]; info = job.get("info")
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        if sc == 404:
+            return jsonify({"error": "Session expired"}), 400
+        return err, sc
+    info = job.get("info")
 
     # Check sospensione nuovi processi (admin toggle)
     if _suspend_new_jobs:
@@ -4388,19 +4503,26 @@ def api_optimize():
                 "estimated_cost_eur": estimated_cost,
                 "chars": total_chars,
             }), 402
-        # Validate payment_token (PayPal order_id or voucher code)
+        # Validate payment_token (PayPal order_id or voucher code).
+        # Sec: check-and-set atomico sotto lock per impedire doppio uso del medesimo token
+        # da parte di richieste concorrenti. La persistenza su disco avviene fuori dal lock
+        # perché _save_payments() riacquisisce _payments_lock (non rientrante).
         valid = False
         if payment_token in payment._payments:
-            pay = payment._payments[payment_token]
-            if not pay.get("used") and pay.get("amount_eur", 0) >= estimated_cost:
-                pay["used"] = True
-                pay["used_at"] = time.time()
-                pay["used_job_id"] = job_id
+            _claimed_pay = None
+            with payment._payments_lock:
+                pay = payment._payments.get(payment_token)
+                if pay and not pay.get("used") and pay.get("amount_eur", 0) >= estimated_cost:
+                    pay["used"] = True
+                    pay["used_at"] = time.time()
+                    pay["used_job_id"] = job_id
+                    _claimed_pay = pay
+            if _claimed_pay is not None:
                 _save_payments()
                 job["payment_token"] = payment_token
                 job["payment_type"] = "paypal"
-                job["payment_email"] = pay.get("email", "")
-                job["payment_amount_eur"] = pay.get("amount_eur", 0)
+                job["payment_email"] = _claimed_pay.get("email", "")
+                job["payment_amount_eur"] = _claimed_pay.get("amount_eur", 0)
                 valid = True
         elif payment_token in payment._vouchers:
             v = payment._vouchers[payment_token]
@@ -4468,6 +4590,9 @@ def api_optimize():
 @app.route("/api/optimize_progress/<job_id>")
 def api_optimize_progress(job_id):
     """SSE endpoint for LLM optimization progress."""
+    _job_pre, _err_pre, _sc_pre = _check_job_owner(job_id)
+    if _err_pre is not None:
+        return _err_pre, _sc_pre
     def stream():
         while True:
             if job_id not in jobs:
@@ -4491,7 +4616,8 @@ def api_optimize_progress(job_id):
                 "opt_elapsed_seconds": round(time.time() - job["opt_start_time"]) if job.get("opt_start_time") else job.get("opt_elapsed_seconds", 0),
             }
             if status == "error":
-                payload["error"] = job.get("error", "Unknown error")
+                # Errore generico verso il client; il dettaglio resta nei log server-side.
+                payload["error"] = "optimization_failed"
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if status == "cancelled" or job.get("opt_cancelled"):
@@ -4521,6 +4647,11 @@ def api_optimize_progress(job_id):
 @app.route("/api/cancel_optimize/<job_id>", methods=["POST"])
 def api_cancel_optimize(job_id):
     """Cancel an LLM optimization in progress."""
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        if _sc == 404:
+            return jsonify({"status": "not_found"}), 404
+        return _err, _sc
     with _jobs_lock:
         if job_id in jobs:
             job = jobs[job_id]
@@ -5259,6 +5390,13 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
+    # Sec (XSS): book_title proviene dai metadati EPUB/PDF (controllati dall'autore del file).
+    # Tutte le interpolazioni nel template devono passare per html.escape, altrimenti un
+    # `<dc:title>` malevolo iniettato lato uploader produce XSS sulla pagina /dl/<token>.
+    import html as _html
+    book_title = _html.escape(str(book_title or ""), quote=True)
+    remaining_str = _html.escape(str(remaining_str or ""), quote=True)
+
     # Single audio button matching post-generation page style
     # SVG download icon for single-file formats, emoji for ZIP
 
@@ -5463,9 +5601,9 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 
 @app.route("/api/download/<job_id>")
 def api_download(job_id):
-    if job_id not in jobs:
-        return "Job not found", 404
-    job = jobs[job_id]
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return ("Job not found" if sc == 404 else "Forbidden"), sc
     if job.get("status") != "done":
         return "Not ready", 400
     
@@ -5565,9 +5703,9 @@ def api_download(job_id):
 
 @app.route("/api/download_podcast/<job_id>")
 def api_download_podcast(job_id):
-    if job_id not in jobs:
-        return "Job not found", 404
-    job = jobs[job_id]
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return ("Job not found" if sc == 404 else "Forbidden"), sc
     if job.get("status") != "done":
         return "Not ready", 400
     if not job.get("podcast_ready"):
@@ -5584,9 +5722,13 @@ def api_download_podcast(job_id):
         return _send_file_throttled(job["output_zip"], as_attachment=True,
                          download_name=job.get("output_name", "podcast.zip"))
 
-    base_url = request.args.get("base_url", "").strip()
+    # Sec (SSRF / content injection): il base_url degli <enclosure> del feed RSS è critico.
+    # Se accettato dal client, un attaccante può fare pubblicare/usare il feed con enclosure
+    # puntate a un host arbitrario (phishing podcast, malware audio). Forziamo il valore
+    # server-side da ABM_BASE_URL e ignoriamo qualunque parametro utente.
+    base_url = (BASE_URL or "").rstrip("/")
     if not base_url:
-        return "base_url parameter is required", 400
+        return "Server misconfigured: ABM_BASE_URL not set", 503
 
     job["last_poll"] = time.time()
     job["downloaded_at"] = time.time()
@@ -5792,13 +5934,23 @@ def _detect_lang_from_request() -> str:
 
 @app.after_request
 def _set_client_cookie(response):
-    """Ensure every response carries the abm_cid cookie for client tracking."""
+    """Ensure every response carries the abm_cid cookie for client tracking.
+
+    Sec: il cookie è il bearer di ownership su tutti gli endpoint job (vedi _check_job_owner).
+    - secure=True quando la request è HTTPS (anche dietro reverse proxy) per impedire
+      interception in chiaro su navigazioni HTTP plain verso lo stesso host.
+    - samesite='Lax' mantenuto: il cookie deve essere inviato sui link cliccati dalle
+      email di notifica (/dl/<token>) che possono provenire da altri domini.
+    """
     if _CLIENT_COOKIE_NAME not in request.cookies:
         cid = str(uuid.uuid4())[:12]
+        is_https = (request.scheme == "https") or (request.headers.get("X-Forwarded-Proto", "") == "https")
         response.set_cookie(
             _CLIENT_COOKIE_NAME, cid,
             max_age=_CLIENT_COOKIE_MAX_AGE,
-            httponly=True, samesite="Lax",
+            httponly=True,
+            secure=is_https,
+            samesite="Lax",
         )
     return response
 
