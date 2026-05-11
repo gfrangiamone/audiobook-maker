@@ -641,7 +641,7 @@ _CONTENT = {
              "Para la mejor experiencia en Android, recomendamos Smart AudioBook Player, "
              "una app diseñada específicamente para audiolibros que recuerda tu posición de escucha, "
              "permite ajustar la velocidad y organiza automáticamente los capítulos. "
-             "En iPhone, puedes usar la app Libri de Apple o cualquier reproductor MP3. "
+             "En iPhone, puedes usar la app Apple Books o cualquier reproductor MP3. "
              "También puedes usar el feed RSS podcast generado por la app para escuchar "
              "los capítulos directamente en tu app de podcast favorita."),
             ("¿Qué es la optimización IA del texto y qué ventajas ofrece?",
