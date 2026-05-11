@@ -291,6 +291,10 @@ def _check_job_owner(job_id):
     Ownership rule: the cookie-stored client_id must match jobs[job_id]['client_id'].
     Jobs predating this enforcement (no client_id stored) are allowed through to preserve
     backward compatibility, but new jobs always store it at creation.
+
+    Admin bypass: una richiesta autenticata come admin (header X-Admin-Token o cookie
+    abm_admin_session valido) passa il controllo. Necessario per la pagina /logs che
+    fa polling di /api/job_status/<job_id> per mostrare la % delle conversioni in corso.
     """
     if job_id not in jobs:
         return None, jsonify({"error": "Job not found"}), 404
@@ -299,6 +303,9 @@ def _check_job_owner(job_id):
     if owner:
         caller = _get_client_id()
         if not caller or caller != owner:
+            # Admin bypass: l'admin puo' osservare lo stato di qualunque job.
+            if _admin_auth_ok(_admin_auth_from_request()):
+                return job, None, 0
             return None, jsonify({"error": "Forbidden"}), 403
     return job, None, 0
 
