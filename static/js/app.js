@@ -1366,12 +1366,12 @@ function _showJobRunningModal(pct){
   if(closeBtn)closeBtn.onclick=_hideJobRunningModal;
   modal.onclick=function(ev){if(ev.target===modal)_hideJobRunningModal();};
 }
-function _hideJobRunningModal(){
+function _hideJobRunningModal(reset){
   var modal=document.getElementById('jobRunningModal');
   if(!modal)return;
   if(modal._dynamic){modal.remove();}
   else{modal.classList.remove('open');}
-  resetAll();
+  if(reset!==false)resetAll(); // reset only when user manually closes the modal
 }
 function _updateJobRunningPct(pct){
   const span=document.getElementById('jobRunningPct');
@@ -1680,7 +1680,7 @@ function listenProgress(){
       if(d.status==='done'){
         es.close();
         generating=false;jobDone=true;
-        _hideJobRunningModal();
+        _hideJobRunningModal(false); // don't reset — keep jobId for download buttons
         unlockUI();
         document.getElementById('pPct').textContent='100%';
         document.getElementById('pBar').style.width='100%';

@@ -84,13 +84,22 @@ _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
 
+def _set_job_status(job, status):
+    """Thread-safe job status update."""
+    if _jobs_lock:
+        with _jobs_lock:
+            job["status"] = status
+    else:
+        job["status"] = status
+
+
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
-              google_tts_module=None, invalidate_voices_cache_fn=None):
+              google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
-    global _google_tts, _invalidate_voices_cache
+    global _google_tts, _invalidate_voices_cache, _jobs_lock
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -99,6 +108,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _google_tts = google_tts_module
     if invalidate_voices_cache_fn is not None:
         _invalidate_voices_cache = invalidate_voices_cache_fn
+    _jobs_lock = jobs_lock
     
     # Inizializza DeepSeek (se API key presente)
     _init_deepseek()
@@ -1035,7 +1045,7 @@ def run_optimization(job_id, selected_chapters=None):
     If selected_chapters is provided (list of indices), only those are optimized.
     """
     job = _jobs[job_id]
-    job["status"] = "optimizing"
+    _set_job_status(job, "optimizing")
     job["opt_cancelled"] = False
     job["last_poll"] = time.time()
     start_time = time.time()
@@ -1202,16 +1212,16 @@ def run_optimization(job_id, selected_chapters=None):
             except Exception as e:
                 print(f"[{job_id}] Optimization email error: {e}")
                 _emit_finalization_progress("Optimization complete (email error, retry manually).", 1.0)
-            job["status"] = "optimized"
+            _set_job_status(job, "optimized")
         else:
             # Interactive mode: just mark as optimized
             _emit_finalization_progress("Optimization complete!", 1.0)
-            job["status"] = "optimized"
+            _set_job_status(job, "optimized")
             job["last_poll"] = time.time()
 
     except _CancelledError:
         # Revert to analyzed so cleanup doesn't nuke the job — user can retry
-        job["status"] = "analyzed"
+        _set_job_status(job, "analyzed")
         job["opt_progress_message"] = "Optimization cancelled"
         print(f"[{job_id}] LLM optimization cancelled")
         _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
@@ -1219,7 +1229,7 @@ def run_optimization(job_id, selected_chapters=None):
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
     except Exception as e:
-        job["status"] = "error"
+        _set_job_status(job, "error")
         job["error"] = f"LLM optimization error: {e}"
         import traceback
         traceback.print_exc()
@@ -1232,7 +1242,7 @@ def run_optimization(job_id, selected_chapters=None):
 
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
     job = _jobs[job_id]
-    job["status"] = "generating"
+    _set_job_status(job, "generating")
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
@@ -1594,7 +1604,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to auto-generate .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        job["status"] = "done"
+        _set_job_status(job, "done")
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
@@ -1609,7 +1619,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
         if still_current:
-            job["status"] = "analyzed"
+            _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
         # Refund caratteri Google TTS non consumati e forza riconciliazione
         if use_google:
@@ -1627,7 +1637,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("voice", ""), job.get("browser_lang", ""))
 
     except Exception as e:
-        job["status"] = "error"
+        _set_job_status(job, "error")
         job["error"] = str(e)
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:

@@ -214,6 +214,7 @@ if google_tts is not None:
 community_store.init(_DATA_DIR)
 
 jobs = {}
+_jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
 
 
 def _has_active_google_tts_jobs():
@@ -223,17 +224,18 @@ def _has_active_google_tts_jobs():
     """
     if google_tts is None:
         return False
-    try:
-        for j in jobs.values():
-            if j.get("status") in ("queued", "running", "generating"):
-                if j.get("google_tts_reserved", 0) > 0:
-                    return True
-                voice = j.get("voice", "")
-                if voice and google_tts.is_google_voice(voice):
-                    return True
-    except Exception:
-        return True  # safe default
-    return False
+    with _jobs_lock:
+        try:
+            for j in jobs.values():
+                if j.get("status") in ("queued", "running", "generating"):
+                    if j.get("google_tts_reserved", 0) > 0:
+                        return True
+                    voice = j.get("voice", "")
+                    if voice and google_tts.is_google_voice(voice):
+                        return True
+        except Exception:
+            return True  # safe default
+        return False
 
 
 if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
@@ -295,12 +297,34 @@ def _get_browser_lang():
 
 
 def _active_generating_for_client(client_id):
-    """Count how many jobs are currently generating for the given client_id."""
+    """Count how many jobs are currently generating for the given client_id. Thread-safe."""
+    with _jobs_lock:
+        return _active_generating_for_client_unlocked(client_id)
+
+
+def _active_generating_for_client_unlocked(client_id):
+    """Internal: caller MUST hold _jobs_lock."""
     if not client_id:
         return 0
     return sum(
         1 for j in jobs.values()
         if j.get("client_id") == client_id and j.get("status") == "generating"
+    )
+
+
+def _active_optimizing_for_client(client_id):
+    """Count how many jobs are currently optimizing for the given client_id. Thread-safe."""
+    with _jobs_lock:
+        return _active_optimizing_for_client_unlocked(client_id)
+
+
+def _active_optimizing_for_client_unlocked(client_id):
+    """Internal: caller MUST hold _jobs_lock."""
+    if not client_id:
+        return 0
+    return sum(
+        1 for j in jobs.values()
+        if j.get("client_id") == client_id and j.get("status") == "optimizing"
     )
 
 
@@ -355,7 +379,21 @@ def _check_download_throttle(file_path):
     return ("ok", _DL_MAX_DOWNLOADS - new_count)
 
 
-def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, **kwargs):
+def _apply_no_cache(response):
+    """Disabilita la cache HTTP sulla risposta (per contenuti rigenerati on-demand con URL stabile).
+    SEND_FILE_MAX_AGE_DEFAULT è 1 anno: senza questa override il browser servirebbe la
+    prima versione scaricata anche dopo che il server ha rigenerato il file con contenuto
+    aggiornato (es. .abm cumulativo dopo successive ottimizzazioni)."""
+    try:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return response
+
+
+def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, **kwargs):
     status, info = _check_download_throttle(file_path)
     if status == "cooldown":
         lang = _get_browser_lang() or "en"
@@ -373,6 +411,8 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
         response.headers["Access-Control-Expose-Headers"] = "X-Download-Last, X-Download-Remaining, Content-Disposition"
     except Exception:
         pass
+    if no_cache:
+        _apply_no_cache(response)
     return response
 
 
@@ -3354,43 +3394,51 @@ def api_analyze():
 
     # Duplicate upload detection: if this client already has an active job for the same file,
     # block if running; reuse if only analyzed/optimized.
-    for jid, job in jobs.items():
-        if job.get("client_id") == client_id and job.get("file_hash") == file_hash:
-            status = job.get("status", "")
-            if status in ("optimizing", "generating"):
-                return jsonify({
-                    "existing_job_id": jid,
-                    "status": status,
-                    "is_running": True,
-                    "progress_current": job.get("progress_current", 0),
-                    "progress_total": job.get("progress_total", 0),
-                    "opt_progress_current": job.get("opt_progress_current", 0),
-                    "opt_progress_total": job.get("opt_progress_total", 0),
+    existing_jid = None
+    existing_job = None
+    with _jobs_lock:
+        for jid, job in jobs.items():
+            if job.get("client_id") == client_id and job.get("file_hash") == file_hash:
+                existing_jid = jid
+                existing_job = job
+                break
+
+    if existing_job:
+        status = existing_job.get("status", "")
+        if status in ("optimizing", "generating"):
+            return jsonify({
+                "existing_job_id": existing_jid,
+                "status": status,
+                "is_running": True,
+                "progress_current": existing_job.get("progress_current", 0),
+                "progress_total": existing_job.get("progress_total", 0),
+                "opt_progress_current": existing_job.get("opt_progress_current", 0),
+                "opt_progress_total": existing_job.get("opt_progress_total", 0),
+            })
+        if status in ("analyzed", "optimized"):
+            # Reuse existing analyzed/optimized job
+            info = existing_job["info"]
+            chapters = []
+            for ch in info.chapters:
+                chapters.append({
+                    "index": ch.index, "title": ch.title,
+                    "words": ch.word_count, "chars": ch.char_count,
+                    "estimated_minutes": round(ch.word_count / 150, 1),
                 })
-            if status in ("analyzed", "optimized"):
-                # Reuse existing analyzed/optimized job
-                info = job["info"]
-                chapters = []
-                for ch in info.chapters:
-                    chapters.append({
-                        "index": ch.index, "title": ch.title,
-                        "words": ch.word_count, "chars": ch.char_count,
-                        "estimated_minutes": round(ch.word_count / 150, 1),
-                    })
-                return jsonify({
-                    "job_id": jid, "title": info.title, "author": info.author,
-                    "language": info.language,
-                    "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
-                    "has_cover": bool(job.get("cover_thumb")),
-                    "total_chapters": len(info.chapters), "total_words": info.total_words,
-                    "total_chars": info.total_chars,
-                    "estimated_minutes": round(info.estimated_duration_minutes, 1),
-                    "chapters": chapters,
-                    "preview_text": job.get("preview_text", ""),
-                    "llm_available": _llm_available(),
-                    "ai_optimized": job.get("ai_optimized", False),
-                    "optimized_chapters": job.get("optimized_chapters", []),
-                })
+            return jsonify({
+                "job_id": existing_jid, "title": info.title, "author": info.author,
+                "language": info.language,
+                "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
+                "has_cover": bool(existing_job.get("cover_thumb")),
+                "total_chapters": len(info.chapters), "total_words": info.total_words,
+                "total_chars": info.total_chars,
+                "estimated_minutes": round(info.estimated_duration_minutes, 1),
+                "chapters": chapters,
+                "preview_text": existing_job.get("preview_text", ""),
+                "llm_available": _llm_available(),
+                "ai_optimized": existing_job.get("ai_optimized", False),
+                "optimized_chapters": existing_job.get("optimized_chapters", []),
+            })
 
     abm_cover_info = None  # cover data extracted from .abm file
     try:
@@ -3409,11 +3457,12 @@ def api_analyze():
     if not info.chapters:
         return jsonify({"error": "No content found."}), 400
 
-    jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
-                     "last_poll": time.time(), "original_filename": file.filename,
-                     "client_id": _get_client_id(), "client_ip": _get_client_ip(),
-                     "browser_lang": _get_browser_lang(),
-                     "optimized_chapters": [], "file_hash": file_hash}
+    with _jobs_lock:
+        jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
+                         "last_poll": time.time(), "original_filename": file.filename,
+                         "client_id": _get_client_id(), "client_ip": _get_client_ip(),
+                         "browser_lang": _get_browser_lang(),
+                         "optimized_chapters": [], "file_hash": file_hash}
 
     # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
@@ -3617,13 +3666,20 @@ def api_cover(job_id):
 @app.route("/api/export_abm/<job_id>")
 def api_export_abm(job_id):
     """Export cleaned text as .abm project file (ZIP with manifest + chapters + cover)."""
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
-
-    job = jobs[job_id]
-    info = job.get("info")
-    if not info or not info.chapters:
-        return jsonify({"error": "No book data available"}), 400
+    with _jobs_lock:
+        if job_id not in jobs:
+            return jsonify({"error": "Job not found"}), 404
+        job = jobs[job_id]
+        info = job.get("info")
+        if not info or not info.chapters:
+            return jsonify({"error": "No book data available"}), 400
+        # Snapshot data needed outside lock
+        _job_data = {
+            "optimized_chapters": job.get("optimized_chapters"),
+            "selected_chapters": job.get("selected_chapters"),
+            "cover_thumb": job.get("cover_thumb"),
+            "original_filename": job.get("original_filename", ""),
+        }
 
     import zipfile
     import io
@@ -3634,8 +3690,8 @@ def api_export_abm(job_id):
 
     # Align with _generate_optimized_abm: prefer cumulative optimized_chapters,
     # fall back to current selected_chapters, else include all.
-    optimized = job.get("optimized_chapters")
-    selected = job.get("selected_chapters")
+    optimized = _job_data["optimized_chapters"]
+    selected = _job_data["selected_chapters"]
     if optimized:
         chapter_set = set(optimized)
     elif selected:
@@ -3662,7 +3718,7 @@ def api_export_abm(job_id):
         # Cover
         has_cover = False
         cover_file = ""
-        cover_path = job.get("cover_thumb")
+        cover_path = _job_data["cover_thumb"]
         if cover_path and os.path.exists(cover_path):
             cover_ext = ".png" if cover_path.endswith(".png") else ".jpg"
             cover_file = f"cover{cover_ext}"
@@ -3680,7 +3736,7 @@ def api_export_abm(job_id):
             "has_cover": has_cover,
             "cover_file": cover_file,
             "exported_at": datetime.now(timezone.utc).isoformat(),
-            "original_filename": job.get("original_filename", ""),
+            "original_filename": _job_data["original_filename"],
             "ai_optimized": bool(job.get("ai_optimized")),
             "chapters": chapters_manifest,
         }
@@ -3694,8 +3750,8 @@ def api_export_abm(job_id):
                   job.get("client_id", ""), job.get("client_ip", ""),
                   browser_lang=job.get("browser_lang", ""))
 
-    return send_file(buf, mimetype="application/zip", as_attachment=True,
-                     download_name=download_name)
+    return _apply_no_cache(send_file(buf, mimetype="application/zip", as_attachment=True,
+                                      download_name=download_name))
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -3723,24 +3779,30 @@ def api_generate():
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
-    if job["status"] not in ("analyzed", "optimized"):
-        return jsonify({"error": "Generation already running or completed."}), 400
-
-    #  -  -  Concurrent generation limit per client  -  - 
+    #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
-    if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
-        active = _active_generating_for_client(client_id)
-        if active >= MAX_CONCURRENT_PER_CLIENT:
-            return jsonify({
-                "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
-                "error_code": "concurrent_limit",
-                "max": MAX_CONCURRENT_PER_CLIENT,
-                "active": active,
-            }), 429
+    with _jobs_lock:
+        if job["status"] not in ("analyzed", "optimized"):
+            return jsonify({"error": "Generation already running or completed."}), 400
+        if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
+            if _active_generating_for_client_unlocked(client_id) >= MAX_CONCURRENT_PER_CLIENT:
+                return jsonify({
+                    "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
+                    "error_code": "concurrent_limit",
+                    "max": MAX_CONCURRENT_PER_CLIENT,
+                    "active": _active_generating_for_client_unlocked(client_id),
+                }), 429
+        # Atomically claim the slot
+        job["status"] = "generating"
+        # Save voice in job for logging
+        job["voice"] = voice
 
-    # Save voice in job for logging
-    job["voice"] = voice
+    # Store format and podcast URL for email/download handlers
+    job["output_format"] = output_format
+    if output_format == "zip_rss":
+        job["notify_download_type"] = "podcast"
+        job["notify_base_url"] = podcast_base_url
 
     info = job["info"]
 
@@ -3765,6 +3827,9 @@ def api_generate():
         total_chars_needed = sum(ch.char_count for ch in info.chapters)
         ok, remaining_after = google_tts.reserve_chars(total_chars_needed)
         if not ok:
+            with _jobs_lock:
+                if job["status"] == "generating":
+                    job["status"] = "analyzed" if job.get("ai_optimized") else "analyzed"
             return jsonify({
                 "error": f"Google TTS monthly limit: {remaining_after:,} chars remaining, "
                          f"but this book needs {total_chars_needed:,} chars.",
@@ -3891,16 +3956,15 @@ def api_progress(job_id):
 def api_cancel(job_id):
     """Cancella un job in corso."""
     if job_id in jobs:
-        job = jobs[job_id]
-        force = request.args.get("force") == "1"
-        # Se l'utente ha registrato email per notifica, ignora cancel da beforeunload
-        # ma permetti cancel esplicito (pulsante con force=1)
-        if job.get("email_registered") and not force:
-            print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
-            return jsonify({"status": "ignored_email_registered"})
-        job["cancelled"] = True
-        job["gen_epoch"] = job.get("gen_epoch", 0) + 1
-        job["status"] = "analyzed"
+        with _jobs_lock:
+            job = jobs[job_id]
+            force = request.args.get("force") == "1"
+            if job.get("email_registered") and not force:
+                print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
+                return jsonify({"status": "ignored_email_registered"})
+            job["cancelled"] = True
+            job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+            job["status"] = "analyzed"
         return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
 
@@ -3908,32 +3972,30 @@ def api_cancel(job_id):
 @app.route("/api/heartbeat/<job_id>", methods=["POST"])
 def api_heartbeat(job_id):
     """Keep-alive: il client segnala che è ancora sulla pagina."""
-    if job_id in jobs:
-        jobs[job_id]["last_poll"] = time.time()
-        return "", 204
+    with _jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["last_poll"] = time.time()
+            return "", 204
     return "", 404
 
 
 @app.route("/api/reset_to_chapters/<job_id>", methods=["POST"])
 def api_reset_to_chapters(job_id):
     """Reset a completed job back to 'analyzed' so the user can select different chapters."""
-    if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
+    with _jobs_lock:
+        if job_id not in jobs:
+            return jsonify({"error": "Job not found"}), 404
+        job = jobs[job_id]
+        if job.get("status") != "done":
+            return jsonify({"error": "Job is not in completed state"}), 400
+        if not job.get("info") or not job["info"].chapters:
+            return jsonify({"error": "Book data no longer available. Please re-upload the file."}), 400
 
-    job = jobs[job_id]
-    if job.get("status") != "done":
-        return jsonify({"error": "Job is not in completed state"}), 400
-
-    # Verify that the original book info is still available
-    if not job.get("info") or not job["info"].chapters:
-        return jsonify({"error": "Book data no longer available. Please re-upload the file."}), 400
-
-    # Clean up generated output files to free disk space
+    # Clean up generated output files to free disk space (I/O outside lock)
     work_dir = UPLOAD_DIR / job_id
     output_dir = work_dir / "output"
     if output_dir.exists():
         shutil.rmtree(str(output_dir), ignore_errors=True)
-    # Remove zip if present
     for key in ("output_zip",):
         fpath = job.get(key, "")
         if fpath and os.path.exists(fpath):
@@ -3941,7 +4003,6 @@ def api_reset_to_chapters(job_id):
                 os.remove(fpath)
             except OSError:
                 pass
-    # Remove stale .abm file — will be regenerated cumulatively after next optimization
     old_abm_path = job.get("optimized_abm_path", "")
     if old_abm_path and os.path.exists(old_abm_path):
         try:
@@ -3949,7 +4010,6 @@ def api_reset_to_chapters(job_id):
             print(f"[reset] Removed stale ABM: {old_abm_path}")
         except OSError as e:
             print(f"[reset] Error removing stale ABM {old_abm_path}: {e}")
-    # Also clean up any leftover .abm files in the work dir
     for abm in work_dir.glob("*.abm"):
         try:
             abm.unlink()
@@ -3957,32 +4017,29 @@ def api_reset_to_chapters(job_id):
         except OSError:
             pass
 
-    # Reset job state
-    job["status"] = "analyzed"
-    job["last_poll"] = time.time()
-    # Clear output-related keys (incluso output_m4b per evitare bottone M4B obsoleto)
-    for key in ("output_files", "output_name", "output_zip", "output_file",
-                "output_m4b",
-                "podcast_ready", "podcast_safe_name", "podcast_mp3s",
-                "progress_current", "progress_total", "progress_message",
-                "processed_chars", "total_chars", "bytes_generated",
-                "start_time", "elapsed_seconds", "current_chapter",
-                "current_chapter_num", "total_chapters",
-                "downloaded_at", "email_sent_at", "email_registered",
-                "failed_chunks", "cancelled",
-                # AI optimization progress state — cleared so re-optimization is possible.
-                # ai_optimized and optimized_chapters are intentionally kept
-                # to preserve per-chapter optimization tracking.
-                "opt_cancelled", "opt_progress_current", "opt_progress_total",
-                "opt_progress_message", "opt_current_chapter", "opt_current_chapter_num",
-                "opt_processed_chars", "opt_total_chars", "opt_streamed_chars",
-                "opt_current_chapter_chars", "opt_elapsed_seconds", "opt_completed_at",
-                "optimized_abm_path", "optimized_abm_name",
-                "selected_chapters",
-                "opt_auto_generate", "opt_single_file", "opt_output_format",
-                "opt_podcast_base_url", "opt_voice", "opt_rate",
-                "email_token"):
-        job.pop(key, None)
+    # Reset job state (inside lock)
+    with _jobs_lock:
+        job["status"] = "analyzed"
+        job["last_poll"] = time.time()
+        for key in ("output_files", "output_name", "output_zip", "output_file",
+                    "output_m4b",
+                    "podcast_ready", "podcast_safe_name", "podcast_mp3s",
+                    "progress_current", "progress_total", "progress_message",
+                    "processed_chars", "total_chars", "bytes_generated",
+                    "start_time", "elapsed_seconds", "current_chapter",
+                    "current_chapter_num", "total_chapters",
+                    "downloaded_at", "email_sent_at", "email_registered",
+                    "failed_chunks", "cancelled",
+                    "opt_cancelled", "opt_progress_current", "opt_progress_total",
+                    "opt_progress_message", "opt_current_chapter", "opt_current_chapter_num",
+                    "opt_processed_chars", "opt_total_chars", "opt_streamed_chars",
+                    "opt_current_chapter_chars", "opt_elapsed_seconds", "opt_completed_at",
+                    "optimized_abm_path", "optimized_abm_name",
+                    "selected_chapters",
+                    "opt_auto_generate", "opt_single_file", "opt_output_format",
+                    "opt_podcast_base_url", "opt_voice", "opt_rate",
+                    "email_token"):
+            job.pop(key, None)
     # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
     #        client_id, client_ip, voice (so preview still works)
 
@@ -4297,7 +4354,19 @@ def api_optimize():
         job["opt_voice"] = lang  # _call_deepseek uses this if "voice" is missing
 
     client_id = job.get("client_id", "")
-    if job["status"] not in ("analyzed",): return jsonify({"error": "Invalid state"}), 400
+    # Atomic concurrency check + status claim for optimization
+    with _jobs_lock:
+        if job["status"] not in ("analyzed",):
+            return jsonify({"error": "Optimization already running or completed."}), 400
+        if client_id and MAX_CONCURRENT_LLM_PER_CLIENT > 0:
+            if _active_optimizing_for_client_unlocked(client_id) >= MAX_CONCURRENT_LLM_PER_CLIENT:
+                return jsonify({
+                    "error": f"Concurrent optimization limit reached ({MAX_CONCURRENT_LLM_PER_CLIENT}).",
+                    "error_code": "concurrent_optimize_limit",
+                    "max": MAX_CONCURRENT_LLM_PER_CLIENT,
+                    "active": _active_optimizing_for_client_unlocked(client_id),
+                }), 429
+        job["status"] = "optimizing"
     raw_selected = data.get("selected_chapters")
     selected_chapters = _parse_selected_chapters(raw_selected)
     already = set(job.get("optimized_chapters", []))
@@ -4452,11 +4521,12 @@ def api_optimize_progress(job_id):
 @app.route("/api/cancel_optimize/<job_id>", methods=["POST"])
 def api_cancel_optimize(job_id):
     """Cancel an LLM optimization in progress."""
-    if job_id in jobs:
-        job = jobs[job_id]
-        if job.get("status") == "optimizing":
-            job["opt_cancelled"] = True
-            return jsonify({"status": "cancelling"})
+    with _jobs_lock:
+        if job_id in jobs:
+            job = jobs[job_id]
+            if job.get("status") == "optimizing":
+                job["opt_cancelled"] = True
+                return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
 
 
@@ -4471,8 +4541,10 @@ def api_active_jobs():
         return jsonify({"error": "Unauthorized"}), 401
 
     from datetime import datetime
+    with _jobs_lock:
+        snapshot = list(jobs.items())
     active = []
-    for jid, job in list(jobs.items()):
+    for jid, job in snapshot:
         if job.get("status") in ("generating", "analyzed", "optimizing", "optimized"):
             info = job.get("info")
             title = ""
@@ -4593,30 +4665,31 @@ def token_do_download_abm(token):
         _download_tokens.pop(token, None)
         _save_tokens()
         return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
-    abm_path = token_info.get("optimized_abm_path", "")
+    job_id = token_info.get("job_id", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
-    if not abm_path or not os.path.exists(abm_path):
-        # Try reconstruction inside job dir
-        job_id = token_info.get("job_id", "")
-        if job_id and abm_path:
-            alt = UPLOAD_DIR / job_id / os.path.basename(abm_path)
-            if alt.exists():
-                abm_path = str(alt)
-    # Fallback: generate on-the-fly if job is still in memory and AI-optimized
-    if (not abm_path or not os.path.exists(abm_path)) and job_id and job_id in jobs:
+    # Always regenerate from cumulative in-memory state when AI-optimized
+    if job_id and job_id in jobs and jobs[job_id].get("ai_optimized"):
         job = jobs[job_id]
-        if job.get("ai_optimized"):
-            try:
-                abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
-                job["optimized_abm_path"] = abm_path
-                job["optimized_abm_name"] = abm_name
-            except Exception as e:
-                print(f"[{job_id}] Token ABM on-demand generation failed: {e}")
+        try:
+            opt_ch = job.get("optimized_chapters", [])
+            print(f"[{job_id}] Token ABM download: regenerating (optimized_chapters={opt_ch})")
+            abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
+            job["optimized_abm_path"] = abm_path
+            job["optimized_abm_name"] = abm_name
+        except Exception as e:
+            print(f"[{job_id}] Token ABM on-demand generation failed: {e}")
+            abm_path = token_info.get("optimized_abm_path", "")
+    else:
+        abm_path = token_info.get("optimized_abm_path", "")
+        if not abm_path or not os.path.exists(abm_path):
+            alt = UPLOAD_DIR / job_id / os.path.basename(abm_path) if job_id else None
+            if alt and alt.exists():
+                abm_path = str(alt)
     if not abm_path or not os.path.exists(abm_path):
         return "File not available", 404
     _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
                   "DOWNLOAD_OPT_ABM", "", "", "", "")
-    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name)
+    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
 
 
 @app.route("/dl/<token>/m4b")
@@ -4695,25 +4768,28 @@ def token_do_download(token):
     try:
         #  -  -  OPTIMIZED ABM download  -  -
         if dl_type == "optimized_abm":
-            abm_path = token_info.get("optimized_abm_path", "")
             abm_name = token_info.get("optimized_abm_name", "optimized.abm")
-            if not abm_path or not os.path.exists(abm_path):
-                # Try path reconstruction
-                abm_path = str(job_dir / os.path.basename(abm_path)) if abm_path else ""
-            # Fallback: generate on-the-fly
-            if (not abm_path or not os.path.exists(abm_path)) and job_id and job and job.get("ai_optimized"):
+            # Always regenerate from cumulative in-memory state when AI-optimized
+            if job_id and job and job.get("ai_optimized"):
                 try:
+                    opt_ch = job.get("optimized_chapters", [])
+                    print(f"[{job_id}] Token dl ABM download: regenerating (optimized_chapters={opt_ch})")
                     abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
                     job["optimized_abm_path"] = abm_path
                     job["optimized_abm_name"] = abm_name
                 except Exception as e:
-                    print(f"[{job_id}] Token download ABM on-demand failed: {e}")
+                    print(f"[{job_id}] Token dl ABM on-demand generation failed: {e}")
+                    abm_path = token_info.get("optimized_abm_path", "")
+            else:
+                abm_path = token_info.get("optimized_abm_path", "")
+                if not abm_path:
+                    abm_path = ""
             if abm_path and os.path.exists(abm_path):
                 if job:
                     job["downloaded_at"] = time.time()
                 _log_activity(job_id, token_info.get("original_filename", ""),
                               "DOWNLOAD_OPT_ABM", "", "", "", "")
-                return send_file(abm_path, as_attachment=True, download_name=abm_name)
+                return _apply_no_cache(send_file(abm_path, as_attachment=True, download_name=abm_name))
             return "File not found", 404
 
         #  -  -  PODCAST download  -  - 
@@ -5413,22 +5489,24 @@ def api_download(job_id):
                       job.get("voice", ""), job.get("browser_lang", ""))
 
     if download_type == "abm":
-        abm_path = job.get("optimized_abm_path")
-        if abm_path and os.path.exists(abm_path):
-            _do_log()
-            safe_name = _safe_filename(job["info"].title) or "progetto"
-            suffix = "_optimized" if job.get("ai_optimized") else ""
-            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}{suffix}.abm")
-        # Fallback: generate ABM on-the-fly if ai_optimized but path is missing
+        # Always regenerate from cumulative in-memory state to avoid stale chapters
         if job.get("ai_optimized"):
             try:
+                opt_ch = job.get("optimized_chapters", [])
+                print(f"[{job_id}] ABM download: regenerating (optimized_chapters={opt_ch})")
                 abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
                 _do_log()
-                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name)
+                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
             except Exception as e:
                 print(f"[{job_id}] On-demand ABM generation failed: {e}")
+        # Fallback: serve existing file if any (pre-regeneration or non-AI-optimized)
+        abm_path = job.get("optimized_abm_path")
+        if abm_path and os.path.exists(abm_path):
+            _do_log()
+            safe_name = _safe_filename(job["info"].title) or "progetto"
+            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True)
         return "Optimized ABM project file not found", 404
 
     if download_type == "m4b":
@@ -5444,7 +5522,7 @@ def api_download(job_id):
             # Physical search fallback
             print(f"[debug] M4B not found at registered path. Searching in directory...")
             job_dir = UPLOAD_DIR / job_id
-            m4b_files = list(job_dir.glob("**/ *.m4b"))
+            m4b_files = list(job_dir.glob("**/*.m4b"))
             if m4b_files:
                 actual_m4b = str(m4b_files[0])
                 job["output_m4b"] = actual_m4b
@@ -5746,10 +5824,11 @@ CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimoss
 
 def _cleanup_job(job_id, reason=""):
     """Remove all files for a job and delete the job entry."""
+    with _jobs_lock:
+        jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
     if work_dir.exists():
         shutil.rmtree(str(work_dir), ignore_errors=True)
-    jobs.pop(job_id, None)
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
@@ -5758,142 +5837,129 @@ def _cleanup_loop():
     while True:
         time.sleep(CLEANUP_INTERVAL_SEC)
         now = time.time()
-        to_remove = []
 
-        for jid, job in list(jobs.items()):
-            status = job.get("status", "")
-            has_email = job.get("email_registered", False)
+        with _jobs_lock:
+            to_remove = []
+            for jid, job in list(jobs.items()):
+                status = job.get("status", "")
+                has_email = job.get("email_registered", False)
 
-            #  -  -  Cancelled jobs: immediate cleanup  -  - 
-            if status == "cancelled":
-                to_remove.append((jid, "cancelled"))
-                continue
-
-            #  -  -  Error jobs: immediate cleanup  -  - 
-            if status == "error":
-                start = job.get("start_time", now)
-                if (now - start) > 120:  # grazia di 2 min per leggere l'errore
-                    to_remove.append((jid, "error"))
-                continue
-
-            #  -  -  Analyzed but never started: cleanup if heartbeat lost  -  - 
-            if status == "analyzed":
-                last_poll = job.get("last_poll", job.get("start_time", now))
-                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:  # 30 min per analyzed
-                    to_remove.append((jid, "stale analyzed"))
-                continue
-
-            #  -  -  Optimizing jobs (LLM)  -  - 
-            if status == "optimizing":
-                if has_email:
-                    continue  # batch mode: keep alive
-                last_poll = job.get("last_poll", job.get("opt_start_time", now))
-                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
-                    job["opt_cancelled"] = True
-                    to_remove.append((jid, f"heartbeat lost during optimization ({int(now - last_poll)}s)"))
-                continue
-
-            #  -  -  Optimized jobs: ottimizzazione completata, in attesa di export/download  -  - 
-            # Il progetto .abm va mantenuto per EMAIL_FILE_RETENTION_SEC (24h) dal termine
-            # dell'ottimizzazione in qualunque caso  -  sia che l'utente abbia lasciato il
-            # browser aperto, sia che sia stata registrata l'email per notifica batch.
-            # La regola unifica lo scenario "no email" con quello email-batch: entrambi
-            # hanno 24h dal completamento per scaricare il .abm tramite il bottone UI o
-            # (se applicabile) il link email.
-            if status == "optimized":
-                opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
-                if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
-                    reason = ("optimization email retention expired" if has_email
-                              else "optimized project retention expired (24h)")
-                    to_remove.append((jid, reason))
-                continue
-
-            #  -  -  Generating jobs  -  - 
-            if status == "generating":
-                # Con email registrata: non cancellare mai (continua in background)
-                if has_email:
-                    continue
-                # Senza email: controlla heartbeat (browser chiuso = cancella)
-                last_poll = job.get("last_poll", job.get("start_time", now))
-                if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
-                    job["cancelled"] = True  # segnala al thread di generazione
-                    to_remove.append((jid, f"heartbeat lost during generation ({int(now - last_poll)}s)"))
-                continue
-
-            #  -  -  Done jobs  -  - 
-            if status == "done":
-                dl_at = job.get("downloaded_at")
-                email_sent_at = job.get("email_sent_at")
-                last_poll = job.get("last_poll", 0)
-
-                # REGOLA 3: Email inviata  →  mantieni 24h dall'invio
-                if has_email and email_sent_at:
-                    if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
-                        to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
+                if status == "cancelled":
+                    to_remove.append((jid, "cancelled"))
                     continue
 
-                # Email registrata ma non ancora inviata  →  mantieni
-                if has_email and not email_sent_at:
+                if status == "error":
+                    start = job.get("start_time", now)
+                    if (now - start) > 120:
+                        to_remove.append((jid, "error"))
                     continue
 
-                # REGOLA 2: Download diretto dall'UI  →  cancella dopo breve grazia
-                if dl_at:
-                    if (now - dl_at) > CLEANUP_GRACE_AFTER_DOWNLOAD_SEC:
-                        to_remove.append((jid, f"downloaded {int(now - dl_at)}s ago"))
+                if status == "analyzed":
+                    last_poll = job.get("last_poll", job.get("start_time", now))
+                    if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:
+                        to_remove.append((jid, "stale analyzed"))
                     continue
 
-                # REGOLA 1: Nessun download, nessuna email, heartbeat perso  →  browser chiuso
-                if last_poll and (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
-                    to_remove.append((jid, f"abandoned (heartbeat lost {int(now - last_poll)}s)"))
+                if status == "optimizing":
+                    if has_email:
+                        continue
+                    last_poll = job.get("last_poll", job.get("opt_start_time", now))
+                    if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                        job["opt_cancelled"] = True
+                        to_remove.append((jid, f"heartbeat lost during optimization ({int(now - last_poll)}s)"))
                     continue
 
+                if status == "optimized":
+                    opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
+                    if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
+                        reason = ("optimization email retention expired" if has_email
+                                  else "optimized project retention expired (24h)")
+                        to_remove.append((jid, reason))
+                    continue
+
+                if status == "generating":
+                    if has_email:
+                        continue
+                    last_poll = job.get("last_poll", job.get("start_time", now))
+                    if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                        job["cancelled"] = True
+                        to_remove.append((jid, f"heartbeat lost during generation ({int(now - last_poll)}s)"))
+                    continue
+
+                if status == "done":
+                    dl_at = job.get("downloaded_at")
+                    email_sent_at = job.get("email_sent_at")
+                    last_poll = job.get("last_poll", 0)
+
+                    if has_email and email_sent_at:
+                        if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
+                            to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
+                        continue
+
+                    if has_email and not email_sent_at:
+                        continue
+
+                    if dl_at:
+                        if (now - dl_at) > CLEANUP_GRACE_AFTER_DOWNLOAD_SEC:
+                            to_remove.append((jid, f"downloaded {int(now - dl_at)}s ago"))
+                        continue
+
+                    if last_poll and (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:
+                        to_remove.append((jid, f"abandoned (heartbeat lost {int(now - last_poll)}s)"))
+                        continue
+
+        # File I/O outside lock
         for jid, reason in to_remove:
             try:
                 _cleanup_job(jid, reason)
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-        #  -  -  Cleanup expired download tokens  -  - 
+    #  -  -  Cleanup expired download tokens  -  -
+    with _tokens_lock:
         expired_tokens = [(t, info) for t, info in _download_tokens.items()
                           if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
-        for t, t_info in expired_tokens:
+    for t, t_info in expired_tokens:
+        with _tokens_lock:
             _download_tokens.pop(t, None)
-            # Also cleanup job directory if job not in memory
-            jid = t_info.get("job_id", "")
-            if jid and jid not in jobs:
-                job_dir = UPLOAD_DIR / jid
-                if job_dir.exists():
-                    shutil.rmtree(str(job_dir), ignore_errors=True)
-                    print(f"[cleanup] Token-orphan dir removed: {jid}")
-        if expired_tokens:
+        jid = t_info.get("job_id", "")
+        with _jobs_lock:
+            job_in_memory = jid in jobs
+        if jid and not job_in_memory:
+            job_dir = UPLOAD_DIR / jid
+            if job_dir.exists():
+                shutil.rmtree(str(job_dir), ignore_errors=True)
+                print(f"[cleanup] Token-orphan dir removed: {jid}")
+    if expired_tokens:
+        with _tokens_lock:
             _save_tokens()
 
-        #  -  -  Cleanup cartelle orfane su disco  -  - 
-        # Cartelle in UPLOAD_DIR non associate a nessun job né token attivo
+    #  -  -  Cleanup cartelle orfane su disco  -  -
+    with _jobs_lock:
         _known_job_ids = set(jobs.keys())
+    with _tokens_lock:
         _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
-        _all_known = _known_job_ids | _known_token_jobs
-        try:
-            for entry in UPLOAD_DIR.iterdir():
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith("_"):
-                    continue  # skip _download_tokens.json etc.
-                if entry.name in _all_known:
-                    continue  # still referenced
-                # Check age: only remove if old enough
-                try:
-                    dir_age = now - entry.stat().st_mtime
-                except OSError:
-                    continue
-                if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
-                    shutil.rmtree(str(entry), ignore_errors=True)
-                    print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
-        except OSError:
-            pass
+    _all_known = _known_job_ids | _known_token_jobs
+    try:
+        for entry in UPLOAD_DIR.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("_"):
+                continue
+            if entry.name in _all_known:
+                continue
+            try:
+                dir_age = now - entry.stat().st_mtime
+            except OSError:
+                continue
+            if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
+                shutil.rmtree(str(entry), ignore_errors=True)
+                print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
+    except OSError:
+        pass
 
-        # Flush pending admin digest (rate-limited: max 1/hour)
-        _try_send_admin_digest()
+    # Flush pending admin digest (rate-limited: max 1/hour)
+    _try_send_admin_digest()
 
 
 # ----------------------------------------------------------------------
@@ -5916,7 +5982,8 @@ generation_engine.configure(
     save_tokens_fn=_save_tokens,
     log_activity_fn=_log_activity,
     google_tts_module=google_tts,
-    invalidate_voices_cache_fn=_invalidate_voices_cache
+    invalidate_voices_cache_fn=_invalidate_voices_cache,
+    jobs_lock=_jobs_lock
 )
 
 if _paypal_available():
