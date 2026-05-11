@@ -225,7 +225,7 @@ function detectLang(){
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,_analyzedHbInterval=null,isTxtFile=false,emailRegistered=false;
 let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
-let aiOptEnabled=false,llmAvailable=false,aiAlreadyOptimized=false;
+let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
 let lastVoucherEmail='';
 try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
 
@@ -524,11 +524,20 @@ async function analyzeEpub(file){
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
     const d=await r.json();
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
+    if(d.existing_job_id && d.is_running){
+      jobId=d.existing_job_id;
+      lo.classList.remove('vis');hideUploadProgress();
+      alert(t('job_already_running'));
+      _showWizProgress();
+      if(d.status==='optimizing'){_listenOptProgressWiz()}
+      else if(d.status==='generating'){listenProgress()}
+      return;
+    }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
     _startAnalyzedHeartbeat();
     isTxtFile=(d.file_type==='txt');
     const isAbmFile=(d.file_type==='abm');
-    llmAvailable=!!d.llm_available;aiAlreadyOptimized=!!d.ai_optimized;aiOptEnabled=false;
+    llmAvailable=!!d.llm_available;optimizedChapters=d.optimized_chapters||[];aiOptEnabled=false;
     _updateAiOptUI();
     if(d.language){
       const lc=d.language.split('-')[0].toLowerCase();
@@ -773,13 +782,13 @@ function fillPreview(d){
   const chCount=document.getElementById('bookChCount');
   if(chCount)chCount.textContent=d.total_chapters+' '+(d.total_chapters===1?(t('sum_c')||'chapter'):(t('sum_cs')||'chapters'));
   const totalChars=document.getElementById('bookTotalChars');
-  if(totalChars)totalChars.textContent=d.total_words.toLocaleString()+' '+(t('sum_w')||'words');
+  if(totalChars)totalChars.textContent=(d.total_words||0).toLocaleString()+' '+(t('sum_w')||'words');
   const bookLangEl=document.getElementById('bookLang');
   if(bookLangEl&&d.language)bookLangEl.textContent=d.language.toUpperCase();
   else if(bookLangEl)bookLangEl.textContent='';
 
   const smC=document.getElementById('smC');if(smC)smC.textContent=d.total_chapters;
-  const smW=document.getElementById('smW');if(smW)smW.textContent=d.total_words.toLocaleString();
+  const smW=document.getElementById('smW');if(smW)smW.textContent=(d.total_words||0).toLocaleString();
   const smD=document.getElementById('smD');if(smD)smD.textContent=fmtDur(d.estimated_minutes);
   const selTot=document.getElementById('selTot');if(selTot)selTot.textContent=d.total_chapters;
 
@@ -879,10 +888,12 @@ function updateSelection(){
     if(aiToggle)aiToggle.checked=false;
     toggleAIOptimization();
   }
+  _updateAiOptUI();
 }
 
 function _getAllCheckboxes(){let cbs=document.querySelectorAll('#chl .col-sel input[type=checkbox]');if(!cbs.length)cbs=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');return cbs}
 function _getSelectedChapterIndexes(){const idxs=[];_getAllCheckboxes().forEach(cb=>{if(cb.checked)idxs.push(parseInt(cb.dataset.idx))});return idxs}
+function _allSelectedOptimized(){const sel=_getSelectedChapterIndexes();if(!sel.length)return false;return sel.every(idx=>optimizedChapters.includes(idx))}
 function chSelAll(){_getAllCheckboxes().forEach(cb=>{cb.checked=true;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.remove('unchecked')});updateSelection()}
 function chSelNone(){_getAllCheckboxes().forEach(cb=>{cb.checked=false;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.add('unchecked')});updateSelection()}
 function chSelInvert(){_getAllCheckboxes().forEach(cb=>{cb.checked=!cb.checked;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!cb.checked)});updateSelection()}
@@ -893,7 +904,8 @@ function exportAbm(){
   if(!jobId){showErr('s3err','No file analyzed yet');return}
   const a=document.createElement('a');
   a.href='/api/export_abm/'+jobId;
-  a.download=(bookData&&bookData.title?bookData.title:'project')+'.abm';
+  const suffix=optimizedChapters.length>0?'_optimized':'';
+  a.download=(bookData&&bookData.title?bookData.title:'project')+suffix+'.abm';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -964,7 +976,7 @@ function toggleAIOptimization(){
 function _updateAiOptCard(){
   const card=document.getElementById('aiOptCard');
   if(!card)return;
-  if(aiOptEnabled&&!aiAlreadyOptimized)card.classList.add('enabled');
+  if(aiOptEnabled&&!_allSelectedOptimized())card.classList.add('enabled');
   else card.classList.remove('enabled');
 }
 
@@ -1020,7 +1032,7 @@ function _updateAiOptUI(){
   if(!card)return;
   if(llmAvailable){
     card.style.display='';
-    if(aiAlreadyOptimized){
+    if(_allSelectedOptimized()){
       const already=document.getElementById('aiAlreadyOpt');if(already)already.style.display='';
       const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
       aiOptEnabled=false;
@@ -1204,7 +1216,7 @@ async function startCombinedGeneration(){
   if(btnGen)btnGen.disabled=true;
   if(btnGen)btnGen.innerHTML='<div class="sp"></div><span>'+t('btn_gen')+'...</span>';
 
-  if(aiOptEnabled&&!aiAlreadyOptimized){
+  if(aiOptEnabled&&!_allSelectedOptimized()){
     // ── AI optimization flow ──
     // Payment check
     var paymentToken=null;
@@ -1312,7 +1324,7 @@ function _showWizProgress(){
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   const progressPhase=document.getElementById('progressPhase');
   if(progressPhase){
-    const phaseLabel=(aiOptEnabled&&!aiAlreadyOptimized)?(t('s4_opt_title')||'AI Optimization + Generation'):(t('s4_title')||'Generation');
+    const phaseLabel=(aiOptEnabled&&!_allSelectedOptimized())?(t('s4_opt_title')||'AI Optimization + Generation'):(t('s4_title')||'Generation');
     progressPhase.textContent=phaseLabel;
   }
   const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
@@ -1333,7 +1345,8 @@ function _listenOptProgressWiz(){
     if(d.status==='optimized'){
       es.close();
       _setCancelButtonMode('gen');
-      aiAlreadyOptimized=true;aiOptEnabled=false;
+      (async()=>{try{const est=await fetch('/api/optimize_estimate/'+jobId).then(r=>r.json());if(est.optimized_chapters)optimizedChapters=est.optimized_chapters;}catch(e){}})();
+      aiOptEnabled=false;
       _updateAiOptUI();
       document.getElementById('pMsg').textContent=t('opt_done')||'Text optimization complete!';
       document.getElementById('pBar').style.width='100%';
@@ -1370,12 +1383,12 @@ function _listenOptProgressWiz(){
       return;
     }
     // Update wizard + old progress
-    var totalChars=d.opt_total_chars||1;
+    var totalChars=d.opt_total_chars_extended||d.opt_total_chars||1;
     var doneChars=d.opt_processed_chars||0;
     var curChChars=d.opt_current_chapter_chars||0;
     var streamedChars=Math.min(d.opt_streamed_chars||0,curChChars);
     var workedChars=doneChars+streamedChars;
-    var pct=doneChars>=totalChars?100:Math.min(99,Math.round(workedChars/totalChars*100));
+    var pct=Math.min(100,Math.round(workedChars/totalChars*100));
     document.getElementById('pBar').style.width=pct+'%';
     document.getElementById('pPct').textContent=pct+'%';
     document.getElementById('pMsg').textContent=d.opt_progress_message||'';
@@ -1768,6 +1781,19 @@ async function downloadFile(type){
         btn.disabled=false;btn.innerHTML=originalHtml;
         return;
       }
+      if(r.status===429){
+        const txt=await r.text();
+        const m=txt.match(/Wait (\d+) seconds/);
+        const sec=m?m[1]:'60';
+        showPErr(t('dl_cooldown').replace('%s', sec));
+        btn.disabled=false;btn.innerHTML=originalHtml;
+        return;
+      }
+      if(r.status===410){
+        showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');
+        btn.disabled=false;btn.innerHTML=originalHtml;
+        return;
+      }
       if(!r.ok){
         const txt=await r.text();
         showPErr(txt||'Download failed');
@@ -1813,6 +1839,19 @@ async function downloadPodcast(){
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
+    if(r.status===429){
+      const txt=await r.text();
+      const m=txt.match(/Wait (\d+) seconds/);
+      const sec=m?m[1]:'60';
+      showPErr(t('dl_cooldown').replace('%s', sec));
+      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      return;
+    }
+    if(r.status===410){
+      showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');
+      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      return;
+    }
     if(!r.ok){
       const txt=await r.text();
       showPErr(txt||'Download failed');
@@ -1843,6 +1882,8 @@ async function downloadPodcastZip(){
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));
+    if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
+    if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
     if(!r.ok){const t=await r.text();showPErr(t||'Download failed');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
     const blob=await r.blob();
     const cd=r.headers.get('Content-Disposition')||'';
@@ -1873,8 +1914,8 @@ async function goBackToChapters(){
   emailRegistered=false;
   // Reset chapter selection — uncheck all
   _getAllCheckboxes().forEach(cb=>{cb.checked=false});
-  // Reset AI optimization state
-  aiAlreadyOptimized=false;aiOptEnabled=false;
+  // Reset AI optimization state (keep optimizedChapters so previously optimized chapters remain tracked)
+  aiOptEnabled=false;
   const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
@@ -1956,7 +1997,7 @@ function resetAll(){
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   // Reset AI toggle
   const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
-  aiOptEnabled=false;aiAlreadyOptimized=false;
+  aiOptEnabled=false;optimizedChapters=[];
   const aiOptCard3=document.getElementById('aiOptCard');if(aiOptCard3){aiOptCard3.classList.remove('enabled');aiOptCard3.style.display='';}
   const summaryBox3=document.getElementById('summaryBox');if(summaryBox3)summaryBox3.style.display='';
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
