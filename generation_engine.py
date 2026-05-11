@@ -1049,6 +1049,11 @@ def run_optimization(job_id, selected_chapters=None):
     total_chapters = len(chapters_to_opt)
     total_chars = sum(ch.char_count for ch in chapters_to_opt)
 
+    FINALIZATION_RATIO = 0.03
+    MIN_FINALIZATION_CHARS = 3000
+    finalization_weight = max(MIN_FINALIZATION_CHARS, int(total_chars * FINALIZATION_RATIO))
+    total_chars_extended = total_chars + finalization_weight
+
     # Carica il prompt per la lingua del job
     lang = job.get("lang", "it")
     prompt = _get_deepseek_prompt(lang)
@@ -1062,10 +1067,19 @@ def run_optimization(job_id, selected_chapters=None):
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
     job["opt_total_chars"] = total_chars
+    job["opt_total_chars_extended"] = total_chars_extended
+    job["opt_finalization_weight"] = finalization_weight
     job["opt_processed_chars"] = 0
     job["opt_streamed_chars"] = 0
     job["opt_start_time"] = start_time
     job["opt_progress_message"] = "Starting optimization..."
+
+    def _emit_finalization_progress(phase_name, fraction_done):
+        """fraction_done: 0.0 -> 1.0 within finalization phase"""
+        job["opt_processed_chars"] = total_chars + int(finalization_weight * fraction_done)
+        job["opt_progress_message"] = phase_name
+        job["opt_elapsed_seconds"] = round(time.time() - start_time)
+        job["opt_progress_ts"] = time.time()
 
     try:
         for i, ch in enumerate(chapters_to_opt):
@@ -1111,6 +1125,10 @@ def run_optimization(job_id, selected_chapters=None):
         job["opt_progress_current"] = total_chapters
         job["opt_elapsed_seconds"] = round(total_elapsed)
         job["opt_completed_at"] = time.time()
+        # Track per-chapter optimization status
+        optimized = set(job.get("optimized_chapters", []))
+        optimized.update(ch.index for ch in chapters_to_opt)
+        job["optimized_chapters"] = list(optimized)
         job["ai_optimized"] = True
         # Segna il job come completato per il recovery voucher all'avvio
         if job.get("payment_type"):
@@ -1121,17 +1139,22 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
+        _emit_finalization_progress("Finalizing optimization...", 0.0)
+
         # Re-check auto_generate — may have been set via the unified optimization+generation flow
         auto_generate = job.get("opt_auto_generate", False)
         if auto_generate:
-            job["opt_progress_message"] = "Optimization complete! Preparing audio generation..."
+            _emit_finalization_progress("Generating optimized project archive...", 0.15)
             # Generate .abm snapshot first, then proceed to TTS generation
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
+                _emit_finalization_progress("Project archive created.", 0.30)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
+                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
+            _emit_finalization_progress("Optimization complete! Preparing audio generation...", 1.0)
             # Go directly to generating — skip intermediate "optimized" status
             # to avoid race condition in SSE polling
             voice = job.get("opt_voice", "it-IT-IsabellaNeural")
@@ -1157,16 +1180,26 @@ def run_optimization(job_id, selected_chapters=None):
                            podcast_base_url=podcast_base_url)
         elif job.get("email_registered"):
             # Batch mode, no auto-generate: create .abm and send email
-            abm_path, abm_name = _generate_optimized_abm(job_id)
-            job["optimized_abm_path"] = abm_path
-            job["optimized_abm_name"] = abm_name
-            job["status"] = "optimized"
+            _emit_finalization_progress("Generating optimized project archive...", 0.15)
+            try:
+                abm_path, abm_name = _generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+                _emit_finalization_progress("Project archive created.", 0.30)
+            except Exception as e:
+                print(f"[{job_id}] Failed to generate .abm: {e}")
+                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
+            _emit_finalization_progress("Sending completion email...", 0.70)
             try:
                 _send_optimization_email(job_id)
+                _emit_finalization_progress("Completion email sent.", 1.0)
             except Exception as e:
                 print(f"[{job_id}] Optimization email error: {e}")
+                _emit_finalization_progress("Optimization complete (email error, retry manually).", 1.0)
+            job["status"] = "optimized"
         else:
             # Interactive mode: just mark as optimized
+            _emit_finalization_progress("Optimization complete!", 1.0)
             job["status"] = "optimized"
             job["last_poll"] = time.time()
 
