@@ -1338,23 +1338,39 @@ function _setWizPct(pct){
 }
 
 function _showJobRunningModal(pct){
-  const modal=document.getElementById('jobRunningModal');
-  if(!modal){alert(t('job_already_running',{pct:pct}));return;}
-  const msgEl=document.getElementById('jobRunningMsg');
+  var pctVal=Math.round(pct||0);
+  var msg=t('job_already_running',{pct:pctVal});
+  var modal=document.getElementById('jobRunningModal');
+  if(!modal){
+    // Fallback: show a styled modal inserted into body
+    var el=document.createElement('div');
+    el.id='jobRunningModal';
+    el.className='modal-overlay open';
+    el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+    el.innerHTML='<div class="modal" style="max-width:480px"><div class="modal-head"><h2>'+t('job_already_running_title')+'</h2></div><div class="modal-body">'+msg+'</div></div>';
+    el._dynamic=true;
+    el.onclick=function(ev){if(ev.target===el)el.remove()};
+    document.body.appendChild(el);
+    return;
+  }
+  var msgEl=document.getElementById('jobRunningMsg');
   if(msgEl){
-    const span='<span id="jobRunningPct">'+Math.round(pct||0)+'</span>';
+    var span='<span id="jobRunningPct">'+pctVal+'</span>';
     msgEl.innerHTML=t('job_already_running',{pct:span});
   }
-  const title=document.getElementById('jobRunningTitle');
+  var title=document.getElementById('jobRunningTitle');
   if(title)title.textContent=t('job_already_running_title')||title.textContent;
   modal.classList.add('open');
-  const closeBtn=document.getElementById('jobRunningClose');
+  modal.style.display='';
+  var closeBtn=document.getElementById('jobRunningClose');
   if(closeBtn)closeBtn.onclick=_hideJobRunningModal;
   modal.onclick=function(ev){if(ev.target===modal)_hideJobRunningModal();};
 }
 function _hideJobRunningModal(){
-  const modal=document.getElementById('jobRunningModal');
-  if(modal)modal.classList.remove('open');
+  var modal=document.getElementById('jobRunningModal');
+  if(!modal)return;
+  if(modal._dynamic){modal.remove();}
+  else{modal.classList.remove('open');}
 }
 function _updateJobRunningPct(pct){
   const span=document.getElementById('jobRunningPct');
