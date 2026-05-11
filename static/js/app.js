@@ -1349,7 +1349,7 @@ function _showJobRunningModal(pct){
     el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
     el.innerHTML='<div class="modal" style="max-width:480px"><div class="modal-head"><h2>'+t('job_already_running_title')+'</h2></div><div class="modal-body">'+msg+'</div></div>';
     el._dynamic=true;
-    el.onclick=function(ev){if(ev.target===el)el.remove()};
+    el.onclick=function(ev){if(ev.target===el){el.remove();resetAll();}};
     document.body.appendChild(el);
     return;
   }
@@ -1371,6 +1371,7 @@ function _hideJobRunningModal(){
   if(!modal)return;
   if(modal._dynamic){modal.remove();}
   else{modal.classList.remove('open');}
+  resetAll();
 }
 function _updateJobRunningPct(pct){
   const span=document.getElementById('jobRunningPct');
