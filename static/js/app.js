@@ -161,7 +161,15 @@ function setupKeyboardShortcuts(){
 }
 
 let cl='en';
-function t(k){return(L[cl]||L.en)[k]||(L.en)[k]||k}
+function t(k, replacements){
+  let s=(L[cl]||L.en)[k]||(L.en)[k]||k;
+  if(replacements){
+    for(let key in replacements){
+      s=s.replace(new RegExp('{'+key+'}','g'), replacements[key]);
+    }
+  }
+  return s;
+}
 function applyI18n(){
   document.querySelectorAll('[data-t]').forEach(e=>{
     const k=e.getAttribute('data-t'), v=t(k);
@@ -527,10 +535,18 @@ async function analyzeEpub(file){
     if(d.existing_job_id && d.is_running){
       jobId=d.existing_job_id;
       lo.classList.remove('vis');hideUploadProgress();
-      alert(t('job_already_running'));
+      let pct=0;
+      if(d.status==='optimizing'){
+        const cur=d.opt_progress_current||0, tot=d.opt_progress_total||1;
+        pct=Math.round((cur/tot)*100);
+        _listenOptProgressWiz()
+      }else if(d.status==='generating'){
+        const cur=d.progress_current||0, tot=d.progress_total||1;
+        pct=Math.round((cur/tot)*100);
+        listenProgress()
+      }
+      alert(t('job_already_running',{pct:pct}));
       _showWizProgress();
-      if(d.status==='optimizing'){_listenOptProgressWiz()}
-      else if(d.status==='generating'){listenProgress()}
       return;
     }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();

@@ -382,6 +382,8 @@ def _save_tokens():
                     "podcast_info_language": info.get("podcast_info_language", ""),
                     "original_filename": info.get("original_filename", ""),
                     "lang": info.get("lang", "en"),
+                    "optimized_abm_path": info.get("optimized_abm_path", ""),
+                    "optimized_abm_name": info.get("optimized_abm_name", ""),
                 }
             with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -3340,6 +3342,10 @@ def api_analyze():
                     "existing_job_id": jid,
                     "status": status,
                     "is_running": True,
+                    "progress_current": job.get("progress_current", 0),
+                    "progress_total": job.get("progress_total", 0),
+                    "opt_progress_current": job.get("opt_progress_current", 0),
+                    "opt_progress_total": job.get("opt_progress_total", 0),
                 })
             if status in ("analyzed", "optimized"):
                 # Reuse existing analyzed/optimized job

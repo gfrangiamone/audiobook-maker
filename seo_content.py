@@ -93,23 +93,30 @@ _CONTENT = {
         "faq_heading": "Domande Frequenti — Convertitore EPUB/PDF Audiolibro",
         "faqs": [
             ("Come convertire un EPUB in audiolibro gratis?",
-             "Carica il tuo file EPUB su Audiobook Maker, seleziona una voce AI e la lingua desiderata, "
-             "poi clicca su Converti. Il convertitore text-to-speech gratuito genererà l'audiolibro "
-             "in formato MP3 che potrai scaricare e ascoltare ovunque. Non serve registrazione."),
+             "Carica il tuo file EPUB su Audiobook Maker, seleziona una voce AI neurale tra le oltre 400 disponibili "
+             "e la lingua desiderata, poi clicca su Converti. Il nostro convertitore text-to-speech gratuito "
+             "estrae il testo dal libro, lo suddivide in capitoli e genera un audiolibro in formato MP3 "
+             "o M4B con capitoli incorporati, pronto per essere scaricato e ascoltato su qualsiasi dispositivo. "
+             "Non è richiesta alcuna registrazione e non ci sono limiti di utilizzo."),
             ("Come convertire un PDF in audiolibro?",
-             "Audiobook Maker supporta la conversione diretta di file PDF in audiolibri MP3. "
-             "Carica il tuo PDF, scegli una voce AI, e il convertitore estrarrà il testo e lo trasformerà "
-             "in audio con sintesi vocale neurale."),
+             "Audiobook Maker supporta la conversione diretta di file PDF in audiolibri MP3 e M4B. "
+             "Carica il tuo PDF, scegli una voce AI neurale e la lingua di narrazione, "
+             "e il convertitore estrae automaticamente il testo dalle pagine, preservando la struttura del documento. "
+             "Il motore text-to-speech neurale trasforma il contenuto in audio naturale di alta qualità, "
+             "pronto per l'ascolto su smartphone, tablet o lettore MP3. Nessuna registrazione richiesta."),
              ("Supportate il formato M4B?",
-              "Sì, Audiobook Maker può generare audiolibri in formato M4B universale. "
+              "Sì, Audiobook Maker può generare audiolibri professionali in formato M4B universale. "
               "A differenza dei semplici file MP3, il formato M4B permette di incorporare "
-              "i capitoli direttamente nel file audio, mantenendo la suddivisione e i titoli "
-              "all'interno di app come Apple Books o VLC."),
+              "i capitoli direttamente nel file audio, mantenendo la suddivisione, i titoli e i metadati. "
+              "È il formato standard per gli audiolibri su Apple Books, iTunes e molte app dedicate. "
+              "Puoi anche generare un file MP3 o uno ZIP con i capitoli separati, a seconda delle tue esigenze."),
             ("Quali formati di ebook sono supportati?",
-             "Audiobook Maker supporta i formati EPUB, PDF e TXT. "
-             "L'EPUB è il formato consigliato per risultati ottimali. "
-             "Se il tuo libro è in un altro formato (MOBI, AZW), puoi convertirlo prima in EPUB "
-             "usando strumenti gratuiti come Calibre."),
+             "Audiobook Maker supporta i formati EPUB, PDF e TXT per la conversione in audiolibro. "
+             "L'EPUB è il formato consigliato per risultati ottimali grazie alla sua struttura logica dei capitoli. "
+             "I PDF sono perfettamente supportati con estrazione testo avanzata. "
+             "Se il tuo libro è in un altro formato come MOBI o AZW, puoi convertirlo facilmente in EPUB "
+             "usando strumenti gratuiti come Calibre prima di caricarlo. "
+             "In output ottieni MP3, M4B con capitoli, o ZIP con i file separati."),
             ("Quante voci AI sono disponibili e in quali lingue?",
              "Audiobook Maker offre oltre 400 voci neurali AI di alta qualità basate su Microsoft Edge TTS, "
              "con supporto per decine di lingue tra cui italiano, inglese, francese, spagnolo, tedesco, "
@@ -118,19 +125,28 @@ _CONTENT = {
              "supporta tutte le lingue offerte dalla libreria Edge TTS. "
              "Ogni lingua dispone di voci maschili e femminili con diversi stili di narrazione."),
             ("Le voci AI sono naturali?",
-             "Sì, il convertitore utilizza voci neurali TTS di alta qualità (Edge TTS) con sintesi "
-             "vocale AI che produce voci naturali e piacevoli da ascoltare."),
+             "Sì, il convertitore utilizza voci neurali TTS di alta qualità basate su Microsoft Edge TTS, "
+             "con sintesi vocale AI avanzata che produce voci naturali, fluide e piacevoli da ascoltare. "
+             "A differenza delle vecchie voci robotiche, le voci neuronali catturano prosodia, intonazione e ritmo, "
+             "offrendo un'esperienza di ascolto professionale comparabile a una narrazione umana. "
+             "Puoi ascoltare un'anteprima gratuita prima di avviare la conversione completa."),
             ("Devo installare qualcosa?",
-             "No, Audiobook Maker è un convertitore online che funziona completamente nel browser. "
-             "Non serve scaricare né installare alcun software."),
+             "No, Audiobook Maker è un convertitore online che funziona completamente nel browser web. "
+             "Non serve scaricare, installare o configurare alcun software sul tuo computer, smartphone o tablet. "
+             "Basta aprire il sito, caricare il libro e avviare la conversione. "
+             "Tutto il processo di text-to-speech avviene sui nostri server in modo sicuro e veloce."),
             ("Posso generare un podcast dai capitoli del libro?",
-             "Sì, Audiobook Maker può generare un feed RSS podcast con tutti i capitoli del tuo "
-             "audiolibro. Puoi copiare il link e aggiungerlo alla tua app podcast preferita per "
-             "ascoltare i capitoli in streaming."),
+             "Sì, Audiobook Maker può generare automaticamente un feed RSS podcast con tutti i capitoli "
+             "del tuo audiolibro. Puoi copiare il link del feed e aggiungerlo a qualsiasi app podcast "
+             "come Apple Podcasts, Spotify, Overcast o Pocket Casts per ascoltare i capitoli in streaming. "
+             "Questa funzione è ideale per chi vuole ascoltare il libro durante la guida o in palestra, "
+             "senza occupare spazio con file scaricati."),
             ("Il servizio è davvero gratuito?",
-             "Sì, Audiobook Maker è completamente gratuito. Non richiede registrazione, "
-             "non ha limiti di utilizzo e non inserisce pubblicità nei file audio generati. "
-             "Il progetto è supportato da donazioni volontarie."),
+             "Sì, Audiobook Maker è completamente gratuito e senza limiti di utilizzo. "
+             "Non richiede registrazione, non chiede carta di credito e non inserisce pubblicità nei file audio generati. "
+             "Il progetto open source è sostenuto da donazioni volontarie della community. "
+             "Tutte le funzioni principali, inclusa la conversione text-to-speech e la generazione M4B, "
+             "sono disponibili gratuitamente per tutti gli utenti."),
             ("Audiobook Maker è un'alternativa gratuita a Speechify?",
              "Sì. A differenza di Speechify che richiede un abbonamento a pagamento, "
              "Audiobook Maker è 100% gratuito, non richiede registrazione e offre "
@@ -241,21 +257,28 @@ _CONTENT = {
         "faq_heading": "Frequently Asked Questions — EPUB/PDF to Audiobook Converter",
         "faqs": [
             ("How to convert an EPUB to audiobook for free?",
-             "Upload your EPUB file to Audiobook Maker, select an AI voice and your desired language, "
-             "then click Convert. The free text-to-speech converter will generate the audiobook "
-             "in MP3 format that you can download and listen to anywhere. No signup required."),
+             "Upload your EPUB file to Audiobook Maker, select a neural AI voice from our collection of over 400 options, "
+             "and choose your desired language, then click Convert. The free text-to-speech converter extracts the book text, "
+             "splits it into chapters, and generates an audiobook in MP3 or M4B format with embedded chapters, "
+             "ready to download and listen on any device. No signup or credit card is required, and there are no usage limits."),
             ("How to convert a PDF to audiobook?",
-             "Upload your PDF file, choose an AI voice, and the converter will extract the text "
-             "and transform it into audio using neural text-to-speech synthesis."),
+             "Audiobook Maker supports direct PDF to audiobook conversion in MP3 and M4B formats. "
+             "Upload your PDF, choose a neural AI voice and narration language, and the converter will automatically "
+             "extract text from the pages while preserving document structure. The neural text-to-speech engine "
+             "transforms the content into high-quality natural audio, ready for listening on smartphones, tablets, or MP3 players. "
+             "No registration is required."),
             ("Do you support the M4B format?",
-             "Yes, Audiobook Maker can generate audiobooks in universal M4B format. "
-             "Unlike standard MP3 files, M4B allows you to embed chapters directly into "
-             "the audio file, preserving the structure and titles in apps like Apple Books or VLC."),
+             "Yes, Audiobook Maker can generate professional audiobooks in universal M4B format. "
+             "Unlike standard MP3 files, M4B allows embedding chapters directly into the audio file, "
+             "preserving structure, titles, and metadata. It is the standard audiobook format for Apple Books, iTunes, and many dedicated apps. "
+             "You can also generate an MP3 file or a ZIP archive with separate chapters, depending on your needs."),
             ("What ebook formats are supported?",
-             "Audiobook Maker supports EPUB, PDF, and TXT formats. "
-             "EPUB is recommended for best results. "
-             "If your book is in another format (MOBI, AZW), you can convert it to EPUB first "
-             "using free tools like Calibre."),
+             "Audiobook Maker supports EPUB, PDF, and TXT formats for audiobook conversion. "
+             "EPUB is recommended for optimal results thanks to its logical chapter structure. "
+             "PDFs are fully supported with advanced text extraction. "
+             "If your book is in another format such as MOBI or AZW, you can easily convert it to EPUB "
+             "using free tools like Calibre before uploading. "
+             "Output options include MP3, M4B with chapters, or a ZIP file with separate chapter files."),
             ("How many AI voices are available and in which languages?",
              "Audiobook Maker offers 400+ high-quality neural AI voices powered by Microsoft Edge TTS, "
              "supporting dozens of languages including English, Italian, French, Spanish, German, "
@@ -264,18 +287,26 @@ _CONTENT = {
              "supports all languages offered by the Edge TTS library. "
              "Each language includes male and female voices with different narration styles."),
             ("Are the AI voices natural-sounding?",
-             "Yes, the converter uses high-quality neural TTS voices (Edge TTS) with AI voice synthesis "
-             "that produces natural and pleasant voices."),
+             "Yes, the converter uses high-quality neural TTS voices powered by Microsoft Edge TTS, "
+             "with advanced AI voice synthesis that produces natural, fluid, and pleasant voices. "
+             "Unlike old robotic voices, neural voices capture prosody, intonation, and rhythm, "
+             "delivering a professional listening experience comparable to human narration. "
+             "You can listen to a free preview before starting the full conversion."),
             ("Do I need to install anything?",
-             "No, Audiobook Maker is an online converter that works entirely in your browser. "
-             "No software download or installation is required."),
+             "No, Audiobook Maker is an online converter that works entirely in your web browser. "
+             "There is no need to download, install, or configure any software on your computer, smartphone, or tablet. "
+             "Simply open the website, upload your book, and start the conversion. "
+             "The entire text-to-speech process runs on our servers securely and quickly."),
             ("Can I generate a podcast from the book chapters?",
-             "Yes, Audiobook Maker can generate a podcast RSS feed with all your audiobook chapters. "
-             "Copy the link and add it to your favorite podcast app to stream chapters."),
+             "Yes, Audiobook Maker can automatically generate a podcast RSS feed containing all your audiobook chapters. "
+             "You can copy the feed link and add it to any podcast app such as Apple Podcasts, Spotify, Overcast, or Pocket Casts "
+             "to stream chapters on demand. This feature is ideal for listening while driving, exercising, or commuting, "
+             "without needing to download files to your device."),
             ("Is the service really free?",
-             "Yes, Audiobook Maker is completely free. No registration required, "
-             "no usage limits, and no ads inserted in the generated audio files. "
-             "The project is supported by voluntary donations."),
+             "Yes, Audiobook Maker is completely free with no usage limits. "
+             "No registration is required, no credit card is asked for, and no advertisements are inserted into generated audio files. "
+             "The open-source project is supported by voluntary community donations. "
+             "All core features, including text-to-speech conversion and M4B generation, are available free of charge to all users."),
             ("Is Audiobook Maker a free alternative to Speechify?",
              "Yes. Unlike Speechify which requires a paid subscription, "
              "Audiobook Maker is 100% free, requires no signup, and offers "
@@ -385,22 +416,29 @@ _CONTENT = {
         "faq_heading": "Questions Fréquentes — Convertisseur EPUB/PDF Livre Audio",
         "faqs": [
             ("Comment convertir un EPUB en livre audio gratuitement ?",
-             "Téléchargez votre fichier EPUB sur Audiobook Maker, sélectionnez une voix IA et la langue, "
-             "puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit générera le livre audio "
-             "au format MP3 que vous pourrez télécharger et écouter partout. Aucune inscription requise."),
+             "Téléchargez votre fichier EPUB sur Audiobook Maker, sélectionnez une voix IA neuronale parmi plus de 400 options "
+             "et la langue souhaitée, puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit extrait le texte du livre, "
+             "le divise en chapitres et génère un livre audio en format MP3 ou M4B avec chapitres intégrés, "
+             "prêt à être téléchargé et écouté sur n'importe quel appareil. Aucune inscription requise et aucune limite d'utilisation."),
             ("Comment convertir un PDF en livre audio ?",
-             "Audiobook Maker prend en charge la conversion directe de PDF en livres audio MP3. "
-             "Téléchargez votre fichier PDF, choisissez une voix IA, et le convertisseur extraira le texte "
-             "pour le transformer en audio avec synthèse vocale neuronale."),
+             "Audiobook Maker prend en charge la conversion directe de PDF en livres audio MP3 et M4B. "
+             "Téléchargez votre fichier PDF, choisissez une voix IA neuronale et la langue de narration, "
+             "et le convertisseur extraira automatiquement le texte des pages tout en préservant la structure du document. "
+             "Le moteur text-to-speech neuronal transforme le contenu en audio naturel de haute qualité, "
+             "prêt à être écouté sur smartphone, tablette ou lecteur MP3. Aucune inscription requise."),
             ("Prenez-vous en charge le format M4B ?",
-             "Oui, Audiobook Maker peut générer des livres audio au format M4B universel. "
+             "Oui, Audiobook Maker peut générer des livres audio professionnels au format M4B universel. "
              "Contrairement aux fichiers MP3 classiques, le format M4B permet d'intégrer "
-             "les chapitres directement dans le fichier audio, conservant les titres et la structure "
-             "dans des applications comme Apple Books ou VLC."),
+             "les chapitres directement dans le fichier audio, conservant les titres, la structure et les métadonnées. "
+             "C'est le format standard pour les livres audio sur Apple Books, iTunes et de nombreuses applications dédiées. "
+             "Vous pouvez également générer un fichier MP3 ou une archive ZIP avec les chapitres séparés selon vos besoins."),
             ("Quels formats d'ebook sont supportés ?",
-             "Audiobook Maker prend en charge les formats EPUB, PDF et TXT. "
-             "L'EPUB est recommandé pour de meilleurs résultats. "
-             "Vous pouvez convertir d'autres formats en EPUB avec Calibre."),
+             "Audiobook Maker prend en charge les formats EPUB, PDF et TXT pour la conversion en livre audio. "
+             "L'EPUB est recommandé pour des résultats optimaux grâce à sa structure logique des chapitres. "
+             "Les PDF sont parfaitement supportés avec une extraction de texte avancée. "
+             "Si votre livre est dans un autre format comme MOBI ou AZW, vous pouvez facilement le convertir en EPUB "
+             "avec des outils gratuits comme Calibre avant de le télécharger. "
+             "En sortie, vous obtenez MP3, M4B avec chapitres, ou ZIP avec les fichiers séparés."),
             ("Combien de voix IA sont disponibles et dans quelles langues ?",
              "Audiobook Maker propose plus de 400 voix IA neuronales de haute qualité basées sur Microsoft Edge TTS, "
              "avec prise en charge de dizaines de langues dont le français, l'anglais, l'italien, l'espagnol, "
@@ -408,14 +446,34 @@ _CONTENT = {
              "L'interface de l'application est disponible en 6 langues, mais le moteur de synthèse vocale "
              "prend en charge toutes les langues offertes par la bibliothèque Edge TTS."),
             ("Les voix IA sont-elles naturelles ?",
-             "Oui, le convertisseur utilise des voix neuronales TTS de haute qualité avec synthèse vocale "
-             "IA qui produit des voix naturelles et agréables."),
+             "Oui, le convertisseur utilise des voix neuronales TTS de haute qualité basées sur Microsoft Edge TTS, "
+             "avec une synthèse vocale IA avancée qui produit des voix naturelles, fluides et agréables. "
+             "Contrairement aux anciennes voix robotiques, les voix neuronales capturent la prosodie, l'intonation et le rythme, "
+             "offrant une expérience d'écoute professionnelle comparable à une narration humaine. "
+             "Vous pouvez écouter un aperçu gratuit avant de lancer la conversion complète."),
             ("Dois-je installer quelque chose ?",
-             "Non, Audiobook Maker fonctionne entièrement dans votre navigateur, sans installation."),
+             "Non, Audiobook Maker fonctionne entièrement dans votre navigateur web, sans aucune installation. "
+             "Il n'est pas nécessaire de télécharger, installer ou configurer de logiciel sur votre ordinateur, smartphone ou tablette. "
+             "Il suffit d'ouvrir le site, télécharger le livre et lancer la conversion. "
+             "Tout le processus text-to-speech s'exécute sur nos serveurs de manière sécurisée et rapide."),
+            ("Puis-je générer un podcast à partir des chapitres du livre ?",
+             "Oui, Audiobook Maker peut générer automatiquement un flux RSS podcast contenant tous les chapitres "
+             "de votre livre audio. Vous pouvez copier le lien du flux et l'ajouter à n'importe quelle application podcast "
+             "comme Apple Podcasts, Spotify, Overcast ou Pocket Casts pour écouter les chapitres en streaming. "
+             "Cette fonction est idéale pour écouter votre livre en conduisant ou à la salle de sport, "
+             "sans occuper d'espace avec des fichiers téléchargés."),
             ("Le service est-il vraiment gratuit ?",
-             "Oui, Audiobook Maker est entièrement gratuit. Pas d'inscription requise, "
-             "pas de limites d'utilisation et pas de publicité dans les fichiers audio générés. "
-             "Le projet est soutenu par des dons volontaires."),
+             "Oui, Audiobook Maker est entièrement gratuit et sans limites d'utilisation. "
+             "Pas d'inscription requise, pas de carte de crédit demandée et pas de publicité dans les fichiers audio générés. "
+             "Le projet open source est soutenu par des dons volontaires de la communauté. "
+             "Toutes les fonctions principales, y compris la conversion text-to-speech et la génération M4B, "
+             "sont disponibles gratuitement pour tous les utilisateurs."),
+            ("Audiobook Maker est-il une alternative gratuite à Speechify ?",
+             "Oui. Contrairement à Speechify qui nécessite un abonnement payant, "
+             "Audiobook Maker est 100 % gratuit, ne nécessite pas d'inscription et propose "
+             "des centaines de voix IA neuronales dans des dizaines de langues sans aucune limite d'utilisation. "
+             "Vous pouvez trouver une comparaison détaillée avec des outils similaires sur "
+             "AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."),
             ("Quels outils utiliser pour écouter un livre audio généré par Audiobook Maker ?",
              "Les fichiers MP3 générés par Audiobook Maker peuvent être lus avec n'importe quel lecteur audio. "
              "Pour une expérience optimale sur Android, nous recommandons Smart AudioBook Player, "
@@ -520,22 +578,29 @@ _CONTENT = {
         "faq_heading": "Preguntas Frecuentes — Convertidor EPUB/PDF a Audiolibro",
         "faqs": [
             ("¿Cómo convertir un EPUB a audiolibro gratis?",
-             "Sube tu archivo EPUB a Audiobook Maker, selecciona una voz IA y el idioma deseado, "
-             "luego haz clic en Convertir. El convertidor text-to-speech gratuito generará el audiolibro "
-             "en formato MP3 que podrás descargar y escuchar en cualquier lugar. Sin registro."),
+             "Sube tu archivo EPUB a Audiobook Maker, selecciona una voz IA neuronal de entre más de 400 opciones "
+             "y el idioma deseado, luego haz clic en Convertir. El convertidor text-to-speech gratuito extrae el texto del libro, "
+             "lo divide en capítulos y genera un audiolibro en formato MP3 o M4B con capítulos integrados, "
+             "listo para descargar y escuchar en cualquier dispositivo. No se requiere registro y no hay límites de uso."),
             ("¿Cómo convertir un PDF a audiolibro?",
-             "Audiobook Maker admite la conversión directa de PDF a audiolibros MP3. "
-             "Sube tu archivo PDF, elige una voz IA, y el convertidor extraerá el texto "
-             "para transformarlo en audio con síntesis de voz neuronal."),
+             "Audiobook Maker admite la conversión directa de PDF a audiolibros MP3 y M4B. "
+             "Sube tu archivo PDF, elige una voz IA neuronal y el idioma de narración, "
+             "y el convertidor extraerá automáticamente el texto de las páginas preservando la estructura del documento. "
+             "El motor text-to-speech neuronal transforma el contenido en audio natural de alta calidad, "
+             "listo para escuchar en smartphone, tablet o reproductor MP3. No se requiere registro."),
             ("¿Es compatible con el formato M4B?",
-             "Sí, Audiobook Maker puede generar audiolibros en formato M4B universal. "
+             "Sí, Audiobook Maker puede generar audiolibros profesionales en formato M4B universal. "
              "A diferencia de los archivos MP3 estándar, el formato M4B permite incrustar "
-             "los capítulos directamente en el archivo de audio, manteniendo los títulos y la estructura "
-             "en aplicaciones como Apple Books o VLC."),
+             "los capítulos directamente en el archivo de audio, manteniendo los títulos, la estructura y los metadatos. "
+             "Es el formato estándar para audiolibros en Apple Books, iTunes y muchas aplicaciones dedicadas. "
+             "También puedes generar un archivo MP3 o un ZIP con los capítulos separados, según tus necesidades."),
             ("¿Qué formatos de ebook son compatibles?",
-             "Audiobook Maker admite los formatos EPUB, PDF y TXT. "
-             "Se recomienda EPUB para mejores resultados. "
-             "Puedes convertir otros formatos a EPUB usando herramientas gratuitas como Calibre."),
+             "Audiobook Maker admite los formatos EPUB, PDF y TXT para la conversión a audiolibro. "
+             "Se recomienda EPUB para obtener resultados óptimos gracias a su estructura lógica de capítulos. "
+             "Los PDF son totalmente compatibles con extracción de texto avanzada. "
+             "Si tu libro está en otro formato como MOBI o AZW, puedes convertirlo fácilmente a EPUB "
+             "usando herramientas gratuitas como Calibre antes de subirlo. "
+             "Las opciones de salida incluyen MP3, M4B con capítulos, o ZIP con los archivos separados."),
             ("¿Cuántas voces IA hay disponibles y en qué idiomas?",
              "Audiobook Maker ofrece más de 400 voces IA neuronales de alta calidad basadas en Microsoft Edge TTS, "
              "con soporte para decenas de idiomas incluyendo español, inglés, italiano, francés, alemán, "
@@ -543,14 +608,34 @@ _CONTENT = {
              "La interfaz de la app está disponible en 6 idiomas, pero el motor de síntesis de voz "
              "soporta todos los idiomas ofrecidos por la librería Edge TTS."),
             ("¿Las voces IA suenan naturales?",
-             "Sí, el convertidor utiliza voces neuronales TTS de alta calidad con síntesis de voz IA "
-             "que produce voces naturales y agradables."),
+             "Sí, el convertidor utiliza voces neuronales TTS de alta calidad basadas en Microsoft Edge TTS, "
+             "con síntesis de voz IA avanzada que produce voces naturales, fluidas y agradables. "
+             "A diferencia de las antiguas voces robóticas, las voces neuronales capturan prosodia, entonación y ritmo, "
+             "ofreciendo una experiencia de escucha profesional comparable a una narración humana. "
+             "Puedes escuchar una vista previa gratuita antes de iniciar la conversión completa."),
             ("¿Necesito instalar algo?",
-             "No, Audiobook Maker funciona completamente en tu navegador, sin instalación."),
+             "No, Audiobook Maker funciona completamente en tu navegador web, sin necesidad de instalación. "
+             "No es necesario descargar, instalar ni configurar ningún software en tu ordenador, smartphone o tablet. "
+             "Simplemente abre el sitio, sube tu libro y inicia la conversión. "
+             "Todo el proceso de text-to-speech se ejecuta en nuestros servidores de forma segura y rápida."),
+            ("¿Puedo generar un podcast con los capítulos del libro?",
+             "Sí, Audiobook Maker puede generar automáticamente un feed RSS podcast con todos los capítulos "
+             "de tu audiolibro. Puedes copiar el enlace del feed y añadirlo a cualquier app de podcast "
+             "como Apple Podcasts, Spotify, Overcast o Pocket Casts para escuchar los capítulos en streaming. "
+             "Esta función es ideal para escuchar el libro mientras conduces o haces ejercicio, "
+             "sin ocupar espacio con archivos descargados."),
             ("¿El servicio es realmente gratuito?",
-             "Sí, Audiobook Maker es completamente gratuito. Sin registro, "
-             "sin límites de uso y sin publicidad en los archivos de audio generados. "
-             "El proyecto se sostiene con donaciones voluntarias."),
+             "Sí, Audiobook Maker es completamente gratuito y sin límites de uso. "
+             "No se requiere registro, no se pide tarjeta de crédito y no hay publicidad en los archivos de audio generados. "
+             "El proyecto de código abierto se sostiene con donaciones voluntarias de la comunidad. "
+             "Todas las funcciones principales, incluida la conversión text-to-speech y la generación M4B, "
+             "están disponibles gratuitamente para todos los usuarios."),
+            ("¿Es Audiobook Maker una alternativa gratuita a Speechify?",
+             "Sí. A diferencia de Speechify, que requiere una suscripción de pago, "
+             "Audiobook Maker es 100 % gratuito, no requiere registro y ofrece "
+             "cientos de voces IA neuronales en decenas de idiomas sin ningún límite de uso. "
+             "Puedes encontrar una comparación detallada con herramientas similares en "
+             "AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."),
             ("¿Qué herramientas puedo usar para escuchar un audiolibro generado por Audiobook Maker?",
              "Los archivos MP3 generados por Audiobook Maker se pueden reproducir con cualquier reproductor de audio. "
              "Para la mejor experiencia en Android, recomendamos Smart AudioBook Player, "
@@ -654,22 +739,30 @@ _CONTENT = {
         "faq_heading": "Häufig Gestellte Fragen — EPUB/PDF-zu-Hörbuch-Konverter",
         "faqs": [
             ("Wie wandelt man ein EPUB kostenlos in ein Hörbuch um?",
-             "Laden Sie Ihre EPUB-Datei auf Audiobook Maker hoch, wählen Sie eine KI-Stimme und die "
-             "gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter "
-             "erstellt das Hörbuch im MP3-Format zum Herunterladen. Keine Registrierung nötig."),
+             "Laden Sie Ihre EPUB-Datei auf Audiobook Maker hoch, wählen Sie eine neuronale KI-Stimme aus über 400 Optionen "
+             "und die gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter "
+             "extrahiert den Text aus dem Buch, teilt ihn in Kapitel und erstellt ein Hörbuch im MP3- oder M4B-Format "
+             "mit eingebetteten Kapiteln, bereit zum Herunterladen und Anhören auf jedem Gerät. "
+             "Keine Registrierung nötig und keine Nutzungsbeschränkungen."),
             ("Wie konvertiert man ein PDF in ein Hörbuch?",
-             "Audiobook Maker unterstützt die direkte Konvertierung von PDF-Dateien in MP3-Hörbücher. "
-             "Laden Sie Ihr PDF hoch, wählen Sie eine KI-Stimme, und der Konverter extrahiert den Text "
-             "und verwandelt ihn in Audio mit neuraler Sprachsynthese."),
+             "Audiobook Maker unterstützt die direkte Konvertierung von PDF-Dateien in MP3- und M4B-Hörbücher. "
+             "Laden Sie Ihr PDF hoch, wählen Sie eine neuronale KI-Stimme und Erzählsprache, "
+             "und der Konverter extrahiert automatisch den Text aus den Seiten unter Beibehaltung der Dokumentenstruktur. "
+             "Die neuronale Text-to-Speech-Engine verwandelt den Inhalt in hochwertiges, natürliches Audio, "
+             "bereit zum Anhören auf Smartphone, Tablet oder MP3-Player. Keine Registrierung erforderlich."),
             ("Wird das M4B-Format unterstützt?",
-             "Ja, Audiobook Maker kann Hörbücher im universellen M4B-Format erstellen. "
+             "Ja, Audiobook Maker kann professionelle Hörbücher im universellen M4B-Format erstellen. "
              "Im Gegensatz zu einfachen MP3-Dateien ermöglicht das M4B-Format die Einbettung "
-             "von Kapiteln direkt in die Audiodatei, sodass Titel und Struktur in Apps wie "
-             "Apple Books oder VLC erhalten bleiben."),
+             "von Kapiteln direkt in die Audiodatei, sodass Titel, Struktur und Metadaten erhalten bleiben. "
+             "Es ist das Standardformat für Hörbücher auf Apple Books, iTunes und vielen spezialisierten Apps. "
+             "Sie können auch eine MP3-Datei oder ein ZIP-Archiv mit separaten Kapiteln erstellen."),
             ("Welche E-Book-Formate werden unterstützt?",
-             "Audiobook Maker unterstützt EPUB-, PDF- und TXT-Formate. "
-             "EPUB wird für beste Ergebnisse empfohlen. "
-             "Andere Formate können Sie mit Calibre zuerst in EPUB konvertieren."),
+             "Audiobook Maker unterstützt EPUB-, PDF- und TXT-Formate für die Hörbuch-Konvertierung. "
+             "EPUB wird für optimale Ergebnisse empfohlen dank seiner logischen Kapitelstruktur. "
+             "PDFs werden vollständig mit erweiterter Textextraktion unterstützt. "
+             "Wenn Ihr Buch in einem anderen Format wie MOBI oder AZW vorliegt, können Sie es mit kostenlosen Tools wie Calibre "
+             "zunächst in EPUB umwandeln, bevor Sie es hochladen. "
+             "Als Ausgabe erhalten Sie MP3, M4B mit Kapiteln oder eine ZIP-Datei mit separaten Kapiteln."),
             ("Wie viele KI-Stimmen sind verfügbar und in welchen Sprachen?",
              "Audiobook Maker bietet über 400 hochwertige neuronale KI-Stimmen basierend auf Microsoft Edge TTS, "
              "mit Unterstützung für Dutzende von Sprachen darunter Deutsch, Englisch, Italienisch, Französisch, "
@@ -677,14 +770,34 @@ _CONTENT = {
              "Die App-Oberfläche ist in 6 Sprachen verfügbar, aber die Sprachsynthese-Engine "
              "unterstützt alle Sprachen der Edge TTS-Bibliothek."),
             ("Klingen die KI-Stimmen natürlich?",
-             "Ja, der Konverter nutzt hochwertige neuronale TTS-Stimmen mit KI-Sprachsynthese, "
-             "die natürliche Stimmen erzeugt."),
+             "Ja, der Konverter nutzt hochwertige neuronale TTS-Stimmen basierend auf Microsoft Edge TTS, "
+             "mit fortschrittlicher KI-Sprachsynthese, die natürliche, flüssige und angenehme Stimmen erzeugt. "
+             "Im Gegensatz zu alten roboterhaften Stimmen erfassen neuronale Stimmen Prosodie, Intonation und Rhythmus, "
+             "und bieten ein professionelles Hörerlebnis vergleichbar mit menschlicher Erzählung. "
+             "Sie können vor der vollständigen Konvertierung eine kostenlose Vorschau anhören."),
             ("Muss ich etwas installieren?",
-             "Nein, Audiobook Maker funktioniert vollständig in Ihrem Browser, ohne Installation."),
+             "Nein, Audiobook Maker funktioniert vollständig in Ihrem Webbrowser, ohne jegliche Installation. "
+             "Sie müssen keine Software auf Ihrem Computer, Smartphone oder Tablet herunterladen, installieren oder konfigurieren. "
+             "Öffnen Sie einfach die Website, laden Sie Ihr Buch hoch und starten Sie die Konvertierung. "
+             "Der gesamte Text-to-Speech-Prozess läuft sicher und schnell auf unseren Servern."),
+            ("Kann ich einen Podcast aus den Buchkapiteln erstellen?",
+             "Ja, Audiobook Maker kann automatisch einen Podcast-RSS-Feed mit allen Kapiteln "
+             "Ihres Hörbuchs erstellen. Sie können den Feed-Link kopieren und in jede Podcast-App "
+             "wie Apple Podcasts, Spotify, Overcast oder Pocket Casts einfügen, um die Kapitel zu streamen. "
+             "Diese Funktion ist ideal zum Hören während der Fahrt oder im Fitnessstudio, "
+             "ohne Speicherplatz mit heruntergeladenen Dateien zu belegen."),
             ("Ist der Dienst wirklich kostenlos?",
-             "Ja, Audiobook Maker ist völlig kostenlos. Keine Registrierung erforderlich, "
-             "keine Nutzungsbeschränkungen und keine Werbung in den erzeugten Audiodateien. "
-             "Das Projekt wird durch freiwillige Spenden unterstützt."),
+             "Ja, Audiobook Maker ist völlig kostenlos und ohne Nutzungsbeschränkungen. "
+             "Keine Registrierung erforderlich, keine Kreditkarte nötig und keine Werbung in den erzeugten Audiodateien. "
+             "Das Open-Source-Projekt wird durch freiwillige Community-Spenden unterstützt. "
+             "Alle Kernfunktionen, einschließlich Text-to-Speech-Konvertierung und M4B-Erzeugung, "
+             "sind für alle Nutzer kostenlos verfügbar."),
+            ("Ist Audiobook Maker eine kostenlose Alternative zu Speechify?",
+             "Ja. Im Gegensatz zu Speechify, das ein kostenpflichtiges Abonnement erfordert, "
+             "ist Audiobook Maker 100 % kostenlos, benötigt keine Registrierung und bietet "
+             "Hunderte neuronale KI-Stimmen in Dutzenden von Sprachen ohne jegliche Nutzungsbegrenzung. "
+             "Einen detaillierten Vergleich mit ähnlichen Tools finden Sie auf "
+             "AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/)."),
             ("Welche Tools kann ich verwenden, um ein von Audiobook Maker erstelltes Hörbuch zu hören?",
              "Die von Audiobook Maker erzeugten MP3-Dateien können mit jedem Audioplayer abgespielt werden. "
              "Für das beste Erlebnis auf Android empfehlen wir Smart AudioBook Player, "
@@ -789,32 +902,56 @@ _CONTENT = {
         "faq_heading": "常见问题 — EPUB/PDF转有声书转换器",
         "faqs": [
             ("如何免费将EPUB转换为有声书？",
-             "将EPUB文件上传到Audiobook Maker，选择AI语音和所需语言，"
-             "然后点击转换。免费文字转语音转换器将生成MP3格式的有声书，可随时随地收听。无需注册。"),
+             "将EPUB文件上传到Audiobook Maker，从400多种神经网络AI语音中选择合适的声音和语言，"
+             "然后点击转换。免费文字转语音转换器会提取书中文本并按章节拆分，"
+             "生成带有嵌入式章节的MP3或M4B格式有声书，可随时下载并在任何设备上收听。"
+             "无需注册，也没有使用限制。"),
             ("如何将PDF转换为有声书？",
-             "Audiobook Maker支持将PDF文件直接转换为MP3有声书。"
-             "上传您的PDF，选择AI语音，转换器将提取文本并使用神经网络语音合成技术将其转换为音频。"),
+             "Audiobook Maker支持将PDF文件直接转换为MP3和M4B格式有声书。"
+             "上传您的PDF，选择神经网络AI语音和朗读语言，转换器会自动从页面中提取文本并保留文档结构。"
+             "神经网络文字转语音引擎将内容转换为高质量自然音频，可在智能手机、平板电脑或MP3播放器上收听。"
+             "无需注册。"),
             ("你们支持 M4B 格式吗？",
-             "支持。Audiobook Maker 可以生成通用的 M4B 格式有声书。"
-             "与普通的 MP3 文件不同，M4B 格式允许直接在音频文件中嵌入章节，"
-             "并在 Apple Books 或 VLC 等应用中保留章节标题和结构。"),
+             "支持。Audiobook Maker 可以生成专业级通用 M4B 格式有声书。"
+             "与普通 MP3 文件不同，M4B 格式允许直接在音频文件中嵌入章节，"
+             "保留章节标题、结构和元数据。它是 Apple Books、iTunes 及许多专业应用的标准有声书格式。"
+             "您还可以生成 MP3 文件或包含独立章节的 ZIP 压缩包，以满足不同需求。"),
             ("支持哪些电子书格式？",
-             "Audiobook Maker支持EPUB、PDF和TXT格式。"
-             "推荐使用EPUB以获得最佳效果。"
-             "其他格式可以先使用Calibre等免费工具转换为EPUB。"),
+             "Audiobook Maker 支持 EPUB、PDF 和 TXT 格式用于有声书转换。"
+             "推荐使用 EPUB 以获得最佳效果，因为它具有清晰的章节逻辑结构。"
+             "PDF 也完全支持，并具备先进的文本提取功能。"
+             "如果您的书籍是 MOBI 或 AZW 等其他格式，可以先用 Calibre 等免费工具轻松转换为 EPUB 后再上传。"
+             "输出格式包括 MP3、带章节的 M4B 或分章节的 ZIP 压缩包。"),
             ("有多少种AI语音可用？支持哪些语言？",
              "Audiobook Maker提供超过400种高质量神经网络AI语音（基于Microsoft Edge TTS），"
              "支持数十种语言，包括中文、英语、意大利语、法语、西班牙语、德语、"
              "葡萄牙语、俄语、日语、韩语、阿拉伯语、印地语等。"
              "应用界面提供6种语言，但语音合成引擎支持Edge TTS库提供的所有语言。"),
             ("AI语音听起来自然吗？",
-             "是的，转换器使用高质量的神经网络TTS语音和AI语音合成，"
-             "能够产生自然悦耳的声音。"),
+             "是的，转换器使用基于 Microsoft Edge TTS 的高质量神经网络 TTS 语音，"
+             "结合先进的 AI 语音合成技术，能够产生自然、流畅且悦耳的声音。"
+             "与旧式机械语音不同，神经网络语音能够捕捉语调、韵律和节奏，"
+             "提供可与真人朗读相媲美的专业听觉体验。"
+             "您可以在开始完整转换前免费试听预览。"),
             ("需要安装什么吗？",
-             "不需要，Audiobook Maker完全在浏览器中运行，无需下载或安装。"),
+             "不需要，Audiobook Maker 完全在网页浏览器中运行，无需任何安装。"
+             "您无需在电脑、智能手机或平板电脑上下载、安装或配置任何软件。"
+             "只需打开网站，上传书籍并启动转换即可。"
+             "整个文字转语音过程在我们的服务器上安全快速地完成。"),
+            ("可以从书籍章节生成播客吗？",
+             "可以，Audiobook Maker 能自动生成包含所有章节的播客 RSS 订阅源。"
+             "您可以复制订阅源链接并添加到 Apple 播客、Spotify、Overcast 或 Pocket Casts 等任何播客应用，"
+             "以便流媒体收听各章节。此功能非常适合在驾驶或健身时听书，"
+             "无需将文件下载到设备上占用空间。"),
             ("服务真的免费吗？",
-             "是的，Audiobook Maker完全免费。无需注册，无使用限制，生成的音频文件中也没有广告。"
-             "项目由自愿捐赠支持。"),
+             "是的，Audiobook Maker 完全免费，没有使用限制。"
+             "无需注册，无需信用卡，生成的音频文件中也没有任何广告。"
+             "这个开源项目由社区自愿捐赠支持。"
+             "所有核心功能，包括文字转语音转换和 M4B 生成，均对所有用户免费开放。"),
+            ("Audiobook Maker 是 Speechify 的免费替代品吗？",
+             "是的。与 Speechify 需要付费订阅不同，Audiobook Maker 100% 免费，"
+             "无需注册，并提供数十种语言的数百种神经网络 AI 语音，没有任何使用限制。"
+             "您可以在 AlternativeTo (https://alternativeto.net/software/audiobook-maker/about/) 上找到与类似工具的详细对比。"),
             ("可以用什么工具收听Audiobook Maker生成的有声书？",
              "Audiobook Maker生成的MP3文件可以用任何音频播放器播放。"
              "在Android上，我们推荐Smart AudioBook Player，"
