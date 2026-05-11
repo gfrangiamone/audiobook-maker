@@ -1592,6 +1592,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Auto-generated .abm snapshot after generation")
             except Exception as e:
                 print(f"[{job_id}] Failed to auto-generate .abm: {e}")
+                job["abm_generation_error"] = str(e)
 
         job["status"] = "done"
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",

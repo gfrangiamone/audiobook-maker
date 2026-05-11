@@ -3941,6 +3941,21 @@ def api_reset_to_chapters(job_id):
                 os.remove(fpath)
             except OSError:
                 pass
+    # Remove stale .abm file — will be regenerated cumulatively after next optimization
+    old_abm_path = job.get("optimized_abm_path", "")
+    if old_abm_path and os.path.exists(old_abm_path):
+        try:
+            os.remove(old_abm_path)
+            print(f"[reset] Removed stale ABM: {old_abm_path}")
+        except OSError as e:
+            print(f"[reset] Error removing stale ABM {old_abm_path}: {e}")
+    # Also clean up any leftover .abm files in the work dir
+    for abm in work_dir.glob("*.abm"):
+        try:
+            abm.unlink()
+            print(f"[reset] Removed leftover ABM: {abm}")
+        except OSError:
+            pass
 
     # Reset job state
     job["status"] = "analyzed"
@@ -4587,6 +4602,16 @@ def token_do_download_abm(token):
             alt = UPLOAD_DIR / job_id / os.path.basename(abm_path)
             if alt.exists():
                 abm_path = str(alt)
+    # Fallback: generate on-the-fly if job is still in memory and AI-optimized
+    if (not abm_path or not os.path.exists(abm_path)) and job_id and job_id in jobs:
+        job = jobs[job_id]
+        if job.get("ai_optimized"):
+            try:
+                abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+            except Exception as e:
+                print(f"[{job_id}] Token ABM on-demand generation failed: {e}")
     if not abm_path or not os.path.exists(abm_path):
         return "File not available", 404
     _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
@@ -4668,13 +4693,21 @@ def token_do_download(token):
           f"UPLOAD_DIR={UPLOAD_DIR}")
 
     try:
-        #  -  -  OPTIMIZED ABM download  -  - 
+        #  -  -  OPTIMIZED ABM download  -  -
         if dl_type == "optimized_abm":
             abm_path = token_info.get("optimized_abm_path", "")
             abm_name = token_info.get("optimized_abm_name", "optimized.abm")
             if not abm_path or not os.path.exists(abm_path):
                 # Try path reconstruction
                 abm_path = str(job_dir / os.path.basename(abm_path)) if abm_path else ""
+            # Fallback: generate on-the-fly
+            if (not abm_path or not os.path.exists(abm_path)) and job_id and job and job.get("ai_optimized"):
+                try:
+                    abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
+                    job["optimized_abm_path"] = abm_path
+                    job["optimized_abm_name"] = abm_name
+                except Exception as e:
+                    print(f"[{job_id}] Token download ABM on-demand failed: {e}")
             if abm_path and os.path.exists(abm_path):
                 if job:
                     job["downloaded_at"] = time.time()
@@ -5386,8 +5419,17 @@ def api_download(job_id):
             safe_name = _safe_filename(job["info"].title) or "progetto"
             suffix = "_optimized" if job.get("ai_optimized") else ""
             return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}{suffix}.abm")
-        else:
-            return "Optimized ABM project file not found", 404
+        # Fallback: generate ABM on-the-fly if ai_optimized but path is missing
+        if job.get("ai_optimized"):
+            try:
+                abm_path, abm_name = generation_engine._generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+                _do_log()
+                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name)
+            except Exception as e:
+                print(f"[{job_id}] On-demand ABM generation failed: {e}")
+        return "Optimized ABM project file not found", 404
 
     if download_type == "m4b":
         m4b_path = job.get("output_m4b")
