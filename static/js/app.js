@@ -539,14 +539,18 @@ async function analyzeEpub(file){
       if(d.status==='optimizing'){
         const cur=d.opt_progress_current||0, tot=d.opt_progress_total||1;
         pct=Math.round((cur/tot)*100);
-        _listenOptProgressWiz()
       }else if(d.status==='generating'){
         const cur=d.progress_current||0, tot=d.progress_total||1;
         pct=Math.round((cur/tot)*100);
-        listenProgress()
       }
-      alert(t('job_already_running',{pct:pct}));
+      // Show the wizard first so the live progress bar is already in place,
+      // pre-populate with the snapshot, then attach SSE so subsequent ticks
+      // update both the wizard and the modal in-place.
       _showWizProgress();
+      _setWizPct(pct);
+      if(d.status==='optimizing'){_listenOptProgressWiz()}
+      else if(d.status==='generating'){listenProgress()}
+      _showJobRunningModal(pct);
       return;
     }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
@@ -1325,6 +1329,38 @@ async function startCombinedGeneration(){
   }
 }
 
+function _setWizPct(pct){
+  const p=Math.max(0,Math.min(100,Math.round(pct||0)));
+  const pBar=document.getElementById('pBar');if(pBar)pBar.style.width=p+'%';
+  const pPct=document.getElementById('pPct');if(pPct)pPct.textContent=p+'%';
+  const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=p+'%';
+  const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=p+'%';
+}
+
+function _showJobRunningModal(pct){
+  const modal=document.getElementById('jobRunningModal');
+  if(!modal){alert(t('job_already_running',{pct:pct}));return;}
+  const msgEl=document.getElementById('jobRunningMsg');
+  if(msgEl){
+    const span='<span id="jobRunningPct">'+Math.round(pct||0)+'</span>';
+    msgEl.innerHTML=t('job_already_running',{pct:span});
+  }
+  const title=document.getElementById('jobRunningTitle');
+  if(title)title.textContent=t('job_already_running_title')||title.textContent;
+  modal.classList.add('open');
+  const closeBtn=document.getElementById('jobRunningClose');
+  if(closeBtn)closeBtn.onclick=_hideJobRunningModal;
+  modal.onclick=function(ev){if(ev.target===modal)_hideJobRunningModal();};
+}
+function _hideJobRunningModal(){
+  const modal=document.getElementById('jobRunningModal');
+  if(modal)modal.classList.remove('open');
+}
+function _updateJobRunningPct(pct){
+  const span=document.getElementById('jobRunningPct');
+  if(span)span.textContent=Math.round(pct||0);
+}
+
 function _showWizProgress(){
   _stopAnalyzedHeartbeat();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='';
@@ -1351,10 +1387,10 @@ function _listenOptProgressWiz(){
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
     if(d.status==='error'){
-      es.close();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
+      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
     }
     if(d.status==='cancelled'){
-      es.close();_setCancelButtonMode('gen');
+      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');
       document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
       unlockUI();return;
     }
@@ -1411,6 +1447,7 @@ function _listenOptProgressWiz(){
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
     const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.opt_progress_message)progressPhase.textContent=d.opt_progress_message;
+    _updateJobRunningPct(pct);
 
     var pChEl=document.getElementById('pCh');
     if(pChEl&&d.opt_current_chapter){pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);}
@@ -1587,8 +1624,8 @@ function listenProgress(){
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
-      if(d.status==='error'){es.close();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
-      if(d.status==='cancelled'){es.close();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
+      if(d.status==='error'){es.close();_hideJobRunningModal();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
+      if(d.status==='cancelled'){es.close();_hideJobRunningModal();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       // Update both old and new progress elements
@@ -1598,6 +1635,7 @@ function listenProgress(){
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.progress_message)progressPhase.textContent=d.progress_message;
+      _updateJobRunningPct(pct);
 
       if(d.current_chapter)
         document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
@@ -1625,6 +1663,7 @@ function listenProgress(){
       if(d.status==='done'){
         es.close();
         generating=false;jobDone=true;
+        _hideJobRunningModal();
         unlockUI();
         document.getElementById('pPct').textContent='100%';
         document.getElementById('pBar').style.width='100%';
@@ -1816,15 +1855,26 @@ async function downloadFile(type){
         btn.disabled=false;btn.innerHTML=originalHtml;
         return;
       }
+      const isLastDl=(r.headers.get('X-Download-Last')==='1');
       const blob=await r.blob();
       const cd=r.headers.get('Content-Disposition')||'';
-      const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
+      // Parse Content-Disposition robustly: RFC 5987 filename*=, quoted filename="...", or bare filename=foo.
+      // The previous regex stopped at apostrophes, truncating titles like "L'isola" and losing the extension.
+      let fname='';
+      let mm=cd.match(/filename\*\s*=\s*[^']+''([^;\n]+)/i);
+      if(mm){try{fname=decodeURIComponent(mm[1].trim())}catch(e){fname=''}}
+      if(!fname){mm=cd.match(/filename\s*=\s*"([^"]+)"/i);if(mm)fname=mm[1]}
+      if(!fname){mm=cd.match(/filename\s*=\s*([^;\n]+)/i);if(mm)fname=mm[1].trim()}
       let defName = 'audiobook.zip';
       if(type === 'm4b') defName = 'audiobook.m4b';
       if(type === 'abm') defName = 'project.abm';
       if(type === 'mp3') defName = 'audiobook.mp3';
-      const fname=m?m[1]:defName;
-      
+      if(!fname) fname=defName;
+      // Safety net: enforce the expected extension if the parsed filename is missing it.
+      const extByType={zip:'.zip',m4b:'.m4b',mp3:'.mp3',abm:'.abm'};
+      const expectedExt=extByType[type];
+      if(expectedExt && !fname.toLowerCase().endsWith(expectedExt)) fname += expectedExt;
+
       const a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
       a.download=fname;
@@ -1837,6 +1887,7 @@ async function downloadFile(type){
       if(type === 'mp3') successT = t('btn_dl_mp3');
       btn.innerHTML='✅ <span>'+successT+'</span>';
       btn.disabled=false;
+      if(isLastDl)showDlLastWarning();
       return;
     }catch(e){
       if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
@@ -1874,6 +1925,7 @@ async function downloadPodcast(){
       btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
       return;
     }
+    const isLastDl=(r.headers.get('X-Download-Last')==='1');
     const blob=await r.blob();
     const cd=r.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
@@ -1885,6 +1937,7 @@ async function downloadPodcast(){
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
     btn.innerHTML='✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
     btn.disabled=false;
+    if(isLastDl)showDlLastWarning();
   }catch(e){
     showPErr('Download error: '+e.message);
     btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
@@ -1901,6 +1954,7 @@ async function downloadPodcastZip(){
     if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
     if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
     if(!r.ok){const t=await r.text();showPErr(t||'Download failed');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
+    const isLastDl=(r.headers.get('X-Download-Last')==='1');
     const blob=await r.blob();
     const cd=r.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename[^;=\n]*=['\"]?([^'\";\n]*)/);
@@ -1909,6 +1963,7 @@ async function downloadPodcastZip(){
     a.href=URL.createObjectURL(blob);a.download=fname;
     document.body.appendChild(a);a.click();
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+    if(isLastDl)showDlLastWarning();
   }catch(e){showPErr('Download error: '+e.message)}
   btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
 }
@@ -1944,10 +1999,12 @@ async function goBackToChapters(){
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
   const btnP=document.getElementById('btnP');if(btnP)btnP.style.display='none';
+  const dlLastNotice=document.getElementById('dlLastNotice');if(dlLastNotice)dlLastNotice.style.display='none';
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  const btnGenGoBack=document.getElementById('btnGenerate');if(btnGenGoBack){btnGenGoBack.disabled=false;btnGenGoBack.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   document.getElementById('pMsg').style.color='';
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
   document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
@@ -2010,6 +2067,7 @@ function resetAll(){
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
   const btnP=document.getElementById('btnP');if(btnP)btnP.style.display='none';
+  const dlLastNotice=document.getElementById('dlLastNotice');if(dlLastNotice)dlLastNotice.style.display='none';
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   // Reset AI toggle
   const aiToggle=document.getElementById('aiToggle');if(aiToggle){aiToggle.checked=false;aiToggle.disabled=false}
@@ -2125,6 +2183,17 @@ function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
 function showPErr(m){document.getElementById('pra').innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+
+function showDlLastWarning(){
+  const el=document.getElementById('dlLastNotice');
+  if(!el)return;
+  const titleEl=el.querySelector('[data-t="dl_last_title"]');
+  const bodyEl=el.querySelector('[data-t="dl_last_body"]');
+  if(titleEl)titleEl.textContent=t('dl_last_title')||'Ultimo download disponibile';
+  if(bodyEl)bodyEl.textContent=t('dl_last_body')||'Questo era l’ultimo download consentito per questo file. Il file verrà rimosso dal server e i prossimi tentativi falliranno: salva subito una copia.';
+  el.style.display='';
+  try{el.scrollIntoView({behavior:'smooth',block:'nearest'})}catch(e){}
+}
 
 // ═══════════════════ SOCIAL SHARE ═══════════════════
 const SHARE_URL='https://audiobook-maker.com';
