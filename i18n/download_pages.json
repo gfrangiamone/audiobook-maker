@@ -92,5 +92,87 @@
       "share_text": "我刚用 Audiobook Maker 把一本电子书转成了有声书——免费且在浏览器即可完成！",
       "copied": "已复制！"
     }
+  },
+  "deleted": {
+    "it": {
+      "title": "Download non disponibile",
+      "h2": "File non pi&ugrave; disponibile",
+      "p1": "Questo file &egrave; stato rimosso automaticamente dopo aver raggiunto il numero massimo di download consentiti.",
+      "p2": "Per generare nuovamente l'audiolibro, visita:"
+    },
+    "en": {
+      "title": "Download unavailable",
+      "h2": "File no longer available",
+      "p1": "This file was automatically removed after reaching the maximum number of allowed downloads.",
+      "p2": "To generate the audiobook again, visit:"
+    },
+    "fr": {
+      "title": "T&eacute;l&eacute;chargement indisponible",
+      "h2": "Fichier plus disponible",
+      "p1": "Ce fichier a &eacute;t&eacute; automatiquement supprim&eacute; apr&egrave;s avoir atteint le nombre maximum de t&eacute;l&eacute;chargements autoris&eacute;s.",
+      "p2": "Pour g&eacute;n&eacute;rer &agrave; nouveau le livre audio, visitez :"
+    },
+    "es": {
+      "title": "Descarga no disponible",
+      "h2": "Archivo ya no disponible",
+      "p1": "Este archivo fue eliminado autom&aacute;ticamente tras alcanzar el n&uacute;mero m&aacute;ximo de descargas permitidas.",
+      "p2": "Para generar nuevamente el audiolibro, visita:"
+    },
+    "de": {
+      "title": "Download nicht verf&uuml;gbar",
+      "h2": "Datei nicht mehr verf&uuml;gbar",
+      "p1": "Diese Datei wurde nach Erreichen der maximal erlaubten Downloads automatisch gel&ouml;scht.",
+      "p2": "Um das H&ouml;rbuch erneut zu erstellen, besuche:"
+    },
+    "zh": {
+      "title": "下载不可用",
+      "h2": "文件不再可用",
+      "p1": "该文件在达到最大允许下载次数后已被自动删除。",
+      "p2": "要重新生成有声读物，请访问："
+    }
+  },
+  "cooldown": {
+    "it": {
+      "title": "Download in attesa",
+      "h2": "Il download potr&agrave; essere ripetuto tra alcuni secondi",
+      "p1": "Per evitare abusi, &egrave; necessario attendere qualche secondo tra un download e l'altro.",
+      "p2": "Tempo rimanente: <strong>{s}</strong> secondi.",
+      "auto": "La pagina si aggiorner&agrave; automaticamente."
+    },
+    "en": {
+      "title": "Download on hold",
+      "h2": "Download can be repeated in a few seconds",
+      "p1": "To prevent abuse, please wait a few seconds between downloads.",
+      "p2": "Remaining time: <strong>{s}</strong> seconds.",
+      "auto": "The page will refresh automatically."
+    },
+    "fr": {
+      "title": "T&eacute;l&eacute;chargement en attente",
+      "h2": "Le t&eacute;l&eacute;chargement pourra &ecirc;tre r&eacute;p&eacute;t&eacute; dans quelques secondes",
+      "p1": "Pour &eacute;viter les abus, veuillez patienter quelques secondes entre chaque t&eacute;l&eacute;chargement.",
+      "p2": "Temps restant : <strong>{s}</strong> secondes.",
+      "auto": "La page s'actualisera automatiquement."
+    },
+    "es": {
+      "title": "Descarga en espera",
+      "h2": "La descarga podr&aacute; repetirse en unos segundos",
+      "p1": "Para evitar abusos, espera unos segundos entre cada descarga.",
+      "p2": "Tiempo restante: <strong>{s}</strong> segundos.",
+      "auto": "La p&aacute;gina se actualizar&aacute; autom&aacute;ticamente."
+    },
+    "de": {
+      "title": "Download wartend",
+      "h2": "Der Download kann in wenigen Sekunden wiederholt werden",
+      "p1": "Um Missbrauch zu vermeiden, bitte warte ein paar Sekunden zwischen den Downloads.",
+      "p2": "Verbleibende Zeit: <strong>{s}</strong> Sekunden.",
+      "auto": "Die Seite wird automatisch neu geladen."
+    },
+    "zh": {
+      "title": "下载等待中",
+      "h2": "下载可在几秒后重试",
+      "p1": "为防止滥用，请在每次下载之间等待几秒钟。",
+      "p2": "剩余时间：<strong>{s}</strong> 秒。",
+      "auto": "页面将自动刷新。"
+    }
   }
 }

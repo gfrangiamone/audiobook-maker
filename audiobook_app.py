@@ -312,30 +312,29 @@ _tokens_lock = threading.Lock()
 
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
 _DL_THROTTLE_SEC = 60
-_DL_MAX_DOWNLOADS = 3
+_DL_MAX_DOWNLOADS = 5
 
 
 def _check_download_throttle(file_path):
     """Check and update download throttle for a file path.
     Returns (status, info):
-      ('ok', None) -> allowed
+      ('ok', remaining)        -> allowed; remaining = additional downloads still permitted after this one
+      ('last', 0)              -> allowed but this is the last permitted download (file will be removed on next attempt)
       ('cooldown', seconds_left) -> too soon, wait
-      ('deleted', None) -> file deleted after max downloads
+      ('deleted', None)        -> file deleted after max downloads
     """
     if not file_path or not os.path.exists(file_path):
         return ("ok", None)
     now = time.time()
     rec = _download_tracking.get(file_path)
+
     if rec:
         elapsed = now - rec["last_download"]
         if elapsed < _DL_THROTTLE_SEC:
             return ("cooldown", int(_DL_THROTTLE_SEC - elapsed))
-        rec["count"] += 1
-        rec["last_download"] = now
-    else:
-        _download_tracking[file_path] = {"count": 1, "last_download": now}
 
-    if _download_tracking[file_path]["count"] >= _DL_MAX_DOWNLOADS:
+    current = rec["count"] if rec else 0
+    if current >= _DL_MAX_DOWNLOADS:
         try:
             os.remove(file_path)
             print(f"[throttle] Deleted {file_path} after {_DL_MAX_DOWNLOADS} downloads")
@@ -344,16 +343,37 @@ def _check_download_throttle(file_path):
         _download_tracking.pop(file_path, None)
         return ("deleted", None)
 
-    return ("ok", None)
+    new_count = current + 1
+    if rec:
+        rec["count"] = new_count
+        rec["last_download"] = now
+    else:
+        _download_tracking[file_path] = {"count": new_count, "last_download": now}
+
+    if new_count >= _DL_MAX_DOWNLOADS:
+        return ("last", 0)
+    return ("ok", _DL_MAX_DOWNLOADS - new_count)
 
 
 def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, **kwargs):
     status, info = _check_download_throttle(file_path)
     if status == "cooldown":
-        return f"Download in cooldown. Wait {info} seconds.", 429
+        lang = _get_browser_lang() or "en"
+        return _render_dl_cooldown_page(lang, info), 429
     if status == "deleted":
-        return "File deleted after too many downloads.", 410
-    return send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+        lang = _get_browser_lang() or "en"
+        return _render_dl_deleted_page(lang), 410
+    response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+    try:
+        if status == "last":
+            response.headers["X-Download-Last"] = "1"
+            response.headers["X-Download-Remaining"] = "0"
+        elif status == "ok" and info is not None:
+            response.headers["X-Download-Remaining"] = str(info)
+        response.headers["Access-Control-Expose-Headers"] = "X-Download-Last, X-Download-Remaining, Content-Disposition"
+    except Exception:
+        pass
+    return response
 
 
 def _save_tokens():
@@ -5054,6 +5074,76 @@ a:hover{{text-decoration:underline}}
 <p>{t['p2']}</p>
 <p><a href="/">&#x1F3A7; Audiobook Maker</a></p>
 </div></body></html>"""
+
+
+def _render_dl_deleted_page(lang="en"):
+    deleted_t = _DL_PAGES_I18N.get("deleted", {})
+    t = deleted_t.get(lang, deleted_t.get("en", {}))
+    return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
+<title>Audiobook Maker  -  {t['title']}</title>
+<style>
+body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
+align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
+.box{{text-align:center;padding:48px;max-width:500px;background:white;border-radius:16px;
+box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+h1{{font-size:3rem;margin:0 0 16px}}
+h2{{color:#e74c3c;margin:0 0 16px}}
+p{{color:#666;line-height:1.6}}
+a{{color:#3b82f6;text-decoration:none;font-weight:600}}
+a:hover{{text-decoration:underline}}
+</style></head><body>
+<div class="box">
+<h1>&#x1F5D1;&#xFE0F;</h1>
+<h2>{t['h2']}</h2>
+<p>{t['p1']}</p>
+<p>{t['p2']}</p>
+<p><a href="/">&#x1F3A7; Audiobook Maker</a></p>
+</div></body></html>"""
+
+
+def _render_dl_cooldown_page(lang="en", seconds=60):
+    cooldown_t = _DL_PAGES_I18N.get("cooldown", {})
+    t = cooldown_t.get(lang, cooldown_t.get("en", {}))
+    p2 = t['p2'].format(s=seconds)
+    auto_refresh_ms = max(seconds + 2, 5) * 1000
+    return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
+<title>Audiobook Maker  -  {t['title']}</title>
+<style>
+body{{font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;
+align-items:center;min-height:100vh;margin:0;background:#f8f9fa;color:#333}}
+.box{{text-align:center;padding:48px;max-width:500px;background:white;border-radius:16px;
+box-shadow:0 4px 24px rgba(0,0,0,.08)}}
+h1{{font-size:3rem;margin:0 0 16px}}
+h2{{color:#f39c12;margin:0 0 16px}}
+p{{color:#666;line-height:1.6}}
+a{{color:#3b82f6;text-decoration:none;font-weight:600}}
+a:hover{{text-decoration:underline}}
+.countdown{{font-size:2.5rem;font-weight:700;color:#f39c12;margin:16px 0}}
+</style></head><body>
+<div class="box">
+<h1>&#x23F3;</h1>
+<h2>{t['h2']}</h2>
+<p>{t['p1']}</p>
+<p>{p2}</p>
+<div class="countdown" id="cd">{seconds}</div>
+<p style="font-size:0.85rem;color:#999">{t['auto']}</p>
+<p style="margin-top:16px"><a href="/">&#x1F3A7; Audiobook Maker</a></p>
+</div>
+<script>
+(function(){{
+  var s={seconds},el=document.getElementById('cd');
+  var iv=setInterval(function(){{
+    s--;if(s<=0){{clearInterval(iv);location.reload();return;}}
+    el.textContent=s;
+  }},1000);
+  setTimeout(function(){{location.reload()}},{auto_refresh_ms});
+}})();
+</script>
+</body></html>"""
 
 
 def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format=""):
