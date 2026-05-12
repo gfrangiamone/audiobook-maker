@@ -40,7 +40,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `MAX_CONTENT_LENGTH` | `200 * 1024 * 1024` (200 MB) | `audiobook_app.py` | 73 |
+| `MAX_CONTENT_LENGTH` | da `ABM_MAX_UPLOAD_MB` (default `50` MB) | `audiobook_app.py` | 163 |
+| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) | `audiobook_app.py` | 3604 |
 
 ---
 

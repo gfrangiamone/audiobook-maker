@@ -1412,15 +1412,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
                     os.remove(p)
-            
-            job["output_files"] = [final_mp3]
-            if job.get("output_m4b"):
+
+            # When the user requested M4B and conversion succeeded, the intermediate
+            # MP3 is no longer needed: drop it to reclaim disk (a 500MB book stores
+            # MP3 + M4B = ~1GB otherwise). Keep MP3 only as fallback if M4B failed
+            # or if the user explicitly asked for mp3 output.
+            m4b_ok = output_format == 'm4b' and job.get("output_m4b") and os.path.exists(job["output_m4b"])
+            if m4b_ok and os.path.exists(final_mp3):
+                try:
+                    mp3_size = os.path.getsize(final_mp3)
+                    os.remove(final_mp3)
+                    print(f"[{job_id}] Removed intermediate MP3 ({mp3_size} bytes) — M4B is the served format")
+                except OSError as e:
+                    print(f"[{job_id}] Could not remove intermediate MP3: {e}")
+                job["output_files"] = [job["output_m4b"]]
+                job["bytes_generated"] = os.path.getsize(job["output_m4b"])
                 job["output_name"] = f"{safe_name}.m4b"
             else:
-                job["output_name"] = f"{safe_name}.mp3"
+                job["output_files"] = [final_mp3]
+                if job.get("output_m4b"):
+                    job["output_name"] = f"{safe_name}.m4b"
+                else:
+                    job["output_name"] = f"{safe_name}.mp3"
 
-            if os.path.exists(final_mp3):
-                job["bytes_generated"] = os.path.getsize(final_mp3)
+                if os.path.exists(final_mp3):
+                    job["bytes_generated"] = os.path.getsize(final_mp3)
         else:
             mp3_files = []
             m4b_chapters = []

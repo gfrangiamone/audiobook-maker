@@ -160,7 +160,7 @@ app = Flask(__name__)
 # Reverse proxy (nginx) sits in front: trust one hop of X-Forwarded-* so request.remote_addr
 # reflects the real client IP instead of 127.0.0.1 (needed for logs, rate limiting, fail2ban).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50")) * 1024 * 1024
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
 
@@ -3597,6 +3597,20 @@ def api_analyze():
 
     if not info.chapters:
         return jsonify({"error": "No content found."}), 400
+
+    # Hard cap on extracted text size: 1 char of TTS ≈ 50-100 bytes of MP3 output.
+    # ABM_MAX_TEXT_CHARS prevents huge books from producing multi-GB audio files
+    # and exhausting server disk. Default 1.5M chars ≈ 75-150 MB of audio.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    if info.total_chars > max_text_chars:
+        try:
+            file_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify({
+            "error": f"Book too large: {info.total_chars:,} characters extracted "
+                     f"(limit {max_text_chars:,}). Please split the book into smaller files."
+        }), 413
 
     with _jobs_lock:
         jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
