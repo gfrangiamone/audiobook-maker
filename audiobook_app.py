@@ -369,7 +369,7 @@ _TOKENS_FILE = UPLOAD_DIR / "_download_tokens.json"
 _tokens_lock = threading.Lock()
 
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
-_DL_THROTTLE_SEC = 60
+_DL_THROTTLE_SEC = 30
 _DL_MAX_DOWNLOADS = 5
 
 
@@ -428,6 +428,19 @@ def _apply_no_cache(response):
 
 
 def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, **kwargs):
+    # HEAD e Range request (anteprima/resume del browser o client email) non devono
+    # consumare il quota di 5 download: serviamo il file senza toccare il counter.
+    is_probe = False
+    try:
+        is_probe = request.method == "HEAD" or bool(request.headers.get("Range"))
+    except Exception:
+        pass
+    if is_probe:
+        response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+        if no_cache:
+            _apply_no_cache(response)
+        return response
+
     status, info = _check_download_throttle(file_path)
     if status == "cooldown":
         lang = _get_browser_lang() or "en"
@@ -719,6 +732,21 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
             _logged_sids_ops.add(key)
         except OSError:
             pass
+
+
+def _is_resume_or_probe_request():
+    """True se la richiesta corrente è HEAD o resume con Range header.
+
+    Why: i browser e i client email aprono il link con HEAD/Range per
+    prefetch/anteprima/resume. Senza filtro ogni link aperto genera N voci
+    nel log anche se l'utente ha cliccato una sola volta.
+    How to apply: chiamare prima di _log_activity nelle route di download
+    per contare solo i download reali (GET completi).
+    """
+    try:
+        return request.method == "HEAD" or bool(request.headers.get("Range"))
+    except Exception:
+        return False
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -1996,22 +2024,21 @@ function updateLiveTimers() {{
 }}
 
 async function updateLiveProgress() {{
-    const pcts = document.querySelectorAll('.card-pct');
-    for (const el of pcts) {{
+    const pcts = Array.from(document.querySelectorAll('.card-pct')).filter(el => el.dataset.sid);
+    if (pcts.length === 0) return;
+    await Promise.all(pcts.map(async (el) => {{
         const sid = el.dataset.sid;
-        if (!sid) continue;
         try {{
             const r = await fetch('/api/job_status/' + sid);
-            if (r.ok) {{
-                const d = await r.json();
-                el.textContent = '(' + d.pct + '%)';
-                if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {{
-                    el.removeAttribute('data-sid');
-                    if (d.status === 'done') el.style.color = 'var(--green)';
-                }}
+            if (!r.ok) return;
+            const d = await r.json();
+            el.textContent = '(' + d.pct + '%)';
+            if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {{
+                el.removeAttribute('data-sid');
+                if (d.status === 'done') el.style.color = 'var(--green)';
             }}
         }} catch(e) {{}}
-    }}
+    }}));
 }}
 
 if (document.querySelectorAll('.live-timer').length > 0) {{
@@ -2233,7 +2260,7 @@ function doLogin(){{
     fetch('/admin/login', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{token: tok}}),
+        body: JSON.stringify({{token: tok, remember: remember}}),
         credentials: 'same-origin',
     }}).then(r => {{
         if(!r.ok){{ alert('Token non valido'); return; }}
@@ -2315,13 +2342,18 @@ def admin_login():
         return jsonify({"error": "Admin disabled"}), 404
     data = request.json or {}
     tok = (data.get("token") or "").strip()
+    remember = bool(data.get("remember", True))
     if not _admin_auth_ok(tok):
         return jsonify({"error": "Invalid token"}), 401
     resp = jsonify({"ok": True})
     is_https = (request.scheme == "https") or (request.headers.get("X-Forwarded-Proto", "") == "https")
+    # 30 giorni con "remember" (default), 8 ore altrimenti. Il cookie è HttpOnly+Strict
+    # quindi non può essere esfiltrato lato client; estendere la durata evita un round-trip
+    # extra (gate → /admin/login → reload) a ogni navigazione successiva alla scadenza.
+    max_age = 30 * 86400 if remember else 8 * 3600
     resp.set_cookie(
         _ADMIN_COOKIE_NAME, tok,
-        max_age=8 * 3600,
+        max_age=max_age,
         httponly=True,
         secure=is_https,
         samesite="Strict",
@@ -4825,8 +4857,9 @@ def token_do_download_abm(token):
                 abm_path = str(alt)
     if not abm_path or not os.path.exists(abm_path):
         return "File not available", 404
-    _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
-                  "DOWNLOAD_OPT_ABM", "", "", "", "")
+    if not _is_resume_or_probe_request():
+        _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
+                      "DOWNLOAD_OPT_ABM", "", "", "", "")
     return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
 
 
@@ -4925,8 +4958,9 @@ def token_do_download(token):
             if abm_path and os.path.exists(abm_path):
                 if job:
                     job["downloaded_at"] = time.time()
-                _log_activity(job_id, token_info.get("original_filename", ""),
-                              "DOWNLOAD_OPT_ABM", "", "", "", "")
+                if not _is_resume_or_probe_request():
+                    _log_activity(job_id, token_info.get("original_filename", ""),
+                                  "DOWNLOAD_OPT_ABM", "", "", "", "")
                 return _apply_no_cache(send_file(abm_path, as_attachment=True, download_name=abm_name))
             return "File not found", 404
 
@@ -4953,15 +4987,24 @@ def _serve_audio_download(token_info, job, job_id):
     orig = token_info.get("original_filename", "")
     job_dir = UPLOAD_DIR / job_id
 
+    def _do_log():
+        if _is_resume_or_probe_request():
+            return
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL",
+                      job.get("client_id", "") if job else "",
+                      job.get("client_ip", "") if job else "",
+                      job.get("voice", "") if job else "",
+                      job.get("browser_lang", "") if job else "")
+
     # 1. Try job in memory
     if job:
         orig = job.get("original_filename", orig)
         if "output_zip" in job and os.path.exists(job["output_zip"]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(job["output_zip"], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         if job.get("output_files") and os.path.exists(job["output_files"][0]):
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(job["output_files"][0], as_attachment=True,
                              download_name=job.get("output_name", output_name))
         print(f"[dl] Job {job_id} in memory but files missing on disk")
@@ -4971,10 +5014,10 @@ def _serve_audio_download(token_info, job, job_id):
     output_file = token_info.get("output_file", "")
 
     if output_zip and os.path.exists(output_zip):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+        _do_log()
         return _send_file_throttled(output_zip, as_attachment=True, download_name=output_name)
     if output_file and os.path.exists(output_file):
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+        _do_log()
         return _send_file_throttled(output_file, as_attachment=True, download_name=output_name)
 
     # 3. Path reconstruction: stored paths may be from a different DATA_DIR
@@ -4983,13 +5026,13 @@ def _serve_audio_download(token_info, job, job_id):
         reconstructed = str(job_dir / os.path.basename(output_zip))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_zip} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(reconstructed, as_attachment=True, download_name=output_name)
     if output_file and not os.path.exists(output_file):
         reconstructed = str(job_dir / "output" / os.path.basename(output_file))
         if os.path.exists(reconstructed):
             print(f"[dl] Path reconstructed: {output_file} -> {reconstructed}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(reconstructed, as_attachment=True, download_name=output_name)
 
     # 4. Fallback: scan job directory for downloadable files
@@ -5002,7 +5045,7 @@ def _serve_audio_download(token_info, job, job_id):
         if zips:
             found = str(zips[0])
             print(f"[dl] Fallback: found ZIP {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         # Look for MP3 in output/ subdirectory, then root
@@ -5013,7 +5056,7 @@ def _serve_audio_download(token_info, job, job_id):
         if len(mp3s) == 1:
             found = str(mp3s[0])
             print(f"[dl] Fallback: found single MP3 {found}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         elif len(mp3s) > 1:
@@ -5021,7 +5064,7 @@ def _serve_audio_download(token_info, job, job_id):
             src_dir = str(mp3s[0].parent)
             zip_file = shutil.make_archive(str(job_dir / "download"), "zip", src_dir)
             print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {zip_file}")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL", job.get("client_id", "") if job else "", job.get("client_ip", "") if job else "", job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _do_log()
             return _send_file_throttled(zip_file, as_attachment=True,
                              download_name=output_name or "audiobook.zip")
 
@@ -5171,10 +5214,11 @@ def _serve_podcast_download(token_info, job, job_id):
                 job["last_poll"] = time.time()
                 job["downloaded_at"] = time.time()
             orig = token_info.get("original_filename", job.get("original_filename", "") if job else "")
-            _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
-                          job.get("client_id", "") if job else "",
-                          job.get("client_ip", "") if job else "",
-                          job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            if not _is_resume_or_probe_request():
+                _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
+                              job.get("client_id", "") if job else "",
+                              job.get("client_ip", "") if job else "",
+                              job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
             return _send_file_throttled(output_zip, as_attachment=True,
                              download_name=os.path.basename(output_zip))
 
@@ -5288,10 +5332,11 @@ def _serve_podcast_download(token_info, job, job_id):
     finally:
         shutil.rmtree(str(podcast_dir), ignore_errors=True)
     orig = token_info.get("original_filename", job.get("original_filename", "") if job else "")
-    _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
-                  job.get("client_id", "") if job else "",
-                  job.get("client_ip", "") if job else "",
-                  job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+    if not _is_resume_or_probe_request():
+        _log_activity(job_id, orig, "DOWNLOAD_EMAIL_PODCAST",
+                      job.get("client_id", "") if job else "",
+                      job.get("client_ip", "") if job else "",
+                      job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
     return _send_file_throttled(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
@@ -5350,11 +5395,27 @@ a:hover{{text-decoration:underline}}
 </div></body></html>"""
 
 
-def _render_dl_cooldown_page(lang="en", seconds=60):
+def _render_dl_cooldown_page(lang="en", seconds=60, back_url=None):
     cooldown_t = _DL_PAGES_I18N.get("cooldown", {})
     t = cooldown_t.get(lang, cooldown_t.get("en", {}))
     p2 = t['p2'].format(s=seconds)
     auto_refresh_ms = max(seconds + 2, 5) * 1000
+    # Al termine del countdown torniamo alla pagina con i bottoni di download (non al
+    # file URL che ha generato il cooldown — altrimenti il timer riparte all'infinito).
+    if back_url is None:
+        try:
+            path = request.path or ""
+            m = re.match(r'^(/dl/[^/]+)(?:/.*)?$', path)
+            if m:
+                back_url = m.group(1)
+            else:
+                ref = request.referrer or ""
+                same_origin = ref.startswith(request.host_url) if ref else False
+                back_url = ref if same_origin else "/"
+        except Exception:
+            back_url = "/"
+    import json as _json
+    back_url_js = _json.dumps(back_url)
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
@@ -5378,16 +5439,17 @@ a:hover{{text-decoration:underline}}
 <p>{p2}</p>
 <div class="countdown" id="cd">{seconds}</div>
 <p style="font-size:0.85rem;color:#999">{t['auto']}</p>
-<p style="margin-top:16px"><a href="/">&#x1F3A7; Audiobook Maker</a></p>
+<p style="margin-top:16px"><a href={back_url_js}>&#x1F3A7; Audiobook Maker</a></p>
 </div>
 <script>
 (function(){{
+  var backUrl = {back_url_js};
   var s={seconds},el=document.getElementById('cd');
   var iv=setInterval(function(){{
-    s--;if(s<=0){{clearInterval(iv);location.reload();return;}}
+    s--;if(s<=0){{clearInterval(iv);location.href=backUrl;return;}}
     el.textContent=s;
   }},1000);
-  setTimeout(function(){{location.reload()}},{auto_refresh_ms});
+  setTimeout(function(){{location.href=backUrl}},{auto_refresh_ms});
 }})();
 </script>
 </body></html>"""
@@ -5629,6 +5691,8 @@ def api_download(job_id):
         log_type = "DOWNLOAD_ABM"
 
     def _do_log():
+        if _is_resume_or_probe_request():
+            return
         _log_activity(job_id, job.get("original_filename", ""), log_type,
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
@@ -5723,9 +5787,10 @@ def api_download_podcast(job_id):
         print(f"[{job_id}] Podcast download: serving existing ZIP with embedded RSS")
         job["last_poll"] = time.time()
         job["downloaded_at"] = time.time()
-        _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
-                      job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""), job.get("browser_lang", ""))
+        if not _is_resume_or_probe_request():
+            _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          job.get("voice", ""), job.get("browser_lang", ""))
         return _send_file_throttled(job["output_zip"], as_attachment=True,
                          download_name=job.get("output_name", "podcast.zip"))
 
@@ -5807,9 +5872,10 @@ def api_download_podcast(job_id):
     finally:
         shutil.rmtree(str(podcast_dir), ignore_errors=True)
 
-    _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
-                  job.get("client_id", ""), job.get("client_ip", ""),
-                  job.get("voice", ""), job.get("browser_lang", ""))
+    if not _is_resume_or_probe_request():
+        _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      job.get("voice", ""), job.get("browser_lang", ""))
     return _send_file_throttled(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
