@@ -121,6 +121,12 @@ def build_reviews(lang: str) -> dict:
         body_text = _localized_comment(it, lang)
         review_entries.append({
             "@type": "Review",
+            "itemReviewed": {
+                "@type": "SoftwareApplication",
+                "name": "Audiobook Maker",
+                "applicationCategory": "MultimediaApplication",
+                "operatingSystem": "Web",
+            },
             "reviewRating": {
                 "@type": "Rating", "ratingValue": r,
                 "bestRating": 5, "worstRating": 1,
@@ -147,6 +153,7 @@ def build_reviews(lang: str) -> dict:
             "bestRating": 5,
             "worstRating": 1,
             "reviewCount": total,
+            "ratingCount": total,
         },
         "review": review_entries,
     }

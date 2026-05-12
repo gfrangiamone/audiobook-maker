@@ -585,17 +585,22 @@ async function analyzeEpub(file){
 
 // ═══════════════════ VOICES ═══════════════════
 async function loadVoices(){
+  // Soft-load. Failures are not user-facing errors: the UI degrades to no
+  // voice options but the page still renders. We must NOT log to
+  // console.error because Googlebot's renderer reports those as critical
+  // issues in Search Console (the /api/voices endpoint can return 499 when
+  // the crawler aborts the connection before the response is ready).
   try{
     const r=await fetch('/api/voices',{headers:{'Accept':'application/json'}});
-    if(!r.ok){console.error('loadVoices HTTP '+r.status);return;}
+    if(!r.ok)return;
     const ct=(r.headers.get('content-type')||'').toLowerCase();
-    if(ct.indexOf('application/json')===-1){console.error('loadVoices: unexpected content-type',ct);return;}
+    if(ct.indexOf('application/json')===-1)return;
     const txt=await r.text();
-    if(!txt){console.error('loadVoices: empty response body');return;}
+    if(!txt)return;
     let data;
     try{ data=JSON.parse(txt); }
-    catch(parseErr){console.error('loadVoices: JSON parse failed',parseErr);return;}
-    if(!data||typeof data!=='object'){console.error('loadVoices: invalid payload');return;}
+    catch(parseErr){return;}
+    if(!data||typeof data!=='object')return;
     if(data._google_tts){
         _googleTtsBudget=data._google_tts;
         delete data._google_tts;
@@ -606,7 +611,7 @@ async function loadVoices(){
     voices=data;
     fillLangs();
   }catch(e){
-    console.error('loadVoices failed:', e&&e.message);
+    /* swallow: see comment above */
   }
 }
 function fillLangs(){
