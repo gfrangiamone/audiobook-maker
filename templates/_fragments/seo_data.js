@@ -41,6 +41,13 @@ desc:"在您的浏览器中免费、安全、快速地将 EPUB 和 PDF 电子书
 kw:"epub转有声书, pdf转有声书, m4b章节制作, 免费有声书制作, 文字转语音有声书, 电子书转mp3, ai语音朗读, 阅读障碍有声书, 无障碍有声书, elevenlabs替代品, 播客rss生成器, audiobook maker",
 ld:"Audiobook Maker",
 features:["EPUB 转 MP3/M4B 有声书转换（含章节）","PDF 转 MP3/M4B 有声书转换（含章节）","400+ 神经网络 AI 语音 (Microsoft Edge TTS)","支持 50 多种语言","章节选择和预览功能","生成播客 RSS 订阅源","长时转换邮件通知","无需注册","无使用限制","基于浏览器的处理"]
+},
+hi:{
+title:"मुफ़्त EPUB/PDF से MP3 और M4B ऑडियोबुक | Audiobook Maker",
+desc:"अपनी EPUB और PDF ईबुक्स को प्राकृतिक AI आवाज़ों के साथ मुफ़्त में MP3 या M4B ऑडियोबुक (एम्बेडेड अध्यायों के साथ) में बदलें. मुफ़्त ऑनलाइन टेक्स्ट-टू-स्पीच कनवर्टर: अपनी किताब अपलोड करें, आवाज़ चुनें और पेशेवर ऑडियोबुक डाउनलोड करें. कोई इंस्टॉलेशन नहीं, ब्राउज़र में काम करता है.",
+kw:"epub से ऑडियोबुक कनवर्टर, pdf से ऑडियोबुक, अध्यायों के साथ m4b, मुफ़्त ऑडियोबुक मेकर, टेक्स्ट टू स्पीच ऑडियोबुक हिंदी, ai ऑडियोबुक जनरेटर, ईबुक से mp3, डिस्लेक्सिया के लिए ऑडियोबुक, सुलभ ऑडियोबुक, elevenlabs मुफ़्त विकल्प, पॉडकास्ट rss जनरेटर, audiobook maker",
+ld:"Audiobook Maker",
+features:["EPUB से MP3/M4B ऑडियोबुक रूपांतरण (अध्यायों के साथ)","PDF से MP3/M4B ऑडियोबुक रूपांतरण (अध्यायों के साथ)","400+ न्यूरल AI आवाज़ें (Microsoft Edge TTS)","50+ भाषाओं का समर्थन","अध्याय चयन और पूर्वावलोकन","पॉडकास्ट RSS फ़ीड जनरेशन","लंबे रूपांतरणों के लिए ईमेल सूचना","पंजीकरण आवश्यक नहीं","कोई उपयोग सीमा नहीं","ब्राउज़र-आधारित प्रसंस्करण"]
 }
 };
 
@@ -83,8 +90,8 @@ let can=document.querySelector('link[rel="canonical"]');
 if(!can){can=document.createElement("link");can.rel="canonical";document.head.appendChild(can)}
 can.href=baseUrl + "/" + lang + "/";
 // Hreflang tags
-const langs=["it","en","fr","es","de","zh"];
-const hreflangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans"};
+const langs=["it","en","fr","es","de","zh","hi"];
+const hreflangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans",hi:"hi"};
 langs.forEach(function(l){
 let hl=document.querySelector('link[hreflang="'+hreflangMap[l]+'"]');
 if(!hl){hl=document.createElement("link");hl.rel="alternate";hl.hreflang=hreflangMap[l];document.head.appendChild(hl)}
@@ -94,7 +101,7 @@ let hlx=document.querySelector('link[hreflang="x-default"]');
 if(!hlx){hlx=document.createElement("link");hlx.rel="alternate";hlx.hreflang="x-default";document.head.appendChild(hlx)}
 hlx.href=baseUrl+"/";
 // HTML lang attribute
-const htmlLangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans"};
+const htmlLangMap={it:"it",en:"en",fr:"fr",es:"es",de:"de",zh:"zh-Hans",hi:"hi"};
 document.documentElement.lang=htmlLangMap[lang]||"en";
 // Structured Data (JSON-LD) — update SoftwareApplication in <head>
 let sc=document.getElementById('jsonLd');

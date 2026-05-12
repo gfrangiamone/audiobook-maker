@@ -8,7 +8,7 @@ dict shaped as:
       "source_lang": "it",
       "it": {<input keys, original verbatim>},
       "en": {<input keys, translated>},
-      "fr": {...}, "es": {...}, "de": {...}, "zh": {...}
+      "fr": {...}, "es": {...}, "de": {...}, "zh": {...}, "hi": {...}
     }
 
 translate_async() runs the call in a daemon thread and invokes a callback
@@ -24,19 +24,19 @@ import traceback
 import generation_engine as ge
 
 
-LANGS: tuple[str, ...] = ("it", "en", "fr", "es", "de", "zh")
+LANGS: tuple[str, ...] = ("it", "en", "fr", "es", "de", "zh", "hi")
 
 
 _TRANSLATE_SYSTEM_PROMPT = """You are a translation engine for the AudioBook Maker app.
-Translate the user-provided JSON content into 6 target languages: \
+Translate the user-provided JSON content into 7 target languages: \
 Italian (it), English (en), French (fr), Spanish (es), German (de), \
-Chinese (zh).
+Chinese (zh), Hindi (hi).
 
 Rules:
 - Detect the source language of the input content.
 - For the source language, output the input text VERBATIM (do not edit, \
 improve, rephrase, or correct typos).
-- Translate accurately into the other 5 languages, preserving tone, \
+- Translate accurately into the other 6 languages, preserving tone, \
 register, punctuation, emoji and newlines.
 - Keep these proper nouns / brand terms untranslated: AudioBook Maker, \
 EPUB, PDF, TXT, MP3, TTS.
@@ -45,13 +45,14 @@ EPUB, PDF, TXT, MP3, TTS.
 
 Output ONLY a single JSON object with this exact structure (no prose):
 {
-  "source_lang": "<two-letter ISO code: it/en/fr/es/de/zh>",
+  "source_lang": "<two-letter ISO code: it/en/fr/es/de/zh/hi>",
   "it": { <same keys as input, Italian text> },
   "en": { ... English ... },
   "fr": { ... French ... },
   "es": { ... Spanish ... },
   "de": { ... German ... },
-  "zh": { ... Chinese ... }
+  "zh": { ... Chinese ... },
+  "hi": { ... Hindi (Devanagari) ... }
 }"""
 
 

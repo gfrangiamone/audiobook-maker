@@ -26,10 +26,12 @@ _REVIEWS_HEADING = {
     "es": "Reseñas de Usuarios",
     "de": "Nutzerbewertungen",
     "zh": "用户评价",
+    "hi": "उपयोगकर्ता समीक्षाएं",
 }
 _AVG_LABEL = {
     "it": "Media", "en": "Average", "fr": "Moyenne",
     "es": "Media", "de": "Durchschnitt", "zh": "平均",
+    "hi": "औसत",
 }
 _BASED_ON = {
     "it": "su {n} recensioni",
@@ -38,6 +40,7 @@ _BASED_ON = {
     "es": "basado en {n} reseñas",
     "de": "basierend auf {n} Bewertungen",
     "zh": "基于 {n} 条评价",
+    "hi": "{n} समीक्षाओं के आधार पर",
 }
 _NO_REVIEWS = {
     "it": "Ancora nessuna recensione.",
@@ -46,10 +49,12 @@ _NO_REVIEWS = {
     "es": "Aún no hay reseñas.",
     "de": "Noch keine Bewertungen.",
     "zh": "暂无评价。",
+    "hi": "अभी तक कोई समीक्षा नहीं.",
 }
 _ANON = {
     "it": "Anonimo", "en": "Anonymous", "fr": "Anonyme",
     "es": "Anónimo", "de": "Anonym", "zh": "匿名",
+    "hi": "अज्ञात",
 }
 
 # Visible block + JSON-LD review[] cap. Higher counts bloat the page without
@@ -63,12 +68,17 @@ def _stars_html(rating: int) -> str:
 
 
 def _localized_comment(item: dict, lang: str) -> str:
-    """Pick the comment text in the requested UI language; fall back to the
-    original. Empty if the user left the comment blank (rating-only)."""
+    """Pick the comment text in the requested UI language; if missing, fall
+    back to the English translation, and only then to the original source
+    text. Empty if the user left the comment blank (rating-only)."""
     i18n = item.get("comment_i18n") or {}
     text = (i18n.get(lang) or "").strip()
     if text:
         return text
+    if lang != "en":
+        en_text = (i18n.get("en") or "").strip()
+        if en_text:
+            return en_text
     return (item.get("comment") or "").strip()
 
 

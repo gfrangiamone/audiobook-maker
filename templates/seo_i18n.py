@@ -41,7 +41,7 @@ _SEO_KEYS: list[str] = [
     "faq_free_books_q", "faq_free_books_a",
 ]
 
-_LANGS: list[str] = ["it", "en", "fr", "es", "de", "zh"]
+_LANGS: list[str] = ["it", "en", "fr", "es", "de", "zh", "hi"]
 
 # JS string literal: any char that isn't an unescaped " or backslash, OR a
 # backslash followed by any char. Matches "Sì", "He said \"hi\"", etc.

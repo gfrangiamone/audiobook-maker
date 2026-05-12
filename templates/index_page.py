@@ -3,7 +3,7 @@ HTML template for the Audiobook Maker landing page.
 
 The template is assembled from modular fragments at startup:
   - _fragments/html_head.html         : HTML structure, CSS, early JS
-  - _fragments/i18n_data.js           : UI translations (6 languages)
+  - _fragments/i18n_data.js           : UI translations (7 languages)
   - _fragments/free_books_data.js     : Free book sites data + functions
   - _fragments/podcast_guide_data.js  : Podcast guide (base64 images + per-language sections + About)
   - _fragments/seo_data.js            : SEO metadata per language + applySEO()
@@ -47,11 +47,13 @@ _FRAGMENT_ORDER = [
 _HREFLANG_MAP = {
     "it": "it", "en": "en", "fr": "fr",
     "es": "es", "de": "de", "zh": "zh-Hans",
+    "hi": "hi",
 }
 # Open Graph locale mapping
 _OG_LOCALE_MAP = {
     "it": "it_IT", "en": "en_US", "fr": "fr_FR",
     "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
+    "hi": "hi_IN",
 }
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 
@@ -76,7 +78,7 @@ def build_html_template(
       4. Version badge before </body>
 
     Args:
-        lang: Language code (it, en, fr, es, de, zh).
+        lang: Language code (it, en, fr, es, de, zh, hi).
         seo: Dict with keys: title, desc, kw, ld_name, ld_desc.
         base_url: Base URL for canonical/hreflang (e.g. "https://audiobook-maker.com").
         version: Version string for the badge (e.g. "2.1").

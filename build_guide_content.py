@@ -22,6 +22,7 @@ from __future__ import annotations
 _HREFLANG_MAP = {
     "it": "it", "en": "en", "fr": "fr",
     "es": "es", "de": "de", "zh": "zh-Hans",
+    "hi": "hi",
 }
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 

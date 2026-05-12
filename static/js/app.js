@@ -1,5 +1,5 @@
 // ═══════════════════ LANGUAGE DROPDOWN ═══════════════════
-const LANG_FLAGS={'it':'🇮🇹','en':'🇬🇧','fr':'🇫🇷','es':'🇪🇸','de':'🇩🇪','zh':'🇨🇳'};
+const LANG_FLAGS={'it':'🇮🇹','en':'🇬🇧','fr':'🇫🇷','es':'🇪🇸','de':'🇩🇪','zh':'🇨🇳','hi':'🇮🇳'};
 function toggleLangDropdown(){
   const el=document.getElementById('langDropdown');
   const trigger=document.getElementById('langCurrent');
@@ -2299,23 +2299,24 @@ function checkVoiceMismatch(){
   if(!bookData||!bookData.language){banner.style.display='none';return;}
   const bookLang=bookData.language.split('-')[0].toLowerCase();
   // Only warn for well-known, unambiguous language codes
-  const known=['it','en','fr','es','de','zh','pt','nl','pl','ru','ja','ko'];
+  const known=['it','en','fr','es','de','zh','hi','pt','nl','pl','ru','ja','ko'];
   if(!known.includes(bookLang)){banner.style.display='none';return;}
   const voiceLang=document.getElementById('vl').value;
   if(bookLang===voiceLang){banner.style.display='none';return;}
   const _names={
-    it:{it:'italiano',en:'Italian',fr:'italien',es:'italiano',de:'Italienisch',zh:'意大利语'},
-    en:{it:'inglese',en:'English',fr:'anglais',es:'inglés',de:'Englisch',zh:'英语'},
-    fr:{it:'francese',en:'French',fr:'français',es:'francés',de:'Französisch',zh:'法语'},
-    es:{it:'spagnolo',en:'Spanish',fr:'espagnol',es:'español',de:'Spanisch',zh:'西班牙语'},
-    de:{it:'tedesco',en:'German',fr:'allemand',es:'alemán',de:'Deutsch',zh:'德语'},
-    zh:{it:'cinese',en:'Chinese',fr:'chinois',es:'chino',de:'Chinesisch',zh:'中文'},
-    pt:{it:'portoghese',en:'Portuguese',fr:'portugais',es:'portugués',de:'Portugiesisch',zh:'葡萄牙语'},
-    ru:{it:'russo',en:'Russian',fr:'russe',es:'ruso',de:'Russisch',zh:'俄语'},
-    ja:{it:'giapponese',en:'Japanese',fr:'japonais',es:'japonés',de:'Japanisch',zh:'日语'},
-    ko:{it:'coreano',en:'Korean',fr:'coréen',es:'coreano',de:'Koreanisch',zh:'韩语'},
-    nl:{it:'olandese',en:'Dutch',fr:'néerlandais',es:'neerlandés',de:'Niederländisch',zh:'荷兰语'},
-    pl:{it:'polacco',en:'Polish',fr:'polonais',es:'polaco',de:'Polnisch',zh:'波兰语'},
+    it:{it:'italiano',en:'Italian',fr:'italien',es:'italiano',de:'Italienisch',zh:'意大利语',hi:'इतालवी'},
+    en:{it:'inglese',en:'English',fr:'anglais',es:'inglés',de:'Englisch',zh:'英语',hi:'अंग्रेज़ी'},
+    fr:{it:'francese',en:'French',fr:'français',es:'francés',de:'Französisch',zh:'法语',hi:'फ़्रेंच'},
+    es:{it:'spagnolo',en:'Spanish',fr:'espagnol',es:'español',de:'Spanisch',zh:'西班牙语',hi:'स्पेनिश'},
+    de:{it:'tedesco',en:'German',fr:'allemand',es:'alemán',de:'Deutsch',zh:'德语',hi:'जर्मन'},
+    zh:{it:'cinese',en:'Chinese',fr:'chinois',es:'chino',de:'Chinesisch',zh:'中文',hi:'चीनी'},
+    hi:{it:'hindi',en:'Hindi',fr:'hindi',es:'hindi',de:'Hindi',zh:'印地语',hi:'हिन्दी'},
+    pt:{it:'portoghese',en:'Portuguese',fr:'portugais',es:'portugués',de:'Portugiesisch',zh:'葡萄牙语',hi:'पुर्तगाली'},
+    ru:{it:'russo',en:'Russian',fr:'russe',es:'ruso',de:'Russisch',zh:'俄语',hi:'रूसी'},
+    ja:{it:'giapponese',en:'Japanese',fr:'japonais',es:'japonés',de:'Japanisch',zh:'日语',hi:'जापानी'},
+    ko:{it:'coreano',en:'Korean',fr:'coréen',es:'coreano',de:'Koreanisch',zh:'韩语',hi:'कोरियाई'},
+    nl:{it:'olandese',en:'Dutch',fr:'néerlandais',es:'neerlandés',de:'Niederländisch',zh:'荷兰语',hi:'डच'},
+    pl:{it:'polacco',en:'Polish',fr:'polonais',es:'polaco',de:'Polnisch',zh:'波兰语',hi:'पोलिश'},
   };
   const dn=(_names[bookLang]||{})[cl]||bookLang;
   const _fix=`<a class="vm-link" onclick="autoFixVoice('${bookLang}')">`;
@@ -2326,6 +2327,7 @@ function checkVoiceMismatch(){
     es:`⚠️ El libro parece estar en <strong>${dn}</strong>, pero está seleccionado otro idioma de voz. ${_fix}Cambiar a voz ${dn} →</a>`,
     de:`⚠️ Das Buch scheint auf <strong>${dn}</strong> zu sein, aber eine andere Stimmensprache ist gewählt. ${_fix}Zu ${dn}-Stimme wechseln →</a>`,
     zh:`⚠️ 本书似乎是<strong>${dn}</strong>，但选择了不同语言的语音。${_fix}切换到${dn}语音 →</a>`,
+    hi:`⚠️ यह पुस्तक <strong>${dn}</strong> में लगती है, लेकिन किसी अन्य भाषा की आवाज़ चुनी गई है। ${_fix}${dn} आवाज़ पर स्विच करें →</a>`,
   };
   banner.innerHTML=_msgs[cl]||_msgs.en;
   banner.style.display='';
@@ -2575,10 +2577,17 @@ function goToAudioSettings(){goToStep(3)}
   }
   function pickI18n(orig,i18n,srcLang){
     const ui=uiLang();
-    const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
+    const dict=(i18n&&typeof i18n==='object')?i18n:{};
+    const localized=(dict[ui]||'').trim();
+    const enFallback=(dict.en||'').trim();
     const src=(srcLang||'').toLowerCase();
-    const hasTr=!!localized && localized!==orig && (!src || src!==ui);
-    return {text:hasTr?localized:orig, hasTr, orig, localized};
+    // Prefer UI-language translation; if missing, fall back to English;
+    // only then fall back to the original source text.
+    let display=localized;
+    if(!display && ui!=='en') display=enFallback;
+    if(!display) display=orig;
+    const hasTr=!!display && display!==orig && (!src || src!==ui);
+    return {text:display, hasTr, orig, localized:display};
   }
   function attachI18nToggle(btn,onSet,info){
     if(!info.hasTr){btn.hidden=true;return;}
@@ -2794,10 +2803,17 @@ function goToAudioSettings(){goToStep(3)}
   }
   function pickI18n(orig,i18n,srcLang){
     const ui=uiLang();
-    const localized=(i18n&&typeof i18n==='object')?(i18n[ui]||''):'';
+    const dict=(i18n&&typeof i18n==='object')?i18n:{};
+    const localized=(dict[ui]||'').trim();
+    const enFallback=(dict.en||'').trim();
     const src=(srcLang||'').toLowerCase();
-    const hasTr=!!localized && localized!==orig && (!src || src!==ui);
-    return {text:hasTr?localized:orig, hasTr, orig, localized};
+    // Prefer UI-language translation; if missing, fall back to English;
+    // only then fall back to the original source text.
+    let display=localized;
+    if(!display && ui!=='en') display=enFallback;
+    if(!display) display=orig;
+    const hasTr=!!display && display!==orig && (!src || src!==ui);
+    return {text:display, hasTr, orig, localized:display};
   }
   function attachI18nToggle(btn,bodyEl,info){
     if(!info.hasTr){btn.hidden=true;return;}

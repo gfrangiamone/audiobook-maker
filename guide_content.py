@@ -14,10 +14,12 @@ from __future__ import annotations
 _HREFLANG_MAP = {
     "it": "it", "en": "en", "fr": "fr",
     "es": "es", "de": "de", "zh": "zh-Hans",
+    "hi": "hi",
 }
 _OG_LOCALE_MAP = {
     "it": "it_IT", "en": "en_US", "fr": "fr_FR",
     "es": "es_ES", "de": "de_DE", "zh": "zh_CN",
+    "hi": "hi_IN",
 }
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 
@@ -61,6 +63,12 @@ _GUIDE_META = {
             "kw": "epub转有声书, epub转mp3, epub转m4b, 免费epub有声书转换器, 如何从epub创建有声书, epub文字转语音",
             "h1": "如何免费将EPUB转换为有声书（在线工具）",
         },
+        "hi": {
+            "title": "EPUB को ऑडियोबुक में मुफ़्त बदलें — पूरी गाइड | Audiobook Maker",
+            "desc": "EPUB ईबुक को मुफ़्त में MP3 या M4B ऑडियोबुक में बदलने की चरण-दर-चरण मार्गदर्शिका. सर्वोत्तम TTS आवाज़ें चुनना, अध्याय संरक्षित करना, और किसी भी EPUB फ़ाइल से पेशेवर ऑडियोबुक बनाना सीखें. कोई सॉफ़्टवेयर इंस्टॉलेशन आवश्यक नहीं.",
+            "kw": "epub से ऑडियोबुक बदलें, epub से mp3, epub से m4b, मुफ़्त epub ऑडियोबुक कनवर्टर, epub से ऑडियोबुक कैसे बनाएं, epub टेक्स्ट टू स्पीच",
+            "h1": "EPUB को ऑडियोबुक में कैसे बदलें (मुफ़्त और ऑनलाइन)",
+        },
     },
     "m4b-format": {
         "en": {
@@ -98,6 +106,12 @@ _GUIDE_META = {
             "desc": "关于M4B有声书格式的一切：什么是M4B，与MP3的区别，如何创建带嵌入式章节和封面的M4B文件，以及为什么M4B是有声书的最佳格式。",
             "kw": "m4b格式, 什么是m4b, m4b与mp3, 创建带章节的m4b, m4b制作工具, m4b转换器, m4b有声书格式",
             "h1": "M4B格式：带章节有声书文件终极指南",
+        },
+        "hi": {
+            "title": "M4B प्रारूप मार्गदर्शिका: अध्यायों के साथ ऑडियोबुक बनाएं | Audiobook Maker",
+            "desc": "M4B ऑडियोबुक प्रारूप के बारे में सब कुछ: यह क्या है, MP3 से अंतर, अंतर्निहित अध्यायों और कवर के साथ M4B फ़ाइलें कैसे बनाएं, और क्यों M4B ऑडियोबुक के लिए सर्वोत्तम प्रारूप है.",
+            "kw": "m4b प्रारूप, m4b क्या है, m4b बनाम mp3, अध्यायों के साथ m4b बनाएं, m4b मेकर, m4b कनवर्टर, m4b ऑडियोबुक प्रारूप",
+            "h1": "M4B प्रारूप: अध्यायों वाली ऑडियोबुक फ़ाइलों की पूरी मार्गदर्शिका",
         },
     },
     "text-to-speech-audiobook": {
@@ -137,6 +151,12 @@ _GUIDE_META = {
             "kw": "免费文字转语音有声书, 在线tts免费, ai语音有声书制作, speechify替代品, elevenlabs替代品, play.ht替代品, 最佳有声书tts, 文字转语音mp3下载, ai旁白免费, 阅读障碍有声书, 盲人有声书, 视障文字转语音, 无障碍有声书制作",
             "h1": "免费文字转语音有声书制作：最佳TTS引擎",
         },
+        "hi": {
+            "title": "मुफ़्त टेक्स्ट टू स्पीच ऑडियोबुक मेकर — सर्वश्रेष्ठ TTS आवाज़ें 2026 | Audiobook Maker",
+            "desc": "प्राकृतिक AI टेक्स्ट-टू-स्पीच आवाज़ों के साथ मुफ़्त ऑडियोबुक बनाएं. ऑडियोबुक निर्माण के लिए सर्वश्रेष्ठ TTS इंजनों की तुलना करें (Edge TTS, Google TTS, Speechify विकल्प). टेक्स्ट, EPUB और PDF को ऑनलाइन ऑडियो में बदलें. कोई साइन-अप आवश्यक नहीं.",
+            "kw": "मुफ़्त टेक्स्ट टू स्पीच ऑडियोबुक, ऑनलाइन tts मुफ़्त, ai आवाज़ ऑडियोबुक मेकर, speechify मुफ़्त विकल्प, elevenlabs मुफ़्त विकल्प, ऑडियोबुक के लिए सर्वश्रेष्ठ tts, टेक्स्ट टू स्पीच mp3 डाउनलोड, मुफ़्त ai कथावाचक, डिस्लेक्सिया के लिए ऑडियोबुक, सुलभ ऑडियोबुक मेकर",
+            "h1": "मुफ़्त टेक्स्ट-टू-स्पीच ऑडियोबुक मेकर: 2026 के सर्वश्रेष्ठ TTS",
+        },
     },
     "podcast": {
         "en": {
@@ -174,6 +194,12 @@ _GUIDE_META = {
             "desc": "了解如何将M4B或MP3有声书章节转换为私人播客RSS订阅源。通过Netlify免费托管，Apple Podcasts、Pocket Casts等应用的分步设置指南。",
             "kw": "私人播客有声书, rss订阅源免费, netlify播客托管, 有声书转播客, 创建播客从有声书, apple podcasts私人订阅源",
             "h1": "如何将有声书发布为私人播客（免费）",
+        },
+        "hi": {
+            "title": "अपनी ऑडियोबुक को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें — मुफ़्त गाइड | Audiobook Maker",
+            "desc": "जानें कि अपने M4B या MP3 ऑडियोबुक अध्यायों को एक निजी पॉडकास्ट RSS फ़ीड में कैसे बदलें. Netlify के साथ मुफ़्त होस्टिंग, Apple Podcasts, Pocket Casts और अन्य के लिए चरण-दर-चरण सेटअप.",
+            "kw": "निजी पॉडकास्ट ऑडियोबुक, मुफ़्त पॉडकास्ट rss फ़ीड, ऑडियोबुक को पॉडकास्ट के रूप में होस्ट करें, netlify पॉडकास्ट होस्टिंग, ऑडियोबुक से पॉडकास्ट, मुफ़्त पॉडकास्ट होस्टिंग, apple podcasts निजी फ़ीड",
+            "h1": "अपनी ऑडियोबुक को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें (मुफ़्त)",
         },
     },
 }
@@ -2148,10 +2174,12 @@ def build_guide_html(
     _updated_label = {
         "it": "Ultimo aggiornamento", "en": "Last updated", "fr": "Dernière mise à jour",
         "es": "Última actualización", "de": "Zuletzt aktualisiert", "zh": "最后更新",
+        "hi": "अंतिम बार अपडेट किया गया",
     }.get(lang, "Last updated")
     _published_label = {
         "it": "Pubblicato", "en": "Published", "fr": "Publié",
         "es": "Publicado", "de": "Veröffentlicht", "zh": "发布于",
+        "hi": "प्रकाशित",
     }.get(lang, "Published")
     article_dates_html = (
         f'<p class="article-dates" style="font-size:.85rem;color:var(--txm);margin:8px 0 16px">'
@@ -2164,6 +2192,7 @@ def build_guide_html(
     crumb_names = {
         "it": "Guide", "en": "Guides", "fr": "Guides",
         "es": "Guías", "de": "Anleitungen", "zh": "指南",
+        "hi": "गाइड",
     }
     crumb_name = crumb_names.get(lang, "Guides")
     breadcrumb_ld = _json.dumps({

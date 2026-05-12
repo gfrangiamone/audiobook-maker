@@ -230,6 +230,7 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
         "es": f"Recibo de pago Audiobook Maker \u2014 {amount_eur:.2f} EUR",
         "de": f"Zahlungsbeleg Audiobook Maker \u2014 {amount_eur:.2f} EUR",
         "zh": f"Audiobook Maker \u4ed8\u6b3e\u6536\u636e \u2014 {amount_eur:.2f} EUR",
+        "hi": f"Audiobook Maker \u092d\u0941\u0917\u0924\u093e\u0928 \u0930\u0938\u0940\u0926 \u2014 {amount_eur:.2f} EUR",
     }
     subject = subj_map.get(lang, subj_map["en"])
     body_map = {
@@ -247,6 +248,13 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
                "Keep this email as receipt. Contact us for invoicing.",
                f"If optimization fails, you will receive a voucher worth {VOUCHER_BONUS_PERCENT}% more, "
                f"valid for {VOUCHER_EXPIRY_DAYS} days."),
+        "hi": ("आपके भुगतान के लिए धन्यवाद.",
+               f"राशि: <strong>EUR {amount_eur:.2f}</strong><br>लेन-देन ID: <code>{order_id}</code>"
+               f"<br>परियोजना: <strong>{book_title}</strong>",
+               "यह भुगतान वाक् संश्लेषण के लिए AI टेक्स्ट अनुकूलन को कवर करता है. "
+               "इस ईमेल को रसीद के रूप में रखें. चालान के लिए हमसे संपर्क करें.",
+               f"यदि अनुकूलन विफल हो जाता है, तो आपको {VOUCHER_BONUS_PERCENT}% अधिक मूल्य का कूपन मिलेगा, "
+               f"जो {VOUCHER_EXPIRY_DAYS} दिनों के लिए मान्य है."),
     }
     heading, details, info_txt, refund = body_map.get(lang, body_map["en"])
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
