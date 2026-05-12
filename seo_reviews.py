@@ -154,6 +154,13 @@ def build_reviews(lang: str) -> dict:
         "operatingSystem": "Web",
         "aggregateRating": {
             "@type": "AggregateRating",
+            "name": "Audiobook Maker User Ratings",
+            "itemReviewed": {
+                "@type": "SoftwareApplication",
+                "name": "Audiobook Maker",
+                "applicationCategory": "MultimediaApplication",
+                "operatingSystem": "Web",
+            },
             "ratingValue": avg,
             "bestRating": 5,
             "worstRating": 1,
