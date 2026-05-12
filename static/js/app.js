@@ -586,24 +586,27 @@ async function analyzeEpub(file){
 // ═══════════════════ VOICES ═══════════════════
 async function loadVoices(){
   try{
-    const r=await fetch('/api/voices');
-    const data=await r.json();
-    console.log("[debug] loadVoices data keys:", Object.keys(data));
-    // Estrai budget Google TTS e rimuovi la chiave speciale
+    const r=await fetch('/api/voices',{headers:{'Accept':'application/json'}});
+    if(!r.ok){console.error('loadVoices HTTP '+r.status);return;}
+    const ct=(r.headers.get('content-type')||'').toLowerCase();
+    if(ct.indexOf('application/json')===-1){console.error('loadVoices: unexpected content-type',ct);return;}
+    const txt=await r.text();
+    if(!txt){console.error('loadVoices: empty response body');return;}
+    let data;
+    try{ data=JSON.parse(txt); }
+    catch(parseErr){console.error('loadVoices: JSON parse failed',parseErr);return;}
+    if(!data||typeof data!=='object'){console.error('loadVoices: invalid payload');return;}
     if(data._google_tts){
         _googleTtsBudget=data._google_tts;
-        console.log("[debug] _googleTtsBudget:", _googleTtsBudget);
         delete data._google_tts;
     }
     else{
-        console.warn("[debug] _google_tts info missing in API response");
         _googleTtsBudget=null;
     }
     voices=data;
     fillLangs();
   }catch(e){
-    console.error('loadVoices failed:', e);
-    alert('Failed to load TTS voices. Check server connection or logs. Error: ' + e.message);
+    console.error('loadVoices failed:', e&&e.message);
   }
 }
 function fillLangs(){
