@@ -120,18 +120,15 @@ def build_reviews(lang: str) -> dict:
         )
         body_text = _localized_comment(it, lang)
         # Review.name satisfies Google's "named element" check: without it,
-        # Search Console reports the entity as "Elemento senza nome" even
-        # when itemReviewed + reviewRating + author are all present.
+        # Search Console reports the entity as "Elemento senza nome".
+        # itemReviewed is omitted on purpose — this Review is nested under
+        # the parent SoftwareApplication's `review[]` property, so the item
+        # being reviewed is implicit. Adding itemReviewed here triggers a
+        # "directional conflict" warning in Search Console.
         review_name = f"Audiobook Maker — {r}/5 by {name}"
         review_entries.append({
             "@type": "Review",
             "name": review_name,
-            "itemReviewed": {
-                "@type": "SoftwareApplication",
-                "name": "Audiobook Maker",
-                "applicationCategory": "MultimediaApplication",
-                "operatingSystem": "Web",
-            },
             "reviewRating": {
                 "@type": "Rating", "ratingValue": r,
                 "bestRating": 5, "worstRating": 1,
@@ -152,15 +149,12 @@ def build_reviews(lang: str) -> dict:
         "url": "https://audiobook-maker.com/",
         "applicationCategory": "MultimediaApplication",
         "operatingSystem": "Web",
+        # Nested under SoftwareApplication.aggregateRating — itemReviewed
+        # is implicit (the parent IS the item) and adding it explicitly
+        # causes a Search Console "directional conflict" warning.
         "aggregateRating": {
             "@type": "AggregateRating",
             "name": "Audiobook Maker User Ratings",
-            "itemReviewed": {
-                "@type": "SoftwareApplication",
-                "name": "Audiobook Maker",
-                "applicationCategory": "MultimediaApplication",
-                "operatingSystem": "Web",
-            },
             "ratingValue": avg,
             "bestRating": 5,
             "worstRating": 1,
