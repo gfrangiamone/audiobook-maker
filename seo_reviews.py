@@ -119,8 +119,13 @@ def build_reviews(lang: str) -> dict:
             if ts else ""
         )
         body_text = _localized_comment(it, lang)
+        # Review.name satisfies Google's "named element" check: without it,
+        # Search Console reports the entity as "Elemento senza nome" even
+        # when itemReviewed + reviewRating + author are all present.
+        review_name = f"Audiobook Maker — {r}/5 by {name}"
         review_entries.append({
             "@type": "Review",
+            "name": review_name,
             "itemReviewed": {
                 "@type": "SoftwareApplication",
                 "name": "Audiobook Maker",
