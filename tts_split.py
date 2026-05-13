@@ -189,14 +189,18 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
-def _plan_chunks(info):
-    """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo."""
+def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS):
+    """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
+
+    max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
+               Per voci Gemini su lingue CJK/Hindi/Arabo passare 1500.
+    """
     plan = []
     for ch in info.chapters:
         clean_text = _strip_parenthetical(ch.text)
         clean_text = _ensure_heading_pause(clean_text)
         full_text = f"{ch.title}.\n\n{clean_text}"
-        chunks = split_text_into_chunks(full_text)
+        chunks = split_text_into_chunks(full_text, max_chars=max_chars)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,
