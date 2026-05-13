@@ -78,6 +78,10 @@ Scansiona ogni frase. Se supera ~30-40 parole, **devi spezzarla**. Vale per narr
 
 Preferisci il punto fermo al punto e virgola. Conserva senso e tono. Quando spezzi, mantieni le parole originali e aggiungi solo il minimo connettivo necessario (un punto, un pronome che ripristini il soggetto).
 
+**Se lo split richiede di modificare parole oltre il connettivo minimo (un pronome di ripresa, una congiunzione), allora non spezzare. Mantieni la frase lunga.**
+
+Sostituire un pronome relativo (`cui`, `che`, `il quale`) con un possessivo o dimostrativo conta come sostituzione di parola e va evitato. Se uno split richiede questa trasformazione, non spezzare.
+
 **⚠️ CONTROLLO GRAMMATICALE OBBLIGATORIO DOPO OGNI SPLIT**
 
 Dopo ogni divisione, verifica che CIASCUN frammento sia una frase grammaticalmente completa: deve avere soggetto e verbo propri. Mai trasformare in frase autonoma:
@@ -103,6 +107,8 @@ Originale (54 parole, troppo lunga):
 
 Output corretto (split in due):
 > *"Era qui da un anno e sognava ancora il cyberspazio, ma la speranza sfumava ogni notte, con tutte le anfetamine che aveva preso, le vie traverse e le scorciatoie che aveva tentato nella Città della Notte. E ancora adesso vedeva la matrice durante il sonno, una grata luminosa di logica dispiegata attraverso quel vuoto incolore."*
+
+**Controllo cosmetico finale sugli split.** Dopo aver applicato tutti gli split del paragrafo, verifica che non ci siano tre o più frasi consecutive che iniziano con la stessa congiunzione (`E lui... E si... E ancora...`). Se sì, riassorbi almeno una di quelle transizioni in virgola — ovvero non spezzare in quel punto, lascia la frase originale unita alla precedente.
 
 ### 10. Punto e virgola fra clausole indipendenti
 Sostituisci `;` con `.` quando ciascuna clausola può stare da sola. Il TTS sotto-rende la pausa del `;`, fondendo due pensieri distinti.
