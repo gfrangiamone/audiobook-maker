@@ -286,6 +286,45 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
+def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
+    """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
+
+    Args:
+        text: testo da sintetizzare.
+        voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
+        output_path: percorso file PCM in output.
+        max_retries: numero di tentativi prima di fallback a silenzio (default 3).
+
+    Returns:
+        dict {input_tokens, output_tokens, audio_seconds, audio_bytes, model_key}
+        on success, False on total failure (silence PCM written).
+    """
+    import gemini_tts as _gemini  # late import: keeps module optional
+
+    clean = _sanitize_tts_text(text)
+    if clean is None:
+        _generate_silence_pcm(output_path, duration_sec=1)
+        return False
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = _gemini.synthesize(clean, voice_id, output_path=output_path)
+            return result
+        except Exception as e:
+            last_error = e
+            snippet = clean[:60].replace('\n', ' ')
+            print(f"[gemini-tts] Attempt {attempt+1}/{max_retries} failed for chunk "
+                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
+          f"generating silence ({len(clean)} chars). Last error: {last_error}")
+    _generate_silence_pcm(output_path, duration_sec=1)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Google Cloud TTS generation
 # ---------------------------------------------------------------------------
