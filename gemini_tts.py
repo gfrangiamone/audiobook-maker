@@ -9,6 +9,10 @@ Integration with tts_split / generation_engine / audiobook_app is Plan B.
 """
 
 import os
+import json
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
 
 # Audio output constants
 AUDIO_TOKENS_PER_SECOND = 25
@@ -282,3 +286,103 @@ def check_text_byte_size(text):
 def get_max_chunk_chars(language):
     """Max chars per chunk per la lingua data. CJK/Hindi/Arabic: 1500. Altri: 2000."""
     return MAX_CHUNK_CHARS_BY_LANG.get(language, MAX_CHUNK_CHARS_BY_LANG["default"])
+
+
+_data_dir = None
+_usage_file_path = None
+_usage_lock = threading.Lock()
+_usage_cache = None
+
+
+def init(data_dir):
+    """Inizializza il modulo con la directory dati persistente."""
+    global _data_dir, _usage_file_path, _usage_cache
+    _data_dir = Path(data_dir)
+    _data_dir.mkdir(parents=True, exist_ok=True)
+    _usage_file_path = _data_dir / "gemini_tts_usage.json"
+    _usage_cache = None
+
+
+def _current_month():
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _empty_usage():
+    return {
+        "month": _current_month(),
+        "chars_total": 0,
+        "input_tokens_total": 0,
+        "output_tokens_total": 0,
+        "google_cost_eur": 0.0,
+        "user_revenue_eur_net": 0.0,
+        "margin_eur": 0.0,
+        "previews_count": 0,
+        "previews_cost_eur": 0.0,
+        "by_model": {
+            "flash25": {"chars": 0, "input_tok": 0, "output_tok": 0,
+                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0},
+            "flash31": {"chars": 0, "input_tok": 0, "output_tok": 0,
+                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0},
+        },
+    }
+
+
+def _load_usage():
+    global _usage_cache
+    if _usage_cache is not None:
+        return _usage_cache
+    if _usage_file_path is None:
+        return _empty_usage()
+    if _usage_file_path.exists():
+        try:
+            data = json.loads(_usage_file_path.read_text(encoding="utf-8"))
+            if data.get("month") == _current_month():
+                _usage_cache = data
+                return data
+        except Exception as e:
+            print(f"[gemini-tts] Warning: could not read usage file: {e}")
+    data = _empty_usage()
+    _usage_cache = data
+    return data
+
+
+def _save_usage(data):
+    global _usage_cache
+    _usage_cache = data
+    if _usage_file_path is None:
+        return
+    try:
+        _usage_file_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _usage_file_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(_usage_file_path)
+    except Exception as e:
+        print(f"[gemini-tts] Warning: could not save usage file: {e}")
+
+
+def record_usage(model_key, chars, input_tokens, output_tokens, google_cost_eur, revenue_eur):
+    """Registra l'utilizzo di un job completato. Aggiorna anche aggregati globali."""
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    with _usage_lock:
+        data = _load_usage()
+        data["chars_total"] += chars
+        data["input_tokens_total"] += input_tokens
+        data["output_tokens_total"] += output_tokens
+        data["google_cost_eur"] += google_cost_eur
+        data["user_revenue_eur_net"] += revenue_eur
+        data["margin_eur"] = data["user_revenue_eur_net"] - data["google_cost_eur"]
+        m = data["by_model"][model_key]
+        m["chars"] += chars
+        m["input_tok"] += input_tokens
+        m["output_tok"] += output_tokens
+        m["google_cost"] += google_cost_eur
+        m["revenue_net"] += revenue_eur
+        m["jobs_count"] += 1
+        _save_usage(data)
+
+
+def get_usage():
+    """Restituisce lo snapshot di utilizzo del mese corrente."""
+    with _usage_lock:
+        return dict(_load_usage())
