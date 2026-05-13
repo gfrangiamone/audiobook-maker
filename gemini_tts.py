@@ -532,3 +532,99 @@ def _get_client():
         api_key = os.environ["ABM_GEMINI_API_KEY"].strip()
         _genai_client = genai.Client(api_key=api_key)
     return _genai_client
+
+
+SYNTH_MAX_ATTEMPTS = 3
+
+
+def synthesize(text, voice_id, rate="+0%", output_path="output.pcm"):
+    """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
+
+    Args:
+        text: testo da sintetizzare (<= MAX_BYTES_PER_CALL UTF-8 bytes).
+        voice_id: 'gemini:<model_key>:<voice_name>'.
+        rate: parametro di compatibilita' — Gemini TTS non ha speaking_rate API,
+              quando rate != '+0%' viene aggiunto un prompt instruction.
+        output_path: percorso file PCM in output.
+
+    Returns:
+        dict con success, bytes_written, input_tokens, output_tokens, model_key,
+        voice_name, attempts_used.
+
+    Raises:
+        ValueError se text supera il cap byte o voice_id e' invalido.
+        RuntimeError se tutti i retry falliscono.
+    """
+    if not is_available():
+        raise RuntimeError("Gemini TTS not available (check ABM_GEMINI_API_KEY)")
+
+    model_key, model_id, voice_name = parse_voice_id(voice_id)
+    ok, size = check_text_byte_size(text)
+    if not ok:
+        raise ValueError(f"Text exceeds MAX_BYTES_PER_CALL ({size} > {MAX_BYTES_PER_CALL} bytes)")
+
+    rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
+    final_text = text
+    if rate_mode == "prompt" and rate and rate != "+0%":
+        pct = rate.replace("%", "").replace("+", "")
+        try:
+            n = int(pct)
+            if n < -5:
+                final_text = f"[slow] {text}"
+            elif n > 5:
+                final_text = f"[fast] {text}"
+        except ValueError:
+            pass
+
+    from google.genai import types as genai_types
+
+    client = _get_client()
+    last_err = None
+    pcm_data = None
+    usage_input = 0
+    usage_output = 0
+    attempt = 0
+
+    while attempt < SYNTH_MAX_ATTEMPTS:
+        attempt += 1
+        try:
+            response = client.models.generate_content(
+                model=model_id,
+                contents=final_text,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=genai_types.SpeechConfig(
+                        voice_config=genai_types.VoiceConfig(
+                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                                voice_name=voice_name,
+                            )
+                        )
+                    ),
+                ),
+            )
+            pcm_data = response.candidates[0].content.parts[0].inline_data.data
+            um = getattr(response, "usage_metadata", None)
+            if um:
+                usage_input = getattr(um, "prompt_token_count", 0) or 0
+                usage_output = getattr(um, "candidates_token_count", 0) or 0
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < SYNTH_MAX_ATTEMPTS:
+                time.sleep(2 ** attempt)
+            else:
+                raise RuntimeError(f"Gemini TTS failed after {SYNTH_MAX_ATTEMPTS} attempts: {last_err}")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as f:
+        f.write(pcm_data)
+
+    return {
+        "success": True,
+        "bytes_written": len(pcm_data),
+        "input_tokens": usage_input,
+        "output_tokens": usage_output,
+        "model_key": model_key,
+        "voice_name": voice_name,
+        "attempts_used": attempt,
+    }
