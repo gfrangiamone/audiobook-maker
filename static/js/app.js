@@ -657,6 +657,7 @@ function fillLangs(){
   updVoices();
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
+function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
 function _googleTtsAffordable(){
   // True se Google TTS è disponibile e ha caratteri sufficienti per il libro corrente.
   // Se non c'è ancora un libro analizzato, basta che il budget non sia esaurito.
@@ -695,6 +696,22 @@ function updVoices(){
       const o=document.createElement('option');o.value=v.id;
       o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
       o.classList.add('gcloud-voice');
+      sel.lastElementChild.appendChild(o);
+    }
+  }
+  // Voci Gemini TTS (se presenti)
+  const geminiVoices=lang.voices.filter(v=>v.engine==='gemini');
+  if(geminiVoices.length>0){
+    lg='';
+    for(const v of geminiVoices){
+      if(lg!=='gemini-grp'){
+        const g=document.createElement('optgroup');
+        g.label='★ Gemini TTS';
+        sel.appendChild(g);lg='gemini-grp';
+      }
+      const o=document.createElement('option');o.value=v.id;
+      o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
+      o.classList.add('gemini-voice');
       sel.lastElementChild.appendChild(o);
     }
   }
@@ -767,6 +784,61 @@ async function previewRead(){
   const url='/api/preview_audio/'+bookData.job_id
     +'?voice='+encodeURIComponent(voice)
     +'&rate='+encodeURIComponent(rate);
+
+  // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
+  if(_isGeminiVoice(voice)){
+    try{
+      const r=await fetch(url);
+      if(r.status===429){
+        const data=await r.json().catch(()=>({}));
+        const minutes=Math.ceil((data.reset_in_seconds||0)/60);
+        const msg=t('gemini_preview_cap_exceeded')
+          .replace('{n}',data.used||0).replace('{cap}',data.cap||5).replace('{min}',minutes);
+        alert(msg);
+        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        return;
+      }
+      if(r.status===503){
+        alert(t('gemini_not_configured'));
+        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        return;
+      }
+      if(!r.ok){
+        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        alert(t('prev_error'));
+        return;
+      }
+      const blob=await r.blob();
+      const blobUrl=URL.createObjectURL(blob);
+      audio.oncanplay=()=>{
+        _prevLoading=false;
+        btn.classList.remove('loading');
+        btn.disabled=true;
+        _previewGenerated=true;
+        _updatePreviewBtn();
+        if(wrap)wrap.classList.add('visible');
+        previewListened=true;
+        audio.oncanplay=null;
+        URL.revokeObjectURL(blobUrl);
+      };
+      audio.onerror=()=>{
+        if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
+        _prevLoading=false;
+        btn.classList.remove('loading');
+        btn.disabled=false;
+        if(wrap)wrap.classList.remove('visible');
+        alert(t('prev_error'));
+      };
+      audio.src=blobUrl;
+      audio.load();
+      return;
+    }catch(err){
+      console.error('[gemini-preview] fetch error:',err);
+      _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+      alert(t('prev_error'));
+      return;
+    }
+  }
 
   audio.oncanplay=()=>{
     _prevLoading=false;
