@@ -1236,6 +1236,23 @@ def run_optimization(job_id, selected_chapters=None):
         _refund_job_payment(job_id, job, "error")
 
 
+def _engine_for_voice(voice):
+    """Sceglie il motore TTS dal voice ID.
+
+    Prefissi:
+      - "gemini:..."  -> Gemini TTS (PCM native)
+      - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
+      - altrimenti    -> Microsoft Edge TTS (MP3, default)
+    """
+    if not voice:
+        return "edge"
+    if voice.startswith("gemini:"):
+        return "gemini"
+    if _google_tts is not None and _google_tts.is_google_voice(voice):
+        return "google"
+    return "edge"
+
+
 # ---------------------------------------------------------------------------
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
