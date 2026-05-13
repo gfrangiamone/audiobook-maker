@@ -3251,6 +3251,56 @@ def admin_api_feedback_update(item_id):
     return ("ok", 200) if ok else ("not found", 404)
 
 
+@app.route("/admin/api/feedback/<item_id>/reply", methods=["POST"])
+def admin_api_feedback_reply(item_id):
+    """Post an admin reply to a feedback item.
+    Translates the reply into all 7 UI languages via LLM.
+    One reply per item — returns 409 if already replied.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    body = request.get_json(silent=True) or {}
+    reply_text = (body.get("reply") or "").strip()
+    # Validate
+    if not reply_text:
+        return jsonify({"error": "reply text required"}), 400
+    if len(reply_text) > 2000:
+        return jsonify({"error": "reply text exceeds 2000 characters"}), 400
+    # Check existing reply
+    store = community_store.feedback()
+    existing = store.get(item_id)
+    if not existing:
+        return jsonify({"error": "feedback item not found"}), 404
+    if existing.get("admin_reply_at", 0) > 0:
+        return jsonify({"error": "reply already posted", "admin_reply_at": existing.get("admin_reply_at")}), 409
+    # Translate via LLM
+    if not community_translator.is_available():
+        return jsonify({"error": "llm unavailable"}), 503
+    try:
+        result = community_translator.translate({"reply": reply_text})
+    except Exception as e:
+        print(f"[feedback-reply] translate raised for {item_id}: {e!s}")
+        result = None
+    if not result:
+        return jsonify({"error": "translation failed, please retry"}), 500
+    now = int(time.time())
+    patch = {
+        "admin_reply_text": reply_text,
+        "admin_reply_lang": "it",
+        "admin_reply_i18n": {
+            lg: (result.get(lg) or {}).get("reply", "")
+            for lg in community_translator.LANGS
+        },
+        "admin_reply_at": now,
+    }
+    try:
+        community_store.feedback().update(item_id, patch)
+    except Exception as e:
+        print(f"[feedback-reply] persist failed for {item_id}: {e!s}")
+        return jsonify({"error": "persist failed"}), 500
+    return jsonify({"ok": True, "at": now})
+
+
 @app.route("/admin/community", methods=["GET"])
 def admin_community_page():
     if not ADMIN_TOKEN:
