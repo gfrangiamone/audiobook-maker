@@ -31,15 +31,21 @@ from pathlib import Path
 
 import email_service
 import payment
+try:
+    import gemini_tts
+except ImportError:
+    gemini_tts = None
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
     _get_audio_duration_ms, _convert_mp3_to_m4b,
     _prepare_m4b_cover_path,
     _generate_podcast_rss,
+    pcm_size_to_seconds,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
+    _pick_chunk_max_chars, generate_chunk_pcm_gemini, _generate_silence_pcm,
 )
 
 # ---------------------------------------------------------------------------
@@ -1270,24 +1276,33 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     loop = asyncio.new_event_loop()
     start_time = time.time()
 
-    # Determina il motore TTS
-    use_google = _google_tts is not None and _google_tts.is_google_voice(voice)
+    # Determina il motore TTS (3-way: edge / google / gemini)
+    engine = _engine_for_voice(voice)
+    use_google = (engine == "google")
+    use_gemini = (engine == "gemini")
 
     try:
         job["progress_message"] = "Preparing..."
         print(f"[{job_id}] Generation started: voice={voice}, rate={rate}, "
               f"chapters={len(info.chapters)}, single_file={single_file}, "
-              f"output_format={output_format}, google={use_google}")
-        plan = _plan_chunks(info)
+              f"output_format={output_format}, engine={engine}")
+        max_chars = _pick_chunk_max_chars(voice, getattr(info, "language", None) or "")
+        plan = _plan_chunks(info, max_chars=max_chars)
+        gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
-        # Genera file di silenzio da preporre a ogni capitolo
-        silence_path = str(work_dir / "_silence.mp3")
-        silence_ok = _generate_silence_mp3(silence_path, CHAPTER_SILENCE_SEC)
+        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini, MP3 altrimenti)
+        if use_gemini:
+            silence_path = str(work_dir / "_silence.pcm")
+            _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC)
+            silence_ok = os.path.exists(silence_path)
+        else:
+            silence_path = str(work_dir / "_silence.mp3")
+            silence_ok = _generate_silence_mp3(silence_path, CHAPTER_SILENCE_SEC)
         print(f"[{job_id}] Silence file: {silence_path}, ok={silence_ok}")
         job["progress_current"] = 2
         job["progress_message"] = "Preparazione audio..."
@@ -1331,7 +1346,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             all_parts = []
             m4b_chapters = []
             current_ms = 0
-            silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
+            if use_gemini and os.path.exists(silence_path):
+                silence_ms = int(pcm_size_to_seconds(os.path.getsize(silence_path)) * 1000)
+            else:
+                silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
             failed_chunks = 0
             for i, block in enumerate(plan):
@@ -1356,14 +1374,35 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         m4b_chapters.append({"title": ch_title, "start": current_ms, "end": current_ms})
                     prev_chapter_idx = ch_idx
 
-                part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                if use_google:
-                    result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
+                if use_gemini:
+                    part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    if result is False:
+                        failed_chunks += 1
+                    else:
+                        gemini_usage["input_tokens"] += result.get("input_tokens", 0)
+                        gemini_usage["output_tokens"] += result.get("output_tokens", 0)
+                        if not gemini_usage["model_key"]:
+                            gemini_usage["model_key"] = result.get("model_key")
                 else:
-                    result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                if result is False:
-                    failed_chunks += 1
+                    part_path = str(work_dir / f"chunk_{i:06d}.mp3")
+                    if use_google:
+                        result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
+                    else:
+                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                    if result is False:
+                        failed_chunks += 1
                 all_parts.append(part_path)
+                # Record Gemini usage per chunk (so partial completions on cancel still book it)
+                if use_gemini and result is not False and gemini_tts is not None:
+                    try:
+                        gemini_tts.record_usage(
+                            result.get("model_key", "flash25"),
+                            result.get("input_tokens", 0),
+                            result.get("output_tokens", 0),
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
                 if i == 0:
@@ -1372,7 +1411,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                           f"failed={failed_chunks}")
 
                 # Aggiorna timing per capitolo M4B
-                duration = _get_audio_duration_ms(part_path)
+                if use_gemini and os.path.exists(part_path):
+                    size_bytes = os.path.getsize(part_path)
+                    duration = int(pcm_size_to_seconds(size_bytes) * 1000)
+                else:
+                    duration = _get_audio_duration_ms(part_path)
                 if m4b_chapters:
                     m4b_chapters[-1]["end"] += duration
                 current_ms += duration
