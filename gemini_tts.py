@@ -139,3 +139,23 @@ def get_voices():
                 })
         out[lang] = lang_voices
     return out
+
+
+def estimate_input_tokens(text, language="it"):
+    """Stima token input dal testo. Usa CHARS_PER_TOKEN_BY_LANG."""
+    if not text:
+        return 0
+    ratio = CHARS_PER_TOKEN_BY_LANG.get(language, CHARS_PER_TOKEN_BY_LANG["default"])
+    return int(len(text) / ratio)
+
+
+def estimate_audio_seconds(text):
+    """Stima durata audio in secondi a velocità di narrazione standard."""
+    if not text:
+        return 0.0
+    return len(text) / CHARS_PER_AUDIO_SECOND
+
+
+def estimate_output_tokens(text):
+    """Stima token audio output. 25 tok/s x secondi stimati."""
+    return int(estimate_audio_seconds(text) * AUDIO_TOKENS_PER_SECOND)
