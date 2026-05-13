@@ -42,6 +42,7 @@ from audio_utils import (
     _prepare_m4b_cover_path,
     _generate_podcast_rss,
     pcm_size_to_seconds,
+    pcm_to_mp3, pcm_to_aac_m4b,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
@@ -1430,12 +1431,54 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] All chunks processed: {total_chunks} total, {failed_chunks} failed")
             job["progress_message"] = "Merging audio..."
             safe_name = _safe_filename(info.title) or "audiolibro"
-            final_mp3 = str(output_dir / f"{safe_name}.mp3")
-            _concatenate_mp3(all_parts, final_mp3)
-            print(f"[{job_id}] MP3 merged: {final_mp3}, size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
 
-            # Generate M4B too (skip for mp3-only format)
-            if output_format != 'mp3':
+            if use_gemini:
+                # Gemini: tutto PCM. Assembly diretto in base a output_format.
+                final_mp3 = str(output_dir / f"{safe_name}.mp3")
+                final_m4b = str(output_dir / f"{safe_name}.m4b")
+                valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
+                cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
+
+                if output_format in ('mp3', 'zip', 'zip_rss'):
+                    # Solo MP3 finale richiesto
+                    pcm_to_mp3(all_parts, final_mp3)
+                    print(f"[{job_id}] PCM->MP3 merged: {final_mp3}, "
+                          f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
+                else:
+                    # M4B richiesto: percorso PCM->AAC diretto (niente MP3 intermedio)
+                    job["progress_message"] = "Converting to M4B..."
+                    print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b}")
+                    m4b_ok = False
+                    for attempt in range(1, 3):
+                        if attempt > 1:
+                            print(f"[{job_id}] Retrying PCM->M4B (attempt {attempt})...")
+                        if pcm_to_aac_m4b(
+                            all_parts, final_m4b,
+                            chapters=valid_m4b_ch or None,
+                            title=info.title, author=info.author or None,
+                            cover_path=cover_path,
+                            date=getattr(info, "date", None),
+                            language=getattr(info, "language", None),
+                            description=getattr(info, "description", None),
+                        ):
+                            job["output_m4b"] = final_m4b
+                            job["m4b_failed"] = False
+                            m4b_ok = True
+                            break
+                    if not m4b_ok:
+                        job["m4b_failed"] = True
+                        # Fallback: produci MP3 cosi' l'utente ha qualcosa
+                        pcm_to_mp3(all_parts, final_mp3)
+                        print(f"[{job_id}] M4B failed, fallback MP3 produced: {final_mp3}")
+            else:
+                # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
+                final_mp3 = str(output_dir / f"{safe_name}.mp3")
+                _concatenate_mp3(all_parts, final_mp3)
+                print(f"[{job_id}] MP3 merged: {final_mp3}, "
+                      f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
+
+            # Generate M4B too (skip for mp3-only format and for Gemini, which already handled it)
+            if not use_gemini and output_format != 'mp3':
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 job["progress_message"] = "Converting to M4B..."
                 print(f"[{job_id}] Starting M4B conversion: {final_m4b}")
@@ -1473,30 +1516,39 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if os.path.exists(p) and p != silence_path:
                     os.remove(p)
 
-            # When the user requested M4B and conversion succeeded, the intermediate
-            # MP3 is no longer needed: drop it to reclaim disk (a 500MB book stores
-            # MP3 + M4B = ~1GB otherwise). Keep MP3 only as fallback if M4B failed
-            # or if the user explicitly asked for mp3 output.
-            m4b_ok = output_format == 'm4b' and job.get("output_m4b") and os.path.exists(job["output_m4b"])
-            if m4b_ok and os.path.exists(final_mp3):
-                try:
-                    mp3_size = os.path.getsize(final_mp3)
-                    os.remove(final_mp3)
-                    print(f"[{job_id}] Removed intermediate MP3 ({mp3_size} bytes) — M4B is the served format")
-                except OSError as e:
-                    print(f"[{job_id}] Could not remove intermediate MP3: {e}")
+            if output_format == 'm4b' and job.get("output_m4b"):
+                # When the user requested M4B and conversion succeeded, the intermediate
+                # MP3 is no longer needed: drop it to reclaim disk (a 500MB book stores
+                # MP3 + M4B = ~1GB otherwise). For Gemini there is no intermediate MP3.
+                if not use_gemini and os.path.exists(final_mp3):
+                    try:
+                        mp3_size = os.path.getsize(final_mp3)
+                        os.remove(final_mp3)
+                        print(f"[{job_id}] Removed intermediate MP3 ({mp3_size} bytes) — M4B is the served format")
+                    except OSError as e:
+                        print(f"[{job_id}] Could not remove intermediate MP3: {e}")
                 job["output_files"] = [job["output_m4b"]]
-                job["bytes_generated"] = os.path.getsize(job["output_m4b"])
                 job["output_name"] = f"{safe_name}.m4b"
+                if os.path.exists(job["output_m4b"]):
+                    job["bytes_generated"] = os.path.getsize(job["output_m4b"])
             else:
-                job["output_files"] = [final_mp3]
+                # Per Gemini in modalita' m4b senza output_m4b (fallback dopo failure) usa MP3.
+                # Per Edge/Google segue il percorso storico.
+                if os.path.exists(final_mp3):
+                    job["output_files"] = [final_mp3]
+                    job["bytes_generated"] = os.path.getsize(final_mp3)
+                else:
+                    job["output_files"] = []
                 if job.get("output_m4b"):
                     job["output_name"] = f"{safe_name}.m4b"
                 else:
                     job["output_name"] = f"{safe_name}.mp3"
 
-                if os.path.exists(final_mp3):
-                    job["bytes_generated"] = os.path.getsize(final_mp3)
+            # Log roll-up Gemini usage (record_usage gia' chiamato per chunk)
+            if use_gemini:
+                print(f"[{job_id}] Gemini usage total: model={gemini_usage['model_key']} "
+                      f"input_tok={gemini_usage['input_tokens']} "
+                      f"output_tok={gemini_usage['output_tokens']}")
         else:
             mp3_files = []
             m4b_chapters = []
