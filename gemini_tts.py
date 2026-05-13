@@ -82,3 +82,26 @@ def get_margin_percent(model_key):
     if model_key == "flash31":
         return _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0)
     raise ValueError(f"Unknown model_key: {model_key}")
+
+
+def is_gemini_voice(voice_id):
+    """True se il voice_id ha prefisso 'gemini:'."""
+    return isinstance(voice_id, str) and voice_id.startswith("gemini:")
+
+
+def parse_voice_id(voice_id):
+    """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash25:Zephyr'.
+
+    Raises ValueError se formato non valido, modello sconosciuto o voce sconosciuta.
+    """
+    if not isinstance(voice_id, str) or not voice_id.startswith("gemini:"):
+        raise ValueError(f"Invalid Gemini voice ID format: {voice_id!r}")
+    parts = voice_id.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Invalid Gemini voice ID format: {voice_id!r} (expected 'gemini:<model>:<voice>')")
+    _, model_key, voice_name = parts
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown Gemini model: {model_key!r} (allowed: {list(GEMINI_MODELS.keys())})")
+    if voice_name not in GEMINI_VOICE_NAMES:
+        raise ValueError(f"Unknown Gemini voice: {voice_name!r}")
+    return model_key, GEMINI_MODELS[model_key]["id"], voice_name
