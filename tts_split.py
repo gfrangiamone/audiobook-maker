@@ -36,6 +36,23 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
+# Lingue che richiedono chunk piu' piccoli per Gemini (espansione UTF-8 alta).
+_GEMINI_SMALL_CHUNK_LANGS = {"zh", "ja", "hi", "ar"}
+_GEMINI_SMALL_CHUNK_MAX = 1500
+
+
+def _pick_chunk_max_chars(voice_id, language):
+    """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
+
+    Gemini: 1500 per zh/ja/hi/ar, 2000 per le altre. Edge/Google: 2000 sempre.
+    """
+    if isinstance(voice_id, str) and voice_id.startswith("gemini:"):
+        lang_code = (language or "").lower().split("-")[0]
+        if lang_code in _GEMINI_SMALL_CHUNK_LANGS:
+            return _GEMINI_SMALL_CHUNK_MAX
+    return CHUNK_MAX_CHARS
+
+
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
 # alla frase successiva per garantire abbastanza contesto al motore TTS.
 _TTS_MIN_SENT_CHARS = 80
