@@ -105,3 +105,37 @@ def parse_voice_id(voice_id):
     if voice_name not in GEMINI_VOICE_NAMES:
         raise ValueError(f"Unknown Gemini voice: {voice_name!r}")
     return model_key, GEMINI_MODELS[model_key]["id"], voice_name
+
+
+SUPPORTED_UI_LANGUAGES = ["it", "en", "fr", "es", "de", "zh", "hi"]
+_LANG_LOCALE = {
+    "it": "it-IT", "en": "en-US", "fr": "fr-FR", "es": "es-ES",
+    "de": "de-DE", "zh": "zh-CN", "hi": "hi-IN",
+}
+
+
+def get_voices():
+    """Catalogo voci Gemini per lingua.
+
+    Le voci Gemini sono multilingue: ogni voce appare sotto ogni lingua UI
+    supportata. 30 voci x 2 modelli = 60 entry per lingua.
+
+    Returns:
+        dict {lang_code: [voice_entry, ...]}
+    """
+    out = {}
+    for lang in SUPPORTED_UI_LANGUAGES:
+        locale = _LANG_LOCALE.get(lang, lang)
+        lang_voices = []
+        for model_key, model_info in GEMINI_MODELS.items():
+            for voice_name in GEMINI_VOICE_NAMES:
+                lang_voices.append({
+                    "id": f"gemini:{model_key}:{voice_name}",
+                    "name": f"{voice_name} ({model_info['label']})",
+                    "locale": locale,
+                    "engine": "gemini",
+                    "model_key": model_key,
+                    "model_label": model_info["label"],
+                })
+        out[lang] = lang_voices
+    return out
