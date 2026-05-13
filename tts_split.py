@@ -296,8 +296,9 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
         max_retries: numero di tentativi prima di fallback a silenzio (default 3).
 
     Returns:
-        dict {input_tokens, output_tokens, audio_seconds, audio_bytes, model_key}
-        on success, False on total failure (silence PCM written).
+        dict {success, bytes_written, input_tokens, output_tokens, model_key,
+        voice_name, attempts_used} on success, False on total failure
+        (silence PCM written).
     """
     import gemini_tts as _gemini  # late import: keeps module optional
 
