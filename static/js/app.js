@@ -823,6 +823,7 @@ async function previewRead(){
       };
       audio.onerror=()=>{
         if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
+        URL.revokeObjectURL(blobUrl);
         _prevLoading=false;
         btn.classList.remove('loading');
         btn.disabled=false;
