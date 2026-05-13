@@ -1108,3 +1108,112 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
             os.remove(tmp_pcm)
         except OSError:
             pass
+
+
+def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
+                   sample_width=2, bitrate="96k", chapters=None, title=None,
+                   author=None, cover_path=None, date=None, language=None,
+                   description=None, genre="Audiobook"):
+    """Codifica PCM concatenato direttamente in M4B (AAC) con capitoli/cover/metadati.
+
+    Vantaggio vs pcm_to_mp3 + mp3_to_m4b: una sola encode AAC (no doppia lossy).
+
+    Args:
+        pcm_paths: lista PCM in ordine.
+        output_path: file .m4b destinazione.
+        bitrate: AAC bitrate (default '96k' mono).
+        chapters: [{'title', 'start' ms, 'end' ms}, ...] opzionale.
+        title/author/cover_path/date/language/description/genre: metadati M4B.
+
+    Returns:
+        True se ok, False altrimenti.
+    """
+    if not pcm_paths:
+        return False
+    ffmpeg_ok, _ = _check_audio_dependencies()
+    if not ffmpeg_ok:
+        print("[pcm_to_aac_m4b] ffmpeg not available")
+        return False
+
+    import subprocess
+
+    tmp_pcm = output_path + ".tmp.pcm"
+    metadata_file = None
+    try:
+        pcm_concat(pcm_paths, tmp_pcm)
+
+        def escape_meta(s):
+            return str(s).replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#').replace('\n', ' ')
+
+        year = _extract_year_from_date(date) if date else ""
+        lang_iso = _normalize_language_iso(language) if language else ""
+        desc_trunc = (description or "").strip()[:1000] if description else ""
+
+        valid_chapters = None
+        if chapters:
+            valid_chapters = [ch for ch in chapters if ch.get("end", 0) > ch.get("start", 0)]
+            if not valid_chapters:
+                valid_chapters = None
+
+        has_global_meta = bool(title or author or year or lang_iso or desc_trunc or genre)
+        if has_global_meta or valid_chapters:
+            metadata_file = output_path + ".metadata.txt"
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                f.write(";FFMETADATA1\n")
+                if title:
+                    f.write(f"title={escape_meta(title)}\n")
+                    f.write(f"album={escape_meta(title)}\n")
+                if author:
+                    f.write(f"artist={escape_meta(author)}\n")
+                    f.write(f"album_artist={escape_meta(author)}\n")
+                if year:
+                    f.write(f"date={escape_meta(year)}\n")
+                if genre:
+                    f.write(f"genre={escape_meta(genre)}\n")
+                if desc_trunc:
+                    f.write(f"comment={escape_meta(desc_trunc)}\n")
+                    f.write(f"description={escape_meta(desc_trunc)}\n")
+                if valid_chapters:
+                    for ch in valid_chapters:
+                        f.write("\n[CHAPTER]\n")
+                        f.write("TIMEBASE=1/1000\n")
+                        f.write(f"START={int(round(ch['start']))}\n")
+                        f.write(f"END={int(round(ch['end']))}\n")
+                        f.write(f"title={escape_meta(ch['title'])}\n")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "s16le",
+            "-ar", str(sample_rate),
+            "-ac", str(channels),
+            "-i", tmp_pcm,
+        ]
+        if metadata_file:
+            cmd.extend(["-i", metadata_file, "-map_metadata", "1", "-map_chapters", "1"])
+        if cover_path and os.path.exists(cover_path):
+            cmd.extend(["-i", cover_path, "-map", "0:a", "-map", f"{2 if metadata_file else 1}:v",
+                        "-disposition:v", "attached_pic", "-c:v", "copy"])
+        else:
+            cmd.extend(["-map", "0:a"])
+
+        cmd.extend(["-c:a", "aac", "-b:a", bitrate])
+        if lang_iso:
+            cmd.extend(["-metadata:s:a:0", f"language={lang_iso}"])
+        cmd.extend(["-metadata", "media_type=2", "-f", "ipod", output_path])
+
+        result = subprocess.run(cmd, capture_output=True, timeout=3600, **_SUBPROCESS_FLAGS)
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="ignore")[:800]
+            print(f"[pcm_to_aac_m4b] ffmpeg failed: {stderr}")
+            return False
+        return True
+    except Exception as e:
+        print(f"[pcm_to_aac_m4b] error: {e}")
+        return False
+    finally:
+        for f in (tmp_pcm, metadata_file):
+            if f:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
