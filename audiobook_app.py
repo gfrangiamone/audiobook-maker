@@ -588,7 +588,7 @@ _voices_cache = None
 _voices_lock = threading.Lock()
 
 async def _fetch_voices():
-    """Fetches and categorizes Edge TTS and Google TTS voices."""
+    """Fetches and categorizes Edge TTS, Google TTS, and Gemini TTS voices."""
     try:
         import edge_tts
         vman = await edge_tts.VoicesManager.create()
