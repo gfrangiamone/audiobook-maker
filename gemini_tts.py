@@ -265,3 +265,20 @@ def estimate_book_cost(chapters, voice_id, language="it"):
         "model_label": GEMINI_MODELS[model_key]["label"],
         "language": language,
     }
+
+
+def check_text_byte_size(text):
+    """Verifica che il testo stia nel cap MAX_BYTES_PER_CALL (UTF-8).
+
+    Returns:
+        (ok: bool, size_bytes: int)
+    """
+    if not text:
+        return True, 0
+    size = len(text.encode("utf-8"))
+    return size <= MAX_BYTES_PER_CALL, size
+
+
+def get_max_chunk_chars(language):
+    """Max chars per chunk per la lingua data. CJK/Hindi/Arabic: 1500. Altri: 2000."""
+    return MAX_CHUNK_CHARS_BY_LANG.get(language, MAX_CHUNK_CHARS_BY_LANG["default"])
