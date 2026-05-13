@@ -3360,6 +3360,13 @@ tr.archived{opacity:.45}
 .toolbar label{margin:0;display:flex;align-items:center;gap:6px;font-size:.85rem}
 .toolbar input[type=checkbox]{width:auto}
 .banner-pill{background:var(--warn);color:#000;padding:1px 6px;border-radius:999px;font-size:.7rem;font-weight:700}
+.reply-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999}
+.reply-modal{background:var(--panel);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto}
+.reply-modal h3{margin:0 0 16px;font-size:1.1rem;color:var(--accent)}
+.reply-modal textarea{width:100%;min-height:120px;resize:vertical;font:inherit}
+.reply-modal .chars{margin-top:6px;font-size:.75rem;color:var(--muted);text-align:right}
+.reply-modal .err{color:var(--err);margin:10px 0;font-size:.85rem}
+.reply-modal-btns{display:flex;gap:10px;margin-top:14px;justify-content:flex-end}
 </style>
 </head>
 <body>
@@ -3437,6 +3444,7 @@ async function loadFb(){
   const d=await r.json();
   const showArch=document.getElementById('fbShowArch').checked;
   let items=d.items||[];
+  window._fbItems = items;
   if(!showArch) items=items.filter(it=>!it.archived);
   // KPI
   const all=d.items||[];
@@ -3468,6 +3476,10 @@ async function loadFb(){
       </td>
       <td><code style="font-size:.75rem">${esc(it.ip_hash||'')}</code></td>
       <td>
+        ${it.admin_reply_at > 0
+          ? `<span style="font-size:.8rem;color:var(--muted)">${fmtDate(it.admin_reply_at)}</span>`
+          : `<button class="sm" style="background:var(--accent)" data-id="${it.id}" onclick="openReplyModal(this)">Rispondi</button>`
+        }
         <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
         <button class="sm danger" data-id="${it.id}" data-act="delete">Elimina</button>
       </td>`;
@@ -3542,8 +3554,73 @@ async function createNews(){
 
 document.getElementById('fbShowArch').addEventListener('change',loadFb);
 document.getElementById('nShowArch').addEventListener('change',loadNews);
+
+let _replyItemId = null;
+function openReplyModal(btn){
+  const id = btn.dataset.id;
+  _replyItemId = id;
+  const item = (window._fbItems || []).find(it => it.id === id);
+  if(!item){return;}
+  document.getElementById('replyOriginal').textContent =
+    ((item.comment_i18n||{}).it)||item.comment||'(senza commento)';
+  document.getElementById('replyText').value = '';
+  document.getElementById('replyCharCount').textContent = '0';
+  document.getElementById('replyErr').hidden = true;
+  document.getElementById('replyModal').hidden = false;
+  document.getElementById('replyText').focus();
+}
+function closeReplyModal(){
+  document.getElementById('replyModal').hidden = true;
+  _replyItemId = null;
+}
+document.getElementById('replyText').addEventListener('input',function(){
+  document.getElementById('replyCharCount').textContent = this.value.length;
+});
+async function submitReply(){
+  if(!_replyItemId) return;
+  const text = document.getElementById('replyText').value.trim();
+  if(!text){document.getElementById('replyErr').textContent='Testo richiesto';document.getElementById('replyErr').hidden=false;return;}
+  if(text.length > 2000){document.getElementById('replyErr').textContent='Max 2000 caratteri';document.getElementById('replyErr').hidden=false;return;}
+  const btn = document.getElementById('replySubmit');
+  btn.disabled = true;
+  const errEl = document.getElementById('replyErr');
+  errEl.hidden = true;
+  try {
+    const r = await fetch('/admin/api/feedback/'+_replyItemId+'/reply',{
+      method:'POST', headers:HDR,
+      body:JSON.stringify({reply:text})
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      errEl.textContent = d.error || ('Errore '+r.status);
+      errEl.hidden = false;
+    } else {
+      closeReplyModal();
+      loadFb();
+    }
+  } catch(e){
+    errEl.textContent = 'Errore di rete';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 loadFb();
 </script>
+<div class="reply-modal-overlay" id="replyModal" hidden>
+  <div class="reply-modal">
+    <h3>Rispondi al commento</h3>
+    <div id="replyOriginal" style="font-size:.85rem;color:var(--muted);margin-bottom:12px;padding:8px;background:#0f172a;border-radius:6px;max-height:100px;overflow-y:auto"></div>
+    <textarea id="replyText" maxlength="2000" placeholder="Scrivi la risposta in italiano..." rows="5"></textarea>
+    <div class="chars"><span id="replyCharCount">0</span>/2000</div>
+    <div class="err" id="replyErr" hidden></div>
+    <div class="reply-modal-btns">
+      <button class="secondary" onclick="closeReplyModal()">Annulla</button>
+      <button id="replySubmit" onclick="submitReply()">Invia risposta</button>
+    </div>
+  </div>
+</div>
 </body></html>"""
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
