@@ -3810,19 +3810,21 @@ def api_preview_audio(job_id):
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and voice.startswith("gemini:")
+    client_id = "anon"
 
     # Preview cap per Gemini (rolling 24h per cookie)
     if use_gemini_preview:
         if not gemini_tts.is_available():
             return jsonify({"error": "gemini_tts_not_configured"}), 503
         client_id = _get_client_id() or "anon"
-        cap_check = gemini_tts.check_preview_cap(client_id)
-        if not cap_check.get("allowed"):
+        used, remaining, reset_ts = gemini_tts.check_preview_cap(client_id)
+        if remaining <= 0:
+            reset_in = max(0, int(reset_ts - time.time()))
             return jsonify({
                 "error": "preview_cap_exceeded",
-                "used": cap_check.get("used", 0),
-                "cap": cap_check.get("cap", 5),
-                "reset_in_seconds": cap_check.get("reset_in_seconds", 0),
+                "used": used,
+                "cap": gemini_tts.PREVIEW_CAP_PER_DAY,
+                "reset_in_seconds": reset_in,
             }), 429
 
     def _generate():
@@ -3835,8 +3837,11 @@ def api_preview_audio(job_id):
                 try:
                     gemini_tts.record_usage(
                         result.get("model_key", "flash25"),
+                        len(preview_text),
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
+                        0.0,
+                        0.0,
                     )
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_usage failed (non-fatal): {e}")

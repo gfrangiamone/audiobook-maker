@@ -1399,8 +1399,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     try:
                         gemini_tts.record_usage(
                             result.get("model_key", "flash25"),
+                            len(block["text"]),
                             result.get("input_tokens", 0),
                             result.get("output_tokens", 0),
+                            0.0,
+                            0.0,
                         )
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
@@ -1605,8 +1608,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             try:
                                 gemini_tts.record_usage(
                                     result.get("model_key", "flash25"),
+                                    len(block["text"]),
                                     result.get("input_tokens", 0),
                                     result.get("output_tokens", 0),
+                                    0.0,
+                                    0.0,
                                 )
                             except Exception as e:
                                 print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
