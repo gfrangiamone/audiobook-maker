@@ -346,7 +346,64 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 ---
 
-## 7. Versione (`version.py`)
+## 7. Gemini TTS (`gemini_tts.py`)
+
+Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, account separato. Native output PCM 24kHz mono 16-bit → AAC per M4B diretto (niente MP3 intermedio).
+
+### 7.1 Autenticazione
+
+| Variabile | Default | Note |
+|-----------|---------|------|
+| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto, Gemini TTS è disabilitato |
+| `ABM_GEMINI_USE_VERTEX` | `false` | Se `true` usa Vertex AI (service account) |
+| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | Path JSON service account (se Vertex) |
+
+### 7.2 Costi Google (USD per 1M token)
+
+Sovrascrivibili in caso di adeguamento listino Google.
+
+| Variabile | Default |
+|-----------|---------|
+| `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `0.50` |
+| `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` | `10.00` |
+| `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `1.00` |
+| `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` |
+| `ABM_GEMINI_USD_EUR_RATE` | `0.86` |
+
+### 7.3 Margini di vendita (% sul costo Google)
+
+| Variabile | Default |
+|-----------|---------|
+| `ABM_GEMINI_25FLASH_MARGIN_PERCENT` | `35` |
+| `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25` |
+
+### 7.4 PayPal fee compensation e soglia gratuità
+
+| Variabile | Default |
+|-----------|---------|
+| `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` | `0.34` |
+| `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` |
+| `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` |
+
+### 7.5 Limiti e anti-abuso
+
+| Variabile | Default |
+|-----------|---------|
+| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `5` (preview free per cookie, rolling 24h) |
+| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `4000` (cap UTF-8 per chiamata API) |
+| `ABM_GEMINI_RATE_MODE` | `prompt` |
+
+### 7.6 Note operative
+
+- Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash25:Zephyr`).
+- Modelli supportati: `flash25` (Gemini 2.5 Flash TTS), `flash31` (Gemini 3.1 Flash TTS).
+- 30 voci prebuilt × 2 modelli = 60 entry per lingua UI.
+- Chunk max chars per lingua: 1500 per zh/ja/hi/ar, 2000 per le altre.
+- Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
+
+---
+
+## 8. Versione (`version.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -355,7 +412,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 ---
 
-## 8. SEO Content (`seo_content.py`)
+## 9. SEO Content (`seo_content.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -364,7 +421,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 ---
 
-## 9. Nuovi moduli (v3.8.0)
+## 10. Nuovi moduli (v3.8.0)
 
 ### Architettura a moduli
 
@@ -381,7 +438,7 @@ A partire dalla v3.8.0, il codice è distribuito su più file per migliorare la 
 
 ---
 
-## 10. Community widget (v3.13.0)
+## 11. Community widget (v3.13.0)
 
 Live Stats, News e Feedback aggiungono questi file su `ABM_DATA_DIR`:
 
@@ -411,7 +468,8 @@ Anti-spam feedback (in-memory, no DB): rate-limit `1/h, 5/24h` per IP-hash, hone
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
 | Google Cloud TTS (`google_tts.py`) | 5 |
+| Gemini TTS (`gemini_tts.py`) | 15 |
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
-| **Totale** | **85** |
+| **Totale** | **100** |
