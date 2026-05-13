@@ -1778,6 +1778,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Refund caratteri Google TTS non consumati e forza riconciliazione
         if use_google:
             _google_tts_refund_unused(job_id, job)
+        # Gemini: nessun refund (pay-per-call gia' record_usage per chunk).
+        # Logghiamo solo il totale parziale per debug.
+        if use_gemini:
+            print(f"[{job_id}] Gemini partial usage (no refund): "
+                  f"model={gemini_usage.get('model_key')} "
+                  f"input_tok={gemini_usage.get('input_tokens', 0)} "
+                  f"output_tok={gemini_usage.get('output_tokens', 0)}")
         # Cleanup temp files (solo se nessuna nuova generazione è partita)
         if still_current:
             try:
