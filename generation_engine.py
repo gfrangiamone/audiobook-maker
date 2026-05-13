@@ -1568,7 +1568,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
                         out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                        _concatenate_mp3(current_chapter_parts, mp3_path)
+                        if use_gemini:
+                            pcm_to_mp3(current_chapter_parts, mp3_path)
+                        else:
+                            _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
 
                         duration = _get_audio_duration_ms(mp3_path)
@@ -1588,13 +1591,33 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if os.path.exists(silence_path):
                         current_chapter_parts.append(silence_path)
 
-                part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                if use_google:
-                    result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
+                if use_gemini:
+                    part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    if result is False:
+                        failed_chunks += 1
+                    else:
+                        gemini_usage["input_tokens"] += result.get("input_tokens", 0)
+                        gemini_usage["output_tokens"] += result.get("output_tokens", 0)
+                        if not gemini_usage["model_key"]:
+                            gemini_usage["model_key"] = result.get("model_key")
+                        if gemini_tts is not None:
+                            try:
+                                gemini_tts.record_usage(
+                                    result.get("model_key", "flash25"),
+                                    result.get("input_tokens", 0),
+                                    result.get("output_tokens", 0),
+                                )
+                            except Exception as e:
+                                print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
                 else:
-                    result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                if result is False:
-                    failed_chunks += 1
+                    part_path = str(work_dir / f"chunk_{i:06d}.mp3")
+                    if use_google:
+                        result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
+                    else:
+                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                    if result is False:
+                        failed_chunks += 1
                 current_chapter_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -1614,7 +1637,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
                 out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                _concatenate_mp3(current_chapter_parts, mp3_path)
+                if use_gemini:
+                    pcm_to_mp3(current_chapter_parts, mp3_path)
+                else:
+                    _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
 
                 duration = _get_audio_duration_ms(mp3_path)
