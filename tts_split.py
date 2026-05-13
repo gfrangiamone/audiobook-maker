@@ -270,6 +270,23 @@ async def generate_chunk_mp3(text, voice, rate, output_path, max_retries=3):
 
 
 # ---------------------------------------------------------------------------
+# Gemini TTS generation (PCM native)
+# ---------------------------------------------------------------------------
+
+_PCM_SAMPLE_RATE = 24000
+_PCM_CHANNELS = 1
+_PCM_SAMPLE_WIDTH = 2  # bytes per sample (16-bit)
+
+
+def _generate_silence_pcm(output_path, duration_sec=1):
+    """Scrive N secondi di silenzio PCM 24kHz mono 16-bit (zero bytes)."""
+    n_bytes = int(duration_sec * _PCM_SAMPLE_RATE * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
+    with open(output_path, "wb") as f:
+        if n_bytes > 0:
+            f.write(b"\x00" * n_bytes)
+
+
+# ---------------------------------------------------------------------------
 # Google Cloud TTS generation
 # ---------------------------------------------------------------------------
 
