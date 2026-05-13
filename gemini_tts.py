@@ -215,3 +215,53 @@ def compute_user_price_eur(google_cost_eur, model_key):
         "paypal_percent_fee": PAYPAL_PERCENT_FEE,
         "free_threshold_eur": FREE_THRESHOLD_EUR,
     }
+
+
+def estimate_book_cost(chapters, voice_id, language="it"):
+    """Stima costo end-to-end della generazione audio di un libro.
+
+    Args:
+        chapters: lista di oggetti con attributo `.text` (es. Chapter dataclass).
+        voice_id: deve iniziare con 'gemini:'.
+        language: ISO 639-1 (it/en/fr/es/de/zh/hi/...). Default 'it'.
+
+    Returns:
+        dict con chars_total, input_tokens_est, audio_seconds_est,
+        output_tokens_est, google_cost_eur, user_price_eur, is_free,
+        estimated_audio_minutes, model_key, language, model_label.
+    """
+    model_key, _, _ = parse_voice_id(voice_id)
+
+    chars_per_chapter = []
+    chars_total = 0
+    full_text_for_estimate = []
+    for ch in chapters:
+        txt = getattr(ch, "text", "") or ""
+        chars_per_chapter.append(len(txt))
+        chars_total += len(txt)
+        full_text_for_estimate.append(txt)
+
+    combined = "".join(full_text_for_estimate)
+    input_tokens = estimate_input_tokens(combined, language)
+    audio_seconds = estimate_audio_seconds(combined)
+    output_tokens = estimate_output_tokens(combined)
+
+    breakdown = google_cost_breakdown(input_tokens, output_tokens, model_key)
+    price = compute_user_price_eur(breakdown["total_eur"], model_key)
+
+    return {
+        "chars_total": chars_total,
+        "chars_per_chapter": chars_per_chapter,
+        "input_tokens_est": input_tokens,
+        "audio_seconds_est": audio_seconds,
+        "output_tokens_est": output_tokens,
+        "google_cost_eur": breakdown["total_eur"],
+        "google_cost_breakdown": breakdown,
+        "user_price_eur": price["user_price_eur"],
+        "is_free": price["is_free"],
+        "margin_percent": price["margin_percent"],
+        "estimated_audio_minutes": audio_seconds / 60.0,
+        "model_key": model_key,
+        "model_label": GEMINI_MODELS[model_key]["label"],
+        "language": language,
+    }
