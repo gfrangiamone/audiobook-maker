@@ -3066,6 +3066,10 @@ def api_community_feedback_list():
             "comment_lang": it.get("comment_lang") or "",
             "comment_i18n": it.get("comment_i18n") or {},
             "created_at": it.get("created_at", 0),
+            "admin_reply_at": it.get("admin_reply_at", 0),
+            "admin_reply_lang": it.get("admin_reply_lang") or "",
+            "admin_reply_text": it.get("admin_reply_text") or "",
+            "admin_reply_i18n": it.get("admin_reply_i18n") or {},
         })
     return jsonify({"items": public_items, "avg": avg, "total": total, "histogram": histogram})
 
