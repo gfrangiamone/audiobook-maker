@@ -74,7 +74,7 @@ from audio_utils import (
     _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
     _generate_silence_mp3, _concatenate_mp3, _get_audio_duration_ms,
     _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
-    _check_audio_dependencies,
+    _check_audio_dependencies, pcm_to_mp3,
 )
 from tts_split import (
     CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
@@ -3809,10 +3809,45 @@ def api_preview_audio(job_id):
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
+    use_gemini_preview = gemini_tts is not None and voice.startswith("gemini:")
+
+    # Preview cap per Gemini (rolling 24h per cookie)
+    if use_gemini_preview:
+        if not gemini_tts.is_available():
+            return jsonify({"error": "gemini_tts_not_configured"}), 503
+        client_id = _get_client_id() or "anon"
+        cap_check = gemini_tts.check_preview_cap(client_id)
+        if not cap_check.get("allowed"):
+            return jsonify({
+                "error": "preview_cap_exceeded",
+                "used": cap_check.get("used", 0),
+                "cap": cap_check.get("cap", 5),
+                "reset_in_seconds": cap_check.get("reset_in_seconds", 0),
+            }), 429
 
     def _generate():
-        import edge_tts
-        if use_google_preview:
+        if use_gemini_preview:
+            # Native output is PCM — convert to MP3 inline for browser playback.
+            pcm_tmp = str(preview_path) + ".pcm"
+            try:
+                result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp)
+                pcm_to_mp3([pcm_tmp], str(preview_path))
+                try:
+                    gemini_tts.record_usage(
+                        result.get("model_key", "flash25"),
+                        result.get("input_tokens", 0),
+                        result.get("output_tokens", 0),
+                    )
+                except Exception as e:
+                    print(f"[preview] gemini_tts.record_usage failed (non-fatal): {e}")
+                gemini_tts.increment_preview(client_id)
+            finally:
+                if os.path.exists(pcm_tmp):
+                    try:
+                        os.remove(pcm_tmp)
+                    except OSError:
+                        pass
+        elif use_google_preview:
             google_tts.synthesize(preview_text, voice, rate, str(preview_path))
             # Deduce i caratteri dell'anteprima dal budget
             google_tts.deduct_chars(len(preview_text))
