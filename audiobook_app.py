@@ -4002,6 +4002,11 @@ def api_generate():
     podcast_base_url = (data.get("podcast_base_url") or "").strip()
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
 
+    # Refuse Gemini voices when the module is missing or the API key is not configured.
+    if voice and voice.startswith("gemini:"):
+        if gemini_tts is None or not gemini_tts.is_available():
+            return jsonify({"error": "gemini_tts_not_configured"}), 400
+
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         if sc == 404:
