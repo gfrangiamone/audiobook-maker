@@ -62,6 +62,13 @@ except ImportError:
     google_tts = None
     print("WARNING: google_tts.py not found  -  Google Cloud TTS disabled.", file=sys.stderr)
 
+#  -  -  Gemini TTS (Flash 2.5 / 3.1)  -  opzionale  -  -
+try:
+    import gemini_tts
+except ImportError:
+    gemini_tts = None
+    print("[startup] gemini_tts module not available (google-genai not installed)")
+
 from audio_utils import (
     _zip_safe_read, _extract_cover_from_epub, _generate_fallback_cover,
     _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
@@ -213,6 +220,18 @@ if google_tts is not None:
     google_tts.init(_DATA_DIR)
     # Forza l'invalidazione della cache voci locale per includere Google all'avvio
     _voices_cache = None
+
+# Inizializza Gemini TTS (Flash 2.5/3.1)
+if gemini_tts is not None:
+    try:
+        gemini_tts.init(_DATA_DIR)
+        if gemini_tts.is_available():
+            print("[startup] Gemini TTS enabled")
+        else:
+            print("[startup] Gemini TTS initialized but disabled (ABM_GEMINI_API_KEY not set)")
+    except Exception as e:
+        print(f"[startup] Gemini TTS init failed: {e}")
+        gemini_tts = None
 
 # Inizializza JSON store community (news, feedback)
 community_store.init(_DATA_DIR)
@@ -1600,16 +1619,17 @@ def admin_logs():
     for day_key in sorted(days.keys(), reverse=True):
         day_sessions = days[day_key]
         day_count = len(day_sessions)
+        day_completed = sum(1 for sid, s in day_sessions if _session_completed(s))
         try:
             day_dt = datetime.strptime(day_key, "%Y-%m-%d")
             day_label = day_dt.strftime("%d/%m/%Y")
         except ValueError:
             day_label = day_key
 
-        cards_html += f"""<div class="day-group" data-day="{day_key}">
+        cards_html += f"""<div class="day-group collapsed" data-day="{day_key}">
 <div class="day-header" onclick="this.parentElement.classList.toggle('collapsed')">
 <span class="day-label">{day_label}</span>
-<span class="day-count">{day_count}</span>
+<span class="day-count">{day_count}<span class="day-sep">/</span><span class="day-completed">{day_completed}</span></span>
 <span class="day-chevron">›</span>
 </div>
 <div class="day-cards">
@@ -1811,7 +1831,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
 .day-header:hover{{background:var(--surface2)}}
 .day-label{{font-weight:700;font-size:.85rem;color:var(--accent);font-variant-numeric:tabular-nums}}
-.day-count{{background:var(--accent);color:var(--bg);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px}}
+.day-count{{background:var(--accent);color:var(--bg);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px;display:flex;align-items:center;gap:3px}}
+.day-sep{{color:var(--bg);opacity:.6}}
+.day-completed{{color:#0f172a;font-weight:700}}
 .day-chevron{{margin-left:auto;color:var(--text-dim);font-size:.9rem;transition:transform .2s}}
 .day-group.collapsed .day-chevron{{transform:rotate(-90deg)}}
 .day-group.collapsed .day-cards{{display:none}}
@@ -2022,7 +2044,7 @@ function filterCards(filter, el) {{
         const visibleCards = group.querySelectorAll('.card:not(.card-hidden)');
         group.classList.toggle('day-hidden', visibleCards.length === 0);
         const countBadge = group.querySelector('.day-count');
-        if (countBadge) countBadge.textContent = visibleCards.length;
+        if (countBadge) countBadge.firstChild.textContent = visibleCards.length;
     }});
 }}
 
