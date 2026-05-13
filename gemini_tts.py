@@ -475,3 +475,60 @@ def increment_preview(cookie_id):
         data[cookie_id] = entry
         _save_previews(data)
         return True
+
+
+_available = None
+_available_lock = threading.Lock()
+_genai_client = None
+
+
+def is_available():
+    """True se ABM_GEMINI_API_KEY (o credenziali Vertex) sono configurate e google-genai e' installato."""
+    global _available, _genai_client
+    if _available is not None:
+        return _available
+    with _available_lock:
+        if _available is not None:
+            return _available
+
+        use_vertex = os.environ.get("ABM_GEMINI_USE_VERTEX", "false").lower() == "true"
+        api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
+        vertex_file = os.environ.get("ABM_GEMINI_VERTEX_CREDENTIALS_FILE", "").strip()
+
+        if use_vertex:
+            if not vertex_file or not os.path.exists(vertex_file):
+                _available = False
+                print("[gemini-tts] Disabled: ABM_GEMINI_USE_VERTEX=true but credentials file not found")
+                return False
+        else:
+            if not api_key:
+                _available = False
+                print("[gemini-tts] Disabled: ABM_GEMINI_API_KEY not set")
+                return False
+
+        try:
+            from google import genai  # noqa: F401
+            _available = True
+            print(f"[gemini-tts] Enabled (vertex={use_vertex})")
+            return True
+        except ImportError:
+            _available = False
+            print("[gemini-tts] Disabled: google-genai not installed. Run: pip install google-genai")
+            return False
+
+
+def _get_client():
+    """Lazy init del client google-genai (singleton)."""
+    global _genai_client
+    if _genai_client is not None:
+        return _genai_client
+    from google import genai
+    use_vertex = os.environ.get("ABM_GEMINI_USE_VERTEX", "false").lower() == "true"
+    if use_vertex:
+        vertex_file = os.environ["ABM_GEMINI_VERTEX_CREDENTIALS_FILE"]
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", vertex_file)
+        _genai_client = genai.Client(vertexai=True)
+    else:
+        api_key = os.environ["ABM_GEMINI_API_KEY"].strip()
+        _genai_client = genai.Client(api_key=api_key)
+    return _genai_client
