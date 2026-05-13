@@ -2925,6 +2925,8 @@ function goToAudioSettings(){goToStep(3)}
     const list=document.getElementById('fbRecent');
     if(!list) return;
     list.innerHTML='';
+    const C_LANG=document.documentElement.lang||'it';
+    function escHtml(s){return (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
     const withComment=items.filter(it=>it.comment).slice(0,15);
     for(const it of withComment){
       const div=document.createElement('div');
@@ -2947,6 +2949,17 @@ function goToAudioSettings(){goToStep(3)}
       const body=div.querySelector('.fbw-comment-body');
       body.textContent=info.text;
       attachI18nToggle(div.querySelector('.fbw-i18n-btn'),body,info);
+      // Admin reply
+      if(it.admin_reply_at > 0){
+        const replyDiv=document.createElement('div');
+        replyDiv.className='fbw-admin-reply';
+        const replyText=it.admin_reply_text||'';
+        const replyI18n=it.admin_reply_i18n||{};
+        const replyLang=it.admin_reply_lang||'it';
+        const replyContent=replyI18n[C_LANG]||replyI18n['it']||replyText;
+        replyDiv.innerHTML=`<div class="fbw-admin-reply-head"><span class="fbw-admin-badge">Admin</span><span class="fbw-comment-date">${fmtDate(it.admin_reply_at)}</span></div><p class="fbw-admin-reply-body">${escHtml(replyContent)}</p>`;
+        div.appendChild(replyDiv);
+      }
       const delBtn=div.querySelector('.fbw-del-btn');
       if(delBtn){
         const lbl=tt('comment_delete','Delete your comment');

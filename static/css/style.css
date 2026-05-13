@@ -851,6 +851,10 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-del-btn{background:transparent;border:1px solid var(--brd);border-radius:4px;color:var(--txm);font-size:.85rem;padding:1px 6px;cursor:pointer;transition:all .15s;line-height:1.2;flex-shrink:0}
 .fbw-del-btn:hover{border-color:#c0392b;color:#c0392b;background:rgba(192,57,43,.08)}
 .fbw-del-btn:disabled{opacity:.5;cursor:default}
+.fbw-admin-reply{margin-top:12px;padding:10px 12px;background:rgba(139,92,246,.1);border-radius:8px;border-left:3px solid #8b5cf6}
+.fbw-admin-reply-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.fbw-admin-badge{background:#8b5cf6;color:#fff;padding:1px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
+.fbw-admin-reply-body{margin:0;font-size:.9rem;color:#c4b5fd}
 .news-item-foot{display:flex;justify-content:flex-end;margin-top:6px}
 @media (max-width:480px){
   .fbw-toggle{padding:12px 14px;font-size:.92rem}
