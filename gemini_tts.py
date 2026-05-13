@@ -159,3 +159,59 @@ def estimate_audio_seconds(text):
 def estimate_output_tokens(text):
     """Stima token audio output. 25 tok/s x secondi stimati."""
     return int(estimate_audio_seconds(text) * AUDIO_TOKENS_PER_SECOND)
+
+
+def google_cost_breakdown(input_tokens, output_tokens, model_key):
+    """Costo Google netto, dettagliato USD/EUR."""
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    m = GEMINI_MODELS[model_key]
+    input_usd = input_tokens * m["input_usd_per_mtok"] / 1_000_000
+    output_usd = output_tokens * m["output_usd_per_mtok"] / 1_000_000
+    total_usd = input_usd + output_usd
+    return {
+        "input_usd": input_usd,
+        "output_usd": output_usd,
+        "total_usd": total_usd,
+        "total_eur": total_usd * USD_EUR_RATE,
+    }
+
+
+def estimate_google_cost_eur(input_tokens, output_tokens, model_key):
+    """Costo Google totale in EUR (semplificato, restituisce solo il totale)."""
+    return google_cost_breakdown(input_tokens, output_tokens, model_key)["total_eur"]
+
+
+def compute_user_price_eur(google_cost_eur, model_key):
+    """Calcola prezzo finale all'utente da costo Google netto.
+
+    Formula:
+        base   = google_cost x (1 + margin/100)
+        gross  = (base + PAYPAL_FIXED_FEE) / (1 - PAYPAL_PERCENT_FEE/100)
+        user_price = round(gross, 2)
+
+    Sotto FREE_THRESHOLD_EUR: user_price = 0.0, is_free = True.
+    """
+    if google_cost_eur < 0:
+        raise ValueError("google_cost_eur must be >= 0")
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+
+    margin_pct = get_margin_percent(model_key)
+    base_eur = google_cost_eur * (1.0 + margin_pct / 100.0)
+    paypal_factor = 1.0 - (PAYPAL_PERCENT_FEE / 100.0)
+    if paypal_factor <= 0:
+        raise ValueError("PAYPAL_PERCENT_FEE >= 100, invalid config")
+    gross = (base_eur + PAYPAL_FIXED_FEE_EUR) / paypal_factor
+    user_price = round(gross, 2)
+    is_free = user_price < FREE_THRESHOLD_EUR
+    return {
+        "google_cost_eur": round(google_cost_eur, 4),
+        "margin_percent": margin_pct,
+        "base_price_eur": round(base_eur, 4),
+        "user_price_eur": 0.0 if is_free else user_price,
+        "is_free": is_free,
+        "paypal_fixed_fee_eur": PAYPAL_FIXED_FEE_EUR,
+        "paypal_percent_fee": PAYPAL_PERCENT_FEE,
+        "free_threshold_eur": FREE_THRESHOLD_EUR,
+    }
