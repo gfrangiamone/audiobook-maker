@@ -10,6 +10,7 @@ Integration with tts_split / generation_engine / audiobook_app is Plan B.
 
 import os
 import json
+import time
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -296,11 +297,13 @@ _usage_cache = None
 
 def init(data_dir):
     """Inizializza il modulo con la directory dati persistente."""
-    global _data_dir, _usage_file_path, _usage_cache
+    global _data_dir, _usage_file_path, _usage_cache, _preview_file_path, _preview_cache
     _data_dir = Path(data_dir)
     _data_dir.mkdir(parents=True, exist_ok=True)
     _usage_file_path = _data_dir / "gemini_tts_usage.json"
     _usage_cache = None
+    _preview_file_path = None
+    _preview_cache = None
 
 
 def _current_month():
@@ -386,3 +389,89 @@ def get_usage():
     """Restituisce lo snapshot di utilizzo del mese corrente."""
     with _usage_lock:
         return dict(_load_usage())
+
+
+_preview_file_path = None
+_preview_lock = threading.Lock()
+_preview_cache = None
+
+
+def _preview_path():
+    global _preview_file_path
+    if _preview_file_path is None and _data_dir is not None:
+        _preview_file_path = _data_dir / "gemini_tts_previews.json"
+    return _preview_file_path
+
+
+def _load_previews():
+    global _preview_cache
+    if _preview_cache is not None:
+        return _preview_cache
+    p = _preview_path()
+    if p and p.exists():
+        try:
+            _preview_cache = json.loads(p.read_text(encoding="utf-8"))
+            return _preview_cache
+        except Exception:
+            pass
+    _preview_cache = {}
+    return _preview_cache
+
+
+def _save_previews(data):
+    global _preview_cache
+    _preview_cache = data
+    p = _preview_path()
+    if p is None:
+        return
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        tmp.replace(p)
+    except Exception as e:
+        print(f"[gemini-tts] Warning: could not save previews file: {e}")
+
+
+def _maybe_reset_cookie(entry, now):
+    """Resetta il counter se il primo timestamp ha superato 24h."""
+    window_start = entry.get("window_start_ts", 0)
+    if now - window_start >= 24 * 3600:
+        entry["count"] = 0
+        entry["window_start_ts"] = now
+    return entry
+
+
+def check_preview_cap(cookie_id):
+    """Stato corrente del cap preview per il cookie. Non incrementa.
+
+    Returns: (count_in_window, remaining, window_reset_ts)
+    """
+    cap = PREVIEW_CAP_PER_DAY
+    now = time.time()
+    with _preview_lock:
+        data = _load_previews()
+        entry = dict(data.get(cookie_id, {"count": 0, "window_start_ts": now}))
+        entry = _maybe_reset_cookie(entry, now)
+        count = entry["count"]
+        remaining = max(0, cap - count)
+        reset_ts = entry["window_start_ts"] + 24 * 3600
+        return count, remaining, int(reset_ts)
+
+
+def increment_preview(cookie_id):
+    """Incrementa il counter se sotto cap. Restituisce True se ok, False se cap raggiunto."""
+    cap = PREVIEW_CAP_PER_DAY
+    now = time.time()
+    with _preview_lock:
+        data = _load_previews()
+        entry = data.get(cookie_id, {"count": 0, "window_start_ts": now})
+        entry = _maybe_reset_cookie(entry, now)
+        if entry["count"] >= cap:
+            data[cookie_id] = entry
+            _save_previews(data)
+            return False
+        entry["count"] += 1
+        data[cookie_id] = entry
+        _save_previews(data)
+        return True
