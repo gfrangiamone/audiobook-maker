@@ -643,6 +643,25 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Google voices: {e}")
 
+    # 3. Gemini TTS (Optional)
+    if gemini_tts is not None:
+        try:
+            gem_dict = gemini_tts.get_voices()
+            for lc_short, v_list in gem_dict.items():
+                if lc_short not in languages:
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                # Gemini voices are multilingual / genderless from the API.
+                # Shim gender fields so existing sort + frontend grouping work.
+                for v in v_list:
+                    v.setdefault("gender", "Neutral")
+                    v.setdefault("gender_icon", "★")
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            print(f"Error merging Gemini voices: {e}")
+
     # Sorting
     for lang in languages.values():
         lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
