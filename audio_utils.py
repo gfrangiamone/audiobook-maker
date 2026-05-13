@@ -1014,3 +1014,97 @@ def _safe_filename(name):
     if name.startswith('-'):
         name = '_' + name
     return name[:100]
+
+
+# ---------------------------------------------------------------------------
+# PCM helpers (Gemini TTS native output: 24kHz mono 16-bit)
+# ---------------------------------------------------------------------------
+
+def pcm_size_to_seconds(byte_size, sample_rate=24000, channels=1, sample_width=2):
+    """Converte byte di PCM raw in secondi di durata.
+
+    sample_width: byte per sample (16-bit = 2).
+    """
+    if byte_size <= 0:
+        return 0.0
+    bytes_per_second = sample_rate * channels * sample_width
+    return byte_size / bytes_per_second
+
+
+def pcm_concat(pcm_paths, output_path, skip_missing=False):
+    """Concatena raw PCM byte-wise (tutti i file devono avere stesso formato).
+
+    Non c'e' header da gestire: PCM raw e' solo sequenza di campioni.
+    Crea il file di output anche se la lista e' vuota.
+
+    Args:
+        pcm_paths: lista path PCM in ordine.
+        output_path: file di destinazione.
+        skip_missing: se True, file non esistenti vengono saltati con log;
+                      altrimenti raise FileNotFoundError.
+    """
+    out = open(output_path, "wb")
+    try:
+        for p in pcm_paths:
+            if not os.path.exists(p):
+                if skip_missing:
+                    print(f"[pcm_concat] skip missing: {p}")
+                    continue
+                raise FileNotFoundError(p)
+            with open(p, "rb") as f:
+                while True:
+                    chunk = f.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+    finally:
+        out.close()
+
+
+def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
+               sample_width=2, bitrate="64k"):
+    """Concatena raw PCM e codifica in MP3 con singola passata ffmpeg.
+
+    Args:
+        pcm_paths: lista path PCM (24kHz mono 16-bit by default).
+        output_path: file MP3 risultante.
+        sample_rate, channels, sample_width: formato sorgente.
+        bitrate: bitrate MP3 (es. '64k').
+
+    Returns:
+        True se ok, False se nessun input o ffmpeg fallisce.
+    """
+    if not pcm_paths:
+        return False
+    ffmpeg_ok, _ = _check_audio_dependencies()
+    if not ffmpeg_ok:
+        print("[pcm_to_mp3] ffmpeg not available")
+        return False
+
+    import subprocess
+    tmp_pcm = output_path + ".tmp.pcm"
+    try:
+        pcm_concat(pcm_paths, tmp_pcm)
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "s16le",
+            "-ar", str(sample_rate),
+            "-ac", str(channels),
+            "-i", tmp_pcm,
+            "-c:a", "libmp3lame",
+            "-b:a", bitrate,
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=600, **_SUBPROCESS_FLAGS)
+        if result.returncode != 0:
+            print(f"[pcm_to_mp3] ffmpeg failed: {result.stderr.decode('utf-8', errors='ignore')[:500]}")
+            return False
+        return True
+    except Exception as e:
+        print(f"[pcm_to_mp3] error: {e}")
+        return False
+    finally:
+        try:
+            os.remove(tmp_pcm)
+        except OSError:
+            pass
