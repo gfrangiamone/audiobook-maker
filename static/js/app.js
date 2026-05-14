@@ -397,6 +397,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 let outputFormat='m4b';
 let podcastBaseUrl='';
+// wizardState centralizza lo stato del wizard. audioTab: 'standard' | 'premium'.
+const wizardState = { audioTab: 'standard' };
 function onOutputChange(){
   const sel=document.getElementById('vOut');
   outputFormat=sel?sel.value:'m4b';
@@ -737,8 +739,6 @@ function updVoices(){
 }
 
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
-// wizardState centralizza lo stato del wizard. audioTab: 'standard' | 'premium'.
-const wizardState = { audioTab: 'standard' };
 
 function updVoicesPremium(){
   const vlEl=document.getElementById('vlPremium');
