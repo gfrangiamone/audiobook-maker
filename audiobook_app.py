@@ -2820,6 +2820,43 @@ def admin_api_voucher_revoke(code):
     return jsonify({"ok": True, "code": code})
 
 
+@app.route("/admin/api/gemini_cost_audit", methods=["GET"])
+def admin_api_gemini_cost_audit():
+    """List Gemini TTS audit records with filters + aggregates. Admin-only."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    model = request.args.get("model")
+    language = request.args.get("language")
+    outcome = request.args.get("outcome")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+
+    def _norm(v):
+        return v if v and v != "all" else None
+
+    recs = list(gemini_cost_audit.iter_records(
+        model=_norm(model), language=_norm(language), outcome=_norm(outcome),
+        date_from=date_from, date_to=date_to,
+    ))
+    total = len(recs)
+    page = recs[offset:offset + limit]
+    agg = gemini_cost_audit.aggregate(
+        model=_norm(model), language=_norm(language),
+        date_from=date_from, date_to=date_to,
+    )
+    return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
 @app.route("/api/voices")
 def api_voices():
     try:
