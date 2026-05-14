@@ -35,6 +35,7 @@ try:
     import gemini_tts
 except ImportError:
     gemini_tts = None
+import gemini_cost_audit
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -1264,6 +1265,53 @@ def _engine_for_voice(voice):
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
 
+def _write_gemini_audit(job_id, job, voice_id, language, outcome):
+    """Append audit record at end of Gemini job. Best-effort, non-fatal."""
+    try:
+        if not voice_id or not voice_id.startswith("gemini:"):
+            return
+        actual = job.get("gemini_actual") or {}
+        parts = voice_id.split(":")
+        model_key = parts[1] if len(parts) >= 3 else "?"
+        payment = job.get("payment") or {}
+        charged = float(payment.get("total_eur", 0) or 0)
+        google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
+        try:
+            if gemini_tts is not None:
+                should = gemini_tts.compute_user_price_eur(google_cost_actual, model_key)
+                should_have_been = float(should.get("user_price_eur", 0.0))
+            else:
+                should_have_been = 0.0
+        except Exception:
+            should_have_been = 0.0
+        delta_eur = round(should_have_been - charged, 4)
+        delta_pct = round((delta_eur / charged * 100), 2) if charged > 0 else 0.0
+        est = job.get("gemini_estimate") or {}
+        rec = {
+            "job_id": job_id,
+            "model_key": model_key,
+            "language": language or "",
+            "chars_total": int(actual.get("chars", 0) or 0),
+            "input_tokens_est": int(est.get("input_tokens_est", 0) or 0),
+            "input_tokens_actual": int(actual.get("input_tokens", 0) or 0),
+            "output_tokens_est": int(est.get("output_tokens_est", 0) or 0),
+            "output_tokens_actual": int(actual.get("output_tokens", 0) or 0),
+            "audio_seconds_est": float(est.get("audio_seconds_est", 0) or 0),
+            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "google_cost_eur_est": float(est.get("google_cost_eur", 0) or 0),
+            "google_cost_eur_actual": round(google_cost_actual, 4),
+            "user_price_eur_charged": charged,
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "delta_pct": delta_pct,
+            "margin_eur_actual": round(charged - google_cost_actual, 4),
+            "outcome": outcome,
+        }
+        gemini_cost_audit.append_record(rec)
+    except Exception as e:
+        print(f"[{job_id}] audit write failed (non-fatal): {e}")
+
+
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     job = _jobs[job_id]
     _set_job_status(job, "generating")
@@ -1819,6 +1867,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
 
+        if use_gemini:
+            _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "completed")
+
         # Send email notification if user registered
         if job.get("notify_email"):
             try:
@@ -1831,6 +1882,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if still_current:
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
+            if use_gemini:
+                _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "cancelled_refunded")
         # Refund caratteri Google TTS non consumati e forza riconciliazione
         if use_google:
             _google_tts_refund_unused(job_id, job)
@@ -1856,6 +1909,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     except Exception as e:
         _set_job_status(job, "error")
         job["error"] = str(e)
+        if use_gemini:
+            _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "failed_refunded")
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
             try:
