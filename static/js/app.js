@@ -783,6 +783,7 @@ function updVoicesPremium(){
     opt.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.label||v.id.split(':').pop());
     sel.appendChild(opt);
   });
+  sel.onchange=()=>{if(_previewGenerated)_resetPreviewState();};
   updateModelRateHint();
 }
 
@@ -796,6 +797,7 @@ function updateModelRateHint(){
 }
 
 function switchAudioTab(tab){
+  const prev=wizardState.audioTab;
   wizardState.audioTab=tab;
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;
@@ -812,6 +814,10 @@ function switchAudioTab(tab){
     updVoicesPremium();
   }else{
     const vvP=document.getElementById('vvPremium');if(vvP)vvP.value='';
+  }
+  if(prev!==tab&&typeof _previewGenerated!=='undefined'&&_previewGenerated){
+    if(typeof _resetPreviewState==='function')_resetPreviewState();
+    else if(typeof previewStop==='function')previewStop();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
@@ -1267,11 +1273,19 @@ function _updateSummary(){
   const sumCh=document.getElementById('summaryChapters');
   if(sumCh)sumCh.textContent=cnt+'/'+(bookData?bookData.total_chapters:'—');
 
-  const vv=document.getElementById('vv'),vr=document.getElementById('vr');
+  const vr=document.getElementById('vr');
   const sumVoice=document.getElementById('summaryVoice');
-  if(sumVoice&&vv){
-    const vSel=vv.options[vv.selectedIndex];
-    const voiceName=vSel?vSel.text.replace(/\s*\(.*?\)\s*/g,'').replace(/Microsoft\s+/g,'').trim():'—';
+  if(sumVoice){
+    let voiceName;
+    if(wizardState.audioTab==='premium'){
+      const vvP=document.getElementById('vvPremium');
+      const vSel=vvP&&vvP.selectedIndex>=0?vvP.options[vvP.selectedIndex]:null;
+      voiceName=vSel?vSel.text:'—';
+    }else{
+      const vv=document.getElementById('vv');
+      const vSel=vv&&vv.selectedIndex>=0?vv.options[vv.selectedIndex]:null;
+      voiceName=vSel?vSel.text.replace(/\s*\(.*?\)\s*/g,'').replace(/Microsoft\s+/g,'').trim():'—';
+    }
     const rate=vr?vr.options[vr.selectedIndex].text:'Normal';
     sumVoice.textContent=voiceName+' — '+rate;
   }
@@ -1382,7 +1396,9 @@ async function _validateLanguage() {
   }
   // 2. Case: Mismatch between detected/metadata language and selected voice
   const bookLang = bookData.language ? bookData.language.split('-')[0].toLowerCase() : '';
-  const voiceLang = document.getElementById('vl').value;
+  const voiceLang = (wizardState.audioTab === 'premium')
+    ? document.getElementById('vlPremium').value
+    : document.getElementById('vl').value;
   if(bookLang && voiceLang && bookLang !== voiceLang && !previewListened) {
     // Show the same warning modal (it asks to verify voice/language)
     return await _showLangWarning();
@@ -1421,7 +1437,9 @@ async function startCombinedGeneration(){
     var paymentToken=null;
     try{
       let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-      const selLang=document.getElementById('vl').value||cl;
+      const selLang=(wizardState.audioTab==='premium')
+        ?document.getElementById('vlPremium').value||cl
+        :document.getElementById('vl').value||cl;
       url.searchParams.append('lang',selLang);
       if(selectedChapters&&selectedChapters.length>0){
         selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
