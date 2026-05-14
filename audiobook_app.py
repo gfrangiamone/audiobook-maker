@@ -369,6 +369,39 @@ def _active_generating_for_client_unlocked(client_id):
     )
 
 
+def _refund_payment_on_orphan(job_id, job, reason):
+    """Refund Gemini payment if /api/generate rejected after the token was consumed.
+
+    Mirrors generation_engine._refund_gemini_payment: voucher → _voucher_refund,
+    paypal → emit refund voucher. Best-effort; non-fatal on errors.
+    Also clears job['payment'] so a retry doesn't see stale state.
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or amt <= 0:
+        return
+    try:
+        if method == "voucher":
+            payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+            if email:
+                payment._create_voucher(
+                    email, amt, origin_order_id=tok, origin_job_id=job_id,
+                    kind="refund", note=f"refund {reason} job {job_id}",
+                )
+            # Free up the PayPal order to be re-spent (or leave used=True and let
+            # the refund voucher carry the value forward; we choose refund voucher
+            # to keep idempotency simple)
+    except Exception as e:
+        print(f"[{job_id}] orphan refund failed ({reason}, non-fatal): {e}")
+    finally:
+        job.pop("payment", None)
+
+
 def _active_optimizing_for_client(client_id):
     """Count how many jobs are currently optimizing for the given client_id. Thread-safe."""
     with _jobs_lock:
@@ -4216,6 +4249,11 @@ def api_generate():
         job["notify_download_type"] = "podcast"
         job["notify_base_url"] = podcast_base_url
 
+    # Maintenance suspend check BEFORE payment preflight so we never consume
+    # a payment token when the system can't accept the job anyway.
+    if _suspend_new_jobs:
+        return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
+
     # ----- F3: Gemini payment preflight -----
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:300]
@@ -4263,18 +4301,16 @@ def api_generate():
         if style_instruction:
             job["gemini_style_instruction"] = style_instruction
 
-    # Check sospensione nuovi processi (admin toggle)
-    if _suspend_new_jobs:
-        return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
-
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
+            _refund_payment_on_orphan(job_id, job, "status_conflict")
             return jsonify({"error": "Generation already running or completed."}), 400
         if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
             if _active_generating_for_client_unlocked(client_id) >= MAX_CONCURRENT_PER_CLIENT:
+                _refund_payment_on_orphan(job_id, job, "concurrent_limit")
                 return jsonify({
                     "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
                     "error_code": "concurrent_limit",
