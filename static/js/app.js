@@ -844,7 +844,7 @@ function getEstimateCacheKey(){
   const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
   const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
   const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
-  return tab+'|'+model+'|'+aiOpt+'|'+chapters;
+  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+chapters;
 }
 function requestCombinedEstimate(){
   if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
@@ -867,12 +867,13 @@ async function _doCombinedEstimate(){
     const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok)throw new Error('estimate failed');
     const data=await r.json();
+    if(getEstimateCacheKey()!==key)return;
     _estimateCache.key=key;
     _estimateCache.value=data;
     renderEstimate(data);
   }catch(e){
     console.warn('combined_estimate error:',e);
-    renderEstimate(null);
+    if(getEstimateCacheKey()===key)renderEstimate(null);
   }
 }
 function renderEstimate(data){
