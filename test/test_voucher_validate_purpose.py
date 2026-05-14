@@ -84,3 +84,35 @@ def test_voucher_validate_not_found_has_valid_false(client):
     d = r.get_json()
     assert d["valid"] is False
     assert d.get("reason") == "not_found"
+
+
+def test_amount_eur_non_numeric_does_not_crash(client):
+    """Issue 1: amount_eur='abc' must NOT return 500. Treat as 0 (skip insufficient branch)."""
+    code = _make_voucher("purpose_test_5@x.it", 1.0)
+    r = client.post("/api/voucher_validate", json={
+        "code": code, "email": "purpose_test_5@x.it",
+        "purpose": "gemini", "amount_eur": "abc",
+    })
+    assert r.status_code != 500, r.get_data(as_text=True)
+    # Non-numeric treated as 0 → success path
+    assert r.status_code == 200, r.get_data(as_text=True)
+    d = r.get_json()
+    assert d["valid"] is True
+
+
+def test_rate_limit_response_includes_valid_and_reason(monkeypatch):
+    """Issue 2: 429 rate-limit response must include valid:False and reason."""
+    import audiobook_app as ab
+    app.config['TESTING'] = True
+    # Force rate limit denial
+    monkeypatch.setattr(ab, "_voucher_rl_check", lambda ip, email: (False, 60, "rate_limit"))
+    monkeypatch.setattr(ab, "_voucher_rl_record_result", lambda email, success: None)
+    with app.test_client() as c:
+        r = c.post("/api/voucher_validate", json={
+            "code": "ANY", "email": "rl@x.it",
+        })
+    assert r.status_code == 429
+    d = r.get_json()
+    assert d.get("valid") is False
+    assert "reason" in d
+    assert d["reason"] == "rate_limit"

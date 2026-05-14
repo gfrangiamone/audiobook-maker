@@ -4753,13 +4753,21 @@ def api_voucher_validate():
     email = (data.get("email") or "").strip().lower()
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     purpose = (data.get("purpose") or "any")
-    amount_required = float(data.get("amount_eur") or 0)
+    try:
+        amount_required = float(data.get("amount_eur") or 0)
+    except (ValueError, TypeError):
+        amount_required = 0.0
 
     #  -  Rate limit check  -
     allowed, retry_after, reason = _voucher_rl_check(ip, email)
     if not allowed:
         _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
-        resp = jsonify({"error": "Too many attempts. Please try later.", "retry_after": retry_after})
+        resp = jsonify({
+            "valid": False,
+            "reason": reason or "rate_limit",
+            "error": "Too many attempts. Please try later.",
+            "retry_after": retry_after,
+        })
         resp.status_code = 429
         resp.headers["Retry-After"] = str(retry_after)
         return resp
