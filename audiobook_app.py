@@ -4797,6 +4797,57 @@ def api_voucher_validate():
     return jsonify(body), status
 
 
+@app.route("/api/gemini_estimate", methods=["POST"])
+def api_gemini_estimate():
+    """Stima costo Voci PREMIUM per il job corrente, capitoli selezionati."""
+    import gemini_tts as _gemini_tts_mod
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id", "")
+    voice_id = data.get("voice_id", "")
+    selected = data.get("selected_chapters") or []
+
+    if not voice_id.startswith("gemini:"):
+        return jsonify({"error": "voice_id must be a Gemini voice"}), 400
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "job has no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters selected"}), 400
+
+    lang = getattr(info, "language", "it") or "it"
+    try:
+        est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+    except Exception as e:
+        return jsonify({"error": f"estimate failed: {e}"}), 500
+
+    return jsonify({
+        "chars_total": est["chars_total"],
+        "audio_seconds_est": est["audio_seconds_est"],
+        "estimated_audio_minutes": round(est["estimated_audio_minutes"], 1),
+        "user_price_eur": est["user_price_eur"],
+        "is_free": est["is_free"],
+        "model_key": est["model_key"],
+        "model_label": est["model_label"],
+        "language": est["language"],
+        "breakdown": {
+            "input_tokens_est": est["input_tokens_est"],
+            "output_tokens_est": est["output_tokens_est"],
+            "google_cost_eur": est["google_cost_eur"],
+            "margin_percent": est["margin_percent"],
+        },
+    })
+
+
 @app.route("/api/optimize", methods=["POST"])
 def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
