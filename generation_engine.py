@@ -1290,6 +1290,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         max_chars = _pick_chunk_max_chars(voice, getattr(info, "language", None) or "")
         plan = _plan_chunks(info, max_chars=max_chars)
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
+        job["gemini_actual"] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "chars": 0,
+            "audio_seconds": 0.0,
+            "google_cost_eur": 0.0,
+            "model_key": None,
+        }
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
@@ -1387,6 +1395,25 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                         if not gemini_usage["model_key"]:
                             gemini_usage["model_key"] = result.get("model_key")
+                        ga = job["gemini_actual"]
+                        ga["input_tokens"] += result.get("input_tokens", 0)
+                        ga["output_tokens"] += result.get("output_tokens", 0)
+                        ga["chars"] += len(block["text"])
+                        bw = result.get("bytes_written", 0)
+                        ga["audio_seconds"] += bw / (24000.0 * 2)
+                        model_key = result.get("model_key", "flash25")
+                        if not ga["model_key"]:
+                            ga["model_key"] = model_key
+                        if gemini_tts is not None:
+                            try:
+                                bd = gemini_tts.google_cost_breakdown(
+                                    result.get("input_tokens", 0),
+                                    result.get("output_tokens", 0),
+                                    model_key,
+                                )
+                                ga["google_cost_eur"] += float(bd.get("total_eur", 0.0) or 0.0)
+                            except Exception as e:
+                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:
@@ -1608,6 +1635,25 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                         if not gemini_usage["model_key"]:
                             gemini_usage["model_key"] = result.get("model_key")
+                        ga = job["gemini_actual"]
+                        ga["input_tokens"] += result.get("input_tokens", 0)
+                        ga["output_tokens"] += result.get("output_tokens", 0)
+                        ga["chars"] += len(block["text"])
+                        bw = result.get("bytes_written", 0)
+                        ga["audio_seconds"] += bw / (24000.0 * 2)
+                        model_key_local = result.get("model_key", "flash25")
+                        if not ga["model_key"]:
+                            ga["model_key"] = model_key_local
+                        if gemini_tts is not None:
+                            try:
+                                bd = gemini_tts.google_cost_breakdown(
+                                    result.get("input_tokens", 0),
+                                    result.get("output_tokens", 0),
+                                    model_key_local,
+                                )
+                                ga["google_cost_eur"] += float(bd.get("total_eur", 0.0) or 0.0)
+                            except Exception as e:
+                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
                         if gemini_tts is not None:
                             try:
                                 gemini_tts.record_usage(
