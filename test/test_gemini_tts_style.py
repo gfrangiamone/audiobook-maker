@@ -80,9 +80,21 @@ def test_style_instruction_coexists_with_rate(monkeypatch, tmp_path):
                           style_instruction="vivace", output_path=str(out))
     c = captured["contents"]
     # Both [fast] and [style: vivace] should be present
-    assert "[fast]" in c or "[style:" in c
+    assert "[fast]" in c and "[style:" in c
     assert "vivace" in c
     assert "Frase" in c
+
+
+def test_style_instruction_whitespace_only_does_not_prepend(monkeypatch, tmp_path):
+    """A whitespace-only style_instruction must not crash and must not add a prefix."""
+    captured = {}
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
+    out = tmp_path / "x.pcm"
+    gemini_tts.synthesize("Solo testo", "gemini:flash25:Zephyr",
+                          style_instruction="   \t  \n  ", output_path=str(out))
+    assert captured["contents"] == "Solo testo"
+    assert "[style:" not in captured["contents"]
 
 
 def test_style_instruction_overflow_raises_value_error(monkeypatch, tmp_path):
