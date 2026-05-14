@@ -877,7 +877,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .model-rate-hint { font-size:11px; color:var(--txm,#9e9890); margin-top:4px; }
 /* ── Payment modal (Premium voices / AI optimization) ── */
 .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5);
-                  display:flex; align-items:center; justify-content:center; z-index:1000; }
+                  display:flex; align-items:center; justify-content:center; z-index:1050; }
 .modal-backdrop[hidden] { display:none; }
 .payment-modal { background:var(--srf,#fff); color:var(--tx,#222);
                  border-radius:8px; max-width:480px; width:90%;
@@ -890,20 +890,20 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .payment-modal .modal-body { padding:18px; }
 .payment-modal .modal-footer { padding:12px 18px; border-top:1px solid var(--brd,#eee);
                                display:flex; gap:8px; justify-content:flex-end; }
-.pay-summary { background:var(--bgm,#f7f4ec); border-radius:6px; padding:10px 14px; margin-bottom:14px; }
+.pay-summary { background:var(--srf2,#f7f4ec); border-radius:6px; padding:10px 14px; margin-bottom:14px; }
 .pay-line { display:flex; justify-content:space-between; padding:3px 0; font-size:.9rem; }
 .pay-line.pay-total { border-top:1px solid var(--brd,#ddd); margin-top:6px; padding-top:8px; font-size:1rem; }
 .pay-tabs { display:flex; gap:4px; border-bottom:1px solid var(--brd,#ddd); margin-bottom:12px; }
 .pay-tab { background:transparent; border:0; padding:8px 14px; cursor:pointer;
            border-bottom:2px solid transparent; margin-bottom:-1px; color:var(--tx,#222); }
-.pay-tab.active { border-bottom-color:var(--accent,#a07d3a); color:var(--accent,#a07d3a); }
+.pay-tab.active { border-bottom-color:var(--ac,#a07d3a); color:var(--ac,#a07d3a); }
 .pay-tab-panel[hidden] { display:none; }
 .pay-tab-panel label { display:block; font-size:.85rem; margin:8px 0 4px; }
 .pay-tab-panel input { width:100%; box-sizing:border-box; padding:8px 10px;
                        border:1px solid var(--brd,#ccc); border-radius:6px;
                        background:var(--srf,#fff); color:var(--tx,#222); font-size:.9rem; }
 .pay-error { color:#c0392b; font-size:.8rem; margin-top:6px; min-height:18px; }
-.payment-modal .btn-primary { background:var(--accent,#a07d3a); color:#fff;
+.payment-modal .btn-primary { background:var(--ac,#a07d3a); color:#fff;
                               border:0; padding:8px 14px; border-radius:6px; cursor:pointer; }
 .payment-modal .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 .payment-modal .btn-secondary { background:transparent; color:var(--tx,#222);

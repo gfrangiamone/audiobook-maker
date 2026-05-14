@@ -837,10 +837,10 @@ __REVIEWS_LD__
 
   <!-- PAYMENT MODAL (Premium voices / AI optimization) -->
   <div class="modal-backdrop" id="geminiPayModal" role="dialog" aria-modal="true"
-       aria-labelledby="payModalTitle" hidden>
+       aria-labelledby="geminiPayModalTitle" hidden>
     <div class="modal payment-modal" role="document">
       <header class="modal-header">
-        <h3 id="payModalTitle" data-t="pay_modal_title">Pagamento generazione</h3>
+        <h3 id="geminiPayModalTitle" data-t="pay_modal_title">Pagamento generazione</h3>
         <button type="button" class="modal-close" id="btnPayCancel" aria-label="Chiudi">&times;</button>
       </header>
       <div class="modal-body">
@@ -856,15 +856,15 @@ __REVIEWS_LD__
         </div>
         <div class="pay-tabs" role="tablist">
           <button type="button" class="pay-tab active" id="payTabVoucher" data-paytab="voucher"
-                  role="tab" aria-selected="true" data-t="pay_tab_voucher">Buono</button>
+                  role="tab" aria-selected="true" aria-controls="payPanelVoucher" data-t="pay_tab_voucher">Buono</button>
           <button type="button" class="pay-tab" id="payTabPaypal" data-paytab="paypal"
-                  role="tab" aria-selected="false" data-t="pay_tab_paypal">PayPal</button>
+                  role="tab" aria-selected="false" aria-controls="payPanelPaypal" data-t="pay_tab_paypal">PayPal</button>
         </div>
         <div class="pay-tab-panel" id="payPanelVoucher" role="tabpanel" aria-labelledby="payTabVoucher">
-          <label for="payVoucherCode" data-t="pay_voucher_code">Codice buono</label>
-          <input type="text" id="payVoucherCode" autocomplete="off">
-          <label for="payVoucherEmail" data-t="pay_voucher_email">Email (verifica)</label>
-          <input type="email" id="payVoucherEmail" autocomplete="email">
+          <label for="geminiPayVoucherCode" data-t="pay_voucher_code">Codice buono</label>
+          <input type="text" id="geminiPayVoucherCode" autocomplete="off">
+          <label for="geminiPayVoucherEmail" data-t="pay_voucher_email">Email (verifica)</label>
+          <input type="email" id="geminiPayVoucherEmail" autocomplete="email">
           <div class="pay-error" id="payVoucherError" role="alert"></div>
         </div>
         <div class="pay-tab-panel" id="payPanelPaypal" role="tabpanel" aria-labelledby="payTabPaypal" hidden>
