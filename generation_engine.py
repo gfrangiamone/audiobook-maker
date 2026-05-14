@@ -971,6 +971,34 @@ def _send_optimization_email(job_id):
 # Payment refund helper
 # ---------------------------------------------------------------------------
 
+def _refund_gemini_payment(job_id, job, reason):
+    """F3: Refund Gemini payment on cancel/error.
+
+    For voucher tokens, refunds the amount on the original voucher.
+    For PayPal tokens, emits a refund voucher to the buyer's email.
+    Non-fatal: any failure is logged and swallowed.
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or amt <= 0:
+        return
+    try:
+        if method == "voucher":
+            payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+            if email:
+                payment._create_voucher(
+                    email, amt, origin_order_id=tok, origin_job_id=job_id,
+                    kind="refund", note=f"refund {reason} job {job_id}",
+                )
+    except Exception as _ref_err:
+        print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
+
+
 def _refund_job_payment(job_id, job, reason="error"):
     """Rimborsa il pagamento di un job di ottimizzazione fallito o annullato.
     - payment_type == "voucher": ri-accredita l'importo sul voucher originale.
@@ -1894,6 +1922,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                   f"model={gemini_usage.get('model_key')} "
                   f"input_tok={gemini_usage.get('input_tokens', 0)} "
                   f"output_tok={gemini_usage.get('output_tokens', 0)}")
+            # F3: Refund the user payment (voucher or paypal) for cancelled job
+            if still_current:
+                _refund_gemini_payment(job_id, job, "cancelled")
         # Cleanup temp files (solo se nessuna nuova generazione è partita)
         if still_current:
             try:
@@ -1911,6 +1942,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["error"] = str(e)
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "failed_refunded")
+            # F3: Refund the user payment (voucher or paypal) for failed Gemini job
+            _refund_gemini_payment(job_id, job, f"failed: {e}")
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
             try:

@@ -4216,6 +4216,53 @@ def api_generate():
         job["notify_download_type"] = "podcast"
         job["notify_base_url"] = podcast_base_url
 
+    # ----- F3: Gemini payment preflight -----
+    payment_token = (data.get("payment_token") or "").strip()
+    style_instruction = (data.get("gemini_style_instruction") or "")[:300]
+    if voice and voice.startswith("gemini:"):
+        # Recompute server-side total (mirror api_combined_estimate)
+        info_pre = job.get("info")
+        all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
+        sel = selected_chapters or []
+        chs_pre = [all_chs_pre[i] for i in sel if 0 <= i < len(all_chs_pre)] if sel else all_chs_pre
+        lang_pre = getattr(info_pre, "language", "it") or "it"
+        try:
+            est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre)
+            gemini_eur_pre = round(est_pre["user_price_eur"], 2)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        llm_eur_pre = 0.0
+        if data.get("ai_opt_enabled"):
+            chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
+            llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+        total_eur_pre = round(gemini_eur_pre + llm_eur_pre, 2)
+        threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+        if total_eur_pre > threshold_pre:
+            if not payment_token:
+                return jsonify({
+                    "error": "payment_required",
+                    "total_eur": total_eur_pre,
+                    "threshold_eur": threshold_pre,
+                }), 402
+            try:
+                _pay_method = payment.consume_payment_token(
+                    payment_token, total_eur_pre, job_id, purpose="gemini"
+                )
+            except ValueError as _pay_err:
+                return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
+            # Stash payment info on job for refund + audit
+            job["payment"] = {
+                "token": payment_token,
+                "total_eur": total_eur_pre,
+                "method": _pay_method,
+                "ts": time.time(),
+                "gemini_est": est_pre,
+                "llm_eur": llm_eur_pre,
+            }
+        # Stash style for run_generation
+        if style_instruction:
+            job["gemini_style_instruction"] = style_instruction
+
     # Check sospensione nuovi processi (admin toggle)
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
@@ -4290,7 +4337,8 @@ def api_generate():
     job["gen_epoch"] = job.get("gen_epoch", 0) + 1
     thread = threading.Thread(
         target=run_generation, args=(job_id, info, voice, rate, single_file),
-        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url},
+        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url,
+                'gemini_style_instruction': job.get("gemini_style_instruction")},
         daemon=True
     )
     thread.start()

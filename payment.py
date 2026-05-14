@@ -491,6 +491,67 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
     return r.json()
 
 
+# ---------------------------------------------------------------------------
+# F3: Payment token consumption (voucher or captured PayPal order)
+# ---------------------------------------------------------------------------
+
+def _paypal_order_is_captured(token: str) -> bool:
+    """True if token is a captured PayPal order not yet consumed."""
+    if not token:
+        return False
+    pay = _payments.get(token)
+    return bool(pay) and not pay.get("used", False)
+
+
+def _paypal_amount_matches(token: str, amount_eur: float, tolerance: float = 0.05) -> bool:
+    """True if captured order amount >= amount_eur (with tolerance for rounding)."""
+    pay = _payments.get(token)
+    if not pay:
+        return False
+    return float(pay.get("amount_eur", 0) or 0) + tolerance >= float(amount_eur)
+
+
+def _mark_paid_job_done(job_id: str, purpose: str = "gemini"):
+    """Unified marker that the paid generation completed (any purpose).
+
+    For now delegates to _mark_paid_opt_done; F4 migration will introduce a
+    proper per-purpose store.
+    """
+    _ = purpose  # consumed by F4 migration
+    _mark_paid_opt_done(job_id)
+
+
+def consume_payment_token(token: str, amount_eur: float, job_id: str,
+                          purpose: str = "gemini") -> str:
+    """Consume a payment token (voucher or captured PayPal order).
+
+    Returns the method used ("voucher" or "paypal").
+    Raises ValueError if invalid / insufficient.
+    """
+    if not token:
+        raise ValueError("missing payment_token")
+    # Try voucher first
+    if token in _vouchers:
+        _voucher_consume(token, amount_eur, job_id=job_id)
+        _mark_paid_job_done(job_id, purpose=purpose)
+        return "voucher"
+    # Then PayPal captured order
+    if _paypal_order_is_captured(token):
+        if not _paypal_amount_matches(token, amount_eur):
+            raise ValueError("paypal amount mismatch")
+        # Mark order as used so it can't be redeemed twice
+        _payments[token]["used"] = True
+        _payments[token]["used_at"] = time.time()
+        _payments[token]["used_for_job"] = job_id
+        try:
+            _save_payments()
+        except Exception:
+            pass  # best-effort persistence
+        _mark_paid_job_done(job_id, purpose=purpose)
+        return "paypal"
+    raise ValueError("invalid payment_token")
+
+
 def _paypal_capture_order(order_id):
     """Capture a previously-approved order. Returns captured order dict."""
     import requests
