@@ -324,7 +324,16 @@ document.addEventListener('DOMContentLoaded',()=>{
   setupUpload();loadVoices();
   // Wizard generation button
   const btnGenerate=document.getElementById('btnGenerate');
-  if(btnGenerate)btnGenerate.onclick=startCombinedGeneration;
+  if(btnGenerate)btnGenerate.onclick=onGenerateClick;
+  // Payment modal (Gemini Premium) listeners
+  document.getElementById('btnPayCancel')?.addEventListener('click', closePaymentModal);
+  document.getElementById('btnPayCancel2')?.addEventListener('click', closePaymentModal);
+  document.getElementById('btnPayConfirm')?.addEventListener('click', onPayConfirm);
+  document.querySelectorAll('.pay-tab').forEach(el => {
+    el.addEventListener('click', () => switchPayTab(el.dataset.paytab));
+  });
+  document.getElementById('payVoucherCode')?.addEventListener('blur', validateVoucherForPayment);
+  document.getElementById('payVoucherEmail')?.addEventListener('blur', validateVoucherForPayment);
   // Download buttons (panel 5)
   const btnD=document.getElementById('btnD');
   if(btnD)btnD.onclick=()=>downloadFile('zip');
@@ -903,6 +912,106 @@ function renderEstimate(data){
   if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
 }
 
+// ═══════════════════ PAYMENT MODAL (combined cost) ═══════════════════
+let _payState = { total: 0, gemini: 0, llm: 0, token: null, method: null };
+
+async function onGenerateClick() {
+  await _doCombinedEstimate();
+  const est = _estimateCache && _estimateCache.value;
+  if (!est || est.is_free) {
+    return startCombinedGeneration();
+  }
+  openPaymentModal(est);
+}
+
+function openPaymentModal(estimate) {
+  _payState = {
+    total: estimate.total_eur, gemini: estimate.gemini_eur,
+    llm: estimate.llm_eur, token: null, method: null,
+  };
+  const lineG = document.getElementById('payLineGemini');
+  if (lineG) lineG.textContent = estimate.gemini_eur > 0 ? `€${estimate.gemini_eur.toFixed(2)}` : '—';
+  const lineL = document.getElementById('payLineLlm');
+  if (lineL) lineL.textContent = estimate.llm_eur > 0 ? `€${estimate.llm_eur.toFixed(2)}` : '—';
+  const tot = document.getElementById('payModalTotal');
+  if (tot) tot.textContent = `€${estimate.total_eur.toFixed(2)}`;
+  const vErr = document.getElementById('payVoucherError');
+  if (vErr) { vErr.textContent = ''; vErr.style.color = ''; }
+  const pErr = document.getElementById('payPaypalError');
+  if (pErr) pErr.textContent = '';
+  const btn = document.getElementById('btnPayConfirm');
+  if (btn) btn.disabled = true;
+  switchPayTab('voucher');
+  const modal = document.getElementById('geminiPayModal');
+  if (modal) modal.hidden = false;
+}
+
+function closePaymentModal() {
+  const modal = document.getElementById('geminiPayModal');
+  if (modal) modal.hidden = true;
+}
+
+function switchPayTab(tab) {
+  document.querySelectorAll('.pay-tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.paytab === tab);
+  });
+  const pv = document.getElementById('payPanelVoucher');
+  if (pv) pv.hidden = (tab !== 'voucher');
+  const pp = document.getElementById('payPanelPaypal');
+  if (pp) pp.hidden = (tab !== 'paypal');
+  if (tab === 'paypal' && typeof renderPaypalGeminiButtons === 'function') {
+    renderPaypalGeminiButtons();
+  }
+}
+
+async function validateVoucherForPayment() {
+  const code = (document.getElementById('payVoucherCode')?.value || '').trim();
+  const email = (document.getElementById('payVoucherEmail')?.value || '').trim();
+  const errEl = document.getElementById('payVoucherError');
+  if (!errEl) return;
+  errEl.style.color = '';
+  errEl.textContent = '';
+  if (!code || !email) {
+    errEl.textContent = (typeof t === 'function' && t('pay_err_empty')) || 'Inserisci codice e email';
+    return;
+  }
+  try {
+    const r = await fetch('/api/voucher_validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ code, email, purpose: 'gemini', amount_eur: _payState.total }),
+    });
+    const d = await r.json();
+    if (!d.valid) {
+      const map = {
+        not_found: (typeof t === 'function' && t('pay_err_voucher_not_found')) || 'Buono non trovato',
+        email_mismatch: (typeof t === 'function' && t('pay_err_email_mismatch')) || 'Email non corrispondente',
+        revoked: (typeof t === 'function' && t('pay_err_revoked')) || 'Buono revocato',
+        insufficient: (typeof t === 'function' && t('pay_err_insufficient')) || 'Saldo insufficiente',
+        expired: (typeof t === 'function' && t('pay_err_expired')) || 'Buono scaduto',
+        used: (typeof t === 'function' && t('pay_err_used')) || 'Buono già utilizzato',
+      };
+      errEl.textContent = map[d.reason] || ((typeof t === 'function' && t('pay_err_unknown')) || 'Errore validazione');
+      return;
+    }
+    _payState.token = code;
+    _payState.method = 'voucher';
+    const btn = document.getElementById('btnPayConfirm');
+    if (btn) btn.disabled = false;
+    errEl.style.color = '#27ae60';
+    const rem = (typeof d.remaining_eur === 'number') ? d.remaining_eur.toFixed(2) : '0.00';
+    errEl.textContent = ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
+  } catch (e) {
+    errEl.textContent = (typeof t === 'function' && t('pay_err_network')) || 'Errore di rete';
+  }
+}
+
+function onPayConfirm() {
+  if (!_payState.token) return;
+  closePaymentModal();
+  startCombinedGeneration(_payState.token);
+}
+
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
 let _prevLoading=false, _previewGenerated=false;
 
@@ -1478,7 +1587,7 @@ async function _validateLanguage() {
   return true;
 }
 
-async function startCombinedGeneration(){
+async function startCombinedGeneration(combinedPaymentToken){
   if(!jobId||generating)return;
 
   // Check admin suspend
@@ -1506,7 +1615,7 @@ async function startCombinedGeneration(){
   if(aiOptEnabled&&!_allSelectedOptimized()){
     // ── AI optimization flow ──
     // Payment check
-    var paymentToken=null;
+    var paymentToken=combinedPaymentToken||null;
     try{
       let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
       const selLang=(wizardState.audioTab==='premium')
@@ -1518,7 +1627,7 @@ async function startCombinedGeneration(){
       }
       var est=await fetch(url.toString()).then(r=>r.json());
       if(est.error){showS3Err(est.error);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
-      if(est.requires_payment){
+      if(est.requires_payment&&!paymentToken){
         // Reuse token already validated via the popup (showCoupon)
         if(window._couponPaymentToken){
           paymentToken=window._couponPaymentToken;
@@ -1572,6 +1681,7 @@ async function startCombinedGeneration(){
     try{
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
+      if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){

@@ -50,7 +50,7 @@ def test_validateLanguage_uses_vlPremium():
 def test_startCombinedGeneration_estimate_uses_vlPremium():
     # The optimize_estimate URL in startCombinedGeneration must be tab-aware
     m = re.search(
-        r"async function startCombinedGeneration\(\)(.+?)^(?:async function|function)\s",
+        r"async function startCombinedGeneration\([^)]*\)(.+?)^(?:async function|function)\s",
         APP_JS, re.DOTALL | re.MULTILINE
     )
     assert m, "startCombinedGeneration function not found"
