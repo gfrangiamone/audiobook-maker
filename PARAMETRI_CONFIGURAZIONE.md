@@ -401,6 +401,42 @@ Sovrascrivibili in caso di adeguamento listino Google.
 - Chunk max chars per lingua: 1500 per zh/ja/hi/ar, 2000 per le altre.
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
 
+### 7.7 Audit log dei costi (`gemini_cost_audit.py`)
+
+Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto un record JSONL nel file mensile `<ABM_DATA_DIR>/gemini_cost_audit_YYYY-MM.jsonl` (append-only, lock per scrittura).
+
+**Campi record (18):**
+
+| Campo | Descrizione |
+|-------|-------------|
+| `ts` | Timestamp ISO8601 UTC della scrittura |
+| `job_id` | ID job applicativo |
+| `client_id` | Cookie client (opaco) |
+| `email` | Email associata al pagamento (vuota per free) |
+| `language` | Lingua sintesi |
+| `model_key` | `flash25` o `flash31` |
+| `voice` | Nome voce |
+| `chars_total` | Caratteri sintetizzati |
+| `chunks_total` | Numero chunk inviati |
+| `audio_seconds_estimated` | Stima ex-ante (rate model+lang) |
+| `audio_seconds_actual` | Misurato (bytes PCM / (24000·2)) |
+| `google_cost_eur_estimated` | Costo Google stimato ex-ante |
+| `google_cost_eur_actual` | Costo Google effettivo (token in/out × tariffa) |
+| `user_price_eur_charged` | Prezzo addebitato all'utente |
+| `margin_percent` | Margine applicato (`ABM_GEMINI_<model>_MARGIN_PERCENT`) |
+| `delta_eur` | `user_price - google_cost_actual` |
+| `delta_pct` | `delta_eur / google_cost_actual × 100` |
+| `outcome` | `completed` \| `failed_refunded` \| `cancelled_refunded` \| `recovered_refunded` |
+
+**Retention:** manuale — i file sono piccoli (qualche KB/mese a regime). Ruotare/archiviare a discrezione admin.
+
+**Parametri di tuning:** se `delta_pct_avg` si discosta sistematicamente (vedi `/admin/logs` → "Audit Gemini" → "Calcola parametri suggeriti"), valutare:
+- aumento margin_percent del modello se delta negativo (`ABM_GEMINI_<model>_MARGIN_PERCENT`)
+- riduzione tariffa utente se delta positivo eccessivo
+- adeguamento del rapporto chars/secondi (tabella `_SEC_PER_KCHARS_BY_LANG` in `gemini_tts.py`) se la stima ex-ante diverge dalla realtà
+
+**Persistenza job pagati unificata:** dalla v3.13.x, sia i pagamenti per Ottimizzazione testo AI sia quelli per voci Premium sono tracciati in `<ABM_DATA_DIR>/_paid_jobs_done.json` (campo `purpose`: `"llm"` o `"gemini"`). La migrazione del vecchio `_paid_opt_done.json` è automatica all'avvio (backup `.pre_unify_bak`).
+
 ---
 
 ## 8. Versione (`version.py`)
