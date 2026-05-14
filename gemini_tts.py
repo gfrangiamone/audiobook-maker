@@ -537,7 +537,7 @@ def _get_client():
 SYNTH_MAX_ATTEMPTS = 3
 
 
-def synthesize(text, voice_id, rate="+0%", output_path="output.pcm"):
+def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
@@ -546,35 +546,45 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm"):
         rate: parametro di compatibilita' — Gemini TTS non ha speaking_rate API,
               quando rate != '+0%' viene aggiunto un prompt instruction.
         output_path: percorso file PCM in output.
+        style_instruction: opzionale, istruzione di stile/tono (max 300 char dopo
+            strip) che viene prefissata al testo come "[style: <stripped>] ".
 
     Returns:
         dict con success, bytes_written, input_tokens, output_tokens, model_key,
         voice_name, attempts_used.
 
     Raises:
-        ValueError se text supera il cap byte o voice_id e' invalido.
+        ValueError se text (dopo i prefissi) supera il cap byte o voice_id e' invalido.
         RuntimeError se tutti i retry falliscono.
     """
     if not is_available():
         raise RuntimeError("Gemini TTS not available (check ABM_GEMINI_API_KEY)")
 
     model_key, model_id, voice_name = parse_voice_id(voice_id)
-    ok, size = check_text_byte_size(text)
-    if not ok:
-        raise ValueError(f"Text exceeds MAX_BYTES_PER_CALL ({size} > {MAX_BYTES_PER_CALL} bytes)")
 
     rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
     final_text = text
+    # Style prefix (cap stripped style at 300 chars to avoid blowing the byte budget)
+    if style_instruction:
+        style = str(style_instruction).strip()[:300]
+        if style:
+            final_text = f"[style: {style}] {final_text}"
+    # Existing rate prefix
     if rate_mode == "prompt" and rate and rate != "+0%":
         pct = rate.replace("%", "").replace("+", "")
         try:
             n = int(pct)
             if n < -5:
-                final_text = f"[slow] {text}"
+                final_text = f"[slow] {final_text}"
             elif n > 5:
-                final_text = f"[fast] {text}"
+                final_text = f"[fast] {final_text}"
         except ValueError:
             pass
+
+    # Byte-size cap AFTER prefixes
+    ok, size = check_text_byte_size(final_text)
+    if not ok:
+        raise ValueError(f"Text exceeds MAX_BYTES_PER_CALL ({size} > {MAX_BYTES_PER_CALL} bytes)")
 
     from google.genai import types as genai_types
 
