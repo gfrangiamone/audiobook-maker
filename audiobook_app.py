@@ -4933,6 +4933,88 @@ def api_combined_estimate():
     })
 
 
+@app.route("/api/paypal_create_order_gemini", methods=["POST"])
+def api_paypal_create_order_gemini():
+    """Create a PayPal order for Voci PREMIUM (+ optional AI text optimization).
+
+    Server-side amount check: recomputes the combined estimate
+    (gemini_eur + llm_eur) and rejects the request if the client-supplied
+    amount differs by more than 0.01 EUR. On match, calls
+    payment._paypal_create_order and returns {order_id, amount, status}.
+    """
+    import payment as _payment_mod
+    import gemini_tts as _gemini_tts_mod
+
+    data = request.get_json(silent=True) or {}
+    job_id = (data.get("job_id") or "").strip()
+    voice_id = (data.get("voice_id") or "").strip()
+    selected = data.get("selected_chapters") or []
+    ai_opt = bool(data.get("ai_opt_enabled", False))
+    try:
+        requested_amount = float(data.get("amount_eur") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid amount_eur"}), 400
+
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters"}), 400
+
+    lang = getattr(info, "language", "it") or "it"
+
+    gemini_eur = 0.0
+    if voice_id.startswith("gemini:"):
+        try:
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        gemini_eur = round(est["user_price_eur"], 2)
+
+    llm_eur = 0.0
+    if ai_opt:
+        chars = sum(len(getattr(c, "text", "") or "") for c in chs)
+        rate = float(os.environ.get("LLM_PRICE_EUR_PER_MCHAR", "1.10"))
+        llm_eur = round((chars / 1_000_000.0) * rate, 2)
+
+    server_total = round(gemini_eur + llm_eur, 2)
+
+    if abs(server_total - requested_amount) > 0.01:
+        return jsonify({
+            "error": f"amount mismatch (server={server_total}, client={requested_amount})",
+            "server_amount_eur": server_total,
+            "client_amount_eur": requested_amount,
+        }), 400
+
+    book_title = getattr(info, "title", "") or "Audiobook"
+    description = f"Audiobook Maker - Voci PREMIUM - {book_title[:60]}"
+    try:
+        order = _payment_mod._paypal_create_order(
+            amount_eur=server_total,
+            description=description,
+            custom_id=f"gemini:{job_id}",
+        )
+    except Exception as e:
+        print(f"[paypal] gemini create_order failed: {e}")
+        return jsonify({"error": f"paypal create failed: {e}"}), 500
+
+    return jsonify({
+        "order_id": order.get("id"),
+        "amount": server_total,
+        "status": order.get("status"),
+    })
+
+
 @app.route("/api/optimize", methods=["POST"])
 def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
