@@ -332,8 +332,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.pay-tab').forEach(el => {
     el.addEventListener('click', () => switchPayTab(el.dataset.paytab));
   });
-  document.getElementById('payVoucherCode')?.addEventListener('blur', validateVoucherForPayment);
-  document.getElementById('payVoucherEmail')?.addEventListener('blur', validateVoucherForPayment);
+  document.getElementById('geminiPayVoucherCode')?.addEventListener('blur', validateVoucherForPayment);
+  document.getElementById('geminiPayVoucherEmail')?.addEventListener('blur', validateVoucherForPayment);
   // Download buttons (panel 5)
   const btnD=document.getElementById('btnD');
   if(btnD)btnD.onclick=()=>downloadFile('zip');
@@ -914,14 +914,21 @@ function renderEstimate(data){
 
 // ═══════════════════ PAYMENT MODAL (combined cost) ═══════════════════
 let _payState = { total: 0, gemini: 0, llm: 0, token: null, method: null };
+let _generatingModal = false;
 
 async function onGenerateClick() {
-  await _doCombinedEstimate();
-  const est = _estimateCache && _estimateCache.value;
-  if (!est || est.is_free) {
-    return startCombinedGeneration();
+  if (_generatingModal) return;
+  _generatingModal = true;
+  try {
+    await _doCombinedEstimate();
+    const est = _estimateCache && _estimateCache.value;
+    if (!est || est.is_free) {
+      return startCombinedGeneration();
+    }
+    openPaymentModal(est);
+  } finally {
+    _generatingModal = false;
   }
-  openPaymentModal(est);
 }
 
 function openPaymentModal(estimate) {
@@ -965,8 +972,8 @@ function switchPayTab(tab) {
 }
 
 async function validateVoucherForPayment() {
-  const code = (document.getElementById('payVoucherCode')?.value || '').trim();
-  const email = (document.getElementById('payVoucherEmail')?.value || '').trim();
+  const code = (document.getElementById('geminiPayVoucherCode')?.value || '').trim();
+  const email = (document.getElementById('geminiPayVoucherEmail')?.value || '').trim();
   const errEl = document.getElementById('payVoucherError');
   if (!errEl) return;
   errEl.style.color = '';

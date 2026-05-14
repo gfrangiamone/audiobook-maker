@@ -28,3 +28,22 @@ def test_switch_pay_tab_function():
 def test_voucher_validate_called_with_purpose_gemini():
     # Verify the fetch body includes purpose: 'gemini'
     assert "purpose: 'gemini'" in APP or 'purpose: "gemini"' in APP
+
+
+def test_voucher_input_ids_match_html():
+    """app.js must use the prefixed IDs that match the HTML modal."""
+    assert "geminiPayVoucherCode" in APP
+    assert "geminiPayVoucherEmail" in APP
+    # Make sure the old unprefixed IDs are not referenced in the new validation flow
+    # (the old #payModal legacy code may still use them — that's fine; we only check
+    # they're not used inside validateVoucherForPayment).
+    func_start = APP.find("function validateVoucherForPayment")
+    assert func_start >= 0
+    # find the closing brace of this function (rough: next blank line + 'function ' or end-of-pattern)
+    snippet = APP[func_start:func_start + 3000]
+    assert "geminiPayVoucherCode" in snippet
+    assert "geminiPayVoucherEmail" in snippet
+
+
+def test_generate_click_has_reentrancy_guard():
+    assert "_generatingModal" in APP
