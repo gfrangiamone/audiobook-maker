@@ -835,4 +835,48 @@ __REVIEWS_LD__
     </div>
   </div>
 
+  <!-- PAYMENT MODAL (Premium voices / AI optimization) -->
+  <div class="modal-backdrop" id="geminiPayModal" role="dialog" aria-modal="true"
+       aria-labelledby="payModalTitle" hidden>
+    <div class="modal payment-modal" role="document">
+      <header class="modal-header">
+        <h3 id="payModalTitle" data-t="pay_modal_title">Pagamento generazione</h3>
+        <button type="button" class="modal-close" id="btnPayCancel" aria-label="Chiudi">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div class="pay-summary">
+          <div class="pay-line"><span data-t="pay_premium_voices">Voci PREMIUM</span>
+               <span id="payLineGemini">&mdash;</span></div>
+          <div class="pay-line"><span data-t="pay_text_ai_optimization">Ottimizzazione testo AI</span>
+               <span id="payLineLlm">&mdash;</span></div>
+          <div class="pay-line pay-total">
+            <span data-t="pay_total">Totale</span>
+            <strong id="payModalTotal">&mdash;</strong>
+          </div>
+        </div>
+        <div class="pay-tabs" role="tablist">
+          <button type="button" class="pay-tab active" id="payTabVoucher" data-paytab="voucher"
+                  role="tab" aria-selected="true" data-t="pay_tab_voucher">Buono</button>
+          <button type="button" class="pay-tab" id="payTabPaypal" data-paytab="paypal"
+                  role="tab" aria-selected="false" data-t="pay_tab_paypal">PayPal</button>
+        </div>
+        <div class="pay-tab-panel" id="payPanelVoucher" role="tabpanel" aria-labelledby="payTabVoucher">
+          <label for="payVoucherCode" data-t="pay_voucher_code">Codice buono</label>
+          <input type="text" id="payVoucherCode" autocomplete="off">
+          <label for="payVoucherEmail" data-t="pay_voucher_email">Email (verifica)</label>
+          <input type="email" id="payVoucherEmail" autocomplete="email">
+          <div class="pay-error" id="payVoucherError" role="alert"></div>
+        </div>
+        <div class="pay-tab-panel" id="payPanelPaypal" role="tabpanel" aria-labelledby="payTabPaypal" hidden>
+          <div id="paypalGeminiContainer"></div>
+          <div class="pay-error" id="payPaypalError" role="alert"></div>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn-secondary" id="btnPayCancel2" data-t="pay_cancel">Annulla</button>
+        <button type="button" class="btn-primary" id="btnPayConfirm" data-t="pay_confirm" disabled>Conferma</button>
+      </footer>
+    </div>
+  </div>
+
 <script>
