@@ -79,3 +79,21 @@ def test_paypal_gemini_handles_sdk_unavailable():
     func_start = APP.find("renderPaypalGeminiButtons")
     snippet = APP[func_start:func_start + 4000]
     assert "typeof paypal" in snippet or "window.paypal" in snippet
+
+
+def test_paypal_sdk_loader_caches_in_flight_promise():
+    """_loadPaypalSdk must reuse an in-flight promise to prevent duplicate script injection."""
+    assert "_paypalSdkPromise" in APP
+
+
+def test_paypal_capture_token_no_orderid_fallback():
+    """onApprove must not silently fall back to data.orderID if payment_token missing."""
+    # Locate the function body and verify the assignment line does NOT contain '|| data.orderID'
+    func_start = APP.find("renderPaypalGeminiButtons")
+    assert func_start >= 0
+    snippet = APP[func_start:func_start + 4000]
+    # The token assignment should NOT have the dead fallback
+    assert "_payState.token = d.payment_token || data.orderID" not in snippet
+    assert "_payState.token=d.payment_token||data.orderID" not in snippet
+    # But it must still set the token from payment_token
+    assert "d.payment_token" in snippet

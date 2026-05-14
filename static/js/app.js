@@ -981,7 +981,7 @@ async function renderPaypalGeminiButtons(){
         const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
         const d=await r.json();
         if(d.error||!d.payment_token){_payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
-        _payState.token=d.payment_token||data.orderID;_payState.method='paypal';
+        _payState.token=d.payment_token;_payState.method='paypal';
         const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
       }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
@@ -1525,16 +1525,19 @@ function _updateSummary(){
 // ═══════════════════ PAYMENT (LLM optimization) ═══════════════════
 let llmConfig={rate:1.1,threshold:0.5,bonus:10,expiry:180,paypalClientId:"",paypalMode:"sandbox",paypalAvailable:false};
 let paypalSdkLoaded=false;
+let _paypalSdkPromise=null;
 
 function _loadPaypalSdk(clientId){
-  return new Promise(function(resolve,reject){
-    if(paypalSdkLoaded&&window.paypal){resolve();return}
+  if(paypalSdkLoaded&&window.paypal)return Promise.resolve();
+  if(_paypalSdkPromise)return _paypalSdkPromise;
+  _paypalSdkPromise=new Promise(function(resolve,reject){
     var s=document.createElement('script');
     s.src='https://www.paypal.com/sdk/js?client-id='+encodeURIComponent(clientId)+'&currency=EUR&intent=capture';
     s.onload=function(){paypalSdkLoaded=true;resolve()};
-    s.onerror=function(){reject(new Error('Failed to load PayPal SDK'))};
+    s.onerror=function(){_paypalSdkPromise=null;reject(new Error('Failed to load PayPal SDK'))};
     document.head.appendChild(s);
   });
+  return _paypalSdkPromise;
 }
 
 async function _showPaymentModal(costEur,chars){
