@@ -958,6 +958,40 @@ function closePaymentModal() {
   if (modal) modal.hidden = true;
 }
 
+// ─────────── PayPal buttons in combined payment modal ───────────
+let _paypalGeminiButtonsInstance = null;
+function _payPaypalErr(msg){const e=document.getElementById('payPaypalError');if(e){e.style.color='';e.textContent=msg||''}}
+async function renderPaypalGeminiButtons(){
+  const container=document.getElementById('paypalGeminiContainer');
+  if(!container)return;
+  container.innerHTML='';_payPaypalErr('');
+  if(!llmConfig.paypalAvailable||!llmConfig.paypalClientId){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
+  try{await _loadPaypalSdk(llmConfig.paypalClientId)}catch(e){_payPaypalErr((typeof t==='function'&&t('pay_paypal_load_failed'))||'Caricamento PayPal fallito');return}
+  if(typeof paypal==='undefined'||!window.paypal||!window.paypal.Buttons){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
+  if(_paypalGeminiButtonsInstance){try{_paypalGeminiButtonsInstance.close()}catch(e){}_paypalGeminiButtonsInstance=null}
+  _paypalGeminiButtonsInstance=window.paypal.Buttons({
+    style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
+    createOrder:async function(){
+      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,amount_eur:_payState.total};
+      const r=await fetch('/api/paypal_create_order_gemini',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
+    },
+    onApprove:async function(data){
+      try{
+        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
+        const d=await r.json();
+        if(d.error||!d.payment_token){_payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
+        _payState.token=d.payment_token||data.orderID;_payState.method='paypal';
+        const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;
+        const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
+      }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
+    },
+    onError:function(err){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(err&&err.message?err.message:''))},
+    onCancel:function(){}
+  });
+  try{_paypalGeminiButtonsInstance.render('#paypalGeminiContainer')}catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
+}
+
 function switchPayTab(tab) {
   document.querySelectorAll('.pay-tab').forEach(el => {
     el.classList.toggle('active', el.dataset.paytab === tab);

@@ -47,3 +47,35 @@ def test_voucher_input_ids_match_html():
 
 def test_generate_click_has_reentrancy_guard():
     assert "_generatingModal" in APP
+
+
+def test_has_render_paypal_gemini_buttons():
+    assert "function renderPaypalGeminiButtons" in APP or "renderPaypalGeminiButtons = " in APP
+
+
+def test_paypal_gemini_uses_dedicated_endpoint():
+    # createOrder must call the gemini-specific endpoint, not the legacy LLM one
+    func_start = APP.find("renderPaypalGeminiButtons")
+    assert func_start >= 0
+    snippet = APP[func_start:func_start + 4000]
+    assert "/api/paypal_create_order_gemini" in snippet
+    assert "/api/paypal_capture_order" in snippet
+
+
+def test_paypal_gemini_uses_dedicated_container():
+    assert "#paypalGeminiContainer" in APP or "'paypalGeminiContainer'" in APP
+
+
+def test_paypal_gemini_buttons_close_on_re_render():
+    # Must close any previously-instantiated buttons before rendering new ones
+    # (prevents zombie iframe leaks when tab toggled multiple times)
+    func_start = APP.find("renderPaypalGeminiButtons")
+    snippet = APP[func_start:func_start + 4000]
+    assert ".close()" in snippet or "buttonsInstance" in snippet
+
+
+def test_paypal_gemini_handles_sdk_unavailable():
+    # if window.paypal is undefined after load attempt, show error not crash
+    func_start = APP.find("renderPaypalGeminiButtons")
+    snippet = APP[func_start:func_start + 4000]
+    assert "typeof paypal" in snippet or "window.paypal" in snippet
