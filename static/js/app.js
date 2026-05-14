@@ -395,6 +395,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     const counter=document.getElementById('styleCounter');
     if(counter)counter.textContent=e.target.value.length;
   });
+  // Cost estimate triggers (no re-estimate on voice change)
+  document.getElementById('aiToggle')?.addEventListener('change',requestCombinedEstimate);
   // Initialize wizard
   updateWizardSteps(1);
 });
@@ -832,6 +834,74 @@ function getCurrentVoiceId(){
   return el?el.value:'';
 }
 
+// ── Combined cost estimate (debounced + cached) ──
+// Trigger: tab change / model change / ai_opt toggle / chapter selection change.
+// no re-estimate on voice change (cost is per-model, not per-voice)
+let estimateDebounceTimer=null;
+const _estimateCache={key:null,value:null};
+function getEstimateCacheKey(){
+  const tab=wizardState.audioTab||'standard';
+  const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
+  const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
+  const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
+  return tab+'|'+model+'|'+aiOpt+'|'+chapters;
+}
+function requestCombinedEstimate(){
+  if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
+  estimateDebounceTimer=setTimeout(_doCombinedEstimate,300);
+}
+async function _doCombinedEstimate(){
+  if(!jobId){renderEstimate(null);return;}
+  const key=getEstimateCacheKey();
+  if(_estimateCache.key===key&&_estimateCache.value){renderEstimate(_estimateCache.value);return;}
+  const voiceId=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  const selected=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+  if(!selected||selected.length===0){renderEstimate(null);return;}
+  const payload={
+    job_id:jobId,
+    voice_id:voiceId||'',
+    selected_chapters:selected,
+    ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,
+  };
+  try{
+    const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok)throw new Error('estimate failed');
+    const data=await r.json();
+    _estimateCache.key=key;
+    _estimateCache.value=data;
+    renderEstimate(data);
+  }catch(e){
+    console.warn('combined_estimate error:',e);
+    renderEstimate(null);
+  }
+}
+function renderEstimate(data){
+  const valueEl=document.getElementById('costPreviewValue');
+  const detailEl=document.getElementById('costPreviewDetail');
+  const costAmount=document.getElementById('costAmount');
+  if(!data){
+    if(valueEl)valueEl.textContent='—';
+    if(detailEl)detailEl.textContent='';
+    return;
+  }
+  if(valueEl){
+    if(data.is_free){valueEl.textContent=(window.t&&t('cost_free'))||'Gratis';}
+    else{valueEl.textContent='€'+Number(data.total_eur).toFixed(2);}
+  }
+  if(detailEl){
+    if(data.is_free){
+      const threshold=Number(data.threshold_eur||0).toFixed(2);
+      detailEl.textContent='≤ €'+threshold+' '+((window.t&&t('cost_under_threshold'))||'sotto soglia');
+    }else{
+      const parts=[];
+      if(data.gemini_eur>0)parts.push('Voci PREMIUM €'+Number(data.gemini_eur).toFixed(2));
+      if(data.llm_eur>0)parts.push('Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
+      detailEl.textContent=parts.join(' + ');
+    }
+  }
+  if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
+}
+
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
 let _prevLoading=false, _previewGenerated=false;
 
@@ -1094,6 +1164,7 @@ function updateSelection(){
     toggleAIOptimization();
   }
   _updateAiOptUI();
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
 
 function _getAllCheckboxes(){let cbs=document.querySelectorAll('#chl .col-sel input[type=checkbox]');if(!cbs.length)cbs=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');return cbs}
