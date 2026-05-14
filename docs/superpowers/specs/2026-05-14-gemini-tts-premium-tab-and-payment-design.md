@@ -182,7 +182,7 @@ generation_engine.run_generation:
 
 audiobook_app startup:
    _recover_orphaned_voucher_charges()  # esteso per gemini
-   ├── scan _paid_opt_done.json (LLM, esistente) + _paid_gemini_done.json (Gemini, nuovo)
+   ├── scan _paid_jobs_done.json (unificato llm+gemini, con migration da _paid_opt_done.json)
    ├── voucher transactions ultime 2h senza done record
    └── refund automatico + audit_log(outcome="recovered_refunded")
 ```
@@ -349,7 +349,7 @@ Calcola, per ogni (modello, lingua), il delta medio storico e propone aggiustame
 | `gemini_tts.py` | Modify | Param `style_instruction` in `synthesize()` |
 | `generation_engine.py` | Modify | Accumulo `gemini_actual`, refund triggers, scrittura audit, passaggio style |
 | `payment.py` | Modify | Campo `purpose` voucher, estensione recovery |
-| `audiobook_app.py` | Modify | Nuovi endpoint, modifica `/api/generate`, admin tab `/logs`, nuovo file `_paid_gemini_done.json` paritetico a `_paid_opt_done.json` (no migration) |
+| `audiobook_app.py` | Modify | Nuovi endpoint, modifica `/api/generate`, admin tab `/logs`, unificazione `_paid_opt_done.json` → `_paid_jobs_done.json` con migration one-shot allo startup |
 | `gemini_cost_audit.py` | **NEW** | Writer/reader/aggregator dell'audit log |
 | `test/test_gemini_premium_tab.py` | **NEW** | Test integrazione UI flow |
 | `test/test_gemini_cost_audit.py` | **NEW** | Test audit log + aggregator |
@@ -362,11 +362,11 @@ Calcola, per ogni (modello, lingua), il delta medio storico e propone aggiustame
 **Fase C — Modal pagamento + voucher**: markup modal, estensione voucher_validate, flow voucher.
 **Fase D — PayPal**: endpoint create_order_gemini, SDK riattivato nel modal.
 **Fase E — Generation engine**: style_instruction al primo chunk, accumulo gemini_actual.
-**Fase F — Audit log + refund**: modulo `gemini_cost_audit`, scrittura record, refund automatico, nuovo file `_paid_gemini_done.json` con recovery startup paritetico al flusso LLM esistente (no migration su `_paid_opt_done.json`).
+**Fase F — Audit log + refund**: modulo `gemini_cost_audit`, scrittura record, refund automatico, unificazione `_paid_opt_done.json` → `_paid_jobs_done.json` con migration one-shot allo startup, recovery startup esteso per coprire entrambi i purpose (`llm`, `gemini`).
 **Fase G — Admin UI**: endpoint audit, tab in `/logs`, "parametri suggeriti".
-**Fase H — Cleanup**: docs, i18n audit 7 lingue, smoke test end-to-end.
+**Fase H — Cleanup + test estesi**: docs, i18n audit 7 lingue, smoke test end-to-end, **test stress concorrenza voucher / migration / refund idempotency** (vedi sez. 7.2 per il dettaglio dei test obbligatori).
 
-Stima: 25 task TDD totali, 8 fasi committabili autonomamente.
+Stima: 25 task TDD totali, 8 fasi committabili autonomamente. La Fase H è ampliata rispetto al baseline del progetto per la natura money-critical dell'intervento.
 
 ## 7. Rischi e mitigazioni
 
@@ -378,6 +378,59 @@ Stima: 25 task TDD totali, 8 fasi committabili autonomamente.
 | Istruzione di stile fa drift della lingua / risultato strano | Avviso UI: "Le istruzioni di stile possono influenzare la qualità della lettura. Testa con la preview prima di procedere." |
 | Voucher esaurito a metà generazione (su batch lunghi) | Pagamento è upfront full-amount, non consumo a chunk; nessun esaurimento in corsa |
 | Admin dimentica di aggiornare parametri → margine si erode silenzioso | Alert nel tab admin: "Delta medio del mese > 10% per modello X — considera aggiornare i parametri" |
+| Migration `_paid_opt_done.json` → `_paid_jobs_done.json` perde record | Backup obbligatorio (`.pre_unify_bak`) + scrittura atomic + abort startup su errore. Procedura idempotente. Dettagli in sez. 7.1 |
+| Race condition su scritture concorrenti `_paid_jobs_done.json` | Lock dedicato (`_paid_jobs_lock`) come già fatto per `_payments.json` / `_vouchers.json`. Coperto da test stress (sez. 7.2) |
+
+## 7.1 Strategia di migration `_paid_opt_done.json` → `_paid_jobs_done.json`
+
+Il file unificato è preferito per coerenza architetturale (un solo file da ispezionare per la recovery, un solo schema). La migration runtime è considerata accettabile dato che in produzione attualmente esiste solo il flusso voucher per LLM, quindi il dataset legacy è limitato.
+
+**Algoritmo migration one-shot, eseguito allo startup dopo `_load_payments` / `_load_vouchers`:**
+
+1. Se esiste `_paid_jobs_done.json` → migration già avvenuta, skip.
+2. Se esiste `_paid_opt_done.json`:
+   a. Backup: copia atomic in `_paid_opt_done.json.pre_unify_bak`
+   b. Lettura record legacy → per ciascuno aggiungi campo `purpose: "llm"` se assente
+   c. Scrittura atomic (tmp + rename) in `_paid_jobs_done.json`
+   d. Mantieni `_paid_opt_done.json` sul disco (NON cancellare) per audit ex-post; il file diventa read-only di fatto.
+3. Se non esiste nessun file → crea `_paid_jobs_done.json` vuoto.
+
+**Rollback safety:** se uno step fallisce, lo startup deve abortire con errore esplicito e log critico. Niente fallback silenzioso che potrebbe perdere record di pagamento.
+
+**Idempotenza:** la procedura deve essere safe-to-rerun (re-startup non duplica record, non altera `_paid_jobs_done.json` esistente).
+
+## 7.2 Requisiti di test (sistema money-critical)
+
+Dato che il flusso tocca pagamenti reali, il test coverage richiesto è più severo del baseline del progetto. La fase H del piano implementativo deve includere:
+
+**Unit test obbligatori:**
+- Migration `_paid_opt_done.json` → `_paid_jobs_done.json`: con file presente / assente / corrotto / parzialmente migrato (re-run)
+- `_voucher_consume(token, amount, purpose)` su tutti i path: voucher valido, esaurito, scaduto, revocato, importo > saldo
+- `_voucher_refund(token, amount)` su tutti i path: success, refund su voucher già consumato totalmente, refund che porta `remaining_eur` oltre `amount_eur` originale (deve essere idempotente / clamp)
+- `compute_user_price_eur` con google_cost = 0, google_cost ≈ threshold, google_cost >> threshold (verifica boundary free/paid)
+- `combined_estimate` con tutte le combinazioni: gemini only / llm only / both / neither / sotto soglia / sopra soglia
+- Audit log: append concorrente da thread multipli (job paralleli), rotazione mese, lettura aggregata con filtri
+- Recovery startup: voucher addebitato senza job in `_paid_jobs_done.json` né in `jobs` → refund automatico
+
+**Integration test obbligatori (smoke E2E):**
+- Free path Gemini (totale ≤ 0.50€): no modal, generazione parte
+- Paid voucher path: validate → consume → generate → completed → audit log scritto
+- Paid PayPal path: create_order → capture → generate → completed → audit log scritto
+- Refund su errore synth: voucher consumed → exception → voucher remaining_eur ripristinato → audit log `failed_refunded`
+- Refund su cancel utente: voucher remaining_eur ripristinato → audit log `cancelled_refunded`
+- Recovery dopo simulated crash: voucher consumed, jobs dict azzerato, restart → refund + audit log `recovered_refunded`
+- Modifica selezione capitoli dopo apertura modal: token invalidato, ri-validazione richiesta
+- Doppio click "Avvia generazione" rapido: il consumo voucher deve essere idempotente (no doppio addebito)
+
+**Test manuali pre-release:**
+- Flusso completo con voucher reale generato da CLI admin
+- Flusso completo con PayPal sandbox (sandbox.paypal.com)
+- Audit log inspection dopo 3-5 generazioni, verifica delta % medio < 15%
+- Stress: 5 generazioni concorrenti con voci/modelli diversi, verifica nessun race condition su `_paid_jobs_done.json`
+
+**Audit dei log activity:**
+- Verifica che ogni transazione voucher generi log `VOUCHER_CONSUME` con purpose, amount, job_id
+- Verifica che ogni refund generi log `VOUCHER_REFUND` con motivo (failed/cancelled/recovered)
 
 ## 8. Out-of-scope esplicito
 
