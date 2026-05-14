@@ -4848,6 +4848,71 @@ def api_gemini_estimate():
     })
 
 
+@app.route("/api/combined_estimate", methods=["POST"])
+def api_combined_estimate():
+    """Stima combinata Voci PREMIUM + ottimizzazione testo AI."""
+    import gemini_tts as _gemini_tts_mod
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id", "")
+    voice_id = data.get("voice_id", "")
+    selected = data.get("selected_chapters") or []
+    ai_opt = bool(data.get("ai_opt_enabled", False))
+
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters"}), 400
+
+    lang = getattr(info, "language", "it") or "it"
+
+    gemini_eur = 0.0
+    gemini_breakdown = {}
+    if voice_id.startswith("gemini:"):
+        try:
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        gemini_eur = round(est["user_price_eur"], 2)
+        gemini_breakdown = {
+            "chars": est["chars_total"],
+            "audio_minutes": round(est["estimated_audio_minutes"], 1),
+            "google_cost_eur": est["google_cost_eur"],
+            "model_label": est["model_label"],
+        }
+
+    llm_eur = 0.0
+    llm_breakdown = {}
+    if ai_opt:
+        chars = sum(len(getattr(c, "text", "") or "") for c in chs)
+        rate = float(os.environ.get("LLM_PRICE_EUR_PER_MCHAR", "1.10"))
+        llm_eur = round((chars / 1_000_000.0) * rate, 2)
+        llm_breakdown = {"chars": chars, "rate_eur_per_mchar": rate}
+
+    total = round(gemini_eur + llm_eur, 2)
+    threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+
+    return jsonify({
+        "gemini_eur": gemini_eur,
+        "llm_eur": llm_eur,
+        "total_eur": total,
+        "is_free": total <= threshold,
+        "threshold_eur": threshold,
+        "gemini_breakdown": gemini_breakdown,
+        "llm_breakdown": llm_breakdown,
+    })
+
+
 @app.route("/api/optimize", methods=["POST"])
 def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
