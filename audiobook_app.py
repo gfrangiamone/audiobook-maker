@@ -393,6 +393,12 @@ def _refund_payment_on_orphan(job_id, job, reason):
                     email, amt, origin_order_id=tok, origin_job_id=job_id,
                     kind="refund", note=f"refund {reason} job {job_id}",
                 )
+            else:
+                print(
+                    f"[{job_id}] WARNING: orphan refund voucher not emitted — "
+                    f"PayPal order {tok} has no buyer email "
+                    f"(amount {amt:.2f} EUR, reason {reason})"
+                )
             # Free up the PayPal order to be re-spent (or leave used=True and let
             # the refund voucher carry the value forward; we choose refund voucher
             # to keep idempotency simple)
@@ -2805,16 +2811,17 @@ def admin_api_voucher_revoke(code):
         time.sleep(0.5)
         return jsonify({"error": "Unauthorized"}), 401
     code = (code or "").strip().upper()
-    if code not in payment._vouchers:
-        return jsonify({"error": "Not found"}), 404
-    v = payment._vouchers[code]
     reason = ((request.json or {}).get("reason") or "").strip()[:200]
-    v["used"] = True
-    v["used_at"] = time.time()
-    v["remaining_eur"] = 0.0
-    v["revoked"] = True
-    v["revoke_reason"] = reason or "admin revoke"
-    _save_vouchers()
+    with payment._vouchers_lock:
+        if code not in payment._vouchers:
+            return jsonify({"error": "Not found"}), 404
+        v = payment._vouchers[code]
+        v["used"] = True
+        v["used_at"] = time.time()
+        v["remaining_eur"] = 0.0
+        v["revoked"] = True
+        v["revoke_reason"] = reason or "admin revoke"
+        _save_vouchers()
     _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})

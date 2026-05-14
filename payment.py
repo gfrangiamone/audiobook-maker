@@ -445,9 +445,11 @@ def _is_paid_job_done(job_id: str) -> bool:
 def _recover_orphaned_voucher_charges(jobs):
     """Recovery all'avvio: cerca addebiti voucher recenti (ultime 2 ore) il cui
     job_id non e ne in memoria (``jobs``) ne tra quelli completati con successo
-    (``_paid_opt_done``). Questo copre il caso in cui il server e stato
-    riavviato/crashato durante un'ottimizzazione a pagamento: il voucher era gia
-    stato addebitato ma il job non e mai terminato.
+    (verificato via ``_is_paid_job_done`` sul nuovo store unificato
+    ``_paid_jobs_done``, che copre sia LLM sia Gemini TTS). Questo copre il
+    caso in cui il server e stato riavviato/crashato durante un'operazione a
+    pagamento: il voucher era gia stato addebitato ma il job non e mai
+    terminato.
     Ri-accredita automaticamente l'importo sul voucher.
     """
     cutoff = time.time() - 2 * 3600  # ultime 2 ore

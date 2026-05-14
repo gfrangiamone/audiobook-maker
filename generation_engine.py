@@ -995,6 +995,12 @@ def _refund_gemini_payment(job_id, job, reason):
                     email, amt, origin_order_id=tok, origin_job_id=job_id,
                     kind="refund", note=f"refund {reason} job {job_id}",
                 )
+            else:
+                print(
+                    f"[{job_id}] WARNING: cannot emit refund voucher — "
+                    f"PayPal order {tok} has no buyer email "
+                    f"(amount {amt:.2f} EUR, reason {reason})"
+                )
     except Exception as _ref_err:
         print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
 
