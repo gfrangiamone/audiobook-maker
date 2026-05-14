@@ -4752,8 +4752,10 @@ def api_voucher_validate():
     code = (data.get("code") or "").strip().upper()
     email = (data.get("email") or "").strip().lower()
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    purpose = (data.get("purpose") or "any")
+    amount_required = float(data.get("amount_eur") or 0)
 
-    #  -  Rate limit check  - 
+    #  -  Rate limit check  -
     allowed, retry_after, reason = _voucher_rl_check(ip, email)
     if not allowed:
         _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
@@ -4762,31 +4764,41 @@ def api_voucher_validate():
         resp.headers["Retry-After"] = str(retry_after)
         return resp
 
-    #  -  Validation logic  - 
+    #  -  Validation logic  -
     outcome = "OK"
     status = 200
     body = None
     if not code or not email:
-        outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required"}
+        outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required", "valid": False, "reason": "missing_fields"}
     elif code not in payment._vouchers:
-        outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found"}
+        outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found", "valid": False, "reason": "not_found"}
     else:
         v = payment._vouchers[code]
         remaining = _voucher_remaining(v)
         if v.get("expires_at", 0) < time.time():
-            outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired"}
+            outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired", "valid": False, "reason": "expired"}
         elif v.get("email", "").lower() != email:
-            outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher"}
+            outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher", "valid": False, "reason": "email_mismatch"}
         elif remaining < 0.01:
-            outcome, status, body = "USED", 400, {"error": "Voucher fully used"}
+            outcome, status, body = "USED", 400, {"error": "Voucher fully used", "valid": False, "reason": "used"}
+        elif amount_required > 0 and remaining < amount_required:
+            outcome, status, body = "INSUFFICIENT", 400, {
+                "valid": False,
+                "reason": "insufficient",
+                "error": "Voucher balance insufficient",
+                "remaining_eur": remaining,
+                "required_eur": amount_required,
+            }
         else:
             # Saldo residuo: l'UI lo usa come "amount_eur" spendibile.
             body = {
+                "valid": True,
                 "payment_token": code,
                 "amount_eur": remaining,
                 "remaining_eur": remaining,
                 "original_amount_eur": round(float(v.get("amount_eur", 0) or 0), 2),
                 "expires_at": v.get("expires_at"),
+                "purpose_requested": purpose,
             }
 
     success = (outcome == "OK")
