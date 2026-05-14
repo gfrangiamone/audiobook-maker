@@ -862,3 +862,16 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .fbw-stars-row{gap:6px}
   .fbw-star{font-size:1.4rem}
 }
+/* ─── Tab-bar Panel 3 (Standard / Premium voices) ─── */
+.tab-bar { display:flex; gap:4px; border-bottom:2px solid var(--brd,#dcd6c8); }
+.tab-bar .tab { padding:8px 14px; background:transparent; border:0; border-bottom:2px solid transparent;
+                 margin-bottom:-2px; cursor:pointer; font-weight:500; color:var(--txm,#9e9890); }
+.tab-bar .tab.active { color:var(--accent,#a07d3a); border-bottom-color:var(--accent,#a07d3a); }
+.tab-panel { padding-top:16px; }
+.tab-panel[hidden] { display:none; }
+.cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
+.cost-preview-box .cost-label { font-size:12px; color:var(--txm,#9e9890); text-transform:uppercase; }
+.cost-preview-box .cost-value { font-size:22px; font-weight:600; color:var(--accent,#a07d3a); }
+.cost-preview-box .cost-detail { font-size:12px; color:var(--txm,#9e9890); margin-top:4px; }
+.char-counter { font-size:11px; color:var(--txm,#9e9890); text-align:right; margin-top:2px; }
+.model-rate-hint { font-size:11px; color:var(--txm,#9e9890); margin-top:4px; }

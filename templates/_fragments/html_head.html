@@ -282,65 +282,111 @@ __REVIEWS_LD__
 
       <div id="voiceMismatch" class="al al-w" style="display:none"></div>
 
-      <div class="form-row">
-        <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
-        <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
+      <div class="tab-bar" role="tablist" style="margin-bottom:12px">
+        <button type="button" class="tab active" data-tab="standard" role="tab"
+                aria-selected="true" data-t="tab_voices_standard">Voci Standard (gratis)</button>
+        <button type="button" class="tab" data-tab="premium" role="tab"
+                aria-selected="false" data-t="tab_voices_premium">★ Voci PREMIUM</button>
       </div>
 
-      <div class="form-row">
-        <div class="form-group speed-slider-group" style="flex:1 1 100%">
-          <div class="speed-label-row">
-            <label data-t="lbl_speed"></label>
-            <span class="speed-value" id="speedLabel" data-t="sp_n"></span>
-          </div>
-          <div class="speed-slider-wrap">
-            <span class="speed-emoji">🐢</span>
-            <input type="range" id="speedSlider" min="-3" max="3" step="1" value="0" aria-label="Velocità narrazione">
-            <span class="speed-emoji">🐇</span>
-          </div>
-          <div class="speed-labels">
-            <span>-30%</span><span>-20%</span><span>-10%</span><span>0%</span><span>+10%</span><span>+20%</span><span>+30%</span>
-          </div>
-          <select id="vr" style="display:none" aria-hidden="true">
-            <option value="-30%" data-t="sp_vs"></option>
-            <option value="-20%" data-t="sp_s"></option>
-            <option value="-10%" data-t="sp_ss"></option>
-            <option value="+0%" selected data-t="sp_n"></option>
-            <option value="+10%" data-t="sp_sf"></option>
-            <option value="+20%" data-t="sp_f"></option>
-            <option value="+30%" data-t="sp_vf"></option>
-          </select>
+      <div class="tab-panel active" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
+        <div class="form-row">
+          <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
+          <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
         </div>
-      </div>
 
-      <div class="form-row">
-        <div class="form-group" id="fgOut" style="flex:1 1 100%"><label data-t="lbl_out"></label>
-          <select id="vOut" onchange="onOutputChange()">
-            <option value="m4b" data-t="out_m4b" selected></option>
-            <option value="zip" data-t="out_zip"></option>
-            <option value="zip_rss" data-t="out_zip_rss"></option>
-            <option value="mp3" data-t="out_mp3"></option>
-          </select>
-          <div id="podcastUrlGroup" style="display:none;margin-top:8px">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-              <input type="url" id="podcastUrlInput" placeholder="https://example.com/podcast/" style="flex:1;padding:8px 10px;border:1px solid var(--brd);border-radius:6px;font-size:.85rem;background:var(--srf);color:var(--tx);box-sizing:border-box">
+        <div class="form-row">
+          <div class="form-group speed-slider-group" style="flex:1 1 100%">
+            <div class="speed-label-row">
+              <label data-t="lbl_speed"></label>
+              <span class="speed-value" id="speedLabel" data-t="sp_n"></span>
             </div>
-            <div class="pod-hint" id="podHint">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
-          </div>
+            <div class="speed-slider-wrap">
+              <span class="speed-emoji">🐢</span>
+              <input type="range" id="speedSlider" min="-3" max="3" step="1" value="0" aria-label="Velocità narrazione">
+              <span class="speed-emoji">🐇</span>
+            </div>
+            <div class="speed-labels">
+              <span>-30%</span><span>-20%</span><span>-10%</span><span>0%</span><span>+10%</span><span>+20%</span><span>+30%</span>
+            </div>
+            <select id="vr" style="display:none" aria-hidden="true">
+              <option value="-30%" data-t="sp_vs"></option>
+              <option value="-20%" data-t="sp_s"></option>
+              <option value="-10%" data-t="sp_ss"></option>
+              <option value="+0%" selected data-t="sp_n"></option>
+              <option value="+10%" data-t="sp_sf"></option>
+              <option value="+20%" data-t="sp_f"></option>
+              <option value="+30%" data-t="sp_vf"></option>
+            </select>
           </div>
         </div>
 
-      <div class="preview-section" id="previewSection">
-        <div class="preview-header">
-          <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>
-          <button class="btn btn-outline btn-sm" id="btnPrev" onclick="previewRead()" disabled>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-            <span id="prevTxt" data-t="btn_gen_preview"></span>
-          </button>
+        <div class="form-row">
+          <div class="form-group" id="fgOut" style="flex:1 1 100%"><label data-t="lbl_out"></label>
+            <select id="vOut" onchange="onOutputChange()">
+              <option value="m4b" data-t="out_m4b" selected></option>
+              <option value="zip" data-t="out_zip"></option>
+              <option value="zip_rss" data-t="out_zip_rss"></option>
+              <option value="mp3" data-t="out_mp3"></option>
+            </select>
+            <div id="podcastUrlGroup" style="display:none;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                <input type="url" id="podcastUrlInput" placeholder="https://example.com/podcast/" style="flex:1;padding:8px 10px;border:1px solid var(--brd);border-radius:6px;font-size:.85rem;background:var(--srf);color:var(--tx);box-sizing:border-box">
+              </div>
+              <div class="pod-hint" id="podHint">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
+            </div>
+          </div>
         </div>
-        <div class="preview-audio-wrap" id="previewAudioWrap">
-          <audio id="previewAudioWiz" controls></audio>
+
+        <div class="preview-section" id="previewSection">
+          <div class="preview-header">
+            <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>
+            <button class="btn btn-outline btn-sm" id="btnPrev" onclick="previewRead()" disabled>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+              <span id="prevTxt" data-t="btn_gen_preview"></span>
+            </button>
+          </div>
+          <div class="preview-audio-wrap" id="previewAudioWrap">
+            <audio id="previewAudioWiz" controls></audio>
+          </div>
         </div>
+      </div>
+
+      <div class="tab-panel" id="tabPremium" role="tabpanel" hidden aria-labelledby="tabPremiumBtn">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="vlPremium" data-t="lbl_lang">Lingua</label>
+            <select id="vlPremium"></select>
+          </div>
+          <div class="form-group">
+            <label for="vmPremium" data-t="lbl_model">Modello</label>
+            <select id="vmPremium">
+              <option value="flash25">Gemini 2.5 Flash TTS</option>
+              <option value="flash31">Gemini 3.1 Flash TTS</option>
+            </select>
+            <div class="model-rate-hint" id="modelRateHint"></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="vvPremium" data-t="lbl_voice">Voce</label>
+            <select id="vvPremium"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="geminiStyle" data-t="lbl_style_instruction">Istruzioni di stile (opzionale)</label>
+            <textarea id="geminiStyle" maxlength="300" rows="2"
+                      placeholder="es. tono calmo, ritmo narrativo lento"></textarea>
+            <div class="char-counter"><span id="styleCounter">0</span>/300</div>
+          </div>
+        </div>
+        <div class="cost-preview-box" id="costPreviewBox">
+          <div class="cost-label" data-t="cost_estimate_label">Stima costo audiolibro</div>
+          <div class="cost-value" id="costPreviewValue">—</div>
+          <div class="cost-detail" id="costPreviewDetail"></div>
+        </div>
+        <!-- Slider velocità, formato e preview vengono riutilizzati dal tab Standard via JS (Task A4) -->
       </div>
 
 
