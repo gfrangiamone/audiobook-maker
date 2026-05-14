@@ -375,6 +375,22 @@ document.addEventListener('DOMContentLoaded',()=>{
   const chAll=document.getElementById('chAll');if(chAll)chAll.onchange=chMasterToggle;
   // AI toggle init
   _initAiOptToggle();
+  // Tab bar (Standard / Premium) + Premium controls
+  document.querySelectorAll('.tab-bar .tab').forEach(btn=>{
+    btn.addEventListener('click',()=>switchAudioTab(btn.dataset.tab));
+  });
+  const vlPrem=document.getElementById('vlPremium');
+  if(vlPrem)vlPrem.addEventListener('change',updVoicesPremium);
+  const vmPrem=document.getElementById('vmPremium');
+  if(vmPrem)vmPrem.addEventListener('change',()=>{
+    updVoicesPremium();
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  });
+  const gStyle=document.getElementById('geminiStyle');
+  if(gStyle)gStyle.addEventListener('input',(e)=>{
+    const counter=document.getElementById('styleCounter');
+    if(counter)counter.textContent=e.target.value.length;
+  });
   // Initialize wizard
   updateWizardSteps(1);
 });
@@ -673,9 +689,16 @@ function updVoices(){
   if(!voices[lc])return;
   const lang=voices[lc];
   // Separa voci per engine, edge prima poi google
-  const edgeVoices=lang.voices.filter(v=>(v.engine||'edge')==='edge');
+  // SKIP gemini in Standard tab — voci premium gestite da updVoicesPremium()
+  const edgeVoices=lang.voices.filter(v=>{
+    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
+    return (v.engine||'edge')==='edge';
+  });
   // Mostra le voci Google solo se il budget mensile copre il libro corrente
-  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>v.engine==='google'):[];
+  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>{
+    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
+    return v.engine==='google';
+  }):[];
   let lg='';
   // Voci Microsoft Edge
   for(const v of edgeVoices){
@@ -699,23 +722,8 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  // Voci Gemini TTS (se presenti)
-  const geminiVoices=lang.voices.filter(v=>v.engine==='gemini');
-  if(geminiVoices.length>0){
-    lg='';
-    for(const v of geminiVoices){
-      if(lg!=='gemini-grp'){
-        const g=document.createElement('optgroup');
-        g.label='★ Gemini TTS';
-        sel.appendChild(g);lg='gemini-grp';
-      }
-      const o=document.createElement('option');o.value=v.id;
-      o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
-      o.classList.add('gemini-voice');
-      sel.lastElementChild.appendChild(o);
-    }
-  }
-  const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+  // Voci Gemini TTS rimosse dal tab Standard (vedi tab Premium)
+  const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
   if(dv)sel.value=dv.id;
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();if(_previewGenerated)_resetPreviewState();};
   _updateVoiceChip();checkVoiceMismatch();
@@ -726,6 +734,75 @@ function updVoices(){
   if(ss)ss.value=0;
   var sl=document.getElementById('speedLabel');
   if(sl)sl.textContent=t('sp_n');
+}
+
+// ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
+// wizardState centralizza lo stato del wizard. audioTab: 'standard' | 'premium'.
+const wizardState = { audioTab: 'standard' };
+
+function updVoicesPremium(){
+  const vlEl=document.getElementById('vlPremium');
+  const vmEl=document.getElementById('vmPremium');
+  const sel=document.getElementById('vvPremium');
+  if(!sel)return;
+  const lang=(vlEl&&vlEl.value)||'it';
+  const modelKey=(vmEl&&vmEl.value)||'flash25';
+  sel.innerHTML='';
+  // Costruisce la lista voci Premium da voices[lang].voices filtrando per engine=gemini
+  // e per modelKey (encoded nell'id come "gemini:<modelKey>:<voiceName>").
+  const langData=voices[lang];
+  const all=langData&&Array.isArray(langData.voices)?langData.voices:[];
+  const prefix='gemini:'+modelKey+':';
+  all.forEach(v=>{
+    if(!v||!v.id)return;
+    if(!v.id.startsWith(prefix))return;
+    if(v.lang&&v.lang!==lang&&v.lang!=='multi')return;
+    const opt=document.createElement('option');
+    opt.value=v.id;
+    opt.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.label||v.id.split(':').pop());
+    sel.appendChild(opt);
+  });
+  updateModelRateHint();
+}
+
+function updateModelRateHint(){
+  const vmEl=document.getElementById('vmPremium');
+  const hint=document.getElementById('modelRateHint');
+  if(!hint||!vmEl)return;
+  const modelKey=vmEl.value;
+  const labels={flash25:'~€0.0027/sec audio (stima)', flash31:'~€0.0054/sec audio (stima)'};
+  hint.textContent=labels[modelKey]||'';
+}
+
+function switchAudioTab(tab){
+  wizardState.audioTab=tab;
+  document.querySelectorAll('.tab-bar .tab').forEach(t=>{
+    const active=t.dataset.tab===tab;
+    t.classList.toggle('active',active);
+    t.setAttribute('aria-selected',active?'true':'false');
+  });
+  const tStd=document.getElementById('tabStandard');
+  const tPrm=document.getElementById('tabPremium');
+  if(tStd)tStd.hidden=(tab!=='standard');
+  if(tPrm)tPrm.hidden=(tab!=='premium');
+  // Mutua esclusione: azzera la voce selezionata nell'altro tab
+  if(tab==='premium'){
+    const vv=document.getElementById('vv');if(vv)vv.value='';
+    updVoicesPremium();
+  }else{
+    const vvP=document.getElementById('vvPremium');if(vvP)vvP.value='';
+  }
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+}
+
+// Helper: ritorna l'id della voce attualmente attiva, in base al tab selezionato.
+function getCurrentVoiceId(){
+  if(wizardState.audioTab==='premium'){
+    const el=document.getElementById('vvPremium');
+    return el?el.value:'';
+  }
+  const el=document.getElementById('vv');
+  return el?el.value:'';
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
@@ -1360,7 +1437,7 @@ async function startCombinedGeneration(){
       if(selectedChapters)payload.selected_chapters=selectedChapters;
       // Always use auto_generate in wizard flow
       payload.auto_generate=true;
-      payload.voice=document.getElementById('vv').value;
+      payload.voice=getCurrentVoiceId();
       payload.rate=document.getElementById('vr').value;
       payload.single_file=singleFile;
       payload.output_format=outputFormat;
@@ -1382,7 +1459,7 @@ async function startCombinedGeneration(){
     _setCancelButtonMode('gen');
     lockUI();
     try{
-      var genPayload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
@@ -1692,7 +1769,7 @@ async function startGen(){
   _setCancelButtonMode('gen');
   lockUI();
   try{
-    const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
