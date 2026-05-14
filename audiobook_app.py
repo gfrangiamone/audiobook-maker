@@ -2820,6 +2820,202 @@ def admin_api_voucher_revoke(code):
     return jsonify({"ok": True, "code": code})
 
 
+@app.route("/admin/logs", methods=["GET"])
+def admin_logs_page():
+    """Admin logs/audit dashboard. Currently hosts the Gemini Cost Audit tab."""
+    if not ADMIN_TOKEN:
+        return ("Admin logs UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return _render_admin_gate("Logs Admin", "/admin/logs"), 200, {"Content-Type": "text/html; charset=utf-8"}
+    html = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - Logs &amp; Audit</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
+  .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
+  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
+  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+  button.secondary{background:#334155}
+  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:12px}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:6px 8px;border-bottom:1px solid #1e293b}
+  .agg-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}
+  @media(max-width:900px){.agg-grid{grid-template-columns:1fr 1fr}}
+  .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
+  .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
+  .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
+  .delta-positive{color:var(--ok)}
+  .delta-negative{color:var(--err)}
+  .empty-msg{text-align:center;color:var(--muted);padding:20px}
+  pre{background:#0f172a;padding:12px;border-radius:6px;overflow:auto;font-size:.8rem}
+</style></head>
+<body>
+<h1>Admin - Logs &amp; Audit</h1>
+
+<div class="tab-bar">
+  <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
+</div>
+
+<div class="tab-panel active" id="tab_gemini_audit">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="auditModelFilter">Modello</label>
+        <select id="auditModelFilter">
+          <option value="all">Tutti</option>
+          <option value="flash25">Gemini 2.5 Flash TTS</option>
+          <option value="flash31">Gemini 3.1 Flash TTS</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditLangFilter">Lingua</label>
+        <select id="auditLangFilter">
+          <option value="all">Tutte</option>
+          <option value="it">it</option><option value="en">en</option>
+          <option value="fr">fr</option><option value="es">es</option>
+          <option value="de">de</option><option value="zh">zh</option>
+          <option value="hi">hi</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditOutcomeFilter">Esito</label>
+        <select id="auditOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditDateFrom">Dal</label>
+        <input type="date" id="auditDateFrom">
+      </div>
+      <div>
+        <label for="auditDateTo">Al</label>
+        <input type="date" id="auditDateTo">
+      </div>
+    </div>
+    <button type="button" id="auditRefreshBtn">Aggiorna</button>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid" id="auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo Google</div><div class="agg-value" id="aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label">Delta % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
+        <th>Char</th><th>Sec audio</th><th>Costo G.</th>
+        <th>Prezzo &euro;</th><th>&Delta; &euro;</th><th>&Delta; %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="auditRecordsBody">
+        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ADMIN_TOKEN = """ + '"' + token + '"' + r""";
+  const $ = (id) => document.getElementById(id);
+
+  function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  function fmtPct(n){
+    const v = Number(n)||0;
+    const cls = v >= 0 ? "delta-positive" : "delta-negative";
+    return `<span class="${cls}">${v.toFixed(2)}%</span>`;
+  }
+
+  async function fetchAudit(){
+    const params = new URLSearchParams();
+    const m = $("auditModelFilter").value;
+    const l = $("auditLangFilter").value;
+    const o = $("auditOutcomeFilter").value;
+    const df = $("auditDateFrom").value;
+    const dt = $("auditDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (l && l !== "all") params.set("language", l);
+    if (o && o !== "all") params.set("outcome", o);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "200");
+    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
+    const d = await r.json();
+    renderAggregates(d.aggregates || {});
+    renderRecords(d.records || []);
+  }
+
+  function renderAggregates(agg){
+    $("aggCount").textContent = agg.count ?? 0;
+    $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("aggMargin").textContent = fmtEur(agg.margin_eur);
+    $("aggDelta").innerHTML = fmtPct(agg.delta_pct_avg);
+  }
+
+  function renderRecords(recs){
+    const tbody = $("auditRecordsBody");
+    if (!recs.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = recs.map(r => {
+      const ts = (r.ts || "").slice(0, 19).replace("T", " ");
+      const dPct = Number(r.delta_pct || 0);
+      const dCls = dPct >= 0 ? "delta-positive" : "delta-negative";
+      return `<tr>
+        <td>${ts}</td>
+        <td><code>${r.job_id || ""}</code></td>
+        <td>${r.model_key || ""}</td>
+        <td>${r.language || ""}</td>
+        <td>${(r.chars_total || 0).toLocaleString()}</td>
+        <td>${(r.audio_seconds_actual || 0).toFixed(1)}</td>
+        <td>${fmtEur(r.google_cost_eur_actual)}</td>
+        <td>${fmtEur(r.user_price_eur_charged)}</td>
+        <td>${(r.delta_eur || 0).toFixed(4)}</td>
+        <td class="${dCls}">${dPct.toFixed(2)}%</td>
+        <td>${r.outcome || ""}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("auditRefreshBtn").addEventListener("click", fetchAudit);
+  // Auto-load on page open
+  fetchAudit();
+})();
+</script>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/admin/api/gemini_cost_audit", methods=["GET"])
 def admin_api_gemini_cost_audit():
     """List Gemini TTS audit records with filters + aggregates. Admin-only."""
