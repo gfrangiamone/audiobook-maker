@@ -19,6 +19,8 @@ def test_admin_logs_page_exists_and_requires_auth(client):
         body = r.get_data(as_text=True)
         # Must contain admin gate form when unauthorized
         assert "X-Admin-Token" in body or "password" in body.lower() or "admin" in body.lower()
+        # CRITICAL: real admin token must NOT leak into unauthenticated response
+        assert "test-admin-token" not in body
 
 
 def test_admin_logs_page_renders_with_token(client):
@@ -34,6 +36,8 @@ def test_admin_logs_page_renders_with_token(client):
     assert 'id="auditAggregates"' in body
     # Records table
     assert 'id="auditRecordsBody"' in body
+    # Spec requires auto-fetch on page load
+    assert "fetchAudit()" in body
 
 
 def test_admin_logs_page_disabled_without_admin_token(client, monkeypatch):

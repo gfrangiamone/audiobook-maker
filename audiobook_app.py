@@ -2981,6 +2981,12 @@ def admin_logs_page():
     $("aggDelta").innerHTML = fmtPct(agg.delta_pct_avg);
   }
 
+  function esc(s){
+    const d = document.createElement('div');
+    d.textContent = (s == null ? "" : String(s));
+    return d.innerHTML;
+  }
+
   function renderRecords(recs){
     const tbody = $("auditRecordsBody");
     if (!recs.length) {
@@ -2988,21 +2994,21 @@ def admin_logs_page():
       return;
     }
     tbody.innerHTML = recs.map(r => {
-      const ts = (r.ts || "").slice(0, 19).replace("T", " ");
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
       const dPct = Number(r.delta_pct || 0);
       const dCls = dPct >= 0 ? "delta-positive" : "delta-negative";
       return `<tr>
         <td>${ts}</td>
-        <td><code>${r.job_id || ""}</code></td>
-        <td>${r.model_key || ""}</td>
-        <td>${r.language || ""}</td>
-        <td>${(r.chars_total || 0).toLocaleString()}</td>
-        <td>${(r.audio_seconds_actual || 0).toFixed(1)}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(r.model_key)}</td>
+        <td>${esc(r.language)}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
         <td>${fmtEur(r.google_cost_eur_actual)}</td>
         <td>${fmtEur(r.user_price_eur_charged)}</td>
-        <td>${(r.delta_eur || 0).toFixed(4)}</td>
+        <td>${(Number(r.delta_eur) || 0).toFixed(4)}</td>
         <td class="${dCls}">${dPct.toFixed(2)}%</td>
-        <td>${r.outcome || ""}</td>
+        <td>${esc(r.outcome)}</td>
       </tr>`;
     }).join("");
   }
