@@ -6842,7 +6842,8 @@ def _cleanup_loop():
 _load_tokens()
 _load_payments()
 _load_vouchers()
-_load_paid_opt_done()
+payment._migrate_paid_opt_to_paid_jobs()
+payment._load_paid_jobs_done()
 payment._recover_orphaned_voucher_charges(jobs)
 
 # Configura il motore di generazione (spostato in generation_engine.py)

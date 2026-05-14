@@ -7,19 +7,23 @@ import payment
 def test_consume_voucher_token_marks_paid_done(monkeypatch, tmp_path):
     monkeypatch.setattr(payment, "_DATA_DIR", tmp_path)
     monkeypatch.setattr(payment, "_PAID_OPT_DONE_FILE", tmp_path / "_paid_opt_done.json")
+    monkeypatch.setattr(payment, "_PAID_JOBS_DONE_FILE", tmp_path / "_paid_jobs_done.json")
     monkeypatch.setattr(payment, "_paid_opt_done", set())
+    monkeypatch.setattr(payment, "_paid_jobs_done", [])
     code, _v = payment._create_voucher("u@x.it", 5.0, kind="test", note="t")
     method = payment.consume_payment_token(code, 1.0, "job-1", purpose="gemini")
     assert method == "voucher"
     # Remaining decreased
     assert payment._voucher_remaining(payment._vouchers[code]) == pytest.approx(4.5, abs=0.01)
     # Job marked as paid-done
-    assert "job-1" in payment._paid_opt_done
+    assert payment._is_paid_job_done("job-1") is True
 
 
 def test_consume_paypal_token_marks_used(monkeypatch, tmp_path):
     monkeypatch.setattr(payment, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(payment, "_PAID_JOBS_DONE_FILE", tmp_path / "_paid_jobs_done.json")
     monkeypatch.setattr(payment, "_paid_opt_done", set())
+    monkeypatch.setattr(payment, "_paid_jobs_done", [])
     payment._payments["ORDER123"] = {
         "order_id": "ORDER123", "amount_eur": 1.50, "email": "x@y.it",
         "captured_at": time.time(), "used": False,
@@ -27,7 +31,7 @@ def test_consume_paypal_token_marks_used(monkeypatch, tmp_path):
     method = payment.consume_payment_token("ORDER123", 1.50, "job-2", purpose="gemini")
     assert method == "paypal"
     assert payment._payments["ORDER123"]["used"] is True
-    assert "job-2" in payment._paid_opt_done
+    assert payment._is_paid_job_done("job-2") is True
     # Cleanup
     del payment._payments["ORDER123"]
 

@@ -17,6 +17,7 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 
 import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -56,6 +57,7 @@ _DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
 _PAYMENTS_FILE = _DATA_DIR / "_payments.json"
 _VOUCHERS_FILE = _DATA_DIR / "_vouchers.json"
 _PAID_OPT_DONE_FILE = _DATA_DIR / "_paid_opt_done.json"
+_PAID_JOBS_DONE_FILE = _DATA_DIR / "_paid_jobs_done.json"
 
 # ---------------------------------------------------------------------------
 # Payment/voucher state
@@ -79,6 +81,11 @@ VOUCHER_EMAIL_LOCKOUT_SEC = 900  # 15 minuti
 
 # Tracking job pagati completati con successo (persistenza su disco)
 _paid_opt_done: set = set()
+
+# Unified paid jobs store (F4): list of {"job_id", "purpose", "ts"}
+# All paid jobs (LLM optimization + Gemini TTS) are tracked here.
+_paid_jobs_done: list = []
+_paid_jobs_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -359,9 +366,8 @@ def _load_paid_opt_done():
 
 
 def _mark_paid_opt_done(job_id: str):
-    """Segna un job come completato con successo (persistente su disco)."""
-    _paid_opt_done.add(job_id)
-    _save_paid_opt_done()
+    """DEPRECATED shim: routes legacy LLM opt completions to unified store."""
+    _mark_paid_job_done(job_id, purpose="llm")
 
 
 def _cleanup_paid_opt_done():
@@ -369,6 +375,66 @@ def _cleanup_paid_opt_done():
     if len(_paid_opt_done) > 1000:
         _paid_opt_done.clear()
         _save_paid_opt_done()
+
+
+# ---------------------------------------------------------------------------
+# F4: Unified paid jobs store with atomic migration
+# ---------------------------------------------------------------------------
+
+def _atomic_write_json(path, data):
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    tmp.replace(path)
+
+
+def _migrate_paid_opt_to_paid_jobs():
+    """One-shot startup migration: legacy _paid_opt_done.json -> _paid_jobs_done.json.
+    Atomic + idempotent. All legacy records are tagged purpose='llm'.
+    """
+    if _PAID_JOBS_DONE_FILE.exists():
+        return  # already migrated
+    if not _PAID_OPT_DONE_FILE.exists():
+        _atomic_write_json(_PAID_JOBS_DONE_FILE, [])
+        return
+    bak = _PAID_OPT_DONE_FILE.with_suffix(".json.pre_unify_bak")
+    if not bak.exists():
+        shutil.copy2(_PAID_OPT_DONE_FILE, bak)
+    try:
+        with open(_PAID_OPT_DONE_FILE, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except Exception as e:
+        raise RuntimeError(f"FATAL migration: cannot read legacy _paid_opt_done.json: {e}")
+    if not isinstance(legacy, list):
+        raise RuntimeError(f"FATAL migration: legacy data not a list: {type(legacy)}")
+    unified = [{"job_id": jid, "purpose": "llm", "ts": 0} for jid in legacy if jid]
+    _atomic_write_json(_PAID_JOBS_DONE_FILE, unified)
+    print(f"[startup] Migrated {len(unified)} record(s) to _paid_jobs_done.json")
+
+
+def _load_paid_jobs_done():
+    global _paid_jobs_done
+    if not _PAID_JOBS_DONE_FILE.exists():
+        _paid_jobs_done = []
+        return
+    try:
+        with open(_PAID_JOBS_DONE_FILE, "r", encoding="utf-8") as f:
+            _paid_jobs_done = json.load(f)
+        print(f"[startup] Loaded {len(_paid_jobs_done)} paid job completion record(s)")
+    except Exception as e:
+        print(f"[paid_jobs_done] Load failed: {e}")
+        _paid_jobs_done = []
+
+
+def _save_paid_jobs_done():
+    with _paid_jobs_lock:
+        _atomic_write_json(_PAID_JOBS_DONE_FILE, list(_paid_jobs_done))
+
+
+def _is_paid_job_done(job_id: str) -> bool:
+    if not job_id:
+        return False
+    return any(r.get("job_id") == job_id for r in _paid_jobs_done)
 
 
 def _recover_orphaned_voucher_charges(jobs):
@@ -397,7 +463,7 @@ def _recover_orphaned_voucher_charges(jobs):
             if not use_job_id:
                 continue
             # Se il job e completato con successo  ->  non rimborsare
-            if use_job_id in _paid_opt_done:
+            if _is_paid_job_done(use_job_id):
                 continue
             # Se il job e ancora in memoria  ->  non rimborsare (non dovrebbe accadere al restart)
             if use_job_id in jobs:
@@ -512,13 +578,12 @@ def _paypal_amount_matches(token: str, amount_eur: float, tolerance: float = 0.0
 
 
 def _mark_paid_job_done(job_id: str, purpose: str = "gemini"):
-    """Unified marker that the paid generation completed (any purpose).
-
-    For now delegates to _mark_paid_opt_done; F4 migration will introduce a
-    proper per-purpose store.
-    """
-    _ = purpose  # consumed by F4 migration
-    _mark_paid_opt_done(job_id)
+    """Append a completion record. Persists to disk."""
+    if not job_id:
+        return
+    with _paid_jobs_lock:
+        _paid_jobs_done.append({"job_id": job_id, "purpose": purpose, "ts": time.time()})
+    _save_paid_jobs_done()
 
 
 def consume_payment_token(token: str, amount_eur: float, job_id: str,
