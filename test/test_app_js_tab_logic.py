@@ -17,3 +17,7 @@ def test_updVoices_excludes_gemini():
 
 def test_wizardState_has_audioTab():
     assert "audioTab:" in APP_JS or "audioTab =" in APP_JS
+
+
+def test_lang_sync_between_tabs_present():
+    assert "syncLanguage" in APP_JS or "vlPremium.value = " in APP_JS

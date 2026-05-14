@@ -380,7 +380,11 @@ document.addEventListener('DOMContentLoaded',()=>{
     btn.addEventListener('click',()=>switchAudioTab(btn.dataset.tab));
   });
   const vlPrem=document.getElementById('vlPremium');
-  if(vlPrem)vlPrem.addEventListener('change',updVoicesPremium);
+  if(vlPrem)vlPrem.addEventListener('change',()=>{
+    const src=document.getElementById('vl');
+    if(src){src.value=vlPrem.value;updVoices();}
+    updVoicesPremium();
+  });
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
     updVoicesPremium();
@@ -583,6 +587,7 @@ async function analyzeEpub(file){
       if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;}
     }
     updVoices();
+    if(typeof syncLanguageOptions==='function')syncLanguageOptions();
     const _vOut=document.getElementById('vOut');
     if(isTxtFile){
       if(_vOut){_vOut.value='m4b';onOutputChange();}
@@ -657,8 +662,12 @@ function fillLangs(){
     o.textContent=l.name+' ('+l.count+')';
     sel.appendChild(o);
   }
-  sel.onchange=updVoices;
-  
+  sel.onchange=()=>{
+    updVoices();
+    const dst=document.getElementById('vlPremium');
+    if(dst){dst.value=sel.value;updVoicesPremium&&updVoicesPremium();}
+  };
+
   if(oldVal && voices[oldVal]) sel.value = oldVal;
   else {
     // Pre-selezione logica:
@@ -671,8 +680,20 @@ function fillLangs(){
     if(voices[defaultLang]) sel.value=defaultLang;
     else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
   }
-  
+
   updVoices();
+  syncLanguageOptions();
+}
+
+// Mantiene allineate le option list dei selettori #vl (Standard) e
+// #vlPremium (Premium). Va chiamata dopo aver popolato #vl in fillLangs(),
+// così entrambi i tab mostrano le stesse lingue e lo stesso valore corrente.
+function syncLanguageOptions(){
+  const src=document.getElementById('vl');
+  const dst=document.getElementById('vlPremium');
+  if(!src||!dst)return;
+  dst.innerHTML=src.innerHTML;
+  dst.value=src.value;
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
