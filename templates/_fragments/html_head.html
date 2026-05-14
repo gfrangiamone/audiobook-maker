@@ -283,13 +283,13 @@ __REVIEWS_LD__
       <div id="voiceMismatch" class="al al-w" style="display:none"></div>
 
       <div class="tab-bar" role="tablist" style="margin-bottom:12px">
-        <button type="button" class="tab active" data-tab="standard" role="tab"
+        <button type="button" id="tabStandardBtn" class="tab active" data-tab="standard" role="tab"
                 aria-selected="true" data-t="tab_voices_standard">Voci Standard (gratis)</button>
-        <button type="button" class="tab" data-tab="premium" role="tab"
+        <button type="button" id="tabPremiumBtn" class="tab" data-tab="premium" role="tab"
                 aria-selected="false" data-t="tab_voices_premium">★ Voci PREMIUM</button>
       </div>
 
-      <div class="tab-panel active" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
+      <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
         <div class="form-row">
           <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
           <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
