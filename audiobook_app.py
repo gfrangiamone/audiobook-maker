@@ -2912,6 +2912,8 @@ def admin_logs_page():
       </div>
     </div>
     <button type="button" id="auditRefreshBtn">Aggiorna</button>
+    <button type="button" id="auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
+    <pre id="auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:10px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;"></pre>
   </div>
 
   <div class="panel">
@@ -3014,6 +3016,31 @@ def admin_logs_page():
   }
 
   $("auditRefreshBtn").addEventListener("click", fetchAudit);
+
+  async function recalcParams(){
+    const out = $("auditRecalcOutput");
+    out.style.display = "block";
+    out.textContent = "Caricamento...";
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/recalc-params",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) {
+        out.textContent = "Errore: " + r.status;
+        return;
+      }
+      const d = await r.json();
+      const sugg = d.suggestions || [];
+      if (!sugg.length) {
+        out.textContent = "Nessun suggerimento (campioni insufficienti).";
+      } else {
+        out.textContent = sugg.join("\n");
+      }
+    } catch (e) {
+      out.textContent = "Errore: " + e;
+    }
+  }
+  $("auditRecalcBtn").addEventListener("click", recalcParams);
+
   // Auto-load on page open
   fetchAudit();
 })();
@@ -3057,6 +3084,46 @@ def admin_api_gemini_cost_audit():
         date_from=date_from, date_to=date_to,
     )
     return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])
+def admin_api_gemini_recalc_params():
+    """Aggrega audit records completed per (model, lang) e suggerisce tuning."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    groups = {}
+    for rec in gemini_cost_audit.iter_records(outcome="completed"):
+        k = (rec.get("model_key") or "?", rec.get("language") or "?")
+        groups.setdefault(k, []).append(rec)
+    suggestions = []
+    for (model, lang), recs in groups.items():
+        if len(recs) < 3:
+            continue
+        deltas = [float(r.get("delta_pct") or 0) for r in recs]
+        avg_delta_pct = sum(deltas) / len(deltas)
+        n = len(recs)
+        if avg_delta_pct > 5:
+            suggestions.append(
+                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — margine alto, valuta riduzione tariffa utente"
+            )
+        elif avg_delta_pct < -5:
+            suggestions.append(
+                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — margine in perdita, valuta aumento tariffa utente o sec_per_kchars"
+            )
+        else:
+            suggestions.append(
+                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — parametri OK"
+            )
+    return jsonify({
+        "suggestions": suggestions,
+        "groups_total": len(groups),
+        "groups_evaluated": sum(1 for g in groups.values() if len(g) >= 3),
+    })
 
 
 @app.route("/api/voices")
