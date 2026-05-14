@@ -25,3 +25,33 @@ def test_panel3_premium_tab_has_style_textarea():
 def test_panel3_premium_tab_has_cost_preview_box():
     assert 'id="costPreviewBox"' in HTML
     assert 'id="costPreviewValue"' in HTML
+
+
+def test_shared_controls_outside_tab_panels():
+    """Speed slider, output format and preview must be siblings of tab-panels (shared), not inside tabStandard."""
+    import re
+    # Estrai il contenuto INTERNO di tabStandard (dal primo tab-panel al successivo)
+    m = re.search(r'id="tabStandard"[^>]*>(.*?)<div class="tab-panel"', HTML, re.DOTALL)
+    assert m, "tabStandard markup not found"
+    inside_std = m.group(1)
+    assert 'id="speedSlider"' not in inside_std, "speed slider must be shared, not inside Standard tab"
+    assert 'id="vOut"' not in inside_std, "output format must be shared, not inside Standard tab"
+    assert 'id="previewSection"' not in inside_std, "preview must be shared, not inside Standard tab"
+
+
+def test_shared_controls_between_tabpremium_and_footer():
+    """Shared controls must appear after tabPremium closes and before panel-footer of panel3."""
+    import re
+    # Trova la sezione panel3 fino al primo panel-footer dopo tabPremium
+    sec = re.search(r'id="panel3"(.*?)class="panel-footer"', HTML, re.DOTALL)
+    assert sec, "panel3 section not found"
+    block = sec.group(1)
+    # tabPremium chiude prima dei controlli condivisi
+    pos_premium_open = block.find('id="tabPremium"')
+    pos_speed = block.find('id="speedSlider"')
+    pos_vout = block.find('id="vOut"')
+    pos_prev = block.find('id="previewSection"')
+    assert pos_premium_open != -1, "tabPremium not found in panel3"
+    assert pos_speed > pos_premium_open, "speedSlider must come after tabPremium opens"
+    assert pos_vout > pos_premium_open, "vOut must come after tabPremium opens"
+    assert pos_prev > pos_premium_open, "previewSection must come after tabPremium opens"

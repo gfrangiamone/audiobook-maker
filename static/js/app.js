@@ -875,7 +875,7 @@ async function previewRead(){
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
 
-  const voice=document.getElementById('vv').value;
+  const voice=getCurrentVoiceId();
   const rate =document.getElementById('vr').value;
   const audio=document.getElementById('previewAudioWiz');
 
