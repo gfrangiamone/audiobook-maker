@@ -315,31 +315,32 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
     Ritorna il nuovo saldo residuo. Se il voucher era marcato used, lo riattiva.
     Solleva ``ValueError`` se il voucher non esiste.
     """
-    v = _vouchers.get(code)
-    if not v:
-        raise ValueError("voucher not found")
-    remaining = _voucher_remaining(v)
-    original = float(v.get("amount_eur", 0) or 0)
-    new_remaining = round(min(remaining + amount, original), 2)
-    now = time.time()
-    v["remaining_eur"] = new_remaining
-    uses = v.get("uses")
-    if not isinstance(uses, list):
-        uses = []
-    uses.append({
-        "job_id": job_id,
-        "amount_eur": -round(amount, 2),  # negativo = refund
-        "at": now,
-        "remaining_after": new_remaining,
-        "reason": reason,
-    })
-    v["uses"] = uses
-    # Riattiva il voucher se aveva saldo e non e scaduto
-    if new_remaining >= 0.01:
-        v["used"] = False
-        if "used_at" in v:
-            del v["used_at"]
-    _save_vouchers()
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            raise ValueError("voucher not found")
+        remaining = _voucher_remaining(v)
+        original = float(v.get("amount_eur", 0) or 0)
+        new_remaining = round(min(remaining + amount, original), 2)
+        now = time.time()
+        v["remaining_eur"] = new_remaining
+        uses = v.get("uses")
+        if not isinstance(uses, list):
+            uses = []
+        uses.append({
+            "job_id": job_id,
+            "amount_eur": -round(amount, 2),  # negativo = refund
+            "at": now,
+            "remaining_after": new_remaining,
+            "reason": reason,
+        })
+        v["uses"] = uses
+        # Riattiva il voucher se aveva saldo e non e scaduto
+        if new_remaining >= 0.01:
+            v["used"] = False
+            if "used_at" in v:
+                del v["used_at"]
+        _save_vouchers()
     print(f"[vouchers] Refund {amount:.2f} EUR -> {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
     return new_remaining
 

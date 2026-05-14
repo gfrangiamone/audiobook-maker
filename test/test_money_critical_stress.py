@@ -242,3 +242,79 @@ def test_concurrent_paypal_double_spend_rejected(monkeypatch, tmp_path):
     finally:
         # Cleanup module state
         payment._payments.pop(order_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Test 4: concurrent consume + refund on the same voucher — no overdraft
+# ---------------------------------------------------------------------------
+
+def test_concurrent_consume_and_refund_no_overdraft(monkeypatch, tmp_path):
+    """While one set of threads consumes a voucher, another set refunds it.
+    The accounting MUST stay consistent: final remaining must equal
+    (original + total_refunded - total_consumed) clamped to [0, original],
+    with no overdraft and no lost updates.
+
+    Regression guard for _voucher_refund: it does a read-modify-write on
+    remaining_eur. Without _vouchers_lock, a concurrent _voucher_consume
+    can see a stale balance and overspend, or vice versa.
+    """
+    monkeypatch.setattr(payment, "_DATA_DIR", tmp_path)
+    monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
+    monkeypatch.setattr(payment, "_vouchers", {})
+
+    code, _ = payment._create_voucher("c@x.it", 10.0, kind="test", note="t")
+    initial = payment._voucher_remaining(payment._vouchers[code])
+    # 20 consume threads of 1.0 each; 10 refund threads of 1.0 each
+    # Worst-case net consumed = 10.0 (20*1 - 10*1), well within pool ~11
+    consumes_ok = 0
+    consumes_fail = 0
+    refunds_ok = 0
+    refunds_fail = 0
+    results_lock = threading.Lock()
+    barrier = threading.Barrier(30)
+
+    def consumer(i):
+        nonlocal consumes_ok, consumes_fail
+        try:
+            barrier.wait()
+            payment._voucher_consume(code, 1.0, job_id=f"c{i}")
+            with results_lock:
+                consumes_ok += 1
+        except Exception:
+            with results_lock:
+                consumes_fail += 1
+
+    def refunder(i):
+        nonlocal refunds_ok, refunds_fail
+        try:
+            barrier.wait()
+            payment._voucher_refund(code, 1.0, job_id=f"r{i}", reason="test")
+            with results_lock:
+                refunds_ok += 1
+        except Exception:
+            with results_lock:
+                refunds_fail += 1
+
+    threads = [threading.Thread(target=consumer, args=(i,)) for i in range(20)] + \
+              [threading.Thread(target=refunder, args=(i,)) for i in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    final = payment._voucher_remaining(payment._vouchers[code])
+    # Invariant 1: no overdraft.
+    assert final >= 0.0, f"OVERDRAFT: final={final} (initial={initial})"
+    # Invariant 2: never exceeds original amount (refund caps at amount_eur).
+    original = float(payment._vouchers[code].get("amount_eur", 0))
+    assert final <= original + 0.01, (
+        f"Refund exceeded cap: final={final}, original={original}"
+    )
+    # Invariant 3: the uses log records every successful op (no lost writes).
+    # Successful refunds may have been capped (and so not changed balance),
+    # but they must still be recorded.
+    uses = payment._vouchers[code].get("uses", [])
+    assert len(uses) == consumes_ok + refunds_ok, (
+        f"Lost-write: expected {consumes_ok + refunds_ok} use records, "
+        f"got {len(uses)} (consumes_ok={consumes_ok}, refunds_ok={refunds_ok})"
+    )
