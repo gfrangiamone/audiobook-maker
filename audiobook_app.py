@@ -3257,27 +3257,24 @@ def admin_api_feedback_update(item_id):
 
 @app.route("/admin/api/feedback/<item_id>/reply", methods=["POST"])
 def admin_api_feedback_reply(item_id):
-    """Post an admin reply to a feedback item.
+    """Create or update an admin reply to a feedback item.
     Translates the reply into all 7 UI languages via LLM.
-    One reply per item — returns 409 if already replied.
+    First call creates the reply, subsequent calls edit it (preserving
+    the original `admin_reply_at` timestamp and tracking edits with
+    `admin_reply_edited_at`).
     """
     if not _admin_auth_ok(_admin_auth_from_request()):
         return ("forbidden", 403)
     body = request.get_json(silent=True) or {}
     reply_text = (body.get("reply") or "").strip()
-    # Validate
     if not reply_text:
         return jsonify({"error": "reply text required"}), 400
     if len(reply_text) > 2000:
         return jsonify({"error": "reply text exceeds 2000 characters"}), 400
-    # Check existing reply
     store = community_store.feedback()
     existing = store.get(item_id)
     if not existing:
         return jsonify({"error": "feedback item not found"}), 404
-    if existing.get("admin_reply_at", 0) > 0:
-        return jsonify({"error": "reply already posted", "admin_reply_at": existing.get("admin_reply_at")}), 409
-    # Translate via LLM
     if not community_translator.is_available():
         return jsonify({"error": "llm unavailable"}), 503
     try:
@@ -3288,6 +3285,7 @@ def admin_api_feedback_reply(item_id):
     if not result:
         return jsonify({"error": "translation failed, please retry"}), 500
     now = int(time.time())
+    prior_at = int(existing.get("admin_reply_at", 0) or 0)
     patch = {
         "admin_reply_text": reply_text,
         "admin_reply_lang": "it",
@@ -3295,14 +3293,40 @@ def admin_api_feedback_reply(item_id):
             lg: (result.get(lg) or {}).get("reply", "")
             for lg in community_translator.LANGS
         },
-        "admin_reply_at": now,
+        "admin_reply_at": prior_at if prior_at > 0 else now,
     }
+    if prior_at > 0:
+        patch["admin_reply_edited_at"] = now
     try:
         community_store.feedback().update(item_id, patch)
     except Exception as e:
         print(f"[feedback-reply] persist failed for {item_id}: {e!s}")
         return jsonify({"error": "persist failed"}), 500
-    return jsonify({"ok": True, "at": now})
+    return jsonify({"ok": True, "at": patch["admin_reply_at"], "edited": prior_at > 0})
+
+
+@app.route("/admin/api/feedback/<item_id>/reply", methods=["DELETE"])
+def admin_api_feedback_reply_delete(item_id):
+    """Remove an admin reply from a feedback item."""
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return ("forbidden", 403)
+    store = community_store.feedback()
+    existing = store.get(item_id)
+    if not existing:
+        return jsonify({"error": "feedback item not found"}), 404
+    patch = {
+        "admin_reply_text": "",
+        "admin_reply_lang": "",
+        "admin_reply_i18n": {},
+        "admin_reply_at": 0,
+        "admin_reply_edited_at": 0,
+    }
+    try:
+        community_store.feedback().update(item_id, patch)
+    except Exception as e:
+        print(f"[feedback-reply] delete failed for {item_id}: {e!s}")
+        return jsonify({"error": "persist failed"}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/admin/community", methods=["GET"])
@@ -3361,6 +3385,7 @@ tr.archived{opacity:.45}
 .toolbar input[type=checkbox]{width:auto}
 .banner-pill{background:var(--warn);color:#000;padding:1px 6px;border-radius:999px;font-size:.7rem;font-weight:700}
 .reply-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999}
+.reply-modal-overlay[hidden]{display:none}
 .reply-modal{background:var(--panel);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto}
 .reply-modal h3{margin:0 0 16px;font-size:1.1rem;color:var(--accent)}
 .reply-modal textarea{width:100%;min-height:120px;resize:vertical;font:inherit}
@@ -3477,7 +3502,7 @@ async function loadFb(){
       <td><code style="font-size:.75rem">${esc(it.ip_hash||'')}</code></td>
       <td>
         ${it.admin_reply_at > 0
-          ? `<span style="font-size:.8rem;color:var(--muted)">${fmtDate(it.admin_reply_at)}</span>`
+          ? `<button class="sm secondary" data-id="${it.id}" onclick="openReplyModal(this)" title="${fmtDate(it.admin_reply_edited_at||it.admin_reply_at)}">Modifica risposta</button>`
           : `<button class="sm" style="background:var(--accent)" data-id="${it.id}" onclick="openReplyModal(this)">Rispondi</button>`
         }
         <button class="sm secondary" data-id="${it.id}" data-act="${it.archived?'unarchive':'archive'}">${it.archived?'Riattiva':'Archivia'}</button>
@@ -3556,26 +3581,33 @@ document.getElementById('fbShowArch').addEventListener('change',loadFb);
 document.getElementById('nShowArch').addEventListener('change',loadNews);
 
 let _replyItemId = null;
+let _replyIsEdit = false;
 function openReplyModal(btn){
   const id = btn.dataset.id;
   _replyItemId = id;
   const item = (window._fbItems || []).find(it => it.id === id);
   if(!item){return;}
+  _replyIsEdit = (item.admin_reply_at||0) > 0;
   document.getElementById('replyOriginal').textContent =
     ((item.comment_i18n||{}).it)||item.comment||'(senza commento)';
-  document.getElementById('replyText').value = '';
-  document.getElementById('replyCharCount').textContent = '0';
+  const txt = document.getElementById('replyText');
+  txt.value = _replyIsEdit ? (item.admin_reply_text || '') : '';
+  document.getElementById('replyCharCount').textContent = String(txt.value.length);
   document.getElementById('replyErr').hidden = true;
+  document.getElementById('replyTitle').textContent = _replyIsEdit ? 'Modifica risposta' : 'Rispondi al commento';
+  document.getElementById('replySubmit').textContent = _replyIsEdit ? 'Salva modifiche' : 'Invia risposta';
+  document.getElementById('replyDelete').hidden = !_replyIsEdit;
   document.getElementById('replyModal').hidden = false;
-  document.getElementById('replyText').focus();
+  txt.focus();
+  txt.addEventListener('input', function(){document.getElementById('replyCharCount').textContent=this.value.length;}, {once: true});
+  document.getElementById('replyCancel').addEventListener('click', closeReplyModal);
 }
 function closeReplyModal(){
-  document.getElementById('replyModal').hidden = true;
+  const modal = document.getElementById('replyModal');
+  if(modal){ modal.hidden = true; }
   _replyItemId = null;
+  _replyIsEdit = false;
 }
-document.getElementById('replyText').addEventListener('input',function(){
-  document.getElementById('replyCharCount').textContent = this.value.length;
-});
 async function submitReply(){
   if(!_replyItemId) return;
   const text = document.getElementById('replyText').value.trim();
@@ -3605,19 +3637,48 @@ async function submitReply(){
     btn.disabled = false;
   }
 }
+async function deleteReply(){
+  if(!_replyItemId) return;
+  if(!confirm('Eliminare la risposta? L\'azione non è reversibile.')) return;
+  const btn = document.getElementById('replyDelete');
+  btn.disabled = true;
+  const errEl = document.getElementById('replyErr');
+  errEl.hidden = true;
+  try {
+    const r = await fetch('/admin/api/feedback/'+_replyItemId+'/reply',{
+      method:'DELETE', headers:HDR
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      errEl.textContent = d.error || ('Errore '+r.status);
+      errEl.hidden = false;
+    } else {
+      closeReplyModal();
+      loadFb();
+    }
+  } catch(e){
+    errEl.textContent = 'Errore di rete';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 loadFb();
 </script>
 <div class="reply-modal-overlay" id="replyModal" hidden>
   <div class="reply-modal">
-    <h3>Rispondi al commento</h3>
+    <h3 id="replyTitle">Rispondi al commento</h3>
     <div id="replyOriginal" style="font-size:.85rem;color:var(--muted);margin-bottom:12px;padding:8px;background:#0f172a;border-radius:6px;max-height:100px;overflow-y:auto"></div>
     <textarea id="replyText" maxlength="2000" placeholder="Scrivi la risposta in italiano..." rows="5"></textarea>
     <div class="chars"><span id="replyCharCount">0</span>/2000</div>
     <div class="err" id="replyErr" hidden></div>
-    <div class="reply-modal-btns">
-      <button class="secondary" onclick="closeReplyModal()">Annulla</button>
-      <button id="replySubmit" onclick="submitReply()">Invia risposta</button>
+    <div class="reply-modal-btns" style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+      <button class="danger" id="replyDelete" onclick="deleteReply()" hidden>Elimina risposta</button>
+      <div style="display:flex;gap:8px;margin-left:auto;">
+        <button class="secondary" id="replyCancel">Annulla</button>
+        <button id="replySubmit" onclick="submitReply()">Invia risposta</button>
+      </div>
     </div>
   </div>
 </div>
@@ -5852,6 +5913,20 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 .donate-coffee:hover{{background:#ffd000;transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,208,0,.4)}}
 .donate-paypal{{background:#003087;color:#fff;border-color:#002070}}
 .donate-paypal:hover{{background:#002070;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,48,135,.35)}}
+@media (max-width:520px){{
+  body{{align-items:flex-start;padding:12px 0}}
+  .box{{padding:24px 16px;border-radius:12px;max-width:100%;margin:0 8px}}
+  h1{{font-size:2.4rem}}
+  h2{{font-size:1.25rem;line-height:1.3}}
+  .title{{font-size:.85rem;word-break:break-word;overflow-wrap:anywhere}}
+  .btn{{padding:14px 18px;font-size:16px;width:100%;box-sizing:border-box;white-space:normal;line-height:1.25}}
+  .btn-abm{{padding:13px 16px;font-size:.92rem;max-width:100%;width:100%;box-sizing:border-box}}
+  .donate-panel{{padding:14px 14px;margin-top:18px}}
+  .donate-title{{font-size:.95rem;line-height:1.3}}
+  .donate-body{{font-size:.78rem}}
+  .donate-btns{{grid-template-columns:1fr;gap:8px}}
+  .donate-btn{{padding:12px 14px;font-size:.9rem;width:100%;box-sizing:border-box}}
+}}
 </style></head><body>
 <div class="box">
 <h1>&#x1F3A7;</h1>
