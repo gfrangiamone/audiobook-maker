@@ -307,7 +307,7 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
-def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
+def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     Args:
@@ -315,6 +315,9 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
         voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
         output_path: percorso file PCM in output.
         max_retries: numero di tentativi prima di fallback a silenzio (default 3).
+        style_instruction: optional style/tone hint prepended to the prompt
+            (e.g. "calmo e narrativo"). Pass-through to gemini_tts.synthesize.
+            Default None.
 
     Returns:
         dict {success, bytes_written, input_tokens, output_tokens, model_key,
@@ -331,7 +334,10 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
     last_error = None
     for attempt in range(max_retries):
         try:
-            result = _gemini.synthesize(clean, voice_id, output_path=output_path)
+            result = _gemini.synthesize(
+                clean, voice_id, output_path=output_path,
+                style_instruction=style_instruction,
+            )
             return result
         except Exception as e:
             last_error = e

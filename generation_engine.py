@@ -1264,7 +1264,7 @@ def _engine_for_voice(voice):
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     job = _jobs[job_id]
     _set_job_status(job, "generating")
     job["cancelled"] = False
@@ -1377,7 +1377,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
+                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                       style_instruction=style_for_chunk)
                     if result is False:
                         failed_chunks += 1
                     else:
@@ -1596,7 +1598,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
+                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                       style_instruction=style_for_chunk)
                     if result is False:
                         failed_chunks += 1
                     else:
