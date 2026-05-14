@@ -130,3 +130,70 @@ def test_run_generation_applies_style_only_to_first_chunk_per_chapter(monkeypatc
     assert styles[2] is None
     assert styles[4] is None
     assert styles[5] is None
+
+
+def test_run_generation_multi_file_branch_also_applies_style_only_to_first_chunk(monkeypatch, tmp_path):
+    """Same behaviour expected in the single_file=False (multi-file) branch."""
+    captured_calls = []
+    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
+        captured_calls.append({"style_instruction": style_instruction})
+        with open(output_path, "wb") as f:
+            f.write(b"\x00" * 1000)
+        return {
+            "success": True, "bytes_written": 1000,
+            "input_tokens": 1, "output_tokens": 1,
+            "model_key": "flash25", "voice_name": "Zephyr", "attempts_used": 1,
+        }
+    monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
+
+    plan = []
+    for ch_idx in range(2):
+        for c_idx in range(3):
+            plan.append({
+                "chapter_index": ch_idx + 1,
+                "chapter_title": f"Cap {ch_idx + 1}",
+                "chunk_index": c_idx,
+                "chunks_in_chapter": 3,
+                "text": f"Cap{ch_idx+1}-Chunk{c_idx}",
+                "chars": 20,
+            })
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars: plan)
+    monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
+    monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
+    monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out: open(out, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
+    monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
+
+    class _Ch:
+        def __init__(self, title, index):
+            self.title = title
+            self.text = "..."
+            self.index = index
+    class _Info:
+        title = "T"
+        author = "A"
+        language = "it"
+        chapters = [_Ch("Cap 1", 1), _Ch("Cap 2", 2)]
+    job = {"gen_epoch": 0, "info": _Info(), "status": "queued",
+           "last_poll": 9e18, "email_registered": True}
+    monkeypatch.setattr(generation_engine, "_jobs", {"j2": job})
+    monkeypatch.setattr(generation_engine, "_upload_dir", tmp_path)
+    monkeypatch.setattr(generation_engine, "_jobs_lock", None, raising=False)
+    monkeypatch.setattr(generation_engine, "gemini_tts", None, raising=False)
+
+    try:
+        generation_engine.run_generation("j2", _Info(), "gemini:flash25:Zephyr", "+0%",
+                                         single_file=False, output_format="zip",
+                                         gemini_style_instruction="vivace")
+    except Exception:
+        pass  # OK if zip assembly fails — only TTS calls matter
+
+    styles = [c["style_instruction"] for c in captured_calls]
+    assert len(captured_calls) == 6, f"expected 6 calls, got {len(captured_calls)}"
+    assert styles[0] == "vivace"
+    assert styles[3] == "vivace"
+    assert styles[1] is None
+    assert styles[2] is None
+    assert styles[4] is None
+    assert styles[5] is None
