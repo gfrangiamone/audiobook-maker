@@ -4915,7 +4915,7 @@ def api_combined_estimate():
     llm_breakdown = {}
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
-        rate = float(os.environ.get("LLM_PRICE_EUR_PER_MCHAR", "1.10"))
+        rate = LLM_RATE_EUR_PER_MCHAR
         llm_eur = round((chars / 1_000_000.0) * rate, 2)
         llm_breakdown = {"chars": chars, "rate_eur_per_mchar": rate}
 
@@ -4984,7 +4984,7 @@ def api_paypal_create_order_gemini():
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
-        rate = float(os.environ.get("LLM_PRICE_EUR_PER_MCHAR", "1.10"))
+        rate = LLM_RATE_EUR_PER_MCHAR
         llm_eur = round((chars / 1_000_000.0) * rate, 2)
 
     server_total = round(gemini_eur + llm_eur, 2)

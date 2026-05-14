@@ -91,6 +91,61 @@ def test_create_order_success(client, jb):
     assert body["status"] == "CREATED"
 
 
+def test_llm_rate_respects_module_constant(client, jb, monkeypatch):
+    """/api/paypal_create_order_gemini must use the canonical
+    LLM_RATE_EUR_PER_MCHAR module constant when computing the
+    server-side amount, so production deployments can tune the rate
+    via ABM_LLM_RATE_EUR_PER_MCHAR.
+
+    Strategy: patch the constant to a known value, recompute the
+    server-side amount via /api/combined_estimate (which must also
+    honour the same constant), then submit that amount to
+    paypal_create_order_gemini and assert it is accepted (no mismatch).
+    A control test with a deliberately stale amount must 400.
+    """
+    import audiobook_app
+
+    monkeypatch.setattr(audiobook_app, "LLM_RATE_EUR_PER_MCHAR", 5.50)
+
+    payload_est = {
+        "job_id": "pj1",
+        "voice_id": "edge:it-IT-DiegoNeural",  # non-gemini => only LLM cost
+        "selected_chapters": [0],
+        "ai_opt_enabled": True,
+    }
+    est = client.post("/api/combined_estimate", json=payload_est).get_json()
+    amount = est["total_eur"]
+    assert amount > 0
+    # Sanity: with patched rate 5.50 and 60_000 chars => 0.33 EUR.
+    chars = est["llm_breakdown"]["chars"]
+    assert amount == round((chars / 1_000_000.0) * 5.50, 2)
+
+    # Submitting the matching amount must pass the server-side check.
+    with patch("payment._paypal_create_order") as mock:
+        mock.return_value = {"id": "ORDER_RATE", "status": "CREATED"}
+        r = client.post("/api/paypal_create_order_gemini", json={
+            "job_id": "pj1",
+            "voice_id": "edge:it-IT-DiegoNeural",
+            "selected_chapters": [0],
+            "ai_opt_enabled": True,
+            "amount_eur": amount,
+        })
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    # Control: with the rate still patched to 5.50, sending the amount
+    # that would be correct at the default 1.10 must be rejected.
+    stale_amount = round((chars / 1_000_000.0) * 1.10, 2)
+    assert stale_amount != amount
+    r2 = client.post("/api/paypal_create_order_gemini", json={
+        "job_id": "pj1",
+        "voice_id": "edge:it-IT-DiegoNeural",
+        "selected_chapters": [0],
+        "ai_opt_enabled": True,
+        "amount_eur": stale_amount,
+    })
+    assert r2.status_code == 400, r2.get_data(as_text=True)
+
+
 def test_create_order_paypal_exception_500(client, jb):
     amount = _server_total(client, "pj1", "gemini:flash25:Zephyr", [0], False)
     with patch("payment._paypal_create_order", side_effect=RuntimeError("PayPal not configured")):
