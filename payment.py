@@ -65,8 +65,8 @@ _PAID_JOBS_DONE_FILE = _DATA_DIR / "_paid_jobs_done.json"
 
 _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
 _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
-_payments_lock = threading.Lock()
-_vouchers_lock = threading.Lock()
+_payments_lock = threading.RLock()
+_vouchers_lock = threading.RLock()
 
 # Rate limit voucher_validate
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
@@ -272,38 +272,42 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
     """Scala ``amount`` EUR dal saldo del voucher ``code``. Ritorna il nuovo saldo
     residuo. Se il saldo scende sotto 0.01 EUR il voucher viene marcato ``used=True``.
     Solleva ``ValueError`` se il voucher non e spendibile o il saldo e insufficiente.
+
+    Money-critical: the entire read-modify-write of ``remaining_eur`` must run
+    under ``_vouchers_lock`` to prevent concurrent overspend of the pool.
     """
-    v = _vouchers.get(code)
-    if not v:
-        raise ValueError("voucher not found")
-    if v.get("expires_at", 0) <= time.time():
-        raise ValueError("voucher expired")
-    remaining = _voucher_remaining(v)
-    # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
-    if amount > remaining + 0.01:
-        raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
-    spent = round(min(amount, remaining), 2)
-    new_remaining = round(remaining - spent, 2)
-    now = time.time()
-    v["remaining_eur"] = new_remaining
-    uses = v.get("uses")
-    if not isinstance(uses, list):
-        uses = []
-    uses.append({
-        "job_id": job_id,
-        "amount_eur": spent,
-        "at": now,
-        "remaining_after": new_remaining,
-    })
-    v["uses"] = uses
-    # Mark fully used solo quando il saldo e praticamente zero
-    if new_remaining < 0.01:
-        v["used"] = True
-        v["used_at"] = now
-    else:
-        v["used"] = False
-    _save_vouchers()
-    return new_remaining
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            raise ValueError("voucher not found")
+        if v.get("expires_at", 0) <= time.time():
+            raise ValueError("voucher expired")
+        remaining = _voucher_remaining(v)
+        # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
+        if amount > remaining + 0.01:
+            raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
+        spent = round(min(amount, remaining), 2)
+        new_remaining = round(remaining - spent, 2)
+        now = time.time()
+        v["remaining_eur"] = new_remaining
+        uses = v.get("uses")
+        if not isinstance(uses, list):
+            uses = []
+        uses.append({
+            "job_id": job_id,
+            "amount_eur": spent,
+            "at": now,
+            "remaining_after": new_remaining,
+        })
+        v["uses"] = uses
+        # Mark fully used solo quando il saldo e praticamente zero
+        if new_remaining < 0.01:
+            v["used"] = True
+            v["used_at"] = now
+        else:
+            v["used"] = False
+        _save_vouchers()
+        return new_remaining
 
 
 def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = "") -> float:
@@ -600,20 +604,23 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
         _voucher_consume(token, amount_eur, job_id=job_id)
         _mark_paid_job_done(job_id, purpose=purpose)
         return "voucher"
-    # Then PayPal captured order
-    if _paypal_order_is_captured(token):
-        if not _paypal_amount_matches(token, amount_eur):
-            raise ValueError("paypal amount mismatch")
-        # Mark order as used so it can't be redeemed twice
-        _payments[token]["used"] = True
-        _payments[token]["used_at"] = time.time()
-        _payments[token]["used_for_job"] = job_id
-        try:
-            _save_payments()
-        except Exception:
-            pass  # best-effort persistence
-        _mark_paid_job_done(job_id, purpose=purpose)
-        return "paypal"
+    # Then PayPal captured order — atomic check-and-set under _payments_lock
+    # to prevent double-spend under concurrent requests.
+    with _payments_lock:
+        pay = _payments.get(token)
+        if pay and not pay.get("used", False):
+            if not _paypal_amount_matches(token, amount_eur):
+                raise ValueError("paypal amount mismatch")
+            # Mark order as used INSIDE the lock so other threads see used=True
+            pay["used"] = True
+            pay["used_at"] = time.time()
+            pay["used_for_job"] = job_id
+            try:
+                _save_payments()
+            except Exception:
+                pass  # best-effort persistence
+            _mark_paid_job_done(job_id, purpose=purpose)
+            return "paypal"
     raise ValueError("invalid payment_token")
 
 
