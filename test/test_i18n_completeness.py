@@ -75,3 +75,5 @@ def test_no_provider_names_in_premium_keys():
                 assert "gemini" not in low, f"{lang}.{k} contains 'Gemini': {val!r}"
                 assert "deepseek" not in low, f"{lang}.{k} contains 'DeepSeek': {val!r}"
                 assert "openai" not in low, f"{lang}.{k} contains 'OpenAI': {val!r}"
+                assert "google" not in low, f"{lang}.{k} contains 'Google': {val!r}"
+                assert "anthropic" not in low, f"{lang}.{k} contains 'Anthropic': {val!r}"
