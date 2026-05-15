@@ -373,7 +373,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .app{padding:20px 12px 60px}
   
   /* Header */
-  .hdr{margin-bottom:12px}
+  .hdr{margin-bottom:4px}
   .hdr h1{font-size:1.6rem;gap:8px}
   .disc{margin-top:6px;margin-bottom:12px;padding:12px 14px}
   .hdr-icon{width:32px;height:32px}
@@ -507,7 +507,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 @media(max-width:600px){#cookieBanner{left:8px;right:8px;bottom:8px;padding:14px 14px}#cookieBanner .cb-actions{justify-content:stretch}#cookieBanner button{flex:1;min-width:96px}}
 
 /* ═══ WIZARD STEPS INDICATOR ═══ */
-.wizard-steps{display:flex;gap:0;align-items:center;justify-content:center;width:100%;max-width:760px;margin:0 auto;padding:22px 24px 0;position:relative;z-index:2}
+.wizard-steps{display:flex;gap:0;align-items:center;justify-content:center;width:100%;max-width:760px;margin:0 auto;padding:8px 24px 0;position:relative;z-index:2}
 .wizard-step-dot{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:default}
 .wizard-step-dot .circle{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.76rem;font-weight:650;background:var(--srf);color:var(--txm);border:2px solid var(--brd);transition:all .2s}
 .wizard-step-dot .label{font-size:.70rem;color:var(--txm);font-weight:550;white-space:nowrap;text-align:center;transition:color .2s}
@@ -521,7 +521,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .wizard-connector.done{background:var(--ok)}
 
 /* ═══ MAIN CARD ═══ */
-.main-card{width:100%;max-width:760px;margin:24px auto 28px;background:var(--srf);border-radius:var(--r);box-shadow:var(--shadow);padding:40px 44px;min-height:380px;transition:all .3s;border:1px solid var(--brd)}
+.main-card{width:100%;max-width:760px;margin:10px auto 28px;background:var(--srf);border-radius:var(--r);box-shadow:var(--shadow);padding:40px 44px;min-height:380px;transition:all .3s;border:1px solid var(--brd)}
 .main-card.locked .ai-opt-card,.main-card.locked .summary-box,.main-card.locked .panel-footer{pointer-events:none;opacity:.55}
 .main-card.locked .progress-area{pointer-events:auto;opacity:1}
 .main-card.locked .generation-active-notice{display:flex}
@@ -682,9 +682,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ═══ WIZARD RESPONSIVE ═══ */
 @media(max-width:640px){
-  .main-card{padding:24px 18px;margin:18px auto}
+  .main-card{padding:24px 18px;margin:8px auto}
   .wizard-step-dot .label{display:none}
-  .wizard-steps{gap:4px;padding:18px 12px 0}
+  .wizard-steps{gap:4px;padding:6px 12px 0}
   .wizard-connector{width:20px}
   .form-row{flex-direction:column;gap:14px}
   .panel-footer{flex-direction:column-reverse;gap:14px;align-items:stretch}
@@ -851,10 +851,10 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-del-btn{background:transparent;border:1px solid var(--brd);border-radius:4px;color:var(--txm);font-size:.85rem;padding:1px 6px;cursor:pointer;transition:all .15s;line-height:1.2;flex-shrink:0}
 .fbw-del-btn:hover{border-color:#c0392b;color:#c0392b;background:rgba(192,57,43,.08)}
 .fbw-del-btn:disabled{opacity:.5;cursor:default}
-.fbw-admin-reply{margin-top:12px;padding:10px 12px;background:rgba(139,92,246,.1);border-radius:8px;border-left:3px solid #8b5cf6}
-.fbw-admin-reply-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.fbw-admin-badge{background:#8b5cf6;color:#fff;padding:1px 7px;border-radius:999px;font-size:.7rem;font-weight:700}
-.fbw-admin-reply-body{margin:0;font-size:.9rem;color:#c4b5fd}
+.fbw-admin-reply{margin-top:10px;padding:8px 10px;background:var(--srf2);border-radius:6px;border-left:2px solid var(--brdh)}
+.fbw-admin-reply-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.fbw-admin-badge{background:transparent;color:var(--txm);padding:0;border-radius:0;font-size:.7rem;font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+.fbw-admin-reply-body{margin:0;font-size:.88rem;color:var(--txd)}
 .news-item-foot{display:flex;justify-content:flex-end;margin-top:6px}
 @media (max-width:480px){
   .fbw-toggle{padding:12px 14px;font-size:.92rem}
