@@ -795,16 +795,21 @@ function updVoicesPremium(){
     sel.appendChild(opt);
   });
   sel.onchange=()=>{if(_previewGenerated)_resetPreviewState();};
-  updateModelRateHint();
+  // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
 }
 
-function updateModelRateHint(){
-  const vmEl=document.getElementById('vmPremium');
+function updateModelRateHint(data){
+  // Rate per-minute derivato dall'ultima stima del backend, così rate x minuti = totale.
+  // data: payload di /api/combined_estimate (può essere null se non ancora disponibile).
   const hint=document.getElementById('modelRateHint');
-  if(!hint||!vmEl)return;
-  const modelKey=vmEl.value;
-  const labels={flash25:'~€0.0027/sec audio (stima)', flash31:'~€0.0054/sec audio (stima)'};
-  hint.textContent=labels[modelKey]||'';
+  if(!hint)return;
+  if(!data||!data.gemini_breakdown){hint.textContent='';return;}
+  const mins=Number(data.gemini_breakdown.audio_minutes||0);
+  const eur=Number(data.gemini_eur||0);
+  if(!(mins>0)||!(eur>0)){hint.textContent='';return;}
+  const ratePerMin=eur/mins;
+  const tmpl=(window.t&&t('model_rate_per_min'))||'~€{r}/min audio (stima)';
+  hint.textContent=tmpl.replace('{r}',ratePerMin.toFixed(4));
 }
 
 function switchAudioTab(tab){
@@ -888,10 +893,25 @@ async function _doCombinedEstimate(){
 function renderEstimate(data){
   const valueEl=document.getElementById('costPreviewValue');
   const detailEl=document.getElementById('costPreviewDetail');
+  const labelEl=document.querySelector('#costPreviewBox .cost-label');
   const costAmount=document.getElementById('costAmount');
+  // Label condizionale: "audiolibro" se tutti i capitoli selezionati, "capitoli selezionati" altrimenti.
+  if(labelEl){
+    let isPartial=false;
+    try{
+      const allCbs=(typeof _getAllCheckboxes==='function')?_getAllCheckboxes():[];
+      const selCount=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes().length:0;
+      isPartial=(allCbs&&allCbs.length>0&&selCount>0&&selCount<allCbs.length);
+    }catch(_){}
+    const key=isPartial?'cost_estimate_label_partial':'cost_estimate_label';
+    const fallback=isPartial?'Stima costo capitoli selezionati':'Stima costo audiolibro';
+    labelEl.textContent=(window.t&&t(key))||fallback;
+    labelEl.setAttribute('data-t',key);
+  }
   if(!data){
     if(valueEl)valueEl.textContent='—';
     if(detailEl)detailEl.textContent='';
+    updateModelRateHint(null);
     return;
   }
   if(valueEl){
@@ -899,17 +919,23 @@ function renderEstimate(data){
     else{valueEl.textContent='€'+Number(data.total_eur).toFixed(2);}
   }
   if(detailEl){
+    const mins=Number(data.gemini_breakdown&&data.gemini_breakdown.audio_minutes||0);
+    const minsTmpl=(window.t&&t('cost_minutes_detail'))||'≈ {n} min audio';
+    const minsStr=(mins>0)?minsTmpl.replace('{n}',mins.toFixed(1)):'';
     if(data.is_free){
       const threshold=Number(data.threshold_eur||0).toFixed(2);
-      detailEl.textContent='≤ €'+threshold+' '+((window.t&&t('cost_under_threshold'))||'sotto soglia');
+      const base='≤ €'+threshold+' '+((window.t&&t('cost_under_threshold'))||'sotto soglia');
+      detailEl.textContent=minsStr?(base+' · '+minsStr):base;
     }else{
       const parts=[];
       if(data.gemini_eur>0)parts.push('Voci PREMIUM €'+Number(data.gemini_eur).toFixed(2));
       if(data.llm_eur>0)parts.push('Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
-      detailEl.textContent=parts.join(' + ');
+      const base=parts.join(' + ');
+      detailEl.textContent=minsStr?(base+' · '+minsStr):base;
     }
   }
   if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
+  updateModelRateHint(data);
 }
 
 // ═══════════════════ PAYMENT MODAL (combined cost) ═══════════════════
