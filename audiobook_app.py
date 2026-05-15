@@ -186,6 +186,7 @@ def add_security_headers(response):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https://api.producthunt.com; "
+        "media-src 'self' blob:; "
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
@@ -4329,19 +4330,21 @@ def api_preview_audio(job_id):
 
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
+    style = (request.args.get("style") or "").strip()[:300]
 
     work_dir = UPLOAD_DIR / job_id
     work_dir.mkdir(exist_ok=True)
-    preview_path = work_dir / "preview.mp3"
-    cache_key_path = work_dir / "preview.key"
-    current_key = f"{voice}|{rate}"
+    # Cache per terna (voice, rate, style): il nome del file è derivato da un
+    # hash della chiave, così tornare a una combinazione già generata serve il
+    # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
+    cache_key = f"{voice}|{rate}|{style}"
+    key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
+    preview_path = work_dir / f"preview_{key_hash}.mp3"
 
-    # Riusa il file se voce e velocità non sono cambiate
-    if preview_path.exists() and cache_key_path.exists():
-        if cache_key_path.read_text(encoding="utf-8").strip() == current_key:
-            return send_file(str(preview_path), mimetype="audio/mpeg",
-                             as_attachment=False, download_name="preview.mp3",
-                             conditional=True)
+    if preview_path.exists() and preview_path.stat().st_size > 0:
+        return send_file(str(preview_path), mimetype="audio/mpeg",
+                         as_attachment=False, download_name="preview.mp3",
+                         conditional=True)
 
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
@@ -4370,7 +4373,8 @@ def api_preview_audio(job_id):
             # Native output is PCM — convert to MP3 inline for browser playback.
             pcm_tmp = str(preview_path) + ".pcm"
             try:
-                result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp)
+                result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
+                                                style_instruction=style or None)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
                 try:
                     gemini_tts.record_usage(
@@ -4417,11 +4421,6 @@ def api_preview_audio(job_id):
 
     if not preview_path.exists():
         return jsonify({"error": "File MP3 non generato."}), 500
-
-    try:
-        cache_key_path.write_text(current_key, encoding="utf-8")
-    except Exception:
-        pass
 
     return send_file(str(preview_path), mimetype="audio/mpeg",
                      as_attachment=False, download_name="preview.mp3",

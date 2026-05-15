@@ -56,7 +56,7 @@ GEMINI_MODELS = {
         "default_margin_percent": _f("ABM_GEMINI_25FLASH_MARGIN_PERCENT", 35.0),
     },
     "flash31": {
-        "id": "gemini-3.1-flash-preview-tts",
+        "id": "gemini-3.1-flash-tts-preview",
         "label": "Gemini 3.1 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
@@ -68,7 +68,8 @@ USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
-PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 5))
+PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 10))
+PREVIEW_WINDOW_SECONDS = int(_f("ABM_GEMINI_PREVIEW_WINDOW_SEC", 300))
 
 GEMINI_VOICE_NAMES = [
     "Achernar", "Achird", "Algenib", "Algieba", "Alnilam",
@@ -434,9 +435,9 @@ def _save_previews(data):
 
 
 def _maybe_reset_cookie(entry, now):
-    """Resetta il counter se il primo timestamp ha superato 24h."""
+    """Resetta il counter se il primo timestamp ha superato la finestra rolling."""
     window_start = entry.get("window_start_ts", 0)
-    if now - window_start >= 24 * 3600:
+    if now - window_start >= PREVIEW_WINDOW_SECONDS:
         entry["count"] = 0
         entry["window_start_ts"] = now
     return entry
@@ -455,7 +456,7 @@ def check_preview_cap(cookie_id):
         entry = _maybe_reset_cookie(entry, now)
         count = entry["count"]
         remaining = max(0, cap - count)
-        reset_ts = entry["window_start_ts"] + 24 * 3600
+        reset_ts = entry["window_start_ts"] + PREVIEW_WINDOW_SECONDS
         return count, remaining, int(reset_ts)
 
 

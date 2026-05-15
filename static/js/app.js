@@ -367,7 +367,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     speedSlider.addEventListener('input',function(){
       var idx=parseInt(this.value)+3;
       _setSpeed(idx);
-      if(_previewGenerated)_resetPreviewState();
+      _onPreviewParamsChanged();
     });
     // Also sync on change (for keyboard/accessibility)
     speedSlider.addEventListener('change',function(){
@@ -398,12 +398,19 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(vmPrem)vmPrem.addEventListener('change',()=>{
     updVoicesPremium();
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+    // Il modello è codificato nel voice id (gemini:<model>:<voice>): cambia il sig.
+    _onPreviewParamsChanged();
   });
   const gStyle=document.getElementById('geminiStyle');
-  if(gStyle)gStyle.addEventListener('input',(e)=>{
-    const counter=document.getElementById('styleCounter');
-    if(counter)counter.textContent=e.target.value.length;
-  });
+  if(gStyle){
+    gStyle.addEventListener('input',(e)=>{
+      const counter=document.getElementById('styleCounter');
+      if(counter)counter.textContent=e.target.value.length;
+    });
+    // Lo stile entra nella firma solo per voci Gemini. Trigger su 'change'
+    // (perdita focus o invio) per non riprocessare a ogni tasto premuto.
+    gStyle.addEventListener('change',()=>{_onPreviewParamsChanged();});
+  }
   // Cost estimate triggers (no re-estimate on voice change)
   document.getElementById('aiToggle')?.addEventListener('change',requestCombinedEstimate);
   // Initialize wizard
@@ -759,7 +766,7 @@ function updVoices(){
   // Voci Gemini TTS rimosse dal tab Standard (vedi tab Premium)
   const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
   if(dv)sel.value=dv.id;
-  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();if(_previewGenerated)_resetPreviewState();};
+  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();_onPreviewParamsChanged();};
   _updateVoiceChip();checkVoiceMismatch();
   // Reset speed to "Normal" (+0%) whenever language or voice changes
   var vrSel2=document.getElementById('vr');
@@ -794,7 +801,7 @@ function updVoicesPremium(){
     opt.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.label||v.id.split(':').pop());
     sel.appendChild(opt);
   });
-  sel.onchange=()=>{if(_previewGenerated)_resetPreviewState();};
+  sel.onchange=()=>{_onPreviewParamsChanged();};
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
 }
 
@@ -1081,6 +1088,34 @@ function onPayConfirm() {
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
 let _prevLoading=false, _previewGenerated=false;
+// Firma dell'anteprima attualmente caricata nel player (voce|rate|stile)
+// e set delle firme già generate in questa sessione (cache-hit lato server garantito).
+let _currentPreviewSig=null;
+const _knownPreviewSigs=new Set();
+
+function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
+
+function _getPreviewSig(){
+  const voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  const rate=document.getElementById('vr')?.value||'+0%';
+  const style=_isGeminiVoiceId(voice)
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,300))
+    : '';
+  return voice+'|'+rate+'|'+style;
+}
+
+function _buildPreviewUrl(){
+  const voice=getCurrentVoiceId();
+  const rate=document.getElementById('vr').value;
+  const style=_isGeminiVoiceId(voice)
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,300))
+    : '';
+  let u='/api/preview_audio/'+bookData.job_id
+    +'?voice='+encodeURIComponent(voice)
+    +'&rate='+encodeURIComponent(rate);
+  if(style)u+='&style='+encodeURIComponent(style);
+  return u;
+}
 
 function _updatePreviewBtn(){
   const btn=document.getElementById('btnPrev');
@@ -1092,8 +1127,39 @@ function _updatePreviewBtn(){
   if(txt)txt.textContent=t(_previewGenerated?'btn_regen_preview':'btn_gen_preview');
 }
 
+// Chiamato quando un parametro che influisce sull'anteprima cambia
+// (voce, modello, velocità, stile). Decide se:
+//  - non fare nulla (firma invariata)
+//  - mostrare direttamente il player con audio cached (firma già generata)
+//  - nascondere il player e riabilitare il bottone Rigenera (firma nuova)
+function _onPreviewParamsChanged(){
+  if(!bookData||!bookData.preview_text)return;
+  const newSig=_getPreviewSig();
+  if(newSig===_currentPreviewSig)return;
+  const audio=document.getElementById('previewAudioWiz');
+  const wrap=document.getElementById('previewAudioWrap');
+  const btn=document.getElementById('btnPrev');
+  if(_knownPreviewSigs.has(newSig)){
+    // Anteprima già in cache lato server: carica direttamente nel player.
+    if(audio){audio.src=_buildPreviewUrl();audio.load();}
+    if(wrap)wrap.classList.add('visible');
+    _currentPreviewSig=newSig;
+    _previewGenerated=true;
+    _updatePreviewBtn();
+    if(btn)btn.disabled=true;
+  } else {
+    // Nuova combinazione: nascondi player, abilita "Rigenera anteprima".
+    if(audio){audio.pause();audio.removeAttribute('src');audio.load();}
+    if(wrap)wrap.classList.remove('visible');
+    _currentPreviewSig=null;
+    _updatePreviewBtn();
+    if(btn)btn.disabled=!(bookData&&bookData.preview_text&&!generating&&!jobDone);
+  }
+}
+
 function _resetPreviewState(){
   _previewGenerated=false;
+  _currentPreviewSig=null;
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
   const audio=document.getElementById('previewAudioWiz');
@@ -1121,20 +1187,21 @@ async function previewRead(){
 
   _prevLoading=true;
   const btn=document.getElementById('btnPrev');
+  const prevTxt=document.getElementById('prevTxt');
+  const _origTxt=prevTxt?prevTxt.textContent:'';
   btn.disabled=true;
   btn.classList.add('loading');
+  if(prevTxt)prevTxt.textContent=t('prev_loading')||'Generazione anteprima in corso…';
+  const _restoreBtn=()=>{btn.classList.remove('loading');if(prevTxt)prevTxt.textContent=_origTxt;};
 
   // Hide previous player if any
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
 
   const voice=getCurrentVoiceId();
-  const rate =document.getElementById('vr').value;
   const audio=document.getElementById('previewAudioWiz');
-
-  const url='/api/preview_audio/'+bookData.job_id
-    +'?voice='+encodeURIComponent(voice)
-    +'&rate='+encodeURIComponent(rate);
+  const _sigAtRequest=_getPreviewSig();
+  const url=_buildPreviewUrl();
 
   // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
   if(_isGeminiVoice(voice)){
@@ -1146,16 +1213,16 @@ async function previewRead(){
         const msg=t('gemini_preview_cap_exceeded')
           .replace('{n}',data.used||0).replace('{cap}',data.cap||5).replace('{min}',minutes);
         alert(msg);
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
         return;
       }
       if(r.status===503){
         alert(t('gemini_not_configured'));
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
         return;
       }
       if(!r.ok){
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
         alert(t('prev_error'));
         return;
       }
@@ -1163,9 +1230,11 @@ async function previewRead(){
       const blobUrl=URL.createObjectURL(blob);
       audio.oncanplay=()=>{
         _prevLoading=false;
-        btn.classList.remove('loading');
+        _restoreBtn();
         btn.disabled=true;
         _previewGenerated=true;
+        _currentPreviewSig=_sigAtRequest;
+        _knownPreviewSigs.add(_sigAtRequest);
         _updatePreviewBtn();
         if(wrap)wrap.classList.add('visible');
         previewListened=true;
@@ -1176,7 +1245,7 @@ async function previewRead(){
         if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
         URL.revokeObjectURL(blobUrl);
         _prevLoading=false;
-        btn.classList.remove('loading');
+        _restoreBtn();
         btn.disabled=false;
         if(wrap)wrap.classList.remove('visible');
         alert(t('prev_error'));
@@ -1186,7 +1255,7 @@ async function previewRead(){
       return;
     }catch(err){
       console.error('[gemini-preview] fetch error:',err);
-      _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+      _prevLoading=false;btn.disabled=false;_restoreBtn();
       alert(t('prev_error'));
       return;
     }
@@ -1194,9 +1263,11 @@ async function previewRead(){
 
   audio.oncanplay=()=>{
     _prevLoading=false;
-    btn.classList.remove('loading');
+    _restoreBtn();
     btn.disabled=true;
     _previewGenerated=true;
+    _currentPreviewSig=_sigAtRequest;
+    _knownPreviewSigs.add(_sigAtRequest);
     _updatePreviewBtn();
     if(wrap)wrap.classList.add('visible');
     previewListened=true;
@@ -1205,7 +1276,7 @@ async function previewRead(){
   audio.onerror=()=>{
     if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
     _prevLoading=false;
-    btn.classList.remove('loading');
+    _restoreBtn();
     btn.disabled=false;
     if(wrap)wrap.classList.remove('visible');
     alert(t('prev_error'));
@@ -2519,6 +2590,7 @@ function resetAll(){
   previewStop();
   bookData=null;jobId=null;
   emailRegistered=false;previewListened=false;
+  _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
   const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';
   // Reset wizard generation UI
