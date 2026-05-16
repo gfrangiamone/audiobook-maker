@@ -4475,39 +4475,63 @@ def api_reset_to_chapters(job_id):
                 shutil.rmtree(str(prev), ignore_errors=True)
         archive_name = f"output_archive_{int(time.time())}"
         archive_dir = work_dir / archive_name
+        # Struttura flat: tutti i file utili (m4b/mp3/zip/cover) finiscono
+        # direttamente in archive_dir/, niente sotto-cartella output/. Cosi'
+        # il fallback `glob('*.m4b')` degli endpoint download li trova.
+        print(f"[reset] job={job_id} output_dir.exists={output_dir.exists()} "
+              f"extra_token_files={len(extra_token_files)} "
+              f"token_m4b={(token_info or {}).get('output_m4b','')!r}")
         try:
             archive_dir.mkdir(exist_ok=True)
-            # Sposta i file referenziati dal token (zip in root, eventuali altri)
             path_remap = {}
+            # Sposta i file referenziati dal token che stanno FUORI da output/
             for src in extra_token_files:
                 src_path = Path(src)
-                # Se gia' dentro output_dir, lo sposteremo con la rename di sotto
                 if output_dir.exists() and src_path.is_relative_to(output_dir):
-                    continue
+                    continue  # sara' incluso dal walk di output/ piu' sotto
                 if not src_path.exists():
                     continue
                 dst = archive_dir / src_path.name
-                shutil.move(str(src_path), str(dst))
-                path_remap[str(src_path)] = str(dst)
-            # Sposta intera cartella output/ dentro l'archivio
+                try:
+                    shutil.move(str(src_path), str(dst))
+                    path_remap[str(src_path)] = str(dst)
+                except OSError as e:
+                    print(f"[reset] Move failed for {src_path}: {e}")
+            # Sposta i FILE contenuti in output/ direttamente in archive_dir
+            # (flat, senza sotto-cartella). Robusto su Windows: shutil.move
+            # gestisce locks/cross-device meglio di Path.rename.
             if output_dir.exists():
-                moved_output = archive_dir / "output"
-                output_dir.rename(moved_output)
-                def _remap_under_output(p):
+                walk_remap = {}
+                for entry in output_dir.iterdir():
+                    if not entry.is_file():
+                        continue
+                    dst = archive_dir / entry.name
+                    if dst.exists():
+                        # collisione improbabile (cap=1) → suffisso
+                        dst = archive_dir / f"{entry.stem}_{int(time.time())}{entry.suffix}"
                     try:
-                        rel = os.path.relpath(p, str(output_dir))
-                        if rel.startswith(".."):
-                            return None
-                        return str(moved_output / rel)
-                    except ValueError:
-                        return None
-                # Pre-populate remap for token paths that pointed into output/
+                        shutil.move(str(entry), str(dst))
+                        walk_remap[str(entry)] = str(dst)
+                    except OSError as e:
+                        print(f"[reset] Move failed for {entry}: {e}")
+                # Remap token paths that pointed into output/
                 for key in ("output_zip", "output_file", "output_m4b"):
                     p = (token_info or {}).get(key) or ""
-                    if p and p not in path_remap:
-                        r = _remap_under_output(p)
-                        if r:
-                            path_remap[p] = r
+                    if not p or p in path_remap:
+                        continue
+                    if p in walk_remap:
+                        path_remap[p] = walk_remap[p]
+                    else:
+                        # Filename-based fallback
+                        candidate = archive_dir / Path(p).name
+                        if candidate.exists():
+                            path_remap[p] = str(candidate)
+                path_remap.update(walk_remap)
+                # Rimuovi output/ (ormai vuota o con sotto-cartelle residue come podcast/cover_assets)
+                try:
+                    shutil.rmtree(str(output_dir), ignore_errors=True)
+                except Exception as e:
+                    print(f"[reset] Cleanup output_dir warning: {e}")
             # Aggiorna il token
             with _tokens_lock:
                 t = _download_tokens.get(active_token)
@@ -4518,7 +4542,8 @@ def api_reset_to_chapters(job_id):
                             t[key] = path_remap[old]
                     t["output_archive_dir"] = archive_name
                     _save_tokens()
-            print(f"[reset] Archived output for active email token: {archive_dir}")
+            print(f"[reset] Archived {len(path_remap)} file(s) to: {archive_dir} "
+                  f"(contents: {[p.name for p in archive_dir.iterdir()]})")
         except OSError as e:
             print(f"[reset] Archive failed, falling back to deletion: {e}")
             if output_dir.exists():
@@ -5181,7 +5206,7 @@ def token_download_page(token):
         results = list(jd.glob("*.m4b")) + list((jd / "output").glob("*.m4b"))
         for archive in jd.glob("output_archive_*"):
             if archive.is_dir():
-                results.extend(archive.glob("*.m4b"))
+                results.extend(archive.rglob("*.m4b"))
         return results
 
     m4b_available = False
@@ -5299,10 +5324,13 @@ def token_do_download_m4b(token):
             m4bs = list(job_dir.glob("*.m4b")) + list((job_dir/"output").glob("*.m4b"))
             for archive in job_dir.glob("output_archive_*"):
                 if archive.is_dir():
-                    m4bs.extend(archive.glob("*.m4b"))
+                    m4bs.extend(archive.rglob("*.m4b"))
             if m4bs: m4b_path = str(m4bs[0])
 
     if not m4b_path or not os.path.exists(m4b_path):
+        print(f"[dl/m4b] 404 token={token} job={job_id} "
+              f"token_m4b={token_info.get('output_m4b','')!r} "
+              f"archives={[str(p) for p in (UPLOAD_DIR/job_id).glob('output_archive_*') if p.is_dir()]}")
         return "M4B file not available", 404
 
     # Log solo sulla prima richiesta completa, non su HEAD o range request
@@ -5446,10 +5474,10 @@ def _serve_audio_download(token_info, job, job_id):
     if job_dir.exists():
         print(f"[dl] Scanning {job_dir} for downloadable files...")
         archive_dirs = [d for d in job_dir.glob("output_archive_*") if d.is_dir()]
-        # Look for ZIP first (root of job dir + archives)
+        # Look for ZIP first (root of job dir + archives, recursive for archives)
         zips = sorted(job_dir.glob("*.zip"))
         for ad in archive_dirs:
-            zips.extend(sorted(ad.glob("*.zip")))
+            zips.extend(sorted(ad.rglob("*.zip")))
         # Exclude podcast zips
         zips = [z for z in zips if "_podcast" not in z.name]
         if zips:
@@ -5462,7 +5490,7 @@ def _serve_audio_download(token_info, job, job_id):
         output_subdir = job_dir / "output"
         mp3s = sorted(output_subdir.glob("*.mp3")) if output_subdir.exists() else []
         for ad in archive_dirs:
-            mp3s.extend(sorted(ad.glob("*.mp3")))
+            mp3s.extend(sorted(ad.rglob("*.mp3")))
         if not mp3s:
             mp3s = sorted(job_dir.glob("*.mp3"))
         if len(mp3s) == 1:
@@ -5688,7 +5716,7 @@ def _serve_podcast_download(token_info, job, job_id):
         if not mp3_files:
             for ad in job_dir.glob("output_archive_*"):
                 if ad.is_dir():
-                    found = sorted([str(f) for f in ad.glob("*.mp3")])
+                    found = sorted([str(f) for f in ad.rglob("*.mp3")])
                     if found:
                         mp3_files = found
                         print(f"[dl] Podcast scan fallback: found {len(mp3_files)} MP3s in {ad}")
