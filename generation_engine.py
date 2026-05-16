@@ -1277,8 +1277,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     job["last_poll"] = time.time()
     work_dir = _upload_dir / job_id
     work_dir.mkdir(exist_ok=True)
-    output_dir = work_dir / "output"
+    # Per-epoch output directory: each /api/generate call creates its own
+    # output_{epoch}/ folder. This isolates concurrent generations and keeps
+    # earlier outputs intact for active email-download tokens, so
+    # /api/reset_to_chapters never has to delete or rename anything.
+    output_dir = work_dir / f"output_{my_epoch}"
     output_dir.mkdir(exist_ok=True)
+    job["output_dir"] = str(output_dir)
     loop = asyncio.new_event_loop()
     start_time = time.time()
 
@@ -1692,7 +1697,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 except Exception as e:
                     print(f"[{job_id}] RSS generation failed (non-fatal): {e}")
 
-            zip_path = shutil.make_archive(str(work_dir / safe_name), "zip", str(output_dir))
+            # Build ZIP outside output_dir (make_archive can't write inside its
+            # source), then move it inside so cleanup per-epoch handles it.
+            _zip_tmp = shutil.make_archive(str(work_dir / f"_zip_{my_epoch}"), "zip", str(output_dir))
+            zip_path = str(output_dir / f"{safe_name}.zip")
+            shutil.move(_zip_tmp, zip_path)
             job["output_files"] = mp3_files
             job["output_name"] = f"{safe_name}.zip"
             job["output_zip"] = zip_path
@@ -1701,7 +1710,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if output_format not in ('mp3', 'zip', 'zip_rss'):
                 try:
                     # Concatenate all MP3s into one for M4B conversion
-                    temp_full_mp3 = str(work_dir / "full_temp.mp3")
+                    temp_full_mp3 = str(work_dir / f"_full_temp_{my_epoch}.mp3")
                     _concatenate_mp3(mp3_files, temp_full_mp3)
                     final_m4b = str(output_dir / f"{safe_name}.m4b")
                     cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
