@@ -645,13 +645,33 @@ def _generate_optimized_abm(job_id):
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     buf.seek(0)
-    # Save .abm to disk for email download
+    # Save .abm to disk for email download.
+    # Prefer the current epoch's output_{N}/ dir if set (so the ABM is
+    # preserved per-generation alongside MP3/M4B). Fall back to work_dir
+    # root when called during the optimization phase, before any audio
+    # generation has run.
     work_dir = _upload_dir / job_id
     work_dir.mkdir(exist_ok=True)
-    abm_path = str(work_dir / f"{safe_title}_optimized.abm")
+    target_dir = work_dir
+    out_dir_str = job.get("output_dir", "")
+    if out_dir_str:
+        out_dir = Path(out_dir_str)
+        if out_dir.exists():
+            target_dir = out_dir
+    abm_name = f"{safe_title}_optimized.abm"
+    abm_path = str(target_dir / abm_name)
     with open(abm_path, "wb") as f:
         f.write(buf.getvalue())
-    return abm_path, f"{safe_title}_optimized.abm"
+    # If we just wrote into output_dir, remove any stale copy left at
+    # work_dir root from an earlier optimization-phase write.
+    if target_dir != work_dir:
+        legacy = work_dir / abm_name
+        if legacy.exists() and str(legacy) != abm_path:
+            try:
+                legacy.unlink()
+            except OSError:
+                pass
+    return abm_path, abm_name
 
 
 # ---------------------------------------------------------------------------
@@ -1767,15 +1787,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         else:
             job["progress_message"] = "Done!"
 
-        # Generate .abm snapshot if AI optimized (so the user can download it)
-        if job.get("ai_optimized") and not job.get("optimized_abm_path"):
+        # Snapshot the .abm into this epoch's output_dir so it is preserved
+        # alongside the audio files. Always regenerate (even if a previous
+        # optimization-phase ABM exists at work_dir root) so the snapshot
+        # reflects the current optimized_chapters state and ends up inside
+        # the per-epoch folder.
+        if job.get("ai_optimized"):
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
-                print(f"[{job_id}] Auto-generated .abm snapshot after generation")
+                print(f"[{job_id}] .abm snapshot in {abm_path}")
             except Exception as e:
-                print(f"[{job_id}] Failed to auto-generate .abm: {e}")
+                print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
         _set_job_status(job, "done")

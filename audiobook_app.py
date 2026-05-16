@@ -4418,7 +4418,7 @@ def api_progress(job_id):
                     if _m4bs:
                         job["output_m4b"] = str(_m4bs[0])
                 if not job.get("optimized_abm_path"):
-                    _abms = list(_work.glob("*.abm"))
+                    _abms = list(_work.glob("*.abm")) + _find_files_in_outputs(_work, "*.abm")
                     if _abms:
                         job["optimized_abm_path"] = str(_abms[0])
 
@@ -4485,26 +4485,20 @@ def api_reset_to_chapters(job_id):
         if not job.get("info") or not job["info"].chapters:
             return jsonify({"error": "Book data no longer available. Please re-upload the file."}), 400
 
-    # Per-epoch output dirs: each /api/generate writes into work_dir/output_{epoch}/.
-    # Reset is now non-destructive for outputs — the next generation will bump
-    # gen_epoch and write into a fresh dir. Earlier outputs stay on disk until
-    # the cleanup loop purges them (unreferenced by any active token AND older
-    # than retention).
+    # Per-epoch layout: /api/generate writes into work_dir/output_{epoch}/,
+    # including the .abm snapshot. Reset is fully non-destructive for outputs
+    # — the next generation bumps gen_epoch and writes into a fresh dir,
+    # leaving previous epochs (audio + .abm) intact for any active email
+    # tokens. The cleanup loop purges orphan dirs after retention.
     #
-    # Cleanup we still do here:
-    # - ABM file at job root (regenerated on next optimization).
+    # The only .abm file we still delete here is a stray copy at work_dir
+    # root left over from an optimization phase that never ran a generation
+    # (the work_dir-root path is no longer in use once output_dir exists).
     work_dir = UPLOAD_DIR / job_id
-    old_abm_path = job.get("optimized_abm_path", "")
-    if old_abm_path and os.path.exists(old_abm_path):
-        try:
-            os.remove(old_abm_path)
-            print(f"[reset] Removed stale ABM: {old_abm_path}")
-        except OSError as e:
-            print(f"[reset] Error removing stale ABM {old_abm_path}: {e}")
     for abm in work_dir.glob("*.abm"):
         try:
             abm.unlink()
-            print(f"[reset] Removed leftover ABM: {abm}")
+            print(f"[reset] Removed work_dir-root ABM: {abm}")
         except OSError:
             pass
 
