@@ -1929,6 +1929,23 @@ function _clearBtnLoading(btn,html){
   btn.disabled=false;
   if(html!==undefined)btn.innerHTML=html;
 }
+// Top-of-page transient toast for download start (matches /dl/<token> page UX).
+let _dlToastEl=null,_dlToastTimer=null;
+function _showDlToast(msg){
+  if(!_dlToastEl){
+    _dlToastEl=document.createElement('div');
+    _dlToastEl.className='dl-toast';
+    document.body.appendChild(_dlToastEl);
+  }
+  _dlToastEl.innerHTML='<span class="spin"></span>'+msg;
+  requestAnimationFrame(()=>_dlToastEl.classList.add('show'));
+  clearTimeout(_dlToastTimer);
+  _dlToastTimer=setTimeout(()=>{if(_dlToastEl)_dlToastEl.classList.remove('show')},6500);
+}
+function _hideDlToast(){
+  clearTimeout(_dlToastTimer);
+  if(_dlToastEl)_dlToastEl.classList.remove('show');
+}
 async function _streamToBlob(response,onProgress){
   const cl=parseInt(response.headers.get('Content-Length')||'0',10);
   if(!response.body||!response.body.getReader){
@@ -1961,6 +1978,7 @@ async function downloadFile(type){
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;
   _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   const maxDlRetries=3;
   for(let attempt=1;attempt<=maxDlRetries;attempt++){
     try{
@@ -2047,6 +2065,7 @@ async function downloadPodcast(){
   const btn=document.getElementById('btnP');
   const restoreHtml='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
   _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
@@ -2100,6 +2119,7 @@ async function downloadPodcastZip(){
   const btn=document.getElementById('btnP');
   const restoreHtml='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
   _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));

@@ -289,6 +289,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── Download hint toast (matches /dl/<token> page) ── */
+.dl-toast{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-8px);background:#1f2937;color:#fff;padding:10px 18px;border-radius:8px;font-size:.9rem;font-weight:500;box-shadow:0 6px 22px rgba(0,0,0,.18);opacity:0;transition:opacity .25s,transform .25s;z-index:9999;pointer-events:none;max-width:90vw;text-align:center}
+.dl-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.dl-toast .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:-2px}
+
 /* ═══ SHARE BAR ═══ */
 .share-row{margin-top:20px;padding-top:16px;border-top:1px solid var(--srf3);text-align:center}
 .share-row .share-label{font-size:.82rem;color:var(--txm);margin-bottom:10px}
