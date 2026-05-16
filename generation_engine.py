@@ -1212,6 +1212,10 @@ def run_optimization(job_id, selected_chapters=None):
             podcast_base_url = job.get("opt_podcast_base_url", "")
             print(f"[{job_id}] Auto-generating after optimization (voice: {voice})")
 
+            # Bump generation epoch so output lands in its own output_{epoch}/.
+            # /api/generate normally does this; the auto-gen path bypasses it.
+            job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+
             # Filter info if only a subset was optimized
             if selected_chapters:
                 selected_set = set(selected_chapters)
