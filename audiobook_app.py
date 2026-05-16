@@ -271,7 +271,7 @@ from email_service import (
     BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
 )
 
-EMAIL_FILE_RETENTION_SEC = 24 * 60 * 60  # 24 ore di retention dopo invio email
+EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
 
 #  -  -  Admin activity digest (email log)  -  - 
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
@@ -4447,18 +4447,105 @@ def api_reset_to_chapters(job_id):
         if not job.get("info") or not job["info"].chapters:
             return jsonify({"error": "Book data no longer available. Please re-upload the file."}), 400
 
-    # Clean up generated output files to free disk space (I/O outside lock)
+    # Clean up generated output files to free disk space (I/O outside lock).
+    # Se esiste un download token email attivo, archivia l'output (cap=1 per job)
+    # cosi' il link email continua a funzionare fino alla scadenza naturale (18h).
     work_dir = UPLOAD_DIR / job_id
     output_dir = work_dir / "output"
-    if output_dir.exists():
-        shutil.rmtree(str(output_dir), ignore_errors=True)
-    for key in ("output_zip",):
-        fpath = job.get(key, "")
-        if fpath and os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-            except OSError:
-                pass
+    active_token = job.get("email_token", "")
+    token_info = _download_tokens.get(active_token) if active_token else None
+    archive_for_token = False
+    if active_token and token_info:
+        created_at = token_info.get("created_at", 0)
+        if (time.time() - created_at) <= EMAIL_FILE_RETENTION_SEC:
+            archive_for_token = True
+
+    # File referenziati dal token che vanno preservati nell'archivio (oltre a output/)
+    extra_token_files = []
+    if archive_for_token:
+        for key in ("output_zip", "output_file", "output_m4b"):
+            p = token_info.get(key) if token_info else None
+            if p and os.path.exists(p) and Path(p).is_relative_to(work_dir):
+                extra_token_files.append(p)
+
+    if archive_for_token and (output_dir.exists() or extra_token_files):
+        # Cap=1: rimuovi eventuali archivi precedenti
+        for prev in work_dir.glob("output_archive_*"):
+            if prev.is_dir():
+                shutil.rmtree(str(prev), ignore_errors=True)
+        archive_name = f"output_archive_{int(time.time())}"
+        archive_dir = work_dir / archive_name
+        try:
+            archive_dir.mkdir(exist_ok=True)
+            # Sposta i file referenziati dal token (zip in root, eventuali altri)
+            path_remap = {}
+            for src in extra_token_files:
+                src_path = Path(src)
+                # Se gia' dentro output_dir, lo sposteremo con la rename di sotto
+                if output_dir.exists() and src_path.is_relative_to(output_dir):
+                    continue
+                if not src_path.exists():
+                    continue
+                dst = archive_dir / src_path.name
+                shutil.move(str(src_path), str(dst))
+                path_remap[str(src_path)] = str(dst)
+            # Sposta intera cartella output/ dentro l'archivio
+            if output_dir.exists():
+                moved_output = archive_dir / "output"
+                output_dir.rename(moved_output)
+                def _remap_under_output(p):
+                    try:
+                        rel = os.path.relpath(p, str(output_dir))
+                        if rel.startswith(".."):
+                            return None
+                        return str(moved_output / rel)
+                    except ValueError:
+                        return None
+                # Pre-populate remap for token paths that pointed into output/
+                for key in ("output_zip", "output_file", "output_m4b"):
+                    p = (token_info or {}).get(key) or ""
+                    if p and p not in path_remap:
+                        r = _remap_under_output(p)
+                        if r:
+                            path_remap[p] = r
+            # Aggiorna il token
+            with _tokens_lock:
+                t = _download_tokens.get(active_token)
+                if t is not None:
+                    for key in ("output_zip", "output_file", "output_m4b"):
+                        old = t.get(key) or ""
+                        if old in path_remap:
+                            t[key] = path_remap[old]
+                    t["output_archive_dir"] = archive_name
+                    _save_tokens()
+            print(f"[reset] Archived output for active email token: {archive_dir}")
+        except OSError as e:
+            print(f"[reset] Archive failed, falling back to deletion: {e}")
+            if output_dir.exists():
+                shutil.rmtree(str(output_dir), ignore_errors=True)
+            if archive_dir.exists():
+                shutil.rmtree(str(archive_dir), ignore_errors=True)
+            # Token ora orfano -> invalidalo per restituire 410 invece di 404 fuorviante
+            with _tokens_lock:
+                _download_tokens.pop(active_token, None)
+                _save_tokens()
+    else:
+        if output_dir.exists():
+            shutil.rmtree(str(output_dir), ignore_errors=True)
+        # Se token presente ma non utilizzabile, rimuovilo per evitare 404 fuorvianti
+        if active_token and not archive_for_token:
+            with _tokens_lock:
+                if _download_tokens.pop(active_token, None) is not None:
+                    _save_tokens()
+
+    if not archive_for_token:
+        for key in ("output_zip",):
+            fpath = job.get(key, "")
+            if fpath and os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
     old_abm_path = job.get("optimized_abm_path", "")
     if old_abm_path and os.path.exists(old_abm_path):
         try:
@@ -5055,7 +5142,7 @@ def token_download_page(token):
     created_at = token_info["created_at"]
     elapsed = time.time() - created_at
 
-    # Check 24h expiration
+    # Check retention expiration
     if elapsed > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
@@ -5090,14 +5177,21 @@ def token_download_page(token):
     # M4B availability: da job in memoria, da token snapshot oppure scan filesystem.
     # Il fallback su filesystem è importante perché il job potrebbe avere output_m4b
     # non impostato (es. se il token è stato creato prima che M4B completasse).
+    def _scan_m4bs(jd):
+        results = list(jd.glob("*.m4b")) + list((jd / "output").glob("*.m4b"))
+        for archive in jd.glob("output_archive_*"):
+            if archive.is_dir():
+                results.extend(archive.glob("*.m4b"))
+        return results
+
     m4b_available = False
     if job_in_memory:
         m4b_path_mem = jobs[job_id].get("output_m4b", "")
         if m4b_path_mem and os.path.exists(m4b_path_mem):
             m4b_available = True
         else:
-            # Fallback filesystem anche con job in memoria
-            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            # Fallback filesystem anche con job in memoria (include output_archive_*)
+            m4bs = _scan_m4bs(job_dir)
             if m4bs:
                 m4b_available = True
                 # Aggiorna anche il job in memoria per coerenza
@@ -5107,8 +5201,8 @@ def token_download_page(token):
         if m4b_path and os.path.exists(m4b_path):
             m4b_available = True
         else:
-            # Check common locations (job dir or output subdir)
-            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            # Check common locations (job dir, output subdir, output_archive_*)
+            m4bs = _scan_m4bs(job_dir)
             m4b_available = len(m4bs) > 0
 
     # ABM availability: from job in memory (ai_optimized flag) or token snapshot
@@ -5144,7 +5238,7 @@ def token_do_download_abm(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
     job_id = token_info.get("job_id", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     # Always regenerate from cumulative in-memory state when AI-optimized
@@ -5184,7 +5278,7 @@ def token_do_download_m4b(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -5202,8 +5296,11 @@ def token_do_download_m4b(token):
         job_dir = UPLOAD_DIR / job_id
         m4b_path = str(job_dir / "output" / f"{_safe_filename(token_info.get('book_title','audiolibro'))}.m4b")
         if not os.path.exists(m4b_path):
-             m4bs = list(job_dir.glob("*.m4b")) + list((job_dir/"output").glob("*.m4b"))
-             if m4bs: m4b_path = str(m4bs[0])
+            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir/"output").glob("*.m4b"))
+            for archive in job_dir.glob("output_archive_*"):
+                if archive.is_dir():
+                    m4bs.extend(archive.glob("*.m4b"))
+            if m4bs: m4b_path = str(m4bs[0])
 
     if not m4b_path or not os.path.exists(m4b_path):
         return "M4B file not available", 404
@@ -5228,7 +5325,7 @@ def token_do_download(token):
     if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return "Link scaduto  -  i file sono stati cancellati dopo 24 ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -5345,11 +5442,14 @@ def _serve_audio_download(token_info, job, job_id):
             _do_log()
             return _send_file_throttled(reconstructed, as_attachment=True, download_name=output_name)
 
-    # 4. Fallback: scan job directory for downloadable files
+    # 4. Fallback: scan job directory for downloadable files (incl. output_archive_*)
     if job_dir.exists():
         print(f"[dl] Scanning {job_dir} for downloadable files...")
-        # Look for ZIP first (root of job dir)
+        archive_dirs = [d for d in job_dir.glob("output_archive_*") if d.is_dir()]
+        # Look for ZIP first (root of job dir + archives)
         zips = sorted(job_dir.glob("*.zip"))
+        for ad in archive_dirs:
+            zips.extend(sorted(ad.glob("*.zip")))
         # Exclude podcast zips
         zips = [z for z in zips if "_podcast" not in z.name]
         if zips:
@@ -5358,9 +5458,11 @@ def _serve_audio_download(token_info, job, job_id):
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
-        # Look for MP3 in output/ subdirectory, then root
+        # Look for MP3 in output/ subdirectory, archives, then root
         output_subdir = job_dir / "output"
         mp3s = sorted(output_subdir.glob("*.mp3")) if output_subdir.exists() else []
+        for ad in archive_dirs:
+            mp3s.extend(sorted(ad.glob("*.mp3")))
         if not mp3s:
             mp3s = sorted(job_dir.glob("*.mp3"))
         if len(mp3s) == 1:
@@ -5576,13 +5678,21 @@ def _serve_podcast_download(token_info, job, job_id):
             if mp3_files:
                 print(f"[dl] Podcast path reconstruction: {len(mp3_files)} MP3s found in {output_dir}")
     if not mp3_files:
-        # Final fallback: scan output/ directory
+        # Final fallback: scan output/ directory + output_archive_*
         job_dir = UPLOAD_DIR / job_id
         output_dir = job_dir / "output"
         if output_dir.exists():
             mp3_files = sorted([str(f) for f in output_dir.glob("*.mp3")])
             if mp3_files:
                 print(f"[dl] Podcast scan fallback: found {len(mp3_files)} MP3s in {output_dir}")
+        if not mp3_files:
+            for ad in job_dir.glob("output_archive_*"):
+                if ad.is_dir():
+                    found = sorted([str(f) for f in ad.glob("*.mp3")])
+                    if found:
+                        mp3_files = found
+                        print(f"[dl] Podcast scan fallback: found {len(mp3_files)} MP3s in {ad}")
+                        break
     if not mp3_files:
         return "File non più disponibili", 410
 
@@ -5877,10 +5987,16 @@ box-shadow:0 4px 24px rgba(0,0,0,.08)}}
 h1{{font-size:3rem;margin:0 0 16px}}
 h2{{color:#2c3e50;margin:0 0 8px}}
 .title{{color:#666;font-style:italic;margin:0 0 24px}}
-.btn{{display:inline-block;padding:16px 32px;background:#3b82f6;color:white;
+.btn{{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:16px 32px;background:#3b82f6;color:white;
 text-decoration:none;border-radius:8px;font-weight:600;font-size:18px;
 transition:background .2s;border:none;cursor:pointer}}
 .btn:hover{{background:#2563eb}}
+.btn.is-loading{{opacity:.85;cursor:wait;pointer-events:none}}
+.btn .spin{{display:inline-block;width:16px;height:16px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;opacity:.85}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+.dl-toast{{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-8px);background:#1f2937;color:#fff;padding:10px 18px;border-radius:8px;font-size:.9rem;font-weight:500;box-shadow:0 6px 22px rgba(0,0,0,.18);opacity:0;transition:opacity .25s,transform .25s;z-index:9999;pointer-events:none}}
+.dl-toast.show{{opacity:1;transform:translateX(-50%) translateY(0)}}
+.dl-toast .spin{{margin-right:8px;border-color:rgba(255,255,255,.4);border-top-color:transparent}}
 .btn-abm{{background:rgba(196,122,42,.10);color:#b8804a;border:1px solid #d4b68c;padding:15px 28px;font-size:1rem;font-weight:600;max-width:300px;margin-top:12px;white-space:normal;word-break:keep-all}}
 .btn-abm:hover{{background:rgba(196,122,42,.14);color:#c47a2a;border-color:#c47a2a}}
 .btn-icon{{vertical-align:middle;margin-right:4px}}
@@ -5998,6 +6114,40 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
       setTimeout(function(){{tip.classList.remove('show')}},2000);
     }});
   }};
+  /* ── Download feedback: spinner sul bottone + toast (file grandi possono richiedere alcuni secondi) ── */
+  var DLS={{
+    it:{{preparing:'Preparazione in corso…',hint:'Il download partirà a breve. Per file grandi può richiedere qualche secondo.'}},
+    en:{{preparing:'Preparing download…',hint:'Your download will start shortly. Large files may take a few seconds.'}},
+    fr:{{preparing:'Préparation du téléchargement…',hint:'Le téléchargement va commencer. Les fichiers volumineux peuvent prendre quelques secondes.'}},
+    es:{{preparing:'Preparando la descarga…',hint:'La descarga comenzará en breve. Los archivos grandes pueden tardar unos segundos.'}},
+    de:{{preparing:'Download wird vorbereitet…',hint:'Der Download startet gleich. Bei großen Dateien kann es einige Sekunden dauern.'}},
+    zh:{{preparing:'正在准备下载…',hint:'下载即将开始，大文件可能需要几秒钟。'}},
+    hi:{{preparing:'डाउनलोड तैयार हो रहा है…',hint:'डाउनलोड जल्द शुरू होगा। बड़ी फ़ाइलों में कुछ सेकंड लग सकते हैं।'}}
+  }};
+  var dls=DLS[bl]||DLS['en'];
+  var toast=document.createElement('div');
+  toast.className='dl-toast';
+  document.body.appendChild(toast);
+  var toastTimer=null;
+  function showToast(msg){{
+    toast.innerHTML='<span class="spin"></span>'+msg;
+    requestAnimationFrame(function(){{toast.classList.add('show')}});
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(function(){{toast.classList.remove('show')}},6500);
+  }}
+  document.querySelectorAll('a.btn').forEach(function(a){{
+    a.addEventListener('click',function(){{
+      if(a.classList.contains('is-loading'))return;
+      var origHtml=a.innerHTML;
+      a.classList.add('is-loading');
+      a.innerHTML='<span class="spin"></span><span>'+dls.preparing+'</span>';
+      showToast(dls.hint);
+      setTimeout(function(){{
+        a.classList.remove('is-loading');
+        a.innerHTML=origHtml;
+      }},9000);
+    }});
+  }});
 }})();
 </script></body></html>"""
 
@@ -6441,8 +6591,9 @@ def _cleanup_loop():
                 if status == "optimized":
                     opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
                     if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
+                        h = EMAIL_FILE_RETENTION_SEC // 3600
                         reason = ("optimization email retention expired" if has_email
-                                  else "optimized project retention expired (24h)")
+                                  else f"optimized project retention expired ({h}h)")
                         to_remove.append((jid, reason))
                     continue
 
@@ -6484,51 +6635,58 @@ def _cleanup_loop():
             except Exception as e:
                 print(f"[cleanup] error removing {jid}: {e}")
 
-    #  -  -  Cleanup expired download tokens  -  -
-    with _tokens_lock:
-        expired_tokens = [(t, info) for t, info in _download_tokens.items()
-                          if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
-    for t, t_info in expired_tokens:
+        #  -  -  Cleanup expired download tokens  -  -
         with _tokens_lock:
-            _download_tokens.pop(t, None)
-        jid = t_info.get("job_id", "")
+            expired_tokens = [(t, info) for t, info in _download_tokens.items()
+                              if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
+        for t, t_info in expired_tokens:
+            with _tokens_lock:
+                _download_tokens.pop(t, None)
+            jid = t_info.get("job_id", "")
+            with _jobs_lock:
+                job_in_memory = jid in jobs
+            if jid:
+                job_dir = UPLOAD_DIR / jid
+                # Remove archived output dirs tied to this token even if job still alive
+                archive_rel = t_info.get("output_archive_dir", "")
+                if archive_rel and job_dir.exists():
+                    archive_path = job_dir / archive_rel
+                    if archive_path.exists() and archive_path.is_dir():
+                        shutil.rmtree(str(archive_path), ignore_errors=True)
+                        print(f"[cleanup] Archived output removed (token expired): {archive_path}")
+                if not job_in_memory and job_dir.exists():
+                    shutil.rmtree(str(job_dir), ignore_errors=True)
+                    print(f"[cleanup] Token-orphan dir removed: {jid}")
+        if expired_tokens:
+            with _tokens_lock:
+                _save_tokens()
+
+        #  -  -  Cleanup cartelle orfane su disco  -  -
         with _jobs_lock:
-            job_in_memory = jid in jobs
-        if jid and not job_in_memory:
-            job_dir = UPLOAD_DIR / jid
-            if job_dir.exists():
-                shutil.rmtree(str(job_dir), ignore_errors=True)
-                print(f"[cleanup] Token-orphan dir removed: {jid}")
-    if expired_tokens:
+            _known_job_ids = set(jobs.keys())
         with _tokens_lock:
-            _save_tokens()
+            _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
+        _all_known = _known_job_ids | _known_token_jobs
+        try:
+            for entry in UPLOAD_DIR.iterdir():
+                if not entry.is_dir():
+                    continue
+                if entry.name.startswith("_"):
+                    continue
+                if entry.name in _all_known:
+                    continue
+                try:
+                    dir_age = now - entry.stat().st_mtime
+                except OSError:
+                    continue
+                if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
+                    shutil.rmtree(str(entry), ignore_errors=True)
+                    print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
+        except OSError:
+            pass
 
-    #  -  -  Cleanup cartelle orfane su disco  -  -
-    with _jobs_lock:
-        _known_job_ids = set(jobs.keys())
-    with _tokens_lock:
-        _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
-    _all_known = _known_job_ids | _known_token_jobs
-    try:
-        for entry in UPLOAD_DIR.iterdir():
-            if not entry.is_dir():
-                continue
-            if entry.name.startswith("_"):
-                continue
-            if entry.name in _all_known:
-                continue
-            try:
-                dir_age = now - entry.stat().st_mtime
-            except OSError:
-                continue
-            if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
-                shutil.rmtree(str(entry), ignore_errors=True)
-                print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
-    except OSError:
-        pass
-
-    # Flush pending admin digest (rate-limited: max 1/hour)
-    _try_send_admin_digest()
+        # Flush pending admin digest (rate-limited: max 1/hour)
+        _try_send_admin_digest()
 
 
 # ----------------------------------------------------------------------
@@ -6552,7 +6710,8 @@ generation_engine.configure(
     log_activity_fn=_log_activity,
     google_tts_module=google_tts,
     invalidate_voices_cache_fn=_invalidate_voices_cache,
-    jobs_lock=_jobs_lock
+    jobs_lock=_jobs_lock,
+    retention_sec=EMAIL_FILE_RETENTION_SEC
 )
 
 if _paypal_available():

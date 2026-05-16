@@ -284,8 +284,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .btn-preview:hover:not(:disabled){border-color:var(--ac);color:var(--ac);background:var(--srf)}
 .btn-preview:disabled{opacity:.38;cursor:not-allowed}
 .btn-preview.loading{opacity:.7;cursor:wait}
-.btn-loading{opacity:.7;cursor:wait}
-.btn-loading::after{content:'';display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;margin-left:6px}
+.btn-loading,.btn.btn-loading:disabled{opacity:.85;cursor:wait;pointer-events:none}
+.btn-loading::after{content:'';display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;margin-left:8px;vertical-align:-2px;opacity:.85}
 
 @keyframes spin{to{transform:rotate(360deg)}}
 

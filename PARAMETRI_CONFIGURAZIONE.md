@@ -33,6 +33,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
+| `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download) | `audiobook_app.py` | 274 |
 
 ---
 
@@ -65,7 +66,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `SMTP_PASS` | da `ABM_SMTP_PASS` | `audiobook_app.py` | 94 |
 | `SMTP_FROM` | da `ABM_SMTP_FROM` o fallback | `audiobook_app.py` | 95 |
 | `BASE_URL` | da `ABM_BASE_URL` (con rstrip) | `audiobook_app.py` | 96 |
-| `EMAIL_FILE_RETENTION_SEC` | `86400` (24 ore) | `audiobook_app.py` | 97 |
+| `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) | `audiobook_app.py` | 97 |
 | `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 103 |
 | `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 104 |
 
@@ -255,9 +256,9 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 - `analyzed` → 3 min dopo l'ultimo heartbeat (anteprima mai avviata)
 - `optimizing` → cancellato se heartbeat perso per >60s (senza email) / tenuto in vita in batch (con email)
-- `optimized` → **24h (`EMAIL_FILE_RETENTION_SEC`) dal `opt_completed_at`**, indipendentemente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per 24h dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
+- `optimized` → **`EMAIL_FILE_RETENTION_SEC` (default 18h, configurabile via `ABM_JOB_RETENTION_SEC`) dal `opt_completed_at`**, indipendentemente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per il periodo configurato dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
 - `generating` → tenuto in vita se email registrata; heartbeat timeout 60s altrimenti
-- `done` → 5 min dopo download diretto / 24h dall'invio email / 60s di heartbeat perso senza download
+- `done` → 5 min dopo download diretto / `EMAIL_FILE_RETENTION_SEC` dall'invio email / 60s di heartbeat perso senza download
 - `error` → 2 min di grazia per leggere il messaggio
 
 ### 3.7 SEO e template

@@ -87,6 +87,7 @@ _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
 _google_tts = None      # optional google_tts module
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
+_retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -101,12 +102,13 @@ def _set_job_status(job, status):
 
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
-              google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None):
+              google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
+              retention_sec=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
-    global _google_tts, _invalidate_voices_cache, _jobs_lock
+    global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -116,6 +118,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     if invalidate_voices_cache_fn is not None:
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
+    _retention_sec = retention_sec if retention_sec is not None else 64800
     
     # Inizializza DeepSeek (se API key presente)
     _init_deepseek()
@@ -660,6 +663,7 @@ def _send_completion_email(job_id):
     job = _jobs.get(job_id)
     if not job or not job.get("notify_email"):
         return
+    retention_h = _retention_sec // 3600
     email = job["notify_email"]
     info = job.get("info", None)
     book_title = info.title if info else "Audiobook"
@@ -713,7 +717,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; Il tuo audiolibro &egrave; pronto!",
             "body": f"La generazione di <strong>{book_title}</strong> &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
-            "warn": "&#x23F0; Attenzione: i file saranno disponibili per il download soltanto per 24 ore a partire dalla ricezione di questa email. Dopo tale periodo verranno cancellati automaticamente.",
+            "warn": f"&#x23F0; Attenzione: i file saranno disponibili per il download soltanto per {retention_h} ore a partire dalla ricezione di questa email. Dopo tale periodo verranno cancellati automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Istruzioni per la pubblicazione del Podcast</strong>",
             "podcast_p1": f"Il file ZIP scaricato contiene tutti i file necessari per il tuo podcast. Per renderlo fruibile online, <strong>decomprimi il file ZIP</strong> e carica tutti i file contenuti sul tuo server web, in modo che siano raggiungibili all'indirizzo:",
             "podcast_p2": f"Il file XML del feed RSS del podcast sar&agrave;:",
@@ -725,7 +729,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; Your audiobook is ready!",
             "body": f"The generation of <strong>{book_title}</strong> has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download your book",
-            "warn": "&#x23F0; Please note: the files will be available for download for 24 hours only from the time you receive this email. After that, they will be automatically deleted.",
+            "warn": f"&#x23F0; Please note: the files will be available for download for {retention_h} hours only from the time you receive this email. After that, they will be automatically deleted.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Podcast Publishing Instructions</strong>",
             "podcast_p1": f"The downloaded ZIP file contains all the files needed for your podcast. To make it available online, <strong>extract the ZIP file</strong> and upload all files to your web server so they are reachable at:",
             "podcast_p2": f"The podcast RSS feed XML file will be:",
@@ -737,7 +741,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; Votre livre audio est pr&ecirc;t !",
             "body": f"La g&eacute;n&eacute;ration de <strong>{book_title}</strong> a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
-            "warn": "&#x23F0; Attention : les fichiers seront disponibles au t&eacute;l&eacute;chargement pendant 24 heures seulement &agrave; compter de la r&eacute;ception de cet email. Pass&eacute; ce d&eacute;lai, ils seront automatiquement supprim&eacute;s.",
+            "warn": f"&#x23F0; Attention : les fichiers seront disponibles au t&eacute;l&eacute;chargement pendant {retention_h} heures seulement &agrave; compter de la r&eacute;ception de cet email. Pass&eacute; ce d&eacute;lai, ils seront automatiquement supprim&eacute;s.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instructions de publication du podcast</strong>",
             "podcast_p1": f"Le fichier ZIP t&eacute;l&eacute;charg&eacute; contient tous les fichiers n&eacute;cessaires &agrave; votre podcast. Pour le rendre accessible en ligne, <strong>d&eacute;compressez le fichier ZIP</strong> et t&eacute;l&eacute;versez tous les fichiers sur votre serveur web, de sorte qu'ils soient accessibles &agrave; l'adresse :",
             "podcast_p2": f"Le fichier XML du flux RSS du podcast sera :",
@@ -749,7 +753,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; &iexcl;Tu audiolibro est&aacute; listo!",
             "body": f"La generaci&oacute;n de <strong>{book_title}</strong> se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
-            "warn": "&#x23F0; Atenci&oacute;n: los archivos estar&aacute;n disponibles para descargar solo durante 24 horas desde la recepci&oacute;n de este email. Despu&eacute;s de ese periodo se eliminar&aacute;n autom&aacute;ticamente.",
+            "warn": f"&#x23F0; Atenci&oacute;n: los archivos estar&aacute;n disponibles para descargar solo durante {retention_h} horas desde la recepci&oacute;n de este email. Despu&eacute;s de ese periodo se eliminar&aacute;n autom&aacute;ticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instrucciones para publicar el podcast</strong>",
             "podcast_p1": f"El archivo ZIP descargado contiene todos los archivos necesarios para tu podcast. Para hacerlo accesible en l&iacute;nea, <strong>descomprime el archivo ZIP</strong> y sube todos los archivos a tu servidor web para que sean accesibles en:",
             "podcast_p2": f"El archivo XML del feed RSS del podcast ser&aacute;:",
@@ -761,7 +765,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; Dein H&ouml;rbuch ist fertig!",
             "body": f"Die Generierung von <strong>{book_title}</strong> wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
-            "warn": "&#x23F0; Hinweis: Die Dateien stehen nur 24 Stunden ab Erhalt dieser E-Mail zum Download bereit. Danach werden sie automatisch gel&ouml;scht.",
+            "warn": f"&#x23F0; Hinweis: Die Dateien stehen nur {retention_h} Stunden ab Erhalt dieser E-Mail zum Download bereit. Danach werden sie automatisch gel&ouml;scht.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Anleitung zur Podcast-Ver&ouml;ffentlichung</strong>",
             "podcast_p1": f"Die heruntergeladene ZIP-Datei enth&auml;lt alle Dateien f&uuml;r deinen Podcast. Um ihn online verf&uuml;gbar zu machen, <strong>entpacke die ZIP-Datei</strong> und lade alle Dateien auf deinen Webserver hoch, sodass sie unter folgender Adresse erreichbar sind:",
             "podcast_p2": f"Die XML-Datei des Podcast-RSS-Feeds lautet:",
@@ -773,7 +777,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; Seu audiolivro est&aacute; pronto!",
             "body": f"A gera&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da com sucesso.",
             "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
-            "warn": "&#x23F0; Aten&ccedil;&atilde;o: os arquivos estar&atilde;o dispon&iacute;veis para download por apenas 24 horas a partir do recebimento deste e-mail. Ap&oacute;s esse per&iacute;odo, eles ser&atilde;o exclu&iacute;dos automaticamente.",
+            "warn": f"&#x23F0; Aten&ccedil;&atilde;o: os arquivos estar&atilde;o dispon&iacute;veis para download por apenas {retention_h} horas a partir do recebimento deste e-mail. Ap&oacute;s esse per&iacute;odo, eles ser&atilde;o exclu&iacute;dos automaticamente.",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>Instru&ccedil;&otilde;es de publica&ccedil;&atilde;o do Podcast</strong>",
             "podcast_p1": f"O arquivo ZIP baixato cont&eacute;m todos os arquivos necess&aacute;rios para o seu podcast. Para torn&aacute;-lo acess&iacute;vel online, <strong>descompacte o arquivo ZIP</strong> e envie todos os arquivos para o seu servidor web, para que sejam acess&iacute;veis em:",
             "podcast_p2": f"O arquivo XML do feed RSS do podcast ser&aacute;:",
@@ -785,7 +789,7 @@ def _send_completion_email(job_id):
             "heading": "&#x1F3A7; \u60a8\u7684\u6709\u58f0\u8bfb\u7269\u5df2\u51c6\u5907\u597d\uff01",
             "body": f"<strong>{book_title}</strong> \u5df2\u6210\u529f\u751f\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u4e66\u7c4d",
-            "warn": "&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u5728\u6536\u5230\u6b64\u90ae\u4ef6\u540e24\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002\u4e4b\u540e\u5c06\u81ea\u52a8\u5220\u9664\u3002",
+            "warn": f"&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u5728\u6536\u5230\u6b64\u90ae\u4ef6\u540e{retention_h}\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002\u4e4b\u540e\u5c06\u81ea\u52a8\u5220\u9664\u3002",
             "podcast_intro": "&#x1F399;&#xFE0F; <strong>\u64ad\u5ba2\u53d1\u5e03\u8bf4\u660e</strong>",
             "podcast_p1": f"\u4e0b\u8f7d\u7684ZIP\u6587\u4ef6\u5305\u542b\u64ad\u5ba2\u6240\u9700\u7684\u6240\u6709\u6587\u4ef6\u3002\u8981\u5728\u7ebf\u53d1\u5e03\uff0c\u8bf7<strong>\u89e3\u538bZIP\u6587\u4ef6</strong>\uff0c\u5e76\u5c06\u6240\u6709\u6587\u4ef6\u4e0a\u4f20\u5230\u60a8\u7684\u7f51\u7edc\u670d\u52a1\u5668\uff0c\u4f7f\u5176\u53ef\u901a\u8fc7\u4ee5\u4e0b\u5730\u5740\u8bbf\u95ee\uff1a",
             "podcast_p2": f"\u64ad\u5ba2RSS\u8ba2\u9605\u6e90\u7684XML\u6587\u4ef6\u5730\u5740\u4e3a\uff1a",
@@ -849,6 +853,7 @@ def _send_optimization_email(job_id):
     job = _jobs.get(job_id)
     if not job or not job.get("notify_email"):
         return
+    retention_h = _retention_sec // 3600
     email = job["notify_email"]
     info = job.get("info")
     book_title = info.title if info else "Audiobook"
@@ -882,7 +887,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; Ottimizzazione testo completata!",
             "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> per la sintesi vocale &egrave; stata completata con successo.",
             "btn": "&#x2B07;&#xFE0F; Scarica il tuo libro",
-            "warn": "&#x23F0; Attenzione: il file sar&agrave; disponibile per il download soltanto per 24 ore.",
+            "warn": f"&#x23F0; Attenzione: il file sar&agrave; disponibile per il download soltanto per {retention_h} ore.",
             "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
         },
         "en": {
@@ -890,7 +895,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; Text optimization completed!",
             "body": f"The AI text optimization of <strong>{book_title}</strong> for speech synthesis has been completed successfully.",
             "btn": "&#x2B07;&#xFE0F; Download your book",
-            "warn": "&#x23F0; Please note: the file will be available for download for 24 hours only.",
+            "warn": f"&#x23F0; Please note: the file will be available for download for {retention_h} hours only.",
             "footer": "This email was automatically generated by Audiobook Maker.",
         },
         "fr": {
@@ -898,7 +903,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; Optimisation du texte termin&eacute;e !",
             "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> pour la synth&egrave;se vocale a &eacute;t&eacute; compl&eacute;t&eacute;e avec succ&egrave;s.",
             "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger votre livre",
-            "warn": "&#x23F0; Attention : le fichier sera disponible au t&eacute;l&eacute;chargement pendant 24 heures seulement.",
+            "warn": f"&#x23F0; Attention : le fichier sera disponible au t&eacute;l&eacute;chargement pendant {retention_h} heures seulement.",
             "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
         },
         "es": {
@@ -906,7 +911,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; &iexcl;Optimizaci&oacute;n de texto completada!",
             "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> para la s&iacute;ntesis de voz se ha completado con &eacute;xito.",
             "btn": "&#x2B07;&#xFE0F; Descargar tu libro",
-            "warn": "&#x23F0; Atenci&oacute;n: el archivo estar&aacute; disponible para descargar solo durante 24 horas.",
+            "warn": f"&#x23F0; Atenci&oacute;n: el archivo estar&aacute; disponible para descargar solo durante {retention_h} horas.",
             "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
         },
         "de": {
@@ -914,7 +919,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; Textoptimierung abgeschlossen!",
             "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> f&uuml;r die Sprachsynthese wurde erfolgreich abgeschlossen.",
             "btn": "&#x2B07;&#xFE0F; Dein Buch herunterladen",
-            "warn": "&#x23F0; Hinweis: Die Datei steht nur 24 Stunden zum Download bereit.",
+            "warn": f"&#x23F0; Hinweis: Die Datei steht nur {retention_h} Stunden zum Download bereit.",
             "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
         },
         "pt": {
@@ -922,7 +927,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; Otimiza&ccedil;&atilde;o de texto conclu&iacute;da!",
             "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> para s&iacute;ntese de voz foi conclu&iacute;da com sucesso.",
             "btn": "&#x2B07;&#xFE0F; Baixar seu livro",
-            "warn": "&#x23F0; Aten&ccedil;&atilde;o: o arquivo estar&aacute; dispon&iacute;vel para download por apenas 24 horas.",
+            "warn": f"&#x23F0; Aten&ccedil;&atilde;o: o arquivo estar&aacute; dispon&iacute;vel para download por apenas {retention_h} horas.",
             "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
         },
         "zh": {
@@ -930,7 +935,7 @@ def _send_optimization_email(job_id):
             "heading": "&#x2728; \u6587\u672c\u4f18\u5316\u5df2\u5b8c\u6210\uff01",
             "body": f"<strong>{book_title}</strong> \u7684AI\u6587\u672c\u4f18\u5316\u5df2\u6210\u529f\u5b8c\u6210\u3002",
             "btn": "&#x2B07;&#xFE0F; \u4e0b\u8f7d\u60a8\u7684\u4e66\u7c4d",
-            "warn": "&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u572824\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002",
+            "warn": f"&#x23F0; \u8bf7\u6ce8\u610f\uff1a\u6587\u4ef6\u4ec5\u5728{retention_h}\u5c0f\u65f6\u5185\u53ef\u4f9b\u4e0b\u8f7d\u3002",
             "footer": "\u6b64\u90ae\u4ef6\u7531 Audiobook Maker \u81ea\u52a8\u751f\u6210\u3002",
         },
     }
