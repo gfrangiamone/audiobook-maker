@@ -1342,6 +1342,21 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "outcome": outcome,
         }
         gemini_cost_audit.append_record(rec)
+        # Reconciliation a livello mensile (gemini_tts_usage.json): registra
+        # il delta stima/reale per consentire calibrazione del modello di costo.
+        # Solo job davvero completati - per i cancel partiali la stima ex-ante
+        # non sarebbe confrontabile con un costo reale "tronco".
+        try:
+            if (gemini_tts is not None and outcome == "completed"
+                    and model_key in ("flash25", "flash31")):
+                gemini_tts.record_job_completion(
+                    model_key,
+                    estimated_eur=float(est.get("google_cost_eur", 0) or 0),
+                    actual_eur=google_cost_actual,
+                    user_price_eur=charged,
+                )
+        except Exception as e:
+            print(f"[{job_id}] record_job_completion failed (non-fatal): {e}")
     except Exception as e:
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
@@ -1486,6 +1501,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         model_key = result.get("model_key", "flash25")
                         if not ga["model_key"]:
                             ga["model_key"] = model_key
+                        # Costo Google REALE del chunk (token reali da usage_metadata
+                        # x rate per MTok). Calcolato una sola volta, riusato sia per
+                        # l'aggregato job (gemini_actual) sia per record_usage().
+                        chunk_google_cost_eur = 0.0
                         if gemini_tts is not None:
                             try:
                                 bd = gemini_tts.google_cost_breakdown(
@@ -1493,9 +1512,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                     result.get("output_tokens", 0),
                                     model_key,
                                 )
-                                ga["google_cost_eur"] += float(bd.get("total_eur", 0.0) or 0.0)
+                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
+                                ga["google_cost_eur"] += chunk_google_cost_eur
                             except Exception as e:
                                 print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
+                        result["_google_cost_eur"] = chunk_google_cost_eur
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:
@@ -1513,11 +1534,25 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             len(block["text"]),
                             result.get("input_tokens", 0),
                             result.get("output_tokens", 0),
-                            0.0,
+                            float(result.get("_google_cost_eur", 0.0) or 0.0),
                             0.0,
                         )
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
+                    # Empirical rate sample (chars normalizzati -> audio_seconds reali)
+                    try:
+                        _lang = (getattr(info, "language", None) or "it")[:2].lower()
+                        _norm_chars = len(gemini_tts._normalize_text(block["text"]))
+                        _audio_secs = result.get("audio_seconds_real")
+                        if _audio_secs is None:
+                            _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
+                        gemini_tts.record_rate_sample(
+                            _norm_chars, _audio_secs, _lang,
+                            result.get("model_key", "flash25"),
+                            rate_pct=rate,
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
                 if i == 0:
@@ -1726,6 +1761,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         model_key_local = result.get("model_key", "flash25")
                         if not ga["model_key"]:
                             ga["model_key"] = model_key_local
+                        chunk_google_cost_eur = 0.0
                         if gemini_tts is not None:
                             try:
                                 bd = gemini_tts.google_cost_breakdown(
@@ -1733,7 +1769,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                     result.get("output_tokens", 0),
                                     model_key_local,
                                 )
-                                ga["google_cost_eur"] += float(bd.get("total_eur", 0.0) or 0.0)
+                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
+                                ga["google_cost_eur"] += chunk_google_cost_eur
                             except Exception as e:
                                 print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
                         if gemini_tts is not None:
@@ -1743,11 +1780,25 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                     len(block["text"]),
                                     result.get("input_tokens", 0),
                                     result.get("output_tokens", 0),
-                                    0.0,
+                                    chunk_google_cost_eur,
                                     0.0,
                                 )
                             except Exception as e:
                                 print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
+                            # Empirical rate sample
+                            try:
+                                _lang = (getattr(info, "language", None) or "it")[:2].lower()
+                                _norm_chars = len(gemini_tts._normalize_text(block["text"]))
+                                _audio_secs = result.get("audio_seconds_real")
+                                if _audio_secs is None:
+                                    _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
+                                gemini_tts.record_rate_sample(
+                                    _norm_chars, _audio_secs, _lang,
+                                    result.get("model_key", "flash25"),
+                                    rate_pct=rate,
+                                )
+                            except Exception as e:
+                                print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:

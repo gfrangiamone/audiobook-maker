@@ -110,6 +110,30 @@ def _llm_available():
     return generation_engine._llm_available()
 
 
+def _estimate_chapter_seconds(ch, language):
+    """Stima durata audio di un capitolo in secondi.
+
+    Usa la stessa funzione di stima del pannello "Voci PREMIUM"
+    (gemini_tts.estimate_audio_seconds con rate empirico) per allineare
+    il dato mostrato nel pannello selezione capitoli con quello del
+    pannello Premium. Fallback a 150 WPM se gemini_tts non disponibile.
+    """
+    try:
+        if gemini_tts is not None:
+            secs = gemini_tts.estimate_audio_seconds(
+                getattr(ch, "text", "") or "",
+                language=language,
+                model_key="flash25",
+                rate_pct=0,
+            )
+            if secs and secs > 0:
+                return float(secs)
+    except Exception:
+        pass
+    # Fallback: 150 WPM (storica)
+    return (getattr(ch, "word_count", 0) or 0) * 60.0 / 150.0
+
+
 # Payment / voucher state and operations live in payment.py.
 # Re-exported names below keep the rest of audiobook_app.py working unchanged.
 # Mutable state dicts (payment._payments, payment._vouchers, payment._paid_opt_done) are accessed via
@@ -693,8 +717,9 @@ async def _fetch_voices():
                         "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
                         "voices": []
                     }
-                # Gemini voices are multilingual / genderless from the API.
-                # Shim gender fields so existing sort + frontend grouping work.
+                # Gemini voices are multilingual; gender è impostato in
+                # gemini_tts.get_voices() da GEMINI_VOICE_GENDER (doc Google).
+                # Lo shim resta come fallback per voci eventuali senza metadata.
                 for v in v_list:
                     v.setdefault("gender", "Neutral")
                     v.setdefault("gender_icon", "★")
@@ -758,10 +783,11 @@ def parse_abm(path):
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     try:
         return generation_engine.run_generation(job_id, info, voice, rate, single_file,
-                                                 output_format=output_format, podcast_base_url=podcast_base_url)
+                                                 output_format=output_format, podcast_base_url=podcast_base_url,
+                                                 gemini_style_instruction=gemini_style_instruction)
     except Exception as e:
         print(f"[{job_id}] CRITICAL: run_generation wrapper crashed: {e}")
         import traceback
@@ -4139,12 +4165,16 @@ def api_analyze():
         if status in ("analyzed", "optimized"):
             # Reuse existing analyzed/optimized job
             info = existing_job["info"]
+            _lang_re = (getattr(info, "language", None) or "it")[:2].lower()
             chapters = []
+            _total_secs_re = 0.0
             for ch in info.chapters:
+                _secs = _estimate_chapter_seconds(ch, _lang_re)
+                _total_secs_re += _secs
                 chapters.append({
                     "index": ch.index, "title": ch.title,
                     "words": ch.word_count, "chars": ch.char_count,
-                    "estimated_minutes": round(ch.word_count / 150, 1),
+                    "estimated_minutes": round(_secs / 60.0, 1),
                 })
             return jsonify({
                 "job_id": existing_jid, "title": info.title, "author": info.author,
@@ -4153,7 +4183,7 @@ def api_analyze():
                 "has_cover": bool(existing_job.get("cover_thumb")),
                 "total_chapters": len(info.chapters), "total_words": info.total_words,
                 "total_chars": info.total_chars,
-                "estimated_minutes": round(info.estimated_duration_minutes, 1),
+                "estimated_minutes": round(_total_secs_re / 60.0, 1),
                 "chapters": chapters,
                 "preview_text": existing_job.get("preview_text", ""),
                 "llm_available": _llm_available(),
@@ -4225,13 +4255,19 @@ def api_analyze():
                   jobs[job_id]["client_id"], jobs[job_id]["client_ip"],
                   browser_lang=jobs[job_id].get("browser_lang", ""))
 
+    _lang_new = (getattr(info, "language", None) or "it")[:2].lower()
     chapters = []
+    _total_secs_new = 0.0
     for ch in info.chapters:
+        _secs = _estimate_chapter_seconds(ch, _lang_new)
+        _total_secs_new += _secs
         chapters.append({
             "index": ch.index, "title": ch.title,
             "words": ch.word_count, "chars": ch.char_count,
-            "estimated_minutes": round(ch.word_count / 150, 1),
+            "estimated_minutes": round(_secs / 60.0, 1),
         })
+    # Override total estimated minutes for response consistency with per-chapter values.
+    _total_minutes_new = round(_total_secs_new / 60.0, 1)
 
     #  -  -  Preview text  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
     # EPUB: salta il front matter e usa un capitolo interno con contenuto narrativo reale.
@@ -4273,7 +4309,10 @@ def api_analyze():
             cut = max_chars
         return text[:cut].rstrip()
 
-    raw_preview = _pick_preview_text(info.chapters, is_txt or is_pdf or is_abm)
+    # Solo TXT puro usa la logica "primo capitolo con >=150 char": PDF e ABM
+    # hanno capitoli strutturati e beneficiano del filtro front-matter + scelta
+    # del secondo capitolo valido (narrativa, non introduzione).
+    raw_preview = _pick_preview_text(info.chapters, is_txt)
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
@@ -4303,7 +4342,7 @@ def api_analyze():
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
         "total_chars": info.total_chars,
-        "estimated_minutes": round(info.estimated_duration_minutes, 1),
+        "estimated_minutes": _total_minutes_new,
         "chapters": chapters,
         "preview_text": preview_text,
         "llm_available": _llm_available(),
@@ -4324,20 +4363,77 @@ def api_preview_audio(job_id):
     if _err is not None:
         return _err, _sc
 
-    preview_text = jobs[job_id].get("preview_text", "")
-    if not preview_text:
-        return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
-
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:300]
 
+    # Se il client passa selected_chapters, l'anteprima deve essere un estratto
+    # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
+    # usa il preview_text fallback memorizzato all'upload.
+    try:
+        sel_raw = request.args.getlist("selected_chapters")
+        sel_idxs = [int(x) for x in sel_raw if str(x).strip()]
+    except (TypeError, ValueError):
+        sel_idxs = []
+    preview_text = ""
+    if sel_idxs:
+        info_pv = jobs[job_id].get("info")
+        all_chs_pv = list(getattr(info_pv, "chapters", []) or []) if info_pv else []
+        by_idx_pv = {ch.index: ch for ch in all_chs_pv}
+        sel_chs = [by_idx_pv[i] for i in sel_idxs if i in by_idx_pv]
+        if sel_chs:
+            try:
+                from epub_to_tts import is_content_chapter as _icc_pv
+                valid = [c for c in sel_chs
+                         if _icc_pv(c.text or "", c.title or "")
+                         and (c.word_count or 0) >= 80]
+            except Exception:
+                valid = [c for c in sel_chs if (c.word_count or 0) >= 80]
+            if not valid:
+                valid = [c for c in sel_chs if ((c.text or "").strip())]
+            if valid:
+                target = valid[1] if len(valid) > 1 else valid[0]
+                raw = (target.text or "").strip()
+                import re as _re_pv
+                raw = _re_pv.sub(r"\s+", " ", raw).strip()
+                # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
+                if len(raw) > 600:
+                    _win = raw[400:600]
+                    _m = _re_pv.search(r'[.!?]["”“»\)\s]', _win)
+                    _cut = (400 + _m.start() + 1) if _m else raw.rfind(" ", 400, 600)
+                    if _cut <= 0:
+                        _cut = 600
+                    preview_text = raw[:_cut].rstrip()
+                else:
+                    preview_text = raw
+    if not preview_text:
+        preview_text = jobs[job_id].get("preview_text", "")
+    if not preview_text:
+        return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
+
+    # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
+    # contenere il costo per-token (input + output sono fatturati).
+    if voice.startswith("gemini:"):
+        import re as _re
+        _t = _re.sub(r'\s+', ' ', preview_text).strip()
+        if len(_t) > 400:
+            _window = _t[250:400]
+            _m = _re.search(r'[.!?]["”“»\)\s]', _window)
+            _cut = (250 + _m.start() + 1) if _m else _t.rfind(' ', 250, 400)
+            if _cut <= 0:
+                _cut = 400
+            preview_text = _t[:_cut].rstrip()
+        else:
+            preview_text = _t
+
     work_dir = UPLOAD_DIR / job_id
     work_dir.mkdir(exist_ok=True)
-    # Cache per terna (voice, rate, style): il nome del file è derivato da un
+    # Cache per (voice, rate, style, selezione): il nome del file è derivato da un
     # hash della chiave, così tornare a una combinazione già generata serve il
     # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
-    cache_key = f"{voice}|{rate}|{style}"
+    # La selezione capitoli entra nella chiave perché il testo varia con essa.
+    sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
+    cache_key = f"{voice}|{rate}|{style}|{sel_key}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -4376,17 +4472,42 @@ def api_preview_audio(job_id):
                 result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
                                                 style_instruction=style or None)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
+                # Costo Google REALE della preview (token reali x rate per MTok).
+                _preview_cost_eur = 0.0
+                try:
+                    _bd = gemini_tts.google_cost_breakdown(
+                        result.get("input_tokens", 0),
+                        result.get("output_tokens", 0),
+                        result.get("model_key", "flash25"),
+                    )
+                    _preview_cost_eur = float(_bd.get("total_eur", 0.0) or 0.0)
+                except Exception as e:
+                    print(f"[preview] google_cost_breakdown failed (non-fatal): {e}")
                 try:
                     gemini_tts.record_usage(
                         result.get("model_key", "flash25"),
                         len(preview_text),
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
-                        0.0,
+                        _preview_cost_eur,
                         0.0,
                     )
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_usage failed (non-fatal): {e}")
+                # Sample rate empirico: lingua del libro + velocita` come tag
+                try:
+                    _job_info = jobs[job_id].get("info")
+                    _preview_lang = (getattr(_job_info, "language", None) or "it")[:2].lower()
+                    _norm_chars = len(gemini_tts._normalize_text(preview_text))
+                    gemini_tts.record_rate_sample(
+                        _norm_chars,
+                        result.get("audio_seconds_real", 0.0),
+                        _preview_lang,
+                        result.get("model_key", "flash25"),
+                        rate_pct=rate,
+                    )
+                except Exception as e:
+                    print(f"[preview] gemini_tts.record_rate_sample failed (non-fatal): {e}")
                 gemini_tts.increment_preview(client_id)
             finally:
                 if os.path.exists(pcm_tmp):
@@ -4574,7 +4695,11 @@ def api_generate():
         info_pre = job.get("info")
         all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
         sel = selected_chapters or []
-        chs_pre = [all_chs_pre[i] for i in sel if 0 <= i < len(all_chs_pre)] if sel else all_chs_pre
+        if sel:
+            _by_index_pre = {ch.index: ch for ch in all_chs_pre}
+            chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
+        else:
+            chs_pre = all_chs_pre
         lang_pre = getattr(info_pre, "language", "it") or "it"
         try:
             est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre)
@@ -5221,6 +5346,7 @@ def api_gemini_estimate():
     job_id = data.get("job_id", "")
     voice_id = data.get("voice_id", "")
     selected = data.get("selected_chapters") or []
+    rate = data.get("rate", "+0%")
 
     if not voice_id.startswith("gemini:"):
         return jsonify({"error": "voice_id must be a Gemini voice"}), 400
@@ -5234,7 +5360,8 @@ def api_gemini_estimate():
 
     all_chs = list(info.chapters)
     if selected:
-        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
     else:
         chs = all_chs
     if not chs:
@@ -5242,7 +5369,7 @@ def api_gemini_estimate():
 
     lang = getattr(info, "language", "it") or "it"
     try:
-        est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+        est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
     except Exception as e:
         return jsonify({"error": f"estimate failed: {e}"}), 500
 
@@ -5255,6 +5382,7 @@ def api_gemini_estimate():
         "model_key": est["model_key"],
         "model_label": est["model_label"],
         "language": est["language"],
+        "rate_step": est.get("rate_step", 0),
         "breakdown": {
             "input_tokens_est": est["input_tokens_est"],
             "output_tokens_est": est["output_tokens_est"],
@@ -5273,6 +5401,7 @@ def api_combined_estimate():
     voice_id = data.get("voice_id", "")
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
+    rate = data.get("rate", "+0%")
 
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -5284,7 +5413,8 @@ def api_combined_estimate():
 
     all_chs = list(info.chapters)
     if selected:
-        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
     else:
         chs = all_chs
     if not chs:
@@ -5294,26 +5424,29 @@ def api_combined_estimate():
 
     gemini_eur = 0.0
     gemini_breakdown = {}
+    rate_step = 0
     if voice_id.startswith("gemini:"):
         try:
-            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
+        rate_step = est.get("rate_step", 0)
         gemini_breakdown = {
             "chars": est["chars_total"],
             "audio_minutes": round(est["estimated_audio_minutes"], 1),
             "google_cost_eur": est["google_cost_eur"],
             "model_label": est["model_label"],
+            "rate_step": rate_step,
         }
 
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
-        rate = LLM_RATE_EUR_PER_MCHAR
-        llm_eur = round((chars / 1_000_000.0) * rate, 2)
-        llm_breakdown = {"chars": chars, "rate_eur_per_mchar": rate}
+        llm_rate = LLM_RATE_EUR_PER_MCHAR
+        llm_eur = round((chars / 1_000_000.0) * llm_rate, 2)
+        llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
 
     total = round(gemini_eur + llm_eur, 2)
     threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
@@ -5324,6 +5457,7 @@ def api_combined_estimate():
         "total_eur": total,
         "is_free": total <= threshold,
         "threshold_eur": threshold,
+        "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
         "llm_breakdown": llm_breakdown,
     })
@@ -5361,7 +5495,8 @@ def api_paypal_create_order_gemini():
 
     all_chs = list(info.chapters)
     if selected:
-        chs = [all_chs[i] for i in selected if 0 <= i < len(all_chs)]
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
     else:
         chs = all_chs
     if not chs:
@@ -5704,25 +5839,24 @@ def token_download_page(token):
     # M4B availability: da job in memoria, da token snapshot oppure scan filesystem.
     # Il fallback su filesystem è importante perché il job potrebbe avere output_m4b
     # non impostato (es. se il token è stato creato prima che M4B completasse).
+    # Glob ricorsivo ("**/*.m4b") allineato a /api/download per coprire eventuali
+    # sottocartelle non standard (chapters/, final/, ecc.).
     m4b_available = False
     if job_in_memory:
         m4b_path_mem = jobs[job_id].get("output_m4b", "")
         if m4b_path_mem and os.path.exists(m4b_path_mem):
             m4b_available = True
         else:
-            # Fallback filesystem anche con job in memoria
-            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            m4bs = list(job_dir.glob("**/*.m4b"))
             if m4bs:
                 m4b_available = True
-                # Aggiorna anche il job in memoria per coerenza
                 jobs[job_id]["output_m4b"] = str(m4bs[0])
     else:
         m4b_path = token_info.get("output_m4b", "")
         if m4b_path and os.path.exists(m4b_path):
             m4b_available = True
         else:
-            # Check common locations (job dir or output subdir)
-            m4bs = list(job_dir.glob("*.m4b")) + list((job_dir / "output").glob("*.m4b"))
+            m4bs = list(job_dir.glob("**/*.m4b"))
             m4b_available = len(m4bs) > 0
 
     # ABM availability: from job in memory (ai_optimized flag) or token snapshot
@@ -5789,7 +5923,13 @@ def token_do_download_abm(token):
 
 @app.route("/dl/<token>/m4b")
 def token_do_download_m4b(token):
-    """Execute the actual M4B file download via token."""
+    """Execute the actual M4B file download via token.
+
+    Allineato a /api/download/<job>?type=m4b:
+    - glob ricorsivo ("**/*.m4b") sulla job dir
+    - fallback su MP3 con header X-Fallback se M4B non esiste
+    - sync di job["output_m4b"] quando il file è trovato via glob
+    """
     token_info = _download_tokens.get(token)
     if not token_info:
         return "Link scaduto", 410
@@ -5807,28 +5947,52 @@ def token_do_download_m4b(token):
         m4b_path = job.get("output_m4b", "")
         job["last_poll"] = time.time()
         job["downloaded_at"] = time.time()
-    
+
     if not m4b_path or not os.path.exists(m4b_path):
         m4b_path = token_info.get("output_m4b", "")
-    
-    # Path reconstruction
-    if not m4b_path or not os.path.exists(m4b_path):
-        job_dir = UPLOAD_DIR / job_id
-        m4b_path = str(job_dir / "output" / f"{_safe_filename(token_info.get('book_title','audiolibro'))}.m4b")
-        if not os.path.exists(m4b_path):
-             m4bs = list(job_dir.glob("*.m4b")) + list((job_dir/"output").glob("*.m4b"))
-             if m4bs: m4b_path = str(m4bs[0])
 
+    # Path reconstruction (ricorsivo, allineato a /api/download)
+    job_dir = UPLOAD_DIR / job_id
     if not m4b_path or not os.path.exists(m4b_path):
-        return "M4B file not available", 404
-
-    # Log solo sulla prima richiesta completa, non su HEAD o range request
-    if request.method != "HEAD" and not request.headers.get("Range"):
-        _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
-                      "", "", "", "")
+        m4bs = list(job_dir.glob("**/*.m4b"))
+        if m4bs:
+            m4b_path = str(m4bs[0])
+            if job:
+                job["output_m4b"] = m4b_path
 
     safe_name = _safe_filename(token_info.get("book_title", "audiolibro"))
-    return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+
+    if m4b_path and os.path.exists(m4b_path):
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
+                          "", "", "", "")
+        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+
+    # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
+    # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
+    print(f"[dl] M4B totally missing for job {job_id}. Falling back to MP3.")
+    mp3_path = ""
+    if job:
+        mp3_path = (job.get("output_files") or [""])[0]
+    if not mp3_path or not os.path.exists(mp3_path):
+        mp3s = list(job_dir.glob("**/*.mp3"))
+        if mp3s:
+            mp3_path = str(mp3s[0])
+
+    if mp3_path and os.path.exists(mp3_path):
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
+                          "", "", "", "")
+        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3")
+        try:
+            resp.headers["X-Fallback"] = "mp3"
+            prev = resp.headers.get("Access-Control-Expose-Headers", "")
+            resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+        except Exception:
+            pass
+        return resp
+
+    return "M4B file not available", 404
 
 
 @app.route("/dl/<token>/download")
@@ -6446,6 +6610,14 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         elif not fmt:
             fmt = "zip"
 
+        # Coerenza con la realtà del filesystem: se l'utente aveva chiesto M4B ma
+        # il file non esiste (es. conversione PCM->AAC fallita su Gemini, oppure
+        # output_format snapshottato come 'm4b' senza che il muxing sia avvenuto),
+        # degradiamo l'etichetta/route a MP3 anziché esporre un link M4B che il
+        # backend dovrà servire via fallback silenzioso.
+        if fmt == "m4b" and not m4b_available:
+            fmt = "mp3"
+
         if fmt == "m4b":
             label_data = _format_labels["m4b"]
             btn_url = f"/dl/{token}/m4b"
@@ -6691,8 +6863,19 @@ def api_download(job_id):
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
             mp3_path = job.get("output_files", [""])[0]
+            if not mp3_path or not os.path.exists(mp3_path):
+                mp3s = list(job_dir.glob("**/*.mp3"))
+                if mp3s:
+                    mp3_path = str(mp3s[0])
             if mp3_path and os.path.exists(mp3_path):
-                return _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3")
+                resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3")
+                try:
+                    resp.headers["X-Fallback"] = "mp3"
+                    prev = resp.headers.get("Access-Control-Expose-Headers", "")
+                    resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+                except Exception:
+                    pass
+                return resp
             return "File not found", 404
 
     if download_type == "zip":

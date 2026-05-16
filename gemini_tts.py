@@ -9,6 +9,7 @@ Integration with tts_split / generation_engine / audiobook_app is Plan B.
 """
 
 import os
+import re
 import json
 import time
 import threading
@@ -68,8 +69,21 @@ USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
-PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 10))
+PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 7))
 PREVIEW_WINDOW_SECONDS = int(_f("ABM_GEMINI_PREVIEW_WINDOW_SEC", 300))
+
+# Direttive di velocita` in linguaggio naturale (Gemini comprende molto meglio
+# linguaggio naturale di tag come [slow]/[fast]). 7 step coprono la corsa del
+# slider UI (-30% .. +30% a passi di 10%).
+_GEMINI_RATE_DIRECTIVES = {
+    -3: "Read this text very slowly, with deliberate, measured pacing and long pauses between sentences.",
+    -2: "Read this text slowly, taking your time and articulating clearly.",
+    -1: "Read this text at a slightly relaxed, slower than normal pace.",
+     0: "",
+     1: "Read this text at a slightly brisk pace, a bit faster than normal.",
+     2: "Read this text at a quick, energetic pace.",
+     3: "Read this text very quickly, with rapid pacing and minimal pauses.",
+}
 
 GEMINI_VOICE_NAMES = [
     "Achernar", "Achird", "Algenib", "Algieba", "Alnilam",
@@ -79,6 +93,50 @@ GEMINI_VOICE_NAMES = [
     "Puck", "Rasalgethi", "Sadachbia", "Sadaltager", "Schedar",
     "Sulafat", "Umbriel", "Vindemiatrix", "Zephyr", "Zubenelgenubi",
 ]
+
+# Gender ufficiale Google per le voci Gemini TTS (Female / Male).
+# Fonte: doc Google AI Studio - elenco voci Gemini 2.5/3.1 Flash TTS.
+GEMINI_VOICE_GENDER = {
+    "Achernar":     "Female",
+    "Achird":       "Male",
+    "Algenib":      "Male",
+    "Algieba":      "Male",
+    "Alnilam":      "Male",
+    "Aoede":        "Female",
+    "Autonoe":      "Female",
+    "Callirrhoe":   "Female",
+    "Charon":       "Male",
+    "Despina":      "Female",
+    "Enceladus":    "Male",
+    "Erinome":      "Female",
+    "Fenrir":       "Male",
+    "Gacrux":       "Female",
+    "Iapetus":      "Male",
+    "Kore":         "Female",
+    "Laomedeia":    "Female",
+    "Leda":         "Female",
+    "Orus":         "Male",
+    "Pulcherrima":  "Female",
+    "Puck":         "Male",
+    "Rasalgethi":   "Male",
+    "Sadachbia":    "Male",
+    "Sadaltager":   "Male",
+    "Schedar":      "Male",
+    "Sulafat":      "Female",
+    "Umbriel":      "Male",
+    "Vindemiatrix": "Female",
+    "Zephyr":       "Female",
+    "Zubenelgenubi": "Male",
+}
+
+
+def _gender_icon(gender):
+    """Icona unicode per gender (allineata con catalogo Edge)."""
+    if gender == "Female":
+        return "♀"  # ♀
+    if gender == "Male":
+        return "♂"  # ♂
+    return ""
 
 
 def get_margin_percent(model_key):
@@ -130,11 +188,18 @@ def get_voices():
         dict {lang_code: [voice_entry, ...]}
     """
     out = {}
+    # Ordina: prima tutte le Female, poi tutte le Male (per coerenza con
+    # l'optgroup label="♀|♂" del combo Edge).
+    sorted_names = sorted(
+        GEMINI_VOICE_NAMES,
+        key=lambda n: (0 if GEMINI_VOICE_GENDER.get(n) == "Female" else 1, n),
+    )
     for lang in SUPPORTED_UI_LANGUAGES:
         locale = _LANG_LOCALE.get(lang, lang)
         lang_voices = []
         for model_key, model_info in GEMINI_MODELS.items():
-            for voice_name in GEMINI_VOICE_NAMES:
+            for voice_name in sorted_names:
+                gender = GEMINI_VOICE_GENDER.get(voice_name, "")
                 lang_voices.append({
                     "id": f"gemini:{model_key}:{voice_name}",
                     "name": f"{voice_name} ({model_info['label']})",
@@ -142,29 +207,96 @@ def get_voices():
                     "engine": "gemini",
                     "model_key": model_key,
                     "model_label": model_info["label"],
+                    "gender": gender,
+                    "gender_icon": _gender_icon(gender),
                 })
         out[lang] = lang_voices
     return out
 
 
+def _normalize_text(text):
+    """Collassa whitespace/newline a singolo spazio e fa strip.
+
+    Necessario perche` len(text) viene usato come proxy del numero di caratteri
+    "parlati": senza questa normalizzazione, formattazione (newline tra paragrafi,
+    indentazione) gonfia il conteggio e disallinea le stime durata/costo dalle
+    stime word-count.
+    """
+    if not text:
+        return ""
+    return re.sub(r'\s+', ' ', text).strip()
+
+
 def estimate_input_tokens(text, language="it"):
     """Stima token input dal testo. Usa CHARS_PER_TOKEN_BY_LANG."""
-    if not text:
+    norm = _normalize_text(text)
+    if not norm:
         return 0
     ratio = CHARS_PER_TOKEN_BY_LANG.get(language, CHARS_PER_TOKEN_BY_LANG["default"])
-    return int(len(text) / ratio)
+    return int(len(norm) / ratio)
 
 
-def estimate_audio_seconds(text):
-    """Stima durata audio in secondi a velocità di narrazione standard."""
-    if not text:
+def _rate_pct_to_step(rate_pct):
+    """Converte percentuale (-30..+30) o stringa ('+10%') a step intero [-3, +3]."""
+    if rate_pct is None or rate_pct == "":
+        return 0
+    if isinstance(rate_pct, str):
+        try:
+            rate_pct = int(rate_pct.replace("%", "").replace("+", ""))
+        except ValueError:
+            return 0
+    try:
+        n = int(rate_pct)
+    except (TypeError, ValueError):
+        return 0
+    return max(-3, min(3, round(n / 10)))
+
+
+def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
+    """Stima durata audio in secondi a una data velocita`.
+
+    Strategia:
+      1. Recupera un rate empirico "baseline" (rate_step=0) per (lang, model)
+         con fallback a tier-2/3. Questo evita che il rate-step richiesto
+         non abbia campioni e produca un risultato invariato rispetto al
+         cursore velocità.
+      2. Applica un fattore esplicito di velocità ricavato da rate_pct:
+            speed_factor = max(0.5, 1 + rate_pct/100)
+            audio_seconds = baseline_seconds / speed_factor
+         Così la stima è monotonica rispetto allo slider velocità.
+    Fallback finale: CHARS_PER_AUDIO_SECOND.
+    Il testo viene normalizzato per coerenza con il conteggio dei sample.
+    """
+    norm = _normalize_text(text)
+    if not norm:
         return 0.0
-    return len(text) / CHARS_PER_AUDIO_SECOND
+    rate = None
+    if language is not None:
+        try:
+            # rate_step=0 (baseline): la scalatura su rate_pct la applichiamo
+            # esplicitamente sotto per garantire monotonia con lo slider.
+            rate = get_empirical_rate(language, model_key, rate_step=0)
+        except Exception:
+            rate = None
+    if not rate or rate <= 0:
+        rate = CHARS_PER_AUDIO_SECOND
+    base_seconds = len(norm) / rate
+    # Converti rate_pct ("+10%", 10, "+0%", ecc.) a fattore moltiplicativo.
+    try:
+        if isinstance(rate_pct, str):
+            rp = int(rate_pct.replace("%", "").replace("+", ""))
+        else:
+            rp = int(rate_pct) if rate_pct is not None else 0
+    except (TypeError, ValueError):
+        rp = 0
+    rp = max(-50, min(50, rp))
+    speed_factor = max(0.5, 1.0 + (rp / 100.0))
+    return base_seconds / speed_factor
 
 
-def estimate_output_tokens(text):
-    """Stima token audio output. 25 tok/s x secondi stimati."""
-    return int(estimate_audio_seconds(text) * AUDIO_TOKENS_PER_SECOND)
+def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0):
+    """Stima token audio output. 25 tok/s x secondi stimati alla velocita` data."""
+    return int(estimate_audio_seconds(text, language=language, model_key=model_key, rate_pct=rate_pct) * AUDIO_TOKENS_PER_SECOND)
 
 
 def google_cost_breakdown(input_tokens, output_tokens, model_key):
@@ -223,7 +355,7 @@ def compute_user_price_eur(google_cost_eur, model_key):
     }
 
 
-def estimate_book_cost(chapters, voice_id, language="it"):
+def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
     """Stima costo end-to-end della generazione audio di un libro.
 
     Args:
@@ -238,19 +370,22 @@ def estimate_book_cost(chapters, voice_id, language="it"):
     """
     model_key, _, _ = parse_voice_id(voice_id)
 
+    # Normalizziamo ogni capitolo separatamente per evitare che whitespace/newline
+    # gonfino il conteggio caratteri rispetto a word_count*split() usato altrove.
     chars_per_chapter = []
     chars_total = 0
-    full_text_for_estimate = []
+    normalized_parts = []
     for ch in chapters:
         txt = getattr(ch, "text", "") or ""
-        chars_per_chapter.append(len(txt))
-        chars_total += len(txt)
-        full_text_for_estimate.append(txt)
+        norm = _normalize_text(txt)
+        chars_per_chapter.append(len(norm))
+        chars_total += len(norm)
+        normalized_parts.append(norm)
 
-    combined = "".join(full_text_for_estimate)
+    combined = " ".join(normalized_parts)
     input_tokens = estimate_input_tokens(combined, language)
-    audio_seconds = estimate_audio_seconds(combined)
-    output_tokens = estimate_output_tokens(combined)
+    audio_seconds = estimate_audio_seconds(combined, language=language, model_key=model_key, rate_pct=rate_pct)
+    output_tokens = estimate_output_tokens(combined, language=language, model_key=model_key, rate_pct=rate_pct)
 
     breakdown = google_cost_breakdown(input_tokens, output_tokens, model_key)
     price = compute_user_price_eur(breakdown["total_eur"], model_key)
@@ -270,6 +405,8 @@ def estimate_book_cost(chapters, voice_id, language="it"):
         "model_key": model_key,
         "model_label": GEMINI_MODELS[model_key]["label"],
         "language": language,
+        "rate_pct": rate_pct,
+        "rate_step": _rate_pct_to_step(rate_pct),
     }
 
 
@@ -317,18 +454,54 @@ def _empty_usage():
         "chars_total": 0,
         "input_tokens_total": 0,
         "output_tokens_total": 0,
+        # google_cost_eur: somma costi REALI calcolati da usage_metadata.token_count
+        # (input+output) x rate per MTok del modello. Aggregato chunk-per-chunk.
         "google_cost_eur": 0.0,
         "user_revenue_eur_net": 0.0,
         "margin_eur": 0.0,
         "previews_count": 0,
         "previews_cost_eur": 0.0,
+        # Reconciliation ex-ante (estimate_book_cost) vs ex-post (usage_metadata
+        # reale). Aggiornata a fine job da record_job_completion().
+        "jobs_completed": 0,
+        "estimated_cost_eur_total": 0.0,
+        "actual_cost_eur_total": 0.0,
+        "cost_delta_eur_total": 0.0,    # actual - estimated (positivo = sottostima)
+        "cost_delta_pct_sum": 0.0,      # somma dei delta% per calcolo media
         "by_model": {
             "flash25": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0},
+                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
+                        "estimated_eur": 0.0, "actual_eur": 0.0},
             "flash31": {"chars": 0, "input_tok": 0, "output_tok": 0,
-                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0},
+                        "google_cost": 0.0, "revenue_net": 0.0, "jobs_count": 0,
+                        "estimated_eur": 0.0, "actual_eur": 0.0},
         },
     }
+
+
+def _ensure_reconciliation_fields(data):
+    """Migra usage data legacy aggiungendo i campi reconciliation se mancanti.
+
+    Permette di leggere file gemini_tts_usage.json scritti prima dell'introduzione
+    della reconciliation senza perdere i totali storici (chars/tokens/cost).
+    """
+    data.setdefault("jobs_completed", 0)
+    data.setdefault("estimated_cost_eur_total", 0.0)
+    data.setdefault("actual_cost_eur_total", 0.0)
+    data.setdefault("cost_delta_eur_total", 0.0)
+    data.setdefault("cost_delta_pct_sum", 0.0)
+    by_model = data.get("by_model") or {}
+    for mk in ("flash25", "flash31"):
+        m = by_model.setdefault(mk, {})
+        m.setdefault("chars", 0)
+        m.setdefault("input_tok", 0)
+        m.setdefault("output_tok", 0)
+        m.setdefault("google_cost", 0.0)
+        m.setdefault("revenue_net", 0.0)
+        m.setdefault("jobs_count", 0)
+        m.setdefault("estimated_eur", 0.0)
+        m.setdefault("actual_eur", 0.0)
+    return data
 
 
 def _load_usage():
@@ -341,6 +514,7 @@ def _load_usage():
         try:
             data = json.loads(_usage_file_path.read_text(encoding="utf-8"))
             if data.get("month") == _current_month():
+                data = _ensure_reconciliation_fields(data)
                 _usage_cache = data
                 return data
         except Exception as e:
@@ -386,10 +560,57 @@ def record_usage(model_key, chars, input_tokens, output_tokens, google_cost_eur,
         _save_usage(data)
 
 
+def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0.0):
+    """Registra la chiusura di un job: stima ex-ante vs costo reale ex-post.
+
+    Da chiamare una sola volta a fine job (success o cancel parziale), DOPO che
+    tutti i chunk hanno gia` chiamato record_usage(). Tiene traccia dell'errore
+    sistematico di estimate_book_cost rispetto ai token reali di usage_metadata.
+
+    Args:
+        model_key: 'flash25' | 'flash31'
+        estimated_eur: costo Google stimato pre-job (da estimate_book_cost)
+        actual_eur: costo Google REALE (somma chunk usage_metadata x rate)
+        user_price_eur: prezzo pagato dall'utente (se 0 = job gratuito o ignoto)
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    try:
+        est = float(estimated_eur or 0.0)
+        act = float(actual_eur or 0.0)
+        rev = float(user_price_eur or 0.0)
+    except (TypeError, ValueError):
+        return
+    delta_eur = act - est
+    delta_pct = (delta_eur / est * 100.0) if est > 0 else 0.0
+    with _usage_lock:
+        data = _load_usage()
+        data["jobs_completed"] += 1
+        data["estimated_cost_eur_total"] += est
+        data["actual_cost_eur_total"] += act
+        data["cost_delta_eur_total"] += delta_eur
+        data["cost_delta_pct_sum"] += delta_pct
+        if rev > 0:
+            data["user_revenue_eur_net"] += rev
+            data["margin_eur"] = data["user_revenue_eur_net"] - data["google_cost_eur"]
+        m = data["by_model"][model_key]
+        m["estimated_eur"] += est
+        m["actual_eur"] += act
+        if rev > 0:
+            m["revenue_net"] += rev
+        _save_usage(data)
+
+
 def get_usage():
     """Restituisce lo snapshot di utilizzo del mese corrente."""
     with _usage_lock:
-        return dict(_load_usage())
+        data = dict(_load_usage())
+        # Campo derivato: media percentuale errore stima.
+        jobs = data.get("jobs_completed", 0) or 0
+        data["cost_delta_pct_avg"] = (
+            round(data.get("cost_delta_pct_sum", 0.0) / jobs, 2) if jobs > 0 else 0.0
+        )
+        return data
 
 
 _preview_file_path = None
@@ -476,6 +697,164 @@ def increment_preview(cookie_id):
         data[cookie_id] = entry
         _save_previews(data)
         return True
+
+
+# ───────────────── Empirical rate log (chars/sec per lang+model) ─────────────────
+#
+# Ad ogni sintesi reale registriamo (chars_normalizzati, audio_secs_reali, lang,
+# model). La media mobile sugli ultimi N campioni per (lang, model) diventa il
+# rate usato dalle stime. Cosi` le stime ex-ante migliorano automaticamente man
+# mano che l'app viene usata e si tarano per ogni lingua.
+
+_rate_log_path = None
+_rate_log_lock = threading.Lock()
+_rate_log_cache = None
+
+RATE_LOG_MAX_SAMPLES = int(_f("ABM_GEMINI_RATE_LOG_MAX_SAMPLES", 2000))
+RATE_LOG_WINDOW = int(_f("ABM_GEMINI_RATE_LOG_WINDOW", 20))
+RATE_LOG_MIN_SAMPLES = int(_f("ABM_GEMINI_RATE_LOG_MIN_SAMPLES", 5))
+
+
+def _rate_log_file():
+    global _rate_log_path
+    if _rate_log_path is None and _data_dir is not None:
+        _rate_log_path = _data_dir / "gemini_tts_rate_log.json"
+    return _rate_log_path
+
+
+def _load_rate_log():
+    global _rate_log_cache
+    if _rate_log_cache is not None:
+        return _rate_log_cache
+    p = _rate_log_file()
+    if p and p.exists():
+        try:
+            _rate_log_cache = json.loads(p.read_text(encoding="utf-8"))
+            if not isinstance(_rate_log_cache, dict) or "samples" not in _rate_log_cache:
+                _rate_log_cache = {"samples": []}
+            return _rate_log_cache
+        except Exception:
+            pass
+    _rate_log_cache = {"samples": []}
+    return _rate_log_cache
+
+
+def _save_rate_log(data):
+    global _rate_log_cache
+    _rate_log_cache = data
+    p = _rate_log_file()
+    if p is None:
+        return
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        tmp.replace(p)
+    except Exception as e:
+        print(f"[gemini-tts] Warning: could not save rate log: {e}")
+
+
+def record_rate_sample(chars, audio_seconds, lang, model_key, rate_pct=0):
+    """Registra un campione (chars_normalizzati, audio_seconds, lang, model, rate).
+
+    Scarta campioni degeneri (chars<=0, audio_seconds<=0.5, rate fuori range
+    plausibile 5-40 char/sec) per non avvelenare la media empirica con outlier
+    derivati da chunk troppo corti o da errori di misurazione.
+    """
+    try:
+        chars = int(chars)
+        audio_seconds = float(audio_seconds)
+    except (TypeError, ValueError):
+        return
+    if chars <= 0 or audio_seconds <= 0.5:
+        return
+    inst_rate = chars / audio_seconds
+    if inst_rate < 5.0 or inst_rate > 40.0:
+        return
+    sample = {
+        "chars": chars,
+        "secs": round(audio_seconds, 3),
+        "lang": (lang or "default")[:8],
+        "model": model_key or "unknown",
+        "rate_step": _rate_pct_to_step(rate_pct),
+        "ts": int(time.time()),
+    }
+    with _rate_log_lock:
+        data = _load_rate_log()
+        samples = data.get("samples", [])
+        samples.append(sample)
+        if len(samples) > RATE_LOG_MAX_SAMPLES:
+            samples = samples[-RATE_LOG_MAX_SAMPLES:]
+        data["samples"] = samples
+        _save_rate_log(data)
+
+
+def get_empirical_rate(lang, model_key=None, rate_step=0, window=None, min_samples=None):
+    """Media mobile char/sec per (lang, model_key, rate_step) con fallback a tier
+    progressivamente piu` larghi:
+
+      1. (lang, model, rate_step) — combo esatta
+      2. (lang, model)            — qualsiasi velocita`
+      3. (lang)                   — qualsiasi modello
+
+    I sample legacy senza rate_step vengono trattati come rate_step=0 (normale).
+    Ritorna None se nemmeno il tier piu` largo ha min_samples campioni.
+    """
+    if not lang:
+        return None
+    win = window if window is not None else RATE_LOG_WINDOW
+    minN = min_samples if min_samples is not None else RATE_LOG_MIN_SAMPLES
+    with _rate_log_lock:
+        samples = list(_load_rate_log().get("samples", []))
+    if not samples:
+        return None
+
+    def _avg(filtered):
+        last = filtered[-win:] if win > 0 else filtered
+        if len(last) < minN:
+            return None
+        total_chars = sum(s.get("chars", 0) for s in last)
+        total_secs = sum(s.get("secs", 0.0) for s in last)
+        if total_secs <= 0:
+            return None
+        return total_chars / total_secs
+
+    def _step(s):
+        return s.get("rate_step", 0)
+
+    # Tier 1: lang + model + rate_step
+    if model_key:
+        tier1 = [s for s in samples if s.get("lang") == lang and s.get("model") == model_key and _step(s) == rate_step]
+        rate = _avg(tier1)
+        if rate is not None:
+            return rate
+        # Tier 2: lang + model, qualsiasi velocita`
+        tier2 = [s for s in samples if s.get("lang") == lang and s.get("model") == model_key]
+        rate = _avg(tier2)
+        if rate is not None:
+            return rate
+    # Tier 3: solo lang
+    tier3 = [s for s in samples if s.get("lang") == lang]
+    return _avg(tier3)
+
+
+def get_rate_log_stats():
+    """Snapshot diagnostico: numero campioni e rate medio per (lang, model)."""
+    with _rate_log_lock:
+        samples = list(_load_rate_log().get("samples", []))
+    by_key = {}
+    for s in samples:
+        k = (s.get("lang", "?"), s.get("model", "?"))
+        b = by_key.setdefault(k, {"n": 0, "chars": 0, "secs": 0.0})
+        b["n"] += 1
+        b["chars"] += s.get("chars", 0)
+        b["secs"] += s.get("secs", 0.0)
+    out = []
+    for (lang, model), b in by_key.items():
+        rate = (b["chars"] / b["secs"]) if b["secs"] > 0 else 0.0
+        out.append({"lang": lang, "model": model, "samples": b["n"], "chars_per_sec": round(rate, 2)})
+    out.sort(key=lambda x: (-x["samples"], x["lang"]))
+    return {"total_samples": len(samples), "by_key": out}
 
 
 _available = None
@@ -570,15 +949,18 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         style = str(style_instruction).strip()[:300]
         if style:
             final_text = f"[style: {style}] {final_text}"
-    # Existing rate prefix
+    # Rate prefix — il modello non ha speaking_rate API, quindi usiamo istruzioni
+    # in linguaggio naturale. I tag bracketed tipo [slow]/[fast] sono fragili (il
+    # modello puo` ignorarli) e collassavano tutti i livelli sotto/sopra il +-5%
+    # in 2 sole varianti. Mappiamo ora il pct a 7 step distinti -> 7 audio diversi.
     if rate_mode == "prompt" and rate and rate != "+0%":
         pct = rate.replace("%", "").replace("+", "")
         try:
             n = int(pct)
-            if n < -5:
-                final_text = f"[slow] {final_text}"
-            elif n > 5:
-                final_text = f"[fast] {final_text}"
+            step = max(-3, min(3, round(n / 10)))
+            directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
+            if directive:
+                final_text = f"{directive} {final_text}"
         except ValueError:
             pass
 
@@ -630,9 +1012,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     with open(output_path, "wb") as f:
         f.write(pcm_data)
 
+    audio_seconds_real = len(pcm_data) / float(AUDIO_SAMPLE_RATE * AUDIO_SAMPLE_WIDTH_BYTES * AUDIO_CHANNELS)
     return {
         "success": True,
         "bytes_written": len(pcm_data),
+        "audio_seconds_real": audio_seconds_real,
         "input_tokens": usage_input,
         "output_tokens": usage_output,
         "model_key": model_key,

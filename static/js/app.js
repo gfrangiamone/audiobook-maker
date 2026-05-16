@@ -368,6 +368,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       var idx=parseInt(this.value)+3;
       _setSpeed(idx);
       _onPreviewParamsChanged();
+      if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
     });
     // Also sync on change (for keyboard/accessibility)
     speedSlider.addEventListener('change',function(){
@@ -792,15 +793,29 @@ function updVoicesPremium(){
   const langData=voices[lang];
   const all=langData&&Array.isArray(langData.voices)?langData.voices:[];
   const prefix='gemini:'+modelKey+':';
-  all.forEach(v=>{
-    if(!v||!v.id)return;
-    if(!v.id.startsWith(prefix))return;
-    if(v.lang&&v.lang!==lang&&v.lang!=='multi')return;
+  // Filtra per modello selezionato e lingua (voci Gemini sono multilingue).
+  const premiumVoices=all.filter(v=>{
+    if(!v||!v.id)return false;
+    if(!v.id.startsWith(prefix))return false;
+    if(v.lang&&v.lang!==lang&&v.lang!=='multi')return false;
+    return true;
+  });
+  // Raggruppa per gender con <optgroup label="♀|♂">, replicando il pattern
+  // del combo Edge (updVoices). Il backend ordina già Female prima di Male.
+  let lg='';
+  for(const v of premiumVoices){
+    if(v.gender!==lg){
+      const g=document.createElement('optgroup');
+      g.label=v.gender==='Female'?'♀':(v.gender==='Male'?'♂':'•');
+      sel.appendChild(g);
+      lg=v.gender;
+    }
     const opt=document.createElement('option');
     opt.value=v.id;
     opt.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.label||v.id.split(':').pop());
-    sel.appendChild(opt);
-  });
+    const target=sel.lastElementChild&&sel.lastElementChild.tagName==='OPTGROUP'?sel.lastElementChild:sel;
+    target.appendChild(opt);
+  }
   sel.onchange=()=>{_onPreviewParamsChanged();};
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
 }
@@ -831,16 +846,27 @@ function switchAudioTab(tab){
   const tPrm=document.getElementById('tabPremium');
   if(tStd)tStd.hidden=(tab!=='standard');
   if(tPrm)tPrm.hidden=(tab!=='premium');
-  // Mutua esclusione: azzera la voce selezionata nell'altro tab
+  // Il box stima costo è rilevante solo per il tab Premium (Standard è gratis).
+  const cpBox=document.getElementById('costPreviewBox');
+  if(cpBox)cpBox.hidden=(tab!=='premium');
+  // Fallback class per browser senza :has(): tinge la border-bottom della tab-bar
+  // del colore dorato quando Premium è attivo.
+  document.querySelectorAll('.tab-bar').forEach(b=>{
+    b.classList.toggle('tabbar-premium-active',tab==='premium');
+  });
+  // Mantieni la selezione voce in entrambi i tab: tornando al tab di origine,
+  // l'anteprima eventualmente già generata (firma in _knownPreviewSigs) deve
+  // restare disponibile. La voce "attiva" è risolta da getCurrentVoiceId() in
+  // base al tab corrente, quindi non serve azzerare l'altro tab.
   if(tab==='premium'){
-    const vv=document.getElementById('vv');if(vv)vv.value='';
     updVoicesPremium();
-  }else{
-    const vvP=document.getElementById('vvPremium');if(vvP)vvP.value='';
   }
-  if(prev!==tab&&typeof _previewGenerated!=='undefined'&&_previewGenerated){
-    if(typeof _resetPreviewState==='function')_resetPreviewState();
-    else if(typeof previewStop==='function')previewStop();
+  if(prev!==tab){
+    // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
+    // del tab attivo: se la firma è in _knownPreviewSigs ricarica l'audio,
+    // altrimenti nasconde il player ma NON cancella le firme note.
+    const a=document.getElementById('previewAudioWiz');if(a)a.pause();
+    if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
@@ -865,7 +891,8 @@ function getEstimateCacheKey(){
   const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
   const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
   const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
-  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+chapters;
+  const rate=document.getElementById('vr')?.value||'+0%';
+  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+chapters;
 }
 function requestCombinedEstimate(){
   if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
@@ -883,6 +910,7 @@ async function _doCombinedEstimate(){
     voice_id:voiceId||'',
     selected_chapters:selected,
     ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,
+    rate:document.getElementById('vr')?.value||'+0%',
   };
   try{
     const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -927,18 +955,28 @@ function renderEstimate(data){
   }
   if(detailEl){
     const mins=Number(data.gemini_breakdown&&data.gemini_breakdown.audio_minutes||0);
-    const minsTmpl=(window.t&&t('cost_minutes_detail'))||'≈ {n} min audio';
-    const minsStr=(mins>0)?minsTmpl.replace('{n}',mins.toFixed(1)):'';
+    // La stima minuti scala ora con rate_pct (vedi gemini_tts.estimate_audio_seconds):
+    // la label velocità deve quindi riflettere il rate selezionato dallo slider.
+    const rateStep=(data.rate_step!=null)?Number(data.rate_step)
+                   :(data.gemini_breakdown&&data.gemini_breakdown.rate_step!=null?Number(data.gemini_breakdown.rate_step):0);
+    const SPEED_KEYS=['sp_vs','sp_s','sp_ss','sp_n','sp_sf','sp_f','sp_vf'];
+    const speedLabel=(window.t&&t(SPEED_KEYS[Math.max(0,Math.min(6,rateStep+3))]))||'normale';
+    const minsTmpl=(window.t&&t('cost_minutes_detail_speed'))||'≈ {n} min audio (velocità: {speed})';
+    const minsStr=(mins>0)?minsTmpl.replace('{n}',mins.toFixed(1)).replace('{speed}',speedLabel):'';
     if(data.is_free){
       const threshold=Number(data.threshold_eur||0).toFixed(2);
       const base='≤ €'+threshold+' '+((window.t&&t('cost_under_threshold'))||'sotto soglia');
       detailEl.textContent=minsStr?(base+' · '+minsStr):base;
     }else{
+      // La voce "Voci PREMIUM €X" è ridondante col totale in grande; mostriamo
+      // solo l'addendo AI quando presente (per spiegare la differenza dal solo Premium).
       const parts=[];
-      if(data.gemini_eur>0)parts.push('Voci PREMIUM €'+Number(data.gemini_eur).toFixed(2));
-      if(data.llm_eur>0)parts.push('Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
-      const base=parts.join(' + ');
-      detailEl.textContent=minsStr?(base+' · '+minsStr):base;
+      if(data.llm_eur>0)parts.push('+ Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
+      const extra=parts.join(' ');
+      const segs=[];
+      if(extra)segs.push(extra);
+      if(minsStr)segs.push(minsStr);
+      detailEl.textContent=segs.join(' · ');
     }
   }
   if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
@@ -1095,13 +1133,20 @@ const _knownPreviewSigs=new Set();
 
 function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
 
+function _getSelectedChaptersKey(){
+  try{
+    const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+    return sel.slice().sort((a,b)=>a-b).join(',');
+  }catch(_){return '';}
+}
+
 function _getPreviewSig(){
   const voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   const rate=document.getElementById('vr')?.value||'+0%';
   const style=_isGeminiVoiceId(voice)
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,300))
     : '';
-  return voice+'|'+rate+'|'+style;
+  return voice+'|'+rate+'|'+style+'|'+_getSelectedChaptersKey();
 }
 
 function _buildPreviewUrl(){
@@ -1114,6 +1159,8 @@ function _buildPreviewUrl(){
     +'?voice='+encodeURIComponent(voice)
     +'&rate='+encodeURIComponent(rate);
   if(style)u+='&style='+encodeURIComponent(style);
+  const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+  sel.forEach(i=>{u+='&selected_chapters='+encodeURIComponent(i);});
   return u;
 }
 
@@ -1413,6 +1460,8 @@ function updateSelection(){
   }
   _updateAiOptUI();
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  // L'anteprima è estratta dai capitoli selezionati: invalida la cache lato client.
+  if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
 }
 
 function _getAllCheckboxes(){let cbs=document.querySelectorAll('#chl .col-sel input[type=checkbox]');if(!cbs.length)cbs=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');return cbs}
@@ -2393,6 +2442,12 @@ async function downloadFile(type){
         return;
       }
       const isLastDl=(r.headers.get('X-Download-Last')==='1');
+      // Se il server ha fatto fallback (es. M4B non disponibile → MP3), il client
+      // deve trattare la risposta come del tipo effettivamente servito, non come
+      // quello richiesto: altrimenti il safety net qui sotto aggiungerebbe una
+      // seconda estensione (es. "X.mp3.m4b") al filename già corretto.
+      const fallbackKind=(r.headers.get('X-Fallback')||'').toLowerCase();
+      const effectiveType=fallbackKind || type;
       const blob=await r.blob();
       const cd=r.headers.get('Content-Disposition')||'';
       // Parse Content-Disposition robustly: RFC 5987 filename*=, quoted filename="...", or bare filename=foo.
@@ -2403,13 +2458,13 @@ async function downloadFile(type){
       if(!fname){mm=cd.match(/filename\s*=\s*"([^"]+)"/i);if(mm)fname=mm[1]}
       if(!fname){mm=cd.match(/filename\s*=\s*([^;\n]+)/i);if(mm)fname=mm[1].trim()}
       let defName = 'audiobook.zip';
-      if(type === 'm4b') defName = 'audiobook.m4b';
-      if(type === 'abm') defName = 'project.abm';
-      if(type === 'mp3') defName = 'audiobook.mp3';
+      if(effectiveType === 'm4b') defName = 'audiobook.m4b';
+      if(effectiveType === 'abm') defName = 'project.abm';
+      if(effectiveType === 'mp3') defName = 'audiobook.mp3';
       if(!fname) fname=defName;
       // Safety net: enforce the expected extension if the parsed filename is missing it.
       const extByType={zip:'.zip',m4b:'.m4b',mp3:'.mp3',abm:'.abm'};
-      const expectedExt=extByType[type];
+      const expectedExt=extByType[effectiveType];
       if(expectedExt && !fname.toLowerCase().endsWith(expectedExt)) fname += expectedExt;
 
       const a=document.createElement('a');

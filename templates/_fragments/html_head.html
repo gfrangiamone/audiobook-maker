@@ -306,7 +306,7 @@ __REVIEWS_LD__
           <div class="form-group">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
             <select id="vmPremium">
-              <option value="flash25" data-t="lbl_model_flash25">Standard</option>
+              <option value="flash25" data-t="lbl_model_flash25" selected>Standard</option>
               <option value="flash31" data-t="lbl_model_flash31">Avanzato</option>
             </select>
             <div class="model-rate-hint" id="modelRateHint"></div>
@@ -321,16 +321,10 @@ __REVIEWS_LD__
         <div class="form-row">
           <div class="form-group" style="flex:1 1 100%">
             <label for="geminiStyle" data-t="lbl_style_instruction">Istruzioni di stile (opzionale)</label>
-            <textarea id="geminiStyle" maxlength="300" rows="4"
-                      style="width:100%; box-sizing:border-box; resize:vertical; min-height:90px"
+            <textarea id="geminiStyle" maxlength="300" rows="2"
                       placeholder="es. tono calmo, ritmo narrativo lento"></textarea>
             <div class="char-counter"><span id="styleCounter">0</span>/300</div>
           </div>
-        </div>
-        <div class="cost-preview-box" id="costPreviewBox">
-          <div class="cost-label" data-t="cost_estimate_label">Stima costo audiolibro</div>
-          <div class="cost-value" id="costPreviewValue">—</div>
-          <div class="cost-detail" id="costPreviewDetail"></div>
         </div>
       </div>
 
@@ -360,6 +354,27 @@ __REVIEWS_LD__
         </div>
       </div>
 
+      <div class="preview-cost-row">
+        <div class="preview-section" id="previewSection">
+          <div class="preview-header">
+            <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>
+            <button class="btn btn-outline btn-sm" id="btnPrev" onclick="previewRead()" disabled>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+              <span id="prevTxt" data-t="btn_gen_preview"></span>
+            </button>
+          </div>
+          <div class="preview-audio-wrap" id="previewAudioWrap">
+            <audio id="previewAudioWiz" controls></audio>
+          </div>
+        </div>
+
+        <div class="cost-preview-box" id="costPreviewBox" hidden>
+          <div class="cost-label" data-t="cost_estimate_label">Stima costo audiolibro</div>
+          <div class="cost-value" id="costPreviewValue">—</div>
+          <div class="cost-detail" id="costPreviewDetail"></div>
+        </div>
+      </div>
+
       <div class="form-row">
         <div class="form-group" id="fgOut" style="flex:1 1 100%"><label data-t="lbl_out"></label>
           <select id="vOut" onchange="onOutputChange()">
@@ -374,19 +389,6 @@ __REVIEWS_LD__
             </div>
             <div class="pod-hint" id="podHint">&#x1F399;&#xFE0F; <span data-t="podcast_hint"></span></div>
           </div>
-        </div>
-      </div>
-
-      <div class="preview-section" id="previewSection">
-        <div class="preview-header">
-          <span class="preview-label">&#x1F50A; <span data-t="preview_box_title">Anteprima lettura</span></span>
-          <button class="btn btn-outline btn-sm" id="btnPrev" onclick="previewRead()" disabled>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-            <span id="prevTxt" data-t="btn_gen_preview"></span>
-          </button>
-        </div>
-        <div class="preview-audio-wrap" id="previewAudioWrap">
-          <audio id="previewAudioWiz" controls></audio>
         </div>
       </div>
 
@@ -863,9 +865,9 @@ __REVIEWS_LD__
         </div>
         <div class="pay-tab-panel" id="payPanelVoucher" role="tabpanel" aria-labelledby="payTabVoucher">
           <label for="geminiPayVoucherCode" data-t="pay_voucher_code">Codice buono</label>
-          <input type="text" id="geminiPayVoucherCode" autocomplete="off">
+          <input type="text" id="geminiPayVoucherCode" autocomplete="off" placeholder="XXXX-XXXX-XXXX">
           <label for="geminiPayVoucherEmail" data-t="pay_voucher_email">Email (verifica)</label>
-          <input type="email" id="geminiPayVoucherEmail" autocomplete="email">
+          <input type="email" id="geminiPayVoucherEmail" autocomplete="email" placeholder="you@email.com">
           <div class="pay-error" id="payVoucherError" role="alert"></div>
         </div>
         <div class="pay-tab-panel" id="payPanelPaypal" role="tabpanel" aria-labelledby="payTabPaypal" hidden>

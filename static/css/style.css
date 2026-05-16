@@ -578,11 +578,25 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ═══ PREVIEW SECTION (inline in panel 3) ═══ */
 .preview-section{margin-top:22px;padding:18px 22px;background:var(--srf2);border-radius:var(--rs);border:1px solid var(--brd)}
+/* Layout affiancato: Anteprima lettura a sinistra, Stima costo a destra.
+   Su schermi stretti i due box vanno a capo (cost-preview-box sotto). */
+.preview-cost-row{display:flex;flex-wrap:wrap;gap:16px;align-items:stretch;margin-top:22px}
+.preview-cost-row .preview-section{flex:1 1 320px;margin-top:0}
+.preview-cost-row .cost-preview-box:not([hidden]){flex:1 1 220px;margin:0;display:flex;flex-direction:column;justify-content:center}
 .preview-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .preview-header .preview-label{font-size:.85rem;font-weight:600;color:var(--txd);white-space:nowrap}
 .preview-audio-wrap{display:none;margin-top:14px}
 .preview-audio-wrap.visible{display:block;animation:fadeSlideIn .3s ease}
 .preview-audio-wrap audio{width:100%;height:36px}
+/* Audio anteprima: nascondi lo slider del volume, mantieni solo l'icona mute/unmute.
+   Pseudo-elementi WebKit/Chromium (Firefox usa shadow DOM chiuso e ignora la regola). */
+#previewAudioWiz::-webkit-media-controls-volume-slider,
+#previewAudioWiz::-webkit-media-controls-volume-control-hover-background,
+#previewAudioWiz::-webkit-media-controls-volume-slider-container{display:none!important}
+/* Spaziatura verticale fine: meno spazio sopra "Velocità di lettura"
+   (subito dopo la textarea Istruzioni), più spazio sopra "Formato di output". */
+.form-row:has(>.speed-slider-group){margin-top:-6px}
+.form-row:has(>#fgOut){margin-top:14px}
 
 /* ═══ AI OPTIMIZATION CARD ═══ */
 .ai-opt-card{border:2px solid #c8b8e0;border-radius:var(--rs);padding:22px 26px;margin-bottom:22px;transition:all .2s;background:linear-gradient(135deg,rgba(139,92,240,.04) 0%,rgba(139,92,240,.02) 100%)}
@@ -866,10 +880,47 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .fbw-star{font-size:1.4rem}
 }
 /* ─── Tab-bar Panel 3 (Standard / Premium voices) ─── */
-.tab-bar { display:flex; gap:4px; border-bottom:2px solid var(--brd,#dcd6c8); }
+.tab-bar { display:flex; gap:6px; width:100%; box-sizing:border-box;
+            border-bottom:2px solid var(--brd,#dcd6c8); align-items:flex-end;
+            transition:border-bottom-color .18s ease; }
+/* Quando il tab Premium è attivo, la riga inferiore resta del colore di default
+   nella parte a sinistra del bottone; a destra del bottone Premium e fino al
+   bordo destro del pannello la linea diventa dorata, tramite un pseudo-elemento
+   flex che riempie lo spazio rimanente. */
+.tab-bar:has(#tabPremiumBtn.active)::after,
+.tab-bar.tabbar-premium-active::after {
+  content:""; flex:1 1 auto; align-self:stretch;
+  border-bottom:2px solid #b8862e; margin-bottom:-2px;
+  pointer-events:none;
+}
 .tab-bar .tab { padding:8px 14px; background:transparent; border:0; border-bottom:2px solid transparent;
-                 margin-bottom:-2px; cursor:pointer; font-weight:500; color:var(--txm,#9e9890); }
+                 margin-bottom:-2px; cursor:pointer; font-weight:700; color:var(--txm,#9e9890);
+                 transition:color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
 .tab-bar .tab.active { color:var(--accent,#a07d3a); border-bottom-color:var(--accent,#a07d3a); }
+/* Tab "Voci PREMIUM": badge dorato sempre evidente, anche se non attivo.
+   Inactive: card dorata con bordo, shimmer leggero. Active: card più satura. */
+.tab-bar #tabPremiumBtn { position:relative; color:#7a5a22; font-weight:800; letter-spacing:.4px;
+                          background:linear-gradient(180deg,#fbeec2 0%,#f4d98a 55%,#e6c46a 100%);
+                          border:1px solid #c9a24a; border-bottom:0;
+                          border-radius:10px 10px 0 0; padding:10px 18px 9px;
+                          box-shadow:0 1px 0 #fff7dd inset, 0 2px 6px rgba(160,125,58,.18);
+                          text-shadow:0 1px 0 rgba(255,255,255,.55);
+                          overflow:hidden; }
+.tab-bar #tabPremiumBtn::before { content:""; position:absolute; top:0; left:-60%; width:55%; height:100%;
+                                  background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.55) 50%,transparent 100%);
+                                  transform:skewX(-20deg); pointer-events:none;
+                                  animation:premiumShimmer 3.6s ease-in-out infinite; }
+@keyframes premiumShimmer { 0%,70%,100% { left:-60%; } 85% { left:120%; } }
+.tab-bar #tabPremiumBtn:hover { transform:translateY(-1px);
+                                background:linear-gradient(180deg,#fff2cc 0%,#f6dc8c 55%,#e9c970 100%);
+                                box-shadow:0 1px 0 #fff7dd inset, 0 4px 10px rgba(160,125,58,.28); }
+.tab-bar #tabPremiumBtn.active { color:#5f4419; border-bottom:0;
+                                 background:linear-gradient(180deg,#ffe9a1 0%,#f0c763 55%,#d9a93d 100%);
+                                 box-shadow:0 1px 0 #fff7dd inset, 0 3px 8px rgba(160,125,58,.32),
+                                            0 -2px 0 #b8862e inset; }
+@media (prefers-reduced-motion: reduce) {
+  .tab-bar #tabPremiumBtn::before { animation:none; display:none; }
+}
 .tab-panel { padding-top:16px; }
 .tab-panel[hidden] { display:none; }
 .cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
@@ -877,6 +928,14 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .cost-preview-box .cost-value { font-size:22px; font-weight:600; color:var(--accent,#a07d3a); }
 .cost-preview-box .cost-detail { font-size:12px; color:var(--txm,#9e9890); margin-top:4px; }
 .char-counter { font-size:11px; color:var(--txm,#9e9890); text-align:right; margin-top:2px; }
+/* Textarea "Istruzioni di stile" (premium): coerente con i campi di testo
+   del widget feedback — stessa palette, padding e focus dorato. */
+#geminiStyle { width:100%; box-sizing:border-box; background:var(--srf);
+               border:1px solid var(--brd); border-radius:6px; color:var(--tx);
+               padding:8px 10px; font:inherit; font-size:.9rem;
+               resize:vertical; min-height:54px;
+               transition:border-color .18s ease; }
+#geminiStyle:focus { outline:none; border-color:var(--ac,#a07d3a); }
 .model-rate-hint { font-size:11px; color:var(--txm,#9e9890); margin-top:4px; }
 /* ── Payment modal (Premium voices / AI optimization) ── */
 .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5);

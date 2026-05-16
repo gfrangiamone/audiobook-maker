@@ -1203,8 +1203,14 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
 
         result = subprocess.run(cmd, capture_output=True, timeout=3600, **_SUBPROCESS_FLAGS)
         if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="ignore")[:800]
-            print(f"[pcm_to_aac_m4b] ffmpeg failed: {stderr}")
+            # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
+            # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",
+            # "Error opening output file", "Unknown encoder 'aac'") sta in coda:
+            # tagliare con [:N] dall'inizio nascondeva sempre la causa reale.
+            stderr_full = result.stderr.decode("utf-8", errors="ignore")
+            stderr_tail = stderr_full[-1500:] if len(stderr_full) > 1500 else stderr_full
+            print(f"[pcm_to_aac_m4b] ffmpeg failed (rc={result.returncode}). "
+                  f"cmd={cmd!r}\nstderr_tail:\n{stderr_tail}")
             return False
         return True
     except Exception as e:
