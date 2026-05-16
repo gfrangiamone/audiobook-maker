@@ -6111,7 +6111,7 @@ def api_download(job_id):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
             print(f"[debug] M4B file found! Serving: {m4b_path}")
-            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True)
         else:
             # Physical search fallback: SOLO dentro output_dir della run corrente,
             # mai uno scan globale su tutti gli output_*/ (servirebbe un m4b di
@@ -6127,13 +6127,13 @@ def api_download(job_id):
                 print(f"[debug] M4B found via physical search: {actual_m4b}")
                 _do_log()
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
-                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b")
+                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True)
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
             mp3_path = job.get("output_files", [""])[0]
             if mp3_path and os.path.exists(mp3_path):
-                return _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3")
+                return _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3", no_cache=True)
             return "File not found", 404
 
     if download_type == "zip":
@@ -6142,22 +6142,22 @@ def api_download(job_id):
             zip_name = job.get("output_name", "audiobook.zip")
             if not zip_name.endswith(".zip"):
                  zip_name = _safe_filename(job["info"].title) + ".zip"
-            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name)
+            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True)
         return "ZIP file not found", 404
 
     # Default logic (compatibility or auto-detect)
     # Prefer M4B if it seems to be the intended primary output
     if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
         _do_log()
-        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"])
+        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True)
 
     if "output_zip" in job and os.path.exists(job["output_zip"]):
         _do_log()
-        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"])
+        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True)
 
     if job.get("output_files") and os.path.exists(job["output_files"][0]):
         _do_log()
-        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"])
+        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True)
 
     return "File not found", 404
 
@@ -6181,7 +6181,7 @@ def api_download_podcast(job_id):
                           job.get("client_id", ""), job.get("client_ip", ""),
                           job.get("voice", ""), job.get("browser_lang", ""))
         return _send_file_throttled(job["output_zip"], as_attachment=True,
-                         download_name=job.get("output_name", "podcast.zip"))
+                         download_name=job.get("output_name", "podcast.zip"), no_cache=True)
 
     # Sec (SSRF / content injection): il base_url degli <enclosure> del feed RSS è critico.
     # Se accettato dal client, un attaccante può fare pubblicare/usare il feed con enclosure
@@ -6266,7 +6266,7 @@ def api_download_podcast(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
     return _send_file_throttled(podcast_zip, as_attachment=True,
-                     download_name=f"{safe_name}_podcast.zip")
+                     download_name=f"{safe_name}_podcast.zip", no_cache=True)
 
 
 # ----------------------------------------------------------------------
