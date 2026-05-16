@@ -1308,6 +1308,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     output_dir = work_dir / f"output_{my_epoch}"
     output_dir.mkdir(exist_ok=True)
     job["output_dir"] = str(output_dir)
+    # Clear stale output paths from previous generations on this same job_id.
+    # Without this, if the current run produces a different format (e.g. mp3
+    # only) the old M4B/ZIP/ABM paths from the previous epoch would persist
+    # in the job dict and be served by /api/download, leaking files across
+    # generations. Active email tokens hold their own snapshot copies, so
+    # this clear is safe for them too.
+    for _stale_key in ("output_files", "output_name", "output_zip", "output_file",
+                       "output_m4b", "optimized_abm_path", "optimized_abm_name",
+                       "podcast_ready", "podcast_safe_name", "podcast_mp3s",
+                       "podcast_info", "podcast_rss_included",
+                       "m4b_failed"):
+        job.pop(_stale_key, None)
     loop = asyncio.new_event_loop()
     start_time = time.time()
 

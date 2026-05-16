@@ -4410,17 +4410,22 @@ def api_progress(job_id):
             if job.get("status") == "done":
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
-                # Se output_m4b o optimized_abm_path non sono impostati, prova a trovare i file su disco
-                # (può succedere se il client riconnette dopo che la generazione è già terminata)
-                _work = UPLOAD_DIR / job_id
-                if not job.get("output_m4b"):
-                    _m4bs = list(_work.glob("*.m4b")) + _find_files_in_outputs(_work, "*.m4b")
-                    if _m4bs:
-                        job["output_m4b"] = str(_m4bs[0])
-                if not job.get("optimized_abm_path"):
-                    _abms = list(_work.glob("*.abm")) + _find_files_in_outputs(_work, "*.abm")
-                    if _abms:
-                        job["optimized_abm_path"] = str(_abms[0])
+                # Reconnection fallback: se output_m4b o optimized_abm_path non sono
+                # impostati, cerca SOLO dentro la cartella della generazione corrente
+                # (job["output_dir"] = output_{gen_epoch}/). Mai fare scan globale su
+                # tutti gli output_*/ perché erediteresti file di run precedenti e li
+                # mostreresti come scaricabili per la run corrente.
+                _cur_output = job.get("output_dir")
+                if _cur_output and os.path.isdir(_cur_output):
+                    _cur_path = Path(_cur_output)
+                    if not job.get("output_m4b"):
+                        _m4bs = list(_cur_path.glob("*.m4b"))
+                        if _m4bs:
+                            job["output_m4b"] = str(_m4bs[0])
+                    if not job.get("optimized_abm_path"):
+                        _abms = list(_cur_path.glob("*.abm"))
+                        if _abms:
+                            job["optimized_abm_path"] = str(_abms[0])
 
                 payload["output_m4b"] = bool(job.get("output_m4b"))
                 payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
@@ -6108,10 +6113,14 @@ def api_download(job_id):
             print(f"[debug] M4B file found! Serving: {m4b_path}")
             return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
         else:
-            # Physical search fallback
-            print(f"[debug] M4B not found at registered path. Searching in directory...")
-            job_dir = UPLOAD_DIR / job_id
-            m4b_files = list(job_dir.glob("**/*.m4b"))
+            # Physical search fallback: SOLO dentro output_dir della run corrente,
+            # mai uno scan globale su tutti gli output_*/ (servirebbe un m4b di
+            # una run precedente).
+            print(f"[debug] M4B not found at registered path. Searching in current output_dir...")
+            cur_out = job.get("output_dir")
+            m4b_files = []
+            if cur_out and os.path.isdir(cur_out):
+                m4b_files = list(Path(cur_out).glob("*.m4b"))
             if m4b_files:
                 actual_m4b = str(m4b_files[0])
                 job["output_m4b"] = actual_m4b
