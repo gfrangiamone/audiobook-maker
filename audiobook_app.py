@@ -6566,8 +6566,10 @@ def _cleanup_loop():
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
-            with _tokens_lock:
-                _save_tokens()
+            # _save_tokens() acquires _tokens_lock internally; wrapping it here
+            # would deadlock on the non-reentrant lock and freeze every later
+            # caller (including the post-COMPLETE email notification).
+            _save_tokens()
 
         #  -  -  Cleanup orphan per-epoch output dirs  -  -
         # An output_{epoch}/ directory is removable when:
