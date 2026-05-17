@@ -1002,24 +1002,34 @@ def _refund_gemini_payment(job_id, job, reason):
     For voucher tokens, refunds the amount on the original voucher.
     For PayPal tokens, emits a refund voucher to the buyer's email.
     Non-fatal: any failure is logged and swallowed.
+
+    Returns a dict with refund details (or None if no refund applied):
+        {"method": "voucher"|"paypal", "amount_eur": float,
+         "email": str, "voucher_code": str|None}
     """
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     amt = float(payment_meta.get("total_eur", 0) or 0)
     method = payment_meta.get("method", "")
     if not tok or amt <= 0:
-        return
+        return None
+    result = {"method": method, "amount_eur": amt, "email": "", "voucher_code": None}
     try:
         if method == "voucher":
             payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
+            voucher = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+            result["email"] = voucher.get("email", "") or ""
         elif method == "paypal":
             pay = payment._payments.get(tok, {})
             email = pay.get("email", "") or ""
+            result["email"] = email
             if email:
-                payment._create_voucher(
+                code, _bonus = payment._create_voucher(
                     email, amt, origin_order_id=tok, origin_job_id=job_id,
                     kind="refund", note=f"refund {reason} job {job_id}",
                 )
+                result["voucher_code"] = code
+                job["refund_voucher_code"] = code
             else:
                 print(
                     f"[{job_id}] WARNING: cannot emit refund voucher — "
@@ -1028,6 +1038,64 @@ def _refund_gemini_payment(job_id, job, reason):
                 )
     except Exception as _ref_err:
         print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
+        return None
+    return result
+
+
+def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True):
+    """Invia email all'utente che ha pagato un job Gemini interrotto per quota
+    daily o budget guard. Deve essere chiamata DOPO _refund_gemini_payment.
+
+    Recupera l'email destinataria dal payment metadata (PayPal -> pay.email,
+    voucher -> voucher.email). Non-fatal: errori vengono ingoiati.
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or amt <= 0:
+        return
+    email = ""
+    voucher_code = job.get("refund_voucher_code") or None
+    try:
+        if method == "voucher":
+            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+            email = v.get("email", "") or ""
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+    except Exception:
+        email = ""
+    if not email:
+        print(f"[{job_id}] No email available for refund notification "
+              f"(method={method}, token={tok}).")
+        return
+    if is_quota:
+        reason_label = (
+            "il provider del servizio voci ha esaurito la quota giornaliera "
+            "di richieste sul nostro piano corrente"
+        )
+    else:
+        reason_label = (
+            "e' stato raggiunto il limite di spesa giornaliero del servizio"
+        )
+    book_title = ""
+    try:
+        info = job.get("info")
+        if info is not None:
+            book_title = getattr(info, "title", "") or job.get("original_filename", "")
+        else:
+            book_title = job.get("original_filename", "")
+    except Exception:
+        book_title = job.get("original_filename", "")
+    try:
+        email_service._send_gemini_failed_refund_email(
+            email, amt, book_title, reason_label, voucher_code=voucher_code,
+        )
+        print(f"[{job_id}] Refund notification email sent to {email} "
+              f"(amount={amt:.2f} EUR, reason={pause_reason}).")
+    except Exception as e:
+        print(f"[{job_id}] Failed to send refund notification email: {e}")
 
 
 def _refund_job_payment(job_id, job, reason="error"):
@@ -2113,9 +2181,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("voice", ""), job.get("browser_lang", ""))
 
     except Exception as e:
-        # Gestione speciale di quota/budget Gemini: il job NON e' un errore "tecnico",
-        # e' una sospensione (pausa) attesa. Lo marchiamo "paused" cosi' la UI puo'
-        # mostrare un messaggio chiaro e il backend puo' eventualmente riprenderlo.
+        # Quota Gemini (RPD/daily) e budget guard interno: il job e' interrotto
+        # a meta'. L'audio parziale non viene consegnato, quindi l'operazione e'
+        # da considerare FALLITA per l'utente -> refund integrale + notifica.
         _is_quota = False
         _is_budget = False
         if use_gemini and gemini_tts is not None:
@@ -2126,25 +2194,51 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _is_quota = False
                 _is_budget = False
         if _is_quota or _is_budget:
-            _set_job_status(job, "paused")
-            job["error"] = str(e)
+            pause_reason = getattr(e, "reason",
+                                   getattr(e, "scope",
+                                           "budget" if _is_budget else "quota"))
+            retry_after = getattr(e, "retry_after_sec", None)
+            # Salviamo i campi pause_* per diagnostica (UI/log) ma marchiamo
+            # il job come ERROR: l'utente vede l'operazione fallita e riceve
+            # rimborso completo (i chunk prodotti non sono consegnabili).
             job["gemini_paused"] = True
-            job["gemini_pause_reason"] = getattr(e, "reason",
-                                                  getattr(e, "scope",
-                                                          "budget" if _is_budget else "quota"))
-            job["gemini_pause_retry_after_sec"] = getattr(e, "retry_after_sec", None)
+            job["gemini_pause_reason"] = pause_reason
+            job["gemini_pause_retry_after_sec"] = retry_after
             job["gemini_pause_message"] = str(e)
+            _set_job_status(job, "error")
+            if _is_quota:
+                _user_msg = ("Generazione interrotta: quota giornaliera del "
+                             "servizio voci PREMIUM esaurita. Hai diritto al "
+                             "rimborso integrale, gia' emesso automaticamente.")
+            else:
+                _user_msg = ("Generazione interrotta: limite di spesa "
+                             "raggiunto. Hai diritto al rimborso integrale, "
+                             "gia' emesso automaticamente.")
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
             try:
                 _write_gemini_audit(job_id, job, voice,
                                     getattr(info, "language", None) or "",
-                                    "paused_budget" if _is_budget else "paused_quota")
+                                    "failed_quota_refunded" if _is_quota
+                                    else "failed_budget_refunded")
             except Exception:
                 pass
-            # Niente refund: i chunk gia' prodotti sono stati addebitati realmente.
-            # Lasciamo la sospensione visibile al chiamante.
-            print(f"[{job_id}] Gemini paused (status=paused): "
-                  f"reason={job['gemini_pause_reason']} "
-                  f"retry_after={job['gemini_pause_retry_after_sec']}s")
+            print(f"[{job_id}] Gemini job FAILED for {pause_reason} "
+                  f"(retry_after={retry_after}s) -> full refund triggered.")
+            try:
+                _refund_gemini_payment(job_id, job,
+                                       f"quota_exhausted: {pause_reason}"
+                                       if _is_quota
+                                       else f"budget_exceeded: {pause_reason}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            # Notifica esplicita all'utente che ha pagato il job (oltre al
+            # voucher gia' inviato per PayPal da _refund_gemini_payment).
+            try:
+                _notify_user_gemini_job_failed(job_id, job, pause_reason,
+                                               is_quota=_is_quota)
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
             import traceback
             traceback.print_exc()
             return

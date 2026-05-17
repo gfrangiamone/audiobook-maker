@@ -32,13 +32,20 @@ CHARS_PER_TOKEN_BY_LANG = {
     "default": 4.0,
 }
 
-# Per-language chunk size (chars) — accounts for UTF-8 byte expansion
+# Per-language chunk size (chars) — accounts for UTF-8 byte expansion.
+# Default alzati per minimizzare il numero di richieste (critico sul Tier 1
+# che oggi limita TTS a 100 RPD per modello). Override per lingua via
+# ABM_GEMINI_MAX_CHUNK_CHARS_<LANG> (es. ABM_GEMINI_MAX_CHUNK_CHARS_IT=5000)
+# o globale via ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT.
+_DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT", "4000"))
+_CJK_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_CJK", "3000"))
 MAX_CHUNK_CHARS_BY_LANG = {
-    "zh": 1500, "ja": 1500, "hi": 1500, "ar": 1500,
-    "default": 2000,
+    "zh": _CJK_CHUNK_CHARS, "ja": _CJK_CHUNK_CHARS,
+    "hi": _CJK_CHUNK_CHARS, "ar": _CJK_CHUNK_CHARS,
+    "default": _DEFAULT_CHUNK_CHARS,
 }
 
-MAX_BYTES_PER_CALL = int(os.environ.get("ABM_GEMINI_MAX_BYTES_PER_CALL", "4000"))
+MAX_BYTES_PER_CALL = int(os.environ.get("ABM_GEMINI_MAX_BYTES_PER_CALL", "8000"))
 
 
 def _f(env, default):
@@ -69,7 +76,7 @@ USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
 FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
-PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 7))
+PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 3))
 PREVIEW_WINDOW_SECONDS = int(_f("ABM_GEMINI_PREVIEW_WINDOW_SEC", 300))
 
 # === Rate limiting & retry tuning (Tier 1 friendly) =========================
@@ -623,7 +630,16 @@ def check_text_byte_size(text):
 
 
 def get_max_chunk_chars(language):
-    """Max chars per chunk per la lingua data. CJK/Hindi/Arabic: 1500. Altri: 2000."""
+    """Max chars per chunk per la lingua data.
+    Override per-lingua: ABM_GEMINI_MAX_CHUNK_CHARS_<LANG_UPPER>.
+    Default europei: 4000 char. CJK/Hindi/Arabic: 3000 char."""
+    if language:
+        env_specific = os.environ.get(f"ABM_GEMINI_MAX_CHUNK_CHARS_{language.upper()}")
+        if env_specific:
+            try:
+                return int(env_specific)
+            except ValueError:
+                pass
     return MAX_CHUNK_CHARS_BY_LANG.get(language, MAX_CHUNK_CHARS_BY_LANG["default"])
 
 

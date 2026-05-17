@@ -390,8 +390,11 @@ Sovrascrivibili in caso di adeguamento listino Google.
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `5` (preview free per cookie, rolling 24h) |
-| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `4000` (cap UTF-8 per chiamata API) |
+| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `3` (preview free per cookie, rolling 24h — basso per non saturare i 100 RPD del Tier 1) |
+| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `8000` (cap UTF-8 per chiamata API — alzato per ridurre RPD) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT` | `4000` (chunk size lingue latine — alzato per ridurre RPD) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_CJK` | `3000` (chunk size CJK/Hindi/Arabic) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=5000`) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
 
 ### 7.6 Note operative
@@ -399,7 +402,7 @@ Sovrascrivibili in caso di adeguamento listino Google.
 - Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash25:Zephyr`).
 - Modelli supportati: `flash25` (Gemini 2.5 Flash TTS), `flash31` (Gemini 3.1 Flash TTS).
 - 30 voci prebuilt × 2 modelli = 60 entry per lingua UI.
-- Chunk max chars per lingua: 1500 per zh/ja/hi/ar, 2000 per le altre.
+- Chunk max chars per lingua (default): 3000 per zh/ja/hi/ar, 4000 per le altre — override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>`.
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
 
 ### 7.7 Audit log dei costi (`gemini_cost_audit.py`)

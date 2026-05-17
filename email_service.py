@@ -7,7 +7,8 @@ Funzioni:
   - _admin_notify_generation: accodamento evento per digest admin
   - _try_send_admin_digest: invio digest se rate limit permette
   - _send_payment_receipt_email: ricevuta pagamento PayPal
-  - _send_voucher_email: email buono rimborso
+  - _send_voucher_email: email buono rimborso (ottimizzazione testo AI)
+  - _send_gemini_failed_refund_email: notifica fallimento generazione voci PREMIUM + rimborso
 
 Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 """
@@ -289,6 +290,48 @@ def _send_voucher_email(code, email, amount_eur, book_title):
   </div>
   <p>Per utilizzarlo, avvia una nuova ottimizzazione AI e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>
   <p style="font-size:.85em;color:#666">Il buono \u00e8 nominativo e riutilizzabile: se l'operazione costa meno del valore del buono, il saldo residuo rimane disponibile per usi successivi fino alla scadenza.</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
+</div>"""
+    _send_email(email, subject, html_body)
+
+
+def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None):
+    """Notifica all'utente che la generazione voci PREMIUM e' fallita per
+    esaurimento quota giornaliera del provider (o limite di spesa interno) e
+    che il rimborso integrale e' stato emesso.
+
+    - voucher_code valorizzato => pagamento PayPal, e' stato emesso un nuovo
+      voucher (con eventuale bonus) all'email.
+    - voucher_code None => pagamento via voucher, l'importo e' stato
+      ri-accreditato sul voucher originale.
+    """
+    if not (email and _smtp_available()):
+        return
+    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    subject = f"Audiobook Maker \u2014 Generazione interrotta, rimborso emesso ({amount_eur:.2f} EUR)"
+    if voucher_code:
+        from datetime import datetime, timedelta
+        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
+        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
+    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
+    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
+    <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
+    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
+  </div>
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+    else:
+        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
+    <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
+  </div>"""
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio interrotta</h2>
+  <p>Ciao,</p>
+  <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata completata.</p>
+  <p><strong>Motivo:</strong> {reason_label}</p>
+  <p>L'operazione &egrave; considerata <strong>fallita</strong> e abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato.</p>
+  {refund_block}
+  <p>Ti chiediamo scusa per il disagio. Puoi ritentare la generazione tra qualche ora, quando la quota del servizio si sar&agrave; rinnovata.</p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
   <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
 </div>"""
