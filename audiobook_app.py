@@ -4711,6 +4711,30 @@ def api_generate():
             chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
             llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
         total_eur_pre = round(gemini_eur_pre + llm_eur_pre, 2)
+
+        # ----- Pre-flight budget guard (Google cost server-side) -----
+        # Indipendente dal pagamento utente: questo è il cap interno sui costi
+        # Google effettivi (per-job + daily). Se sforato, blocchiamo il job
+        # PRIMA di chiamare l'API, così non spendiamo nulla.
+        try:
+            _google_cost_pre = float(est_pre.get("google_cost_eur", 0.0) or 0.0)
+            preflight = gemini_tts.preflight_budget_check(_google_cost_pre)
+            if preflight.get("warning"):
+                print(f"[{job_id}] Budget warning (preflight): {preflight['warning']}")
+        except gemini_tts.GeminiBudgetExceeded as _bex:
+            return jsonify({
+                "error": "budget_exceeded",
+                "scope": getattr(_bex, "scope", "unknown"),
+                "message": str(_bex),
+                "estimated_eur": getattr(_bex, "estimated_eur", _google_cost_pre),
+                "cap_eur": getattr(_bex, "cap_eur", None),
+                "used_eur": getattr(_bex, "used_eur", None),
+            }), 429
+        except Exception as _bgenerr:
+            # Errore non-budget: log e prosegui (graceful degradation).
+            print(f"[{job_id}] preflight_budget_check raised non-budget error: "
+                  f"{_bgenerr}")
+
         threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
         if total_eur_pre > threshold_pre:
             if not payment_token:

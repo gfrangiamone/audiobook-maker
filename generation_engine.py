@@ -1483,8 +1483,29 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                     style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                       style_instruction=style_for_chunk)
+                    try:
+                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                           style_instruction=style_for_chunk)
+                    except Exception as _quota_or_budget_err:
+                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
+                        # marcare il job come paused/error che silenziare il resto
+                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
+                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
+                                                                  (gemini_tts.GeminiQuotaExhausted,
+                                                                   gemini_tts.GeminiBudgetExceeded)):
+                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
+                            reason = getattr(_quota_or_budget_err, "reason",
+                                             getattr(_quota_or_budget_err, "scope", "quota"))
+                            job["gemini_paused"] = True
+                            job["gemini_pause_reason"] = reason
+                            job["gemini_pause_retry_after_sec"] = retry_after
+                            job["gemini_pause_message"] = str(_quota_or_budget_err)
+                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
+                                  f"reason={reason} retry_after={retry_after}s. "
+                                  f"Err: {str(_quota_or_budget_err)[:200]}")
+                            raise
+                        # Errore generico non quota-related: rilancia
+                        raise
                     if result is False:
                         failed_chunks += 1
                     else:
@@ -1743,8 +1764,29 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                     style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                       style_instruction=style_for_chunk)
+                    try:
+                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                           style_instruction=style_for_chunk)
+                    except Exception as _quota_or_budget_err:
+                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
+                        # marcare il job come paused/error che silenziare il resto
+                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
+                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
+                                                                  (gemini_tts.GeminiQuotaExhausted,
+                                                                   gemini_tts.GeminiBudgetExceeded)):
+                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
+                            reason = getattr(_quota_or_budget_err, "reason",
+                                             getattr(_quota_or_budget_err, "scope", "quota"))
+                            job["gemini_paused"] = True
+                            job["gemini_pause_reason"] = reason
+                            job["gemini_pause_retry_after_sec"] = retry_after
+                            job["gemini_pause_message"] = str(_quota_or_budget_err)
+                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
+                                  f"reason={reason} retry_after={retry_after}s. "
+                                  f"Err: {str(_quota_or_budget_err)[:200]}")
+                            raise
+                        # Errore generico non quota-related: rilancia
+                        raise
                     if result is False:
                         failed_chunks += 1
                     else:
@@ -1930,9 +1972,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["completed_at"] = time.time()
         job["last_poll"] = time.time()
         job["failed_chunks"] = failed_chunks
-        if failed_chunks > 0:
+        # Calcolo ratio chunk falliti per decidere se il job e' "done" oppure "partial".
+        # Soglia configurabile via ABM_GEMINI_MAX_FAILED_RATIO (default 5%).
+        try:
+            _max_failed_ratio = float(os.environ.get("ABM_GEMINI_MAX_FAILED_RATIO", "0.05"))
+        except (TypeError, ValueError):
+            _max_failed_ratio = 0.05
+        _tot_chunks_safe = max(1, int(total_chunks))
+        _fail_ratio = failed_chunks / _tot_chunks_safe
+        job["failed_chunks_ratio"] = round(_fail_ratio, 4)
+        job["total_chunks"] = _tot_chunks_safe
+        _is_partial = _fail_ratio > _max_failed_ratio
+        if _is_partial:
+            job["status_partial_reason"] = (
+                f"failed_chunks_ratio={_fail_ratio:.1%} exceeds threshold "
+                f"{_max_failed_ratio:.1%}"
+            )
+            job["progress_message"] = (
+                f"Completato parzialmente: {failed_chunks}/{_tot_chunks_safe} chunk falliti "
+                f"({_fail_ratio:.1%})"
+            )
+            print(f"[{job_id}] PARTIAL: {job['status_partial_reason']}")
+        elif failed_chunks > 0:
             job["progress_message"] = f"Done! ({failed_chunks} chunk(s) skipped due to TTS errors)"
-            print(f"[{job_id}] Completed with {failed_chunks} failed chunk(s)")
+            print(f"[{job_id}] Completed with {failed_chunks} failed chunk(s) "
+                  f"(ratio {_fail_ratio:.1%} <= {_max_failed_ratio:.1%})")
         else:
             job["progress_message"] = "Done!"
 
@@ -1947,7 +2011,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to auto-generate .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        _set_job_status(job, "done")
+        _set_job_status(job, "partial" if _is_partial else "done")
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
@@ -1995,6 +2059,41 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("voice", ""), job.get("browser_lang", ""))
 
     except Exception as e:
+        # Gestione speciale di quota/budget Gemini: il job NON e' un errore "tecnico",
+        # e' una sospensione (pausa) attesa. Lo marchiamo "paused" cosi' la UI puo'
+        # mostrare un messaggio chiaro e il backend puo' eventualmente riprenderlo.
+        _is_quota = False
+        _is_budget = False
+        if use_gemini and gemini_tts is not None:
+            try:
+                _is_quota = isinstance(e, gemini_tts.GeminiQuotaExhausted)
+                _is_budget = isinstance(e, gemini_tts.GeminiBudgetExceeded)
+            except Exception:
+                _is_quota = False
+                _is_budget = False
+        if _is_quota or _is_budget:
+            _set_job_status(job, "paused")
+            job["error"] = str(e)
+            job["gemini_paused"] = True
+            job["gemini_pause_reason"] = getattr(e, "reason",
+                                                  getattr(e, "scope",
+                                                          "budget" if _is_budget else "quota"))
+            job["gemini_pause_retry_after_sec"] = getattr(e, "retry_after_sec", None)
+            job["gemini_pause_message"] = str(e)
+            try:
+                _write_gemini_audit(job_id, job, voice,
+                                    getattr(info, "language", None) or "",
+                                    "paused_budget" if _is_budget else "paused_quota")
+            except Exception:
+                pass
+            # Niente refund: i chunk gia' prodotti sono stati addebitati realmente.
+            # Lasciamo la sospensione visibile al chiamante.
+            print(f"[{job_id}] Gemini paused (status=paused): "
+                  f"reason={job['gemini_pause_reason']} "
+                  f"retry_after={job['gemini_pause_retry_after_sec']}s")
+            import traceback
+            traceback.print_exc()
+            return
         _set_job_status(job, "error")
         job["error"] = str(e)
         if use_gemini:

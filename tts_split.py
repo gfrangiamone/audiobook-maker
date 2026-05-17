@@ -307,22 +307,30 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
-def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
+def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
+
+    NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
+    (che è quota-aware e rispetta `retryDelay` dei 429). Qui manteniamo un
+    re-try sottile (default 1) per gestire errori non-API/transient di rete
+    a livello superiore. Errori di tipo `GeminiQuotaExhausted` o
+    `GeminiBudgetExceeded` vengono ri-sollevati senza fallback silenzio
+    perché significano "il chunk non va silenziato, va sospeso il job".
 
     Args:
         text: testo da sintetizzare.
         voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
         output_path: percorso file PCM in output.
-        max_retries: numero di tentativi prima di fallback a silenzio (default 3).
-        style_instruction: optional style/tone hint prepended to the prompt
-            (e.g. "calmo e narrativo"). Pass-through to gemini_tts.synthesize.
-            Default None.
+        max_retries: numero di tentativi (default 1; il backoff vero è in synthesize).
+        style_instruction: optional style/tone hint prepended to the prompt.
 
     Returns:
-        dict {success, bytes_written, input_tokens, output_tokens, model_key,
-        voice_name, attempts_used} on success, False on total failure
-        (silence PCM written).
+        dict on success, False on total failure (silence PCM written).
+
+    Raises:
+        gemini_tts.GeminiQuotaExhausted: quota raggiunta; il caller deve
+            sospendere il job invece di silenziare il chunk.
+        gemini_tts.GeminiBudgetExceeded: budget €/giorno o per-job sforato.
     """
     import gemini_tts as _gemini  # late import: keeps module optional
 
@@ -339,6 +347,9 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3, style_
                 style_instruction=style_instruction,
             )
             return result
+        except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+            # Non silenziare: il caller decide se sospendere il job.
+            raise
         except Exception as e:
             last_error = e
             snippet = clean[:60].replace('\n', ' ')

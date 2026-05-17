@@ -72,6 +72,76 @@ FREE_THRESHOLD_EUR = _f("ABM_GEMINI_FREE_THRESHOLD_EUR", 0.50)
 PREVIEW_CAP_PER_DAY = int(_f("ABM_GEMINI_PREVIEW_CAP_PER_DAY", 7))
 PREVIEW_WINDOW_SECONDS = int(_f("ABM_GEMINI_PREVIEW_WINDOW_SEC", 300))
 
+# === Rate limiting & retry tuning (Tier 1 friendly) =========================
+# Free tier defaults qui sotto sono prudenti; alza i valori se hai billing
+# attivo (vedi .env.gemini.tier1.example). I valori vengono letti a ogni call
+# (no caching) per supportare reload a runtime durante test.
+def _i(env, default):
+    try:
+        return int(os.environ.get(env, str(default)))
+    except (ValueError, TypeError):
+        return int(default)
+
+
+def _b(env, default):
+    v = os.environ.get(env)
+    if v is None:
+        return bool(default)
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Max attempts e backoff
+SYNTH_MAX_ATTEMPTS_DEFAULT = 3
+
+# Throttle RPM (millisecondi minimi tra due chiamate consecutive per modello).
+# 0 = nessun throttle. Free tier: 6500 (flash25, 10 RPM) / 21000 (flash31, 3 RPM).
+# Tier 1: 80 (flash25, ~750 RPM) / 200 (flash31, ~300 RPM).
+def _min_interval_ms(model_key):
+    if model_key == "flash25":
+        return _i("ABM_GEMINI_MIN_INTERVAL_FLASH25_MS", 0)
+    return _i("ABM_GEMINI_MIN_INTERVAL_FLASH31_MS", 0)
+
+
+# RPD safety cap per modello (numero massimo di richieste/giorno).
+# 0 = nessun cap locale (l'API Google fa da unica barriera).
+def _rpd_cap(model_key):
+    if model_key == "flash25":
+        return _i("ABM_GEMINI_RPD_FLASH25", 0)
+    return _i("ABM_GEMINI_RPD_FLASH31", 0)
+
+
+def _rpd_safety_reserve():
+    return _i("ABM_GEMINI_RPD_SAFETY_RESERVE", 0)
+
+
+# Retry policy
+def _synth_max_attempts():
+    return _i("ABM_GEMINI_SYNTH_MAX_ATTEMPTS", SYNTH_MAX_ATTEMPTS_DEFAULT)
+
+
+def _retry_honor_delay():
+    return _b("ABM_GEMINI_RETRY_HONOR_DELAY", True)
+
+
+def _retry_max_wait_sec():
+    return _i("ABM_GEMINI_RETRY_MAX_WAIT_SEC", 60)
+
+
+def _abort_on_daily_quota():
+    # Free tier: True (inutile riprovare se retry è ore). Tier 1: False.
+    return _b("ABM_GEMINI_ABORT_ON_QUOTA", True)
+
+
+class GeminiQuotaExhausted(RuntimeError):
+    """Sollevata quando l'errore 429 è daily-quota e ABORT_ON_QUOTA è True,
+    oppure quando il cap RPD locale è raggiunto. Il chiamante può intercettare
+    per sospendere il job invece di silenziare il chunk."""
+
+    def __init__(self, message, retry_after_sec=None, reason="quota"):
+        super().__init__(message)
+        self.retry_after_sec = retry_after_sec
+        self.reason = reason
+
 # Direttive di velocita` in linguaggio naturale (Gemini comprende molto meglio
 # linguaggio naturale di tag come [slow]/[fast]). 7 step coprono la corsa del
 # slider UI (-30% .. +30% a passi di 10%).
@@ -410,6 +480,136 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
     }
 
 
+# ===========================================================================
+# Budget guard — pre-flight job vs cap di spesa (€/giorno e €/job).
+# Pensato per Tier 1: in free tier il guard primario è RPD (vedi _check_rpd_cap).
+# ===========================================================================
+
+class GeminiBudgetExceeded(RuntimeError):
+    """Sollevata quando un nuovo job supererebbe il budget. Il chiamante deve
+    intercettare e restituire un messaggio "riprova al reset di mezzanotte UTC"
+    o "supera budget per-job, riduci selezione capitoli"."""
+
+    def __init__(self, message, scope, estimated_eur, cap_eur, used_eur=None):
+        super().__init__(message)
+        self.scope = scope          # 'per_job' | 'daily'
+        self.estimated_eur = estimated_eur
+        self.cap_eur = cap_eur
+        self.used_eur = used_eur
+
+
+def _daily_budget_eur():
+    return _f("ABM_GEMINI_DAILY_BUDGET_EUR", 0.0)  # 0 = disabilitato
+
+
+def _per_job_budget_eur():
+    return _f("ABM_GEMINI_PER_JOB_BUDGET_EUR", 0.0)  # 0 = disabilitato
+
+
+def _budget_alert_pct():
+    return _i("ABM_GEMINI_BUDGET_ALERT_PCT", 80)
+
+
+def _budget_hard_stop():
+    return _b("ABM_GEMINI_BUDGET_HARD_STOP", True)
+
+
+def get_daily_spent_eur():
+    """Spesa Google del giorno corrente in EUR (UTC). Aggrega l'audit log
+    gemini_cost_audit_YYYY-MM.jsonl filtrando per data odierna. Cade su 0
+    se il file non esiste / non leggibile (graceful)."""
+    if _data_dir is None:
+        return 0.0
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month = _current_month()
+    audit_file = _data_dir / f"gemini_cost_audit_{month}.jsonl"
+    if not audit_file.exists():
+        return 0.0
+    spent = 0.0
+    try:
+        with audit_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = rec.get("ts", "")
+                if not ts.startswith(today_iso):
+                    continue
+                spent += float(rec.get("google_cost_eur_actual", 0.0) or 0.0)
+    except Exception as e:
+        print(f"[gemini-tts] get_daily_spent_eur failed: {e}")
+        return 0.0
+    return spent
+
+
+def budget_status():
+    """Snapshot del budget (per admin/UI)."""
+    daily_cap = _daily_budget_eur()
+    spent = get_daily_spent_eur()
+    pct = (spent / daily_cap * 100.0) if daily_cap > 0 else 0.0
+    return {
+        "daily_cap_eur": daily_cap,
+        "daily_spent_eur": round(spent, 4),
+        "daily_remaining_eur": round(max(0.0, daily_cap - spent), 4) if daily_cap > 0 else None,
+        "daily_used_pct": round(pct, 1) if daily_cap > 0 else None,
+        "per_job_cap_eur": _per_job_budget_eur(),
+        "alert_pct": _budget_alert_pct(),
+        "hard_stop": _budget_hard_stop(),
+    }
+
+
+def preflight_budget_check(estimated_cost_eur):
+    """Verifica che un job da `estimated_cost_eur` EUR possa partire.
+
+    Solleva GeminiBudgetExceeded(scope='per_job') se sopra il cap singolo,
+    GeminiBudgetExceeded(scope='daily') se sommato allo speso di oggi supera
+    il cap giornaliero. Se `BUDGET_HARD_STOP` è False, fa solo un log warning
+    e NON blocca (utile in dev/admin con cap conservativi per allarmi).
+    """
+    if estimated_cost_eur is None or estimated_cost_eur < 0:
+        return {"ok": True, "warning": None}
+    per_job = _per_job_budget_eur()
+    daily = _daily_budget_eur()
+    spent = get_daily_spent_eur() if daily > 0 else 0.0
+    alert_pct = _budget_alert_pct()
+    hard = _budget_hard_stop()
+    warning = None
+
+    # Per-job
+    if per_job > 0 and estimated_cost_eur > per_job:
+        msg = (f"Job estimated cost {estimated_cost_eur:.2f} € exceeds "
+               f"per-job cap {per_job:.2f} €")
+        if hard:
+            raise GeminiBudgetExceeded(msg, scope="per_job",
+                                       estimated_eur=estimated_cost_eur,
+                                       cap_eur=per_job)
+        warning = msg
+
+    # Daily
+    if daily > 0:
+        projected = spent + estimated_cost_eur
+        if projected > daily:
+            msg = (f"Job would push daily spend to {projected:.2f} € (cap {daily:.2f} €, "
+                   f"already spent {spent:.2f} €)")
+            if hard:
+                raise GeminiBudgetExceeded(msg, scope="daily",
+                                           estimated_eur=estimated_cost_eur,
+                                           cap_eur=daily, used_eur=spent)
+            warning = msg
+        elif projected > daily * alert_pct / 100.0:
+            warning = (f"[alert] Daily spend will reach "
+                       f"{projected:.2f}/{daily:.2f} € ({projected/daily*100:.0f}%)")
+            print(f"[gemini-tts] {warning}")
+
+    return {"ok": True, "warning": warning, "spent_eur": spent,
+            "estimated_eur": estimated_cost_eur,
+            "daily_cap_eur": daily, "per_job_cap_eur": per_job}
+
+
 def check_text_byte_size(text):
     """Verifica che il testo stia nel cap MAX_BYTES_PER_CALL (UTF-8).
 
@@ -436,12 +636,15 @@ _usage_cache = None
 def init(data_dir):
     """Inizializza il modulo con la directory dati persistente."""
     global _data_dir, _usage_file_path, _usage_cache, _preview_file_path, _preview_cache
+    global _rpd_file_path, _rpd_cache
     _data_dir = Path(data_dir)
     _data_dir.mkdir(parents=True, exist_ok=True)
     _usage_file_path = _data_dir / "gemini_tts_usage.json"
     _usage_cache = None
     _preview_file_path = None
     _preview_cache = None
+    _rpd_file_path = _data_dir / "gemini_tts_rpd.json"
+    _rpd_cache = None
 
 
 def _current_month():
@@ -914,7 +1117,183 @@ def _get_client():
     return _genai_client
 
 
-SYNTH_MAX_ATTEMPTS = 3
+SYNTH_MAX_ATTEMPTS = 3  # kept for backward import compat; runtime uses _synth_max_attempts()
+
+
+# ---------------------------------------------------------------------------
+# Request guard: RPM throttle + RPD daily counter
+# ---------------------------------------------------------------------------
+
+_last_call_ts_by_model = {}
+_throttle_lock = threading.Lock()
+
+_rpd_file_path = None
+_rpd_lock = threading.Lock()
+_rpd_cache = None  # {"date": "YYYY-MM-DD", "flash25": N, "flash31": M}
+
+
+def _today_utc_str():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _rpd_load():
+    """Carica contatore RPD per modello dal file su disco. Rolla a mezzanotte UTC."""
+    global _rpd_cache
+    if _rpd_cache is not None and _rpd_cache.get("date") == _today_utc_str():
+        return _rpd_cache
+    if _rpd_file_path is None:
+        # Fallback in-memory only
+        _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+        return _rpd_cache
+    if _rpd_file_path.exists():
+        try:
+            data = json.loads(_rpd_file_path.read_text(encoding="utf-8"))
+            if data.get("date") == _today_utc_str():
+                data.setdefault("flash25", 0)
+                data.setdefault("flash31", 0)
+                _rpd_cache = data
+                return data
+        except Exception as e:
+            print(f"[gemini-tts] RPD load failed: {e}")
+    _rpd_cache = {"date": _today_utc_str(), "flash25": 0, "flash31": 0}
+    return _rpd_cache
+
+
+def _rpd_save():
+    if _rpd_file_path is None or _rpd_cache is None:
+        return
+    try:
+        _rpd_file_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _rpd_file_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(_rpd_cache), encoding="utf-8")
+        tmp.replace(_rpd_file_path)
+    except Exception as e:
+        print(f"[gemini-tts] RPD save failed: {e}")
+
+
+def _rpd_increment(model_key):
+    with _rpd_lock:
+        data = _rpd_load()
+        data[model_key] = data.get(model_key, 0) + 1
+        _rpd_save()
+
+
+def rpd_status():
+    """Espone lo stato corrente del contatore RPD (per admin/dashboard)."""
+    with _rpd_lock:
+        data = _rpd_load()
+        return {
+            "date": data.get("date"),
+            "flash25": {
+                "used": data.get("flash25", 0),
+                "cap": _rpd_cap("flash25"),
+                "reserve": _rpd_safety_reserve(),
+            },
+            "flash31": {
+                "used": data.get("flash31", 0),
+                "cap": _rpd_cap("flash31"),
+                "reserve": _rpd_safety_reserve(),
+            },
+        }
+
+
+def _check_rpd_cap(model_key):
+    """Solleva GeminiQuotaExhausted se il cap locale è stato raggiunto."""
+    cap = _rpd_cap(model_key)
+    if cap <= 0:
+        return  # nessun cap configurato
+    with _rpd_lock:
+        used = _rpd_load().get(model_key, 0)
+    reserve = _rpd_safety_reserve()
+    available = cap - used - reserve
+    if available <= 0:
+        # retry teorico: a mezzanotte UTC
+        now = datetime.now(timezone.utc)
+        midnight = now.replace(hour=23, minute=59, second=59).timestamp()
+        wait_sec = max(60, int(midnight - now.timestamp()))
+        raise GeminiQuotaExhausted(
+            f"Local RPD cap reached for {model_key}: used={used} cap={cap} reserve={reserve}",
+            retry_after_sec=wait_sec,
+            reason="rpd_local_cap",
+        )
+
+
+def _throttle_rpm(model_key):
+    """Rispetta l'intervallo minimo tra due call (RPM floor)."""
+    min_ms = _min_interval_ms(model_key)
+    if min_ms <= 0:
+        return
+    with _throttle_lock:
+        last = _last_call_ts_by_model.get(model_key, 0.0)
+        elapsed_ms = (time.time() - last) * 1000.0
+        wait_ms = min_ms - elapsed_ms
+        if wait_ms > 0:
+            time.sleep(wait_ms / 1000.0)
+        _last_call_ts_by_model[model_key] = time.time()
+
+
+# ---------------------------------------------------------------------------
+# 429 / retry parsing
+# ---------------------------------------------------------------------------
+
+# Match `retry in 6h12m51.7s`, `retryDelay: '22371s'`, `Please retry in 5.4s`,
+# o numeri puri di secondi nei messaggi di errore Google API.
+_RE_RETRY_HMS = re.compile(r"retry\s+in\s+(?:(\d+)h)?(?:(\d+)m)?([\d.]+)?s", re.IGNORECASE)
+_RE_RETRY_SECS = re.compile(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", re.IGNORECASE)
+
+
+def _parse_retry_after(err):
+    """Estrae retry-after in secondi dall'errore. Restituisce None se non trovato.
+
+    Tentativi (ordinati):
+      1. attributo `error.retry_delay` / `error.details[*].retry_delay.seconds`
+         (se l'SDK lo espone come oggetto strutturato)
+      2. parsing della stringa: 'retryDelay: 22371s'
+      3. parsing della stringa: 'retry in 6h12m51.7s' / 'retry in 5s'
+    """
+    # 1) Structured access via SDK
+    try:
+        details = getattr(err, "details", None) or []
+        for d in details:
+            rd = getattr(d, "retry_delay", None) or (d.get("retryDelay") if isinstance(d, dict) else None)
+            if rd is not None:
+                if isinstance(rd, str) and rd.endswith("s"):
+                    return float(rd[:-1])
+                secs = getattr(rd, "seconds", None) if not isinstance(rd, dict) else rd.get("seconds")
+                if secs is not None:
+                    return float(secs)
+    except Exception:
+        pass
+
+    # 2/3) String parsing
+    s = str(err)
+    m = _RE_RETRY_SECS.search(s)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    m = _RE_RETRY_HMS.search(s)
+    if m:
+        try:
+            h = int(m.group(1) or 0)
+            mn = int(m.group(2) or 0)
+            sc = float(m.group(3) or 0)
+            return h * 3600 + mn * 60 + sc
+        except ValueError:
+            pass
+    return None
+
+
+def _is_daily_quota_error(err):
+    """Heuristica per distinguere quota daily da rate-limit transient."""
+    s = str(err).lower()
+    return ("per_day" in s) or ("per_model_per_day" in s) or ("perdayper" in s.replace("-", ""))
+
+
+def _is_429(err):
+    s = str(err)
+    return ("429" in s) or ("RESOURCE_EXHAUSTED" in s) or ("ResourceExhausted" in s)
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None):
@@ -971,14 +1350,23 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
 
     from google.genai import types as genai_types
 
+    # Guard pre-call: cap RPD locale + throttle RPM. Il cap RPD può sollevare
+    # GeminiQuotaExhausted; il throttle invece blocca (sleep) finché c'è budget.
+    _check_rpd_cap(model_key)
+    _throttle_rpm(model_key)
+
     client = _get_client()
     last_err = None
     pcm_data = None
     usage_input = 0
     usage_output = 0
     attempt = 0
+    max_attempts = _synth_max_attempts()
+    honor_delay = _retry_honor_delay()
+    max_wait = _retry_max_wait_sec()
+    abort_daily = _abort_on_daily_quota()
 
-    while attempt < SYNTH_MAX_ATTEMPTS:
+    while attempt < max_attempts:
         attempt += 1
         try:
             response = client.models.generate_content(
@@ -1000,13 +1388,46 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             if um:
                 usage_input = getattr(um, "prompt_token_count", 0) or 0
                 usage_output = getattr(um, "candidates_token_count", 0) or 0
+            # Successo: conta nella quota RPD locale
+            _rpd_increment(model_key)
             break
         except Exception as e:
             last_err = e
-            if attempt < SYNTH_MAX_ATTEMPTS:
-                time.sleep(2 ** attempt)
+            is_429 = _is_429(e)
+            is_daily = is_429 and _is_daily_quota_error(e)
+            retry_after = _parse_retry_after(e) if is_429 else None
+
+            # Daily quota: inutile riprovare se il delay è ore.
+            if is_daily and abort_daily:
+                print(f"[gemini-tts] Daily quota exhausted ({model_key}). "
+                      f"retry_after={retry_after}s. Aborting (ABM_GEMINI_ABORT_ON_QUOTA=true).")
+                raise GeminiQuotaExhausted(
+                    f"Gemini daily quota exhausted: {e}",
+                    retry_after_sec=retry_after,
+                    reason="api_daily_quota",
+                )
+
+            # Decidi la wait: rispetta retry_after se presente e ragionevole,
+            # altrimenti fallback a backoff esponenziale (2/4/8/16 s).
+            if honor_delay and retry_after is not None:
+                if retry_after > max_wait:
+                    print(f"[gemini-tts] 429 retry_after={retry_after}s > max_wait={max_wait}s. "
+                          f"Suspending instead of sleeping ({model_key}).")
+                    raise GeminiQuotaExhausted(
+                        f"Gemini 429 with long retry: {e}",
+                        retry_after_sec=retry_after,
+                        reason="retry_too_long",
+                    )
+                wait = max(1.0, retry_after)
             else:
-                raise RuntimeError(f"Gemini TTS failed after {SYNTH_MAX_ATTEMPTS} attempts: {last_err}")
+                wait = min(30.0, 2 ** attempt)
+
+            if attempt < max_attempts:
+                print(f"[gemini-tts] Attempt {attempt}/{max_attempts} failed "
+                      f"({'429' if is_429 else 'other'}). Sleeping {wait:.1f}s. Err: {str(e)[:200]}")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(f"Gemini TTS failed after {max_attempts} attempts: {last_err}")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
