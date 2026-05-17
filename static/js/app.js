@@ -2400,6 +2400,61 @@ function cancelJob(){
 
 function retryGen(){retryGeneration()}
 
+function _fmtBytes(n){
+  if(!n||n<1024)return (n||0)+' B';
+  if(n<1048576)return (n/1024).toFixed(0)+' KB';
+  return (n/1048576).toFixed(1)+' MB';
+}
+function _setBtnLoading(btn,labelHtml){
+  if(!btn)return;
+  btn.disabled=true;
+  btn.classList.add('btn-loading');
+  btn.innerHTML='<span>'+labelHtml+'</span>';
+}
+function _clearBtnLoading(btn,html){
+  if(!btn)return;
+  btn.classList.remove('btn-loading');
+  btn.disabled=false;
+  if(html!==undefined)btn.innerHTML=html;
+}
+// Top-of-page transient toast for download start (matches /dl/<token> page UX).
+let _dlToastEl=null,_dlToastTimer=null;
+function _showDlToast(msg){
+  if(!_dlToastEl){
+    _dlToastEl=document.createElement('div');
+    _dlToastEl.className='dl-toast';
+    document.body.appendChild(_dlToastEl);
+  }
+  _dlToastEl.innerHTML='<span class="spin"></span>'+msg;
+  requestAnimationFrame(()=>_dlToastEl.classList.add('show'));
+  clearTimeout(_dlToastTimer);
+  _dlToastTimer=setTimeout(()=>{if(_dlToastEl)_dlToastEl.classList.remove('show')},6500);
+}
+function _hideDlToast(){
+  clearTimeout(_dlToastTimer);
+  if(_dlToastEl)_dlToastEl.classList.remove('show');
+}
+async function _streamToBlob(response,onProgress){
+  const cl=parseInt(response.headers.get('Content-Length')||'0',10);
+  if(!response.body||!response.body.getReader){
+    return await response.blob();
+  }
+  const reader=response.body.getReader();
+  const chunks=[];
+  let received=0;
+  while(true){
+    const{done,value}=await reader.read();
+    if(done)break;
+    chunks.push(value);
+    received+=value.length;
+    if(onProgress){
+      try{onProgress(received,cl)}catch(_e){}
+    }
+  }
+  const type=response.headers.get('Content-Type')||'application/octet-stream';
+  return new Blob(chunks,{type});
+}
+
 async function downloadFile(type){
   if(!jobId)return;
   let btnId = 'btnD';
@@ -2410,7 +2465,8 @@ async function downloadFile(type){
 
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;
-  btn.disabled=true;btn.textContent='⏳...';
+  _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   const maxDlRetries=3;
   for(let attempt=1;attempt<=maxDlRetries;attempt++){
     try{
@@ -2419,7 +2475,7 @@ async function downloadFile(type){
       if(r.status===404){
         if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
         showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
-        btn.disabled=false;btn.innerHTML=originalHtml;
+        _clearBtnLoading(btn,originalHtml);
         return;
       }
       if(r.status===429){
@@ -2427,18 +2483,18 @@ async function downloadFile(type){
         const m=txt.match(/Wait (\d+) seconds/);
         const sec=m?m[1]:'60';
         showPErr(t('dl_cooldown').replace('%s', sec));
-        btn.disabled=false;btn.innerHTML=originalHtml;
+        _clearBtnLoading(btn,originalHtml);
         return;
       }
       if(r.status===410){
         showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');
-        btn.disabled=false;btn.innerHTML=originalHtml;
+        _clearBtnLoading(btn,originalHtml);
         return;
       }
       if(!r.ok){
         const txt=await r.text();
         showPErr(txt||'Download failed');
-        btn.disabled=false;btn.innerHTML=originalHtml;
+        _clearBtnLoading(btn,originalHtml);
         return;
       }
       const isLastDl=(r.headers.get('X-Download-Last')==='1');
@@ -2448,7 +2504,15 @@ async function downloadFile(type){
       // seconda estensione (es. "X.mp3.m4b") al filename già corretto.
       const fallbackKind=(r.headers.get('X-Fallback')||'').toLowerCase();
       const effectiveType=fallbackKind || type;
-      const blob=await r.blob();
+      const dlLabel=t('dl_downloading')||'Downloading…';
+      const blob=await _streamToBlob(r,(rx,total)=>{
+        if(total>0){
+          const pct=Math.min(100,Math.floor(rx*100/total));
+          btn.innerHTML='<span>'+dlLabel+' '+pct+'%</span>';
+        }else{
+          btn.innerHTML='<span>'+dlLabel+' '+_fmtBytes(rx)+'</span>';
+        }
+      });
       const cd=r.headers.get('Content-Disposition')||'';
       // Parse Content-Disposition robustly: RFC 5987 filename*=, quoted filename="...", or bare filename=foo.
       // The previous regex stopped at apostrophes, truncating titles like "L'isola" and losing the extension.
@@ -2477,14 +2541,13 @@ async function downloadFile(type){
       if(type === 'm4b') successT = t('btn_dl_m4b');
       if(type === 'abm') successT = t('btn_dl_abm');
       if(type === 'mp3') successT = t('btn_dl_mp3');
-      btn.innerHTML='✅ <span>'+successT+'</span>';
-      btn.disabled=false;
+      _clearBtnLoading(btn,'✅ <span>'+successT+'</span>');
       if(isLastDl)showDlLastWarning();
       return;
     }catch(e){
       if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
       showPErr('Download error: '+e.message);
-      btn.disabled=false;btn.innerHTML=originalHtml;
+      _clearBtnLoading(btn,originalHtml);
     }
   }
 }
@@ -2494,7 +2557,9 @@ async function downloadPodcast(){
   const baseUrl=prompt(t('podcast_url_prompt'),'https://example.com/podcast');
   if(!baseUrl)return;
   const btn=document.getElementById('btnP');
-  btn.disabled=true;btn.textContent='⏳...';
+  const restoreHtml='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+  _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
@@ -2503,22 +2568,30 @@ async function downloadPodcast(){
       const m=txt.match(/Wait (\d+) seconds/);
       const sec=m?m[1]:'60';
       showPErr(t('dl_cooldown').replace('%s', sec));
-      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      _clearBtnLoading(btn,restoreHtml);
       return;
     }
     if(r.status===410){
       showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');
-      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      _clearBtnLoading(btn,restoreHtml);
       return;
     }
     if(!r.ok){
       const txt=await r.text();
       showPErr(txt||'Download failed');
-      btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+      _clearBtnLoading(btn,restoreHtml);
       return;
     }
     const isLastDl=(r.headers.get('X-Download-Last')==='1');
-    const blob=await r.blob();
+    const dlLabel=t('dl_downloading')||'Downloading…';
+    const blob=await _streamToBlob(r,(rx,total)=>{
+      if(total>0){
+        const pct=Math.min(100,Math.floor(rx*100/total));
+        btn.innerHTML='<span>'+dlLabel+' '+pct+'%</span>';
+      }else{
+        btn.innerHTML='<span>'+dlLabel+' '+_fmtBytes(rx)+'</span>';
+      }
+    });
     const cd=r.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename[^;=\n]*=['"]?([^'";\n]*)/);
     const fname=m?m[1]:'podcast.zip';
@@ -2527,27 +2600,36 @@ async function downloadPodcast(){
     a.download=fname;
     document.body.appendChild(a);a.click();
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
-    btn.innerHTML='✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
-    btn.disabled=false;
+    _clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');
     if(isLastDl)showDlLastWarning();
   }catch(e){
     showPErr('Download error: '+e.message);
-    btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+    _clearBtnLoading(btn,restoreHtml);
   }
 }
 
 async function downloadPodcastZip(){
   if(!jobId)return;
   const btn=document.getElementById('btnP');
-  btn.disabled=true;btn.textContent='⏳...';
+  const restoreHtml='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+  _setBtnLoading(btn,t('dl_preparing')||'Preparing…');
+  _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
     const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));
-    if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
-    if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
-    if(!r.ok){const t=await r.text();showPErr(t||'Download failed');btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';return}
+    if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));_clearBtnLoading(btn,restoreHtml);return}
+    if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');_clearBtnLoading(btn,restoreHtml);return}
+    if(!r.ok){const tx=await r.text();showPErr(tx||'Download failed');_clearBtnLoading(btn,restoreHtml);return}
     const isLastDl=(r.headers.get('X-Download-Last')==='1');
-    const blob=await r.blob();
+    const dlLabel=t('dl_downloading')||'Downloading…';
+    const blob=await _streamToBlob(r,(rx,total)=>{
+      if(total>0){
+        const pct=Math.min(100,Math.floor(rx*100/total));
+        btn.innerHTML='<span>'+dlLabel+' '+pct+'%</span>';
+      }else{
+        btn.innerHTML='<span>'+dlLabel+' '+_fmtBytes(rx)+'</span>';
+      }
+    });
     const cd=r.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename[^;=\n]*=['\"]?([^'\";\n]*)/);
     const fname=m?m[1]:'podcast.zip';
@@ -2555,9 +2637,12 @@ async function downloadPodcastZip(){
     a.href=URL.createObjectURL(blob);a.download=fname;
     document.body.appendChild(a);a.click();
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+    _clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');
     if(isLastDl)showDlLastWarning();
-  }catch(e){showPErr('Download error: '+e.message)}
-  btn.disabled=false;btn.innerHTML='🎙️ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>';
+  }catch(e){
+    showPErr('Download error: '+e.message);
+    _clearBtnLoading(btn,restoreHtml);
+  }
 }
 
 function onBeforeUnload(e){
