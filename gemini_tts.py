@@ -1312,6 +1312,89 @@ def _is_429(err):
     return ("429" in s) or ("RESOURCE_EXHAUSTED" in s) or ("ResourceExhausted" in s)
 
 
+class GeminiEmptyResponse(RuntimeError):
+    """Sollevata quando la response Gemini non contiene payload audio.
+    Causa tipica: safety filter, prompt block, finish_reason!=STOP, o modello
+    preview instabile. Il caller puo' decidere se considerarla non-retryable
+    (block_reason=SAFETY/PROHIBITED_CONTENT) o transient (OTHER/MAX_TOKENS).
+    """
+
+    def __init__(self, message, block_reason=None, finish_reason=None,
+                 safety_ratings=None, retryable=True):
+        super().__init__(message)
+        self.block_reason = block_reason
+        self.finish_reason = finish_reason
+        self.safety_ratings = safety_ratings
+        self.retryable = retryable
+
+
+def _extract_audio_pcm(response, model_key):
+    """Estrae il payload PCM da una response Gemini. Se mancano candidates,
+    content, parts, o inline_data, solleva GeminiEmptyResponse con tutti i
+    metadati diagnostici (prompt_feedback.block_reason, finish_reason,
+    safety_ratings) loggati per chiarire il motivo del rifiuto."""
+    # 1) prompt_feedback.block_reason: il prompt e' stato bloccato prima
+    #    dell'inferenza (es. safety filter sul testo di input).
+    pf = getattr(response, "prompt_feedback", None)
+    block_reason = None
+    if pf is not None:
+        br = getattr(pf, "block_reason", None)
+        if br:
+            block_reason = getattr(br, "name", str(br))
+    # 2) candidates: lista delle risposte; se vuota -> nessun output prodotto.
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        msg = (f"Gemini returned no candidates (model={model_key}, "
+               f"block_reason={block_reason or 'unknown'})")
+        print(f"[gemini-tts] EMPTY-RESPONSE: {msg}")
+        raise GeminiEmptyResponse(
+            msg, block_reason=block_reason,
+            retryable=(block_reason not in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST")),
+        )
+    cand = candidates[0]
+    finish_reason = getattr(cand, "finish_reason", None)
+    finish_label = getattr(finish_reason, "name", str(finish_reason)) if finish_reason else None
+    safety_ratings = getattr(cand, "safety_ratings", None)
+    content = getattr(cand, "content", None)
+    parts = getattr(content, "parts", None) if content is not None else None
+    if not parts:
+        # Logga safety_ratings in modo leggibile per capire quale categoria
+        # ha triggerato il block (HARM_CATEGORY_DANGEROUS_CONTENT, ecc).
+        ratings_str = "n/a"
+        if safety_ratings:
+            try:
+                ratings_str = ", ".join(
+                    f"{getattr(r.category, 'name', r.category)}={getattr(r.probability, 'name', r.probability)}"
+                    for r in safety_ratings
+                )
+            except Exception:
+                ratings_str = str(safety_ratings)[:200]
+        msg = (f"Gemini response has no audio parts "
+               f"(model={model_key}, finish_reason={finish_label}, "
+               f"block_reason={block_reason or 'none'}, safety=[{ratings_str}])")
+        print(f"[gemini-tts] EMPTY-RESPONSE: {msg}")
+        # Retryable solo se NON e' un block content-based.
+        non_retryable_finish = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "RECITATION"}
+        retryable = (finish_label not in non_retryable_finish
+                     and block_reason not in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST"))
+        raise GeminiEmptyResponse(
+            msg, block_reason=block_reason,
+            finish_reason=finish_label,
+            safety_ratings=ratings_str,
+            retryable=retryable,
+        )
+    inline = getattr(parts[0], "inline_data", None)
+    data = getattr(inline, "data", None) if inline is not None else None
+    if not data:
+        msg = (f"Gemini response part has no inline_data "
+               f"(model={model_key}, finish_reason={finish_label})")
+        print(f"[gemini-tts] EMPTY-RESPONSE: {msg}")
+        raise GeminiEmptyResponse(
+            msg, finish_reason=finish_label, retryable=True,
+        )
+    return data
+
+
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
@@ -1399,7 +1482,7 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                     ),
                 ),
             )
-            pcm_data = response.candidates[0].content.parts[0].inline_data.data
+            pcm_data = _extract_audio_pcm(response, model_key)
             um = getattr(response, "usage_metadata", None)
             if um:
                 usage_input = getattr(um, "prompt_token_count", 0) or 0
@@ -1412,6 +1495,14 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             is_429 = _is_429(e)
             is_daily = is_429 and _is_daily_quota_error(e)
             retry_after = _parse_retry_after(e) if is_429 else None
+
+            # Response vuota non-retryable (safety/prohibited/recitation):
+            # inutile riprovare lo stesso testo, abortire subito.
+            if isinstance(e, GeminiEmptyResponse) and not e.retryable:
+                print(f"[gemini-tts] Empty response non-retryable: "
+                      f"finish_reason={e.finish_reason} block={e.block_reason}. "
+                      f"Aborting attempts.")
+                raise
 
             # Daily quota: inutile riprovare se il delay è ore.
             if is_daily and abort_daily:

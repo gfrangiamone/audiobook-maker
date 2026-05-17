@@ -396,6 +396,8 @@ Sovrascrivibili in caso di adeguamento listino Google.
 | `ABM_GEMINI_MAX_CHUNK_CHARS_CJK` | `3000` (chunk size CJK/Hindi/Arabic) |
 | `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=5000`) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
+| `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
+| `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
 
 ### 7.6 Note operative
 

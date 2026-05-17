@@ -1042,9 +1042,13 @@ def _refund_gemini_payment(job_id, job, reason):
     return result
 
 
-def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True):
-    """Invia email all'utente che ha pagato un job Gemini interrotto per quota
-    daily o budget guard. Deve essere chiamata DOPO _refund_gemini_payment.
+def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
+                                    failure_kind=None):
+    """Invia email all'utente che ha pagato un job Gemini fallito.
+    Deve essere chiamata DOPO _refund_gemini_payment.
+
+    failure_kind: "quota" | "budget" | "quality". Se None, viene derivato da
+    is_quota per retrocompatibilita'.
 
     Recupera l'email destinataria dal payment metadata (PayPal -> pay.email,
     voucher -> voucher.email). Non-fatal: errori vengono ingoiati.
@@ -1070,14 +1074,21 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True):
         print(f"[{job_id}] No email available for refund notification "
               f"(method={method}, token={tok}).")
         return
-    if is_quota:
+    if failure_kind is None:
+        failure_kind = "quota" if is_quota else "budget"
+    if failure_kind == "quota":
         reason_label = (
             "il provider del servizio voci ha esaurito la quota giornaliera "
             "di richieste sul nostro piano corrente"
         )
-    else:
+    elif failure_kind == "budget":
         reason_label = (
             "e' stato raggiunto il limite di spesa giornaliero del servizio"
+        )
+    else:  # quality
+        reason_label = (
+            "alcune porzioni del testo non sono state sintetizzate "
+            "correttamente e l'audio risultante sarebbe stato incompleto"
         )
     book_title = ""
     try:
@@ -2096,10 +2107,51 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _max_failed_ratio = float(os.environ.get("ABM_GEMINI_MAX_FAILED_RATIO", "0.05"))
         except (TypeError, ValueError):
             _max_failed_ratio = 0.05
+        # Soglia per refund automatico su engine Gemini: se la frazione di
+        # chunk silenziati supera questo valore, il job e' considerato fallito
+        # (refund + notifica) invece di consegnato parziale. Default 0.0 =
+        # qualsiasi chunk silenziato innesca il refund. Disabilita con un valore
+        # > 1 (es. 2.0).
+        try:
+            _refund_failed_ratio = float(os.environ.get("ABM_GEMINI_REFUND_FAILED_RATIO", "0.0"))
+        except (TypeError, ValueError):
+            _refund_failed_ratio = 0.0
         _tot_chunks_safe = max(1, int(total_chunks))
         _fail_ratio = failed_chunks / _tot_chunks_safe
         job["failed_chunks_ratio"] = round(_fail_ratio, 4)
         job["total_chunks"] = _tot_chunks_safe
+        # Auto-refund su qualita' insufficiente (chunk silenziati sopra soglia).
+        # Applicato solo su engine Gemini, dove il fallback a silenzio non
+        # rappresenta l'output che l'utente ha pagato.
+        if use_gemini and failed_chunks > 0 and _fail_ratio > _refund_failed_ratio:
+            _set_job_status(job, "error")
+            _user_msg = (
+                f"Generazione interrotta: {failed_chunks}/{_tot_chunks_safe} segmenti "
+                f"({_fail_ratio:.1%}) non sintetizzati correttamente. L'audio risultante "
+                f"sarebbe stato incompleto: rimborso integrale gia' emesso."
+            )
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            job["failed_chunks_ratio"] = round(_fail_ratio, 4)
+            print(f"[{job_id}] Gemini job FAILED for quality "
+                  f"({failed_chunks}/{_tot_chunks_safe}={_fail_ratio:.1%}) "
+                  f"-> full refund triggered.")
+            try:
+                _write_gemini_audit(job_id, job, voice,
+                                    getattr(info, "language", None) or "",
+                                    "failed_quality_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot_chunks_safe}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            try:
+                _notify_user_gemini_job_failed(job_id, job, "quality_failed",
+                                               failure_kind="quality")
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            return
         _is_partial = _fail_ratio > _max_failed_ratio
         if _is_partial:
             job["status_partial_reason"] = (

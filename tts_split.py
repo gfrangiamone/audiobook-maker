@@ -36,20 +36,25 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
-# Lingue che richiedono chunk piu' piccoli per Gemini (espansione UTF-8 alta).
-_GEMINI_SMALL_CHUNK_LANGS = {"zh", "ja", "hi", "ar"}
-_GEMINI_SMALL_CHUNK_MAX = 1500
-
 
 def _pick_chunk_max_chars(voice_id, language):
     """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
 
-    Gemini: 1500 per zh/ja/hi/ar, 2000 per le altre. Edge/Google: 2000 sempre.
+    Gemini: delega a gemini_tts.get_max_chunk_chars(lang) (default 4000
+    latine / 3000 CJK, override env ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>).
+    Tier 1 limita a 100 RPD/modello: chunk piu' grossi = meno richieste
+    per libro.
+
+    Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
     if isinstance(voice_id, str) and voice_id.startswith("gemini:"):
         lang_code = (language or "").lower().split("-")[0]
-        if lang_code in _GEMINI_SMALL_CHUNK_LANGS:
-            return _GEMINI_SMALL_CHUNK_MAX
+        try:
+            import gemini_tts
+            return gemini_tts.get_max_chunk_chars(lang_code)
+        except Exception:
+            # Fallback prudente se il modulo non e' disponibile.
+            return 4000 if lang_code not in {"zh", "ja", "hi", "ar"} else 3000
     return CHUNK_MAX_CHARS
 
 
