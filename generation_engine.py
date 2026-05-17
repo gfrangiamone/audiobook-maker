@@ -681,8 +681,24 @@ def _generate_optimized_abm(job_id):
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
     job = _jobs.get(job_id)
-    if not job or not job.get("notify_email"):
+    if not job:
+        print(f"[{job_id}] _send_completion_email: job missing from _jobs (cleanup race)", flush=True)
+        try:
+            _log_activity(job_id, "", "EMAIL_SKIPPED_NOJOB", "", "", "", "")
+        except Exception:
+            pass
         return
+    if not job.get("notify_email"):
+        print(f"[{job_id}] _send_completion_email: notify_email empty "
+              f"(email_registered={job.get('email_registered')})", flush=True)
+        try:
+            _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_NOADDR",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          job.get("voice", ""), job.get("browser_lang", ""))
+        except Exception:
+            pass
+        return
+    print(f"[{job_id}] _send_completion_email: preparing send to {job['notify_email']}", flush=True)
     retention_h = _retention_sec // 3600
     email = job["notify_email"]
     info = job.get("info", None)
@@ -1824,11 +1840,30 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("voice", ""), job.get("browser_lang", ""))
 
         # Send email notification if user registered
-        if job.get("notify_email"):
+        notify_email = job.get("notify_email")
+        if notify_email:
+            print(f"[{job_id}] post-COMPLETE: triggering email to {notify_email}", flush=True)
             try:
                 _send_completion_email(job_id)
             except Exception as e:
-                print(f"[{job_id}] Email notification error: {e}")
+                import traceback
+                print(f"[{job_id}] Email notification error: {e}", flush=True)
+                traceback.print_exc()
+                try:
+                    _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
+                                  job.get("client_id", ""), job.get("client_ip", ""),
+                                  job.get("voice", ""), job.get("browser_lang", ""))
+                except Exception:
+                    pass
+        else:
+            print(f"[{job_id}] post-COMPLETE: no notify_email "
+                  f"(email_registered={job.get('email_registered')})", flush=True)
+            try:
+                _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_BRANCH",
+                              job.get("client_id", ""), job.get("client_ip", ""),
+                              job.get("voice", ""), job.get("browser_lang", ""))
+            except Exception:
+                pass
 
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
