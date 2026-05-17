@@ -745,8 +745,10 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Google voices: {e}")
 
-    # 3. Gemini TTS (Optional)
-    if gemini_tts is not None:
+    # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
+    # `gemini_tts is not None` significa solo che il modulo è importato;
+    # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
+    if gemini_tts is not None and gemini_tts.is_available():
         try:
             gem_dict = gemini_tts.get_voices()
             for lc_short, v_list in gem_dict.items():
