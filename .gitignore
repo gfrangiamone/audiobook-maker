@@ -40,8 +40,9 @@ Thumbs.db
 *.swo
 
 # Environment
-.env
-.env.local
+# Tutti i file che iniziano con .env (incluso .env, .env.local, .env.*.example,
+# .env.production, ecc.) sono esclusi per evitare leak di chiavi/credenziali.
+.env*
 
 # Sensitive runtime data (should normally live in ABM_DATA_DIR outside repo,
 # but guard against accidental commits if ever present in the working tree)
