@@ -2937,12 +2937,24 @@ def admin_logs_page():
   .delta-negative{color:var(--err)}
   .empty-msg{text-align:center;color:var(--muted);padding:20px}
   pre{background:#0f172a;padding:12px;border-radius:6px;overflow:auto;font-size:.8rem}
+  tr.row-refund{background:rgba(239,68,68,0.10)}
+  tr.row-refund td{border-bottom-color:rgba(239,68,68,0.35)}
+  tr.row-preflight{background:rgba(37,99,235,0.10)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .badge-ok{background:rgba(16,185,129,.18);color:#10b981}
+  .badge-err{background:rgba(239,68,68,.18);color:#ef4444}
+  .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
+  .badge-info{background:rgba(59,130,246,.18);color:#60a5fa}
+  .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
+  .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
+  .toggle-row input{width:auto}
 </style></head>
 <body>
 <h1>Admin - Logs &amp; Audit</h1>
 
 <div class="tab-bar">
   <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
+  <button type="button" class="tab-btn" data-tab="gemini_events">Eventi &amp; Rimborsi</button>
 </div>
 
 <div class="tab-panel active" id="tab_gemini_audit">
@@ -2972,7 +2984,11 @@ def admin_logs_page():
         <select id="auditOutcomeFilter">
           <option value="all">Tutti</option>
           <option value="completed">Completato</option>
-          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="failed_refunded">Fallito generico (rimborsato)</option>
+          <option value="failed_quota_refunded">Fallito quota (rimborsato)</option>
+          <option value="failed_budget_refunded">Fallito budget (rimborsato)</option>
+          <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
+          <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
           <option value="cancelled_refunded">Annullato (rimborsato)</option>
         </select>
       </div>
@@ -3011,6 +3027,72 @@ def admin_logs_page():
       </tr></thead>
       <tbody id="auditRecordsBody">
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_gemini_events">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="evModelFilter">Modello</label>
+        <select id="evModelFilter">
+          <option value="all">Tutti</option>
+          <option value="flash25">Gemini 2.5 Flash TTS</option>
+          <option value="flash31">Gemini 3.1 Flash TTS</option>
+        </select>
+      </div>
+      <div>
+        <label for="evLangFilter">Lingua</label>
+        <select id="evLangFilter">
+          <option value="all">Tutte</option>
+          <option value="it">it</option><option value="en">en</option>
+          <option value="fr">fr</option><option value="es">es</option>
+          <option value="de">de</option><option value="zh">zh</option>
+          <option value="hi">hi</option>
+        </select>
+      </div>
+      <div>
+        <label for="evDateFrom">Dal</label>
+        <input type="date" id="evDateFrom">
+      </div>
+      <div>
+        <label for="evDateTo">Al</label>
+        <input type="date" id="evDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="evRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <label><input type="checkbox" id="evOnlyRefunds"> Solo eventi con rimborso</label>
+      <span style="margin-left:auto;font-size:.85em">Eventi con rimborso evidenziati in rosso; blocchi preventivi in blu.</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati Eventi</h2>
+    <div class="agg-grid">
+      <div class="agg-box"><div class="agg-label">Totale eventi</div><div class="agg-value" id="evCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Completati</div><div class="agg-value" id="evCompleted">-</div></div>
+      <div class="agg-box"><div class="agg-label">Rimborsi</div><div class="agg-value" id="evRefunds" style="color:#ef4444">-</div></div>
+      <div class="agg-box"><div class="agg-label">Bloccati preflight</div><div class="agg-value" id="evPreflight" style="color:#60a5fa">-</div></div>
+      <div class="agg-box"><div class="agg-label">Annullati</div><div class="agg-value" id="evCancelled">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Eventi (ultimi 500)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Esito</th><th>Modello</th>
+        <th>Lingua</th><th>Char</th><th>Prezzo &euro;</th><th>Costo G. &euro;</th>
+      </tr></thead>
+      <tbody id="evRecordsBody">
+        <tr><td colspan="8" class="empty-msg">Premi "Aggiorna" per caricare gli eventi.</td></tr>
       </tbody>
     </table>
   </div>
@@ -3114,6 +3196,114 @@ def admin_logs_page():
     }
   }
   $("auditRecalcBtn").addEventListener("click", recalcParams);
+
+  // ---- Tab switching ----
+  function showTab(name){
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.tab === name);
+    });
+    document.querySelectorAll(".tab-panel").forEach(p => {
+      p.classList.toggle("active", p.id === "tab_" + name);
+    });
+    if (name === "gemini_events" && !window._evLoaded) {
+      window._evLoaded = true;
+      fetchEvents();
+    }
+    if (location.hash !== "#tab-" + name) {
+      location.hash = "#tab-" + name;
+    }
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+  });
+  if (location.hash === "#tab-gemini" || location.hash === "#tab-gemini_events") {
+    showTab("gemini_events");
+  }
+
+  // ---- Eventi & Rimborsi tab ----
+  const REFUND_OUTCOMES = new Set([
+    "failed_refunded", "failed_quota_refunded", "failed_budget_refunded",
+    "failed_quality_refunded", "preflight_blocked_refunded",
+    "cancelled_refunded",
+  ]);
+  const OUTCOME_BADGE = {
+    "completed":                  ["badge-ok",   "Completato"],
+    "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
+    "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
+    "failed_budget_refunded":     ["badge-err",  "Budget superato"],
+    "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
+    "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
+    "cancelled_refunded":         ["badge-muted","Annullato"],
+    "cancelled":                  ["badge-muted","Annullato"],
+  };
+
+  async function fetchEvents(){
+    const params = new URLSearchParams();
+    const m = $("evModelFilter").value;
+    const l = $("evLangFilter").value;
+    const df = $("evDateFrom").value;
+    const dt = $("evDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (l && l !== "all") params.set("language", l);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "500");
+    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento eventi: " + r.status); return; }
+    const d = await r.json();
+    renderEvents(d.records || []);
+  }
+
+  function renderEvents(recs){
+    const onlyRefunds = $("evOnlyRefunds").checked;
+    let filtered = recs;
+    if (onlyRefunds) filtered = recs.filter(r => REFUND_OUTCOMES.has(r.outcome));
+    // Aggregati
+    let completed=0, refunds=0, preflight=0, cancelled=0;
+    for (const r of recs) {
+      if (r.outcome === "completed") completed++;
+      else if (r.outcome === "preflight_blocked_refunded") { preflight++; refunds++; }
+      else if (REFUND_OUTCOMES.has(r.outcome)) {
+        refunds++;
+        if (r.outcome.startsWith("cancelled")) cancelled++;
+      }
+    }
+    $("evCount").textContent = recs.length;
+    $("evCompleted").textContent = completed;
+    $("evRefunds").textContent = refunds;
+    $("evPreflight").textContent = preflight;
+    $("evCancelled").textContent = cancelled;
+
+    const tbody = $("evRecordsBody");
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Nessun evento.</td></tr>';
+      return;
+    }
+    // Sort desc by ts
+    filtered = filtered.slice().sort((a,b) => (b.ts||"").localeCompare(a.ts||""));
+    tbody.innerHTML = filtered.map(r => {
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const out = r.outcome || "?";
+      const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
+      const rowCls = REFUND_OUTCOMES.has(out)
+        ? (out === "preflight_blocked_refunded" ? "row-preflight" : "row-refund")
+        : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td>${esc(r.model_key)}</td>
+        <td>${esc(r.language)}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td>${fmtEur(r.user_price_eur_charged)}</td>
+        <td>${fmtEur(r.google_cost_eur_actual)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("evRefreshBtn").addEventListener("click", fetchEvents);
+  $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
 
   // Auto-load on page open
   fetchAudit();

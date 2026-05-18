@@ -1218,6 +1218,58 @@ def rpd_status():
         }
 
 
+def rpd_available(model_key):
+    """Numero di richieste residue al model_key prima di esaurire la quota giornaliera.
+
+    Tiene conto del cap configurato meno l'utilizzato e meno la safety reserve.
+    Ritorna 0 quando il job non puo' partire; un cap <= 0 (non configurato) ritorna
+    un valore "infinito" sentinella (es. 10**9) per non bloccare configurazioni
+    senza limite.
+    """
+    cap = _rpd_cap(model_key)
+    if cap <= 0:
+        return 10**9
+    with _rpd_lock:
+        used = _rpd_load().get(model_key, 0)
+    reserve = _rpd_safety_reserve()
+    return max(0, cap - used - reserve)
+
+
+def preflight_can_run(model_key, chunks_needed):
+    """Verifica preventiva: il job puo' partire senza saturare la quota?
+
+    Ritorna dict:
+        {"ok": bool, "available": int, "needed": int, "shortfall": int,
+         "cap": int, "used": int, "reserve": int, "retry_after_sec": int}
+
+    retry_after_sec e' calcolato come secondi residui fino a mezzanotte UTC
+    (quando il counter rolla). Per cap non configurato (cap<=0) ritorna sempre ok=True.
+    """
+    cap = _rpd_cap(model_key)
+    if cap <= 0:
+        return {"ok": True, "available": 10**9, "needed": int(chunks_needed),
+                "shortfall": 0, "cap": 0, "used": 0, "reserve": 0,
+                "retry_after_sec": 0}
+    with _rpd_lock:
+        used = _rpd_load().get(model_key, 0)
+    reserve = _rpd_safety_reserve()
+    available = max(0, cap - used - reserve)
+    shortfall = max(0, int(chunks_needed) - available)
+    now = datetime.now(timezone.utc)
+    midnight = now.replace(hour=23, minute=59, second=59).timestamp()
+    retry_after = max(60, int(midnight - now.timestamp()))
+    return {
+        "ok": shortfall == 0,
+        "available": available,
+        "needed": int(chunks_needed),
+        "shortfall": shortfall,
+        "cap": cap,
+        "used": used,
+        "reserve": reserve,
+        "retry_after_sec": retry_after,
+    }
+
+
 def _check_rpd_cap(model_key):
     """Solleva GeminiQuotaExhausted se il cap locale è stato raggiunto."""
     cap = _rpd_cap(model_key)

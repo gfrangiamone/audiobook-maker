@@ -996,6 +996,61 @@ def _send_optimization_email(job_id):
 # Payment refund helper
 # ---------------------------------------------------------------------------
 
+def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
+                                 reason_detail="",
+                                 chunks_total=None, chunks_failed=None):
+    """Notifica IMMEDIATA all'admin per ogni job Gemini fallito (con rimborso)
+    o bloccato preventivamente. Best-effort, non-fatal.
+
+    kind: "quota" | "budget" | "quality" | "preflight" | "generic"
+    """
+    try:
+        payment_meta = job.get("payment") or {}
+        amount_eur = float(payment_meta.get("total_eur", 0) or 0)
+        method = payment_meta.get("method", "")
+        voucher_code = job.get("refund_voucher_code") or None
+        # Determina email destinataria
+        email = ""
+        try:
+            tok = payment_meta.get("token")
+            if method == "voucher" and tok:
+                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                email = v.get("email", "") or ""
+            elif method == "paypal" and tok:
+                pay = payment._payments.get(tok, {})
+                email = pay.get("email", "") or ""
+        except Exception:
+            email = ""
+        # Titolo libro
+        book_title = ""
+        try:
+            info = job.get("info")
+            if info is not None:
+                book_title = getattr(info, "title", "") or job.get("original_filename", "")
+            else:
+                book_title = job.get("original_filename", "")
+        except Exception:
+            book_title = job.get("original_filename", "")
+        chars_total = job.get("total_chars")
+        if chunks_total is None:
+            chunks_total = job.get("total_chunks")
+        email_service._admin_notify_gemini_failure(
+            job_id=job_id,
+            kind=kind,
+            amount_eur=amount_eur,
+            email=email,
+            book_title=book_title,
+            audit_outcome=audit_outcome,
+            reason_detail=reason_detail,
+            voucher_code=voucher_code,
+            chars_total=chars_total,
+            chunks_total=chunks_total,
+            chunks_failed=chunks_failed,
+        )
+    except Exception as e:
+        print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
+
+
 def _refund_gemini_payment(job_id, job, reason):
     """F3: Refund Gemini payment on cancel/error.
 
@@ -1523,6 +1578,95 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
+        job["total_chars"] = total_chars
+        job["total_chunks"] = total_chunks
+
+        # Pre-flight RPD check: per job Gemini, se i chunk previsti superano
+        # la quota giornaliera residua (cap - used - reserve), abortire ANTE
+        # di sintetizzare alcunche': rimborso integrale, notifica utente
+        # generica "voci PREMIUM sovraccarico", admin alert.
+        if use_gemini and gemini_tts is not None:
+            try:
+                _parts_v = (voice or "").split(":")
+                _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash25"
+                _pf = gemini_tts.preflight_can_run(_model_key, total_chunks)
+            except Exception as _pf_err:
+                print(f"[{job_id}] Preflight check error (non-fatal, proceeding): {_pf_err}")
+                _pf = {"ok": True}
+            if not _pf.get("ok"):
+                _reason = (f"preflight_block: model={_model_key} "
+                           f"needed={_pf.get('needed')} "
+                           f"available={_pf.get('available')} "
+                           f"shortfall={_pf.get('shortfall')} "
+                           f"cap={_pf.get('cap')} used={_pf.get('used')} "
+                           f"reserve={_pf.get('reserve')}")
+                print(f"[{job_id}] PREFLIGHT BLOCK -> {_reason}")
+                _set_job_status(job, "error")
+                _user_msg = ("Generazione non avviata: il motore voci PREMIUM "
+                             "e' temporaneamente sovraccarico. Hai diritto al "
+                             "rimborso integrale, gia' emesso automaticamente. "
+                             "Riprova tra qualche ora.")
+                job["error"] = _user_msg
+                job["user_facing_error"] = _user_msg
+                job["gemini_preflight_block"] = {
+                    "model_key": _model_key,
+                    "needed": _pf.get("needed"),
+                    "available": _pf.get("available"),
+                    "retry_after_sec": _pf.get("retry_after_sec"),
+                }
+                # Audit
+                try:
+                    _write_gemini_audit(job_id, job, voice,
+                                        getattr(info, "language", None) or "",
+                                        "preflight_blocked_refunded")
+                except Exception:
+                    pass
+                # Refund
+                _refund_info = None
+                try:
+                    _refund_info = _refund_gemini_payment(
+                        job_id, job, f"preflight_block: {_reason}",
+                    )
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Preflight refund failed (non-fatal): {_ref_err}")
+                # Notifica utente (overload copy)
+                try:
+                    payment_meta = job.get("payment") or {}
+                    amt = float(payment_meta.get("total_eur", 0) or 0)
+                    method = payment_meta.get("method", "")
+                    tok = payment_meta.get("token")
+                    _email_to = ""
+                    try:
+                        if method == "voucher" and tok:
+                            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                            _email_to = v.get("email", "") or ""
+                        elif method == "paypal" and tok:
+                            pay = payment._payments.get(tok, {})
+                            _email_to = pay.get("email", "") or ""
+                    except Exception:
+                        _email_to = ""
+                    _book_title = ""
+                    try:
+                        _book_title = getattr(info, "title", "") or job.get("original_filename", "")
+                    except Exception:
+                        _book_title = job.get("original_filename", "")
+                    if _email_to and amt > 0:
+                        email_service._send_gemini_overload_email(
+                            _email_to, amt, _book_title,
+                            voucher_code=job.get("refund_voucher_code"),
+                            retry_after_sec=_pf.get("retry_after_sec", 0),
+                        )
+                except Exception as _notif_err:
+                    print(f"[{job_id}] Preflight user notification failed (non-fatal): {_notif_err}")
+                # Admin alert
+                _admin_alert_gemini_failure(
+                    job_id, job, kind="preflight",
+                    audit_outcome="preflight_blocked_refunded",
+                    reason_detail=_reason,
+                    chunks_total=total_chunks,
+                )
+                return
+
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
@@ -2151,6 +2295,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                failure_kind="quality")
             except Exception as _notif_err:
                 print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="quality",
+                audit_outcome="failed_quality_refunded",
+                reason_detail=f"{failed_chunks}/{_tot_chunks_safe} chunk silenziati ({_fail_ratio:.1%})",
+                chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
+            )
             return
         _is_partial = _fail_ratio > _max_failed_ratio
         if _is_partial:
@@ -2291,6 +2441,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                is_quota=_is_quota)
             except Exception as _notif_err:
                 print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job,
+                kind="quota" if _is_quota else "budget",
+                audit_outcome="failed_quota_refunded" if _is_quota
+                              else "failed_budget_refunded",
+                reason_detail=f"{pause_reason} | retry_after={retry_after}s | {str(e)[:200]}",
+            )
             import traceback
             traceback.print_exc()
             return
@@ -2300,6 +2457,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "failed_refunded")
             # F3: Refund the user payment (voucher or paypal) for failed Gemini job
             _refund_gemini_payment(job_id, job, f"failed: {e}")
+            # Notifica utente con copy "qualita'" (errore generico, parziale non consegnabile)
+            try:
+                _notify_user_gemini_job_failed(job_id, job, f"generic_error: {e}",
+                                               failure_kind="quality")
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="generic",
+                audit_outcome="failed_refunded",
+                reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
+            )
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
             try:

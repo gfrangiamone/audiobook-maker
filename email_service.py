@@ -39,6 +39,10 @@ _admin_queue = []          # list of dicts: {title, author, filename, voice, cha
 _admin_queue_lock = threading.Lock()
 _admin_last_sent = 0.0     # timestamp dell'ultimo digest inviato
 
+# Throttle anti-flood per admin failure alerts: chiave = f"{job_id}::{kind}"
+_admin_failure_last = {}
+_admin_failure_lock = threading.Lock()
+
 # ---------------------------------------------------------------------------
 # Payment email config — imported from payment.py (single source of truth)
 # ---------------------------------------------------------------------------
@@ -294,6 +298,148 @@ def _send_voucher_email(code, email, amount_eur, book_title):
   <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
 </div>"""
     _send_email(email, subject, html_body)
+
+
+def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None,
+                                 retry_after_sec=0):
+    """Notifica all'utente che il job non e' stato avviato perche' il motore
+    voci PREMIUM e' temporaneamente sovraccarico. Include il rimborso integrale.
+
+    voucher_code valorizzato => pagamento PayPal, e' stato emesso un voucher.
+    voucher_code None => pagamento via voucher, importo ri-accreditato.
+    """
+    if not (email and _smtp_available()):
+        return
+    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    subject = (f"Audiobook Maker — Generazione non avviata, rimborso emesso "
+               f"({amount_eur:.2f} EUR)")
+    if voucher_code:
+        from datetime import datetime, timedelta
+        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
+        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
+    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
+    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
+    <div style="margin-top:12px">Valore: <strong>{amount_eur:.2f} EUR</strong></div>
+    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
+  </div>
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+    else:
+        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
+    <p style="margin:0"><strong>Rimborso accreditato:</strong> {amount_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
+  </div>"""
+    retry_hint = ""
+    if retry_after_sec and retry_after_sec > 0:
+        hours = max(1, retry_after_sec // 3600)
+        retry_hint = (f"<p>Il servizio si rinnova al massimo entro <strong>"
+                      f"{hours} or{'a' if hours == 1 else 'e'}</strong>: puoi "
+                      f"riprovare gi&agrave; da domani.</p>")
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h2 style="color:#c0392b">&#x26A0;&#xFE0F; Generazione audio non avviata</h2>
+  <p>Ciao,</p>
+  <p>la generazione delle voci PREMIUM per <strong>{title_safe}</strong> non &egrave; stata avviata.</p>
+  <p><strong>Motivo:</strong> il motore voci PREMIUM &egrave; temporaneamente sovraccarico e non avrebbe potuto completare il tuo libro senza interruzioni.</p>
+  <p>Per non lasciarti con un audio parziale abbiamo emesso il <strong>rimborso integrale</strong> della cifra che avevi versato, senza nemmeno iniziare la sintesi.</p>
+  {refund_block}
+  {retry_hint}
+  <p>Ti chiediamo scusa per il disagio.</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+</div>"""
+    _send_email(email, subject, html_body)
+
+
+def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
+                                  audit_outcome, reason_detail="",
+                                  voucher_code=None, chars_total=None,
+                                  chunks_total=None, chunks_failed=None):
+    """Notifica IMMEDIATA all'admin di un fallimento job Gemini TTS che ha
+    comportato rimborso (o di un blocco preventivo).
+
+    kind:    "quota" | "budget" | "quality" | "preflight" | "generic"
+    audit_outcome: stringa di outcome dell'audit (es. "failed_quota_refunded").
+
+    Throttle: 1 invio max ogni 60 sec per stesso job_id+kind, per evitare flood
+    in caso di crash a ripetizione su stesso job.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    # Throttle per job+kind
+    key = f"{job_id}::{kind}"
+    now = time.time()
+    with _admin_failure_lock:
+        last = _admin_failure_last.get(key, 0.0)
+        if (now - last) < 60.0:
+            print(f"[admin] Failure alert throttled for {key} "
+                  f"(last sent {now - last:.0f}s ago)")
+            return
+        _admin_failure_last[key] = now
+
+    kind_label = {
+        "quota":     "QUOTA esaurita",
+        "budget":    "BUDGET superato",
+        "quality":   "QUALITA' insufficiente (chunk silenziati)",
+        "preflight": "BLOCCO PREVENTIVO RPD",
+        "generic":   "ERRORE generico",
+    }.get(kind, kind.upper())
+
+    color = {
+        "quota":     "#c0392b",
+        "budget":    "#c0392b",
+        "quality":   "#d97706",
+        "preflight": "#2563eb",
+        "generic":   "#7c2d12",
+    }.get(kind, "#444")
+
+    refund_line = ""
+    if amount_eur and amount_eur > 0:
+        if voucher_code:
+            refund_line = (f"<tr><td><strong>Rimborso</strong></td>"
+                           f"<td>{amount_eur:.2f} EUR — voucher PayPal "
+                           f"<code>{voucher_code}</code></td></tr>")
+        else:
+            refund_line = (f"<tr><td><strong>Rimborso</strong></td>"
+                           f"<td>{amount_eur:.2f} EUR — riaccredito "
+                           f"voucher originale</td></tr>")
+
+    plan_line = ""
+    if chunks_total is not None:
+        if chunks_failed is not None:
+            plan_line = (f"<tr><td><strong>Chunk</strong></td>"
+                         f"<td>{chunks_failed}/{chunks_total} falliti</td></tr>")
+        else:
+            plan_line = (f"<tr><td><strong>Chunk previsti</strong></td>"
+                         f"<td>{chunks_total}</td></tr>")
+    chars_line = ""
+    if chars_total is not None:
+        chars_line = (f"<tr><td><strong>Caratteri</strong></td>"
+                      f"<td>{chars_total:,}</td></tr>")
+
+    title_safe = _sanitize_header(book_title or "(senza titolo)", max_len=120)
+    email_safe = _sanitize_header(email or "(sconosciuta)", max_len=200)
+    reason_safe = _sanitize_header(reason_detail or "", max_len=300)
+    subject = (f"[ABM-ADMIN] Gemini TTS — {kind_label} "
+               f"— job {job_id[:8]}")
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">
+  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+    <h2 style="margin:0;font-size:18px">Gemini TTS — {kind_label}</h2>
+    <p style="margin:6px 0 0;opacity:.9;font-size:13px">Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;border-radius:3px">{job_id}</code></p>
+  </div>
+  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ddd;border-top:none;font-size:14px">
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee;width:40%"><strong>Outcome audit</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><code>{audit_outcome}</code></td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Utente</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{email_safe}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Libro</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{title_safe}</td></tr>
+    {plan_line}
+    {chars_line}
+    {refund_line}
+    <tr><td style="padding:8px 12px"><strong>Dettaglio</strong></td><td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#555">{reason_safe or '—'}</td></tr>
+  </table>
+  <p style="color:#888;font-size:12px;margin-top:16px">Alert generato automaticamente. Per disattivare rimuovere <code>ABM_ADMIN_EMAIL</code>. Console eventi: <code>{BASE_URL}/admin/#tab-gemini</code></p>
+</div>"""
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Failure alert sent for {key} ({kind_label})")
+    except Exception as e:
+        print(f"[admin] Failed to send failure alert for {key}: {e}")
 
 
 def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None):
