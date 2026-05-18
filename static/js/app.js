@@ -949,6 +949,10 @@ function renderEstimate(data){
     updateModelRateHint(null);
     return;
   }
+  // Nota: data.gemini_overloaded e' una proprieta' informativa restituita dal
+  // server per il modello selezionato; la valutazione del blocco avviene solo
+  // al click di "Prosegui" (vedi onGenerateClick), non qui — l'utente puo'
+  // continuare ad esplorare modelli/voci senza popup intrusivi.
   if(valueEl){
     if(data.is_free){valueEl.textContent=(window.t&&t('cost_free'))||'Gratis';}
     else{valueEl.textContent='€'+Number(data.total_eur).toFixed(2);}
@@ -993,6 +997,11 @@ async function onGenerateClick() {
   try {
     await _doCombinedEstimate();
     const est = _estimateCache && _estimateCache.value;
+    // Preflight RPD: blocca PRIMA della richiesta pagamento.
+    if (est && est.gemini_overloaded) {
+      try { _showGeminiOverloadModal(est.gemini_overload_info||{}); } catch(_e){}
+      return;
+    }
     if (!est || est.is_free) {
       return startCombinedGeneration();
     }
@@ -1043,7 +1052,7 @@ async function renderPaypalGeminiButtons(){
   _paypalGeminiButtonsInstance=window.paypal.Buttons({
     style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
     createOrder:async function(){
-      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,amount_eur:_payState.total};
+      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,rate:document.getElementById('vr')?.value||'+0%',amount_eur:_payState.total};
       const r=await fetch('/api/paypal_create_order_gemini',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },
@@ -1841,28 +1850,47 @@ async function startCombinedGeneration(combinedPaymentToken){
     _setCancelButtonMode('opt');
     lockUI();
     try{
-      const selLang=document.getElementById('vl').value||cl;
+      console.log('[startCombinedGeneration] preparing /api/optimize payload', {jobId, paymentToken: !!paymentToken, selectedChapters, audioTab: wizardState.audioTab});
+      const selLangEl=(wizardState.audioTab==='premium')
+        ?document.getElementById('vlPremium')
+        :document.getElementById('vl');
+      const selLang=(selLangEl&&selLangEl.value)||cl;
+      const vrEl=document.getElementById('vr');
+      const voiceId=getCurrentVoiceId();
       var payload={job_id:jobId,batch:false,lang:selLang};
       if(paymentToken)payload.payment_token=paymentToken;
       if(selectedChapters)payload.selected_chapters=selectedChapters;
       // Always use auto_generate in wizard flow
       payload.auto_generate=true;
-      payload.voice=getCurrentVoiceId();
-      payload.rate=document.getElementById('vr').value;
+      payload.voice=voiceId;
+      payload.rate=(vrEl&&vrEl.value)||'+0%';
       payload.single_file=singleFile;
       payload.output_format=outputFormat;
       payload.podcast_base_url=podcastBaseUrl;
+      console.log('[startCombinedGeneration] POST /api/optimize', payload);
       var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      console.log('[startCombinedGeneration] /api/optimize response', r.status);
       var d=await r.json();
+      console.log('[startCombinedGeneration] /api/optimize body', d);
       if(d.error){
         if(d.error_code==='llm_concurrent_limit'){
           document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
           document.getElementById('pMsg').style.color='var(--err)';
-        }else{showPErr(d.error)}
+        }else{
+          showPErr(d.error);
+          const pMsgEl=document.getElementById('pMsg');
+          if(pMsgEl){pMsgEl.textContent=d.error;pMsgEl.style.color='var(--err)';}
+        }
         unlockUI();return;
       }
       _listenOptProgressWiz();
-    }catch(e){showPErr('Error: '+e.message);unlockUI()}
+    }catch(e){
+      console.error('[startCombinedGeneration] exception during /api/optimize', e);
+      showPErr('Error: '+e.message);
+      const pMsgEl=document.getElementById('pMsg');
+      if(pMsgEl){pMsgEl.textContent='Errore: '+e.message;pMsgEl.style.color='var(--err)';}
+      unlockUI();
+    }
   }else{
     // ── Direct TTS generation ──
     _showWizProgress();
@@ -1890,6 +1918,14 @@ async function startCombinedGeneration(combinedPaymentToken){
           document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
           document.getElementById('btnRetryWiz').onclick=retryGeneration;
           unlockUI();return;
+        }
+        if(gd.error_code==='gemini_overload'){
+          // Pre-flight block sincrono: nessun job avviato, nessun payment consumato.
+          unlockUI();generating=false;
+          document.getElementById('cnA').style.display='none';
+          try{console.log('[abm] gemini_overload (sync /api/generate):', gd);}catch(e){}
+          _showGeminiOverloadModal(gd);
+          return;
         }
         showPErr(gd.error);unlockUI();return;
       }
@@ -1952,17 +1988,25 @@ function _updateJobRunningPct(pct){
 // scelta voce e scegliere un'altra opzione (altro modello PREMIUM o voci
 // Standard). Niente redirect alla home.
 function _showGeminiOverloadModal(d){
+  // Helper: t() ritorna la chiave stessa se la traduzione manca, quindi
+  // l'idioma "t(k)||fallback" non scatta mai (la chiave e' truthy).
+  // _tf invece riconosce il caso "non tradotto" e usa il fallback.
+  function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
   // Cleanup eventuale modal residuo
   var old=document.getElementById('geminiOverloadModal');
   if(old)old.remove();
-  // Compongo testo di rimborso in base al metodo di pagamento
+  // Distingue caso preventivo (controllo PRIMA del pagamento → nessun rimborso da mostrare)
+  // dal caso post-pagamento (refund_method valorizzato → mostriamo la riga rimborso).
+  var hasRefund=!!(d&&d.refund_method);
   var refundLine='';
-  if(d&&d.refund_method==='paypal'&&d.refund_voucher_code){
-    refundLine='<p style="margin:8px 0 0">'+esc(t('gemini_overload_refund_paypal')||'L\'importo ti e\' stato rimborsato sotto forma di voucher')+
-      ' <code style="background:rgba(0,0,0,.06);padding:2px 6px;border-radius:4px;font-weight:600">'+esc(d.refund_voucher_code)+'</code> '+
-      esc(t('gemini_overload_refund_email_hint')||'(anche via email).')+'</p>';
-  }else if(d&&d.refund_method==='voucher'){
-    refundLine='<p style="margin:8px 0 0">'+esc(t('gemini_overload_refund_voucher')||'L\'importo e\' stato riaccreditato sul voucher che hai usato.')+'</p>';
+  if(hasRefund){
+    if(d.refund_method==='paypal'&&d.refund_voucher_code){
+      refundLine='<p style="margin:8px 0 0;color:#374151">'+esc(_tf('gemini_overload_refund_paypal','L\'importo ti e\' stato rimborsato sotto forma di voucher'))+
+        ' <code style="background:rgba(0,0,0,.06);color:#111;padding:2px 6px;border-radius:4px;font-weight:600">'+esc(d.refund_voucher_code)+'</code> '+
+        esc(_tf('gemini_overload_refund_email_hint','(anche via email).'))+'</p>';
+    }else if(d.refund_method==='voucher'){
+      refundLine='<p style="margin:8px 0 0;color:#374151">'+esc(_tf('gemini_overload_refund_voucher','L\'importo e\' stato riaccreditato sul voucher che hai usato.'))+'</p>';
+    }
   }
   // Retry hint (solo se >0 e sotto 24h)
   var retryLine='';
@@ -1970,24 +2014,33 @@ function _showGeminiOverloadModal(d){
   if(rs>0&&rs<86400){
     var h=Math.ceil(rs/3600);
     retryLine='<p style="margin:8px 0 0;color:#6b7280;font-size:.92em">'+
-      esc((t('gemini_overload_retry_hint')||'Le voci PREMIUM tornano disponibili tra circa {h} h.').replace('{h}',h))+'</p>';
+      esc(_tf('gemini_overload_retry_hint','Le voci PREMIUM tornano disponibili tra circa {h} h.').replace('{h}',h))+'</p>';
   }
-  var title=esc(t('gemini_overload_title')||'Voci PREMIUM temporaneamente sovraccariche');
-  var body=esc(t('gemini_overload_body')||
-    'Le voci PREMIUM non sono disponibili in questo momento. La generazione non e\' partita e hai ricevuto il rimborso integrale. Puoi proseguire scegliendo:');
-  var optA=esc(t('gemini_overload_opt_a')||'un altro modello di voci PREMIUM');
-  var optB=esc(t('gemini_overload_opt_b')||'le voci Standard (sempre disponibili, gratuite)');
-  var btnLabel=esc(t('gemini_overload_btn')||'Torna alla scelta voce');
+  // Testo del popup: preventivo (no pagamento) vs post-pagamento.
+  var title, body, btnLabel;
+  if(hasRefund){
+    title=esc(_tf('gemini_overload_title','Voci PREMIUM temporaneamente non disponibili'));
+    body=esc(_tf('gemini_overload_body',
+      'Le voci PREMIUM non sono disponibili in questo momento. La generazione non e\' partita e hai ricevuto il rimborso integrale. Puoi proseguire scegliendo:'));
+    btnLabel=esc(_tf('gemini_overload_btn','Torna alla scelta voce'));
+  }else{
+    title=esc(_tf('gemini_overload_title_pre','Voci PREMIUM temporaneamente non disponibili'));
+    body=esc(_tf('gemini_overload_body_pre',
+      'Le voci PREMIUM hanno raggiunto il limite giornaliero di utilizzo. Per proseguire puoi scegliere:'));
+    btnLabel=esc(_tf('gemini_overload_btn_pre','Ho capito'));
+  }
+  var optA=esc(_tf('gemini_overload_opt_a','un altro modello di voci PREMIUM'));
+  var optB=esc(_tf('gemini_overload_opt_b','le voci Standard (sempre disponibili, gratuite)'));
   var el=document.createElement('div');
   el.id='geminiOverloadModal';
   el.className='modal-overlay open';
-  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;color:#111';
   el.innerHTML=
-    '<div class="modal" style="max-width:540px;background:#fff;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)">'+
-      '<div class="modal-head" style="padding:18px 22px 0"><h2 style="margin:0;font-size:1.15em">'+title+'</h2></div>'+
-      '<div class="modal-body" style="padding:14px 22px 18px">'+
-        '<p style="margin:0 0 10px">'+body+'</p>'+
-        '<ul style="margin:0 0 6px;padding-left:22px"><li>'+optA+'</li><li>'+optB+'</li></ul>'+
+    '<div class="modal" style="max-width:540px;background:#fff;color:#111;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)">'+
+      '<div class="modal-head" style="padding:18px 22px 12px;border-bottom:1px solid #e5e7eb"><h2 style="margin:0;font-size:1.15em;color:#111;font-weight:700">'+title+'</h2></div>'+
+      '<div class="modal-body" style="padding:14px 22px 18px;color:#111;line-height:1.5">'+
+        '<p style="margin:0 0 10px;color:#1f2937">'+body+'</p>'+
+        '<ul style="margin:0 0 6px;padding-left:22px;color:#1f2937"><li>'+optA+'</li><li>'+optB+'</li></ul>'+
         refundLine+retryLine+
         '<div style="margin-top:18px;text-align:right">'+
           '<button id="geminiOverloadBtn" class="btn btn-primary" style="padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer">'+btnLabel+'</button>'+
@@ -2001,13 +2054,20 @@ function _showGeminiOverloadModal(d){
     var pra=document.getElementById('pra');if(pra)pra.innerHTML='';
     // Torna allo step 3 (scelta voce/audio)
     try{goToStep(3);}catch(e){}
-    // Libera lo stato wizard per consentire un nuovo avvio
+    // Libera lo stato wizard per consentire un nuovo avvio.
+    // IMPORTANTE: NON azzerare jobId. Nel preflight sincrono il job rimane
+    // in status="analyzed" lato server e l'utente puo' cambiare modello /
+    // tab voce e ripartire. Azzerando jobId rompiamo /api/combined_estimate
+    // (che richiede jobId) e la "STIMA COSTO CAPITOLI SELEZIONATI" non si
+    // ricalcola piu' al cambio modello.
     try{
-      jobId=null;jobDone=false;generating=false;
+      jobDone=false;generating=false;
       var gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
       var p4f=document.getElementById('panel4Footer');if(p4f)p4f.style.display='';
       var gan=document.getElementById('generationActiveNotice');if(gan)gan.style.display='none';
     }catch(e){}
+    // Ricalcola la stima per il modello/voce attualmente selezionato.
+    try{if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();}catch(e){}
   }
   var btn=document.getElementById('geminiOverloadBtn');
   if(btn)btn.onclick=dismiss;
@@ -2263,6 +2323,13 @@ async function startGen(){
         document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
         document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
       }
+      if(d.error_code==='gemini_overload'){
+        unlockUI();generating=false;
+        document.getElementById('cnA').style.display='none';
+        try{console.log('[abm] gemini_overload (sync /api/generate):', d);}catch(e){}
+        _showGeminiOverloadModal(d);
+        return;
+      }
       showPErr(d.error);unlockUI();return
     }
     listenProgress();
@@ -2283,10 +2350,11 @@ function listenProgress(){
         unlockUI();
         generating=false;
         document.getElementById('cnA').style.display='none';
+        try{console.log('[abm] job error payload:', d);}catch(e){}
         if(d.error_kind==='gemini_overload'){
           _showGeminiOverloadModal(d);
         }else{
-          showPErr(d.error);
+          showPErr(d.error||'Errore');
         }
         return;
       }
