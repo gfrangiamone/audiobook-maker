@@ -1947,6 +1947,73 @@ function _updateJobRunningPct(pct){
   if(span)span.textContent=Math.round(pct||0);
 }
 
+// Popup mostrato quando il pre-flight rileva che le voci PREMIUM sono
+// sature (RPD esaurito): rimborso gia' emesso, l'utente puo' tornare alla
+// scelta voce e scegliere un'altra opzione (altro modello PREMIUM o voci
+// Standard). Niente redirect alla home.
+function _showGeminiOverloadModal(d){
+  // Cleanup eventuale modal residuo
+  var old=document.getElementById('geminiOverloadModal');
+  if(old)old.remove();
+  // Compongo testo di rimborso in base al metodo di pagamento
+  var refundLine='';
+  if(d&&d.refund_method==='paypal'&&d.refund_voucher_code){
+    refundLine='<p style="margin:8px 0 0">'+esc(t('gemini_overload_refund_paypal')||'L\'importo ti e\' stato rimborsato sotto forma di voucher')+
+      ' <code style="background:rgba(0,0,0,.06);padding:2px 6px;border-radius:4px;font-weight:600">'+esc(d.refund_voucher_code)+'</code> '+
+      esc(t('gemini_overload_refund_email_hint')||'(anche via email).')+'</p>';
+  }else if(d&&d.refund_method==='voucher'){
+    refundLine='<p style="margin:8px 0 0">'+esc(t('gemini_overload_refund_voucher')||'L\'importo e\' stato riaccreditato sul voucher che hai usato.')+'</p>';
+  }
+  // Retry hint (solo se >0 e sotto 24h)
+  var retryLine='';
+  var rs=Number(d&&d.retry_after_sec||0);
+  if(rs>0&&rs<86400){
+    var h=Math.ceil(rs/3600);
+    retryLine='<p style="margin:8px 0 0;color:#6b7280;font-size:.92em">'+
+      esc((t('gemini_overload_retry_hint')||'Le voci PREMIUM tornano disponibili tra circa {h} h.').replace('{h}',h))+'</p>';
+  }
+  var title=esc(t('gemini_overload_title')||'Voci PREMIUM temporaneamente sovraccariche');
+  var body=esc(t('gemini_overload_body')||
+    'Le voci PREMIUM non sono disponibili in questo momento. La generazione non e\' partita e hai ricevuto il rimborso integrale. Puoi proseguire scegliendo:');
+  var optA=esc(t('gemini_overload_opt_a')||'un altro modello di voci PREMIUM');
+  var optB=esc(t('gemini_overload_opt_b')||'le voci Standard (sempre disponibili, gratuite)');
+  var btnLabel=esc(t('gemini_overload_btn')||'Torna alla scelta voce');
+  var el=document.createElement('div');
+  el.id='geminiOverloadModal';
+  el.className='modal-overlay open';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+  el.innerHTML=
+    '<div class="modal" style="max-width:540px;background:#fff;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)">'+
+      '<div class="modal-head" style="padding:18px 22px 0"><h2 style="margin:0;font-size:1.15em">'+title+'</h2></div>'+
+      '<div class="modal-body" style="padding:14px 22px 18px">'+
+        '<p style="margin:0 0 10px">'+body+'</p>'+
+        '<ul style="margin:0 0 6px;padding-left:22px"><li>'+optA+'</li><li>'+optB+'</li></ul>'+
+        refundLine+retryLine+
+        '<div style="margin-top:18px;text-align:right">'+
+          '<button id="geminiOverloadBtn" class="btn btn-primary" style="padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer">'+btnLabel+'</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(el);
+  function dismiss(){
+    el.remove();
+    // Pulisci eventuale errore inline residuo nello step di progress
+    var pra=document.getElementById('pra');if(pra)pra.innerHTML='';
+    // Torna allo step 3 (scelta voce/audio)
+    try{goToStep(3);}catch(e){}
+    // Libera lo stato wizard per consentire un nuovo avvio
+    try{
+      jobId=null;jobDone=false;generating=false;
+      var gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+      var p4f=document.getElementById('panel4Footer');if(p4f)p4f.style.display='';
+      var gan=document.getElementById('generationActiveNotice');if(gan)gan.style.display='none';
+    }catch(e){}
+  }
+  var btn=document.getElementById('geminiOverloadBtn');
+  if(btn)btn.onclick=dismiss;
+  el.onclick=function(ev){if(ev.target===el)dismiss();};
+}
+
 function _showWizProgress(){
   _stopAnalyzedHeartbeat();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='';
@@ -2210,7 +2277,19 @@ function listenProgress(){
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
-      if(d.status==='error'){es.close();_hideJobRunningModal();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
+      if(d.status==='error'){
+        es.close();
+        _hideJobRunningModal(false); // no resetAll: vogliamo restare nel wizard
+        unlockUI();
+        generating=false;
+        document.getElementById('cnA').style.display='none';
+        if(d.error_kind==='gemini_overload'){
+          _showGeminiOverloadModal(d);
+        }else{
+          showPErr(d.error);
+        }
+        return;
+      }
       if(d.status==='cancelled'){es.close();_hideJobRunningModal();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;

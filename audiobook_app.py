@@ -5138,6 +5138,22 @@ def api_progress(job_id):
             if job.get("status") == "error":
                 # Errore generico verso il client: il dettaglio resta nei log server-side.
                 payload["error"] = "generation_failed"
+                # Eccezione: per il pre-flight block delle voci PREMIUM,
+                # esponiamo un error_kind strutturato cosi' il frontend puo'
+                # mostrare un popup specifico e riportare l'utente alla scelta
+                # voce (invece di redirect generico alla home).
+                _pf_block = job.get("gemini_preflight_block")
+                if _pf_block:
+                    payload["error_kind"] = "gemini_overload"
+                    payload["retry_after_sec"] = int(_pf_block.get("retry_after_sec") or 0)
+                    _paym = job.get("payment") or {}
+                    payload["refund_method"] = _paym.get("method", "")
+                    # Codice voucher di rimborso solo se PayPal (per voucher
+                    # il riaccredito e' silenzioso sul codice originale).
+                    if _paym.get("method") == "paypal":
+                        _vcode = job.get("refund_voucher_code")
+                        if _vcode:
+                            payload["refund_voucher_code"] = _vcode
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("status") == "cancelled" or job.get("cancelled"):
