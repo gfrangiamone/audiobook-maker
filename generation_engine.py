@@ -1485,10 +1485,30 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         delta_eur = round(should_have_been - charged, 4)
         delta_pct = round((delta_eur / charged * 100), 2) if charged > 0 else 0.0
         est = job.get("gemini_estimate") or {}
+        # Rate scelto dall'utente: il prezzo proposto scala col fattore di
+        # velocità, quindi va tracciato per consentire calibrazione per
+        # rate_step (vedi recalc-params, raggruppato anche su rate_step).
+        rate_raw = job.get("rate", "+0%")
+        try:
+            if isinstance(rate_raw, str):
+                rate_pct_val = int(rate_raw.replace("%", "").replace("+", "").strip() or 0)
+            else:
+                rate_pct_val = int(rate_raw or 0)
+        except Exception:
+            rate_pct_val = 0
+        try:
+            if gemini_tts is not None and hasattr(gemini_tts, "_rate_pct_to_step"):
+                rate_step_val = int(gemini_tts._rate_pct_to_step(rate_pct_val))
+            else:
+                rate_step_val = max(-3, min(3, round(rate_pct_val / 10.0)))
+        except Exception:
+            rate_step_val = 0
         rec = {
             "job_id": job_id,
             "model_key": model_key,
             "language": language or "",
+            "rate_pct": rate_pct_val,
+            "rate_step": rate_step_val,
             "chars_total": int(actual.get("chars", 0) or 0),
             "input_tokens_est": int(est.get("input_tokens_est", 0) or 0),
             "input_tokens_actual": int(actual.get("input_tokens", 0) or 0),
@@ -1531,6 +1551,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
+    # Conserva il rate scelto sul job: serve all'audit Gemini (calibrazione
+    # per rate_step) e a eventuali ri-letture diagnostiche del job state.
+    job["rate"] = rate
     work_dir = _upload_dir / job_id
     work_dir.mkdir(exist_ok=True)
     # Per-epoch output directory: each /api/generate call creates its own
@@ -1592,6 +1615,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _parts_v = (voice or "").split(":")
                 _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash25"
                 _pf = gemini_tts.preflight_can_run(_model_key, total_chunks)
+                # Log RPD status sempre (anche quando ok) per visibilita' operativa.
+                # cap=0 = nessun cap locale configurato (l'API Google fa da unica barriera).
+                _cap_v = _pf.get("cap", 0)
+                if _cap_v and _cap_v > 0:
+                    print(f"[{job_id}] RPD status [{_model_key}]: "
+                          f"used={_pf.get('used', 0)}/{_cap_v}, "
+                          f"reserve={_pf.get('reserve', 0)}, "
+                          f"available={_pf.get('available', 0)}, "
+                          f"needed={_pf.get('needed', 0)} "
+                          f"-> {'OK' if _pf.get('ok') else 'BLOCK (shortfall=' + str(_pf.get('shortfall', 0)) + ')'}")
+                else:
+                    print(f"[{job_id}] RPD status [{_model_key}]: no local cap "
+                          f"(ABM_GEMINI_RPD_{_model_key.upper()}=0), needed={_pf.get('needed', 0)}")
             except Exception as _pf_err:
                 print(f"[{job_id}] Preflight check error (non-fatal, proceeding): {_pf_err}")
                 _pf = {"ok": True}
@@ -1603,11 +1639,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                            f"cap={_pf.get('cap')} used={_pf.get('used')} "
                            f"reserve={_pf.get('reserve')}")
                 print(f"[{job_id}] PREFLIGHT BLOCK -> {_reason}")
-                _set_job_status(job, "error")
                 _user_msg = ("Generazione non avviata: il motore voci PREMIUM "
                              "e' temporaneamente sovraccarico. Hai diritto al "
                              "rimborso integrale, gia' emesso automaticamente. "
                              "Riprova tra qualche ora.")
+                # IMPORTANTE: settare i marker del preflight block PRIMA di
+                # cambiare status a "error". Lo stream SSE in /api/progress
+                # polla ogni secondo e si chiude al primo tick con status=error;
+                # se gemini_preflight_block non e' ancora settato a quel tick,
+                # il frontend non riceve error_kind=gemini_overload e cade nel
+                # branch errore generico (e nel popup non viene mostrato).
                 job["error"] = _user_msg
                 job["user_facing_error"] = _user_msg
                 job["gemini_preflight_block"] = {
@@ -1616,6 +1657,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     "available": _pf.get("available"),
                     "retry_after_sec": _pf.get("retry_after_sec"),
                 }
+                _set_job_status(job, "error")
                 # Audit
                 try:
                     _write_gemini_audit(job_id, job, voice,

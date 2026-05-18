@@ -81,6 +81,7 @@ from tts_split import (
     _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
     _edge_tts_call, generate_chunk_mp3, generate_chunk_mp3_google,
     _strip_parenthetical, _ensure_heading_pause, _plan_chunks,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes,
 )
 
 import email_service
@@ -1627,6 +1628,7 @@ def admin_logs():
             "recurring": "Ricorrenti", "months": "Mesi",
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
+            "gemini_started": "Gen. Gemini",
         },
         "en": {
             "sessions": "Sessions", "gen_completed": "Gen. completed",
@@ -1635,6 +1637,7 @@ def admin_logs():
             "recurring": "Returning", "months": "Months",
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
+            "gemini_started": "Gemini runs",
         },
         "fr": {
             "sessions": "Sessions", "gen_completed": "Gén. terminée",
@@ -1643,6 +1646,7 @@ def admin_logs():
             "recurring": "Récurrents", "months": "Mois",
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
+            "gemini_started": "Gén. Gemini",
         },
         "de": {
             "sessions": "Sitzungen", "gen_completed": "Gen. abgeschlossen",
@@ -1651,6 +1655,7 @@ def admin_logs():
             "recurring": "Wiederkehrend", "months": "Monate",
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
+            "gemini_started": "Gemini-Läufe",
         },
         "es": {
             "sessions": "Sesiones", "gen_completed": "Gen. completada",
@@ -1659,6 +1664,7 @@ def admin_logs():
             "recurring": "Recurrentes", "months": "Meses",
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
+            "gemini_started": "Gen. Gemini",
         },
         "zh": {
             "sessions": "会话", "gen_completed": "生成完成",
@@ -1667,6 +1673,7 @@ def admin_logs():
             "recurring": "常客", "months": "月份",
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
+            "gemini_started": "Gemini 生成",
         },
         "hi": {
             "sessions": "सत्र", "gen_completed": "जनरेशन पूर्ण",
@@ -1675,6 +1682,7 @@ def admin_logs():
             "recurring": "नियमित", "months": "महीने",
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
+            "gemini_started": "Gemini जनरेशन",
         },
     }
     _blang = _get_browser_lang()
@@ -1709,6 +1717,12 @@ def admin_logs():
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
+    # Sessioni che hanno realmente avviato la generazione del libro con voci Gemini
+    # (esclude le anteprime: richiediamo GENERATE in events).
+    gemini_started = sum(
+        1 for s in sessions.values()
+        if "GENERATE" in s["events"] and str(s.get("voice", "")).startswith("gemini:")
+    )
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
@@ -1842,11 +1856,16 @@ def admin_logs():
             blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
 
             card_cls = "card card-in-progress" if is_progress else "card"
+            is_gemini_run = (
+                "GENERATE" in s["events"]
+                and str(voice_raw).startswith("gemini:")
+            )
             data_attrs = (
                 f'data-status="{card_status}" '
                 f'data-email="{1 if has_email else 0}" '
                 f'data-recurring="{1 if is_recurring else 0}" '
-                f'data-identified="{1 if is_identified else 0}"'
+                f'data-identified="{1 if is_identified else 0}" '
+                f'data-gemini="{1 if is_gemini_run else 0}"'
             )
 
             cards_html += f"""<div class="{card_cls}" {data_attrs}>
@@ -1949,8 +1968,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat.stat-green.active{{border-color:var(--green);box-shadow:0 0 0 2px rgba(34,197,94,.25)}}
 .stat.stat-red.active{{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.25)}}
 .stat.stat-orange.active{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.25)}}
+.stat.stat-gemini.active{{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.25)}}
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
-.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
 .day-group{{margin:0 12px 6px}}
 .day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
@@ -2001,6 +2021,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
+        <a class="btn btn-accent" href="/admin/logs?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
         <a class="btn btn-accent" href="/logs/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
@@ -2015,6 +2036,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
     <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">{returning_clients}</div><div class="lbl">{t["recurring"]}</div></div>
+    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci Gemini (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
 </div>
 
 <div class="cards-container">
@@ -2163,6 +2185,7 @@ function filterCards(filter, el) {{
         else if (filter === 'email') {{ show = card.dataset.email === '1'; }} 
         else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }} 
         else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
+        else if (filter === 'gemini') {{ show = card.dataset.gemini === '1'; }}
         card.classList.toggle('card-hidden', !show);
     }});
     document.querySelectorAll('.day-group').forEach(group => {{
@@ -2950,7 +2973,7 @@ def admin_logs_page():
   .toggle-row input{width:auto}
 </style></head>
 <body>
-<h1>Admin - Logs &amp; Audit</h1>
+<h1>Admin - Logs &amp; Audit <a href="/logs" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
 
 <div class="tab-bar">
   <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
@@ -3003,7 +3026,7 @@ def admin_logs_page():
     </div>
     <button type="button" id="auditRefreshBtn">Aggiorna</button>
     <button type="button" id="auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
-    <pre id="auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:10px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;"></pre>
+    <pre id="auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.5"></pre>
   </div>
 
   <div class="panel">
@@ -3360,33 +3383,70 @@ def admin_api_gemini_recalc_params():
         return jsonify({"error": "Unauthorized"}), 401
 
     import gemini_cost_audit
-    groups = {}
+    # Doppio raggruppamento:
+    #   - groups_global: (model, lang)              — vista aggregata storica
+    #   - groups_rate:   (model, lang, rate_step)   — calibrazione per velocità
+    # La velocità incide direttamente sul prezzo proposto (estimate_audio_seconds
+    # scala con rate_pct), quindi i delta vanno monitorati anche per rate.
+    groups_global = {}
+    groups_rate = {}
     for rec in gemini_cost_audit.iter_records(outcome="completed"):
-        k = (rec.get("model_key") or "?", rec.get("language") or "?")
-        groups.setdefault(k, []).append(rec)
+        model = rec.get("model_key") or "?"
+        lang = rec.get("language") or "?"
+        # I record precedenti l'introduzione di rate_step potrebbero non averlo:
+        # li trattiamo come rate_step=0 (velocità "normale").
+        try:
+            rstep = int(rec.get("rate_step") if rec.get("rate_step") is not None else 0)
+        except Exception:
+            rstep = 0
+        groups_global.setdefault((model, lang), []).append(rec)
+        groups_rate.setdefault((model, lang, rstep), []).append(rec)
+
+    def _label_for(avg_delta_pct):
+        if avg_delta_pct > 5:
+            return "margine alto, valuta riduzione tariffa utente"
+        if avg_delta_pct < -5:
+            return "margine in perdita, valuta aumento tariffa utente o sec_per_kchars"
+        return "parametri OK"
+
+    def _rate_label(step):
+        # Mappa step -> etichetta UI (cfr. SPEED_KEYS in app.js)
+        return {-3: "vs", -2: "s", -1: "ss", 0: "n", 1: "sf", 2: "f", 3: "vf"}.get(int(step), str(step))
+
     suggestions = []
-    for (model, lang), recs in groups.items():
+    suggestions.append("=== Aggregato globale (model / lang) ===")
+    if not groups_global:
+        suggestions.append("  (nessun record disponibile)")
+    for (model, lang), recs in sorted(groups_global.items()):
         if len(recs) < 3:
+            suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) campioni insufficienti (servono >=3)")
             continue
         deltas = [float(r.get("delta_pct") or 0) for r in recs]
-        avg_delta_pct = sum(deltas) / len(deltas)
+        avg = sum(deltas) / len(deltas)
+        suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) avg delta {avg:+.2f}% — {_label_for(avg)}")
+
+    suggestions.append("")
+    suggestions.append("=== Per velocità (model / lang / rate_step) ===")
+    if not groups_rate:
+        suggestions.append("  (nessun record disponibile)")
+    for (model, lang, rstep), recs in sorted(groups_rate.items()):
         n = len(recs)
-        if avg_delta_pct > 5:
-            suggestions.append(
-                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — margine alto, valuta riduzione tariffa utente"
-            )
-        elif avg_delta_pct < -5:
-            suggestions.append(
-                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — margine in perdita, valuta aumento tariffa utente o sec_per_kchars"
-            )
+        deltas = [float(r.get("delta_pct") or 0) for r in recs]
+        avg = sum(deltas) / len(deltas) if deltas else 0.0
+        rate_pcts = [int(r.get("rate_pct") or 0) for r in recs]
+        rp_min, rp_max = (min(rate_pcts), max(rate_pcts)) if rate_pcts else (0, 0)
+        rp_str = f"{rp_min:+d}%" if rp_min == rp_max else f"{rp_min:+d}%..{rp_max:+d}%"
+        head = f"  [{model} / {lang} / step={rstep:+d} ({_rate_label(rstep)}) {rp_str}] (n={n})"
+        if n < 3:
+            suggestions.append(f"{head} campioni insufficienti")
         else:
-            suggestions.append(
-                f"[{model} / {lang}] (n={n}) avg delta {avg_delta_pct:+.2f}% — parametri OK"
-            )
+            suggestions.append(f"{head} avg delta {avg:+.2f}% — {_label_for(avg)}")
     return jsonify({
         "suggestions": suggestions,
-        "groups_total": len(groups),
-        "groups_evaluated": sum(1 for g in groups.values() if len(g) >= 3),
+        "groups_total": len(groups_global),
+        "groups_evaluated": sum(1 for g in groups_global.values() if len(g) >= 3),
+        "groups_by_rate_total": len(groups_rate),
+        "groups_by_rate_evaluated": sum(1 for g in groups_rate.values() if len(g) >= 3),
     })
 
 
@@ -4932,7 +4992,10 @@ def api_generate():
             chs_pre = all_chs_pre
         lang_pre = getattr(info_pre, "language", "it") or "it"
         try:
-            est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre)
+            # Il rate scelto influisce sulla stima (estimate_audio_seconds scala
+            # con rate_pct): il ricalcolo server-side deve usarlo per allinearsi
+            # alla stima vista dall'utente e validare correttamente il pagamento.
+            est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre, rate_pct=rate)
             gemini_eur_pre = round(est_pre["user_price_eur"], 2)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
@@ -4964,6 +5027,78 @@ def api_generate():
             # Errore non-budget: log e prosegui (graceful degradation).
             print(f"[{job_id}] preflight_budget_check raised non-budget error: "
                   f"{_bgenerr}")
+
+        # ----- Pre-flight RPD check SINCRONO (prima di consumare il payment) -----
+        # Eseguito qui per evitare la race condition fra il thread async di
+        # run_generation (che setta status=error + marker) e lo stream SSE in
+        # /api/progress (che a volte chiude il loop al primo tick prima che il
+        # marker sia visibile). Bloccando qui rispondiamo a /api/generate
+        # direttamente con error_code=gemini_overload e il frontend mostra il
+        # popup senza fare affidamento sul polling SSE.
+        try:
+            _info_chs_for_plan = chs_pre
+            _info_lang_for_plan = lang_pre
+            _max_chars_pf = _pick_chunk_max_chars(voice, _info_lang_for_plan)
+            _max_bytes_pf = _pick_chunk_max_bytes(voice)
+            class _PlanInfo:
+                pass
+            _plan_info = _PlanInfo()
+            _plan_info.chapters = _info_chs_for_plan
+            _plan_for_pf = _plan_chunks(_plan_info, max_chars=_max_chars_pf, max_bytes=_max_bytes_pf)
+            _total_chunks_pf = len(_plan_for_pf)
+            _parts_v_pf = (voice or "").split(":")
+            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash25"
+            _pf_sync = gemini_tts.preflight_can_run(_model_key_pf, _total_chunks_pf)
+            # Log RPD status (richiesta utente) — sempre, anche se OK.
+            _cap_v_pf = _pf_sync.get("cap", 0)
+            if _cap_v_pf and _cap_v_pf > 0:
+                print(f"[{job_id}] RPD status [{_model_key_pf}]: "
+                      f"used={_pf_sync.get('used', 0)}/{_cap_v_pf}, "
+                      f"reserve={_pf_sync.get('reserve', 0)}, "
+                      f"available={_pf_sync.get('available', 0)}, "
+                      f"needed={_pf_sync.get('needed', 0)} "
+                      f"-> {'OK' if _pf_sync.get('ok') else 'BLOCK (shortfall=' + str(_pf_sync.get('shortfall', 0)) + ')'}")
+            else:
+                print(f"[{job_id}] RPD status [{_model_key_pf}]: no local cap "
+                      f"(ABM_GEMINI_RPD_{_model_key_pf.upper()}=0), needed={_pf_sync.get('needed', 0)}")
+        except Exception as _pf_sync_err:
+            print(f"[{job_id}] Sync preflight check error (non-fatal, proceeding): {_pf_sync_err}")
+            _pf_sync = {"ok": True}
+        if not _pf_sync.get("ok"):
+            _reason_sync = (f"preflight_block_sync: model={_model_key_pf} "
+                            f"needed={_pf_sync.get('needed')} "
+                            f"available={_pf_sync.get('available')} "
+                            f"shortfall={_pf_sync.get('shortfall')} "
+                            f"cap={_pf_sync.get('cap')} used={_pf_sync.get('used')} "
+                            f"reserve={_pf_sync.get('reserve')}")
+            print(f"[{job_id}] PREFLIGHT BLOCK (sync) -> {_reason_sync}")
+            # Nessun payment consumato a questo punto: niente refund da emettere.
+            # Admin alert (informativo) per parita' con il blocco async.
+            try:
+                _admin_alert_text = (
+                    f"[ABM-ADMIN] Gemini TTS — BLOCCO PREVENTIVO RPD (sync)\n\n"
+                    f"job_id={job_id} model={_model_key_pf}\n"
+                    f"needed={_pf_sync.get('needed')} "
+                    f"available={_pf_sync.get('available')} "
+                    f"shortfall={_pf_sync.get('shortfall')}\n"
+                    f"cap={_pf_sync.get('cap')} used={_pf_sync.get('used')} "
+                    f"reserve={_pf_sync.get('reserve')}\n"
+                    f"Nessun payment consumato (blocco prima del consume).\n"
+                )
+                _admin_email = os.environ.get("ABM_ADMIN_EMAIL", "")
+                if _admin_email:
+                    email_service.send_email(_admin_email,
+                                             "[ABM-ADMIN] Preflight RPD block (sync)",
+                                             _admin_alert_text)
+            except Exception as _ae:
+                print(f"[{job_id}] Admin alert (sync) failed: {_ae}")
+            return jsonify({
+                "error": "Generation not started: PREMIUM voices are temporarily overloaded.",
+                "error_code": "gemini_overload",
+                "retry_after_sec": int(_pf_sync.get("retry_after_sec") or 0),
+                "model_key": _model_key_pf,
+                "refund_method": "",
+            }), 429
 
         threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
         if total_eur_pre > threshold_pre:
@@ -5717,6 +5852,36 @@ def api_combined_estimate():
     total = round(gemini_eur + llm_eur, 2)
     threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
 
+    # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
+    # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
+    # l'avviso "non disponibile" senza passare per il flusso pagamento/PayPal.
+    overload_info = None
+    if voice_id.startswith("gemini:"):
+        try:
+            _max_chars_cb = _pick_chunk_max_chars(voice_id, lang)
+            _max_bytes_cb = _pick_chunk_max_bytes(voice_id)
+            class _PlanInfoCB:
+                pass
+            _pi = _PlanInfoCB()
+            _pi.chapters = chs
+            _plan_cb = _plan_chunks(_pi, max_chars=_max_chars_cb, max_bytes=_max_bytes_cb)
+            _total_chunks_cb = len(_plan_cb)
+            _parts_cb = voice_id.split(":")
+            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash25"
+            _pf_cb = _gemini_tts_mod.preflight_can_run(_model_key_cb, _total_chunks_cb)
+            if not _pf_cb.get("ok"):
+                overload_info = {
+                    "model_key": _model_key_cb,
+                    "retry_after_sec": int(_pf_cb.get("retry_after_sec") or 0),
+                    "needed": _pf_cb.get("needed"),
+                    "available": _pf_cb.get("available"),
+                }
+                print(f"[{job_id}] combined_estimate: gemini_overloaded "
+                      f"[{_model_key_cb}] needed={_pf_cb.get('needed')} "
+                      f"available={_pf_cb.get('available')}")
+        except Exception as _ce_pf_err:
+            print(f"[{job_id}] combined_estimate preflight error (non-fatal): {_ce_pf_err}")
+
     return jsonify({
         "gemini_eur": gemini_eur,
         "llm_eur": llm_eur,
@@ -5726,6 +5891,8 @@ def api_combined_estimate():
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
         "llm_breakdown": llm_breakdown,
+        "gemini_overloaded": overload_info is not None,
+        "gemini_overload_info": overload_info,
     })
 
 
@@ -5746,6 +5913,7 @@ def api_paypal_create_order_gemini():
     voice_id = (data.get("voice_id") or "").strip()
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
+    rate = data.get("rate", "+0%")
     try:
         requested_amount = float(data.get("amount_eur") or 0)
     except (TypeError, ValueError):
@@ -5773,7 +5941,9 @@ def api_paypal_create_order_gemini():
     gemini_eur = 0.0
     if voice_id.startswith("gemini:"):
         try:
-            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang)
+            # rate_pct: la stima dipende dalla velocità scelta, quindi va
+            # passata anche qui per coerenza con /api/combined_estimate.
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
