@@ -82,7 +82,7 @@ def _send_email(to_addr, subject, html_body):
     from email.mime.multipart import MIMEMultipart
 
     if not _smtp_available():
-        print(f"[email] SMTP not configured, cannot send to {to_addr}")
+        print(f"[email] SMTP not configured, cannot send to {to_addr}", flush=True)
         return False
 
     # Sec: validazione difensiva degli header (CRLF injection)
@@ -92,7 +92,7 @@ def _send_email(to_addr, subject, html_body):
     # ma applichiamo un check di sicurezza centrale).
     import re as _re_email
     if not _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', to_addr_clean):
-        print(f"[email] Refused invalid recipient: {to_addr_clean!r}")
+        print(f"[email] Refused invalid recipient: {to_addr_clean!r}", flush=True)
         return False
 
     msg = MIMEMultipart("alternative")
@@ -104,26 +104,38 @@ def _send_email(to_addr, subject, html_body):
     msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
+    print(f"[email] Connecting to {SMTP_HOST}:{SMTP_PORT} for {to_addr_clean}...", flush=True)
+    t0 = time.time()
+    # Non usiamo `with smtplib.SMTP(...) as server:` perché `__exit__` chiama
+    # QUIT e ne attende la risposta: alcuni relay (TurboSMTP osservato 2026-05)
+    # accettano il messaggio ma non rispondono al QUIT, lasciando il thread
+    # bloccato senza che il timeout del socket scatti in modo affidabile.
+    # Inviamo, poi chiudiamo il socket direttamente saltando QUIT.
+    server = None
     try:
         if SMTP_PORT == 465:
-            # SSL diretto (porta 465)
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
         else:
-            # STARTTLS (porta 587) o plain (porta 25)
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+            server.ehlo()
+            if SMTP_PORT != 25:
+                server.starttls()
                 server.ehlo()
-                if SMTP_PORT != 25:
-                    server.starttls()
-                    server.ehlo()
-                server.login(SMTP_USER, SMTP_PASS)
-                server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
-        print(f"[email] Sent to {to_addr_clean}: {subject_clean}")
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
+        print(f"[email] Sent to {to_addr_clean} in {time.time()-t0:.1f}s: {subject_clean}", flush=True)
         return True
     except Exception as e:
-        print(f"[email] Failed to send to {to_addr_clean}: {e}")
+        print(f"[email] Failed to send to {to_addr_clean} after {time.time()-t0:.1f}s: {type(e).__name__}: {e}", flush=True)
         return False
+    finally:
+        if server is not None:
+            try:
+                server.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
