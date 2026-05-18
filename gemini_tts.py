@@ -39,7 +39,12 @@ CHARS_PER_TOKEN_BY_LANG = {
 # o globale via ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT.
 _DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT", "4000"))
 _CJK_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_CJK", "3000"))
+# Italiano: default piu' alto (6000) per ridurre il numero di chunk e
+# stare entro 100 RPD anche per libri medi. Override via
+# ABM_GEMINI_MAX_CHUNK_CHARS_IT.
+_IT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_IT", "6000"))
 MAX_CHUNK_CHARS_BY_LANG = {
+    "it": _IT_CHUNK_CHARS,
     "zh": _CJK_CHUNK_CHARS, "ja": _CJK_CHUNK_CHARS,
     "hi": _CJK_CHUNK_CHARS, "ar": _CJK_CHUNK_CHARS,
     "default": _DEFAULT_CHUNK_CHARS,

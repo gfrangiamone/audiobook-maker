@@ -393,8 +393,9 @@ Sovrascrivibili in caso di adeguamento listino Google.
 | `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `3` (preview free per cookie, rolling 24h — basso per non saturare i 100 RPD del Tier 1) |
 | `ABM_GEMINI_MAX_BYTES_PER_CALL` | `8000` (cap UTF-8 per chiamata API — alzato per ridurre RPD) |
 | `ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT` | `4000` (chunk size lingue latine — alzato per ridurre RPD) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_IT` | `6000` (italiano: piu' alto del default per minimizzare chunk su libri medi) |
 | `ABM_GEMINI_MAX_CHUNK_CHARS_CJK` | `3000` (chunk size CJK/Hindi/Arabic) |
-| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=5000`) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua (es. `ABM_GEMINI_MAX_CHUNK_CHARS_ES=5000`) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
 | `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
 | `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
