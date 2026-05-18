@@ -39,10 +39,12 @@ CHARS_PER_TOKEN_BY_LANG = {
 # o globale via ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT.
 _DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT", "4000"))
 _CJK_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_CJK", "3000"))
-# Italiano: default piu' alto (6000) per ridurre il numero di chunk e
-# stare entro 100 RPD anche per libri medi. Override via
-# ABM_GEMINI_MAX_CHUNK_CHARS_IT.
-_IT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_IT", "6000"))
+# Italiano: 5500 char di default. NON alzare a 6000: i caratteri accentati
+# italiani sono 2 byte UTF-8, quindi 6000 char possono diventare 6050+ byte e
+# sforare MAX_BYTES_PER_CALL (cap API, espresso in byte). Lo splitter ha gia'
+# un check byte-aware, ma 5500 da' margine extra senza degradare RPD in modo
+# significativo. Override via ABM_GEMINI_MAX_CHUNK_CHARS_IT.
+_IT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_IT", "5500"))
 MAX_CHUNK_CHARS_BY_LANG = {
     "it": _IT_CHUNK_CHARS,
     "zh": _CJK_CHUNK_CHARS, "ja": _CJK_CHUNK_CHARS,

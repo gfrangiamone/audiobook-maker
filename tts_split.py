@@ -58,6 +58,30 @@ def _pick_chunk_max_chars(voice_id, language):
     return CHUNK_MAX_CHARS
 
 
+# Margine di sicurezza riservato ai prefissi che synthesize() prepende al testo
+# (style_instruction max 300 char + envelope "[style: ...] " + rate directive
+# fino a ~30 char). Lasciamo 400 byte di buffer sul cap API per evitare che il
+# chunk passi lo splitter ma fallisca check_text_byte_size() in gemini_tts.
+_GEMINI_BYTE_SAFETY_MARGIN = 400
+
+
+def _pick_chunk_max_bytes(voice_id):
+    """Cap byte UTF-8 per chunk per voci Gemini, None per altri motori.
+
+    Il cap API e' MAX_BYTES_PER_CALL (default 8000, configurabile via env);
+    lo splitter usa un cap ridotto del margine di sicurezza riservato ai
+    prefissi style/rate che synthesize() aggiunge in coda al testo.
+    """
+    if not (isinstance(voice_id, str) and voice_id.startswith("gemini:")):
+        return None
+    try:
+        import gemini_tts
+        cap = int(gemini_tts.MAX_BYTES_PER_CALL)
+    except Exception:
+        cap = 8000
+    return max(1000, cap - _GEMINI_BYTE_SAFETY_MARGIN)
+
+
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
 # alla frase successiva per garantire abbastanza contesto al motore TTS.
 _TTS_MIN_SENT_CHARS = 80
@@ -70,11 +94,16 @@ _TTS_MAX_SENT_CHARS = 1500
 # Text splitting
 # ---------------------------------------------------------------------------
 
-def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
-    """Spezza il testo in chunk <= max_chars senza mai tagliare a metà frase.
+def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
+    """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8) senza mai
+    tagliare a meta' frase.
 
-    Strategia: tokenizza il testo in frasi (terminatori . ! ? … + spazio/newline),
-    poi accumula frasi nel chunk corrente finché il limite non viene raggiunto.
+    Strategia: tokenizza il testo in frasi (terminatori . ! ? ... + spazio/newline),
+    poi accumula frasi nel chunk corrente finche' uno dei due limiti non viene
+    raggiunto.
+
+    max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita
+        a byte e non a caratteri). Se None, viene applicato solo il cap chars.
     """
     if not text or not text.strip():
         return [text] if text else [""]
@@ -89,8 +118,12 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
     for sent in sentences:
         if not current:
             current = sent
-        elif len(current) + 1 + len(sent) <= max_chars:
-            current = current + " " + sent
+            continue
+        candidate = current + " " + sent
+        chars_ok = len(candidate) <= max_chars
+        bytes_ok = (max_bytes is None) or (len(candidate.encode("utf-8")) <= max_bytes)
+        if chars_ok and bytes_ok:
+            current = candidate
         else:
             chunks.append(current)
             current = sent
@@ -194,18 +227,20 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
-def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS):
+def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
                Per voci Gemini su lingue CJK/Hindi/Arabo passare 1500.
+    max_bytes: cap byte UTF-8 opzionale (None per Edge/Google, MAX_BYTES_PER_CALL
+               meno margine di sicurezza per Gemini).
     """
     plan = []
     for ch in info.chapters:
         clean_text = _strip_parenthetical(ch.text)
         clean_text = _ensure_heading_pause(clean_text)
         full_text = f"{ch.title}.\n\n{clean_text}"
-        chunks = split_text_into_chunks(full_text, max_chars=max_chars)
+        chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,
@@ -312,6 +347,77 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
+def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries):
+    """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
+    raw nel file output_path. Aggrega i risultati metrici sommando token/byte.
+
+    Ritorna il dict aggregato in stile synthesize(). False se anche un solo
+    sotto-chunk fallisce (in quel caso il caller decide se silenziare o
+    propagare).
+    """
+    import gemini_tts as _gemini
+
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    aggregate = {
+        "success": True,
+        "bytes_written": 0,
+        "audio_seconds_real": 0.0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "model_key": None,
+        "voice_name": None,
+        "attempts_used": 0,
+        "split_pieces": len(pieces),
+    }
+
+    tmp_parts = []
+    try:
+        with open(output_path, "wb") as fout:
+            for idx, piece_text in enumerate(pieces):
+                tmp_path = output_path + f".part{idx:03d}.pcm"
+                tmp_parts.append(tmp_path)
+                last_error = None
+                piece_ok = False
+                for attempt in range(max_retries):
+                    try:
+                        result = _gemini.synthesize(
+                            piece_text, voice_id, output_path=tmp_path,
+                            style_instruction=style_instruction,
+                        )
+                        piece_ok = True
+                        aggregate["bytes_written"] += int(result.get("bytes_written", 0))
+                        aggregate["audio_seconds_real"] += float(result.get("audio_seconds_real", 0.0))
+                        aggregate["input_tokens"] += int(result.get("input_tokens", 0))
+                        aggregate["output_tokens"] += int(result.get("output_tokens", 0))
+                        aggregate["model_key"] = result.get("model_key") or aggregate["model_key"]
+                        aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
+                        aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
+                        break
+                    except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+                        raise
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            time.sleep(2 ** attempt)
+                if not piece_ok:
+                    snippet = piece_text[:60].replace('\n', ' ')
+                    print(f"[gemini-tts] Split-piece {idx+1}/{len(pieces)} failed "
+                          f"({len(piece_text)} chars: \"{snippet}...\"): {last_error}")
+                    return False
+                with open(tmp_path, "rb") as fpart:
+                    fout.write(fpart.read())
+        return aggregate
+    finally:
+        for p in tmp_parts:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
@@ -343,6 +449,27 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     if clean is None:
         _generate_silence_pcm(output_path, duration_sec=1)
         return False
+
+    # Emergency byte-split: se il chunk supera il byte-cap effettivo (cap API
+    # meno margine per i prefissi style/rate), invece di farlo silenziare
+    # spezziamo su confine frase e facciamo N chiamate API. Costa +RPD ma
+    # garantisce zero buchi audio (principio: qualita' > numero chiamate).
+    effective_cap = _pick_chunk_max_bytes(voice_id)
+    clean_bytes = len(clean.encode("utf-8"))
+    if effective_cap is not None and clean_bytes > effective_cap:
+        max_chars_for_split = max(1000, effective_cap // 2)
+        pieces = split_text_into_chunks(clean, max_chars=max_chars_for_split, max_bytes=effective_cap)
+        if len(pieces) >= 2:
+            print(f"[gemini-tts] Emergency byte-split: {clean_bytes} bytes > {effective_cap} cap, "
+                  f"splitting into {len(pieces)} sub-chunks")
+            agg = _synthesize_pcm_pieces_and_concat(
+                pieces, voice_id, output_path, style_instruction, max_retries,
+            )
+            if agg is not False:
+                return agg
+            # Fall-through: se lo split fallisce, scriviamo silenzio sotto.
+            _generate_silence_pcm(output_path, duration_sec=1)
+            return False
 
     last_error = None
     for attempt in range(max_retries):

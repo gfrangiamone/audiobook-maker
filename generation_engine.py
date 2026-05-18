@@ -47,7 +47,8 @@ from audio_utils import (
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
-    _pick_chunk_max_chars, generate_chunk_pcm_gemini, _generate_silence_pcm,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    generate_chunk_pcm_gemini, _generate_silence_pcm,
 )
 
 # ---------------------------------------------------------------------------
@@ -1565,7 +1566,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
               f"chapters={len(info.chapters)}, single_file={single_file}, "
               f"output_format={output_format}, engine={engine}")
         max_chars = _pick_chunk_max_chars(voice, getattr(info, "language", None) or "")
-        plan = _plan_chunks(info, max_chars=max_chars)
+        max_bytes = _pick_chunk_max_bytes(voice)
+        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes)
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         job["gemini_actual"] = {
             "input_tokens": 0,
