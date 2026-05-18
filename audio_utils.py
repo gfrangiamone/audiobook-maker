@@ -1189,12 +1189,22 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
             "-i", tmp_pcm,
         ]
         if metadata_file:
-            cmd.extend(["-i", metadata_file, "-map_metadata", "1", "-map_chapters", "1"])
+            cmd.extend(["-i", metadata_file])
         if cover_path and os.path.exists(cover_path):
-            cmd.extend(["-i", cover_path, "-map", "0:a", "-map", f"{2 if metadata_file else 1}:v",
+            cmd.extend(["-i", cover_path])
+
+        # Mapping streams: prima dei map_metadata/chapters (output options).
+        # Bug fix: con cover presente, mettere -map_metadata tra -i metadata e -i cover
+        # faceva interpretare a ffmpeg map_metadata come opzione di INPUT per cover.jpg,
+        # generando "Option map_metadata cannot be applied to input url ...".
+        cmd.extend(["-map", "0:a"])
+        if cover_path and os.path.exists(cover_path):
+            cover_idx = 2 if metadata_file else 1
+            cmd.extend(["-map", f"{cover_idx}:v",
                         "-disposition:v", "attached_pic", "-c:v", "copy"])
-        else:
-            cmd.extend(["-map", "0:a"])
+
+        if metadata_file:
+            cmd.extend(["-map_metadata", "1", "-map_chapters", "1"])
 
         cmd.extend(["-c:a", "aac", "-b:a", bitrate])
         if lang_iso:
