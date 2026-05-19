@@ -4008,6 +4008,7 @@ def api_analyze():
         "llm_available": _llm_available(),
         "ai_optimized": abm_ai_optimized,
         "optimized_chapters": jobs[job_id].get("optimized_chapters", []),
+        "max_text_chars": int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")),
     })
 
 

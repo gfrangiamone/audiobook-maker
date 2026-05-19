@@ -1390,8 +1390,7 @@ async function startCombinedGeneration(){
         if(d.error_code==='selection_too_large'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-          const k='selection_too_large',tpl=t(k,{chars:(d.chars_selected||0).toLocaleString(),limit:(d.chars_limit||0).toLocaleString()});
-          showErr('s3err',(tpl&&tpl!==k)?tpl:d.error);unlockUI();return;
+          _showSelTooLargeModal(d.chars_selected,d.chars_limit);unlockUI();return;
         }
         if(d.error_code==='llm_concurrent_limit'){
           document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
@@ -1415,8 +1414,7 @@ async function startCombinedGeneration(){
         if(gd.error_code==='selection_too_large'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
-          const k='selection_too_large',tpl=t(k,{chars:(gd.chars_selected||0).toLocaleString(),limit:(gd.chars_limit||0).toLocaleString()});
-          showErr('s3err',(tpl&&tpl!==k)?tpl:gd.error);unlockUI();return;
+          _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
         }
         if(gd.error_code==='concurrent_limit'){
           document.getElementById('pMsg').textContent=t('concurrent_limit')||gd.error;
@@ -2543,6 +2541,35 @@ function autoFixVoice(langCode){
 }
 
 function goToAudioSettings(){goToStep(3)}
+
+function _computeSelectedChars(){
+  if(!bookData||!Array.isArray(bookData.chapters))return 0;
+  const sel=new Set(_getSelectedChapterIndexes());
+  let total=0;
+  bookData.chapters.forEach(ch=>{if(sel.has(ch.index))total+=(ch.chars||0)});
+  return total;
+}
+function _showSelTooLargeModal(charsSelected,limit){
+  const body=document.getElementById('selTooLargeBody');
+  if(body){
+    const k='sel_too_large_body';
+    const tpl=t(k,{chars:(charsSelected||0).toLocaleString(),limit:(limit||0).toLocaleString()});
+    body.textContent=(tpl&&tpl!==k)?tpl:('Selection too large: '+(charsSelected||0).toLocaleString()+' characters (limit '+(limit||0).toLocaleString()+'). Please reduce the chapter selection.');
+  }
+  const m=document.getElementById('selTooLargeModal');if(m)m.classList.add('open');
+}
+function closeSelTooLargeModal(){const m=document.getElementById('selTooLargeModal');if(m)m.classList.remove('open')}
+function tryGoToAudioSettings(){
+  const sel=_getSelectedChapterIndexes();
+  if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
+  const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
+  const limit=(bookData&&bookData.max_text_chars)|0;
+  if(limit>0){
+    const chars=_computeSelectedChars();
+    if(chars>limit){_showSelTooLargeModal(chars,limit);return}
+  }
+  goToStep(3);
+}
 
 // ═══════════════════ COOKIE CONSENT BANNER (Consent Mode v2) ═══════════════════
 (function(){
