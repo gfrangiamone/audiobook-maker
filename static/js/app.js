@@ -548,9 +548,9 @@ async function analyzeEpub(file){
       // update both the wizard and the modal in-place.
       _showWizProgress();
       _setWizPct(pct);
+      _showJobRunningModal(pct,jobId);
       if(d.status==='optimizing'){_listenOptProgressWiz()}
       else if(d.status==='generating'){listenProgress()}
-      _showJobRunningModal(pct);
       return;
     }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
@@ -701,22 +701,7 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  // Voci Gemini TTS (se presenti)
-  const geminiVoices=lang.voices.filter(v=>v.engine==='gemini');
-  if(geminiVoices.length>0){
-    lg='';
-    for(const v of geminiVoices){
-      if(lg!=='gemini-grp'){
-        const g=document.createElement('optgroup');
-        g.label='★ Gemini TTS';
-        sel.appendChild(g);lg='gemini-grp';
-      }
-      const o=document.createElement('option');o.value=v.id;
-      o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
-      o.classList.add('gemini-voice');
-      sel.lastElementChild.appendChild(o);
-    }
-  }
+  // Voci Gemini: deliberatamente NON inserite nella select utente.
   // Preserve user's prior voice selection if still available in the rebuilt list.
   // Setting sel.value to a non-existent option silently fails (sel.value becomes ''),
   // so we can detect a real restore by comparing back.
@@ -1393,8 +1378,9 @@ async function startCombinedGeneration(){
           _showSelTooLargeModal(d.chars_selected,d.chars_limit);unlockUI();return;
         }
         if(d.error_code==='llm_concurrent_limit'){
-          document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
-          document.getElementById('pMsg').style.color='var(--err)';
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('llm_concurrent_limit')||d.error);
         }else{showPErr(d.error)}
         unlockUI();return;
       }
@@ -1417,12 +1403,9 @@ async function startCombinedGeneration(){
           _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
         }
         if(gd.error_code==='concurrent_limit'){
-          document.getElementById('pMsg').textContent=t('concurrent_limit')||gd.error;
-          document.getElementById('pMsg').style.color='var(--err)';
-          document.getElementById('pBar').style.width='0%';
-          document.getElementById('pPct').textContent='';
-          document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-          document.getElementById('btnRetryWiz').onclick=retryGeneration;
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('concurrent_limit')||gd.error);
           unlockUI();return;
         }
         if(gd.error_code==='google_tts_budget'){
@@ -1447,7 +1430,9 @@ function _setWizPct(pct){
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=p+'%';
 }
 
-function _showJobRunningModal(pct){
+var _jobRunningModalJobId=null;
+function _showJobRunningModal(pct,forJobId){
+  _jobRunningModalJobId=forJobId||jobId||null;
   var pctVal=Math.round(pct||0);
   var msg=t('job_already_running',{pct:pctVal});
   var modal=document.getElementById('jobRunningModal');
@@ -1459,7 +1444,7 @@ function _showJobRunningModal(pct){
     el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
     el.innerHTML='<div class="modal" style="max-width:480px"><div class="modal-head"><h2>'+t('job_already_running_title')+'</h2></div><div class="modal-body">'+msg+'</div></div>';
     el._dynamic=true;
-    el.onclick=function(ev){if(ev.target===el){el.remove();resetAll();}};
+    el.onclick=function(ev){if(ev.target===el){el.remove();_jobRunningModalJobId=null;resetAll();}};
     document.body.appendChild(el);
     return;
   }
@@ -1473,17 +1458,26 @@ function _showJobRunningModal(pct){
   modal.classList.add('open');
   modal.style.display='';
   var closeBtn=document.getElementById('jobRunningClose');
-  if(closeBtn)closeBtn.onclick=_hideJobRunningModal;
+  if(closeBtn)closeBtn.onclick=function(){_hideJobRunningModal();};
   modal.onclick=function(ev){if(ev.target===modal)_hideJobRunningModal();};
 }
-function _hideJobRunningModal(reset){
+function _hideJobRunningModal(reset,forJobId){
+  // If forJobId is provided, only hide if it matches the modal's tracked job.
+  // Prevents an SSE for a different in-progress job from closing a modal
+  // that is showing the user a different job's status.
+  if(forJobId!=null&&_jobRunningModalJobId!=null&&forJobId!==_jobRunningModalJobId)return;
   var modal=document.getElementById('jobRunningModal');
-  if(!modal)return;
+  if(!modal){_jobRunningModalJobId=null;return}
   if(modal._dynamic){modal.remove();}
   else{modal.classList.remove('open');}
+  _jobRunningModalJobId=null;
   if(reset!==false)resetAll(); // reset only when user manually closes the modal
 }
-function _updateJobRunningPct(pct){
+function _updateJobRunningPct(pct,forJobId){
+  // Only update the modal if the SSE tick belongs to the job the modal is
+  // tracking. With multiple concurrent jobs the user may have several SSE
+  // streams alive, all targeting the same DOM element.
+  if(forJobId!=null&&_jobRunningModalJobId!=null&&forJobId!==_jobRunningModalJobId)return;
   const span=document.getElementById('jobRunningPct');
   if(span)span.textContent=Math.round(pct||0);
 }
@@ -1510,14 +1504,15 @@ function _showWizProgress(){
 }
 
 function _listenOptProgressWiz(){
-  var es=new EventSource('/api/optimize_progress/'+jobId);
+  var myJobId=jobId;
+  var es=new EventSource('/api/optimize_progress/'+myJobId);
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
     if(d.status==='error'){
-      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
+      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
     }
     if(d.status==='cancelled'){
-      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');
+      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
       document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
       unlockUI();return;
     }
@@ -1574,7 +1569,7 @@ function _listenOptProgressWiz(){
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
     const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.opt_progress_message)progressPhase.textContent=d.opt_progress_message;
-    _updateJobRunningPct(pct);
+    _updateJobRunningPct(pct,myJobId);
 
     var pChEl=document.getElementById('pCh');
     if(pChEl&&d.opt_current_chapter){pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);}
@@ -1732,10 +1727,10 @@ async function startGen(){
         showErr('s3err',d.error);unlockUI();return;
       }
       if(d.error_code==='concurrent_limit'){
-        document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';
-        document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='';
-        document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-        document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',t('concurrent_limit')||d.error);
+        unlockUI();return
       }
       if(d.error_code==='google_tts_budget'){
         document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);document.getElementById('pMsg').style.color='var(--err)';
@@ -1751,13 +1746,14 @@ async function startGen(){
 function listenProgress(){
   let retries=0;
   const maxRetries=5;
+  const myJobId=jobId;
   function connect(){
-    const es=new EventSource('/api/progress/'+jobId);
+    const es=new EventSource('/api/progress/'+myJobId);
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
-      if(d.status==='error'){es.close();_hideJobRunningModal();showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
-      if(d.status==='cancelled'){es.close();_hideJobRunningModal();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
+      if(d.status==='error'){es.close();_hideJobRunningModal(true,myJobId);showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
+      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       // Update both old and new progress elements
@@ -1767,7 +1763,7 @@ function listenProgress(){
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.progress_message)progressPhase.textContent=d.progress_message;
-      _updateJobRunningPct(pct);
+      _updateJobRunningPct(pct,myJobId);
 
       if(d.current_chapter)
         document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
@@ -1795,7 +1791,7 @@ function listenProgress(){
       if(d.status==='done'){
         es.close();
         generating=false;jobDone=true;
-        _hideJobRunningModal(false); // don't reset — keep jobId for download buttons
+        _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons
         unlockUI();
         document.getElementById('pPct').textContent='100%';
         document.getElementById('pBar').style.width='100%';
