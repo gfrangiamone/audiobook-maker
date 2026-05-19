@@ -961,6 +961,9 @@ function fillPreview(d){
 }
 
 function updateSelection(){
+  // Clear any stale "selection too large" error: the user is changing the selection
+  // in response to it, so the previous message is no longer relevant.
+  const s3errEl=document.getElementById('s3err');if(s3errEl)s3errEl.innerHTML='';
   let boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
   if(!boxes.length)boxes=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');
   let cnt=0,words=0,mins=0;
@@ -1384,6 +1387,12 @@ async function startCombinedGeneration(){
       var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       var d=await r.json();
       if(d.error){
+        if(d.error_code==='selection_too_large'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          const k='selection_too_large',tpl=t(k,{chars:(d.chars_selected||0).toLocaleString(),limit:(d.chars_limit||0).toLocaleString()});
+          showErr('s3err',(tpl&&tpl!==k)?tpl:d.error);unlockUI();return;
+        }
         if(d.error_code==='llm_concurrent_limit'){
           document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
           document.getElementById('pMsg').style.color='var(--err)';
@@ -1403,6 +1412,12 @@ async function startCombinedGeneration(){
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
+        if(gd.error_code==='selection_too_large'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          const k='selection_too_large',tpl=t(k,{chars:(gd.chars_selected||0).toLocaleString(),limit:(gd.chars_limit||0).toLocaleString()});
+          showErr('s3err',(tpl&&tpl!==k)?tpl:gd.error);unlockUI();return;
+        }
         if(gd.error_code==='concurrent_limit'){
           document.getElementById('pMsg').textContent=t('concurrent_limit')||gd.error;
           document.getElementById('pMsg').style.color='var(--err)';
@@ -1713,6 +1728,11 @@ async function startGen(){
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
+      if(d.error_code==='selection_too_large'){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',d.error);unlockUI();return;
+      }
       if(d.error_code==='concurrent_limit'){
         document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';
         document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='';

@@ -6814,5 +6814,8 @@ if __name__ == "__main__":
     print(f"  Script folder: {SCRIPT_DIR}")
     print(f"  Data folder:   {UPLOAD_DIR}")
     print(f"  Activity log:  {SCRIPT_DIR / 'activity_YYYY-MM.log'}")
+    _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
+    print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
+          f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
     print(f"{'='*50}\n")
     app.run(host="127.0.0.1", port=PORT, debug=True)
