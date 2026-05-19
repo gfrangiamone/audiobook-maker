@@ -553,7 +553,7 @@ def _find_files_in_outputs(job_dir, pattern):
     return results
 
 
-def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, **kwargs):
+def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, **kwargs):
     # HEAD e Range request (anteprima/resume del browser o client email) non devono
     # consumare il quota di 5 download: serviamo il file senza toccare il counter.
     is_probe = False
@@ -561,7 +561,11 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
         is_probe = request.method == "HEAD" or bool(request.headers.get("Range"))
     except Exception:
         pass
-    if is_probe:
+    # bypass_throttle: per le rotte UI autenticate (cookie owner via
+    # _check_job_owner). Il throttle è disegnato per i link email pubblici via
+    # token, non per il proprietario del job. Senza bypass, un download via
+    # email link 30s prima blocca quello via UI sullo stesso file.
+    if is_probe or bypass_throttle:
         response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
         if no_cache:
             _apply_no_cache(response)
@@ -749,6 +753,8 @@ async def _fetch_voices():
     # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
     # `gemini_tts is not None` significa solo che il modulo è importato;
     # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
+    # NB: il branch GEMINI espone le voci nel tab "PREMIUM" (la rimozione
+    # fatta su main era temporanea per la release pre-feature).
     if gemini_tts is not None and gemini_tts.is_available():
         try:
             gem_dict = gemini_tts.get_voices()
@@ -1629,6 +1635,7 @@ def admin_logs():
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
             "gemini_started": "Gen. Gemini",
+            "eta_label": "Stima completamento gen.",
         },
         "en": {
             "sessions": "Sessions", "gen_completed": "Gen. completed",
@@ -1638,6 +1645,7 @@ def admin_logs():
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
             "gemini_started": "Gemini runs",
+            "eta_label": "ETA",
         },
         "fr": {
             "sessions": "Sessions", "gen_completed": "Gén. terminée",
@@ -1647,6 +1655,7 @@ def admin_logs():
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
             "gemini_started": "Gén. Gemini",
+            "eta_label": "ETA",
         },
         "de": {
             "sessions": "Sitzungen", "gen_completed": "Gen. abgeschlossen",
@@ -1656,6 +1665,7 @@ def admin_logs():
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
             "gemini_started": "Gemini-Läufe",
+            "eta_label": "ETA",
         },
         "es": {
             "sessions": "Sesiones", "gen_completed": "Gen. completada",
@@ -1665,6 +1675,7 @@ def admin_logs():
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
             "gemini_started": "Gen. Gemini",
+            "eta_label": "ETA",
         },
         "zh": {
             "sessions": "会话", "gen_completed": "生成完成",
@@ -1674,6 +1685,7 @@ def admin_logs():
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
             "gemini_started": "Gemini 生成",
+            "eta_label": "预计剩余",
         },
         "hi": {
             "sessions": "सत्र", "gen_completed": "जनरेशन पूर्ण",
@@ -1683,6 +1695,7 @@ def admin_logs():
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
             "gemini_started": "Gemini जनरेशन",
+            "eta_label": "शेष",
         },
     }
     _blang = _get_browser_lang()
@@ -1972,6 +1985,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
 .stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
+.stat-eta{{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}}
+.stat-eta .eta-lbl{{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}}
 .day-group{{margin:0 12px 6px}}
 .day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
 .day-header:hover{{background:var(--surface2)}}
@@ -2031,7 +2046,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 <div class="stats">
     <div class="stat active" data-filter="all" onclick="filterCards('all',this)"><div class="num">{total_sessions}</div><div class="lbl">{t["sessions"]}</div></div>
     <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)"><div class="num">{gen_completed}</div><div class="lbl">{t["gen_completed"]}</div></div>
-    <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div></div>
+    <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div><div class="stat-eta" id="statEta"></div></div>
     <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">{gen_cancelled}</div><div class="lbl">{t["cancelled"]}</div></div>
     <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
@@ -2209,6 +2224,58 @@ function updateLiveTimers() {{
         const s = String(diff % 60).padStart(2, '0');
         timer.textContent = h + ':' + m + ':' + s;
     }});
+    updateAggregateEta();
+}}
+
+function fmtEta(sec) {{
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) {{
+        return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    }}
+    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}}
+
+function updateAggregateEta() {{
+    const box = document.getElementById('statEta');
+    if (!box) return;
+    const cards = document.querySelectorAll('.card-in-progress');
+    const now = new Date();
+    let maxRemaining = -1;
+    let unknownCount = 0;
+    let estimableCount = 0;
+    cards.forEach(card => {{
+        const timer = card.querySelector('.live-timer');
+        const pctEl = card.querySelector('.card-pct');
+        if (!timer) return;
+        if (pctEl && !pctEl.hasAttribute('data-sid')) return;
+        const start = new Date(timer.dataset.start);
+        const elapsed = Math.max(0, (now - start) / 1000);
+        let pct = 0;
+        if (pctEl) {{
+            const m = pctEl.textContent.match(/(\\d+)/);
+            if (m) pct = parseInt(m[1], 10);
+        }}
+        if (pct <= 0 || pct >= 100 || elapsed <= 0) {{
+            unknownCount++;
+            return;
+        }}
+        const remaining = elapsed * (100 - pct) / pct;
+        estimableCount++;
+        if (remaining > maxRemaining) maxRemaining = remaining;
+    }});
+    if (cards.length === 0) {{
+        box.textContent = '';
+        return;
+    }}
+    if (estimableCount === 0) {{
+        box.innerHTML = '<span class="eta-lbl">{t["eta_label"]}</span>--:--';
+        return;
+    }}
+    const prefix = unknownCount > 0 ? '≥ ' : '';
+    box.innerHTML = '<span class="eta-lbl">{t["eta_label"]}</span>' + prefix + fmtEta(maxRemaining);
 }}
 
 async function updateLiveProgress() {{
@@ -2233,6 +2300,7 @@ if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveTimers, 1000);
     setInterval(updateLiveProgress, 5000);
     updateLiveProgress();
+    updateAggregateEta();
 }}
 
 //  -  -  Admin: sospensione nuovi processi  -  -
@@ -4098,7 +4166,7 @@ tr.archived{opacity:.45}
     <input id="nTitle" maxlength="200">
     <label>Testo</label>
     <textarea id="nBody" rows="4" maxlength="2000"></textarea>
-    <div style="margin-top:10px"><button onclick="createNews()">Pubblica</button></div>
+    <div style="margin-top:10px"><button id="nPublish" onclick="createNews()">Pubblica</button></div>
     <div id="nMsg"></div>
   </div>
   <div class="toolbar">
@@ -4228,16 +4296,24 @@ async function createNews(){
   };
   const msg=document.getElementById('nMsg');
   if(!body.title.trim()){msg.innerHTML='<div class="msg err">Titolo richiesto</div>';return;}
-  const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
-  if(r.ok){
-    msg.innerHTML='<div class="msg ok">Pubblicata</div>';
-    document.getElementById('nTitle').value='';
-    document.getElementById('nBody').value='';
-    document.getElementById('nBanner').checked=false;
-    loadNews();
-  } else {
-    const e=await r.json().catch(()=>({error:'errore'}));
-    msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+  const btn=document.getElementById('nPublish');
+  const origLabel=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Pubblicazione…';}
+  msg.innerHTML='<div class="msg">Pubblicazione in corso…</div>';
+  try{
+    const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
+    if(r.ok){
+      msg.innerHTML='<div class="msg ok">Pubblicata</div>';
+      document.getElementById('nTitle').value='';
+      document.getElementById('nBody').value='';
+      document.getElementById('nBanner').checked=false;
+      loadNews();
+    } else {
+      const e=await r.json().catch(()=>({error:'errore'}));
+      msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+    }
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent=origLabel;}
   }
 }
 
@@ -4278,7 +4354,9 @@ async function submitReply(){
   if(!text){document.getElementById('replyErr').textContent='Testo richiesto';document.getElementById('replyErr').hidden=false;return;}
   if(text.length > 2000){document.getElementById('replyErr').textContent='Max 2000 caratteri';document.getElementById('replyErr').hidden=false;return;}
   const btn = document.getElementById('replySubmit');
+  const origLabel = btn ? btn.textContent : '';
   btn.disabled = true;
+  btn.textContent = '⏳ Traduzione in corso…';
   const errEl = document.getElementById('replyErr');
   errEl.hidden = true;
   try {
@@ -4299,13 +4377,16 @@ async function submitReply(){
     errEl.hidden = false;
   } finally {
     btn.disabled = false;
+    btn.textContent = origLabel;
   }
 }
 async function deleteReply(){
   if(!_replyItemId) return;
   if(!confirm('Eliminare la risposta? L\'azione non è reversibile.')) return;
   const btn = document.getElementById('replyDelete');
+  const origLabel = btn ? btn.textContent : '';
   btn.disabled = true;
+  btn.textContent = '⏳ Eliminazione…';
   const errEl = document.getElementById('replyErr');
   errEl.hidden = true;
   try {
@@ -4325,6 +4406,7 @@ async function deleteReply(){
     errEl.hidden = false;
   } finally {
     btn.disabled = false;
+    btn.textContent = origLabel;
   }
 }
 
@@ -4499,19 +4581,11 @@ def api_analyze():
     if not info.chapters:
         return jsonify({"error": "No content found."}), 400
 
-    # Hard cap on extracted text size: 1 char of TTS ≈ 50-100 bytes of MP3 output.
-    # ABM_MAX_TEXT_CHARS prevents huge books from producing multi-GB audio files
-    # and exhausting server disk. Default 1.5M chars ≈ 75-150 MB of audio.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
-    if info.total_chars > max_text_chars:
-        try:
-            file_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return jsonify({
-            "error": f"Book too large: {info.total_chars:,} characters extracted "
-                     f"(limit {max_text_chars:,}). Please split the book into smaller files."
-        }), 413
+    # NOTE: the ABM_MAX_TEXT_CHARS cap is no longer enforced here. We show the
+    # book regardless of its total size so the user can browse chapters and
+    # narrow the selection. The actual cap is applied at /api/generate and
+    # /api/optimize on the *selected* chapters, where it matters for output
+    # size and LLM cost.
 
     with _jobs_lock:
         jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
@@ -4639,6 +4713,7 @@ def api_analyze():
         "llm_available": _llm_available(),
         "ai_optimized": abm_ai_optimized,
         "optimized_chapters": jobs[job_id].get("optimized_chapters", []),
+        "max_text_chars": int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")),
     })
 
 
@@ -5170,7 +5245,25 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  - 
+    # Hard cap on TTS-bound text size for THIS run: applied only to the
+    # selected chapters. 1 char ≈ 50-100 bytes of MP3 output, so the limit
+    # keeps audio outputs under ~75-150 MB. The user can return to the
+    # chapter list and reduce the selection if exceeded.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    selected_chars = sum(ch.char_count for ch in info.chapters)
+    if selected_chars > max_text_chars:
+        with _jobs_lock:
+            if job["status"] == "generating":
+                job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
+        return jsonify({
+            "error": f"Selection too large: {selected_chars:,} characters "
+                     f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+            "error_code": "selection_too_large",
+            "chars_selected": selected_chars,
+            "chars_limit": max_text_chars,
+        }), 413
+
+    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  -
     # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
     # parallele non possono passare lo stesso check. Il refund della parte
     # non consumata avviene in run_generation in caso di errore/cancellazione.
@@ -5524,6 +5617,26 @@ def api_optimize_estimate(job_id):
     else:
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
     cost = _estimate_llm_cost_eur(total_chars)
+
+    # Pre-validate the output-size cap against the full selected set so the
+    # user is informed before being asked to pay.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    if raw_sel:
+        selected_set_cap = set(selected_indices)
+    else:
+        selected_set_cap = {ch.index for ch in info.chapters}
+    selected_chars_total = sum(
+        ch.char_count for ch in info.chapters if ch.index in selected_set_cap
+    )
+    if selected_chars_total > max_text_chars:
+        return jsonify({
+            "error": f"Selection too large: {selected_chars_total:,} characters "
+                     f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+            "error_code": "selection_too_large",
+            "chars_selected": selected_chars_total,
+            "chars_limit": max_text_chars,
+        }), 413
+
     return jsonify({
         "chars": total_chars, "cost_eur": cost,
         "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
@@ -6031,6 +6144,33 @@ def api_optimize():
     print(f"[{job_id}] OPTIMIZE raw selected_chapters: {raw_selected!r} -> parsed: {selected_chapters!r} -> to_optimize: {chapters_to_optimize!r}")
     if not chapters_to_optimize:
         return jsonify({"status": "already_optimized", "optimized_chapters": list(already)})
+
+    # Hard cap on text size for the final audio output, applied to the full
+    # selected set (already-optimized + to-optimize). Blocks early so the
+    # user doesn't pay for LLM optimization on a selection that cannot be
+    # rendered to audio.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    if info is not None:
+        if selected_chapters:
+            selected_set_for_cap = set(selected_chapters)
+        else:
+            selected_set_for_cap = {ch.index for ch in info.chapters}
+        selected_chars_total = sum(
+            ch.char_count for ch in info.chapters if ch.index in selected_set_for_cap
+        )
+        if selected_chars_total > max_text_chars:
+            # Release the "optimizing" status claimed above so the user can
+            # retry with a smaller selection.
+            with _jobs_lock:
+                if job.get("status") == "optimizing":
+                    job["status"] = "analyzed"
+            return jsonify({
+                "error": f"Selection too large: {selected_chars_total:,} characters "
+                         f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+                "error_code": "selection_too_large",
+                "chars_selected": selected_chars_total,
+                "chars_limit": max_text_chars,
+            }), 413
     estimated_cost = _estimate_llm_cost_eur(total_chars)
     if estimated_cost > LLM_FREE_THRESHOLD_EUR:
         payment_token = (data.get("payment_token") or "").strip()
@@ -7313,7 +7453,7 @@ def api_download(job_id):
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
                 _do_log()
-                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
+                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, bypass_throttle=True)
             except Exception as e:
                 print(f"[{job_id}] On-demand ABM generation failed: {e}")
         # Fallback: serve existing file if any (pre-regeneration or non-AI-optimized)
@@ -7321,7 +7461,7 @@ def api_download(job_id):
         if abm_path and os.path.exists(abm_path):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "progetto"
-            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True)
+            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True)
         return "Optimized ABM project file not found", 404
 
     if download_type == "m4b":
@@ -7332,7 +7472,7 @@ def api_download(job_id):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
             print(f"[debug] M4B file found! Serving: {m4b_path}")
-            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True)
+            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
         else:
             # Physical search fallback: SOLO dentro output_dir della run corrente,
             # mai uno scan globale su tutti gli output_*/ (servirebbe un m4b di
@@ -7348,7 +7488,7 @@ def api_download(job_id):
                 print(f"[debug] M4B found via physical search: {actual_m4b}")
                 _do_log()
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
-                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True)
+                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
@@ -7360,7 +7500,7 @@ def api_download(job_id):
             if mp3_path and os.path.exists(mp3_path):
                 resp = _send_file_throttled(mp3_path, as_attachment=True,
                                             download_name=f"{_safe_filename(job['info'].title)}.mp3",
-                                            no_cache=True)
+                                            no_cache=True, bypass_throttle=True)
                 try:
                     resp.headers["X-Fallback"] = "mp3"
                     prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -7376,22 +7516,22 @@ def api_download(job_id):
             zip_name = job.get("output_name", "audiobook.zip")
             if not zip_name.endswith(".zip"):
                  zip_name = _safe_filename(job["info"].title) + ".zip"
-            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True)
+            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True, bypass_throttle=True)
         return "ZIP file not found", 404
 
     # Default logic (compatibility or auto-detect)
     # Prefer M4B if it seems to be the intended primary output
     if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
         _do_log()
-        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True)
+        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
 
     if "output_zip" in job and os.path.exists(job["output_zip"]):
         _do_log()
-        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True)
+        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
 
     if job.get("output_files") and os.path.exists(job["output_files"][0]):
         _do_log()
-        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True)
+        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
 
     return "File not found", 404
 
@@ -7415,7 +7555,7 @@ def api_download_podcast(job_id):
                           job.get("client_id", ""), job.get("client_ip", ""),
                           job.get("voice", ""), job.get("browser_lang", ""))
         return _send_file_throttled(job["output_zip"], as_attachment=True,
-                         download_name=job.get("output_name", "podcast.zip"), no_cache=True)
+                         download_name=job.get("output_name", "podcast.zip"), no_cache=True, bypass_throttle=True)
 
     # Sec (SSRF / content injection): il base_url degli <enclosure> del feed RSS è critico.
     # Se accettato dal client, un attaccante può fare pubblicare/usare il feed con enclosure
@@ -7500,7 +7640,7 @@ def api_download_podcast(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
     return _send_file_throttled(podcast_zip, as_attachment=True,
-                     download_name=f"{safe_name}_podcast.zip", no_cache=True)
+                     download_name=f"{safe_name}_podcast.zip", no_cache=True, bypass_throttle=True)
 
 
 # ----------------------------------------------------------------------
@@ -7976,5 +8116,8 @@ if __name__ == "__main__":
     print(f"  Script folder: {SCRIPT_DIR}")
     print(f"  Data folder:   {UPLOAD_DIR}")
     print(f"  Activity log:  {SCRIPT_DIR / 'activity_YYYY-MM.log'}")
+    _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
+    print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
+          f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
     print(f"{'='*50}\n")
     app.run(host="127.0.0.1", port=PORT, debug=True)

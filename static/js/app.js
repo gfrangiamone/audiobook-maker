@@ -589,9 +589,9 @@ async function analyzeEpub(file){
       // update both the wizard and the modal in-place.
       _showWizProgress();
       _setWizPct(pct);
+      _showJobRunningModal(pct,jobId);
       if(d.status==='optimizing'){_listenOptProgressWiz()}
       else if(d.status==='generating'){listenProgress()}
-      _showJobRunningModal(pct);
       return;
     }
     bookData=d;jobId=d.job_id;lo.classList.remove('vis');hideUploadProgress();
@@ -727,7 +727,9 @@ function _googleTtsAffordable(){
   return true;
 }
 function updVoices(){
-  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');sel.innerHTML='';
+  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');
+  const oldVoice=sel.value;
+  sel.innerHTML='';
   if(!voices[lc])return;
   const lang=voices[lc];
   // Separa voci per engine, edge prima poi google
@@ -764,18 +766,35 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  // Voci Gemini TTS rimosse dal tab Standard (vedi tab Premium)
-  const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
-  if(dv)sel.value=dv.id;
+  // Voci Gemini TTS NON inserite nella select Standard (vedi tab Premium).
+  // Preserve user's prior voice selection if still available in the rebuilt list.
+  // Setting sel.value to a non-existent option silently fails (sel.value becomes ''),
+  // so we can detect a real restore by comparing back.
+  let restored=false;
+  if(oldVoice){
+    sel.value=oldVoice;
+    restored=(sel.value===oldVoice);
+  }
+  if(!restored){
+    const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
+    if(dv)sel.value=dv.id;
+  }
+  // Su cambio voce: _onPreviewParamsChanged() gestisce il reset dello stato
+  // anteprima in base alla signature dei parametri (no cache su nuove combo,
+  // restore se gia` generata in passato). Sostituisce _resetPreviewState().
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();_onPreviewParamsChanged();};
   _updateVoiceChip();checkVoiceMismatch();
-  // Reset speed to "Normal" (+0%) whenever language or voice changes
-  var vrSel2=document.getElementById('vr');
-  if(vrSel2)vrSel2.value='+0%';
-  var ss=document.getElementById('speedSlider');
-  if(ss)ss.value=0;
-  var sl=document.getElementById('speedLabel');
-  if(sl)sl.textContent=t('sp_n');
+  // Reset speed to "Normal" (+0%) only when the voice actually changed (language change or first build).
+  // When the previous selection is preserved (e.g. applyI18n→fillLangs→updVoices triggered by a modal),
+  // keep the user's current speed.
+  if(!restored){
+    var vrSel2=document.getElementById('vr');
+    if(vrSel2)vrSel2.value='+0%';
+    var ss=document.getElementById('speedSlider');
+    if(ss)ss.value=0;
+    var sl=document.getElementById('speedLabel');
+    if(sl)sl.textContent=t('sp_n');
+  }
 }
 
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
@@ -1423,6 +1442,9 @@ function fillPreview(d){
 }
 
 function updateSelection(){
+  // Clear any stale "selection too large" error: the user is changing the selection
+  // in response to it, so the previous message is no longer relevant.
+  const s3errEl=document.getElementById('s3err');if(s3errEl)s3errEl.innerHTML='';
   let boxes=document.querySelectorAll('#chl .col-sel input[type=checkbox]');
   if(!boxes.length)boxes=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');
   let cnt=0,words=0,mins=0;
@@ -1873,14 +1895,16 @@ async function startCombinedGeneration(combinedPaymentToken){
       var d=await r.json();
       console.log('[startCombinedGeneration] /api/optimize body', d);
       if(d.error){
-        if(d.error_code==='llm_concurrent_limit'){
-          document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;
-          document.getElementById('pMsg').style.color='var(--err)';
-        }else{
-          showPErr(d.error);
-          const pMsgEl=document.getElementById('pMsg');
-          if(pMsgEl){pMsgEl.textContent=d.error;pMsgEl.style.color='var(--err)';}
+        if(d.error_code==='selection_too_large'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          _showSelTooLargeModal(d.chars_selected,d.chars_limit);unlockUI();return;
         }
+        if(d.error_code==='llm_concurrent_limit'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('llm_concurrent_limit')||d.error);
+        }else{showPErr(d.error)}
         unlockUI();return;
       }
       _listenOptProgressWiz();
@@ -1903,13 +1927,15 @@ async function startCombinedGeneration(combinedPaymentToken){
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
+        if(gd.error_code==='selection_too_large'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
+        }
         if(gd.error_code==='concurrent_limit'){
-          document.getElementById('pMsg').textContent=t('concurrent_limit')||gd.error;
-          document.getElementById('pMsg').style.color='var(--err)';
-          document.getElementById('pBar').style.width='0%';
-          document.getElementById('pPct').textContent='';
-          document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-          document.getElementById('btnRetryWiz').onclick=retryGeneration;
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('concurrent_limit')||gd.error);
           unlockUI();return;
         }
         if(gd.error_code==='google_tts_budget'){
@@ -1942,7 +1968,9 @@ function _setWizPct(pct){
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=p+'%';
 }
 
-function _showJobRunningModal(pct){
+var _jobRunningModalJobId=null;
+function _showJobRunningModal(pct,forJobId){
+  _jobRunningModalJobId=forJobId||jobId||null;
   var pctVal=Math.round(pct||0);
   var msg=t('job_already_running',{pct:pctVal});
   var modal=document.getElementById('jobRunningModal');
@@ -1954,7 +1982,7 @@ function _showJobRunningModal(pct){
     el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
     el.innerHTML='<div class="modal" style="max-width:480px"><div class="modal-head"><h2>'+t('job_already_running_title')+'</h2></div><div class="modal-body">'+msg+'</div></div>';
     el._dynamic=true;
-    el.onclick=function(ev){if(ev.target===el){el.remove();resetAll();}};
+    el.onclick=function(ev){if(ev.target===el){el.remove();_jobRunningModalJobId=null;resetAll();}};
     document.body.appendChild(el);
     return;
   }
@@ -1968,17 +1996,26 @@ function _showJobRunningModal(pct){
   modal.classList.add('open');
   modal.style.display='';
   var closeBtn=document.getElementById('jobRunningClose');
-  if(closeBtn)closeBtn.onclick=_hideJobRunningModal;
+  if(closeBtn)closeBtn.onclick=function(){_hideJobRunningModal();};
   modal.onclick=function(ev){if(ev.target===modal)_hideJobRunningModal();};
 }
-function _hideJobRunningModal(reset){
+function _hideJobRunningModal(reset,forJobId){
+  // If forJobId is provided, only hide if it matches the modal's tracked job.
+  // Prevents an SSE for a different in-progress job from closing a modal
+  // that is showing the user a different job's status.
+  if(forJobId!=null&&_jobRunningModalJobId!=null&&forJobId!==_jobRunningModalJobId)return;
   var modal=document.getElementById('jobRunningModal');
-  if(!modal)return;
+  if(!modal){_jobRunningModalJobId=null;return}
   if(modal._dynamic){modal.remove();}
   else{modal.classList.remove('open');}
+  _jobRunningModalJobId=null;
   if(reset!==false)resetAll(); // reset only when user manually closes the modal
 }
-function _updateJobRunningPct(pct){
+function _updateJobRunningPct(pct,forJobId){
+  // Only update the modal if the SSE tick belongs to the job the modal is
+  // tracking. With multiple concurrent jobs the user may have several SSE
+  // streams alive, all targeting the same DOM element.
+  if(forJobId!=null&&_jobRunningModalJobId!=null&&forJobId!==_jobRunningModalJobId)return;
   const span=document.getElementById('jobRunningPct');
   if(span)span.textContent=Math.round(pct||0);
 }
@@ -2096,14 +2133,15 @@ function _showWizProgress(){
 }
 
 function _listenOptProgressWiz(){
-  var es=new EventSource('/api/optimize_progress/'+jobId);
+  var myJobId=jobId;
+  var es=new EventSource('/api/optimize_progress/'+myJobId);
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
     if(d.status==='error'){
-      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
+      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
     }
     if(d.status==='cancelled'){
-      es.close();_hideJobRunningModal();_setCancelButtonMode('gen');
+      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
       document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
       unlockUI();return;
     }
@@ -2160,7 +2198,7 @@ function _listenOptProgressWiz(){
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
     const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.opt_progress_message)progressPhase.textContent=d.opt_progress_message;
-    _updateJobRunningPct(pct);
+    _updateJobRunningPct(pct,myJobId);
 
     var pChEl=document.getElementById('pCh');
     if(pChEl&&d.opt_current_chapter){pChEl.textContent='Cap. '+(d.opt_current_chapter_num||'?')+'/'+(d.opt_progress_total||'?')+': '+String(d.opt_current_chapter).substring(0,40);}
@@ -2312,11 +2350,16 @@ async function startGen(){
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
+      if(d.error_code==='selection_too_large'){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',d.error);unlockUI();return;
+      }
       if(d.error_code==='concurrent_limit'){
-        document.getElementById('pMsg').textContent=t('concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';
-        document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='';
-        document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-        document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',t('concurrent_limit')||d.error);
+        unlockUI();return
       }
       if(d.error_code==='google_tts_budget'){
         document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);document.getElementById('pMsg').style.color='var(--err)';
@@ -2339,26 +2382,31 @@ async function startGen(){
 function listenProgress(){
   let retries=0;
   const maxRetries=5;
+  const myJobId=jobId;
   function connect(){
-    const es=new EventSource('/api/progress/'+jobId);
+    const es=new EventSource('/api/progress/'+myJobId);
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
       if(d.status==='error'){
         es.close();
-        _hideJobRunningModal(false); // no resetAll: vogliamo restare nel wizard
         unlockUI();
         generating=false;
         document.getElementById('cnA').style.display='none';
         try{console.log('[abm] job error payload:', d);}catch(e){}
         if(d.error_kind==='gemini_overload'){
+          // Restiamo nel wizard per mostrare il modal Gemini overload;
+          // no resetAll. Passiamo myJobId per evitare di chiudere modal
+          // di altri job concorrenti.
+          _hideJobRunningModal(false,myJobId);
           _showGeminiOverloadModal(d);
         }else{
+          _hideJobRunningModal(true,myJobId);
           showPErr(d.error||'Errore');
         }
         return;
       }
-      if(d.status==='cancelled'){es.close();_hideJobRunningModal();document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
+      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       // Update both old and new progress elements
@@ -2368,7 +2416,7 @@ function listenProgress(){
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.progress_message)progressPhase.textContent=d.progress_message;
-      _updateJobRunningPct(pct);
+      _updateJobRunningPct(pct,myJobId);
 
       if(d.current_chapter)
         document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
@@ -2396,7 +2444,7 @@ function listenProgress(){
       if(d.status==='done'){
         es.close();
         generating=false;jobDone=true;
-        _hideJobRunningModal(false); // don't reset — keep jobId for download buttons
+        _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons
         unlockUI();
         document.getElementById('pPct').textContent='100%';
         document.getElementById('pBar').style.width='100%';
@@ -3149,6 +3197,35 @@ function autoFixVoice(langCode){
 }
 
 function goToAudioSettings(){goToStep(3)}
+
+function _computeSelectedChars(){
+  if(!bookData||!Array.isArray(bookData.chapters))return 0;
+  const sel=new Set(_getSelectedChapterIndexes());
+  let total=0;
+  bookData.chapters.forEach(ch=>{if(sel.has(ch.index))total+=(ch.chars||0)});
+  return total;
+}
+function _showSelTooLargeModal(charsSelected,limit){
+  const body=document.getElementById('selTooLargeBody');
+  if(body){
+    const k='sel_too_large_body';
+    const tpl=t(k,{chars:(charsSelected||0).toLocaleString(),limit:(limit||0).toLocaleString()});
+    body.textContent=(tpl&&tpl!==k)?tpl:('Selection too large: '+(charsSelected||0).toLocaleString()+' characters (limit '+(limit||0).toLocaleString()+'). Please reduce the chapter selection.');
+  }
+  const m=document.getElementById('selTooLargeModal');if(m)m.classList.add('open');
+}
+function closeSelTooLargeModal(){const m=document.getElementById('selTooLargeModal');if(m)m.classList.remove('open')}
+function tryGoToAudioSettings(){
+  const sel=_getSelectedChapterIndexes();
+  if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
+  const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
+  const limit=(bookData&&bookData.max_text_chars)|0;
+  if(limit>0){
+    const chars=_computeSelectedChars();
+    if(chars>limit){_showSelTooLargeModal(chars,limit);return}
+  }
+  goToStep(3);
+}
 
 // ═══════════════════ COOKIE CONSENT BANNER (Consent Mode v2) ═══════════════════
 (function(){

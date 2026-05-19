@@ -42,7 +42,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `MAX_CONTENT_LENGTH` | da `ABM_MAX_UPLOAD_MB` (default `50` MB) | `audiobook_app.py` | 163 |
-| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) | `audiobook_app.py` | 3604 |
+| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) — applicato ai capitoli **selezionati** in `/api/generate`, `/api/optimize` e `/api/optimize_estimate`; il libro viene analizzato e mostrato a prescindere dalla dimensione totale | `audiobook_app.py` | — |
 
 ---
 
