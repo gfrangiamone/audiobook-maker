@@ -669,7 +669,9 @@ function _googleTtsAffordable(){
   return true;
 }
 function updVoices(){
-  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');sel.innerHTML='';
+  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');
+  const oldVoice=sel.value;
+  sel.innerHTML='';
   if(!voices[lc])return;
   const lang=voices[lc];
   // Separa voci per engine, edge prima poi google
@@ -715,17 +717,31 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
-  if(dv)sel.value=dv.id;
+  // Preserve user's prior voice selection if still available in the rebuilt list.
+  // Setting sel.value to a non-existent option silently fails (sel.value becomes ''),
+  // so we can detect a real restore by comparing back.
+  let restored=false;
+  if(oldVoice){
+    sel.value=oldVoice;
+    restored=(sel.value===oldVoice);
+  }
+  if(!restored){
+    const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+    if(dv)sel.value=dv.id;
+  }
   sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();if(_previewGenerated)_resetPreviewState();};
   _updateVoiceChip();checkVoiceMismatch();
-  // Reset speed to "Normal" (+0%) whenever language or voice changes
-  var vrSel2=document.getElementById('vr');
-  if(vrSel2)vrSel2.value='+0%';
-  var ss=document.getElementById('speedSlider');
-  if(ss)ss.value=0;
-  var sl=document.getElementById('speedLabel');
-  if(sl)sl.textContent=t('sp_n');
+  // Reset speed to "Normal" (+0%) only when the voice actually changed (language change or first build).
+  // When the previous selection is preserved (e.g. applyI18n→fillLangs→updVoices triggered by a modal),
+  // keep the user's current speed.
+  if(!restored){
+    var vrSel2=document.getElementById('vr');
+    if(vrSel2)vrSel2.value='+0%';
+    var ss=document.getElementById('speedSlider');
+    if(ss)ss.value=0;
+    var sl=document.getElementById('speedLabel');
+    if(sl)sl.textContent=t('sp_n');
+  }
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
