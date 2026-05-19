@@ -681,26 +681,9 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Google voices: {e}")
 
-    # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
-    # `gemini_tts is not None` significa solo che il modulo è importato;
-    # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
-    if gemini_tts is not None and gemini_tts.is_available():
-        try:
-            gem_dict = gemini_tts.get_voices()
-            for lc_short, v_list in gem_dict.items():
-                if lc_short not in languages:
-                    languages[lc_short] = {
-                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
-                        "voices": []
-                    }
-                # Gemini voices are multilingual / genderless from the API.
-                # Shim gender fields so existing sort + frontend grouping work.
-                for v in v_list:
-                    v.setdefault("gender", "Neutral")
-                    v.setdefault("gender_icon", "★")
-                languages[lc_short]["voices"].extend(v_list)
-        except Exception as e:
-            print(f"Error merging Gemini voices: {e}")
+    # 3. Voci Gemini: deliberatamente NON esposte all'elenco UI in nessun caso.
+    #    Il modulo gemini_tts resta importato per la pipeline interna, ma le sue
+    #    voci non devono mai apparire nel selector lato utente.
 
     # Sorting
     for lang in languages.values():
@@ -1561,6 +1544,7 @@ def admin_logs():
             "recurring": "Ricorrenti", "months": "Mesi",
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
+            "eta_label": "Stima completamento gen.",
         },
         "en": {
             "sessions": "Sessions", "gen_completed": "Gen. completed",
@@ -1569,6 +1553,7 @@ def admin_logs():
             "recurring": "Returning", "months": "Months",
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
+            "eta_label": "ETA",
         },
         "fr": {
             "sessions": "Sessions", "gen_completed": "Gén. terminée",
@@ -1577,6 +1562,7 @@ def admin_logs():
             "recurring": "Récurrents", "months": "Mois",
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
+            "eta_label": "ETA",
         },
         "de": {
             "sessions": "Sitzungen", "gen_completed": "Gen. abgeschlossen",
@@ -1585,6 +1571,7 @@ def admin_logs():
             "recurring": "Wiederkehrend", "months": "Monate",
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
+            "eta_label": "ETA",
         },
         "es": {
             "sessions": "Sesiones", "gen_completed": "Gen. completada",
@@ -1593,6 +1580,7 @@ def admin_logs():
             "recurring": "Recurrentes", "months": "Meses",
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
+            "eta_label": "ETA",
         },
         "zh": {
             "sessions": "会话", "gen_completed": "生成完成",
@@ -1601,6 +1589,7 @@ def admin_logs():
             "recurring": "常客", "months": "月份",
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
+            "eta_label": "预计剩余",
         },
         "hi": {
             "sessions": "सत्र", "gen_completed": "जनरेशन पूर्ण",
@@ -1609,6 +1598,7 @@ def admin_logs():
             "recurring": "नियमित", "months": "महीने",
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
+            "eta_label": "शेष",
         },
     }
     _blang = _get_browser_lang()
@@ -1886,6 +1876,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
 .stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
+.stat-eta{{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}}
+.stat-eta .eta-lbl{{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}}
 .day-group{{margin:0 12px 6px}}
 .day-header{{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;user-select:none;margin-top:8px;transition:background .15s}}
 .day-header:hover{{background:var(--surface2)}}
@@ -1944,7 +1936,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 <div class="stats">
     <div class="stat active" data-filter="all" onclick="filterCards('all',this)"><div class="num">{total_sessions}</div><div class="lbl">{t["sessions"]}</div></div>
     <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)"><div class="num">{gen_completed}</div><div class="lbl">{t["gen_completed"]}</div></div>
-    <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div></div>
+    <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div><div class="stat-eta" id="statEta"></div></div>
     <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">{gen_cancelled}</div><div class="lbl">{t["cancelled"]}</div></div>
     <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
@@ -2120,6 +2112,58 @@ function updateLiveTimers() {{
         const s = String(diff % 60).padStart(2, '0');
         timer.textContent = h + ':' + m + ':' + s;
     }});
+    updateAggregateEta();
+}}
+
+function fmtEta(sec) {{
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) {{
+        return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    }}
+    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}}
+
+function updateAggregateEta() {{
+    const box = document.getElementById('statEta');
+    if (!box) return;
+    const cards = document.querySelectorAll('.card-in-progress');
+    const now = new Date();
+    let maxRemaining = -1;
+    let unknownCount = 0;
+    let estimableCount = 0;
+    cards.forEach(card => {{
+        const timer = card.querySelector('.live-timer');
+        const pctEl = card.querySelector('.card-pct');
+        if (!timer) return;
+        if (pctEl && !pctEl.hasAttribute('data-sid')) return;
+        const start = new Date(timer.dataset.start);
+        const elapsed = Math.max(0, (now - start) / 1000);
+        let pct = 0;
+        if (pctEl) {{
+            const m = pctEl.textContent.match(/(\\d+)/);
+            if (m) pct = parseInt(m[1], 10);
+        }}
+        if (pct <= 0 || pct >= 100 || elapsed <= 0) {{
+            unknownCount++;
+            return;
+        }}
+        const remaining = elapsed * (100 - pct) / pct;
+        estimableCount++;
+        if (remaining > maxRemaining) maxRemaining = remaining;
+    }});
+    if (cards.length === 0) {{
+        box.textContent = '';
+        return;
+    }}
+    if (estimableCount === 0) {{
+        box.innerHTML = '<span class="eta-lbl">{t["eta_label"]}</span>--:--';
+        return;
+    }}
+    const prefix = unknownCount > 0 ? '≥ ' : '';
+    box.innerHTML = '<span class="eta-lbl">{t["eta_label"]}</span>' + prefix + fmtEta(maxRemaining);
 }}
 
 async function updateLiveProgress() {{
@@ -2144,6 +2188,7 @@ if (document.querySelectorAll('.live-timer').length > 0) {{
     setInterval(updateLiveTimers, 1000);
     setInterval(updateLiveProgress, 5000);
     updateLiveProgress();
+    updateAggregateEta();
 }}
 
 //  -  -  Admin: sospensione nuovi processi  -  -
