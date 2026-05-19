@@ -3174,6 +3174,7 @@ def admin_logs_page():
       tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>';
       return;
     }
+    recs = recs.slice().sort((a,b) => (b.ts||"").localeCompare(a.ts||""));
     tbody.innerHTML = recs.map(r => {
       const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
       const dPct = Number(r.delta_pct || 0);
@@ -5415,7 +5416,7 @@ def api_reset_to_chapters(job_id):
                     "optimized_abm_path", "optimized_abm_name",
                     "selected_chapters",
                     "opt_auto_generate", "opt_single_file", "opt_output_format",
-                    "opt_podcast_base_url", "opt_voice", "opt_rate",
+                    "opt_podcast_base_url", "opt_voice", "opt_rate", "opt_lang",
                     "email_token"):
             job.pop(key, None)
     # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
@@ -5998,9 +5999,12 @@ def api_optimize():
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
-    # Store language for optimization prompt selection
+    # Lingua TTS selezionata in UI: e' la fonte autoritativa per scegliere
+    # il prompt LLM (prompt_tts_<lang>.md), perche' l'ottimizzazione deve
+    # produrre testo adatto alla voce TTS scelta, non alla lingua dell'input.
+    # Es: input EN ottimizzato per voce IT -> serve prompt_tts_it.md.
     if lang:
-        job["opt_voice"] = lang  # _call_deepseek uses this if "voice" is missing
+        job["opt_lang"] = (lang.split("-")[0] or "").lower() or None
 
     client_id = job.get("client_id", "")
     # Atomic concurrency check + status claim for optimization

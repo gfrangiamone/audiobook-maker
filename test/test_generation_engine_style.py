@@ -53,9 +53,11 @@ def test_chunk_gemini_default_style_is_none(monkeypatch, tmp_path):
     assert captured["style_instruction"] is None
 
 
-def test_run_generation_applies_style_only_to_first_chunk_per_chapter(monkeypatch, tmp_path):
+def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
     """End-to-end (mocked): 2 chapters x 3 chunks each = 6 calls.
-    Expect style="calmo" on chunks 0 and 3 (first of each chapter), None on others."""
+    Expect style="calmo" su tutti i chunk -- limitarlo al primo chunk di ogni
+    capitolo faceva percepire all'utente uno stile incoerente tra preview
+    (sempre con stile) e job finale (stile solo nel ~5% dell'audio)."""
     # Capture calls to generate_chunk_pcm_gemini through patch
     captured_calls = []
     def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
@@ -83,13 +85,13 @@ def test_run_generation_applies_style_only_to_first_chunk_per_chapter(monkeypatc
                 "text": f"Cap{ch_idx+1}-Chunk{c_idx}",
                 "chars": 20,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
 
     # Avoid heavy post-processing (mp3 encoding etc.)
-    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out: open(out, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out, **kw: open(out, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "pcm_to_aac_m4b", lambda *a, **k: True)
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
     monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
@@ -118,22 +120,14 @@ def test_run_generation_applies_style_only_to_first_chunk_per_chapter(monkeypatc
     except Exception:
         pass  # OK if final mp3 assembly fails — we only care about TTS calls
 
-    # Verify the TTS calls
+    # Verify: lo stile deve essere applicato a TUTTI i 6 chunk.
     styles = [c["style_instruction"] for c in captured_calls]
-    # 6 chunks total
     assert len(captured_calls) == 6, f"expected 6 calls, got {len(captured_calls)}"
-    # Chunk 0 of chapter 1 and chunk 0 of chapter 2 should have style="calmo"
-    assert styles[0] == "calmo"
-    assert styles[3] == "calmo"
-    # The other 4 should be None
-    assert styles[1] is None
-    assert styles[2] is None
-    assert styles[4] is None
-    assert styles[5] is None
+    assert all(s == "calmo" for s in styles), f"style non applicato a tutti i chunk: {styles}"
 
 
-def test_run_generation_multi_file_branch_also_applies_style_only_to_first_chunk(monkeypatch, tmp_path):
-    """Same behaviour expected in the single_file=False (multi-file) branch."""
+def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monkeypatch, tmp_path):
+    """Stesso comportamento atteso nel branch single_file=False (multi-file)."""
     captured_calls = []
     def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
         captured_calls.append({"style_instruction": style_instruction})
@@ -157,11 +151,11 @@ def test_run_generation_multi_file_branch_also_applies_style_only_to_first_chunk
                 "text": f"Cap{ch_idx+1}-Chunk{c_idx}",
                 "chars": 20,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
-    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out: open(out, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out, **kw: open(out, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
     monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
 
@@ -191,9 +185,4 @@ def test_run_generation_multi_file_branch_also_applies_style_only_to_first_chunk
 
     styles = [c["style_instruction"] for c in captured_calls]
     assert len(captured_calls) == 6, f"expected 6 calls, got {len(captured_calls)}"
-    assert styles[0] == "vivace"
-    assert styles[3] == "vivace"
-    assert styles[1] is None
-    assert styles[2] is None
-    assert styles[4] is None
-    assert styles[5] is None
+    assert all(s == "vivace" for s in styles), f"style non applicato a tutti i chunk: {styles}"

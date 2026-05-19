@@ -40,10 +40,9 @@ CHUNK_MAX_CHARS = 2000
 def _pick_chunk_max_chars(voice_id, language):
     """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
 
-    Gemini: delega a gemini_tts.get_max_chunk_chars(lang) (default 4000
-    latine / 3000 CJK, override env ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>).
-    Tier 1 limita a 100 RPD/modello: chunk piu' grossi = meno richieste
-    per libro.
+    Gemini: delega a gemini_tts.get_max_chunk_chars(lang) (default 700 char
+    per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
+    ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
 
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
@@ -53,33 +52,25 @@ def _pick_chunk_max_chars(voice_id, language):
             import gemini_tts
             return gemini_tts.get_max_chunk_chars(lang_code)
         except Exception:
-            # Fallback prudente se il modulo non e' disponibile.
-            return 4000 if lang_code not in {"zh", "ja", "hi", "ar"} else 3000
+            return 700
     return CHUNK_MAX_CHARS
-
-
-# Margine di sicurezza riservato ai prefissi che synthesize() prepende al testo
-# (style_instruction max 300 char + envelope "[style: ...] " + rate directive
-# fino a ~30 char). Lasciamo 400 byte di buffer sul cap API per evitare che il
-# chunk passi lo splitter ma fallisca check_text_byte_size() in gemini_tts.
-_GEMINI_BYTE_SAFETY_MARGIN = 400
 
 
 def _pick_chunk_max_bytes(voice_id):
     """Cap byte UTF-8 per chunk per voci Gemini, None per altri motori.
 
-    Il cap API e' MAX_BYTES_PER_CALL (default 8000, configurabile via env);
-    lo splitter usa un cap ridotto del margine di sicurezza riservato ai
-    prefissi style/rate che synthesize() aggiunge in coda al testo.
+    Si applica al SOLO testo da sintetizzare, in linea con la semantica di
+    MAX_BYTES_PER_CALL: e` un target qualita` acustica sul testo audio, non
+    sul payload API. I prefissi style/rate aggiunti da synthesize() sono
+    direttive di prompt e non concorrono al budget byte qui.
     """
     if not (isinstance(voice_id, str) and voice_id.startswith("gemini:")):
         return None
     try:
         import gemini_tts
-        cap = int(gemini_tts.MAX_BYTES_PER_CALL)
+        return int(gemini_tts.MAX_BYTES_PER_CALL)
     except Exception:
-        cap = 8000
-    return max(1000, cap - _GEMINI_BYTE_SAFETY_MARGIN)
+        return 700
 
 
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo

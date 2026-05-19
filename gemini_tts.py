@@ -32,27 +32,24 @@ CHARS_PER_TOKEN_BY_LANG = {
     "default": 4.0,
 }
 
-# Per-language chunk size (chars) — accounts for UTF-8 byte expansion.
-# Default alzati per minimizzare il numero di richieste (critico sul Tier 1
-# che oggi limita TTS a 100 RPD per modello). Override per lingua via
-# ABM_GEMINI_MAX_CHUNK_CHARS_<LANG> (es. ABM_GEMINI_MAX_CHUNK_CHARS_IT=5000)
-# o globale via ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT.
-_DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT", "4000"))
-_CJK_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_CJK", "3000"))
-# Italiano: 5500 char di default. NON alzare a 6000: i caratteri accentati
-# italiani sono 2 byte UTF-8, quindi 6000 char possono diventare 6050+ byte e
-# sforare MAX_BYTES_PER_CALL (cap API, espresso in byte). Lo splitter ha gia'
-# un check byte-aware, ma 5500 da' margine extra senza degradare RPD in modo
-# significativo. Override via ABM_GEMINI_MAX_CHUNK_CHARS_IT.
-_IT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_MAX_CHUNK_CHARS_IT", "5500"))
-MAX_CHUNK_CHARS_BY_LANG = {
-    "it": _IT_CHUNK_CHARS,
-    "zh": _CJK_CHUNK_CHARS, "ja": _CJK_CHUNK_CHARS,
-    "hi": _CJK_CHUNK_CHARS, "ar": _CJK_CHUNK_CHARS,
-    "default": _DEFAULT_CHUNK_CHARS,
-}
+# Chunk piccoli (default 700 char) per stabilita` acustica e prosodia uniforme.
+# Lo strumento richiede Gemini Tier 2/3 (RPD elevato), quindi il costo aggiuntivo
+# in numero di richieste e` accettabile in cambio di un audio piu` naturale.
+# Override globale: ABM_GEMINI_CHUNK_CHARS. Override per-lingua:
+# ABM_GEMINI_MAX_CHUNK_CHARS_<LANG_UPPER> (vince sempre).
+DEFAULT_CHUNK_CHARS = int(os.environ.get("ABM_GEMINI_CHUNK_CHARS", "700"))
 
+# Target QUALITA` (soft) sui byte UTF-8 del TESTO PURO da sintetizzare
+# (esclusi i prefissi style/rate, che sono direttive di prompt e non audio).
+# Sopra questa soglia Gemini TTS tende a degradare acusticamente, ma la
+# chiamata API non fallisce -- synthesize() logga solo un warning.
 MAX_BYTES_PER_CALL = int(os.environ.get("ABM_GEMINI_MAX_BYTES_PER_CALL", "8000"))
+
+# Hard cap API sul PAYLOAD TOTALE (testo + prefissi style + prefix rate).
+# E` il limite tecnico oltre il quale Gemini TTS rifiuta la chiamata. Distinto
+# da MAX_BYTES_PER_CALL: quest'ultimo e` un target qualita` sul solo testo,
+# mentre API_HARD_BYTES_CAP protegge dall'overshoot complessivo della call.
+API_HARD_BYTES_CAP = int(os.environ.get("ABM_GEMINI_API_HARD_BYTES_CAP", "8000"))
 
 
 def _f(env, default):
@@ -144,6 +141,36 @@ def _retry_max_wait_sec():
 def _abort_on_daily_quota():
     # Free tier: True (inutile riprovare se retry è ore). Tier 1: False.
     return _b("ABM_GEMINI_ABORT_ON_QUOTA", True)
+
+
+# === Quality tuning =========================================================
+# Lo strumento e` pensato per Gemini Tier 2/3 (RPD elevato): privilegiamo
+# stabilita` acustica e prosodia uniforme rispetto al numero di richieste.
+# Defaults: temperature 0.75 (riduce deriva metallica sui chunk lunghi),
+# gap 250 ms tra chunk consecutivi (respiro naturale al confine). Ogni
+# parametro e` override-abile via env dedicata.
+def _temperature():
+    """Temperature passata al GenerateContentConfig. Default 0.75.
+    Override: ABM_GEMINI_TEMPERATURE (float, accetta virgola decimale)."""
+    val = os.environ.get("ABM_GEMINI_TEMPERATURE")
+    if val is not None and val.strip() != "":
+        try:
+            return float(val.replace(",", "."))
+        except ValueError:
+            pass
+    return 0.75
+
+
+def inter_chunk_gap_ms():
+    """Silenzio (ms) inserito tra chunk PCM consecutivi in concatenazione.
+    Default 250. Override: ABM_GEMINI_INTER_CHUNK_GAP_MS (intero >= 0)."""
+    val = os.environ.get("ABM_GEMINI_INTER_CHUNK_GAP_MS")
+    if val is not None and val.strip() != "":
+        try:
+            return max(0, int(val))
+        except ValueError:
+            pass
+    return 250
 
 
 class GeminiQuotaExhausted(RuntimeError):
@@ -625,7 +652,12 @@ def preflight_budget_check(estimated_cost_eur):
 
 
 def check_text_byte_size(text):
-    """Verifica che il testo stia nel cap MAX_BYTES_PER_CALL (UTF-8).
+    """Verifica che il testo stia nel target QUALITA` MAX_BYTES_PER_CALL (UTF-8).
+
+    NB: MAX_BYTES_PER_CALL e` un target QUALITA` soft sul TESTO PURO (oltre
+    quella soglia Gemini TTS degrada acusticamente), NON un hard cap API.
+    L'hard cap API sul payload completo (testo + prefissi) e` API_HARD_BYTES_CAP.
+    Chi chiama decide se trattare ok=False come errore o solo come warning.
 
     Returns:
         (ok: bool, size_bytes: int)
@@ -638,8 +670,11 @@ def check_text_byte_size(text):
 
 def get_max_chunk_chars(language):
     """Max chars per chunk per la lingua data.
-    Override per-lingua: ABM_GEMINI_MAX_CHUNK_CHARS_<LANG_UPPER>.
-    Default europei: 4000 char. CJK/Hindi/Arabic: 3000 char."""
+
+    Default: DEFAULT_CHUNK_CHARS (700) — chunk piccoli per stabilita` acustica.
+    Override per-lingua ABM_GEMINI_MAX_CHUNK_CHARS_<LANG_UPPER> ha precedenza
+    sull'override globale ABM_GEMINI_CHUNK_CHARS.
+    """
     if language:
         env_specific = os.environ.get(f"ABM_GEMINI_MAX_CHUNK_CHARS_{language.upper()}")
         if env_specific:
@@ -647,7 +682,7 @@ def get_max_chunk_chars(language):
                 return int(env_specific)
             except ValueError:
                 pass
-    return MAX_CHUNK_CHARS_BY_LANG.get(language, MAX_CHUNK_CHARS_BY_LANG["default"])
+    return DEFAULT_CHUNK_CHARS
 
 
 _data_dir = None
@@ -1458,20 +1493,24 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
-        text: testo da sintetizzare (<= MAX_BYTES_PER_CALL UTF-8 bytes).
+        text: testo da sintetizzare. MAX_BYTES_PER_CALL e` un TARGET QUALITA`
+            (soft) che si applica SOLO a questo testo (esclusi i prefissi
+            style/rate aggiunti internamente): se sforato, warning ma si procede.
         voice_id: 'gemini:<model_key>:<voice_name>'.
         rate: parametro di compatibilita' — Gemini TTS non ha speaking_rate API,
               quando rate != '+0%' viene aggiunto un prompt instruction.
         output_path: percorso file PCM in output.
         style_instruction: opzionale, istruzione di stile/tono (max 300 char dopo
             strip) che viene prefissata al testo come "[style: <stripped>] ".
+            Non concorre al target qualita`: e` un prompt, non testo audio.
 
     Returns:
         dict con success, bytes_written, input_tokens, output_tokens, model_key,
         voice_name, attempts_used.
 
     Raises:
-        ValueError se text (dopo i prefissi) supera il cap byte o voice_id e' invalido.
+        ValueError se il payload totale (testo + prefissi) supera API_HARD_BYTES_CAP
+            o voice_id e' invalido.
         RuntimeError se tutti i retry falliscono.
     """
     if not is_available():
@@ -1479,9 +1518,18 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
 
     model_key, model_id, voice_name = parse_voice_id(voice_id)
 
+    # Check 1: target QUALITA` sul TESTO PURO (escluso prefissi). Se lo splitter
+    # ha lavorato correttamente questo non scatta; e` un warning di sicurezza che
+    # non blocca la sintesi (l'API regge il payload, e` solo l'acustica a degradare).
+    text_ok, text_size = check_text_byte_size(text)
+    if not text_ok:
+        print(f"[gemini-tts] WARN: testo {text_size}b oltre soglia qualita` "
+              f"{MAX_BYTES_PER_CALL}b -- possibile lieve degrado acustico")
+
     rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
     final_text = text
-    # Style prefix (cap stripped style at 300 chars to avoid blowing the byte budget)
+    # Style prefix (cap stripped style at 300 chars). I prefissi sono direttive di
+    # prompt, NON testo da sintetizzare: non concorrono al target di qualita`.
     if style_instruction:
         style = str(style_instruction).strip()[:300]
         if style:
@@ -1501,10 +1549,14 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         except ValueError:
             pass
 
-    # Byte-size cap AFTER prefixes
-    ok, size = check_text_byte_size(final_text)
-    if not ok:
-        raise ValueError(f"Text exceeds MAX_BYTES_PER_CALL ({size} > {MAX_BYTES_PER_CALL} bytes)")
+    # Check 2: hard cap API sul PAYLOAD COMPLETO (testo + prefissi). E` il vero
+    # limite tecnico oltre il quale Gemini TTS rifiuta la chiamata.
+    payload_size = len(final_text.encode("utf-8"))
+    if payload_size > API_HARD_BYTES_CAP:
+        raise ValueError(
+            f"Payload exceeds API hard cap ({payload_size} > {API_HARD_BYTES_CAP} bytes; "
+            f"testo {text_size}b + prefissi {payload_size - text_size}b)"
+        )
 
     from google.genai import types as genai_types
 
@@ -1527,19 +1579,26 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     while attempt < max_attempts:
         attempt += 1
         try:
+            config_kwargs = {
+                "response_modalities": ["AUDIO"],
+                "speech_config": genai_types.SpeechConfig(
+                    voice_config=genai_types.VoiceConfig(
+                        prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                            voice_name=voice_name,
+                        )
+                    )
+                ),
+            }
+            # Temperature: in modalita` Premium (default 0.75) e tunable via env.
+            # Una temperature piu` bassa riduce la "deriva metallica" sui chunk
+            # lunghi e rende la prosodia piu` stabile job-su-job.
+            temp = _temperature()
+            if temp is not None:
+                config_kwargs["temperature"] = temp
             response = client.models.generate_content(
                 model=model_id,
                 contents=final_text,
-                config=genai_types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=genai_types.SpeechConfig(
-                        voice_config=genai_types.VoiceConfig(
-                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                                voice_name=voice_name,
-                            )
-                        )
-                    ),
-                ),
+                config=genai_types.GenerateContentConfig(**config_kwargs),
             )
             pcm_data = _extract_audio_pcm(response, model_key)
             um = getattr(response, "usage_metadata", None)

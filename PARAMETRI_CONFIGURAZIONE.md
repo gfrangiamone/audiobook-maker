@@ -390,22 +390,25 @@ Sovrascrivibili in caso di adeguamento listino Google.
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `3` (preview free per cookie, rolling 24h — basso per non saturare i 100 RPD del Tier 1) |
-| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `8000` (cap UTF-8 per chiamata API — alzato per ridurre RPD) |
-| `ABM_GEMINI_MAX_CHUNK_CHARS_DEFAULT` | `4000` (chunk size lingue latine — alzato per ridurre RPD) |
-| `ABM_GEMINI_MAX_CHUNK_CHARS_IT` | `5500` (italiano: lascia margine per accenti UTF-8 sotto MAX_BYTES_PER_CALL) |
-| `ABM_GEMINI_MAX_CHUNK_CHARS_CJK` | `3000` (chunk size CJK/Hindi/Arabic) |
-| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua (es. `ABM_GEMINI_MAX_CHUNK_CHARS_ES=5000`) |
+| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `3` (preview free per cookie, rolling 24h) |
+| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `8000` (target qualita` UTF-8 sul **testo da sintetizzare** — soft cap: oltre questa soglia Gemini TTS degrada acusticamente; sopra soglia `synthesize()` logga warning ma procede. NB: i prefissi style/rate aggiunti internamente sono *direttive di prompt*, non testo audio, e non concorrono al conteggio) |
+| `ABM_GEMINI_API_HARD_BYTES_CAP` | `8000` (hard cap UTF-8 sul **payload completo** testo+prefissi inviato all'API; sopra soglia `synthesize()` solleva `ValueError`. E` il vero limite tecnico API, distinto dal target qualita`) |
+| `ABM_GEMINI_CHUNK_CHARS` | `700` (chunk size globale — chunk piccoli per stabilita` acustica, richiede Tier 2/3) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua, vince su `ABM_GEMINI_CHUNK_CHARS` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`) |
+| `ABM_GEMINI_TEMPERATURE` | `0.75` (temperature passata al modello — abbassa la deriva metallica sui chunk lunghi) |
+| `ABM_GEMINI_INTER_CHUNK_GAP_MS` | `250` (silenzio PCM in ms inserito tra chunk consecutivi in concat) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
 | `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
 | `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
 
 ### 7.6 Note operative
 
+- **Requisito**: Gemini Tier 2 o 3 (RPD elevato). Il default `ABM_GEMINI_CHUNK_CHARS=700` privilegia stabilita` acustica e prosodia uniforme sul numero di richieste; un libro medio genera centinaia di chunk e satura rapidamente i 100 RPD/modello del Tier 1.
 - Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash25:Zephyr`).
 - Modelli supportati: `flash25` (Gemini 2.5 Flash TTS), `flash31` (Gemini 3.1 Flash TTS).
 - 30 voci prebuilt × 2 modelli = 60 entry per lingua UI.
-- Chunk max chars per lingua (default): 3000 per zh/ja/hi/ar, 4000 per le altre — override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>`.
+- Chunk max chars: `700` globale, override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`).
+- Quality tuning: `ABM_GEMINI_TEMPERATURE=0.75` riduce la deriva metallica, `ABM_GEMINI_INTER_CHUNK_GAP_MS=250` inserisce un micro-silenzio tra chunk consecutivi in PCM per un confine acustico piu` naturale.
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
 
 ### 7.7 Audit log dei costi (`gemini_cost_audit.py`)

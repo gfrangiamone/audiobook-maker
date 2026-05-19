@@ -28,9 +28,9 @@ Un audiolibro usa una sola voce, quindi una sola engine (edge | google | gemini)
 
 Le 60 voci Gemini (30 × 2 modelli) sono divise per modello. Il selettore Modello filtra il select voce mostrando 30 voci alla volta. Vantaggio: l'utente non è sovraccaricato e il prezzo €/minuto può essere mostrato accanto al selettore modello (è una proprietà del modello, non della voce).
 
-### 2.3 Istruzioni di stile come prefisso al primo chunk di ogni capitolo
+### 2.3 Istruzioni di stile come prefisso a ogni chunk
 
-Gemini TTS accetta direttive testuali nel contenuto. Per minimizzare il costo (le istruzioni contribuiscono ai token input), il prefisso viene applicato **solo al primo chunk di ogni capitolo**. Risultato: 30 chapter × 1 application = 30 ripetizioni, contro le potenziali 1500+ se applicato a ogni chunk. Campo libero max 300 caratteri.
+Gemini TTS accetta direttive testuali nel contenuto. Il prefisso `[style: ...]` viene applicato **a ogni chunk** della sintesi (max 300 caratteri). Scelta cambiata rispetto al design iniziale "solo primo chunk di ogni capitolo": l'ottimizzazione costo era trascurabile (~0.003 USD per libro tipico) e produceva uno scollamento percepibile fra preview (sempre con stile) e job finale (stile attivo solo sul ~5% dell'audio, poi sparisce). Applicare lo stile a ogni chunk restituisce un'esperienza coerente con la preview.
 
 ### 2.4 Soglia gratuità unica sul totale
 

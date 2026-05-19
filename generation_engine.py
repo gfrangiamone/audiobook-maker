@@ -466,13 +466,22 @@ def _call_deepseek(user_content, job=None, max_retries=4):
     """Call DeepSeek API with streaming. Returns optimized text.
     Retries on transient network errors with exponential backoff.
     """
-    # Determina la lingua dal job (usando la voce selezionata)
+    # Lingua del prompt LLM = lingua TTS selezionata dall'utente (non lingua
+    # dell'input). Fonte primaria: opt_lang (settato da /api/optimize a partire
+    # dal selector di lingua TTS). Fallback: estrazione dal voice id, che pero'
+    # funziona solo per voci Edge/Google (es. "it-IT-X", "en-US-Chirp3-HD-X")
+    # e fallisce per Gemini (es. "gemini:flash25:Zephyr" -> nessuna lingua
+    # estraibile -> prompt generico).
     lang = "it"
     if job:
-        voice = job.get("voice") or job.get("opt_voice", "")
-        if voice:
-            lang = voice.split("-")[0].lower()
-            
+        opt_lang = (job.get("opt_lang") or "").strip()
+        if opt_lang:
+            lang = opt_lang.split("-")[0].lower()
+        else:
+            voice = job.get("voice") or job.get("opt_voice", "")
+            if isinstance(voice, str) and voice and not voice.startswith("gemini:"):
+                lang = voice.split("-")[0].lower()
+
     prompt = _get_deepseek_prompt(lang)
     
     messages = [
@@ -1288,8 +1297,11 @@ def run_optimization(job_id, selected_chapters=None):
     finalization_weight = max(MIN_FINALIZATION_CHARS, int(total_chars * FINALIZATION_RATIO))
     total_chars_extended = total_chars + finalization_weight
 
-    # Carica il prompt per la lingua del job
-    lang = job.get("lang", "it")
+    # Carica il prompt per la lingua TTS selezionata (non per la lingua
+    # dell'input): l'ottimizzazione deve produrre testo adatto alla voce
+    # che lo leggera`. Fallback finale: lingua del libro estratta in fase
+    # di parsing (utile solo se per qualche motivo opt_lang non e` settato).
+    lang = job.get("opt_lang") or job.get("lang") or "it"
     prompt = _get_deepseek_prompt(lang)
     if prompt:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
@@ -1777,6 +1789,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["current_chapter_num"] = block["chapter_index"]
             job["elapsed_seconds"] = round(elapsed)
 
+        # Gap inter-chunk Gemini (Premium quality). Calcolato qui per essere
+        # disponibile sia nel ramo single-file sia nel ramo multi-file.
+        gap_ms_inter = (gemini_tts.inter_chunk_gap_ms()
+                        if (use_gemini and gemini_tts is not None) else 0)
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -1787,6 +1804,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
             failed_chunks = 0
+            # Gap inter-chunk (Premium quality Gemini): pcm_concat inserira` un
+            # silenzio di gap_ms_inter ms PRIMA di ogni elemento di all_parts
+            # tranne il primo. Per mantenere allineati i marker M4B aggiorniamo
+            # current_ms e l'end del capitolo corrente PRIMA di ogni append a
+            # all_parts (escluso il primo). Il gap viene quindi attribuito al
+            # capitolo "uscente" se inserito prima del silence_path, e al
+            # capitolo "entrante" se inserito prima di un chunk audio (sia
+            # all'interno di un capitolo, sia come primo chunk di un capitolo
+            # nuovo senza silence_path: in questo caso l'ascoltatore sente
+            # ~gap_ms di silenzio in testa al cap, che e` esteticamente OK).
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
@@ -1798,6 +1825,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # Silenzio all'inizio di ogni capitolo
                 if ch_idx != prev_chapter_idx:
                     if os.path.exists(silence_path):
+                        # Bump per il gap che verra` inserito PRIMA del silence:
+                        # appartiene alla coda del capitolo precedente.
+                        if gap_ms_inter and all_parts:
+                            current_ms += gap_ms_inter
+                            if m4b_chapters:
+                                m4b_chapters[-1]["end"] += gap_ms_inter
                         all_parts.append(silence_path)
                         if m4b_chapters:
                             m4b_chapters[-1]["end"] = current_ms
@@ -1811,7 +1844,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
+                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
+                    # chunk del capitolo (vecchio design cost-saving) faceva
+                    # percepire all'utente uno stile diverso tra preview (1 chunk,
+                    # sempre con stile) e job finale (1 chunk su N con stile).
+                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
+                    # prefix x N chunk: pochi millicent per libro tipico).
+                    style_for_chunk = gemini_style_instruction
                     try:
                         result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
                                                            style_instruction=style_for_chunk)
@@ -1875,6 +1914,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
                     if result is False:
                         failed_chunks += 1
+                # Bump per il gap che verra` inserito PRIMA di questo part_path
+                # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
+                if gap_ms_inter and all_parts:
+                    current_ms += gap_ms_inter
+                    if m4b_chapters:
+                        m4b_chapters[-1]["end"] += gap_ms_inter
                 all_parts.append(part_path)
                 # Record Gemini usage per chunk (so partial completions on cancel still book it)
                 if use_gemini and result is not False and gemini_tts is not None:
@@ -1940,13 +1985,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if output_format in ('mp3', 'zip', 'zip_rss'):
                     # Solo MP3 finale richiesto
-                    pcm_to_mp3(all_parts, final_mp3)
+                    pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
                     print(f"[{job_id}] PCM->MP3 merged: {final_mp3}, "
-                          f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
+                          f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}, "
+                          f"gap_ms={gap_ms_inter}")
                 else:
                     # M4B richiesto: percorso PCM->AAC diretto (niente MP3 intermedio)
                     job["progress_message"] = "Converting to M4B..."
-                    print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b}")
+                    print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b} (gap_ms={gap_ms_inter})")
                     m4b_ok = False
                     for attempt in range(1, 3):
                         if attempt > 1:
@@ -1959,6 +2005,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             date=getattr(info, "date", None),
                             language=getattr(info, "language", None),
                             description=getattr(info, "description", None),
+                            gap_ms=gap_ms_inter,
                         ):
                             job["output_m4b"] = final_m4b
                             job["m4b_failed"] = False
@@ -1967,7 +2014,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if not m4b_ok:
                         job["m4b_failed"] = True
                         # Fallback: produci MP3 cosi' l'utente ha qualcosa
-                        pcm_to_mp3(all_parts, final_mp3)
+                        pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
                         print(f"[{job_id}] M4B failed, fallback MP3 produced: {final_mp3}")
             else:
                 # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
@@ -2068,7 +2115,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         if use_gemini:
-                            pcm_to_mp3(current_chapter_parts, mp3_path)
+                            pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
                         else:
                             _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
@@ -2092,7 +2139,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    style_for_chunk = gemini_style_instruction if block.get("chunk_index", -1) == 0 else None
+                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
+                    # chunk del capitolo (vecchio design cost-saving) faceva
+                    # percepire all'utente uno stile diverso tra preview (1 chunk,
+                    # sempre con stile) e job finale (1 chunk su N con stile).
+                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
+                    # prefix x N chunk: pochi millicent per libro tipico).
+                    style_for_chunk = gemini_style_instruction
                     try:
                         result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
                                                            style_instruction=style_for_chunk)
@@ -2198,7 +2251,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 if use_gemini:
-                    pcm_to_mp3(current_chapter_parts, mp3_path)
+                    pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
                 else:
                     _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)

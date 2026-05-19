@@ -1031,7 +1031,8 @@ def pcm_size_to_seconds(byte_size, sample_rate=24000, channels=1, sample_width=2
     return byte_size / bytes_per_second
 
 
-def pcm_concat(pcm_paths, output_path, skip_missing=False):
+def pcm_concat(pcm_paths, output_path, skip_missing=False, gap_ms=0,
+               sample_rate=24000, channels=1, sample_width=2):
     """Concatena raw PCM byte-wise (tutti i file devono avere stesso formato).
 
     Non c'e' header da gestire: PCM raw e' solo sequenza di campioni.
@@ -1042,15 +1043,28 @@ def pcm_concat(pcm_paths, output_path, skip_missing=False):
         output_path: file di destinazione.
         skip_missing: se True, file non esistenti vengono saltati con log;
                       altrimenti raise FileNotFoundError.
+        gap_ms: silenzio (ms) inserito tra ogni coppia di PCM consecutivi
+                effettivamente scritti. 0 = nessun gap (concat byte-a-byte).
+                Utile per dare respiro acustico tra chunk TTS consecutivi.
+        sample_rate, channels, sample_width: formato sorgente, usato solo per
+                calcolare la dimensione del gap in byte.
     """
     out = open(output_path, "wb")
+    gap_bytes = b""
+    if gap_ms and gap_ms > 0:
+        n_samples = int(gap_ms * sample_rate / 1000)
+        gap_bytes = b"\x00" * (n_samples * channels * sample_width)
     try:
+        wrote_any = False
         for p in pcm_paths:
             if not os.path.exists(p):
                 if skip_missing:
                     print(f"[pcm_concat] skip missing: {p}")
                     continue
                 raise FileNotFoundError(p)
+            if wrote_any and gap_bytes:
+                out.write(gap_bytes)
+            wrote_any = True
             with open(p, "rb") as f:
                 while True:
                     chunk = f.read(1 << 20)
@@ -1062,7 +1076,7 @@ def pcm_concat(pcm_paths, output_path, skip_missing=False):
 
 
 def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
-               sample_width=2, bitrate="64k"):
+               sample_width=2, bitrate="64k", gap_ms=0):
     """Concatena raw PCM e codifica in MP3 con singola passata ffmpeg.
 
     Args:
@@ -1070,6 +1084,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
         output_path: file MP3 risultante.
         sample_rate, channels, sample_width: formato sorgente.
         bitrate: bitrate MP3 (es. '64k').
+        gap_ms: silenzio inter-chunk in ms (vedi pcm_concat).
 
     Returns:
         True se ok, False se nessun input o ffmpeg fallisce.
@@ -1084,7 +1099,8 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
     import subprocess
     tmp_pcm = output_path + ".tmp.pcm"
     try:
-        pcm_concat(pcm_paths, tmp_pcm)
+        pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
+                   channels=channels, sample_width=sample_width)
         cmd = [
             "ffmpeg", "-y",
             "-f", "s16le",
@@ -1113,7 +1129,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
 def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
                    sample_width=2, bitrate="96k", chapters=None, title=None,
                    author=None, cover_path=None, date=None, language=None,
-                   description=None, genre="Audiobook"):
+                   description=None, genre="Audiobook", gap_ms=0):
     """Codifica PCM concatenato direttamente in M4B (AAC) con capitoli/cover/metadati.
 
     Vantaggio vs pcm_to_mp3 + mp3_to_m4b: una sola encode AAC (no doppia lossy).
@@ -1140,7 +1156,8 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
     tmp_pcm = output_path + ".tmp.pcm"
     metadata_file = None
     try:
-        pcm_concat(pcm_paths, tmp_pcm)
+        pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
+                   channels=channels, sample_width=sample_width)
 
         def escape_meta(s):
             return str(s).replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#').replace('\n', ' ')
