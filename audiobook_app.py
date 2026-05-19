@@ -3474,7 +3474,7 @@ tr.archived{opacity:.45}
     <input id="nTitle" maxlength="200">
     <label>Testo</label>
     <textarea id="nBody" rows="4" maxlength="2000"></textarea>
-    <div style="margin-top:10px"><button onclick="createNews()">Pubblica</button></div>
+    <div style="margin-top:10px"><button id="nPublish" onclick="createNews()">Pubblica</button></div>
     <div id="nMsg"></div>
   </div>
   <div class="toolbar">
@@ -3604,16 +3604,24 @@ async function createNews(){
   };
   const msg=document.getElementById('nMsg');
   if(!body.title.trim()){msg.innerHTML='<div class="msg err">Titolo richiesto</div>';return;}
-  const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
-  if(r.ok){
-    msg.innerHTML='<div class="msg ok">Pubblicata</div>';
-    document.getElementById('nTitle').value='';
-    document.getElementById('nBody').value='';
-    document.getElementById('nBanner').checked=false;
-    loadNews();
-  } else {
-    const e=await r.json().catch(()=>({error:'errore'}));
-    msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+  const btn=document.getElementById('nPublish');
+  const origLabel=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Pubblicazione…';}
+  msg.innerHTML='<div class="msg">Pubblicazione in corso…</div>';
+  try{
+    const r=await fetch('/admin/api/news',{method:'POST',headers:HDR,body:JSON.stringify(body)});
+    if(r.ok){
+      msg.innerHTML='<div class="msg ok">Pubblicata</div>';
+      document.getElementById('nTitle').value='';
+      document.getElementById('nBody').value='';
+      document.getElementById('nBanner').checked=false;
+      loadNews();
+    } else {
+      const e=await r.json().catch(()=>({error:'errore'}));
+      msg.innerHTML='<div class="msg err">'+esc(e.error||'errore')+'</div>';
+    }
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent=origLabel;}
   }
 }
 
@@ -3654,7 +3662,9 @@ async function submitReply(){
   if(!text){document.getElementById('replyErr').textContent='Testo richiesto';document.getElementById('replyErr').hidden=false;return;}
   if(text.length > 2000){document.getElementById('replyErr').textContent='Max 2000 caratteri';document.getElementById('replyErr').hidden=false;return;}
   const btn = document.getElementById('replySubmit');
+  const origLabel = btn ? btn.textContent : '';
   btn.disabled = true;
+  btn.textContent = '⏳ Traduzione in corso…';
   const errEl = document.getElementById('replyErr');
   errEl.hidden = true;
   try {
@@ -3675,13 +3685,16 @@ async function submitReply(){
     errEl.hidden = false;
   } finally {
     btn.disabled = false;
+    btn.textContent = origLabel;
   }
 }
 async function deleteReply(){
   if(!_replyItemId) return;
   if(!confirm('Eliminare la risposta? L\'azione non è reversibile.')) return;
   const btn = document.getElementById('replyDelete');
+  const origLabel = btn ? btn.textContent : '';
   btn.disabled = true;
+  btn.textContent = '⏳ Eliminazione…';
   const errEl = document.getElementById('replyErr');
   errEl.hidden = true;
   try {
@@ -3701,6 +3714,7 @@ async function deleteReply(){
     errEl.hidden = false;
   } finally {
     btn.disabled = false;
+    btn.textContent = origLabel;
   }
 }
 
