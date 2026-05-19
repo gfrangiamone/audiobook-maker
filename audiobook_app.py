@@ -3885,19 +3885,11 @@ def api_analyze():
     if not info.chapters:
         return jsonify({"error": "No content found."}), 400
 
-    # Hard cap on extracted text size: 1 char of TTS ≈ 50-100 bytes of MP3 output.
-    # ABM_MAX_TEXT_CHARS prevents huge books from producing multi-GB audio files
-    # and exhausting server disk. Default 1.5M chars ≈ 75-150 MB of audio.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
-    if info.total_chars > max_text_chars:
-        try:
-            file_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return jsonify({
-            "error": f"Book too large: {info.total_chars:,} characters extracted "
-                     f"(limit {max_text_chars:,}). Please split the book into smaller files."
-        }), 413
+    # NOTE: the ABM_MAX_TEXT_CHARS cap is no longer enforced here. We show the
+    # book regardless of its total size so the user can browse chapters and
+    # narrow the selection. The actual cap is applied at /api/generate and
+    # /api/optimize on the *selected* chapters, where it matters for output
+    # size and LLM cost.
 
     with _jobs_lock:
         jobs[job_id] = {"status": "analyzed", "epub_path": str(file_path), "info": info,
@@ -4314,7 +4306,25 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  - 
+    # Hard cap on TTS-bound text size for THIS run: applied only to the
+    # selected chapters. 1 char ≈ 50-100 bytes of MP3 output, so the limit
+    # keeps audio outputs under ~75-150 MB. The user can return to the
+    # chapter list and reduce the selection if exceeded.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    selected_chars = sum(ch.char_count for ch in info.chapters)
+    if selected_chars > max_text_chars:
+        with _jobs_lock:
+            if job["status"] == "generating":
+                job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
+        return jsonify({
+            "error": f"Selection too large: {selected_chars:,} characters "
+                     f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+            "error_code": "selection_too_large",
+            "chars_selected": selected_chars,
+            "chars_limit": max_text_chars,
+        }), 413
+
+    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  -
     # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
     # parallele non possono passare lo stesso check. Il refund della parte
     # non consumata avviene in run_generation in caso di errore/cancellazione.
@@ -4651,6 +4661,26 @@ def api_optimize_estimate(job_id):
     else:
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
     cost = _estimate_llm_cost_eur(total_chars)
+
+    # Pre-validate the output-size cap against the full selected set so the
+    # user is informed before being asked to pay.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    if raw_sel:
+        selected_set_cap = set(selected_indices)
+    else:
+        selected_set_cap = {ch.index for ch in info.chapters}
+    selected_chars_total = sum(
+        ch.char_count for ch in info.chapters if ch.index in selected_set_cap
+    )
+    if selected_chars_total > max_text_chars:
+        return jsonify({
+            "error": f"Selection too large: {selected_chars_total:,} characters "
+                     f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+            "error_code": "selection_too_large",
+            "chars_selected": selected_chars_total,
+            "chars_limit": max_text_chars,
+        }), 413
+
     return jsonify({
         "chars": total_chars, "cost_eur": cost,
         "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
@@ -4892,6 +4922,33 @@ def api_optimize():
     print(f"[{job_id}] OPTIMIZE raw selected_chapters: {raw_selected!r} -> parsed: {selected_chapters!r} -> to_optimize: {chapters_to_optimize!r}")
     if not chapters_to_optimize:
         return jsonify({"status": "already_optimized", "optimized_chapters": list(already)})
+
+    # Hard cap on text size for the final audio output, applied to the full
+    # selected set (already-optimized + to-optimize). Blocks early so the
+    # user doesn't pay for LLM optimization on a selection that cannot be
+    # rendered to audio.
+    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    if info is not None:
+        if selected_chapters:
+            selected_set_for_cap = set(selected_chapters)
+        else:
+            selected_set_for_cap = {ch.index for ch in info.chapters}
+        selected_chars_total = sum(
+            ch.char_count for ch in info.chapters if ch.index in selected_set_for_cap
+        )
+        if selected_chars_total > max_text_chars:
+            # Release the "optimizing" status claimed above so the user can
+            # retry with a smaller selection.
+            with _jobs_lock:
+                if job.get("status") == "optimizing":
+                    job["status"] = "analyzed"
+            return jsonify({
+                "error": f"Selection too large: {selected_chars_total:,} characters "
+                         f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
+                "error_code": "selection_too_large",
+                "chars_selected": selected_chars_total,
+                "chars_limit": max_text_chars,
+            }), 413
     estimated_cost = _estimate_llm_cost_eur(total_chars)
     if estimated_cost > LLM_FREE_THRESHOLD_EUR:
         payment_token = (data.get("payment_token") or "").strip()
