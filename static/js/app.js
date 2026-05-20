@@ -949,6 +949,11 @@ async function _doCombinedEstimate(){
     if(!r.ok)throw new Error('estimate failed');
     const data=await r.json();
     if(getEstimateCacheKey()!==key)return;
+    if(data.paypal_client_id!==undefined){
+      llmConfig.paypalClientId=data.paypal_client_id||"";
+      llmConfig.paypalMode=data.paypal_mode||"sandbox";
+      llmConfig.paypalAvailable=!!data.paypal_available;
+    }
     _estimateCache.key=key;
     _estimateCache.value=data;
     renderEstimate(data);

@@ -6083,6 +6083,9 @@ def api_combined_estimate():
         "llm_breakdown": llm_breakdown,
         "gemini_overloaded": overload_info is not None,
         "gemini_overload_info": overload_info,
+        "paypal_available": _paypal_available(),
+        "paypal_client_id": PAYPAL_CLIENT_ID if _paypal_available() else "",
+        "paypal_mode": PAYPAL_MODE,
     })
 
 
