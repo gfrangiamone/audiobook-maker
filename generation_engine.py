@@ -5,8 +5,8 @@ Funzioni principali:
   - configure(): inietta i riferimenti globali condivisi (jobs, upload_dir, ecc.)
   - _CancelledError, _SimpleChapter, _SimpleBookInfo: classi helper
   - parse_txt, parse_abm: parser file di testo/progetto
-  - _init_deepseek, _llm_available: inizializzazione client DeepSeek
-  - _call_deepseek, _optimize_chapter_text: ottimizzazione LLM
+  - _init_llm, _llm_available: inizializzazione client LLM
+  - _call_llm, _optimize_chapter_text: ottimizzazione LLM
   - _generate_optimized_abm: genera snapshot .abm post-ottimizzazione
   - _send_completion_email, _send_optimization_email: email di completamento
   - _refund_job_payment: rimborso pagamento in caso di errore/cancellazione
@@ -52,29 +52,62 @@ from tts_split import (
 )
 
 # ---------------------------------------------------------------------------
-# DeepSeek LLM config (letti da os.environ)
+# LLM (text-optimization) config — engine-agnostic, env-driven
 # ---------------------------------------------------------------------------
+# Tutti i parametri sono override-able via ABM_LLM_* environment variables.
+# I default attuali sono tarati su DeepSeek-Chat (provider corrente). Cambiare
+# provider richiede solo di rivalorizzare le env var (no code change).
 
-DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
-DEEPSEEK_API_BASE = "https://api.deepseek.com"
-DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
-DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
-DEEPSEEK_MAX_TOKENS = 384000
-DEEPSEEK_TEMPERATURE = 0.3
-DEEPSEEK_CHARS_PER_TOKEN = 3.5
-DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000  # 1M context window (DeepSeek V4 Flash)
-DEEPSEEK_RESERVED_OUTPUT_TOKENS = 384000
-DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
-DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
-DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
-# Per-chunk safe size: ~1.14M chars per chunk with 384k output tokens.
-# Single API call per chapter for virtually any real book — no chunking needed.
-DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.85)
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+def _env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+def _env_bool(name, default):
+    return os.environ.get(name, "true" if default else "false").strip().lower() in ("true", "1", "yes", "on")
+
+# Connection
+LLM_API_KEY  = os.environ.get("ABM_LLM_API_KEY", "")
+LLM_API_BASE = os.environ.get("ABM_LLM_API_BASE", "https://api.deepseek.com")
+LLM_MODEL    = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+
+# Generation behavior
+LLM_THINKING         = _env_bool("ABM_LLM_THINKING", False)
+LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").strip().lower()
+LLM_TEMPERATURE      = _env_float("ABM_LLM_TEMPERATURE", 0.3)
+LLM_MAX_TOKENS       = _env_int("ABM_LLM_MAX_TOKENS", 65536)
+
+# Token-economy helpers
+LLM_CHARS_PER_TOKEN        = _env_float("ABM_LLM_CHARS_PER_TOKEN", 3.5)
+LLM_MAX_CONTEXT_TOKENS     = _env_int("ABM_LLM_MAX_CONTEXT_TOKENS", 1000000)
+LLM_RESERVED_PROMPT_TOKENS = _env_int("ABM_LLM_RESERVED_PROMPT_TOKENS", 4000)
+LLM_OUTPUT_SAFETY_MARGIN   = _env_float("ABM_LLM_OUTPUT_SAFETY_MARGIN", 0.85)
+
+# Reliability / pacing
+LLM_REQUEST_TIMEOUT_SEC   = _env_float("ABM_LLM_REQUEST_TIMEOUT_SEC", 120.0)
+LLM_MAX_RETRIES           = _env_int("ABM_LLM_MAX_RETRIES", 4)
+LLM_INTER_CHUNK_SLEEP_SEC = _env_float("ABM_LLM_INTER_CHUNK_SLEEP_SEC", 0.5)
+LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
+
+# Derived (computed, not directly configurable)
+LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
+LLM_MAX_INPUT_TOKENS = LLM_MAX_CONTEXT_TOKENS - LLM_RESERVED_OUTPUT_TOKENS - LLM_RESERVED_PROMPT_TOKENS
+LLM_MAX_INPUT_CHARS = int(LLM_MAX_INPUT_TOKENS * LLM_CHARS_PER_TOKEN)
+# Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
+# Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
+# per ogni chunk → regole sempre rispettate anche su libri lunghi.
+LLM_SAFE_OUTPUT_CHUNK = int(LLM_MAX_TOKENS * LLM_CHARS_PER_TOKEN * LLM_OUTPUT_SAFETY_MARGIN)
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
-_deepseek_client = None
+_llm_client = None
 
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
@@ -122,37 +155,37 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _jobs_lock = jobs_lock
     _retention_sec = retention_sec if retention_sec is not None else 64800
     
-    # Inizializza DeepSeek (se API key presente)
-    _init_deepseek()
+    # Inizializza client LLM (se API key presente)
+    _init_llm()
 
 
 # ---------------------------------------------------------------------------
-# DeepSeek client init
+# LLM client init (OpenAI-compatible)
 # ---------------------------------------------------------------------------
 
-def _init_deepseek():
-    """Initialize DeepSeek client and verify presence of essential prompts."""
-    global _deepseek_client
-    if not DEEPSEEK_API_KEY:
-        print("[startup] DeepSeek LLM optimization disabled (ABM_DEEPSEEK_API_KEY not set)")
+def _init_llm():
+    """Initialize LLM client and verify presence of essential prompts."""
+    global _llm_client
+    if not LLM_API_KEY:
+        print("[startup] LLM text optimization disabled (ABM_LLM_API_KEY not set)")
         return
     try:
         from openai import OpenAI
-        _deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_API_BASE)
+        _llm_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
         # Verifica almeno il prompt generico
         generic_path = _SCRIPT_DIR / "prompt_opt_AI" / "prompt_tts_generic.md"
         if not generic_path.exists():
             print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
         else:
-            print(f"[startup] DeepSeek LLM optimization enabled (Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING})")
+            print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING})")
     except ImportError:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
-        _deepseek_client = None
+        _llm_client = None
 
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
-    return _deepseek_client is not None
+    return _llm_client is not None
 
 
 # ---------------------------------------------------------------------------
@@ -432,17 +465,17 @@ def _sanitize_llm_output(text: str) -> str:
     return "\n\n".join(final_paragraphs).strip()
 
 
-_deepseek_prompts = {} # Cache per i prompt multilingua
+_llm_prompts = {} # Cache per i prompt multilingua
 
-def _get_deepseek_prompt(lang_code="it"):
+def _get_llm_prompt(lang_code="it"):
     """
     Ritorna il prompt specifico per la lingua, o quello generico come fallback.
     lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
     """
-    global _deepseek_prompts
+    global _llm_prompts
     lang = (lang_code or "it").split("-")[0].lower()
-    if lang in _deepseek_prompts:
-        return _deepseek_prompts[lang]
+    if lang in _llm_prompts:
+        return _llm_prompts[lang]
     
     prompt_dir = _SCRIPT_DIR / "prompt_opt_AI"
     filename = f"prompt_tts_{lang}.md"
@@ -453,17 +486,17 @@ def _get_deepseek_prompt(lang_code="it"):
         
     if path.exists():
         try:
-            print(f"[DeepSeek] Using prompt file: {path.name}")
+            print(f"[LLM] Using prompt file: {path.name}")
             content = path.read_text(encoding="utf-8").strip()
-            _deepseek_prompts[lang] = content
+            _llm_prompts[lang] = content
             return content
         except Exception as e:
             print(f"Error reading prompt {path}: {e}")
             
     return ""
 
-def _call_deepseek(user_content, job=None, max_retries=4):
-    """Call DeepSeek API with streaming. Returns optimized text.
+def _call_llm(user_content, job=None, max_retries=None):
+    """Call LLM API with streaming. Returns optimized text.
     Retries on transient network errors with exponential backoff.
     """
     # Lingua del prompt LLM = lingua TTS selezionata dall'utente (non lingua
@@ -482,8 +515,11 @@ def _call_deepseek(user_content, job=None, max_retries=4):
             if isinstance(voice, str) and voice and not voice.startswith("gemini:"):
                 lang = voice.split("-")[0].lower()
 
-    prompt = _get_deepseek_prompt(lang)
-    
+    prompt = _get_llm_prompt(lang)
+
+    if max_retries is None:
+        max_retries = LLM_MAX_RETRIES
+
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": user_content},
@@ -495,19 +531,19 @@ def _call_deepseek(user_content, job=None, max_retries=4):
         try:
             # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort)
             kwargs = {
-                "model": DEEPSEEK_MODEL,
+                "model": LLM_MODEL,
                 "messages": messages,
-                "max_tokens": DEEPSEEK_MAX_TOKENS,
-                "temperature": DEEPSEEK_TEMPERATURE,
+                "max_tokens": LLM_MAX_TOKENS,
+                "temperature": LLM_TEMPERATURE,
                 "stream": True,
-                "timeout": 120.0,
+                "timeout": LLM_REQUEST_TIMEOUT_SEC,
             }
-            if DEEPSEEK_REASONING_EFFORT != "none":
-                kwargs["reasoning_effort"] = DEEPSEEK_REASONING_EFFORT
-            if DEEPSEEK_THINKING:
+            if LLM_REASONING_EFFORT != "none":
+                kwargs["reasoning_effort"] = LLM_REASONING_EFFORT
+            if LLM_THINKING:
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
                 
-            stream = _deepseek_client.chat.completions.create(**kwargs)
+            stream = _llm_client.chat.completions.create(**kwargs)
             for event in stream:
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
@@ -535,7 +571,7 @@ def _call_deepseek(user_content, job=None, max_retries=4):
                     job["opt_streamed_chars"] = max(
                         0, job.get("opt_streamed_chars", 0) - removed
                     )
-                print(f"  [DeepSeek] sanitized output: removed {removed} chars of meta/duplicates")
+                print(f"  [LLM] sanitized output: removed {removed} chars of meta/duplicates")
             return cleaned
         except Exception as e:
             last_exc = e
@@ -549,7 +585,7 @@ def _call_deepseek(user_content, job=None, max_retries=4):
             if not transient or attempt >= max_retries - 1:
                 raise
             wait = 2 ** attempt  # 1, 2, 4, 8 seconds
-            print(f"  [DeepSeek] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
+            print(f"  [LLM] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
             time.sleep(wait)
     if last_exc:
         raise last_exc
@@ -560,10 +596,10 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
     """Optimize a single chapter's text, using chunking if needed."""
     label = f"[ch {chapter_num}/{total_chapters}]" if chapter_num else ""
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
-    if len(text) <= DEEPSEEK_SAFE_OUTPUT_CHUNK:
+    if len(text) <= LLM_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
-        return _call_deepseek(text, job=job)
-    chunks = _split_text_into_chunks(text, DEEPSEEK_SAFE_OUTPUT_CHUNK)
+        return _call_llm(text, job=job)
+    chunks = _split_text_into_chunks(text, LLM_SAFE_OUTPUT_CHUNK)
     print(f"  {label} LLM chunked: {len(chunks)} chunks ({len(text):,} chars total)")
     results = []
     for i, chunk in enumerate(chunks):
@@ -578,9 +614,9 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
                 user_content = f"[Parte {i+1} di {len(chunks)} \u2014 continuazione]\n\n{chunk}"
         else:
             user_content = chunk
-        results.append(_call_deepseek(user_content, job=job))
+        results.append(_call_llm(user_content, job=job))
         if i < len(chunks) - 1:
-            time.sleep(0.5)  # rate limiting tra chunk
+            time.sleep(LLM_INTER_CHUNK_SLEEP_SEC)  # rate limiting tra chunk
     # Seconda passata di sanitizzazione sul testo ricomposto
     return _sanitize_llm_output("\n\n".join(results))
 
@@ -1268,7 +1304,7 @@ def _google_tts_refund_unused(job_id, job):
 # ---------------------------------------------------------------------------
 
 def run_optimization(job_id, selected_chapters=None):
-    """Background thread: optimize text of all chapters via DeepSeek LLM.
+    """Background thread: optimize text of all chapters via LLM.
     If selected_chapters is provided (list of indices), only those are optimized.
     """
     job = _jobs[job_id]
@@ -1302,13 +1338,13 @@ def run_optimization(job_id, selected_chapters=None):
     # che lo leggera`. Fallback finale: lingua del libro estratta in fase
     # di parsing (utile solo se per qualche motivo opt_lang non e` settato).
     lang = job.get("opt_lang") or job.get("lang") or "it"
-    prompt = _get_deepseek_prompt(lang)
+    prompt = _get_llm_prompt(lang)
     if prompt:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
-              f"Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
     else:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!). "
-              f"Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
@@ -1334,7 +1370,7 @@ def run_optimization(job_id, selected_chapters=None):
             # Heartbeat check (skip if email registered — batch mode)
             if not job.get("email_registered"):
                 last_poll = job.get("last_poll", start_time)
-                if time.time() - last_poll > 60:
+                if time.time() - last_poll > LLM_HEARTBEAT_TIMEOUT_SEC:
                     raise _CancelledError("Optimization cancelled (heartbeat lost)")
 
             job["opt_progress_current"] = i

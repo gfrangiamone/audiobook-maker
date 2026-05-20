@@ -3,9 +3,12 @@ __pycache__/
 _debug*
 *.py[cod]
 *.log
+*.md
+*.env
 *.egg-info/
 firebase*
 data/
+md_files/
 mockup/
 scripts/
 test/
@@ -23,8 +26,7 @@ venv/
 node_modules/
 backup/
 public/
-CLAUDE.md
-GEMINI.md
+
 
 # App data (generated at runtime)
 data/

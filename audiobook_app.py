@@ -99,12 +99,12 @@ try:
 except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
-#  -  -  DeepSeek LLM per ottimizzazione testo TTS  -  opzionale  -  -
-# (Configurati e gestiti in generation_engine.py)
-DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
-DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
+#  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
+# (Configurati e gestiti in generation_engine.py; lette qui solo per startup log)
+LLM_API_KEY = os.environ.get("ABM_LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+LLM_THINKING = os.environ.get("ABM_LLM_THINKING", "false").lower() == "true"
+LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").lower()
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
@@ -8098,7 +8098,7 @@ def _ensure_background_threads():
     print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
     if _llm_available():
-        print(f"[startup] LLM text optimization enabled (DeepSeek {DEEPSEEK_MODEL})")
+        print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:

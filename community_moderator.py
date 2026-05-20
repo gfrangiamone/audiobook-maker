@@ -1,6 +1,6 @@
 """Content moderation for community feedback via URL detection and LLM check.
 
-Reuses the DeepSeek client from generation_engine. Follows the same pattern
+Reuses the LLM client from generation_engine. Follows the same pattern
 as community_translator.py: no circular imports, synchronous validate().
 """
 from __future__ import annotations
@@ -49,12 +49,12 @@ def _has_url(text: str) -> bool:
 
 
 def _call_llm(text: str, *, timeout: float) -> dict | None:
-    """Call DeepSeek LLM for moderation. Returns parsed JSON dict or None."""
-    client = ge._deepseek_client
+    """Call LLM for moderation. Returns parsed JSON dict or None."""
+    client = ge._llm_client
     if client is None:
         return None
     kwargs = dict(
-        model=ge.DEEPSEEK_MODEL,
+        model=ge.LLM_MODEL,
         messages=[
             {"role": "system", "content": _MODERATION_SYSTEM_PROMPT},
             {"role": "user", "content": text},
