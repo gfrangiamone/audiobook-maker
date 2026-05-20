@@ -902,30 +902,12 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
                  margin-bottom:-2px; cursor:pointer; font-weight:700; color:var(--txm,#9e9890);
                  transition:color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
 .tab-bar .tab.active { color:var(--accent,#a07d3a); border-bottom-color:var(--accent,#a07d3a); }
-/* Tab "Voci PREMIUM": badge dorato sempre evidente, anche se non attivo.
-   Inactive: card dorata con bordo, shimmer leggero. Active: card più satura. */
-.tab-bar #tabPremiumBtn { position:relative; color:#7a5a22; font-weight:800; letter-spacing:.4px;
-                          background:linear-gradient(180deg,#fbeec2 0%,#f4d98a 55%,#e6c46a 100%);
-                          border:1px solid #c9a24a; border-bottom:0;
-                          border-radius:10px 10px 0 0; padding:10px 18px 9px;
-                          box-shadow:0 1px 0 #fff7dd inset, 0 2px 6px rgba(160,125,58,.18);
-                          text-shadow:0 1px 0 rgba(255,255,255,.55);
-                          overflow:hidden; }
-.tab-bar #tabPremiumBtn::before { content:""; position:absolute; top:0; left:-60%; width:55%; height:100%;
-                                  background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.55) 50%,transparent 100%);
-                                  transform:skewX(-20deg); pointer-events:none;
-                                  animation:premiumShimmer 3.6s ease-in-out infinite; }
-@keyframes premiumShimmer { 0%,70%,100% { left:-60%; } 85% { left:120%; } }
-.tab-bar #tabPremiumBtn:hover { transform:translateY(-1px);
-                                background:linear-gradient(180deg,#fff2cc 0%,#f6dc8c 55%,#e9c970 100%);
-                                box-shadow:0 1px 0 #fff7dd inset, 0 4px 10px rgba(160,125,58,.28); }
-.tab-bar #tabPremiumBtn.active { color:#5f4419; border-bottom:0;
-                                 background:linear-gradient(180deg,#ffe9a1 0%,#f0c763 55%,#d9a93d 100%);
-                                 box-shadow:0 1px 0 #fff7dd inset, 0 3px 8px rgba(160,125,58,.32),
-                                            0 -2px 0 #b8862e inset; }
-@media (prefers-reduced-motion: reduce) {
-  .tab-bar #tabPremiumBtn::before { animation:none; display:none; }
-}
+/* Tab "Voci PREMIUM": stessa estetica del tab Standard; l'enfasi premium
+   è concentrata sulla stella iniziale (dorata), così il tab non sembra
+   selezionato quando in realtà è inattivo. */
+.tab-bar #tabPremiumBtn { display:inline-block; }
+.tab-bar #tabPremiumBtn::first-letter { color:#d4a83a; font-size:1.05em;
+                                        text-shadow:0 1px 0 rgba(255,255,255,.35); }
 .tab-panel { padding-top:16px; }
 .tab-panel[hidden] { display:none; }
 .cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
