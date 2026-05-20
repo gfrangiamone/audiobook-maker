@@ -394,6 +394,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     const src=document.getElementById('vl');
     if(src){src.value=vlPrem.value;updVoices();}
     updVoicesPremium();
+    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   });
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
@@ -685,6 +687,8 @@ function fillLangs(){
     updVoices();
     const dst=document.getElementById('vlPremium');
     if(dst){dst.value=sel.value;updVoicesPremium&&updVoicesPremium();}
+    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   };
 
   if(oldVal && voices[oldVal]) sel.value = oldVal;
@@ -911,7 +915,9 @@ function getEstimateCacheKey(){
   const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
   const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
   const rate=document.getElementById('vr')?.value||'+0%';
-  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+chapters;
+  const langEl=(tab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
+  const lang=(langEl&&langEl.value)||cl||'';
+  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+lang+'|'+chapters;
 }
 function requestCombinedEstimate(){
   if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
@@ -924,12 +930,19 @@ async function _doCombinedEstimate(){
   const voiceId=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   const selected=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   if(!selected||selected.length===0){renderEstimate(null);return;}
+  // Lingua TTS scelta in "Impostazioni audio": prevale su metadata libro
+  // per stima durata/costo (cluster rate-log + ratio chars/token).
+  const selLangEl=(wizardState.audioTab==='premium')
+    ?document.getElementById('vlPremium')
+    :document.getElementById('vl');
+  const selLang=(selLangEl&&selLangEl.value)||cl||'';
   const payload={
     job_id:jobId,
     voice_id:voiceId||'',
     selected_chapters:selected,
     ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,
     rate:document.getElementById('vr')?.value||'+0%',
+    lang:selLang,
   };
   try{
     const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1071,7 +1084,11 @@ async function renderPaypalGeminiButtons(){
   _paypalGeminiButtonsInstance=window.paypal.Buttons({
     style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
     createOrder:async function(){
-      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,rate:document.getElementById('vr')?.value||'+0%',amount_eur:_payState.total};
+      // Lingua UI: deve combaciare con quella usata in /api/combined_estimate
+      // altrimenti il server-side amount check rifiuta l'ordine.
+      const _selLangEl=(wizardState.audioTab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
+      const _selLang=(_selLangEl&&_selLangEl.value)||cl||'';
+      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,rate:document.getElementById('vr')?.value||'+0%',lang:_selLang,amount_eur:_payState.total};
       const r=await fetch('/api/paypal_create_order_gemini',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },

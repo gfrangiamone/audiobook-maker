@@ -5930,6 +5930,7 @@ def api_gemini_estimate():
     voice_id = data.get("voice_id", "")
     selected = data.get("selected_chapters") or []
     rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
 
     if not voice_id.startswith("gemini:"):
         return jsonify({"error": "voice_id must be a Gemini voice"}), 400
@@ -5950,7 +5951,10 @@ def api_gemini_estimate():
     if not chs:
         return jsonify({"error": "no chapters selected"}), 400
 
-    lang = getattr(info, "language", "it") or "it"
+    # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
+    # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
+    # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
     try:
         est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
     except Exception as e:
@@ -5985,6 +5989,7 @@ def api_combined_estimate():
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
 
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -6003,7 +6008,10 @@ def api_combined_estimate():
     if not chs:
         return jsonify({"error": "no chapters"}), 400
 
-    lang = getattr(info, "language", "it") or "it"
+    # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
+    # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
+    # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
 
     gemini_eur = 0.0
     gemini_breakdown = {}
@@ -6096,6 +6104,7 @@ def api_paypal_create_order_gemini():
     selected = data.get("selected_chapters") or []
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
     try:
         requested_amount = float(data.get("amount_eur") or 0)
     except (TypeError, ValueError):
@@ -6118,7 +6127,9 @@ def api_paypal_create_order_gemini():
     if not chs:
         return jsonify({"error": "no chapters"}), 400
 
-    lang = getattr(info, "language", "it") or "it"
+    # Lingua: stessa priorita` di /api/combined_estimate (UI > metadata > "it").
+    # Deve essere identica per evitare amount mismatch sul server-side check.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
 
     gemini_eur = 0.0
     if voice_id.startswith("gemini:"):
