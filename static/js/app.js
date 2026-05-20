@@ -1924,6 +1924,10 @@ async function startCombinedGeneration(combinedPaymentToken){
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
+      if(_isGeminiVoiceId(getCurrentVoiceId())){
+        var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,300);
+        if(_gs)genPayload.gemini_style_instruction=_gs;
+      }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
@@ -2347,6 +2351,10 @@ async function startGen(){
   try{
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
+    if(_isGeminiVoiceId(getCurrentVoiceId())){
+      const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,300);
+      if(_gs)payload.gemini_style_instruction=_gs;
+    }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){

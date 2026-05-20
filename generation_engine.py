@@ -1880,6 +1880,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
                     # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
                     # chunk del capitolo (vecchio design cost-saving) faceva
                     # percepire all'utente uno stile diverso tra preview (1 chunk,
@@ -1889,7 +1890,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     style_for_chunk = gemini_style_instruction
                     try:
                         result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                           style_instruction=style_for_chunk)
+                                                           style_instruction=style_for_chunk,
+                                                           rate=rate,
+                                                           debug_prompt_path=debug_prompt_path)
                     except Exception as _quota_or_budget_err:
                         # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
                         # marcare il job come paused/error che silenziare il resto
@@ -2175,6 +2178,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
                     # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
                     # chunk del capitolo (vecchio design cost-saving) faceva
                     # percepire all'utente uno stile diverso tra preview (1 chunk,
@@ -2184,7 +2188,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     style_for_chunk = gemini_style_instruction
                     try:
                         result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                           style_instruction=style_for_chunk)
+                                                           style_instruction=style_for_chunk,
+                                                           rate=rate,
+                                                           debug_prompt_path=debug_prompt_path)
                     except Exception as _quota_or_budget_err:
                         # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
                         # marcare il job come paused/error che silenziare il resto

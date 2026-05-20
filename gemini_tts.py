@@ -1489,7 +1489,8 @@ def _extract_audio_pcm(response, model_key):
     return data
 
 
-def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None):
+def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
+               debug_prompt_path=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
@@ -1498,10 +1499,12 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             style/rate aggiunti internamente): se sforato, warning ma si procede.
         voice_id: 'gemini:<model_key>:<voice_name>'.
         rate: parametro di compatibilita' — Gemini TTS non ha speaking_rate API,
-              quando rate != '+0%' viene aggiunto un prompt instruction.
+              quando rate != '+0%' viene aggiunta come direttiva in linguaggio
+              naturale DENTRO il blocco [style: ...] (es. "Read this text quickly...").
         output_path: percorso file PCM in output.
         style_instruction: opzionale, istruzione di stile/tono (max 300 char dopo
-            strip) che viene prefissata al testo come "[style: <stripped>] ".
+            strip). Viene fusa con l'eventuale rate directive in un singolo
+            blocco "[style: <user_style> <rate_directive>] " prefissato al testo.
             Non concorre al target qualita`: e` un prompt, non testo audio.
 
     Returns:
@@ -1526,28 +1529,51 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         print(f"[gemini-tts] WARN: testo {text_size}b oltre soglia qualita` "
               f"{MAX_BYTES_PER_CALL}b -- possibile lieve degrado acustico")
 
+    # Kill-switch del rate prompt-directive. Default "prompt" = directive attiva.
+    # Qualsiasi altro valore (incluso il legacy "token"/"estimate") disattiva
+    # l'iniezione. Nessun altro effetto: non e` usato per cost calc o altro.
     rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
-    final_text = text
-    # Style prefix (cap stripped style at 300 chars). I prefissi sono direttive di
-    # prompt, NON testo da sintetizzare: non concorrono al target di qualita`.
+    # Costruiamo un singolo blocco "[style: ... ]" che combina lo stile utente
+    # con la direttiva di velocita`. Il rate non e` esposto dall'API Gemini come
+    # parametro audio, quindi va comunicato in linguaggio naturale. Inserirlo
+    # DENTRO il blocco style (anziche` come prefisso separato in fila al testo)
+    # ha due vantaggi:
+    #   1. Semanticamente piu` corretto: "come leggere" = stile, non testo.
+    #   2. Aderenza maggiore: Gemini ignora spesso istruzioni in linguaggio
+    #      diverso da quello del testo se non sono incapsulate.
+    # Lo style utente viene capato a 300 char (qualita` UI); la directive rate
+    # e` costante e si appende dopo senza re-cap (max ~110 char system-added).
+    style_parts = []
     if style_instruction:
-        style = str(style_instruction).strip()[:300]
-        if style:
-            final_text = f"[style: {style}] {final_text}"
-    # Rate prefix — il modello non ha speaking_rate API, quindi usiamo istruzioni
-    # in linguaggio naturale. I tag bracketed tipo [slow]/[fast] sono fragili (il
-    # modello puo` ignorarli) e collassavano tutti i livelli sotto/sopra il +-5%
-    # in 2 sole varianti. Mappiamo ora il pct a 7 step distinti -> 7 audio diversi.
-    if rate_mode == "prompt" and rate and rate != "+0%":
-        pct = rate.replace("%", "").replace("+", "")
-        try:
-            n = int(pct)
-            step = max(-3, min(3, round(n / 10)))
-            directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
-            if directive:
-                final_text = f"{directive} {final_text}"
-        except ValueError:
-            pass
+        s = str(style_instruction).strip()[:300]
+        if s:
+            style_parts.append(s)
+    # Iniezione della rate directive nel blocco [style:...]. Silenziosa su
+    # successo (per non spammare il log con N chunk * stesso messaggio). Loud
+    # solo quando il rate non-default viene scartato: utile per diagnosi rapida
+    # ("ho chiesto +30% ma l'audio e` a velocita` normale").
+    if rate and rate != "+0%":
+        if rate_mode != "prompt":
+            print(f"[gemini-tts] WARN: rate={rate!r} richiesto ma "
+                  f"ABM_GEMINI_RATE_MODE={rate_mode!r} disattiva la directive. "
+                  f"Setta ABM_GEMINI_RATE_MODE=prompt (o unset) per attivarla.")
+        else:
+            pct = str(rate).replace("%", "").replace("+", "")
+            try:
+                n = int(pct)
+                step = max(-3, min(3, round(n / 10)))
+                directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
+                if directive:
+                    style_parts.append(directive)
+                # step 0 = directive vuota = niente da appendere (silenzioso).
+            except ValueError as _ve:
+                print(f"[gemini-tts] WARN: rate={rate!r} parse failed ({_ve}). "
+                      f"Directive non aggiunta.")
+
+    if style_parts:
+        final_text = f"[style: {' '.join(style_parts)}] {text}"
+    else:
+        final_text = text
 
     # Check 2: hard cap API sul PAYLOAD COMPLETO (testo + prefissi). E` il vero
     # limite tecnico oltre il quale Gemini TTS rifiuta la chiamata.
@@ -1557,6 +1583,15 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             f"Payload exceeds API hard cap ({payload_size} > {API_HARD_BYTES_CAP} bytes; "
             f"testo {text_size}b + prefissi {payload_size - text_size}b)"
         )
+
+    # Debug: dump del prompt finale (testo + prefissi style/rate) per ispezione.
+    if debug_prompt_path:
+        try:
+            Path(debug_prompt_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(debug_prompt_path, "w", encoding="utf-8") as fp:
+                fp.write(final_text)
+        except Exception as e:
+            print(f"[gemini-tts] could not write debug prompt to {debug_prompt_path}: {e}")
 
     from google.genai import types as genai_types
 

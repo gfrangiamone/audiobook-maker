@@ -20,6 +20,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 
 import edge_tts
 
@@ -200,6 +201,45 @@ def _ensure_heading_pause(text):
     return "\n".join(result)
 
 
+def _normalize_for_title_match(s):
+    """Normalizza una stringa per fuzzy-match titolo: minuscolo, senza diacritici,
+    senza punteggiatura/quote, whitespace compatto.
+
+    Es: 'AINULINDALË"LA MUSICA"' -> 'ainulindale la musica'
+    """
+    if not s:
+        return ""
+    s = unicodedata.normalize('NFKD', s)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    return s.strip()
+
+
+def _title_already_in_text(title, text, lookahead_chars=300):
+    """True se il titolo del capitolo compare gia` in testa al testo del capitolo,
+    a meno di diacritici/punteggiatura/quote/prefissi numerici.
+
+    Evita la duplicazione quando l'estrazione capitoli include gia` un heading
+    nel body identico al titolo derivato dai metadati (es. EPUB + filename
+    normalizzato).
+    """
+    if not title or not text:
+        return False
+    norm_title = _normalize_for_title_match(title)
+    # Rimuovi prefisso numerico tipo "003 ", "01 ", "chapter 3 ", "capitolo 4 "
+    tokens = norm_title.split()
+    while tokens and (tokens[0].isdigit() or tokens[0] in ("chapter", "capitolo", "cap", "ch")):
+        tokens.pop(0)
+    norm_title_core = ' '.join(tokens)
+    # Titolo troppo corto/generico (<= 4 char): meglio non dedupliccare per evitare falsi positivi
+    if not norm_title_core or len(norm_title_core) <= 4:
+        return False
+    head = text[:lookahead_chars]
+    norm_head = _normalize_for_title_match(head)
+    return norm_title_core in norm_head
+
+
 def _sanitize_tts_text(text: str):
     """Pulisce il testo per TTS: rimuove caratteri di controllo/zero-width,
     collassa whitespace eccessivo, normalizza newline.
@@ -230,7 +270,13 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
     for ch in info.chapters:
         clean_text = _strip_parenthetical(ch.text)
         clean_text = _ensure_heading_pause(clean_text)
-        full_text = f"{ch.title}.\n\n{clean_text}"
+        # Dedup heading: se il titolo del capitolo compare gia` in testa al testo
+        # (a meno di diacritici/punteggiatura/quote/prefissi numerici), evita
+        # di prependerlo per non far leggere al TTS due volte la stessa frase.
+        if _title_already_in_text(ch.title, clean_text):
+            full_text = clean_text
+        else:
+            full_text = f"{ch.title}.\n\n{clean_text}"
         chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
@@ -338,7 +384,8 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
-def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries):
+def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries,
+                                      debug_prompt_path=None, rate="+0%"):
     """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
     raw nel file output_path. Aggrega i risultati metrici sommando token/byte.
 
@@ -372,11 +419,18 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                 tmp_parts.append(tmp_path)
                 last_error = None
                 piece_ok = False
+                # Per-piece debug prompt path (es. prompt5.txt -> prompt5.part000.txt)
+                piece_debug_path = None
+                if debug_prompt_path:
+                    base, ext = os.path.splitext(debug_prompt_path)
+                    piece_debug_path = f"{base}.part{idx:03d}{ext or '.txt'}"
                 for attempt in range(max_retries):
                     try:
                         result = _gemini.synthesize(
                             piece_text, voice_id, output_path=tmp_path,
                             style_instruction=style_instruction,
+                            rate=rate,
+                            debug_prompt_path=piece_debug_path,
                         )
                         piece_ok = True
                         aggregate["bytes_written"] += int(result.get("bytes_written", 0))
@@ -409,7 +463,8 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                 pass
 
 
-def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None):
+def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
+                              debug_prompt_path=None, rate="+0%"):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -455,6 +510,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
                   f"splitting into {len(pieces)} sub-chunks")
             agg = _synthesize_pcm_pieces_and_concat(
                 pieces, voice_id, output_path, style_instruction, max_retries,
+                debug_prompt_path=debug_prompt_path, rate=rate,
             )
             if agg is not False:
                 return agg
@@ -468,6 +524,8 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             result = _gemini.synthesize(
                 clean, voice_id, output_path=output_path,
                 style_instruction=style_instruction,
+                rate=rate,
+                debug_prompt_path=debug_prompt_path,
             )
             return result
         except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
