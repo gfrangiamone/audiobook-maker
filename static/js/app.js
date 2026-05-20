@@ -1280,8 +1280,17 @@ async function previewRead(){
 
   // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
   if(_isGeminiVoice(voice)){
+    // Client-side timeout via AbortController: il server ha un timeout di
+    // 30s, ma l'utente vuole feedback piu` rapido. Se a 25s non e` arrivata
+    // risposta, abortiamo lato client e mostriamo timeout message. Cosi`
+    // anche in caso di stall server (RPM throttle, network) la UI non
+    // resta appesa indefinitamente con solo lo spinner.
+    const _ctrl=new AbortController();
+    const _toMs=25000;
+    const _toHandle=setTimeout(()=>{try{_ctrl.abort();}catch(_){}},_toMs);
     try{
-      const r=await fetch(url);
+      const r=await fetch(url,{signal:_ctrl.signal});
+      clearTimeout(_toHandle);
       if(r.status===429){
         const data=await r.json().catch(()=>({}));
         const minutes=Math.ceil((data.reset_in_seconds||0)/60);
@@ -1367,9 +1376,17 @@ async function previewRead(){
       audio.load();
       return;
     }catch(err){
+      clearTimeout(_toHandle);
       console.error('[gemini-preview] fetch error:',err);
       _prevLoading=false;btn.disabled=false;_restoreBtn();
-      alert(t('prev_error'));
+      // AbortError = timeout client-side (25s). Mostriamo il messaggio
+      // timeout invece di generico prev_error: l'utente capisce che il
+      // problema e` lentezza del servizio, non un suo errore.
+      if(err && err.name==='AbortError'){
+        alert(t('gemini_timeout')||'Il servizio TTS impiega troppo tempo a rispondere. Riprova tra qualche secondo o seleziona una voce differente.');
+      }else{
+        alert(t('prev_error'));
+      }
       return;
     }
   }

@@ -4829,6 +4829,29 @@ def api_preview_audio(job_id):
                 "cap": gemini_tts.PREVIEW_CAP_PER_DAY,
                 "reset_in_seconds": reset_in,
             }), 429
+        # Preflight RPD: se il modello non ha quota per anche solo 1 chunk,
+        # falliamo immediatamente con 503 invece di lasciare la call al
+        # synthesize() che andrebbe in errore dopo aver consumato tempo.
+        # Senza questo check, su flash25 con RPD esaurito l'utente vedeva
+        # solo lo spinner per ~30s prima di un 504 generico.
+        try:
+            parts = voice.split(":")
+            _model_key_pf = parts[1] if len(parts) >= 3 else "flash25"
+            _pf = gemini_tts.preflight_can_run(_model_key_pf, 1)
+            if not _pf.get("ok"):
+                return jsonify({
+                    "error": ("Il modello voci PREMIUM ha esaurito la quota "
+                              "giornaliera. Riprova piu` tardi o seleziona "
+                              "un modello differente."),
+                    "code": "quota_exhausted",
+                    "model_key": _model_key_pf,
+                    "retry_after_sec": int(_pf.get("retry_after_sec") or 0),
+                    "available": _pf.get("available"),
+                }), 503
+        except Exception as _pf_err:
+            # Preflight non-fatal: log e prosegui. Meglio rischiare un 504
+            # downstream che bloccare un preview legittimo.
+            print(f"[preview] preflight check error (non-fatal): {_pf_err}")
 
     def _generate():
         if use_gemini_preview:
