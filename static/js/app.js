@@ -1172,7 +1172,7 @@ function _getPreviewSig(){
   const voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   const rate=document.getElementById('vr')?.value||'+0%';
   const style=_isGeminiVoiceId(voice)
-    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,300))
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
   return voice+'|'+rate+'|'+style+'|'+_getSelectedChaptersKey();
 }
@@ -1181,7 +1181,7 @@ function _buildPreviewUrl(){
   const voice=getCurrentVoiceId();
   const rate=document.getElementById('vr').value;
   const style=_isGeminiVoiceId(voice)
-    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,300))
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
   let u='/api/preview_audio/'+bookData.job_id
     +'?voice='+encodeURIComponent(voice)
@@ -1925,7 +1925,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       if(_isGeminiVoiceId(getCurrentVoiceId())){
-        var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,300);
+        var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
         if(_gs)genPayload.gemini_style_instruction=_gs;
       }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
@@ -2352,7 +2352,7 @@ async function startGen(){
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
-      const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,300);
+      const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
       if(_gs)payload.gemini_style_instruction=_gs;
     }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});

@@ -4731,7 +4731,7 @@ def api_preview_audio(job_id):
 
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
-    style = (request.args.get("style") or "").strip()[:300]
+    style = (request.args.get("style") or "").strip()[:200]
 
     # Se il client passa selected_chapters, l'anteprima deve essere un estratto
     # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
@@ -4836,7 +4836,8 @@ def api_preview_audio(job_id):
             pcm_tmp = str(preview_path) + ".pcm"
             try:
                 result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
-                                                style_instruction=style or None)
+                                                style_instruction=style or None,
+                                                rate=rate)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
                 # Costo Google REALE della preview (token reali x rate per MTok).
                 _preview_cost_eur = 0.0
@@ -5055,7 +5056,7 @@ def api_generate():
 
     # ----- F3: Gemini payment preflight -----
     payment_token = (data.get("payment_token") or "").strip()
-    style_instruction = (data.get("gemini_style_instruction") or "")[:300]
+    style_instruction = (data.get("gemini_style_instruction") or "")[:200]
     if voice and voice.startswith("gemini:"):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")

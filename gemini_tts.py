@@ -1502,9 +1502,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
               quando rate != '+0%' viene aggiunta come direttiva in linguaggio
               naturale DENTRO il blocco [style: ...] (es. "Read this text quickly...").
         output_path: percorso file PCM in output.
-        style_instruction: opzionale, istruzione di stile/tono (max 300 char dopo
+        style_instruction: opzionale, istruzione di stile/tono (max 200 char dopo
             strip). Viene fusa con l'eventuale rate directive in un singolo
             blocco "[style: <user_style> <rate_directive>] " prefissato al testo.
+            Cap a 200 (non 300): la directive rate piu` lunga e` ~95 char, la
+            somma resta <= 296 sotto il budget storico di 300 char prompt.
             Non concorre al target qualita`: e` un prompt, non testo audio.
 
     Returns:
@@ -1545,7 +1547,10 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     # e` costante e si appende dopo senza re-cap (max ~110 char system-added).
     style_parts = []
     if style_instruction:
-        s = str(style_instruction).strip()[:300]
+        # Cap a 200 char (non 300): la directive rate piu` lunga e` ~95 char e
+        # va a sommarsi nello stesso blocco [style: ...]. 200 + 95 + 1 (sep) =
+        # 296, sotto il budget storico di 300 char "comprensibili" dal modello.
+        s = str(style_instruction).strip()[:200]
         if s:
             style_parts.append(s)
     # Iniezione della rate directive nel blocco [style:...]. Silenziosa su
