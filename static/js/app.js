@@ -1292,13 +1292,51 @@ async function previewRead(){
         return;
       }
       if(r.status===503){
-        alert(t('gemini_not_configured'));
+        // 503 ha 3 sotto-casi distinti:
+        // - code=quota_exhausted: RPD server-wide per il modello -> suggerisci altro modello
+        // - code=budget_exceeded: budget EUR daily -> suggerisci voci Standard
+        // - default (no code): servizio non configurato (env mancanti)
+        const data=await r.json().catch(()=>({}));
+        const c=data && data.code;
+        if(c==='quota_exhausted'){
+          alert((data && data.error)||t('gemini_quota_exhausted')||'Il modello voci PREMIUM ha raggiunto il limite giornaliero. Riprova piu` tardi o seleziona un modello differente.');
+        }else if(c==='budget_exceeded'){
+          alert((data && data.error)||t('gemini_budget_exceeded')||'Le voci PREMIUM hanno raggiunto il budget giornaliero. Riprova piu` tardi o seleziona una voce Standard.');
+        }else{
+          alert(t('gemini_not_configured'));
+        }
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
+        return;
+      }
+      // 502 con code=empty_response: il modello ha risposto ma senza audio
+      // (finish_reason=OTHER tipicamente, instabilita` model-specific
+      // su combo voce/rate/lingua). Suggeriamo retry o cambio voce/modello
+      // perche` lo stesso payload sullo stesso modello tende a restituire
+      // lo stesso esito (non e` transient di rete).
+      if(r.status===502){
+        const data=await r.json().catch(()=>({}));
+        if(data && data.code==='empty_response'){
+          const reason=data.finish_reason||'unknown';
+          const tmpl=t('gemini_empty_response')||'Il modello TTS non ha prodotto audio (motivo: {reason}). Riprova o seleziona una voce o un modello differente.';
+          alert(tmpl.replace('{reason}',reason));
+        }else{
+          alert((data && data.error) || t('prev_error'));
+        }
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
+        return;
+      }
+      // 504: timeout server-side (il servizio TTS non ha risposto entro 30s).
+      // Tipicamente indica overload temporaneo del modello: invito a retry.
+      if(r.status===504){
+        alert(t('gemini_timeout')||'Il servizio TTS impiega troppo tempo a rispondere. Riprova tra qualche secondo o seleziona una voce differente.');
         _prevLoading=false;btn.disabled=false;_restoreBtn();
         return;
       }
       if(!r.ok){
+        // Tentativo di parse JSON per estrarre error message strutturato.
+        const data=await r.json().catch(()=>({}));
         _prevLoading=false;btn.disabled=false;_restoreBtn();
-        alert(t('prev_error'));
+        alert((data && data.error) || t('prev_error'));
         return;
       }
       const blob=await r.blob();

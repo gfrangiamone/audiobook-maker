@@ -4927,6 +4927,28 @@ def api_preview_audio(job_id):
                 "code": "empty_response",
                 "finish_reason": _fr,
             }), 502
+        # Quota giornaliera RPD raggiunta server-wide per il modello. Diverso
+        # dal preview_cap per-client (429): qui e` un limite Gemini globale.
+        # Restituiamo 503 con code dedicato per messaggio actionable.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiQuotaExhausted", ())):
+            _ra = getattr(e, "retry_after_sec", None)
+            return jsonify({
+                "error": ("Il modello voci PREMIUM ha raggiunto il limite "
+                          "giornaliero. Riprova piu` tardi o seleziona un "
+                          "modello differente."),
+                "code": "quota_exhausted",
+                "retry_after_sec": _ra,
+            }), 503
+        # Budget EUR daily/per-job superato (raro in preview, ma possibile se
+        # il budget e` molto stretto). Stesso treatment di quota_exhausted ma
+        # con code distinto per logging lato server.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiBudgetExceeded", ())):
+            return jsonify({
+                "error": ("Le voci PREMIUM hanno raggiunto il budget "
+                          "giornaliero. Riprova piu` tardi o seleziona "
+                          "una voce Standard."),
+                "code": "budget_exceeded",
+            }), 503
         return jsonify({"error": f"Errore generazione anteprima: {e}"}), 500
 
     if not preview_path.exists():
