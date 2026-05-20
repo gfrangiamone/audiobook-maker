@@ -1490,7 +1490,7 @@ def _extract_audio_pcm(response, model_key):
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
-               debug_prompt_path=None):
+               debug_prompt_path=None, max_attempts=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
@@ -1508,6 +1508,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             Cap a 200 (non 300): la directive rate piu` lunga e` ~95 char, la
             somma resta <= 296 sotto il budget storico di 300 char prompt.
             Non concorre al target qualita`: e` un prompt, non testo audio.
+        max_attempts: opzionale, override del numero massimo di tentativi.
+            Default None = usa `_synth_max_attempts()` (3 in prod). Per il
+            path preview si passa 1 per fallire velocemente su EMPTY-RESPONSE
+            finish_reason=OTHER (retry di stesso payload di solito non aiuta)
+            ed evitare il timeout 30s lato client.
 
     Returns:
         dict con success, bytes_written, input_tokens, output_tokens, model_key,
@@ -1611,7 +1616,13 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     usage_input = 0
     usage_output = 0
     attempt = 0
-    max_attempts = _synth_max_attempts()
+    # max_attempts: il parametro funzione vince sull'env. Permette al caller
+    # (es. preview_audio) di abbassare il numero di retry per non saturare il
+    # timeout client su EMPTY-RESPONSE retryable ma di fatto deterministica.
+    if max_attempts is None or int(max_attempts) <= 0:
+        max_attempts = _synth_max_attempts()
+    else:
+        max_attempts = int(max_attempts)
     honor_delay = _retry_honor_delay()
     max_wait = _retry_max_wait_sec()
     abort_daily = _abort_on_daily_quota()

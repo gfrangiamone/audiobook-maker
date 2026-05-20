@@ -4835,9 +4835,18 @@ def api_preview_audio(job_id):
             # Native output is PCM — convert to MP3 inline for browser playback.
             pcm_tmp = str(preview_path) + ".pcm"
             try:
+                # max_attempts=1: il path preview ha timeout client 30s. Se
+                # Gemini restituisce EMPTY-RESPONSE con finish_reason=OTHER
+                # (modello fermato per ragioni non specificate, tipico su
+                # combo voce/rate/lingua poco stabili come flash25), i 3
+                # retry default + backoff saturano il timeout → 504 lato
+                # browser. Falliamo veloce: il caller (preview_audio)
+                # converte l'errore in 502 con messaggio utile e l'utente
+                # puo` ritentare manualmente o cambiare voce/modello.
                 result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
                                                 style_instruction=style or None,
-                                                rate=rate)
+                                                rate=rate,
+                                                max_attempts=1)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
                 # Costo Google REALE della preview (token reali x rate per MTok).
                 _preview_cost_eur = 0.0
@@ -4905,6 +4914,19 @@ def api_preview_audio(job_id):
     except concurrent.futures.TimeoutError:
         return jsonify({"error": "Timeout: il servizio TTS non ha risposto in 30 secondi."}), 504
     except Exception as e:
+        # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
+        # o simili). Tipicamente combo voce/rate/lingua poco stabile su un
+        # modello specifico (es. flash25). Restituiamo 502 con messaggio
+        # actionable invece di 500 generico.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiEmptyResponse", ())):
+            _fr = getattr(e, "finish_reason", None) or "unknown"
+            return jsonify({
+                "error": (f"Il modello TTS non ha prodotto audio (motivo: {_fr}). "
+                          f"Riprova, oppure cambia voce o modello (la stessa voce su "
+                          f"un modello diverso spesso funziona)."),
+                "code": "empty_response",
+                "finish_reason": _fr,
+            }), 502
         return jsonify({"error": f"Errore generazione anteprima: {e}"}), 500
 
     if not preview_path.exists():
