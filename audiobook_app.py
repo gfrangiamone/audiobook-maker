@@ -4972,6 +4972,24 @@ def api_preview_audio(job_id):
                           "una voce Standard."),
                 "code": "budget_exceeded",
             }), 503
+        # HTTP timeout: il client genai non ha ricevuto risposta entro il
+        # timeout configurato (ABM_GEMINI_HTTP_TIMEOUT_MS, default 25s).
+        # Distinguiamo dal ThreadPoolExecutor timeout (504) perche` qui
+        # abbiamo info sulla causa (API lenta/irraggiungibile).
+        _ctx = getattr(e, "__context__", None)
+        _is_http_timeout = False
+        try:
+            import httpx
+            _is_http_timeout = isinstance(e, httpx.TimeoutException) or isinstance(_ctx, httpx.TimeoutException)
+        except ImportError:
+            pass
+        if _is_http_timeout:
+            return jsonify({
+                "error": ("Il servizio voci PREMIUM non risponde. Riprova "
+                          "tra qualche secondo o seleziona un modello/voce "
+                          "differente."),
+                "code": "http_timeout",
+            }), 504
         return jsonify({"error": f"Errore generazione anteprima: {e}"}), 500
 
     if not preview_path.exists():

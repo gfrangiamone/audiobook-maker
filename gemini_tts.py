@@ -1158,20 +1158,27 @@ def is_available():
             return False
 
 
+def _http_timeout_ms():
+    """Timeout HTTP per le call al Gemini API (millisecondi)."""
+    return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
+
+
 def _get_client():
     """Lazy init del client google-genai (singleton)."""
     global _genai_client
     if _genai_client is not None:
         return _genai_client
     from google import genai
+    from google.genai import types as _gt
+    http_opts = _gt.HttpOptions(timeout=_http_timeout_ms())
     use_vertex = os.environ.get("ABM_GEMINI_USE_VERTEX", "false").lower() == "true"
     if use_vertex:
         vertex_file = os.environ["ABM_GEMINI_VERTEX_CREDENTIALS_FILE"]
         os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", vertex_file)
-        _genai_client = genai.Client(vertexai=True)
+        _genai_client = genai.Client(vertexai=True, http_options=http_opts)
     else:
         api_key = os.environ["ABM_GEMINI_API_KEY"].strip()
-        _genai_client = genai.Client(api_key=api_key)
+        _genai_client = genai.Client(api_key=api_key, http_options=http_opts)
     return _genai_client
 
 
