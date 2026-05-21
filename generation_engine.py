@@ -44,6 +44,7 @@ from audio_utils import (
     _generate_podcast_rss,
     pcm_size_to_seconds,
     pcm_to_mp3, pcm_to_aac_m4b,
+    trim_pcm_trailing_silence,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
@@ -1461,6 +1462,24 @@ def run_optimization(job_id, selected_chapters=None):
                     info.total_chars = sum(ch.char_count for ch in filtered)
                     info.estimated_duration_minutes = info.total_words / 150
 
+            # Persisti la stima Gemini per l'audit (popola i campi *_est del
+            # JSONL altrimenti sempre 0 in questo path: il flusso auto-gen
+            # bypassa /api/generate dove la stima viene calcolata).
+            if (gemini_tts is not None and voice
+                    and voice.startswith("gemini:")):
+                try:
+                    _ui_lang_autogen = (job.get("opt_lang") or "").lower()
+                    _lang_autogen = (_ui_lang_autogen
+                                     or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                     or "it")
+                    _est_autogen = gemini_tts.estimate_book_cost(
+                        info.chapters, voice,
+                        language=_lang_autogen, rate_pct=rate,
+                    )
+                    job["gemini_estimate"] = _est_autogen
+                except Exception as _e_est_ag:
+                    print(f"[{job_id}] auto-gen gemini_estimate persist failed (non-fatal): {_e_est_ag}")
+
             run_generation(job_id, info, voice, rate, single_file,
                            output_format=output_format,
                            podcast_base_url=podcast_base_url)
@@ -1537,6 +1556,29 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         model_key = parts[1] if len(parts) >= 3 else "?"
         payment = job.get("payment") or {}
         charged = float(payment.get("total_eur", 0) or 0)
+        payment_method = payment.get("method", "") or ""
+        payment_source = payment.get("source", "") or ""
+        payment_token_full = payment.get("token", "") or ""
+        # Fallback: il flusso auto_generate post-optimize storicamente non
+        # impostava job["payment"] (l'unico setter era /api/generate). Per
+        # job legacy o path non ancora coperti, accettiamo come ripiego la
+        # cifra registrata da /api/optimize (job["payment_amount_eur"]).
+        # Nel JSONL marchiamo l'origine con payment_source="legacy_fallback"
+        # cosi' un'eventuale doppia copertura e' rintracciabile.
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        # Token mascherato per audit (mai esporre il PayPal order_id completo).
+        if payment_token_full:
+            payment_token_short = (payment_token_full[:8] + "..."
+                                   if len(payment_token_full) > 12
+                                   else payment_token_full)
+        else:
+            payment_token_short = ""
         google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
         try:
             if gemini_tts is not None:
@@ -1588,8 +1630,29 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - google_cost_actual, 4),
             "outcome": outcome,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
         }
         gemini_cost_audit.append_record(rec)
+        # Diagnostica: job completato sopra soglia gratuita senza pagamento
+        # registrato e' sintomo di bug (token consumato in un branch che non
+        # stasha job["payment"], oppure stima divergente fra frontend/server
+        # che salta il branch payment). Stampa WARNING esplicito cosi' la
+        # prossima occorrenza emerge nei log senza dover scavare nel JSONL.
+        try:
+            _free_thr = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+        except (TypeError, ValueError):
+            _free_thr = 0.50
+        if (outcome == "completed"
+                and charged <= 0.0
+                and should_have_been > _free_thr):
+            print(f"[{job_id}] AUDIT WARNING: completed job sopra soglia "
+                  f"({should_have_been:.2f}€) senza pagamento registrato "
+                  f"(payment_method={payment_method or 'NONE'}, "
+                  f"payment_token_in_job={'YES' if job.get('payment_token') else 'NO'}). "
+                  f"Possibile bug: token consumato in un path che non stasha "
+                  f"job['payment']. Vedi md_files/ttsgemini.md sezione audit.")
         # Reconciliation a livello mensile (gemini_tts_usage.json): registra
         # il delta stima/reale per consentire calibrazione del modello di costo.
         # Solo job davvero completati - per i cancel partiali la stima ex-ante
@@ -1988,6 +2051,21 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
 
+                    # Trim trailing silence dal PCM chunk Gemini per ridurre le
+                    # pause percepibili tra chunk consecutivi. Cap a trim_tail_ms()
+                    # per evitare di tagliare l'attacco/coda di parola. NON applicato
+                    # se result is False (sotto e` silenzio puro segnaposto).
+                    if gemini_tts is not None:
+                        try:
+                            _trim_cap = gemini_tts.trim_tail_ms()
+                            _trim_thr = gemini_tts.trim_tail_threshold()
+                            if _trim_cap > 0:
+                                trim_pcm_trailing_silence(
+                                    part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
+                                )
+                        except Exception as _e_trim:
+                            print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
+
                 # Log sul primo chunk per confermare che il TTS sta procedendo
                 if i == 0:
                     print(f"[{job_id}] First chunk done: {part_path}, "
@@ -2265,6 +2343,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 )
                             except Exception as e:
                                 print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
+
+                        # Trim trailing silence dal PCM Gemini (idem single-file branch).
+                        if gemini_tts is not None:
+                            try:
+                                _trim_cap = gemini_tts.trim_tail_ms()
+                                _trim_thr = gemini_tts.trim_tail_threshold()
+                                if _trim_cap > 0:
+                                    trim_pcm_trailing_silence(
+                                        part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
+                                    )
+                            except Exception as _e_trim:
+                                print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:

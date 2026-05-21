@@ -1302,13 +1302,16 @@ async function previewRead(){
 
   // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
   if(_isGeminiVoice(voice)){
-    // Client-side timeout via AbortController: il server ha un timeout di
-    // 30s, ma l'utente vuole feedback piu` rapido. Se a 25s non e` arrivata
-    // risposta, abortiamo lato client e mostriamo timeout message. Cosi`
-    // anche in caso di stall server (RPM throttle, network) la UI non
-    // resta appesa indefinitamente con solo lo spinner.
+    // Client-side timeout via AbortController, model-aware.
+    // Catena server: HTTP Google -> wrapper ThreadPoolExecutor -> handler.
+    //   flash25:  HTTP 25s -> wrapper 30s -> client 35s (5s buffer).
+    //   flash31:  HTTP 60s -> wrapper 65s -> client 70s (5s buffer).
+    // flash31 e` strutturalmente piu` lento (RPM cap 3/300 vs 10/750 +
+    // audio gen piu` lenta lato Google); senza buffer il client abortiva
+    // mentre il server stava completando con successo, generando il falso
+    // positivo "Il servizio TTS impiega troppo tempo".
     const _ctrl=new AbortController();
-    const _toMs=25000;
+    const _toMs = voice.indexOf(':flash31:') !== -1 ? 70000 : 35000;
     const _toHandle=setTimeout(()=>{try{_ctrl.abort();}catch(_){}},_toMs);
     try{
       const r=await fetch(url,{signal:_ctrl.signal});
@@ -1998,7 +2001,10 @@ async function startCombinedGeneration(combinedPaymentToken){
     _setCancelButtonMode('gen');
     lockUI();
     try{
-      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+      var _genLang=(wizardState.audioTab==='premium')
+        ?(document.getElementById('vlPremium')?.value||cl)
+        :(document.getElementById('vl')?.value||cl);
+      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       if(_isGeminiVoiceId(getCurrentVoiceId())){
@@ -2426,7 +2432,10 @@ async function startGen(){
   _setCancelButtonMode('gen');
   lockUI();
   try{
-    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+    const _genLang2=(wizardState.audioTab==='premium')
+      ?(document.getElementById('vlPremium')?.value||cl)
+      :(document.getElementById('vl')?.value||cl);
+    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
       const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);

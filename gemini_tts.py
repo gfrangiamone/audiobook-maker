@@ -163,14 +163,44 @@ def _temperature():
 
 def inter_chunk_gap_ms():
     """Silenzio (ms) inserito tra chunk PCM consecutivi in concatenazione.
-    Default 250. Override: ABM_GEMINI_INTER_CHUNK_GAP_MS (intero >= 0)."""
+    Default 100. Override: ABM_GEMINI_INTER_CHUNK_GAP_MS (intero >= 0).
+
+    NB: i chunk Gemini hanno trailing silence naturale variabile (50-1500 ms).
+    Il trim trailing-silence (vedi trim_tail_ms()) li normalizza prima della
+    concat, quindi un gap basso (100 ms) e' sufficiente come respiro acustico.
+    Storicamente era 250 ms: causava pause percepibili di "qualche secondo"
+    quando si sommava al trailing residuo non trimmato."""
     val = os.environ.get("ABM_GEMINI_INTER_CHUNK_GAP_MS")
     if val is not None and val.strip() != "":
         try:
             return max(0, int(val))
         except ValueError:
             pass
-    return 250
+    return 100
+
+
+def trim_tail_ms():
+    """Cap massimo (ms) di silenzio finale da rimuovere a ogni PCM chunk Gemini.
+    Default 800. Override: ABM_GEMINI_TRIM_TAIL_MS (intero >= 0). 0 = disabilita."""
+    val = os.environ.get("ABM_GEMINI_TRIM_TAIL_MS")
+    if val is not None and val.strip() != "":
+        try:
+            return max(0, int(val))
+        except ValueError:
+            pass
+    return 800
+
+
+def trim_tail_threshold():
+    """Soglia ampiezza (0-32767) sotto cui un sample int16 e' considerato silenzio.
+    Default 200 (≈ -44 dB). Override: ABM_GEMINI_TRIM_TAIL_THRESHOLD."""
+    val = os.environ.get("ABM_GEMINI_TRIM_TAIL_THRESHOLD")
+    if val is not None and val.strip() != "":
+        try:
+            return max(0, min(32767, int(val)))
+        except ValueError:
+            pass
+    return 200
 
 
 class GeminiQuotaExhausted(RuntimeError):
@@ -1158,13 +1188,28 @@ def is_available():
             return False
 
 
-def _http_timeout_ms():
-    """Timeout HTTP per le call al Gemini API (millisecondi)."""
+def _http_timeout_ms(model_key=None):
+    """Timeout HTTP per le call al Gemini API (millisecondi).
+
+    `flash31` (gemini-3.1-flash-tts-preview) e` strutturalmente piu` lento
+    di `flash25`: RPM cap inferiore (3/300 vs 10/750) + audio gen piu`
+    lenta lato Google. Con il default 25s i chunk normali finiscono in
+    504 DEADLINE_EXCEEDED, saturano i 3 retry e producono silenzio. Per
+    flash31 il default sale a 60s; flash25 resta a 25s per preservare il
+    fast-fail su stall reali. Override via env per-modello.
+    """
+    if model_key == "flash31":
+        return _i("ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31", 60000)
     return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
 
 
 def _get_client():
-    """Lazy init del client google-genai (singleton)."""
+    """Lazy init del client google-genai (singleton).
+
+    Il timeout HTTP qui impostato e` il default del client; viene
+    sovrascritto per-call in `synthesize()` con il timeout model-aware
+    (vedi `_http_timeout_ms(model_key)`).
+    """
     global _genai_client
     if _genai_client is not None:
         return _genai_client
@@ -1653,10 +1698,18 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             temp = _temperature()
             if temp is not None:
                 config_kwargs["temperature"] = temp
+            # http_options per-call: override del timeout del client.
+            # flash31 ha bisogno di ~60s mentre flash25 sta sui 25s. Settare
+            # qui evita 504 DEADLINE_EXCEEDED in chain sui retry per flash31.
             response = client.models.generate_content(
                 model=model_id,
                 contents=final_text,
-                config=genai_types.GenerateContentConfig(**config_kwargs),
+                config=genai_types.GenerateContentConfig(
+                    **config_kwargs,
+                    http_options=genai_types.HttpOptions(
+                        timeout=_http_timeout_ms(model_key)
+                    ),
+                ),
             )
             pcm_data = _extract_audio_pcm(response, model_key)
             um = getattr(response, "usage_metadata", None)

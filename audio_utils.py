@@ -1031,6 +1031,63 @@ def pcm_size_to_seconds(byte_size, sample_rate=24000, channels=1, sample_width=2
     return byte_size / bytes_per_second
 
 
+def trim_pcm_trailing_silence(pcm_path, sample_rate=24000, channels=1, sample_width=2,
+                              threshold=200, max_trim_ms=800):
+    """Tronca in-place il silenzio finale di un file PCM raw mono 16-bit (s16le).
+
+    Scansiona dalla coda del file fino a `max_trim_ms` di campioni e rimuove
+    i samples finali consecutivi con |valore| < threshold. Usato per ridurre
+    le pause percepibili tra chunk Gemini TTS consecutivi (ogni chunk tende ad
+    avere trailing silence di durata variabile).
+
+    Args:
+        pcm_path: file PCM raw (s16le).
+        sample_rate, channels, sample_width: formato. Solo mono 16-bit supportato.
+        threshold: ampiezza assoluta (0-32767) sotto cui un sample e' "silenzio".
+                   200 ≈ -44 dB (sicuro contro tagli sull'attacco di parola).
+        max_trim_ms: cap massimo (ms) di silenzio da rimuovere. 0 = disabilita.
+
+    Returns:
+        int: millisecondi effettivamente troncati (0 se nessun trim o errore).
+    """
+    if max_trim_ms <= 0 or sample_width != 2 or channels != 1:
+        return 0
+    if not os.path.exists(pcm_path):
+        return 0
+    try:
+        size = os.path.getsize(pcm_path)
+        if size < 4:
+            return 0
+        max_trim_bytes = int(max_trim_ms * sample_rate / 1000) * channels * sample_width
+        scan_bytes = min(size, max_trim_bytes)
+        # Allinea su confine sample
+        scan_bytes -= scan_bytes % (channels * sample_width)
+        if scan_bytes <= 0:
+            return 0
+        import struct
+        with open(pcm_path, "rb") as f:
+            f.seek(size - scan_bytes)
+            tail = f.read(scan_bytes)
+        n_samples = len(tail) // 2
+        if n_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{n_samples}h", tail)
+        cut_samples = 0
+        for i in range(n_samples - 1, -1, -1):
+            if abs(samples[i]) >= threshold:
+                break
+            cut_samples += 1
+        if cut_samples == 0:
+            return 0
+        cut_bytes = cut_samples * sample_width * channels
+        with open(pcm_path, "rb+") as f:
+            f.truncate(size - cut_bytes)
+        return int(cut_samples * 1000 / sample_rate)
+    except Exception as e:
+        print(f"[trim_pcm_trailing_silence] error on {pcm_path}: {e}")
+        return 0
+
+
 def pcm_concat(pcm_paths, output_path, skip_missing=False, gap_ms=0,
                sample_rate=24000, channels=1, sample_width=2):
     """Concatena raw PCM byte-wise (tutti i file devono avere stesso formato).
