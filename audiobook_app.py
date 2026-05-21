@@ -8338,7 +8338,8 @@ _init_log_dedup()
 _ensure_background_threads()
 
 if __name__ == "__main__":
-    PORT = 5601
+    PORT = int(os.environ.get("ABM_PORT", "5601"))
+    DEBUG = os.environ.get("ABM_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
     print(f"\n{'='*50}")
     print(f"  Audiobook Maker v{__version__}")
     print(f"  http://localhost:{PORT}")
@@ -8349,5 +8350,7 @@ if __name__ == "__main__":
     _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
     print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
           f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
+    print(f"  Debug mode: {DEBUG} "
+          f"({'env ABM_DEBUG' if 'ABM_DEBUG' in os.environ else 'default off'})")
     print(f"{'='*50}\n")
-    app.run(host="127.0.0.1", port=PORT, debug=True)
+    app.run(host="127.0.0.1", port=PORT, debug=DEBUG)

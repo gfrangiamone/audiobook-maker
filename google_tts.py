@@ -73,7 +73,7 @@ def is_available():
         
         print(f"[google-tts] init check: creds_file='{creds_file}'")
         
-        if not creds_file or not os.path.exists(creds_file):
+        if not creds_file or not os.path.isfile(creds_file):
             _gtts_available = False
             print(f"[google-tts] Disabled: no credentials file found at '{creds_file}'.")
             return False
