@@ -1,0 +1,35 @@
+name: Deploy to Test
+
+on:
+  push:
+    branches: [GEMINI]
+  workflow_dispatch:
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax check (py_compile su tutti i .py tracciati)
+        run: |
+          python -m py_compile $(git ls-files '*.py')
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: syntax-check
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /opt/audiobook-maker-test
+            git fetch origin GEMINI
+            git reset --hard origin/GEMINI
+            pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl restart audiobook-maker-test
+            echo "Deploy test completato: $(date)"
