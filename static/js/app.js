@@ -1667,6 +1667,15 @@ function _updateAiOptCard(){
 
 async function _fetchCostEstimate(){
   if(!jobId)return;
+  // Con voci PREMIUM il costo LLM (anche oltre soglia) e' bundlato nel
+  // pagamento combinato Premium+AI gestito dal modale aperto da onGenerateClick.
+  // Saltare il popup voucher LLM-only per evitare una doppia richiesta di pagamento.
+  if(wizardState.audioTab==='premium'){
+    const costEl=document.getElementById('costEstimate');if(costEl)costEl.classList.remove('visible');
+    const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+    const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
+    return;
+  }
   try{
     let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
     const selLang=document.getElementById('vl').value||cl;
@@ -1899,8 +1908,10 @@ async function startCombinedGeneration(combinedPaymentToken){
   }catch(e){}
 
   if(!(await _validateLanguage()))return;
-  // Donate modal for returning users
-  if(_shouldShowDonateModal()){await _showDonateModal();}
+  // Donate modal for returning users — saltato per Voci PREMIUM: chiedere
+  // una donazione subito dopo (o in luogo di) un pagamento Premium e' UX
+  // contraddittoria. La generazione gratis con voci Standard mantiene il prompt.
+  if(wizardState.audioTab!=='premium' && _shouldShowDonateModal()){await _showDonateModal();}
   _markGeneration();
 
   // Collect selected chapters
@@ -1924,6 +1935,9 @@ async function startCombinedGeneration(combinedPaymentToken){
         ?document.getElementById('vlPremium').value||cl
         :document.getElementById('vl').value||cl;
       url.searchParams.append('lang',selLang);
+      // Passa la voce cosi' il server applica il cap corretto (Gemini ha MAX_GEMINI_TEXT_CHARS piu' restrittivo).
+      const _voiceForEst=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+      if(_voiceForEst)url.searchParams.append('voice',_voiceForEst);
       if(selectedChapters&&selectedChapters.length>0){
         selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
       }
@@ -2508,6 +2522,7 @@ function listenProgress(){
       if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
+      window._sseLastProgressPct=pct;
       // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
       document.getElementById('pBar').style.width=pct+'%';
@@ -2670,9 +2685,109 @@ function cancelOptimization(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
 }
 
-function cancelJob(){
-  if(!jobId||!generating)return;
-  navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
+// Helper: crea un modal-overlay neutro (titolo + body container + footer).
+// Ritorna {root, body, footer, close(v?)} dove close rimuove l'overlay e
+// (se passata) risolve la Promise associata.
+function _mkCancelModal(modalId, titleText, resolveFn){
+  var old=document.getElementById(modalId); if(old)old.remove();
+  var ov=document.createElement('div');
+  ov.id=modalId;
+  ov.className='modal-overlay open';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;color:#111';
+  var box=document.createElement('div');
+  box.className='modal';
+  box.style.cssText='max-width:520px;background:#fff;color:#111;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  var head=document.createElement('div');
+  head.className='modal-head';
+  head.style.cssText='padding:18px 22px 12px;border-bottom:1px solid #e5e7eb';
+  var h2=document.createElement('h2');
+  h2.style.cssText='margin:0;font-size:1.15em;color:#111;font-weight:700';
+  h2.textContent=titleText;
+  head.appendChild(h2);
+  var body=document.createElement('div');
+  body.className='modal-body';
+  body.style.cssText='padding:14px 22px 18px;color:#111;line-height:1.5';
+  var footer=document.createElement('div');
+  footer.style.cssText='margin-top:18px;text-align:right';
+  body.appendChild(footer);
+  box.appendChild(head);
+  box.appendChild(body);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  var settled=false;
+  function close(v){
+    if(settled) return;
+    settled=true;
+    ov.remove();
+    if(resolveFn) resolveFn(v);
+  }
+  ov.addEventListener('click', function(ev){ if(ev.target===ov) close(false); });
+  return {root:ov, body:body, footer:footer, close:close};
+}
+
+// Modal di conferma cancel per voci PREMIUM (Gemini): l'utente sta per
+// rinunciare a parte dell'importo gia' versato. Promise<bool>.
+function _confirmCancelGeminiModal(paid, pct){
+  return new Promise(function(resolve){
+    function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
+    var paidNum=Number(paid)||0;
+    var pctNum=Math.max(0,Math.min(100, Math.round(Number(pct)||0)));
+    var refundEst=Math.max(0, paidNum * (100 - pctNum) / 100 - 0.34);
+    var m=_mkCancelModal('cancelConfirmModal',
+      _tf('cancel_confirm_title','Annullare la generazione?'), resolve);
+    var p=document.createElement('p');
+    p.style.cssText='margin:0 0 12px;color:#1f2937';
+    p.textContent=_tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.');
+    m.body.insertBefore(p, m.footer);
+    var ul=document.createElement('ul');
+    ul.style.cssText='margin:0 0 12px;padding-left:8px;color:#1f2937;list-style:none';
+    var lines=[
+      _tf('cancel_confirm_paid','Importo versato: {paid} EUR').replace('{paid}', paidNum.toFixed(2)),
+      _tf('cancel_confirm_progress','Avanzamento attuale: {pct}%').replace('{pct}', String(pctNum)),
+      _tf('cancel_confirm_refund_est','Rimborso stimato: ~{refund} EUR').replace('{refund}', refundEst.toFixed(2))
+    ];
+    lines.forEach(function(txt){
+      var li=document.createElement('li');
+      li.style.cssText='margin:4px 0';
+      li.textContent='• '+txt;
+      ul.appendChild(li);
+    });
+    m.body.insertBefore(ul, m.footer);
+    var btnNo=document.createElement('button');
+    btnNo.className='btn';
+    btnNo.style.cssText='padding:8px 16px;border-radius:8px;background:#e5e7eb;color:#111;border:none;font-weight:600;cursor:pointer;margin-right:8px';
+    btnNo.textContent=_tf('cancel_confirm_no','Continua generazione');
+    btnNo.addEventListener('click', function(){ m.close(false); });
+    var btnYes=document.createElement('button');
+    btnYes.className='btn btn-danger';
+    btnYes.style.cssText='padding:8px 16px;border-radius:8px;background:#dc2626;color:#fff;border:none;font-weight:600;cursor:pointer';
+    btnYes.textContent=_tf('cancel_confirm_yes','Sì, annulla');
+    btnYes.addEventListener('click', function(){ m.close(true); });
+    m.footer.appendChild(btnNo);
+    m.footer.appendChild(btnYes);
+  });
+}
+
+// Modal informativo: il server ha rifiutato il cancel perche' il job e'
+// oltre la soglia di lock (ABM_GEMINI_CANCEL_LOCK_PCT).
+function _showCancelLockedModal(lockPct){
+  function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
+  var lockNum=Math.max(0,Math.min(100, Math.round(Number(lockPct)||70)));
+  var m=_mkCancelModal('cancelLockedModal',
+    _tf('cancel_locked_title','Annullamento non disponibile'), null);
+  var p=document.createElement('p');
+  p.style.cssText='margin:0 0 12px;color:#1f2937';
+  p.textContent=_tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento. Per non perdere quasi tutto l\'importo versato, attendi il completamento.').replace('{lock}', String(lockNum));
+  m.body.insertBefore(p, m.footer);
+  var btnOk=document.createElement('button');
+  btnOk.className='btn btn-primary';
+  btnOk.style.cssText='padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer';
+  btnOk.textContent=_tf('news_modal_ok','Ho capito');
+  btnOk.addEventListener('click', function(){ m.close(); });
+  m.footer.appendChild(btnOk);
+}
+
+function _completeCancelUI(){
   generating=false;
   unlockUI();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
@@ -2687,9 +2802,38 @@ function cancelJob(){
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
   document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
-  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
+  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;const sp=document.createElement('span');sp.setAttribute('data-t','btn_gen');sp.textContent=t('btn_gen');btnGen.replaceChildren(sp);}
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   updateSelection();
+}
+
+function cancelJob(){
+  if(!jobId||!generating)return;
+  var voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  if(_isGeminiVoiceId(voice)){
+    var paid=(window._payState && _payState.gemini) ? Number(_payState.gemini)||0 : 0;
+    var pct=Number(window._sseLastProgressPct||0);
+    _confirmCancelGeminiModal(paid, pct).then(function(yes){
+      if(!yes) return;
+      // Fetch (non sendBeacon) per intercettare 409 cancel_locked_progress.
+      fetch('/api/cancel/'+jobId,{method:'POST',credentials:'same-origin'}).then(function(r){
+        if(r.status===409){
+          return r.json().then(function(d){
+            _showCancelLockedModal((d&&d.lock_pct)||70);
+            return null;
+          });
+        }
+        _completeCancelUI();
+        return null;
+      }).catch(function(){
+        try{navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');}catch(e){}
+        _completeCancelUI();
+      });
+    });
+    return;
+  }
+  navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
+  _completeCancelUI();
 }
 
 function retryGen(){retryGeneration()}
@@ -3369,7 +3513,12 @@ function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();
   if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
   const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
-  const limit=(bookData&&bookData.max_text_chars)|0;
+  // Cap dipendente dalla tab voce: Premium usa max_gemini_text_chars (piu' restrittivo)
+  // quando disponibile, altrimenti fallback al cap standard.
+  const _premiumActive=(wizardState.audioTab==='premium');
+  const _capPremium=(bookData&&bookData.max_gemini_text_chars)|0;
+  const _capStd=(bookData&&bookData.max_text_chars)|0;
+  const limit=(_premiumActive&&_capPremium>0)?_capPremium:_capStd;
   if(limit>0){
     const chars=_computeSelectedChars();
     if(chars>limit){_showSelTooLargeModal(chars,limit);return}
