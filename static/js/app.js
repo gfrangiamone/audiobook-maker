@@ -2523,6 +2523,7 @@ function listenProgress(){
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       window._sseLastProgressPct=pct;
+      _updateGeminiCancelLockUI(pct);
       // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
       document.getElementById('pBar').style.width=pct+'%';
@@ -2785,6 +2786,35 @@ function _showCancelLockedModal(lockPct){
   btnOk.textContent=_tf('news_modal_ok','Ho capito');
   btnOk.addEventListener('click', function(){ m.close(); });
   m.footer.appendChild(btnOk);
+}
+
+// Disabilita il pulsante Cancel quando il job voci PREMIUM e' oltre la
+// soglia client-side (default 70). La gate finale e' comunque server-side
+// in /api/cancel (ABM_GEMINI_CANCEL_LOCK_PCT). Tooltip via title attribute.
+var _GEMINI_CANCEL_LOCK_PCT_CLIENT = 70;
+function _updateGeminiCancelLockUI(pct){
+  var btnC = document.getElementById('btnC');
+  if(!btnC) return;
+  var voice = (typeof getCurrentVoiceId==='function') ? getCurrentVoiceId() : '';
+  if(!_isGeminiVoiceId(voice)){
+    if(btnC.disabled && btnC.dataset.lockedByCancelFloor==='1'){
+      btnC.disabled=false;
+      btnC.title='';
+      delete btnC.dataset.lockedByCancelFloor;
+    }
+    return;
+  }
+  var p = Math.max(0, Math.min(100, Math.round(Number(pct)||0)));
+  if(p > _GEMINI_CANCEL_LOCK_PCT_CLIENT){
+    function _tf(k, fb){var v=t(k); return (v===k||!v)?fb:v;}
+    btnC.disabled=true;
+    btnC.dataset.lockedByCancelFloor='1';
+    btnC.title=_tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento.').replace('{lock}', String(_GEMINI_CANCEL_LOCK_PCT_CLIENT));
+  } else if(btnC.dataset.lockedByCancelFloor==='1'){
+    btnC.disabled=false;
+    btnC.title='';
+    delete btnC.dataset.lockedByCancelFloor;
+  }
 }
 
 function _completeCancelUI(){
