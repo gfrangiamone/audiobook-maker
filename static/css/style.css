@@ -653,6 +653,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .progress-stats-wiz .pct{color:var(--ac);font-weight:650;font-variant-numeric:tabular-nums}
 .generation-active-notice{display:none;align-items:center;gap:8px;font-size:.8rem;color:var(--ac);font-weight:550;margin-bottom:16px;padding:10px 16px;background:var(--acs);border-radius:var(--rs);border:1px solid rgba(196,122,42,.15)}
 .generation-active-notice .pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--ac);flex-shrink:0;animation:pulse 1.4s infinite}
+.generation-active-notice.warn{color:#b91c1c;background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.3);font-weight:600;font-size:.85rem;line-height:1.4;align-items:flex-start}
+.generation-active-notice.warn .pulse-dot{background:#dc2626;margin-top:5px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* ═══ EMAIL LATE AREA ═══ */

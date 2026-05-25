@@ -511,6 +511,7 @@ function lockUI(){
   });
   // Show cancel area
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='';
+  _updateGenNoticeWarning();
 }
 function unlockUI(){
   generating=false;
@@ -2221,6 +2222,8 @@ function _showWizProgress(){
 
 function _listenOptProgressWiz(){
   var myJobId=jobId;
+  _updateGenNoticeWarning();
+  _autoRegisterEmailFromStorage(myJobId);
   var es=new EventSource('/api/optimize_progress/'+myJobId);
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
@@ -2477,6 +2480,8 @@ function listenProgress(){
   let retries=0;
   const maxRetries=5;
   const myJobId=jobId;
+  _updateGenNoticeWarning();
+  _autoRegisterEmailFromStorage(myJobId);
   function connect(){
     const es=new EventSource('/api/progress/'+myJobId);
     es.onmessage=ev=>{
@@ -3124,6 +3129,56 @@ async function validateCoupon(){
   }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
 }
 
+function _updateGenNoticeWarning(){
+  const notice=document.getElementById('generationActiveNotice');
+  const txt=document.getElementById('genActiveNoticeText');
+  if(!notice||!txt)return;
+  if(emailRegistered){
+    notice.classList.remove('warn');
+  }else{
+    notice.classList.add('warn');
+    const w=t('gen_active_notice_warn');
+    if(w)txt.textContent=w;
+  }
+}
+
+function _setEmailLateConfirm(area,msg){
+  if(!area)return;
+  while(area.firstChild)area.removeChild(area.firstChild);
+  const span=document.createElement('span');
+  span.style.color='var(--ok)';
+  span.style.fontSize='.84rem';
+  span.textContent=msg;
+  area.appendChild(span);
+}
+
+async function _autoRegisterEmailFromStorage(myJobId){
+  if(emailRegistered)return false;
+  let stored='';
+  try{stored=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
+  if(!stored||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stored))return false;
+  try{
+    const dlType=(outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters');
+    const payload={job_id:myJobId,email:stored,download_type:dlType,lang:cl};
+    if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');payload.base_url=urlInput?urlInput.value.trim():'';}
+    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(d&&d.error)return false;
+    if(myJobId!==jobId)return false;
+    emailRegistered=true;
+    lastVoucherEmail=stored;
+    const noticeEl=document.getElementById('genActiveNoticeText');
+    if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',stored);
+    const area=document.getElementById('emailLateArea');
+    if(area){
+      _setEmailLateConfirm(area,t('email_late_ok_persisted')||('Email: '+stored));
+      area.classList.add('visible');
+    }
+    _updateGenNoticeWarning();
+    return true;
+  }catch(e){return false}
+}
+
 async function submitEmailLate(){
   const email=(document.getElementById('notifyEmailLate').value||'').trim();
   if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return;
@@ -3139,7 +3194,8 @@ async function submitEmailLate(){
     const noticeEl=document.getElementById('genActiveNoticeText');
     if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',email);
     const area=document.getElementById('emailLateArea');
-    if(area)area.innerHTML='<span style="color:var(--ok);font-size:.84rem">✅ '+(t('email_late_ok')||'Email registered!')+'</span>';
+    _setEmailLateConfirm(area,'✅ '+(t('email_late_ok')||'Email registered!'));
+    _updateGenNoticeWarning();
   }catch(e){alert('Error: '+e.message)}
 }
 
