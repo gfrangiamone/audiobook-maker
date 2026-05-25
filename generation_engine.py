@@ -88,6 +88,7 @@ _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op
 _google_tts = None      # optional google_tts module
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
+_write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -103,12 +104,13 @@ def _set_job_status(job, status):
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
-              retention_sec=None):
+              retention_sec=None, write_email_marker_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
+    global _write_email_marker
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -119,6 +121,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
     _retention_sec = retention_sec if retention_sec is not None else 64800
+    _write_email_marker = write_email_marker_fn
     
     # Inizializza DeepSeek (se API key presente)
     _init_deepseek()
@@ -737,7 +740,15 @@ def _send_completion_email(job_id):
     }
     _save_tokens()
     job["email_token"] = token
-    job["email_sent_at"] = time.time()
+    _sent_at = time.time()
+    job["email_sent_at"] = _sent_at
+    # Marker su disco: protegge la job dir per tutta la finestra di retention
+    # anche dal cleanup di altri worker Gunicorn che non vedono questo token.
+    if _write_email_marker is not None:
+        try:
+            _write_email_marker(_upload_dir / job_id, _sent_at)
+        except Exception as e:
+            print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 
     dl_url = f"{BASE_URL}/dl/{token}" if BASE_URL else f"/dl/{token}"
 
@@ -913,7 +924,13 @@ def _send_optimization_email(job_id):
     }
     _save_tokens()
     job["email_token"] = token
-    job["email_sent_at"] = time.time()
+    _sent_at = time.time()
+    job["email_sent_at"] = _sent_at
+    if _write_email_marker is not None:
+        try:
+            _write_email_marker(_upload_dir / job_id, _sent_at)
+        except Exception as e:
+            print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 
     dl_url = f"{BASE_URL}/dl/{token}" if BASE_URL else f"/dl/{token}"
 
