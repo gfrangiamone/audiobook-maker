@@ -593,8 +593,51 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     return response
 
 
+def _read_tokens_file():
+    """Read raw token dict from disk. Returns {} on missing/invalid file."""
+    if not _TOKENS_FILE.exists():
+        return {}
+    try:
+        with open(_TOKENS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"[tokens] Failed to read tokens file: {e}")
+        return {}
+
+
+def _merge_tokens_from_disk():
+    """Pick up tokens persisted by other workers (Gunicorn multi-worker safety).
+
+    Each worker keeps its own in-memory `_download_tokens`; the only shared
+    state is `_TOKENS_FILE`. Without periodic merge, worker B's cleanup loop
+    cannot see tokens created by worker A and would delete their job dirs as
+    orphan. In-memory entries always win on conflict (worker may have data
+    not yet flushed to disk).
+    """
+    disk = _read_tokens_file()
+    if not disk:
+        return
+    now = time.time()
+    with _tokens_lock:
+        for tok, info in disk.items():
+            try:
+                created = float(info.get("created_at", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if (now - created) > EMAIL_FILE_RETENTION_SEC + 300:
+                continue
+            if tok not in _download_tokens:
+                _download_tokens[tok] = info
+
+
 def _save_tokens():
-    """Persist download tokens to disk (survives restart)."""
+    """Persist download tokens to disk (survives restart).
+
+    Re-reads the file first and merges to avoid clobbering tokens written by
+    other workers since our last sync.
+    """
+    _merge_tokens_from_disk()
     try:
         with _tokens_lock:
             # Save only serializable data
@@ -5662,6 +5705,10 @@ def api_register_email():
     job["notify_lang"] = data.get("lang", "en")
     # Keep job alive indefinitely while generating (disable heartbeat-based cleanup)
     job["email_registered"] = True
+    # Marker 'pending' su disco: protegge la dir dal cleanup orfani di altri worker
+    # per tutta la lavorazione, finché _send_completion_email lo sovrascriverà
+    # con il timestamp.
+    _write_email_pending_marker(UPLOAD_DIR / job_id)
 
     print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
@@ -6465,6 +6512,7 @@ def api_optimize():
         job["notify_email"] = email
         job["notify_lang"] = data.get("lang", "en")
         job["email_registered"] = True
+        _write_email_pending_marker(UPLOAD_DIR / job_id)
 
     # Store auto-generate params for batch mode
     if auto_generate:
@@ -8049,9 +8097,88 @@ CLEANUP_HEARTBEAT_TIMEOUT_SEC = 60          # heartbeat perso per 60s = browser 
 CLEANUP_INTERVAL_SEC = 60                   # check every 60 seconds
 CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimosse
 
+# Marker scritto nella job dir per proteggere la cartella dal cleanup orfani
+# di OGNI worker Gunicorn. Il filesystem è l'unica fonte autoritativa condivisa.
+# Due stati possibili nel contenuto del file:
+#   - "pending"  → email registrata, lavorazione in corso. Protezione illimitata
+#                  fino al cap EMAIL_PENDING_MAX_AGE_SEC (anti-orphan se worker
+#                  crasha durante un job lungo).
+#   - "<float>"  → email inviata al timestamp indicato. Protezione per
+#                  EMAIL_FILE_RETENTION_SEC + 300s da quel timestamp.
+EMAIL_MARKER_FILENAME = ".email_sent"
+_EMAIL_MARKER_PENDING = "pending"
+EMAIL_PENDING_MAX_AGE_SEC = 48 * 3600  # cap di sicurezza se la lavorazione si interrompe senza email
+
+
+def _write_email_marker(work_dir, when=None):
+    """Marca una job dir come 'email inviata' (timestamp epoch in secondi).
+    Sovrascrive un eventuale marker 'pending'. Idempotente."""
+    try:
+        ts = float(when) if when is not None else time.time()
+        marker = Path(work_dir) / EMAIL_MARKER_FILENAME
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{ts:.3f}", encoding="utf-8")
+    except OSError as e:
+        print(f"[email-marker] write failed in {work_dir}: {e}")
+
+
+def _write_email_pending_marker(work_dir):
+    """Marca una job dir come 'email registrata, lavorazione in corso'.
+    Non sovrascrive un marker timestamp già presente (email già inviata).
+    Non riscrive se è già 'pending' (preserva mtime → cap age coerente)."""
+    try:
+        marker = Path(work_dir) / EMAIL_MARKER_FILENAME
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        if marker.exists():
+            try:
+                existing = marker.read_text(encoding="utf-8").strip()
+                if existing == _EMAIL_MARKER_PENDING:
+                    return
+                # Se è un timestamp valido, l'email è già stata inviata: non degradare.
+                float(existing)
+                return
+            except (OSError, ValueError):
+                pass  # contenuto illeggibile/corrotto: sovrascriviamo
+        marker.write_text(_EMAIL_MARKER_PENDING, encoding="utf-8")
+    except OSError as e:
+        print(f"[email-marker] pending write failed in {work_dir}: {e}")
+
+
+def _email_marker_protects(work_dir, now):
+    """True se il marker email protegge la dir.
+    Pending: protetto se mtime entro EMAIL_PENDING_MAX_AGE_SEC.
+    Timestamp: protetto se entro EMAIL_FILE_RETENTION_SEC + 300s."""
+    marker = Path(work_dir) / EMAIL_MARKER_FILENAME
+    try:
+        if not marker.exists():
+            return False
+    except OSError:
+        return False
+    try:
+        content = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if content == _EMAIL_MARKER_PENDING:
+        try:
+            mtime = marker.stat().st_mtime
+        except OSError:
+            return False
+        return (now - mtime) < EMAIL_PENDING_MAX_AGE_SEC
+    try:
+        ts = float(content)
+    except ValueError:
+        try:
+            ts = marker.stat().st_mtime
+        except OSError:
+            return False
+    return (now - ts) < EMAIL_FILE_RETENTION_SEC + 300
+
 
 def _cleanup_job(job_id, reason=""):
-    """Remove all files for a job and delete the job entry."""
+    """Remove all files for a job and delete the job entry.
+    NOTA: nessun gate marker qui — questo path viene invocato solo dal branch
+    per-status che opera su `jobs` locali con info complete (cancelled/error/
+    done+retention-scaduta). La protezione cross-worker è nei branch orfani."""
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
@@ -8065,6 +8192,11 @@ def _cleanup_loop():
     while True:
         time.sleep(CLEANUP_INTERVAL_SEC)
         now = time.time()
+
+        # Multi-worker: absorb tokens created by other workers before deciding
+        # what to delete. Without this, this worker's view of _download_tokens
+        # misses peers' tokens and the orphan-dir branch wipes their job dirs.
+        _merge_tokens_from_disk()
 
         with _jobs_lock:
             to_remove = []
@@ -8165,6 +8297,8 @@ def _cleanup_loop():
                         shutil.rmtree(str(archive_path), ignore_errors=True)
                         print(f"[cleanup] Legacy archive removed (token expired): {archive_path}")
                 if not job_in_memory and job_dir.exists():
+                    if _email_marker_protects(job_dir, now):
+                        continue
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
@@ -8212,6 +8346,8 @@ def _cleanup_loop():
                     except OSError:
                         continue
                     if age > EMAIL_FILE_RETENTION_SEC:
+                        if _email_marker_protects(od.parent, now):
+                            continue
                         shutil.rmtree(str(od), ignore_errors=True)
                         print(f"[cleanup] Orphan output dir removed: {od} (age: {int(age)}s)")
         except OSError:
@@ -8236,6 +8372,8 @@ def _cleanup_loop():
                 except OSError:
                     continue
                 if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
+                    if _email_marker_protects(entry, now):
+                        continue
                     shutil.rmtree(str(entry), ignore_errors=True)
                     print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
         except OSError:
@@ -8268,7 +8406,8 @@ generation_engine.configure(
     google_tts_module=google_tts,
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,
-    retention_sec=EMAIL_FILE_RETENTION_SEC
+    retention_sec=EMAIL_FILE_RETENTION_SEC,
+    write_email_marker_fn=_write_email_marker
 )
 
 if _paypal_available():
