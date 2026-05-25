@@ -31,6 +31,7 @@ from pathlib import Path
 
 import email_service
 import payment
+import cancel_policy
 try:
     import gemini_tts
 except ImportError:
@@ -2706,32 +2707,132 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
+        partial_audio_delivered = False
+        partial_download_url = None
+
+        if still_current and use_gemini:
+            try:
+                actual = job.get("gemini_actual") or {}
+                google_cost = float(actual.get("google_cost_eur", 0.0) or 0.0)
+                payment_meta = job.get("payment") or {}
+                paid = float(payment_meta.get("total_eur", 0) or 0)
+                method = payment_meta.get("method", "")
+
+                cr = cancel_policy.compute_cancel_retention(google_cost, method, paid)
+                retained = cr["retained_eur"]
+                refund = cr["refund_eur"]
+
+                # Encoding MP3 parziale (best-effort)
+                try:
+                    pcm_files = []
+                    if work_dir.exists():
+                        pcm_files = sorted(work_dir.glob("chunk_*.pcm"))
+                        pcm_files = [str(p) for p in pcm_files if p.stat().st_size > 0]
+                    if pcm_files:
+                        partial_mp3 = output_dir / f"{job_id}_partial.mp3"
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        gap = gemini_tts.inter_chunk_gap_ms() if gemini_tts is not None else 100
+                        ok = pcm_to_mp3(pcm_files, str(partial_mp3), gap_ms=gap)
+                        if ok and partial_mp3.exists() and partial_mp3.stat().st_size > 0:
+                            partial_audio_delivered = True
+                            token = str(uuid.uuid4())
+                            _download_tokens[token] = {
+                                "job_id": job_id,
+                                "created_at": time.time(),
+                                "download_type": "audio",
+                                "output_file": str(partial_mp3),
+                                "output_format": "mp3",
+                                "book_title": (getattr(info, "title", "") or
+                                               job.get("original_filename", "")),
+                                "original_filename": job.get("original_filename", ""),
+                                "lang": job.get("browser_lang", "en"),
+                                "is_gemini": True,
+                                "partial_cancel": True,
+                            }
+                            _save_tokens()
+                            partial_download_url = (f"{BASE_URL}/dl/{token}/download"
+                                                     if BASE_URL else f"/dl/{token}/download")
+                            job["partial_download_url"] = partial_download_url
+                            job["partial_download_token"] = token
+                except Exception as enc_err:
+                    print(f"[{job_id}] Cancel partial encoding failed (non-fatal): {enc_err}")
+
+                progress_pct = _progress_pct(job)
+                job["cancel_meta"] = {
+                    "paid_eur": round(paid, 2),
+                    "retained_eur": retained,
+                    "refund_eur": refund,
+                    "progress_pct": progress_pct,
+                    "partial_audio_delivered": partial_audio_delivered,
+                }
+
+                outcome = "cancelled_partial" if retained > 0 else "cancelled_refunded"
+                _write_gemini_audit(job_id, job, voice,
+                                    getattr(info, "language", None) or "", outcome)
+
+                refund_result = _refund_gemini_payment(
+                    job_id, job, "cancelled", retained_eur=retained)
+
+                if (refund_result and refund_result.get("email")
+                        and partial_audio_delivered
+                        and hasattr(email_service, "_send_gemini_cancelled_partial_email")):
+                    try:
+                        email_service._send_gemini_cancelled_partial_email(
+                            email=refund_result["email"],
+                            paid_eur=round(paid, 2),
+                            retained_eur=retained,
+                            refund_eur=refund,
+                            voucher_code=refund_result.get("voucher_code"),
+                            book_title=(getattr(info, "title", "") or
+                                        job.get("original_filename", "")),
+                            download_url=partial_download_url,
+                            lang=job.get("browser_lang", "it"),
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] cancel partial email failed: {e}")
+            except Exception as cancel_err:
+                print(f"[{job_id}] Cancel partial flow error (fallback to legacy): {cancel_err}")
+                try:
+                    _write_gemini_audit(job_id, job, voice,
+                                        getattr(info, "language", None) or "",
+                                        "cancelled_refunded")
+                except Exception:
+                    pass
+                try:
+                    _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+                except Exception:
+                    pass
+        elif use_gemini and not still_current:
+            print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
+
+        if use_google:
+            _google_tts_refund_unused(job_id, job)
+
         if still_current:
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
-            if use_gemini:
-                _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "cancelled_refunded")
-        # Refund caratteri Google TTS non consumati e forza riconciliazione
-        if use_google:
-            _google_tts_refund_unused(job_id, job)
-        # Gemini: nessun refund (pay-per-call gia' record_usage per chunk).
-        # Logghiamo solo il totale parziale per debug.
-        if use_gemini:
-            print(f"[{job_id}] Gemini partial usage (no refund): "
-                  f"model={gemini_usage.get('model_key')} "
-                  f"input_tok={gemini_usage.get('input_tokens', 0)} "
-                  f"output_tok={gemini_usage.get('output_tokens', 0)}")
-            # F3: Refund the user payment (voucher or paypal) for cancelled job
-            if still_current:
-                _refund_gemini_payment(job_id, job, "cancelled")
-        # Cleanup temp files (solo se nessuna nuova generazione è partita)
-        if still_current:
             try:
                 if work_dir.exists():
-                    shutil.rmtree(str(work_dir), ignore_errors=True)
+                    # Conserva l'MP3 parziale finche' il token download e' vivo:
+                    # rimuoviamo solo i PCM/sub-dir intermedi, non output_dir.
+                    for p in work_dir.glob("chunk_*.pcm"):
+                        try: p.unlink()
+                        except OSError: pass
+                    for p in work_dir.glob("prompt*.txt"):
+                        try: p.unlink()
+                        except OSError: pass
+                    sil = work_dir / "_silence.pcm"
+                    if sil.exists():
+                        try: sil.unlink()
+                        except OSError: pass
+                    # Se NON e' stato consegnato audio parziale, rimuovi tutta la work_dir.
+                    if not partial_audio_delivered:
+                        shutil.rmtree(str(work_dir), ignore_errors=True)
             except Exception:
                 pass
-        print(f"[{job_id}] Generation cancelled, resources freed{' (stale)' if not still_current else ''}.")
+
+        print(f"[{job_id}] Generation cancelled, resources freed"
+              f"{' (stale)' if not still_current else ''}.")
         _log_activity(job_id, job.get("original_filename", ""), "CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
