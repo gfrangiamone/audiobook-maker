@@ -1172,11 +1172,21 @@ def _progress_pct(job: dict) -> int:
         return 0
 
 
-def _refund_gemini_payment(job_id, job, reason):
+def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
     """F3: Refund Gemini payment on cancel/error.
 
     For voucher tokens, refunds the amount on the original voucher.
     For PayPal tokens, emits a refund voucher to the buyer's email.
+
+    `retained_eur` (default 0.0) e' l'importo trattenuto dalla piattaforma
+    per coprire i costi gia' sostenuti (Google + fee PayPal). Solo i cancel
+    volontari (reason == "cancelled") con costo provider > 0 lo usano;
+    quota/budget/errori continuano a passare 0.0 -> rimborso integrale.
+
+    apply_bonus al voucher PayPal emesso: True per failure piattaforma
+    (default), False per cancel volontario (retained_eur > 0 oppure
+    reason == "cancelled").
+
     Non-fatal: any failure is logged and swallowed.
 
     Returns a dict with refund details (or None if no refund applied):
@@ -1185,14 +1195,27 @@ def _refund_gemini_payment(job_id, job, reason):
     """
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
-    amt = float(payment_meta.get("total_eur", 0) or 0)
+    paid = float(payment_meta.get("total_eur", 0) or 0)
     method = payment_meta.get("method", "")
-    if not tok or amt <= 0:
+    if not tok or paid <= 0:
         return None
-    result = {"method": method, "amount_eur": amt, "email": "", "voucher_code": None}
+    refund_amt = round(max(0.0, paid - float(retained_eur or 0.0)), 2)
+    apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
+    result = {"method": method, "amount_eur": refund_amt, "email": "", "voucher_code": None}
+    if refund_amt <= 0:
+        try:
+            if method == "voucher":
+                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                result["email"] = v.get("email", "") or ""
+            elif method == "paypal":
+                pay = payment._payments.get(tok, {})
+                result["email"] = pay.get("email", "") or ""
+        except Exception:
+            pass
+        return result
     try:
         if method == "voucher":
-            payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
+            payment._voucher_refund(tok, refund_amt, job_id=job_id, reason=reason)
             voucher = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
             result["email"] = voucher.get("email", "") or ""
         elif method == "paypal":
@@ -1201,8 +1224,9 @@ def _refund_gemini_payment(job_id, job, reason):
             result["email"] = email
             if email:
                 code, _bonus = payment._create_voucher(
-                    email, amt, origin_order_id=tok, origin_job_id=job_id,
+                    email, refund_amt, origin_order_id=tok, origin_job_id=job_id,
                     kind="refund", note=f"refund {reason} job {job_id}",
+                    apply_bonus=apply_bonus,
                 )
                 result["voucher_code"] = code
                 job["refund_voucher_code"] = code
@@ -1210,7 +1234,7 @@ def _refund_gemini_payment(job_id, job, reason):
                 print(
                     f"[{job_id}] WARNING: cannot emit refund voucher — "
                     f"PayPal order {tok} has no buyer email "
-                    f"(amount {amt:.2f} EUR, reason {reason})"
+                    f"(amount {refund_amt:.2f} EUR, reason {reason})"
                 )
     except Exception as _ref_err:
         print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
