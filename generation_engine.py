@@ -1716,6 +1716,14 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "payment_token_short": payment_token_short,
             "payment_source": payment_source,
         }
+        _cancel_meta = job.get("cancel_meta")
+        if isinstance(_cancel_meta, dict):
+            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
+            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
+            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
+            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
+            rec["cancel_partial_audio_delivered"] = bool(
+                _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
         # Diagnostica: job completato sopra soglia gratuita senza pagamento
         # registrato e' sintomo di bug (token consumato in un branch che non
