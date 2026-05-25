@@ -454,6 +454,65 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         print(f"[admin] Failed to send failure alert for {key}: {e}")
 
 
+def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
+                                          refund_eur, voucher_code,
+                                          book_title, download_url, lang="it"):
+    """Notifica all'utente che ha annullato volontariamente un job voci PREMIUM
+    in corso: l'MP3 parziale e' disponibile al download, il rimborso e' stato
+    emesso al netto della quota gia' consumata (costo provider + commissioni
+    non recuperabili).
+
+    - voucher_code valorizzato => pagamento PayPal, nuovo voucher emesso per
+      l'importo rimborsato (refund_eur).
+    - voucher_code None => pagamento via voucher, refund_eur ri-accreditato
+      silenziosamente sul voucher originale.
+    """
+    if not (email and _smtp_available()):
+        return
+    title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
+    subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
+               f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+    dl_safe = (download_url or "").replace('"', "%22")
+    if voucher_code and refund_eur > 0:
+        from datetime import datetime, timedelta
+        expiry = (datetime.now() + timedelta(days=VOUCHER_EXPIRY_DAYS)).strftime("%d/%m/%Y")
+        refund_block = f"""<div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
+    <div style="font-size:.85em;color:#666;margin-bottom:8px">Codice buono di rimborso:</div>
+    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{voucher_code}</div>
+    <div style="margin-top:12px">Valore: <strong>{refund_eur:.2f} EUR</strong></div>
+    <div style="margin-top:4px;font-size:.9em;color:#666">Scadenza: {expiry}</div>
+  </div>
+  <p>Per utilizzarlo, avvia una nuova generazione PREMIUM e inserisci questo codice insieme all'email <strong>{email}</strong>.</p>"""
+    elif refund_eur > 0:
+        refund_block = f"""<div style="padding:16px;background:#f0fff4;border:1px solid #c6f6d5;border-radius:8px;margin:20px 0">
+    <p style="margin:0"><strong>Rimborso accreditato:</strong> {refund_eur:.2f} EUR sono stati ri-accreditati sul tuo buono di pagamento originale e sono disponibili da subito per un nuovo tentativo.</p>
+  </div>"""
+    else:
+        refund_block = f"""<div style="padding:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin:20px 0">
+    <p style="margin:0">La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.</p>
+  </div>"""
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+  <h2 style="color:#d97706">&#x26A0;&#xFE0F; Generazione annullata su tua richiesta</h2>
+  <p>Ciao,</p>
+  <p>hai annullato la generazione delle voci PREMIUM per <strong>{title_safe}</strong> mentre era in corso.</p>
+  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino al momento dell'annullamento. Puoi scaricarlo dal link sottostante:</p>
+  <p style="text-align:center;margin:20px 0">
+    <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">Scarica l'audio parziale (MP3)</a>
+  </p>
+  <h3 style="margin-top:28px;color:#333">Dettaglio rimborso</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
+    <tr><td style="padding:6px 0;color:#666">Importo versato</td><td style="padding:6px 0;text-align:right"><strong>{paid_eur:.2f} EUR</strong></td></tr>
+    <tr><td style="padding:6px 0;color:#666">Quota trattenuta (costo gi&agrave; sostenuto)</td><td style="padding:6px 0;text-align:right">{retained_eur:.2f} EUR</td></tr>
+    <tr><td style="padding:6px 0;color:#666;border-top:1px solid #eee"><strong>Rimborso</strong></td><td style="padding:6px 0;text-align:right;border-top:1px solid #eee"><strong style="color:#059669">{refund_eur:.2f} EUR</strong></td></tr>
+  </table>
+  {refund_block}
+  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di annullamento, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+</div>"""
+    _send_email(email, subject, html_body)
+
+
 def _send_gemini_failed_refund_email(email, amount_eur, book_title, reason_label, voucher_code=None):
     """Notifica all'utente che la generazione voci PREMIUM e' fallita per
     esaurimento quota giornaliera del provider (o limite di spesa interno) e
