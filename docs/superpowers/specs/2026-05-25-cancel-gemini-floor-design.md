@@ -18,7 +18,7 @@ Quando l'utente annulla un job Gemini TTS già pagato (PayPal o voucher) tramite
 3. Chiama `_refund_gemini_payment(reason="cancelled")` che rimborsa il **100%** dell'importo pagato (voucher: riaccredito silenzioso sul voucher originale; PayPal: emissione di un nuovo voucher con codice in email — rif. memoria `feedback_refund_voucher_policy.md`).
 4. Cancella `work_dir` con tutti i PCM/MP3 parziali, perdendo l'audio già sintetizzato.
 
-Nel frattempo la piattaforma ha già pagato Google per i chunk effettivamente generati (`record_usage` chunk-per-chunk in `generation_engine.py:2067`, aggregato in `jobs[job_id]["gemini_usage"].google_cost_eur`).
+Nel frattempo la piattaforma ha già pagato Google per i chunk effettivamente generati (`record_usage` chunk-per-chunk in `generation_engine.py:2067`, aggregato in `jobs[job_id]["gemini_actual"].google_cost_eur`).
 
 ### 1.2 Problemi identificati
 
@@ -55,7 +55,7 @@ refund   = paid - retained
 dove:
 
 - `paid` = importo pagato dall'utente per il job Gemini (`job["payment"].total_eur`).
-- `google_cost_eur_actual` = somma del costo Google reale per i chunk già completati al momento del cancel, letto da `jobs[job_id]["gemini_usage"].google_cost_eur` (aggiornato chunk-per-chunk in `generation_engine.py:2067`). Snapshot del valore al momento del `_set_job_status(job, "cancelled")` o equivalente. Chunk in-flight quando arriva il cancel: se completa con successo prima dell'abort viene contato (record_usage già chiamato), se abortisce non viene contato.
+- `google_cost_eur_actual` = somma del costo Google reale per i chunk già completati al momento del cancel, letto da `jobs[job_id]["gemini_actual"].google_cost_eur` (aggiornato chunk-per-chunk in `generation_engine.py:2067`). Snapshot del valore al momento del `_set_job_status(job, "cancelled")` o equivalente. Chunk in-flight quando arriva il cancel: se completa con successo prima dell'abort viene contato (record_usage già chiamato), se abortisce non viene contato.
 - `paypal_fees_if_method_paypal` = `paid × (ABM_GEMINI_PAYPAL_PERCENT_FEE / 100) + ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` calcolato sull'**importo pagato originale** se `job["payment"].method == "paypal"`. Zero se metodo `voucher`. Default attuali: `3.4%` + `0.34€` (vedi `md_files/PARAMETRI_CONFIGURAZIONE.md`).
 
 ### 3.2 Helper engine-agnostic
@@ -105,7 +105,7 @@ Solo **TTS Gemini**. La policy si applica esclusivamente quando `job["voice"]` (
 
 ### 4.2 Fase 2 (spec separata, da scrivere dopo rilascio Fase 1)
 
-LLM optimization (`run_optimization` in `generation_engine.py`). Riusa lo stesso `compute_cancel_retention`, sostituendo `provider_cost_eur` con il costo DeepSeek/LLM accumulato durante lo streaming (`_call_deepseek` traccia già token chunk-per-chunk; va aggregato in un campo simile a `gemini_usage`). Decisioni residue per Fase 2:
+LLM optimization (`run_optimization` in `generation_engine.py`). Riusa lo stesso `compute_cancel_retention`, sostituendo `provider_cost_eur` con il costo DeepSeek/LLM accumulato durante lo streaming (`_call_deepseek` traccia già token chunk-per-chunk; va aggregato in un campo simile a `gemini_actual`). Decisioni residue per Fase 2:
 
 - Contropartita: consegnare il testo parziale ottimizzato (in equivalente a MP3 parziale)?
 - Modal U1 separato per LLM cancel?
@@ -193,7 +193,7 @@ Nuova env `ABM_GEMINI_CANCEL_LOCK_PCT`:
 
 Branch `_CancelledError` in `generation_engine.py:2658` ristrutturato in questo ordine:
 
-1. **Snapshot floor**: leggi `gemini_usage.google_cost_eur`, calcola `retained` via `compute_cancel_retention`.
+1. **Snapshot floor**: leggi `gemini_actual.google_cost_eur`, calcola `retained` via `compute_cancel_retention`.
 2. **Encoding parziale**: se ci sono PCM chunk già scritti (`work_dir` non vuoto), invoca pipeline esistente per produrre `<output_dir>/<filename>_partial.mp3`. In caso di errore di encoding, log + skip (fallback a "nessun MP3 parziale", refund procede comunque).
 3. **Audit**: `_write_gemini_audit` con `outcome="cancelled_partial"` se `retained > 0`, altrimenti `cancelled_refunded` (vedi §8).
 4. **Refund finanziario**: `_refund_gemini_payment(reason="cancelled", retained_eur=retained)` (vedi §9 per la modifica della funzione).
@@ -214,7 +214,7 @@ Nuovo valore consentito in `gemini_cost_audit_YYYY-MM.jsonl`:
 | `outcome` | Significato | Quando |
 |-----------|-------------|--------|
 | `cancelled_refunded` (esistente) | Rimborso 100% senza trattenuto | Cancel pre-audio voucher (E1.voucher); cancel automatico per quota/budget (E9); job free (E1.free) |
-| `cancelled_partial` (NUOVO) | Cancel volontario con `retained > 0` | Tutti gli altri cancel volontari Gemini con `gemini_usage.google_cost_eur > 0` o con `paypal_fees > 0` |
+| `cancelled_partial` (NUOVO) | Cancel volontario con `retained > 0` | Tutti gli altri cancel volontari Gemini con `gemini_actual.google_cost_eur > 0` o con `paypal_fees > 0` |
 
 Aggiungere al filter dropdown del pannello `/admin` (`audiobook_app.py:3221` e mapping badge `audiobook_app.py:3457`):
 
@@ -265,9 +265,9 @@ Verifica in `payment._create_voucher`: oggi il refund PayPal in caso di failure 
 
 Strategia:
 
-- Aggiungere parametro `apply_refund_bonus: bool = True` a `payment._create_voucher` (o equivalente meccanismo già esistente).
-- Path `_refund_gemini_payment` invocato da `_CancelledError` (cancel volontario): passa `apply_refund_bonus=False`.
-- Path invocato da `except Exception` (quota/budget/altri errori): mantiene `apply_refund_bonus=True` (comportamento attuale).
+- Aggiungere parametro `apply_bonus: bool = True` a `payment._create_voucher` (o equivalente meccanismo già esistente).
+- Path `_refund_gemini_payment` invocato da `_CancelledError` (cancel volontario): passa `apply_bonus=False`.
+- Path invocato da `except Exception` (quota/budget/altri errori): mantiene `apply_bonus=True` (comportamento attuale).
 
 Da verificare in implementazione: la funzione `payment._create_voucher` ha già un flag analogo o il bonus +10% è applicato implicitamente in base a `kind="refund"`. In quel caso introdurre un nuovo `kind="cancel_partial"` o un parametro esplicito.
 
@@ -277,7 +277,7 @@ Da verificare in implementazione: la funzione `payment._create_voucher` ha già 
 
 ### 9.4 PayPal
 
-`payment._create_voucher(email, refund_amt, origin_order_id=tok, origin_job_id=job_id, kind="refund", note=f"user_cancel {job_id}", apply_refund_bonus=False)`. Codice voucher emesso in email tramite `_send_gemini_cancelled_partial_email` (vedi §11).
+`payment._create_voucher(email, refund_amt, origin_order_id=tok, origin_job_id=job_id, kind="refund", note=f"user_cancel {job_id}", apply_bonus=False)`. Codice voucher emesso in email tramite `_send_gemini_cancelled_partial_email` (vedi §11).
 
 ---
 
@@ -287,7 +287,7 @@ Sotto la formula §3 si decompongono così:
 
 | # | Scenario | Floor | Refund | MP3 parziale | Audit outcome |
 |---|----------|-------|--------|--------------|---------------|
-| E1.PP | Pre-audio (`gemini_usage=0`), metodo PayPal | `paypal_fees(paid)` | `paid − fees` (voucher) | No (no PCM) | `cancelled_partial` |
+| E1.PP | Pre-audio (`gemini_actual=0`), metodo PayPal | `paypal_fees(paid)` | `paid − fees` (voucher) | No (no PCM) | `cancelled_partial` |
 | E1.V | Pre-audio, metodo voucher | 0 | 100% riaccredito | No | `cancelled_refunded` |
 | E1.Free | Pre-audio, job free (`paid=0`) | n/a | n/a | No | `cancelled_refunded` |
 | E2 | Floor ≥ paid (job lungo cancellato sotto 70%) | `paid` | 0 | Sì | `cancelled_partial` |
@@ -295,7 +295,7 @@ Sotto la formula §3 si decompongono così:
 | E4 | Cancel tentato durante post-processing post-chunk (M4B mux, ecc.) | n/a — `_check_cancelled` è solo nel loop chunk; non viene invocato in concat/mux | Charge full | Full audio | `completed` (job completa normalmente) |
 | E5 | Voucher con saldo bonus residuo | come PayPal/voucher in base a metodo originale | Refund accreditato sul voucher originale | Sì se audio iniziato | `cancelled_partial` o `cancelled_refunded` |
 | E6 | PayPal, audio iniziato | `google_cost + paypal_fees` | `paid − retained` (voucher emesso) | Sì | `cancelled_partial` |
-| E7 | Chunk in-flight al cancel | snapshot `gemini_usage` al `_set_status("cancelled")`; chunk completo conta, abortito no | derivato | — | — |
+| E7 | Chunk in-flight al cancel | snapshot `gemini_actual` al `_set_status("cancelled")`; chunk completo conta, abortito no | derivato | — | — |
 | E8 | Audit `outcome` | nuovo valore `cancelled_partial` per `retained > 0`; `cancelled_refunded` per `retained = 0` | — | — | — |
 | E9 | Cancel automatico (quota/budget Gemini, errori) | **non cambia**: refund integrale, no MP3 parziale | 100% | No | `cancelled_refunded` / `gemini_overload` / `budget_exceeded` (esistenti) |
 | E10 | Tentativo cancel oltre 70% | non applicabile — `/api/cancel` ritorna `409 cancel_locked_progress` | — | — | — |
@@ -362,7 +362,7 @@ Solo se `email_registered` (stesso gate dei job completati). Altrimenti l'utente
 | `audiobook_app.py:5680-5694` | Endpoint `/api/cancel/<job_id>` | Aggiungere gate `ABM_GEMINI_CANCEL_LOCK_PCT` per voci Gemini; ritorno `409 cancel_locked_progress` |
 | `audiobook_app.py:3221, 3457, 3466` | Mapping audit outcome | Aggiungere `cancelled_partial` con badge `Annullato (parz.)` |
 | `email_service.py` | nuova funzione | `_send_gemini_cancelled_partial_email(...)` |
-| `payment.py` | `_create_voucher` o equivalente | Aggiungere `apply_refund_bonus: bool = True`; cancel volontario passa `False` |
+| `payment.py` | `_create_voucher` o equivalente | Aggiungere `apply_bonus: bool = True`; cancel volontario passa `False` |
 
 ### 12.2 Frontend
 
