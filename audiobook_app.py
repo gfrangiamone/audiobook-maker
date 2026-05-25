@@ -3124,6 +3124,7 @@ def admin_logs_page():
           <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
           <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
           <option value="cancelled_refunded">Annullato (rimborsato)</option>
+          <option value="cancelled_partial">Annullato (parziale)</option>
         </select>
       </div>
       <div>
@@ -3359,7 +3360,7 @@ def admin_logs_page():
   const REFUND_OUTCOMES = new Set([
     "failed_refunded", "failed_quota_refunded", "failed_budget_refunded",
     "failed_quality_refunded", "preflight_blocked_refunded",
-    "cancelled_refunded",
+    "cancelled_refunded", "cancelled_partial",
   ]);
   const OUTCOME_BADGE = {
     "completed":                  ["badge-ok",   "Completato"],
@@ -3369,6 +3370,7 @@ def admin_logs_page():
     "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
     "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
     "cancelled_refunded":         ["badge-muted","Annullato"],
+    "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
     "cancelled":                  ["badge-muted","Annullato"],
   };
 
