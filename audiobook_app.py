@@ -5546,6 +5546,22 @@ def api_progress(job_id):
                 break
             if job.get("status") == "cancelled" or job.get("cancelled"):
                 payload["status"] = "cancelled"
+                # Espone metadati cancel volontario voci PREMIUM: refund summary
+                # (paid/retained/refund/progress) + link al MP3 parziale se
+                # generato. Vedi T7 generation_engine.py:_CancelledError branch.
+                _cm = job.get("cancel_meta")
+                if isinstance(_cm, dict):
+                    payload["cancel_meta"] = {
+                        "paid_eur": _cm.get("paid_eur", 0),
+                        "retained_eur": _cm.get("retained_eur", 0),
+                        "refund_eur": _cm.get("refund_eur", 0),
+                        "progress_pct": _cm.get("progress_pct", 0),
+                        "partial_audio_delivered": bool(
+                            _cm.get("partial_audio_delivered", False)),
+                    }
+                _pdl = job.get("partial_download_url")
+                if _pdl:
+                    payload["partial_download_url"] = _pdl
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("status") == "done":

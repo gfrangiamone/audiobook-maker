@@ -2519,7 +2519,7 @@ function listenProgress(){
         }
         return;
       }
-      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
+      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;_renderGeminiCancelSummary(d);return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       window._sseLastProgressPct=pct;
@@ -2786,6 +2786,41 @@ function _showCancelLockedModal(lockPct){
   btnOk.textContent=_tf('news_modal_ok','Ho capito');
   btnOk.addEventListener('click', function(){ m.close(); });
   m.footer.appendChild(btnOk);
+}
+
+// Renderizza link MP3 parziale + refund summary post-cancel voci PREMIUM.
+// d e' il payload SSE con campi opzionali partial_download_url e cancel_meta
+// (paid_eur, retained_eur, refund_eur, progress_pct, partial_audio_delivered).
+function _renderGeminiCancelSummary(d){
+  if(!d || (!d.cancel_meta && !d.partial_download_url)) return;
+  function _tf(k, fb){var v=t(k); return (v===k||!v)?fb:v;}
+  var host=document.getElementById('pra');
+  if(!host) return;
+  var existing=document.getElementById('geminiCancelSummary');
+  if(existing) existing.remove();
+  var box=document.createElement('div');
+  box.id='geminiCancelSummary';
+  box.style.cssText='margin-top:18px;padding:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#111;max-width:560px';
+  if(d.partial_download_url){
+    var dlWrap=document.createElement('div');
+    dlWrap.style.cssText='margin-bottom:12px;text-align:center';
+    var a=document.createElement('a');
+    a.href=d.partial_download_url;
+    a.setAttribute('rel','noopener');
+    a.style.cssText='display:inline-block;background:#8b5cf6;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600';
+    a.textContent=_tf('cancel_partial_dl','Scarica audio parziale (MP3)');
+    dlWrap.appendChild(a);
+    box.appendChild(dlWrap);
+  }
+  var cm=d.cancel_meta||{};
+  var paid=Number(cm.paid_eur||0).toFixed(2);
+  var ret=Number(cm.retained_eur||0).toFixed(2);
+  var ref=Number(cm.refund_eur||0).toFixed(2);
+  var summary=document.createElement('p');
+  summary.style.cssText='margin:0;color:#374151;font-size:.95em;text-align:center';
+  summary.textContent=_tf('cancel_summary','Versati {paid} EUR · Trattenuti {retained} EUR · Rimborsati {refund} EUR').replace('{paid}',paid).replace('{retained}',ret).replace('{refund}',ref);
+  box.appendChild(summary);
+  host.appendChild(box);
 }
 
 // Disabilita il pulsante Cancel quando il job voci PREMIUM e' oltre la
