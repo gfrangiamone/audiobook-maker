@@ -5585,7 +5585,12 @@ def api_progress(job_id):
 
 @app.route("/api/cancel/<job_id>", methods=["POST"])
 def api_cancel(job_id):
-    """Cancella un job in corso."""
+    """Cancella un job in corso.
+
+    Per voci Gemini, il cancel volontario e' bloccato oltre la soglia
+    ABM_GEMINI_CANCEL_LOCK_PCT (default 70). Vedi
+    docs/superpowers/specs/2026-05-25-cancel-gemini-floor-design.md.
+    """
     _job, _err, _sc = _check_job_owner(job_id)
     if _err is not None:
         if _sc == 404:
@@ -5593,6 +5598,22 @@ def api_cancel(job_id):
         return _err, _sc
     with _jobs_lock:
         job = jobs[job_id]
+        voice = job.get("voice", "") or job.get("opt_voice", "") or ""
+        is_gemini = voice.startswith("gemini:")
+        if is_gemini:
+            try:
+                lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
+            except (TypeError, ValueError):
+                lock_pct = 70
+            if 0 < lock_pct < 100:
+                from generation_engine import _progress_pct
+                pct = _progress_pct(job)
+                if pct > lock_pct:
+                    return jsonify({
+                        "error": "cancel_locked_progress",
+                        "progress_pct": pct,
+                        "lock_pct": lock_pct,
+                    }), 409
         force = request.args.get("force") == "1"
         if job.get("email_registered") and not force:
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
