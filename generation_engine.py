@@ -124,7 +124,23 @@ _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op
 _google_tts = None      # optional google_tts module
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
+_gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
+
+
+def _is_gemini_voice(voice):
+    """True per voice id Gemini (`gemini:<model>:<voice>`)."""
+    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+
+
+def _retention_for_job(job):
+    """Retention sec per il job (Gemini -> _gemini_retention_sec).
+    Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice`
+    non e' ancora settato (lo /api/generate lo scrive, /api/optimize no)."""
+    if not isinstance(job, dict):
+        return _retention_sec
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    return _gemini_retention_sec if _is_gemini_voice(v) else _retention_sec
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -140,13 +156,13 @@ def _set_job_status(job, status):
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
-              retention_sec=None, write_email_marker_fn=None):
+              retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
-    global _write_email_marker
+    global _gemini_retention_sec, _write_email_marker
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -157,6 +173,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
     _retention_sec = retention_sec if retention_sec is not None else 64800
+    _gemini_retention_sec = gemini_retention_sec if gemini_retention_sec is not None else 172800
     _write_email_marker = write_email_marker_fn
     
     # Inizializza client LLM (se API key presente)
@@ -750,7 +767,8 @@ def _send_completion_email(job_id):
             pass
         return
     print(f"[{job_id}] _send_completion_email: preparing send to {job['notify_email']}", flush=True)
-    retention_h = _retention_sec // 3600
+    _ret_sec_job = _retention_for_job(job)
+    retention_h = _ret_sec_job // 3600
     email = job["notify_email"]
     info = job.get("info", None)
     book_title = info.title if info else "Audiobook"
@@ -785,6 +803,8 @@ def _send_completion_email(job_id):
         # Optional: optimized .abm snapshot (when auto_generate flow produced one)
         "optimized_abm_path": job.get("optimized_abm_path", ""),
         "optimized_abm_name": job.get("optimized_abm_name", ""),
+        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
     }
     _save_tokens()
     job["email_token"] = token
@@ -948,7 +968,8 @@ def _send_optimization_email(job_id):
     job = _jobs.get(job_id)
     if not job or not job.get("notify_email"):
         return
-    retention_h = _retention_sec // 3600
+    _ret_sec_job = _retention_for_job(job)
+    retention_h = _ret_sec_job // 3600
     email = job["notify_email"]
     info = job.get("info")
     book_title = info.title if info else "Audiobook"
@@ -969,6 +990,9 @@ def _send_optimization_email(job_id):
         "lang": lang,
         "output_format": "",
         "ai_optimized": True,
+        # Token .abm di sola ottimizzazione: la retention sarà comunque pilotata
+        # dal flag voce se l'utente dopo procede a generazione PREMIUM.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
     }
     _save_tokens()
     job["email_token"] = token
@@ -1129,6 +1153,23 @@ def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
         )
     except Exception as e:
         print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
+
+
+def _progress_pct(job: dict) -> int:
+    """Percentuale di completamento (0..100) di un job in corso.
+
+    Robusta a campi mancanti o valori anomali: clamp 0..100, 0 se denominatore
+    nullo/mancante.
+    """
+    try:
+        total = float(job.get("progress_total", 0) or 0)
+        if total <= 0:
+            return 0
+        current = float(job.get("progress_current", 0) or 0)
+        pct = int(round(current / total * 100))
+        return max(0, min(100, pct))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _refund_gemini_payment(job_id, job, reason):
