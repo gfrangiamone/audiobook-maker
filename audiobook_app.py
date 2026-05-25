@@ -298,6 +298,93 @@ from email_service import (
 )
 
 EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
+# Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
+# i pagamenti Premium meritano una finestra di download/email piu' ampia.
+GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
+# Hard cap caratteri per audiolibro completo (taglia output audio):
+# - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
+# - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'
+#   le voci Gemini hanno cost-per-char piu' alto e RPM/RPD piu' restrittive.
+MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
+
+
+def _is_gemini_voice(voice):
+    """True se la voce e' una voce PREMIUM Gemini (formato gemini:<model>:<voice>)."""
+    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+
+
+def _max_text_chars_for_voice(voice):
+    """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
+    return MAX_GEMINI_TEXT_CHARS if _is_gemini_voice(voice) else MAX_TEXT_CHARS
+
+
+def _retention_for_job(job):
+    """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce Gemini, altrimenti EMAIL_FILE_RETENTION_SEC.
+    Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice` non e' ancora settato."""
+    if not isinstance(job, dict):
+        return EMAIL_FILE_RETENTION_SEC
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    return GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
+
+
+def _retention_for_token_info(info):
+    """Retention sec applicabile a un download token: usa is_gemini se salvato sul token."""
+    if isinstance(info, dict) and info.get("is_gemini"):
+        return GEMINI_FILE_RETENTION_SEC
+    return EMAIL_FILE_RETENTION_SEC
+
+
+# Protezione no-download per voci PREMIUM (costose): se il job/token Gemini
+# non ha mai registrato un download, raddoppiamo la retention prima di
+# cancellare gli output. Salvaguardia per utenti che ricevono l'email tardi
+# o non aprono subito il link.
+GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER = 2
+
+
+def _effective_retention_for_job(job):
+    """Retention con protezione no-download per job PREMIUM/Gemini.
+    Se il job e' Gemini e non risulta alcun download (job["downloaded_at"] vuoto),
+    raddoppia la retention base. Per voci standard: identica a _retention_for_job."""
+    base = _retention_for_job(job)
+    if not isinstance(job, dict):
+        return base
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    if _is_gemini_voice(v) and not job.get("downloaded_at"):
+        return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
+    return base
+
+
+def _effective_retention_for_token_info(info):
+    """Retention con protezione no-download per token PREMIUM/Gemini.
+    Se il token e' is_gemini e nessun /dl/<token>/* ha mai servito il file
+    (downloaded_at vuoto), raddoppia la retention base."""
+    base = _retention_for_token_info(info)
+    if isinstance(info, dict) and info.get("is_gemini") and not info.get("downloaded_at"):
+        return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
+    return base
+
+
+def _mark_token_downloaded(token_info):
+    """Registra che il file del token e' stato servito (download reale, non
+    probe/HEAD/Range). Aggiorna token_info in-place e persiste su disco per
+    sopravvivere ai restart, disattivando la protezione no-download
+    (_effective_retention_for_token_info). Idempotente: skip su probe/HEAD/
+    Range e se gia' marcato."""
+    try:
+        if _is_resume_or_probe_request():
+            return
+    except Exception:
+        pass
+    if not isinstance(token_info, dict):
+        return
+    if token_info.get("downloaded_at"):
+        return
+    token_info["downloaded_at"] = time.time()
+    try:
+        _save_tokens()
+    except Exception as e:
+        print(f"[tokens] _mark_token_downloaded persist failed: {e}")
 
 #  -  -  Admin activity digest (email log)  -  - 
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
@@ -625,7 +712,9 @@ def _merge_tokens_from_disk():
                 created = float(info.get("created_at", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            if (now - created) > EMAIL_FILE_RETENTION_SEC + 300:
+            # Per token PREMIUM (is_gemini) la retention e' GEMINI_FILE_RETENTION_SEC,
+            # raddoppiata se non risulta alcun download (_effective_*).
+            if (now - created) > _effective_retention_for_token_info(info) + 300:
                 continue
             if tok not in _download_tokens:
                 _download_tokens[tok] = info
@@ -664,6 +753,11 @@ def _save_tokens():
                     "lang": info.get("lang", "en"),
                     "optimized_abm_path": info.get("optimized_abm_path", ""),
                     "optimized_abm_name": info.get("optimized_abm_name", ""),
+                    # Marker per scegliere retention: True se job ha generato con voce PREMIUM.
+                    "is_gemini": bool(info.get("is_gemini", False)),
+                    # Timestamp primo download reale del file via /dl/<token>/*.
+                    # 0/None = mai scaricato (attiva protezione 2x per voci PREMIUM).
+                    "downloaded_at": info.get("downloaded_at") or 0,
                 }
             with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -683,8 +777,9 @@ def _load_tokens():
         loaded = 0
         expired = 0
         for tok, info in data.items():
-            # Skip expired tokens
-            if (now - info.get("created_at", 0)) > EMAIL_FILE_RETENTION_SEC + 300:
+            # Skip expired tokens (retention dipende da is_gemini sul token,
+            # raddoppiata se downloaded_at non e' settato).
+            if (now - info.get("created_at", 0)) > _effective_retention_for_token_info(info) + 300:
                 expired += 1
                 continue
             # Verify that job files still exist
@@ -4758,7 +4853,8 @@ def api_analyze():
         "llm_available": _llm_available(),
         "ai_optimized": abm_ai_optimized,
         "optimized_chapters": jobs[job_id].get("optimized_chapters", []),
-        "max_text_chars": int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")),
+        "max_text_chars": MAX_TEXT_CHARS,
+        "max_gemini_text_chars": MAX_GEMINI_TEXT_CHARS,
     })
 
 
@@ -5404,11 +5500,11 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    # Hard cap on TTS-bound text size for THIS run: applied only to the
-    # selected chapters. 1 char ≈ 50-100 bytes of MP3 output, so the limit
-    # keeps audio outputs under ~75-150 MB. The user can return to the
-    # chapter list and reduce the selection if exceeded.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # Hard cap on TTS-bound text size for THIS run: applied solo alla selezione.
+    # 1 char ~= 50-100 byte di MP3, quindi il limite mantiene l'output sotto
+    # ~75-150 MB. Per voci PREMIUM (gemini:) usiamo MAX_GEMINI_TEXT_CHARS
+    # (default 800k, piu' restrittivo) data la maggior pressione su cost/RPM.
+    max_text_chars = _max_text_chars_for_voice(voice)
     selected_chars = sum(ch.char_count for ch in info.chapters)
     if selected_chars > max_text_chars:
         with _jobs_lock:
@@ -5819,8 +5915,11 @@ def api_optimize_estimate(job_id):
     cost = _estimate_llm_cost_eur(total_chars)
 
     # Pre-validate the output-size cap against the full selected set so the
-    # user is informed before being asked to pay.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # user is informed before being asked to pay. La voce influisce sul cap
+    # (Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS): il
+    # frontend passa ?voice=... quando la conosce; in assenza si usa lo standard.
+    voice_q = (request.args.get("voice") or "").strip()
+    max_text_chars = _max_text_chars_for_voice(voice_q)
     if raw_sel:
         selected_set_cap = set(selected_indices)
     else:
@@ -6362,8 +6461,9 @@ def api_optimize():
     # Hard cap on text size for the final audio output, applied to the full
     # selected set (already-optimized + to-optimize). Blocks early so the
     # user doesn't pay for LLM optimization on a selection that cannot be
-    # rendered to audio.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # rendered to audio. Per auto_generate con voce PREMIUM si applica il
+    # cap MAX_GEMINI_TEXT_CHARS (piu' restrittivo).
+    max_text_chars = _max_text_chars_for_voice(data.get("voice", ""))
     if info is not None:
         if selected_chapters:
             selected_set_for_cap = set(selected_chapters)
@@ -6700,9 +6800,11 @@ def token_download_page(token):
     lang = token_info.get("lang", "en")
     created_at = token_info["created_at"]
     elapsed = time.time() - created_at
+    # Retention per-token: PREMIUM (is_gemini) usa GEMINI_FILE_RETENTION_SEC.
+    _ret = _retention_for_token_info(token_info)
 
     # Check retention expiration
-    if elapsed > EMAIL_FILE_RETENTION_SEC:
+    if elapsed > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
         return _render_dl_expired_page(lang), 410
@@ -6719,7 +6821,7 @@ def token_download_page(token):
         _save_tokens()
         return _render_dl_expired_page(lang), 410
 
-    remaining_sec = max(60, int(EMAIL_FILE_RETENTION_SEC - elapsed))
+    remaining_sec = max(60, int(_ret - elapsed))
     remaining_h = remaining_sec // 3600
     remaining_m = (remaining_sec % 3600) // 60
     if remaining_h > 0:
@@ -6785,10 +6887,11 @@ def token_do_download_abm(token):
     token_info = _download_tokens.get(token)
     if not token_info:
         return "Link scaduto", 410
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
     job_id = token_info.get("job_id", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     # Always serve the .abm captured in this token's snapshot. Each generation
@@ -6812,6 +6915,7 @@ def token_do_download_abm(token):
     if not _is_resume_or_probe_request():
         _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
                       "DOWNLOAD_OPT_ABM", "", "", "", "")
+    _mark_token_downloaded(token_info)
     return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
 
 
@@ -6829,10 +6933,11 @@ def token_do_download_m4b(token):
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
     # Per-epoch isolation: il token email punta a UNA specifica generazione.
     # Non usiamo MAI lo stato del job vivo (job["output_m4b"]) come fonte
@@ -6868,6 +6973,7 @@ def token_do_download_m4b(token):
         if request.method != "HEAD" and not request.headers.get("Range"):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
                           "", "", "", "")
+        _mark_token_downloaded(token_info)
         return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
 
     # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
@@ -6885,6 +6991,7 @@ def token_do_download_m4b(token):
         if request.method != "HEAD" and not request.headers.get("Range"):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
                           "", "", "", "")
+        _mark_token_downloaded(token_info)
         resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3")
         try:
             resp.headers["X-Fallback"] = "mp3"
@@ -6909,10 +7016,11 @@ def token_do_download(token):
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -6951,6 +7059,7 @@ def token_do_download(token):
                 if not _is_resume_or_probe_request():
                     _log_activity(job_id, token_info.get("original_filename", ""),
                                   "DOWNLOAD_OPT_ABM", "", "", "", "")
+                _mark_token_downloaded(token_info)
                 return _apply_no_cache(send_file(abm_path, as_attachment=True, download_name=abm_name))
             return "File not found", 404
 
@@ -6991,6 +7100,8 @@ def _serve_audio_download(token_info, job, job_id):
                       job.get("client_ip", "") if job else "",
                       job.get("voice", "") if job else "",
                       job.get("browser_lang", "") if job else "")
+        # Disattiva la protezione no-download per voci PREMIUM (cleanup loop).
+        _mark_token_downloaded(token_info)
 
     output_zip = token_info.get("output_zip", "")
     output_file = token_info.get("output_file", "")
@@ -7215,6 +7326,7 @@ def _serve_podcast_download(token_info, job, job_id):
                               job.get("client_id", "") if job else "",
                               job.get("client_ip", "") if job else "",
                               job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _mark_token_downloaded(token_info)
             return _send_file_throttled(output_zip, as_attachment=True,
                              download_name=os.path.basename(output_zip))
 
@@ -7287,6 +7399,7 @@ def _serve_podcast_download(token_info, job, job_id):
     cached_zip = epoch_dir / f"{safe_name}_podcast.zip"
     if cached_zip.exists() and cached_zip.stat().st_size > 0:
         print(f"[dl] Serving cached podcast zip: {cached_zip}")
+        _mark_token_downloaded(token_info)
         return _send_file_throttled(str(cached_zip), as_attachment=True,
                          download_name=f"{safe_name}_podcast.zip")
 
@@ -7333,6 +7446,7 @@ def _serve_podcast_download(token_info, job, job_id):
                       job.get("client_id", "") if job else "",
                       job.get("client_ip", "") if job else "",
                       job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+    _mark_token_downloaded(token_info)
     return _send_file_throttled(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
@@ -8186,7 +8300,11 @@ def _write_email_pending_marker(work_dir):
 def _email_marker_protects(work_dir, now):
     """True se il marker email protegge la dir.
     Pending: protetto se mtime entro EMAIL_PENDING_MAX_AGE_SEC.
-    Timestamp: protetto se entro EMAIL_FILE_RETENTION_SEC + 300s."""
+    Timestamp: protetto se entro max(EMAIL_FILE_RETENTION_SEC,
+    GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER) + 300s.
+    Usiamo il max perche' il marker su disco non conosce voice/downloaded_at del job;
+    moltiplichiamo per il fattore no-download per non cancellare un Gemini job dir
+    mai scaricato prima della finestra estesa (default 96h)."""
     marker = Path(work_dir) / EMAIL_MARKER_FILENAME
     try:
         if not marker.exists():
@@ -8210,7 +8328,10 @@ def _email_marker_protects(work_dir, now):
             ts = marker.stat().st_mtime
         except OSError:
             return False
-    return (now - ts) < EMAIL_FILE_RETENTION_SEC + 300
+    return (now - ts) < max(
+        EMAIL_FILE_RETENTION_SEC,
+        GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
+    ) + 300
 
 
 def _cleanup_job(job_id, reason=""):
@@ -8270,8 +8391,11 @@ def _cleanup_loop():
 
                 if status == "optimized":
                     opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
-                    if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
-                        h = EMAIL_FILE_RETENTION_SEC // 3600
+                    # Effective retention: per voci PREMIUM senza alcun download
+                    # del .abm, raddoppia il timer.
+                    _ret = _effective_retention_for_job(job)
+                    if (now - opt_done) > _ret:
+                        h = _ret // 3600
                         reason = ("optimization email retention expired" if has_email
                                   else f"optimized project retention expired ({h}h)")
                         to_remove.append((jid, reason))
@@ -8292,7 +8416,8 @@ def _cleanup_loop():
                     last_poll = job.get("last_poll", 0)
 
                     if has_email and email_sent_at:
-                        if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
+                        # Effective retention: voci PREMIUM senza download → 2x.
+                        if (now - email_sent_at) > _effective_retention_for_job(job):
                             to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
                         continue
 
@@ -8316,9 +8441,12 @@ def _cleanup_loop():
                 print(f"[cleanup] error removing {jid}: {e}")
 
         #  -  -  Cleanup expired download tokens  -  -
+        # Retention per-token: se il token e' marcato is_gemini (voce PREMIUM)
+        # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
+        # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
         with _tokens_lock:
             expired_tokens = [(t, info) for t, info in _download_tokens.items()
-                              if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
+                              if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
         for t, t_info in expired_tokens:
             with _tokens_lock:
                 _download_tokens.pop(t, None)
@@ -8384,7 +8512,13 @@ def _cleanup_loop():
                         age = now - od.stat().st_mtime
                     except OSError:
                         continue
-                    if age > EMAIL_FILE_RETENTION_SEC:
+                    # Senza contesto-job, usiamo la retention piu' lunga (Gemini)
+                    # moltiplicata per il fattore no-download: la dir orfana puo'
+                    # appartenere a un job PREMIUM mai scaricato.
+                    if age > max(
+                        EMAIL_FILE_RETENTION_SEC,
+                        GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
+                    ):
                         if _email_marker_protects(od.parent, now):
                             continue
                         shutil.rmtree(str(od), ignore_errors=True)
@@ -8446,6 +8580,7 @@ generation_engine.configure(
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,
     retention_sec=EMAIL_FILE_RETENTION_SEC,
+    gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
     write_email_marker_fn=_write_email_marker
 )
 
@@ -8528,6 +8663,17 @@ if __name__ == "__main__":
     _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
     print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
           f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
+    _max_gemini_text_chars_startup = os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000")
+    print(f"  ABM_MAX_GEMINI_TEXT_CHARS: {_max_gemini_text_chars_startup} "
+          f"({'env' if 'ABM_MAX_GEMINI_TEXT_CHARS' in os.environ else 'default'})")
+    _job_retention_startup = os.environ.get("ABM_JOB_RETENTION_SEC", "64800")
+    print(f"  ABM_JOB_RETENTION_SEC: {_job_retention_startup}s "
+          f"(~{int(_job_retention_startup)//3600}h) "
+          f"({'env' if 'ABM_JOB_RETENTION_SEC' in os.environ else 'default'})")
+    _gemini_retention_startup = os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800")
+    print(f"  ABM_GEMINI_JOB_RETENTION_SEC: {_gemini_retention_startup}s "
+          f"(~{int(_gemini_retention_startup)//3600}h) "
+          f"({'env' if 'ABM_GEMINI_JOB_RETENTION_SEC' in os.environ else 'default'})")
     print(f"  Debug mode: {DEBUG} "
           f"({'env ABM_DEBUG' if 'ABM_DEBUG' in os.environ else 'default off'})")
     print(f"{'='*50}\n")
