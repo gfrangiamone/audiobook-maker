@@ -156,3 +156,46 @@ def test_is_available_disabled(monkeypatch, reset_backend_cache):
     monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
     import gemini_tts
     assert gemini_tts.is_available() is False
+
+
+def test_get_client_vertex_passes_project_and_location(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "test-project-42")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    import gemini_tts
+    gemini_tts._clients_by_location = {}
+
+    captured = []
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(gemini_tts, "_make_genai_client", lambda **kw: _FakeClient(**kw))
+    gemini_tts._get_client("flash25")
+    assert captured[0]["vertexai"] is True
+    assert captured[0]["project"] == "test-project-42"
+    assert captured[0]["location"] == "global"
+
+
+def test_get_client_caches_per_location(monkeypatch, tmp_path, reset_backend_cache):
+    """Verifica che richieste a location differenti producano client distinti."""
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    import gemini_tts
+    gemini_tts._clients_by_location = {}
+
+    calls = []
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(gemini_tts, "_make_genai_client", lambda **kw: _FakeClient(**kw))
+    c1 = gemini_tts._get_client("flash25")  # location=global
+    c2 = gemini_tts._get_client("flash31")  # location=us-central1
+    c3 = gemini_tts._get_client("flash25")  # cache hit, no new call
+    assert len(calls) == 2
+    assert c1 is c3
+    assert c1 is not c2

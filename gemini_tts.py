@@ -1250,7 +1250,7 @@ def get_rate_log_stats():
 
 _available = None
 _available_lock = threading.Lock()
-_genai_client = None
+_clients_by_location = {}
 
 
 def is_available():
@@ -1301,28 +1301,56 @@ def _http_timeout_ms(model_key=None):
     return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
 
 
-def _get_client():
-    """Lazy init del client google-genai (singleton).
+def _make_genai_client(**kwargs):
+    """Wrapper attorno a genai.Client() — seam isolato per i test.
 
-    Il timeout HTTP qui impostato e` il default del client; viene
-    sovrascritto per-call in `synthesize()` con il timeout model-aware
-    (vedi `_http_timeout_ms(model_key)`).
+    Tutti i kwargs vengono passati al costruttore reale del client.
     """
-    global _genai_client
-    if _genai_client is not None:
-        return _genai_client
     from google import genai
+    return genai.Client(**kwargs)
+
+
+def _get_client(model_key=None):
+    """Lazy init del client google-genai, cached per location.
+
+    Vertex: il client e' tied a (project, location); flash25 e flash31
+    possono finire su region diverse, quindi servono client distinti.
+    API key: location e' ignorato, una sola entry "_apikey" nella cache.
+    """
     from google.genai import types as _gt
-    http_opts = _gt.HttpOptions(timeout=_http_timeout_ms())
-    use_vertex = os.environ.get("ABM_GEMINI_USE_VERTEX", "false").lower() == "true"
-    if use_vertex:
-        vertex_file = os.environ["ABM_GEMINI_VERTEX_CREDENTIALS_FILE"]
-        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", vertex_file)
-        _genai_client = genai.Client(vertexai=True, http_options=http_opts)
+    backend = _resolve_backend()
+    if backend is None:
+        raise RuntimeError("Gemini TTS not available (no backend configured)")
+
+    if backend == "apikey":
+        cache_key = "_apikey"
+    else:
+        # Vertex: cache per location (model_key obbligatorio per risolverla).
+        if model_key is None:
+            raise ValueError("_get_client(): model_key richiesto su backend Vertex")
+        cache_key = ("vertex", _resolve_location(model_key))
+
+    cached = _clients_by_location.get(cache_key)
+    if cached is not None:
+        return cached
+
+    http_opts = _gt.HttpOptions(timeout=_http_timeout_ms(model_key))
+
+    if backend == "vertex":
+        creds_file = os.environ["ABM_GOOGLE_CREDENTIALS_FILE"]
+        os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", creds_file)
+        client = _make_genai_client(
+            vertexai=True,
+            project=_vertex_project(),
+            location=_resolve_location(model_key),
+            http_options=http_opts,
+        )
     else:
         api_key = os.environ["ABM_GEMINI_API_KEY"].strip()
-        _genai_client = genai.Client(api_key=api_key, http_options=http_opts)
-    return _genai_client
+        client = _make_genai_client(api_key=api_key, http_options=http_opts)
+
+    _clients_by_location[cache_key] = client
+    return client
 
 
 SYNTH_MAX_ATTEMPTS = 3  # kept for backward import compat; runtime uses _synth_max_attempts()
