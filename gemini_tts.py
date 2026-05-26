@@ -59,9 +59,17 @@ def _f(env, default):
         return float(default)
 
 
+# Default region Vertex per modello (override via env in _resolve_location).
+# flash25 GA disponibile su global con latenza inferiore.
+# flash31 preview solo su us-central1.
+_DEFAULT_VERTEX_LOCATION_FLASH25 = "global"
+_DEFAULT_VERTEX_LOCATION_FLASH31 = "us-central1"
+
 GEMINI_MODELS = {
     "flash25": {
         "id": "gemini-2.5-flash-preview-tts",
+        "id_vertex": "gemini-2.5-flash-tts",
+        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH25,
         "label": "Gemini 2.5 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK", 0.50),
         "output_usd_per_mtok": _f("ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK", 10.00),
@@ -69,6 +77,8 @@ GEMINI_MODELS = {
     },
     "flash31": {
         "id": "gemini-3.1-flash-tts-preview",
+        "id_vertex": "gemini-3.1-flash-tts-preview",
+        "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
         "output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK", 20.00),
