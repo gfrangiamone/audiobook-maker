@@ -135,3 +135,23 @@ def test_resolve_location_unknown_key_raises(monkeypatch, reset_backend_cache):
     import gemini_tts
     with pytest.raises(ValueError, match="Unknown Gemini model"):
         gemini_tts._resolve_location("flash99")
+
+
+def test_is_available_vertex(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    import gemini_tts
+    gemini_tts._available = None  # reset cache
+    assert gemini_tts.is_available() is True
+
+
+def test_is_available_disabled(monkeypatch, reset_backend_cache):
+    monkeypatch.delenv("ABM_GEMINI_BACKEND", raising=False)
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
+    import gemini_tts
+    gemini_tts._available = None
+    assert gemini_tts.is_available() is False

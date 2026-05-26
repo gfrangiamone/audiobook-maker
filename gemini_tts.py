@@ -1254,33 +1254,31 @@ _genai_client = None
 
 
 def is_available():
-    """True se ABM_GEMINI_API_KEY (o credenziali Vertex) sono configurate e google-genai e' installato."""
-    global _available, _genai_client
+    """True se un backend Gemini TTS valido e' configurato e google-genai e' installato.
+
+    Backend ammessi:
+    - Vertex AI: ABM_GCP_PROJECT_ID + ABM_GOOGLE_CREDENTIALS_FILE (file leggibile).
+    - API key:   ABM_GEMINI_API_KEY non vuota.
+    Selettore esplicito: ABM_GEMINI_BACKEND=vertex|apikey|auto (default: auto).
+    """
+    global _available
     if _available is not None:
         return _available
     with _available_lock:
         if _available is not None:
             return _available
 
-        use_vertex = os.environ.get("ABM_GEMINI_USE_VERTEX", "false").lower() == "true"
-        api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
-        vertex_file = os.environ.get("ABM_GEMINI_VERTEX_CREDENTIALS_FILE", "").strip()
-
-        if use_vertex:
-            if not vertex_file or not os.path.exists(vertex_file):
-                _available = False
-                print("[gemini-tts] Disabled: ABM_GEMINI_USE_VERTEX=true but credentials file not found")
-                return False
-        else:
-            if not api_key:
-                _available = False
-                print("[gemini-tts] Disabled: ABM_GEMINI_API_KEY not set")
-                return False
+        backend = _resolve_backend()
+        if backend is None:
+            _available = False
+            print("[gemini-tts] Disabled: no backend configured "
+                  "(set ABM_GEMINI_BACKEND + relative env)")
+            return False
 
         try:
             from google import genai  # noqa: F401
             _available = True
-            print(f"[gemini-tts] Enabled (vertex={use_vertex})")
+            print(f"[gemini-tts] Enabled (backend={backend})")
             return True
         except ImportError:
             _available = False
