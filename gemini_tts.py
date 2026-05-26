@@ -142,6 +142,37 @@ def _resolve_backend():
 def _vertex_project():
     return os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
 
+
+def _resolve_model_id(model_key):
+    """Restituisce il model ID giusto per il backend corrente.
+
+    Vertex usa nomi GA (`gemini-2.5-flash-tts`) mentre API key usa i nomi
+    legacy `-preview-tts`. Per `flash31` il nome combacia (preview su entrambi).
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown Gemini model: {model_key!r}")
+    m = GEMINI_MODELS[model_key]
+    backend = _resolve_backend()
+    if backend == "vertex":
+        return m["id_vertex"]
+    return m["id"]
+
+
+def _resolve_location(model_key):
+    """Restituisce la region Vertex per il modello.
+
+    Override env per-modello: ABM_VERTEX_LOCATION_FLASH25 / _FLASH31.
+    Default: vedi GEMINI_MODELS[...]['location_vertex'].
+    Significativo solo se backend=vertex (ignorato per API key).
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown Gemini model: {model_key!r}")
+    env_key = f"ABM_VERTEX_LOCATION_{model_key.upper()}"
+    override = os.environ.get(env_key, "").strip()
+    if override:
+        return override
+    return GEMINI_MODELS[model_key]["location_vertex"]
+
 USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)

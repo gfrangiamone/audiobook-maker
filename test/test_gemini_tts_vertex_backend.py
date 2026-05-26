@@ -78,3 +78,46 @@ def test_backend_vertex_disabled_when_creds_missing(monkeypatch, tmp_path, reset
     monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(tmp_path / "missing.json"))
     import gemini_tts
     assert gemini_tts._resolve_backend() is None
+
+
+def test_resolve_model_id_vertex(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    import gemini_tts
+    assert gemini_tts._resolve_model_id("flash25") == "gemini-2.5-flash-tts"
+    assert gemini_tts._resolve_model_id("flash31") == "gemini-3.1-flash-tts-preview"
+
+
+def test_resolve_model_id_apikey(monkeypatch, reset_backend_cache):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "apikey")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    import gemini_tts
+    assert gemini_tts._resolve_model_id("flash25") == "gemini-2.5-flash-preview-tts"
+    assert gemini_tts._resolve_model_id("flash31") == "gemini-3.1-flash-tts-preview"
+
+
+def test_resolve_location_default(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    monkeypatch.delenv("ABM_VERTEX_LOCATION_FLASH25", raising=False)
+    monkeypatch.delenv("ABM_VERTEX_LOCATION_FLASH31", raising=False)
+    import gemini_tts
+    assert gemini_tts._resolve_location("flash25") == "global"
+    assert gemini_tts._resolve_location("flash31") == "us-central1"
+
+
+def test_resolve_location_env_override(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    monkeypatch.setenv("ABM_VERTEX_LOCATION_FLASH25", "europe-west4")
+    monkeypatch.setenv("ABM_VERTEX_LOCATION_FLASH31", "us-central1")
+    import gemini_tts
+    assert gemini_tts._resolve_location("flash25") == "europe-west4"
+    assert gemini_tts._resolve_location("flash31") == "us-central1"
