@@ -409,7 +409,7 @@ def parse_voice_id(voice_id):
         raise ValueError(f"Unknown Gemini model: {model_key!r} (allowed: {list(GEMINI_MODELS.keys())})")
     if voice_name not in GEMINI_VOICE_NAMES:
         raise ValueError(f"Unknown Gemini voice: {voice_name!r}")
-    return model_key, GEMINI_MODELS[model_key]["id"], voice_name
+    return model_key, _resolve_model_id(model_key), voice_name
 
 
 SUPPORTED_UI_LANGUAGES = ["it", "en", "fr", "es", "de", "zh", "hi"]

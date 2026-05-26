@@ -201,3 +201,24 @@ def test_get_client_caches_per_location(monkeypatch, tmp_path, reset_backend_cac
     assert len(calls) == 2
     assert c1 is c3
     assert c1 is not c2
+
+
+def test_parse_voice_id_returns_vertex_model_id(monkeypatch, tmp_path, reset_backend_cache):
+    creds = tmp_path / "sa.json"; creds.write_text("{}")
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
+    import gemini_tts
+    model_key, model_id, voice = gemini_tts.parse_voice_id("gemini:flash25:Kore")
+    assert model_key == "flash25"
+    assert model_id == "gemini-2.5-flash-tts"
+    assert voice == "Kore"
+
+
+def test_parse_voice_id_returns_apikey_model_id(monkeypatch, reset_backend_cache):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "apikey")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    import gemini_tts
+    model_key, model_id, voice = gemini_tts.parse_voice_id("gemini:flash25:Kore")
+    assert model_id == "gemini-2.5-flash-preview-tts"
