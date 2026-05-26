@@ -86,6 +86,62 @@ GEMINI_MODELS = {
     },
 }
 
+# === Backend resolver (Vertex vs API key) ====================================
+# Cache module-level: il backend viene risolto al primo uso e congelato per
+# evitare flip-flop a runtime se un task cambia env tra una chiamata e l'altra.
+# Reset esplicito (per test): `gemini_tts._BACKEND = None`.
+_BACKEND = None  # None=unresolved, "vertex", "apikey", o False=DISABLED
+_BACKEND_LOCK = threading.Lock()
+
+
+def _resolve_backend():
+    """Risolve quale backend Gemini usare in base alle env var.
+
+    Returns:
+        "vertex" | "apikey" | None (None = TTS disabilitato).
+
+    Logica:
+    - ABM_GEMINI_BACKEND=vertex (esplicito): richiede ABM_GCP_PROJECT_ID +
+      ABM_GOOGLE_CREDENTIALS_FILE leggibile. Se mancano -> DISABLED.
+    - ABM_GEMINI_BACKEND=apikey (esplicito): richiede ABM_GEMINI_API_KEY.
+    - ABM_GEMINI_BACKEND unset o "auto": Vertex se config completa, altrimenti
+      API key se presente, altrimenti DISABLED.
+    """
+    global _BACKEND
+    if _BACKEND is not None:
+        return _BACKEND if _BACKEND else None
+    with _BACKEND_LOCK:
+        if _BACKEND is not None:
+            return _BACKEND if _BACKEND else None
+
+        choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+        project = os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
+        creds = os.environ.get("ABM_GOOGLE_CREDENTIALS_FILE", "").strip()
+        api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
+
+        vertex_ready = bool(project) and bool(creds) and os.path.isfile(creds)
+        apikey_ready = bool(api_key)
+
+        if choice == "vertex":
+            _BACKEND = "vertex" if vertex_ready else False
+        elif choice == "apikey":
+            _BACKEND = "apikey" if apikey_ready else False
+        else:  # auto / unknown
+            if vertex_ready:
+                _BACKEND = "vertex"
+            elif apikey_ready:
+                _BACKEND = "apikey"
+            else:
+                _BACKEND = False
+
+        if _BACKEND:
+            print(f"[gemini-tts] Backend resolved: {_BACKEND}")
+        return _BACKEND if _BACKEND else None
+
+
+def _vertex_project():
+    return os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
+
 USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
 PAYPAL_PERCENT_FEE = _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
