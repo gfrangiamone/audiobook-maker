@@ -22,9 +22,11 @@ def reset_backend_cache():
     import gemini_tts as gt
     gt._BACKEND = None
     gt._available = None
+    gt._clients_by_location = {}
     yield
     gt._BACKEND = None
     gt._available = None
+    gt._clients_by_location = {}
 
 
 def test_backend_vertex_explicit(monkeypatch, tmp_path, reset_backend_cache):
