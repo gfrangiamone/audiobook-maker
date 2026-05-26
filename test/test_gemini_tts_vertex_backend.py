@@ -121,3 +121,17 @@ def test_resolve_location_env_override(monkeypatch, tmp_path, reset_backend_cach
     import gemini_tts
     assert gemini_tts._resolve_location("flash25") == "europe-west4"
     assert gemini_tts._resolve_location("flash31") == "us-central1"
+
+
+def test_resolve_model_id_unknown_key_raises(monkeypatch, reset_backend_cache):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "apikey")
+    monkeypatch.setenv("ABM_GEMINI_API_KEY", "k")
+    import gemini_tts
+    with pytest.raises(ValueError, match="Unknown Gemini model"):
+        gemini_tts._resolve_model_id("flash99")
+
+
+def test_resolve_location_unknown_key_raises(monkeypatch, reset_backend_cache):
+    import gemini_tts
+    with pytest.raises(ValueError, match="Unknown Gemini model"):
+        gemini_tts._resolve_location("flash99")

@@ -159,11 +159,14 @@ def _resolve_model_id(model_key):
 
 
 def _resolve_location(model_key):
-    """Restituisce la region Vertex per il modello.
+    """Restituisce la region Vertex configurata per il modello.
+
+    Non controlla il backend attivo: il chiamante deve usare questo valore solo
+    quando _resolve_backend() == "vertex" (per il backend apikey la region non
+    si applica).
 
     Override env per-modello: ABM_VERTEX_LOCATION_FLASH25 / _FLASH31.
     Default: vedi GEMINI_MODELS[...]['location_vertex'].
-    Significativo solo se backend=vertex (ignorato per API key).
     """
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown Gemini model: {model_key!r}")
