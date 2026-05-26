@@ -24,7 +24,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 104 |
 | `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 105 |
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 152 |
-| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) | `google_tts.py` | 69 |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — dal 2026-05-26 usato **anche** dal backend Vertex AI Gemini TTS (non più solo da Google Cloud TTS): un unico service account autentica entrambe le integrazioni quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `google_tts.py` | 69 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
 | `ABM_GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (1M caratteri/mese, free tier Google Cloud TTS) | `google_tts.py` | 33 |
 | `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 104 |
@@ -373,9 +373,13 @@ Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, accoun
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto, Gemini TTS è disabilitato |
-| `ABM_GEMINI_USE_VERTEX` | `false` | Se `true` usa Vertex AI (service account) |
-| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | Path JSON service account (se Vertex) |
+| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto e backend non risolve a Vertex, Gemini TTS è disabilitato. Usato dal backend `apikey` (e fallback in modalità `auto`). |
+| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key. `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. File: `gemini_tts.py:_resolve_backend` (linea ~97). |
+| `ABM_GCP_PROJECT_ID` | *(vuoto)* | ID progetto GCP che ospita le API Vertex AI e Cloud TTS. Richiesto se `ABM_GEMINI_BACKEND=vertex` (o auto-risolto a Vertex). Esempio: `audiobook-maker-496208`. File: `gemini_tts.py:_vertex_project`. |
+| `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per il modello `gemini-2.5-flash-tts` (GA). Default `global`: routing automatico latency-aware. Pinnare `us-central1` se servono quote dedicate. File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash25"]["location_vertex"]`). |
+| `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per `gemini-3.1-flash-tts-preview`. Solo `us-central1` supporta il modello preview (verificato 2026-05-26 via `models.list()`). File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash31"]["location_vertex"]`). |
+| `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** (2026-05-26): sostituita da `ABM_GEMINI_BACKEND=vertex` + `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`. Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
+| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | **DEPRECATED** (2026-05-26): sostituita da `ABM_GOOGLE_CREDENTIALS_FILE` (unico path JSON service account per Vertex AI Gemini TTS + Google Cloud TTS). Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
 
 ### 7.2 Costi Google (USD per 1M token)
 
