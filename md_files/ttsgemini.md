@@ -92,14 +92,14 @@ Esempi: `gemini:flash25:Zephyr`, `gemini:flash31:Kore`.
 
 ### 3.2 Modelli supportati
 
-Definiti in `GEMINI_MODELS` (`gemini_tts.py:62`). Ogni entry contiene id API + label umana + tariffe USD/MTok + margine default:
+Definiti in `GEMINI_MODELS` (`gemini_tts.py:62`). Ogni entry contiene id API (API key + Vertex) + label umana + tariffe USD/MTok + margine default. **Nota**: l'ID effettivo passato a `client.models.generate_content` dipende dal backend attivo (vedi §16 "Autenticazione e Backend") ed è risolto da `_resolve_model_id(model_key)`.
 
-| `model_key` | `id` API | Label | Input USD/MTok | Output USD/MTok |
-|-------------|----------|-------|----------------|-----------------|
-| `flash25` | `gemini-2.5-flash-preview-tts` | "Gemini 2.5 Flash TTS" | `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` |
-| `flash31` | `gemini-3.1-flash-tts-preview` | "Gemini 3.1 Flash TTS" | `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` |
+| `model_key` | API key ID | Vertex ID (GA) | Label | Input USD/MTok | Output USD/MTok |
+|-------------|------------|----------------|-------|----------------|-----------------|
+| `flash25` | `gemini-2.5-flash-preview-tts` | `gemini-2.5-flash-tts` | "Gemini 2.5 Flash TTS" | `ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_25FLASH_OUTPUT_USD_PER_MTOK` |
+| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | "Gemini 3.1 Flash TTS" | `ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK` | `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` |
 
-**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + relative env per pricing/margine + (se necessario) tuning RPM/RPD dedicato.
+**Aggiungere un nuovo modello**: estendere `GEMINI_MODELS` con un nuovo `<model_key>` + ID per entrambi i backend (API key + Vertex) + relative env per pricing/margine + (se necessario) tuning RPM/RPD dedicato + region default (`_resolve_location`).
 
 ### 3.3 Catalogo voci
 
@@ -682,13 +682,47 @@ Il client renderizza un blocco riepilogo via `_renderGeminiCancelSummary(d)` con
 
 > **Convenzione**: parsing tollerante (virgola decimale OK, whitespace ignorato). Tutte lette **a ogni call** (no cache), quindi modificabili senza restart in dev. In produzione, restart è raccomandato per coerenza tra moduli.
 
-### Autenticazione
+### Autenticazione e Backend
+
+Gemini TTS supporta due backend, selezionabili via `ABM_GEMINI_BACKEND`:
+
+| `ABM_GEMINI_BACKEND` | Env richieste | Note |
+|---|---|---|
+| `vertex` (consigliato prod) | `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE` (path al SA JSON, lo stesso usato da Cloud TTS) | Quote a livello progetto GCP, no Tier API. Service account JSON deve avere ruolo `roles/aiplatform.user`. |
+| `apikey` (dev / fallback) | `ABM_GEMINI_API_KEY` (chiave Gemini AI Studio) | Quote tiered Google AI Studio (Tier 1/2/3). |
+| `auto` (default) o non settato | una delle due sopra | Preferisce Vertex se presente; cade su API key. |
+
+#### Mapping modello → backend
+
+I modelli hanno ID differenti tra Vertex (GA) e API key (legacy "-preview"):
+
+| Modello key | API key ID | Vertex ID | Vertex region default |
+|---|---|---|---|
+| `flash25` | `gemini-2.5-flash-preview-tts` | `gemini-2.5-flash-tts` (GA) | `global` |
+| `flash31` | `gemini-3.1-flash-tts-preview` | `gemini-3.1-flash-tts-preview` | `us-central1` |
+
+Override region per modello: `ABM_VERTEX_LOCATION_FLASH25` / `ABM_VERTEX_LOCATION_FLASH31`.
+
+Vertex client cache: un client `genai.Client(vertexai=True, project, location)` per ogni `(backend, location)` distinta. flash25/flash31 vivono su client separati per via della region diversa.
+
+Resolver implementato in `gemini_tts.py`:
+- `_resolve_backend()` — sceglie vertex/apikey
+- `_resolve_model_id(model_key)` — ID corretto per backend
+- `_resolve_location(model_key)` — region Vertex
+- `_get_client(model_key)` — client cached per (backend, location)
+
+#### Env vars autenticazione
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_USE_VERTEX` | `false` | `true` → usa Vertex AI service account |
-| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (modo default) |
-| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(empty)* | Path JSON service account (modo Vertex) |
+| `ABM_GEMINI_BACKEND` | `auto` | `vertex` / `apikey` / `auto` — selettore backend. |
+| `ABM_GCP_PROJECT_ID` | — | ID progetto GCP per Vertex. Obbligatorio se backend=vertex. |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | *(empty)* | Path JSON service account (re-uso da Cloud TTS). Obbligatorio se backend=vertex. |
+| `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per flash25 (override). |
+| `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per flash31 (override). |
+| `ABM_GEMINI_API_KEY` | *(empty)* | API key Google AI Studio (backend=apikey). |
+| `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** — usa `ABM_GEMINI_BACKEND=vertex`. Conservato per backward-compat. |
+| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(empty)* | **DEPRECATED** — usa `ABM_GOOGLE_CREDENTIALS_FILE` (condiviso con Cloud TTS). |
 
 ### Chunking
 
@@ -833,7 +867,7 @@ I numeri sopra sono indicativi e vanno verificati sul portale Google AI Studio a
 
 ## 18. Disabilitazione del motore
 
-Se `ABM_GEMINI_API_KEY` non è settato (e `ABM_GEMINI_USE_VERTEX=false`), oppure `google-genai` non è installato, `gemini_tts.is_available()` ritorna `False`. Conseguenze:
+Se nessun backend è configurabile (`ABM_GEMINI_BACKEND=vertex` ma `ABM_GCP_PROJECT_ID`/`ABM_GOOGLE_CREDENTIALS_FILE` mancanti, oppure `ABM_GEMINI_BACKEND=apikey` ma `ABM_GEMINI_API_KEY` mancante, oppure `auto` con entrambe le credenziali assenti), oppure `google-genai` non è installato, `gemini_tts.is_available()` ritorna `False`. Conseguenze:
 
 - `/api/voices` non include voci `gemini:*`.
 - Tab Premium nascosto nel frontend.
