@@ -21,8 +21,10 @@ def reset_backend_cache():
     """Reset cache backend tra test (importante: la cache vive a module level)."""
     import gemini_tts as gt
     gt._BACKEND = None
+    gt._available = None
     yield
     gt._BACKEND = None
+    gt._available = None
 
 
 def test_backend_vertex_explicit(monkeypatch, tmp_path, reset_backend_cache):
@@ -143,7 +145,7 @@ def test_is_available_vertex(monkeypatch, tmp_path, reset_backend_cache):
     monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
     monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
     import gemini_tts
-    gemini_tts._available = None  # reset cache
+    pytest.importorskip("google.genai", reason="google-genai not installed")
     assert gemini_tts.is_available() is True
 
 
@@ -153,5 +155,4 @@ def test_is_available_disabled(monkeypatch, reset_backend_cache):
     monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
     monkeypatch.delenv("ABM_GEMINI_API_KEY", raising=False)
     import gemini_tts
-    gemini_tts._available = None
     assert gemini_tts.is_available() is False
