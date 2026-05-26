@@ -35,7 +35,7 @@ def _make_fake_client(captured):
 
 def test_style_instruction_prepended_to_text(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize(
@@ -51,7 +51,7 @@ def test_style_instruction_prepended_to_text(monkeypatch, tmp_path):
 
 def test_style_instruction_none_does_not_prepend(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize("Ciao", "gemini:flash25:Zephyr", style_instruction=None, output_path=str(out))
@@ -60,7 +60,7 @@ def test_style_instruction_none_does_not_prepend(monkeypatch, tmp_path):
 
 def test_style_instruction_truncated_at_300_chars(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     long_style = "a" * 500
@@ -72,7 +72,7 @@ def test_style_instruction_truncated_at_300_chars(monkeypatch, tmp_path):
 
 def test_style_instruction_coexists_with_rate(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setenv("ABM_GEMINI_RATE_MODE", "prompt")
     out = tmp_path / "x.pcm"
@@ -89,7 +89,7 @@ def test_style_instruction_coexists_with_rate(monkeypatch, tmp_path):
 def test_style_instruction_whitespace_only_does_not_prepend(monkeypatch, tmp_path):
     """A whitespace-only style_instruction must not crash and must not add a prefix."""
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     gemini_tts.synthesize("Solo testo", "gemini:flash25:Zephyr",
@@ -107,7 +107,7 @@ def test_prefissi_oltre_soglia_qualita_non_sollevano(monkeypatch, tmp_path, caps
     finche` il payload totale resta sotto API_HARD_BYTES_CAP.
     """
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     # Scenario realistico: target qualita` 700b, hard cap API 8000b.
     monkeypatch.setattr(gemini_tts, "MAX_BYTES_PER_CALL", 700)
@@ -133,7 +133,7 @@ def test_testo_oltre_soglia_qualita_warning_ma_non_solleva(monkeypatch, tmp_path
     ma il job non si perde).
     """
     captured = {}
-    monkeypatch.setattr(gemini_tts, "_get_client", lambda: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setattr(gemini_tts, "MAX_BYTES_PER_CALL", 700)
     monkeypatch.setattr(gemini_tts, "API_HARD_BYTES_CAP", 8000)

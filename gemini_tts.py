@@ -1788,7 +1788,7 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     _check_rpd_cap(model_key)
     _throttle_rpm(model_key)
 
-    client = _get_client()
+    client = _get_client(model_key)
     last_err = None
     pcm_data = None
     usage_input = 0
