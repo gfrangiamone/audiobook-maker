@@ -209,3 +209,16 @@ def test_parse_voice_id_returns_apikey_model_id(monkeypatch, reset_backend_cache
     import gemini_tts
     model_key, model_id, voice = gemini_tts.parse_voice_id("gemini:flash25:Kore")
     assert model_id == "gemini-2.5-flash-preview-tts"
+
+
+def test_parse_retry_after_vertex_shape():
+    """Vertex usa stesso schema gRPC RetryInfo dell'API key."""
+    import gemini_tts
+    class _E(Exception):
+        pass
+    e = _E(
+        '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED",'
+        '"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo",'
+        '"retryDelay":"42s"}]}}'
+    )
+    assert gemini_tts._parse_retry_after(e) == 42.0
