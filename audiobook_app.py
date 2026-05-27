@@ -263,7 +263,11 @@ def add_security_headers(response):
     ct = response.content_type or ''
     path = (request.path or '') if request else ''
     if 'Cache-Control' not in response.headers:
-        if 'text/html' in ct:
+        # Admin/API non devono mai essere cachati (cambi di stato real-time).
+        if path.startswith('/admin') or path.startswith('/api/'):
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+        elif 'text/html' in ct:
             # 5-min cache + 1h stale-while-revalidate: lets new approved
             # reviews surface in the embedded JSON-LD/visible block within a
             # few minutes while keeping repeat-visit perf high.
