@@ -1672,7 +1672,12 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         except Exception:
             should_have_been = 0.0
         delta_eur = round(should_have_been - charged, 4)
-        delta_pct = round((delta_eur / charged * 100), 2) if charged > 0 else 0.0
+        # DELTA % = scostamento di ricarico in punti percentuali rispetto al
+        # costo Google. Ricarico effettivo = (charged - cost)/cost; ricarico
+        # atteso = (should - cost)/cost; il delta tra i due = delta_eur/cost.
+        # NB: non si divide piu` per `charged` (era ambiguo: scostamento di
+        # prezzo, non di margine).
+        delta_pct = round((delta_eur / google_cost_actual * 100), 2) if google_cost_actual > 0 else 0.0
         est = job.get("gemini_estimate") or {}
         # Rate scelto dall'utente: il prezzo proposto scala col fattore di
         # velocità, quindi va tracciato per consentire calibrazione per

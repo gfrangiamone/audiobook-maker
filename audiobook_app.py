@@ -2174,7 +2174,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/admin/logs?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
+        <a class="btn btn-accent" href="/admin/audit-tts?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
         <a class="btn btn-accent" href="/logs/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
@@ -3123,19 +3123,19 @@ def admin_api_voucher_revoke(code):
     return jsonify({"ok": True, "code": code})
 
 
-@app.route("/admin/logs", methods=["GET"])
+@app.route("/admin/audit-tts", methods=["GET"])
 def admin_logs_page():
-    """Admin logs/audit dashboard. Currently hosts the Gemini Cost Audit tab."""
+    """Admin TTS audit dashboard. Hosts the Gemini Cost Audit and Events/Refunds tabs."""
     if not ADMIN_TOKEN:
-        return ("Admin logs UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+        return ("Admin audit TTS UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
     token = _admin_auth_from_request()
     if not _admin_auth_ok(token):
-        return _render_admin_gate("Logs Admin", "/admin/logs"), 200, {"Content-Type": "text/html; charset=utf-8"}
+        return _render_admin_gate("Audit TTS", "/admin/audit-tts"), 200, {"Content-Type": "text/html; charset=utf-8"}
     html = r"""<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Admin - Logs &amp; Audit</title>
+<title>Admin - Audit TTS</title>
 <style>
   :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
   *{box-sizing:border-box}
@@ -3175,11 +3175,15 @@ def admin_logs_page():
   .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
   .badge-info{background:rgba(59,130,246,.18);color:#60a5fa}
   .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
+  .badge-live{background:rgba(139,92,246,.22);color:var(--accent);animation:livePulse 1.8s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
+  tr.row-live{background:rgba(139,92,246,.10)}
+  tr.row-live td{border-bottom-color:rgba(139,92,246,.30)}
   .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
   .toggle-row input{width:auto}
 </style></head>
 <body>
-<h1>Admin - Logs &amp; Audit <a href="/logs" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+<h1>Admin - Audit TTS <a href="/logs" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
 
 <div class="tab-bar">
   <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
@@ -3202,16 +3206,13 @@ def admin_logs_page():
         <label for="auditLangFilter">Lingua</label>
         <select id="auditLangFilter">
           <option value="all">Tutte</option>
-          <option value="it">it</option><option value="en">en</option>
-          <option value="fr">fr</option><option value="es">es</option>
-          <option value="de">de</option><option value="zh">zh</option>
-          <option value="hi">hi</option>
         </select>
       </div>
       <div>
         <label for="auditOutcomeFilter">Esito</label>
         <select id="auditOutcomeFilter">
           <option value="all">Tutti</option>
+          <option value="running">In corso</option>
           <option value="completed">Completato</option>
           <option value="failed_refunded">Fallito generico (rimborsato)</option>
           <option value="failed_quota_refunded">Fallito quota (rimborsato)</option>
@@ -3253,7 +3254,7 @@ def admin_logs_page():
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th>Costo G.</th>
-        <th>Prezzo &euro;</th><th>&Delta; &euro;</th><th>&Delta; %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th>&Delta; &euro;</th><th title="DELTA % = DELTA € / Costo Google · scostamento di ricarico rispetto alla regola">&Delta; %</th><th>Esito</th>
       </tr></thead>
       <tbody id="auditRecordsBody">
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -3278,10 +3279,6 @@ def admin_logs_page():
         <label for="evLangFilter">Lingua</label>
         <select id="evLangFilter">
           <option value="all">Tutte</option>
-          <option value="it">it</option><option value="en">en</option>
-          <option value="fr">fr</option><option value="es">es</option>
-          <option value="de">de</option><option value="zh">zh</option>
-          <option value="hi">hi</option>
         </select>
       </div>
       <div>
@@ -3340,6 +3337,52 @@ def admin_logs_page():
     return `<span class="${cls}">${v.toFixed(2)}%</span>`;
   }
 
+  // Italian display names per i codici lingua usati dal motore Gemini TTS.
+  // Coprire l'intero set ufficiale (24) cosi` la dropdown e` sensata anche
+  // quando in futuro verranno generati audio in lingue oggi non esposte in UI.
+  const LANG_NAMES = {
+    "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
+    "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
+    "ko":"Coreano","zh":"Cinese","hi":"Hindi","ar":"Arabo",
+    "id":"Indonesiano","nl":"Olandese","pl":"Polacco","th":"Thai",
+    "tr":"Turco","vi":"Vietnamita","ro":"Rumeno","uk":"Ucraino",
+    "bn":"Bengalese","mr":"Marathi","ta":"Tamil","te":"Telugu",
+  };
+  function langLabel(code){
+    const c = (code||"").toLowerCase();
+    return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
+  }
+
+  async function loadLanguageOptions(){
+    let codes = [];
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/languages",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (r.ok) {
+        const d = await r.json();
+        codes = Array.isArray(d.languages) ? d.languages : [];
+      }
+    } catch(e) { /* silenzioso: dropdown resta con solo "Tutte" */ }
+    codes = codes.slice().sort((a,b) =>
+      langLabel(a).localeCompare(langLabel(b), "it"));
+    for (const selId of ["auditLangFilter", "evLangFilter"]) {
+      const sel = $(selId);
+      if (!sel) continue;
+      const prev = sel.value;
+      // Rimuove option diverse da "all" e ripopola
+      Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
+      for (const code of codes) {
+        const opt = document.createElement("option");
+        opt.value = code;
+        opt.textContent = langLabel(code);
+        sel.appendChild(opt);
+      }
+      if (prev && Array.from(sel.options).some(o => o.value === prev)) {
+        sel.value = prev;
+      }
+    }
+  }
+
   async function fetchAudit(){
     const params = new URLSearchParams();
     const m = $("auditModelFilter").value;
@@ -3381,23 +3424,43 @@ def admin_logs_page():
       tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>';
       return;
     }
-    recs = recs.slice().sort((a,b) => (b.ts||"").localeCompare(a.ts||""));
+    // Ordina mettendo i live "running" sempre in cima, poi gli altri per ts desc.
+    recs = recs.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
     tbody.innerHTML = recs.map(r => {
       const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
-      const dPct = Number(r.delta_pct || 0);
+      // Prezzo/Δ effettivi: per cancel anticipato usa quanto trattenuto
+      // (cancel_retained_eur) invece dell'originale pre-pagato; per record
+      // normali coincide con user_price_eur_charged.
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const dEur = (r._eff_delta_eur != null) ? Number(r._eff_delta_eur)
+                                              : Number(r.delta_eur || 0);
+      const gCost = Number(r.google_cost_eur_actual || 0);
+      const dPct = gCost > 0 ? (dEur / gCost * 100) : 0;
       const dCls = dPct >= 0 ? "delta-positive" : "delta-negative";
-      return `<tr>
+      const isLive = !!r._live;
+      const rowCls = isLive ? "row-live" : "";
+      const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      // Per cancel: mostra prezzo effettivo + tooltip con il pagato originale.
+      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
+        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
+        : "";
+      return `<tr class="${rowCls}">
         <td>${ts}</td>
         <td><code>${esc(r.job_id)}</code></td>
         <td>${esc(r.model_key)}</td>
-        <td>${esc(r.language)}</td>
+        <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
-        <td>${fmtEur(r.google_cost_eur_actual)}</td>
-        <td>${fmtEur(r.user_price_eur_charged)}</td>
-        <td>${(Number(r.delta_eur) || 0).toFixed(4)}</td>
+        <td>${fmtEur(gCost)}</td>
+        <td${cancelTip}>${fmtEur(revenue)}</td>
+        <td>${dEur.toFixed(4)}</td>
         <td class="${dCls}">${dPct.toFixed(2)}%</td>
-        <td>${esc(r.outcome)}</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
       </tr>`;
     }).join("");
   }
@@ -3458,6 +3521,7 @@ def admin_logs_page():
     "cancelled_refunded", "cancelled_partial",
   ]);
   const OUTCOME_BADGE = {
+    "running":                    ["badge-live", "In corso"],
     "completed":                  ["badge-ok",   "Completato"],
     "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
     "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
@@ -3512,23 +3576,33 @@ def admin_logs_page():
       tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Nessun evento.</td></tr>';
       return;
     }
-    // Sort desc by ts
-    filtered = filtered.slice().sort((a,b) => (b.ts||"").localeCompare(a.ts||""));
+    // Live in cima, poi resto desc per ts.
+    filtered = filtered.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
     tbody.innerHTML = filtered.map(r => {
       const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
       const out = r.outcome || "?";
       const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
-      const rowCls = REFUND_OUTCOMES.has(out)
-        ? (out === "preflight_blocked_refunded" ? "row-preflight" : "row-refund")
+      const rowCls = r._live ? "row-live"
+        : (REFUND_OUTCOMES.has(out)
+            ? (out === "preflight_blocked_refunded" ? "row-preflight" : "row-refund")
+            : "");
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
+        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
         : "";
       return `<tr class="${rowCls}">
         <td>${ts}</td>
         <td><code>${esc(r.job_id)}</code></td>
         <td><span class="badge ${cls}">${esc(label)}</span></td>
         <td>${esc(r.model_key)}</td>
-        <td>${esc(r.language)}</td>
+        <td>${esc(langLabel(r.language))}</td>
         <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
-        <td>${fmtEur(r.user_price_eur_charged)}</td>
+        <td${cancelTip}>${fmtEur(revenue)}</td>
         <td>${fmtEur(r.google_cost_eur_actual)}</td>
       </tr>`;
     }).join("");
@@ -3537,17 +3611,118 @@ def admin_logs_page():
   $("evRefreshBtn").addEventListener("click", fetchEvents);
   $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
 
-  // Auto-load on page open
-  fetchAudit();
+  // Auto-load on page open: prima popola la dropdown lingue, poi carica i record.
+  loadLanguageOptions().finally(fetchAudit);
 })();
 </script>
 </body></html>"""
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+_ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
+
+
+def _synth_running_gemini_audit_records():
+    """Snapshot dei job Gemini attivi sintetizzato in forma audit-shaped.
+
+    Permette a /admin/audit-tts di mostrare una riga immediatamente all'avvio
+    di una generazione Premium, aggiornata ad ogni refresh con i dati di
+    costo accumulati in `job["gemini_actual"]`. Quando il job termina, la riga
+    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
+    """
+    out = []
+    if gemini_tts is None:
+        return out
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for job_id, job in snapshot:
+        try:
+            if not isinstance(job, dict):
+                continue
+            status = job.get("status", "")
+            if status not in _ACTIVE_JOB_STATUSES:
+                continue
+            voice = job.get("voice") or job.get("opt_voice") or ""
+            if not _is_gemini_voice(voice):
+                continue
+            ga = job.get("gemini_actual") or {}
+            parts = voice.split(":")
+            model_key = parts[1] if len(parts) >= 3 else (ga.get("model_key") or "?")
+            info = job.get("info")
+            language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
+            payment = job.get("payment") or {}
+            charged = float(payment.get("total_eur", 0) or 0)
+            if charged <= 0:
+                charged = float(job.get("payment_amount_eur", 0) or 0)
+            google_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
+            try:
+                should = gemini_tts.compute_user_price_eur(google_cost_actual, model_key)
+                should_have_been = float(should.get("user_price_eur", 0.0))
+            except Exception:
+                should_have_been = 0.0
+            delta_eur = round(should_have_been - charged, 4)
+            rate_raw = job.get("rate", "+0%")
+            try:
+                rate_pct = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
+            except Exception:
+                rate_pct = 0
+            rec = {
+                "ts": job.get("started_at") or now_iso,
+                "job_id": job_id,
+                "model_key": model_key,
+                "language": language,
+                "rate_pct": rate_pct,
+                "chars_total": int(ga.get("chars", 0) or 0),
+                "audio_seconds_actual": round(float(ga.get("audio_seconds", 0) or 0), 2),
+                "google_cost_eur_actual": round(google_cost_actual, 4),
+                "user_price_eur_charged": round(charged, 4),
+                "user_price_eur_should_have_been": round(should_have_been, 2),
+                "delta_eur": delta_eur,
+                "margin_eur_actual": round(charged - google_cost_actual, 4),
+                "outcome": "running",
+                "_live": True,
+            }
+            out.append(rec)
+        except Exception:
+            continue
+    return out
+
+
+def _apply_cancel_effective(rec):
+    """Augmenta il record con `_eff_*` che riflettono i rimborsi da cancel.
+
+    Per record di cancellazione anticipata, il ricavo effettivo non e' il
+    prezzo originario pagato (`user_price_eur_charged`) ma la quota trattenuta
+    a copertura del consumato (`cancel_retained_eur`). Calcola in coerenza
+    revenue/margin/delta effettivi.
+    """
+    if not isinstance(rec, dict):
+        return rec
+    charged = float(rec.get("user_price_eur_charged", 0) or 0)
+    cost = float(rec.get("google_cost_eur_actual", 0) or 0)
+    should = float(rec.get("user_price_eur_should_have_been", 0) or 0)
+    cancel_retained = rec.get("cancel_retained_eur")
+    if cancel_retained is not None:
+        revenue = float(cancel_retained or 0)
+    else:
+        revenue = charged
+    rec["_eff_revenue_eur"] = round(revenue, 4)
+    rec["_eff_margin_eur"] = round(revenue - cost, 4)
+    rec["_eff_delta_eur"] = round(should - revenue, 4)
+    rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / cost * 100), 2) if cost > 0 else 0.0
+    return rec
+
+
 @app.route("/admin/api/gemini_cost_audit", methods=["GET"])
 def admin_api_gemini_cost_audit():
-    """List Gemini TTS audit records with filters + aggregates. Admin-only."""
+    """List Gemini TTS audit records with filters + aggregates. Admin-only.
+
+    Restituisce, in aggiunta ai record persistiti su JSONL, righe sintetiche
+    `outcome="running"` per i job Gemini attualmente in corso (snapshot live).
+    Ogni record viene arricchito con campi `_eff_*` che applicano i rimborsi
+    da cancellazione anticipata su ricavo/margine/delta.
+    """
     if not ADMIN_TOKEN:
         return jsonify({"error": "Admin UI disabled"}), 404
     if not _admin_auth_ok(_admin_auth_from_request()):
@@ -3569,17 +3744,80 @@ def admin_api_gemini_cost_audit():
     def _norm(v):
         return v if v and v != "all" else None
 
-    recs = list(gemini_cost_audit.iter_records(
+    persisted = list(gemini_cost_audit.iter_records(
         model=_norm(model), language=_norm(language), outcome=_norm(outcome),
         date_from=date_from, date_to=date_to,
     ))
+    persisted_ids = {r.get("job_id") for r in persisted}
+
+    # Inietta i job in corso: rispetta i filtri model/lang; outcome="running"
+    # e' visibile solo quando outcome=all o esattamente "running".
+    live = []
+    out_filter = _norm(outcome)
+    if out_filter in (None, "running"):
+        for r in _synth_running_gemini_audit_records():
+            if r.get("job_id") in persisted_ids:
+                continue
+            if _norm(model) and r.get("model_key") != _norm(model):
+                continue
+            if _norm(language) and r.get("language") != _norm(language):
+                continue
+            live.append(r)
+
+    recs = live + persisted
+    for r in recs:
+        _apply_cancel_effective(r)
     total = len(recs)
     page = recs[offset:offset + limit]
-    agg = gemini_cost_audit.aggregate(
-        model=_norm(model), language=_norm(language),
-        date_from=date_from, date_to=date_to,
-    )
+
+    # Aggregati ricomputati sui record arricchiti (solo "completed" + i live
+    # in corso, esclusi rimborsi totali). Ricavo/margine usano _eff_* per
+    # tener conto dei rimborsi da cancel.
+    agg_n = 0
+    agg_rev = 0.0
+    agg_cost = 0.0
+    agg_delta = 0.0
+    for r in recs:
+        oc = r.get("outcome") or ""
+        if oc not in ("completed", "running", "cancelled_partial"):
+            continue
+        agg_n += 1
+        agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
+        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
+    agg = {
+        "count": agg_n,
+        "revenue_eur": round(agg_rev, 4),
+        "google_cost_eur": round(agg_cost, 4),
+        "margin_eur": round(agg_rev - agg_cost, 4),
+        "delta_pct_avg": round((agg_delta / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "filters": {"model": _norm(model), "language": _norm(language),
+                    "date_from": date_from, "date_to": date_to},
+    }
     return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/gemini_cost_audit/languages", methods=["GET"])
+def admin_api_gemini_cost_audit_languages():
+    """Restituisce le lingue distinte realmente presenti nei record audit Gemini.
+
+    Usato dalla pagina /admin/audit-tts per popolare dinamicamente il filtro
+    lingua con i codici effettivamente generati, evitando di confondere
+    "lingue UI" con "lingue di generazione TTS".
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    seen = set()
+    for rec in gemini_cost_audit.iter_records():
+        lang = (rec.get("language") or "").strip().lower()
+        if lang:
+            seen.add(lang)
+    return jsonify({"languages": sorted(seen)})
 
 
 @app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])
@@ -3622,6 +3860,15 @@ def admin_api_gemini_recalc_params():
         # Mappa step -> etichetta UI (cfr. SPEED_KEYS in app.js)
         return {-3: "vs", -2: "s", -1: "ss", 0: "n", 1: "sf", 2: "f", 3: "vf"}.get(int(step), str(step))
 
+    # DELTA% = delta_eur / costo Google (formula del ricarico applicato).
+    # Calcolato sui totali del gruppo: piu` robusto della media semplice di
+    # percentuali (outlier su record con costo Google molto piccolo) e
+    # coerente sui record storici salvati con la vecchia formula.
+    def _avg_delta_pct(recs):
+        d_sum = sum(float(r.get("delta_eur") or 0) for r in recs)
+        c_sum = sum(float(r.get("google_cost_eur_actual") or 0) for r in recs)
+        return (d_sum / c_sum * 100.0) if c_sum > 0 else 0.0
+
     suggestions = []
     suggestions.append("=== Aggregato globale (model / lang) ===")
     if not groups_global:
@@ -3630,8 +3877,7 @@ def admin_api_gemini_recalc_params():
         if len(recs) < 3:
             suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) campioni insufficienti (servono >=3)")
             continue
-        deltas = [float(r.get("delta_pct") or 0) for r in recs]
-        avg = sum(deltas) / len(deltas)
+        avg = _avg_delta_pct(recs)
         suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) avg delta {avg:+.2f}% — {_label_for(avg)}")
 
     suggestions.append("")
@@ -3640,8 +3886,7 @@ def admin_api_gemini_recalc_params():
         suggestions.append("  (nessun record disponibile)")
     for (model, lang, rstep), recs in sorted(groups_rate.items()):
         n = len(recs)
-        deltas = [float(r.get("delta_pct") or 0) for r in recs]
-        avg = sum(deltas) / len(deltas) if deltas else 0.0
+        avg = _avg_delta_pct(recs)
         rate_pcts = [int(r.get("rate_pct") or 0) for r in recs]
         rp_min, rp_max = (min(rate_pcts), max(rate_pcts)) if rate_pcts else (0, 0)
         rp_str = f"{rp_min:+d}%" if rp_min == rp_max else f"{rp_min:+d}%..{rp_max:+d}%"

@@ -61,26 +61,31 @@ def iter_records(model=None, language=None, outcome=None,
 
 
 def aggregate(model=None, language=None, date_from=None, date_to=None):
-    """Aggregati su record completed: count, revenue, cost, margin, delta avg."""
+    """Aggregati su record completed: count, revenue, cost, margin, delta avg.
+
+    `delta_pct_avg` e` ricomputato dai totali euro
+    (sum(delta_eur) / sum(google_cost) * 100) cosi` da seguire la formula
+    DELTA% = DELTA€ / Costo Google coerentemente anche sui record storici
+    salvati con la vecchia formula (delta_eur / charged).
+    """
     n = 0
     revenue = 0.0
     cost = 0.0
-    delta_pcts = []
+    delta_eur_sum = 0.0
     for rec in iter_records(model=model, language=language,
                             outcome="completed",
                             date_from=date_from, date_to=date_to):
         n += 1
         revenue += float(rec.get("user_price_eur_charged", 0) or 0)
         cost += float(rec.get("google_cost_eur_actual", 0) or 0)
-        dp = rec.get("delta_pct")
-        if dp is not None:
-            delta_pcts.append(float(dp))
+        delta_eur_sum += float(rec.get("delta_eur", 0) or 0)
+    delta_pct_avg = round((delta_eur_sum / cost * 100), 2) if cost > 0 else 0.0
     return {
         "count": n,
         "revenue_eur": round(revenue, 4),
         "google_cost_eur": round(cost, 4),
         "margin_eur": round(revenue - cost, 4),
-        "delta_pct_avg": round(sum(delta_pcts) / len(delta_pcts), 2) if delta_pcts else 0.0,
+        "delta_pct_avg": delta_pct_avg,
         "filters": {"model": model, "language": language,
                     "date_from": date_from, "date_to": date_to},
     }
