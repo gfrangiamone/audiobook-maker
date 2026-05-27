@@ -974,22 +974,11 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
                     clean = _remove_duplicate_heading(clean, section_title)
 
-                    # Salta sezioni con testo vuoto, tranne i marcatori
-                    # di capitolo principale (titoli in maiuscolo o "Capitolo N —")
-                    # che servono come indicatori strutturali nel TTS.
-                    clean_stripped = clean.strip()
-                    if not clean_stripped or clean_stripped == ".":
-                        # Controlla se è un marcatore strutturale utile
-                        title_upper_chars = sum(1 for c in section_title if c.isupper())
-                        title_alpha_chars = sum(1 for c in section_title if c.isalpha())
-                        is_main_chapter = (
-                            # Titolo prevalentemente maiuscolo (es. "LA CREATIVITÀ...")
-                            (title_alpha_chars > 0 and title_upper_chars / title_alpha_chars > 0.6)
-                            # O contiene "Capitolo/Chapter —"
-                            or bool(re.search(r"(Capitolo|Chapter|Parte|Part)\s+.*\s*—\s*", section_title, re.IGNORECASE))
-                        )
-                        if not is_main_chapter:
-                            continue  # Salta sotto-sezione vuota
+                    # In questo branch le sezioni provengono dai fragment TOC
+                    # (vedi merged_sections sopra): il TOC è l'autorità — se un
+                    # editore ha listato una entry con corpo vuoto (es. titolo
+                    # + epigrafe + sotto-sezioni che seguono), è un marcatore
+                    # strutturale legittimo. Manteniamo SEMPRE la sezione.
 
                     chapter_index += 1
                     chapter = Chapter(
@@ -1142,13 +1131,16 @@ def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
 
 def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tuple[str, str]]:
     """
-    Spezza un singolo documento HTML in sezioni basandosi sugli heading.
+    Spezza un singolo documento HTML in sezioni basandosi sui titoli del TOC.
 
-    Strategia:
-    1. Trova tutti gli heading (h1-h6) nel documento
-    2. Matcha ogni heading con un titolo del TOC (fuzzy match)
-    3. Estrai il contenuto HTML tra heading consecutivi
-    4. Converti ogni sezione in testo
+    Strategia (in ordine di preferenza):
+    1. Cerca match con heading classici (h1-h6) usando greedy matching in ordine documento.
+    2. Se i match sono insufficienti, estende la ricerca a `<p>`/`<div>` block-level
+       con testo che corrisponde a una entry TOC (caso EPUB esportati da InDesign /
+       impaginatori che usano stili CSS al posto di heading semantici).
+    3. Per lo split:
+       - Se tutti i punti-titolo condividono lo stesso parent: usa sibling-walk.
+       - Altrimenti: usa walk DOM ricorsivo che evita doppia inclusione.
 
     Returns: lista di (titolo, html_della_sezione)
     """
@@ -1161,12 +1153,6 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
 
     body = soup.find("body") or soup
 
-    # Trova tutti gli heading nel documento
-    all_headings = body.find_all(HEADING_TAGS)
-
-    if not all_headings:
-        return []
-
     # Normalizza i titoli TOC per matching
     def normalize(text: str) -> str:
         """Normalizza testo per confronto fuzzy."""
@@ -1178,48 +1164,184 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
 
     normalized_toc = [normalize(t) for t in toc_titles]
 
-    def matches_toc(heading_text: str) -> Optional[int]:
-        """Ritorna l'indice del titolo TOC corrispondente, o None."""
+    def find_match_indices(heading_text: str) -> tuple[list[int], list[int]]:
+        """
+        Per un dato testo, trova tutti i TOC index che potrebbero matcharlo.
+        Restituisce (exact_matches, fuzzy_matches) ordinati per indice.
+        Exact: norm uguale. Fuzzy: substring o ≥60% word overlap.
+        """
         norm = normalize(heading_text)
         if not norm or len(norm) < 3:
-            return None
-
-        # Match esatto
-        for i, toc_norm in enumerate(normalized_toc):
-            if norm == toc_norm:
-                return i
-
-        # Il titolo TOC è contenuto nell'heading o viceversa
-        for i, toc_norm in enumerate(normalized_toc):
-            if toc_norm in norm or norm in toc_norm:
-                return i
-
-        # Match parziale: almeno 60% delle parole del TOC presenti nell'heading
-        for i, toc_norm in enumerate(normalized_toc):
-            toc_words = set(toc_norm.split())
+            return [], []
+        exact = [i for i, tn in enumerate(normalized_toc) if tn and tn == norm]
+        if exact:
+            return exact, []
+        fuzzy = []
+        for i, tn in enumerate(normalized_toc):
+            if not tn:
+                continue
+            if tn in norm or norm in tn:
+                a = min(len(tn), len(norm))
+                b = max(len(tn), len(norm))
+                if a > 0 and b < a * 2.5 + 15:
+                    fuzzy.append(i)
+                    continue
+            toc_words = set(tn.split())
             head_words = set(norm.split())
             if len(toc_words) >= 2:
                 overlap = len(toc_words & head_words) / len(toc_words)
                 if overlap >= 0.6:
-                    return i
+                    fuzzy.append(i)
+        return [], fuzzy
 
-        return None
+    def lis_assign(cand_options: list[list[int]]) -> list[tuple[int, int]]:
+        """
+        Dato cand_options[i] = lista ordinata di possibili TOC index per candidato i,
+        trova l'assegnazione massimale (cand_idx, toc_idx) con entrambi gli indici
+        strettamente crescenti — algoritmo LIS DP O(N^2 * M_avg).
+        Risolve sia duplicati (stesso testo mappato a 2 entry TOC) sia ordini doc
+        che non corrispondono linearmente all'ordine TOC.
+        """
+        n = len(cand_options)
+        if n == 0:
+            return []
+        # dp[i] = dict {chosen_toc_idx: (count, prev_i, prev_toc_idx)}
+        dp: list[dict[int, tuple[int, int, int]]] = [{} for _ in range(n)]
+        for i in range(n):
+            for c in cand_options[i]:
+                best_count = 1
+                best_prev_i = -1
+                best_prev_c = -1
+                for j in range(i):
+                    for cp, (cnt, _, _) in dp[j].items():
+                        if cp < c and cnt + 1 > best_count:
+                            best_count = cnt + 1
+                            best_prev_i = j
+                            best_prev_c = cp
+                dp[i][c] = (best_count, best_prev_i, best_prev_c)
+        # Trova il massimo globale
+        best_count, best_i, best_c = 0, -1, -1
+        for i in range(n):
+            for c, (cnt, _, _) in dp[i].items():
+                if cnt > best_count:
+                    best_count, best_i, best_c = cnt, i, c
+        # Backtrack
+        result = []
+        i, c = best_i, best_c
+        while i != -1:
+            result.append((i, c))
+            _, pi, pc = dp[i][c]
+            i, c = pi, pc
+        result.reverse()
+        return result
 
-    # Identifica gli heading che corrispondono a capitoli del TOC
+    # ── Step 1: heading classici (con LIS) ────────────────────────────
+    all_headings = body.find_all(HEADING_TAGS)
     chapter_headings = []
-    for heading in all_headings:
-        text = heading.get_text(strip=True)
-        toc_idx = matches_toc(text)
-        if toc_idx is not None:
-            chapter_headings.append({
-                "element": heading,
-                "toc_index": toc_idx,
-                "title": toc_titles[toc_idx],
-            })
+    if all_headings:
+        heading_opts = []  # parallel list of (heading_el, valid_toc_indices)
+        for heading in all_headings:
+            text = heading.get_text(strip=True)
+            exact, fuzzy = find_match_indices(text)
+            opts = exact if exact else fuzzy
+            if opts:
+                heading_opts.append((heading, opts))
+        if heading_opts:
+            cand_options = [opts for (_, opts) in heading_opts]
+            assignment = lis_assign(cand_options)
+            for cand_idx, toc_idx in assignment:
+                heading = heading_opts[cand_idx][0]
+                chapter_headings.append({
+                    "element": heading,
+                    "toc_index": toc_idx,
+                    "title": toc_titles[toc_idx],
+                })
 
+    # ── Step 2: fallback su <p>/<div> styled-as-headings (con LIS) ───
+    # Molti EPUB (esportati da InDesign, Sigil, ecc.) usano <p class="Titolo...">
+    # invece di heading semantici. Attiva se i match h1-h6 sono < 50% delle entry TOC.
+    #
+    # Strategia a 2 tier per evitare falsi positivi (paragrafi di corpo che
+    # citano un titolo, footnote, nomi di relatore, ecc.):
+    #   Tier 1 (alta confidenza): solo <p>/<div> con class CSS che suggerisce
+    #     "titolo/heading" (titol, lezione, giorno, maiuscolet, chapter, ecc.),
+    #     SOLO match esatti.
+    #   Tier 2 (fallback): se Tier 1 non basta, allarga a tutti i <p>/<div>
+    #     ma SOLO con match esatti (no fuzzy, troppo soggetto a falsi positivi).
+    needed = max(2, int(len(toc_titles) * 0.5))
+
+    def _has_title_class(tag) -> bool:
+        cls_list = tag.get("class") or []
+        if isinstance(cls_list, str):
+            cls_list = cls_list.split()
+        title_hints = (
+            "titol", "title", "heading", "header", "chapter",
+            "giorno", "lezione", "maiuscolet", "kapitel",
+            "capitulo", "chapitre", "section",
+        )
+        for c in cls_list:
+            c_low = c.lower()
+            for h in title_hints:
+                if h in c_low:
+                    return True
+        return False
+
+    if len(chapter_headings) < needed:
+        para_opts_tier1 = []
+        para_opts_tier2 = []
+        for tag in body.find_all(["p", "div"]):
+            text = tag.get_text(strip=True)
+            if not text or len(text) > 300:
+                continue  # i titoli non sono blocchi di prosa
+            # Escludi container con figli block-level (es. <div> wrapper)
+            block_children = [
+                c for c in tag.find_all(["p", "div"])
+                if c.get_text(strip=True)
+            ]
+            if block_children:
+                continue
+            exact, _ = find_match_indices(text)
+            if not exact and _has_title_class(tag):
+                # Solo per tag con class titolo, accetta match con
+                # suffisso di footnote numerica appiccicata (es. "Titolo34"
+                # quando il TOC ha "Titolo" e InDesign ha appeso il
+                # riferimento alla nota). Pattern molto stretto per
+                # evitare falsi positivi.
+                nx = normalize(text)
+                m = re.match(r"^(.*?)\s*\d{1,3}$", nx)
+                if m:
+                    stripped = m.group(1).strip()
+                    if stripped and len(stripped) >= 3:
+                        for i, tn in enumerate(normalized_toc):
+                            if tn and tn == stripped:
+                                exact = [i]
+                                break
+            if not exact:
+                continue  # no fuzzy generico: troppi falsi positivi
+            entry = (tag, exact)
+            if _has_title_class(tag):
+                para_opts_tier1.append(entry)
+            para_opts_tier2.append(entry)
+
+        # Scegli tier 1 se ha abbastanza match, altrimenti tier 2
+        para_opts = para_opts_tier1 if len(para_opts_tier1) >= needed else para_opts_tier2
+
+        if para_opts:
+            cand_options = [opts for (_, opts) in para_opts]
+            assignment = lis_assign(cand_options)
+            para_headings = []
+            for cand_idx, toc_idx in assignment:
+                tag = para_opts[cand_idx][0]
+                para_headings.append({
+                    "element": tag,
+                    "toc_index": toc_idx,
+                    "title": toc_titles[toc_idx],
+                })
+            if len(para_headings) > len(chapter_headings):
+                chapter_headings = para_headings
+
+    # ── Step 3: ultimo fallback — most-common heading level senza TOC ─
     if not chapter_headings:
-        # Nessun match con il TOC — prova a usare tutti gli heading dello stesso livello
-        # più frequente come separatori di capitolo
         from collections import Counter
         level_counts = Counter(h.name for h in all_headings)
         if level_counts:
@@ -1237,60 +1359,120 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
     if len(chapter_headings) < 2:
         return []
 
-    # Costruisci set di id() di TUTTI gli heading capitolo per rilevamento rapido
-    all_heading_ids = set(id(ch["element"]) for ch in chapter_headings)
+    # Ordina per posizione DOM (garantisce ordine documento anche se find_next_match
+    # ha pescato un fallback fuori sequenza)
+    doc_order = {id(el): idx for idx, el in enumerate(body.find_all(True))}
+    chapter_headings.sort(key=lambda ch: doc_order.get(id(ch["element"]), 10**9))
 
-    # Estrai HTML tra heading consecutivi
-    sections = []
-    for i, ch in enumerate(chapter_headings):
-        heading_el = ch["element"]
-        title = ch["title"]
+    heading_id_set = set(id(ch["element"]) for ch in chapter_headings)
+    heading_idx_map = {id(ch["element"]): i for i, ch in enumerate(chapter_headings)}
 
-        # Raccogli tutti gli elementi tra questo heading e il prossimo
-        section_parts = []
-        current = heading_el.next_sibling
+    # Se tutti gli heading hanno lo stesso parent → strategia sibling-walk
+    parents = set(id(ch["element"].parent) for ch in chapter_headings)
+    same_parent = len(parents) == 1
 
-        # Determina l'elemento di stop (prossimo heading capitolo)
-        stop_element = None
-        if i + 1 < len(chapter_headings):
-            stop_element = chapter_headings[i + 1]["element"]
-
-        # Set di id() degli heading successivi (per rilevare wrapper annidati)
-        remaining_heading_ids = set(
-            id(chapter_headings[j]["element"])
-            for j in range(i + 1, len(chapter_headings))
-        )
-
-        while current:
-            if current == stop_element:
-                break
-            if isinstance(current, Comment):
+    if same_parent:
+        sections = []
+        for i, ch in enumerate(chapter_headings):
+            heading_el = ch["element"]
+            title = ch["title"]
+            section_parts = []
+            current = heading_el.next_sibling
+            stop_element = (
+                chapter_headings[i + 1]["element"]
+                if i + 1 < len(chapter_headings)
+                else None
+            )
+            remaining_heading_ids = set(
+                id(chapter_headings[j]["element"])
+                for j in range(i + 1, len(chapter_headings))
+            )
+            while current:
+                if current == stop_element:
+                    break
+                if isinstance(current, Comment):
+                    current = current.next_sibling
+                    continue
+                if isinstance(current, Tag):
+                    if remaining_heading_ids:
+                        contains_subsequent = False
+                        for desc in current.descendants:
+                            if isinstance(desc, Tag) and id(desc) in remaining_heading_ids:
+                                contains_subsequent = True
+                                break
+                        if contains_subsequent:
+                            current = current.next_sibling
+                            continue
+                    section_parts.append(str(current))
+                elif isinstance(current, NavigableString):
+                    text = str(current).strip()
+                    if text:
+                        section_parts.append(text)
                 current = current.next_sibling
-                continue
-            if isinstance(current, Tag):
-                # Salta elementi che CONTENGONO heading di sezioni successive
-                # (evita duplicazione quando le sotto-sezioni sono racchiuse
-                #  in <div> wrapper che includono sia l'heading che il contenuto)
-                if remaining_heading_ids:
-                    contains_subsequent = False
-                    for desc in current.descendants:
-                        if isinstance(desc, Tag) and id(desc) in remaining_heading_ids:
-                            contains_subsequent = True
-                            break
-                    if contains_subsequent:
-                        current = current.next_sibling
-                        continue
-                section_parts.append(str(current))
-            elif isinstance(current, NavigableString):
-                text = str(current).strip()
-                if text:
-                    section_parts.append(text)
-            current = current.next_sibling
+            section_html = "".join(section_parts)
+            sections.append((title, f"<body>{section_html}</body>"))
+        return sections
 
-        section_html = "".join(section_parts)
-        # Emetti sempre la sezione (anche con contenuto vuoto):
-        # il chiamante deciderà se tenerla come marcatore strutturale.
-        sections.append((title, f"<body>{section_html}</body>"))
+    # ── DOM-walking strategy: heading distribuiti in container diversi ─
+    sections_data = [{"title": None, "parts": []}]  # [0] = pre-section
+    current_idx = 0
+
+    def walk(node):
+        nonlocal current_idx
+        if isinstance(node, Comment):
+            return
+        if isinstance(node, NavigableString):
+            text = str(node)
+            if text.strip():
+                sections_data[current_idx]["parts"].append(text)
+            return
+        if not isinstance(node, Tag):
+            return
+
+        if id(node) in heading_id_set:
+            new_idx = heading_idx_map[id(node)]
+            sections_data.append({
+                "title": chapter_headings[new_idx]["title"],
+                "parts": [],
+            })
+            current_idx = len(sections_data) - 1
+            return  # NON includere il testo del titolo nel corpo della sezione
+
+        # Se il sottoalbero contiene un titolo → discendi
+        contains_section_heading = False
+        for desc in node.descendants:
+            if isinstance(desc, Tag) and id(desc) in heading_id_set:
+                contains_section_heading = True
+                break
+
+        if contains_section_heading:
+            for child in node.children:
+                walk(child)
+        else:
+            # Sottoalbero "leaf" (nessun titolo) → include integralmente
+            sections_data[current_idx]["parts"].append(str(node))
+
+    # Aumenta recursionlimit per documenti molto annidati
+    import sys as _sys
+    _old_limit = _sys.getrecursionlimit()
+    _sys.setrecursionlimit(max(_old_limit, 8000))
+    try:
+        for child in body.children:
+            walk(child)
+    finally:
+        _sys.setrecursionlimit(_old_limit)
+
+    sections = []
+    for s in sections_data:
+        html_text = "".join(s["parts"])
+        if s["title"] is None:
+            # pre-section: tieni solo se ha contenuto significativo
+            soup_test = BeautifulSoup(html_text, "lxml")
+            if len(soup_test.get_text(strip=True)) < 100:
+                continue
+            sections.append(("Premessa", f"<body>{html_text}</body>"))
+        else:
+            sections.append((s["title"], f"<body>{html_text}</body>"))
 
     return sections
 
