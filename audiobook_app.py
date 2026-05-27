@@ -5742,7 +5742,11 @@ def api_cancel(job_id):
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
-        job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+        # NB: non incrementiamo gen_epoch qui. Il bump epoch e' riservato
+        # al riavvio della generazione (/api/generate linea ~5548) per
+        # invalidare worker thread orfane. Bumparlo sul cancel volontario
+        # farebbe finire run_generation nel ramo STALE del _CancelledError
+        # handler, saltando refund + partial-audio email.
         job["status"] = "analyzed"
     return jsonify({"status": "cancelling"})
 
