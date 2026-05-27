@@ -2523,6 +2523,14 @@ function listenProgress(){
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       window._sseLastProgressPct=pct;
+      // Reidrata _payState dopo reload pagina: il server espone paid_eur
+      // (quota gemini effettivamente pagata) nello stream SSE; senza questo,
+      // il modal di cancel mostrerebbe "Importo versato: 0.00 EUR" dopo F5.
+      if(typeof d.paid_eur==='number' && d.paid_eur>0 && !(_payState && _payState.gemini>0)){
+        if(!_payState) _payState={total:0,gemini:0,llm:0,token:null,method:null};
+        _payState.gemini=d.paid_eur;
+        if(d.paid_method && !_payState.method) _payState.method=d.paid_method;
+      }
       _updateGeminiCancelLockUI(pct);
       // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
@@ -2881,7 +2889,10 @@ function cancelJob(){
     _confirmCancelGeminiModal(paid, pct).then(function(yes){
       if(!yes) return;
       // Fetch (non sendBeacon) per intercettare 409 cancel_locked_progress.
-      fetch('/api/cancel/'+jobId,{method:'POST',credentials:'same-origin'}).then(function(r){
+      // force=1: il modale di conferma è già un'azione esplicita dell'utente,
+      // by-passa la guardia server email_registered (che resta attiva solo per
+      // l'unload implicito della pagina).
+      fetch('/api/cancel/'+jobId+'?force=1',{method:'POST',credentials:'same-origin'}).then(function(r){
         if(r.status===409){
           return r.json().then(function(d){
             _showCancelLockedModal((d&&d.lock_pct)||70);
