@@ -599,6 +599,11 @@ def _save_tokens():
                     "lang": info.get("lang", "en"),
                     "optimized_abm_path": info.get("optimized_abm_path", ""),
                     "optimized_abm_name": info.get("optimized_abm_name", ""),
+                    # Fields required by /dl/<token> rendering after worker restart
+                    # or cross-worker token merge (Gunicorn multi-process).
+                    "output_format": info.get("output_format", ""),
+                    "output_m4b": info.get("output_m4b", ""),
+                    "ai_optimized": info.get("ai_optimized", False),
                 }
             with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -6006,10 +6011,15 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         audio_btn_html = '<a href="/dl/{}/download" class="btn">{}</a>'.format(
             token, t.get("btn_no_m4b", "&#x2B07;&#xFE0F; Download podcast"))
         type_label = "Podcast"
-    elif dl_type == "audio":
-        # Determine format: prefer output_format from job, fallback to m4b detection
+    elif dl_type in ("audio", "chapters"):
+        # Determine format: prefer output_format from job, fallback to m4b detection.
+        # "chapters" è inviato dal frontend per gli output multi-file (ZIP per capitoli):
+        # forza fmt="zip" per saltare la rilevazione M4B quando il formato esplicito
+        # mancasse dal token (es. token persistiti prima del fix di _save_tokens).
         fmt = output_format if output_format in ("m4b", "mp3", "zip", "zip_rss") else None
-        if not fmt and m4b_available:
+        if not fmt and dl_type == "chapters":
+            fmt = "zip"
+        elif not fmt and m4b_available:
             fmt = "m4b"
         elif not fmt:
             fmt = "zip"
