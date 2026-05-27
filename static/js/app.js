@@ -3373,30 +3373,17 @@ function _setEmailLateConfirm(area,msg){
 }
 
 async function _autoRegisterEmailFromStorage(myJobId){
+  // Pre-popola il campo di notifica con l'email del voucher (o un'email
+  // gia' usata in passato) ma NON la registra: la conferma deve essere
+  // esplicita via pulsante. Evita di "ereditare" silenziosamente l'email
+  // del buono per la notifica, quando l'utente potrebbe volerla diversa.
   if(emailRegistered)return false;
   let stored='';
   try{stored=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
   if(!stored||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stored))return false;
-  try{
-    const dlType=(outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters');
-    const payload={job_id:myJobId,email:stored,download_type:dlType,lang:cl};
-    if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');payload.base_url=urlInput?urlInput.value.trim():'';}
-    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const d=await r.json();
-    if(d&&d.error)return false;
-    if(myJobId!==jobId)return false;
-    emailRegistered=true;
-    lastVoucherEmail=stored;
-    const noticeEl=document.getElementById('genActiveNoticeText');
-    if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',stored);
-    const area=document.getElementById('emailLateArea');
-    if(area){
-      _setEmailLateConfirm(area,t('email_late_ok_persisted')||('Email: '+stored));
-      area.classList.add('visible');
-    }
-    _updateGenNoticeWarning();
-    return true;
-  }catch(e){return false}
+  const input=document.getElementById('notifyEmailLate');
+  if(input&&!input.value)input.value=stored;
+  return false;
 }
 
 async function submitEmailLate(){

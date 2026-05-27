@@ -5619,14 +5619,16 @@ def api_progress(job_id):
                 "processed_chars": job.get("processed_chars", 0),
                 "total_chars": job.get("total_chars", 0),
             }
-            # Espone l'importo gemini pagato (quota refundabile) e il metodo:
-            # serve al frontend per reidratare _payState dopo un reload e
-            # mostrare "Importo versato" corretto nel modal di cancel.
+            # Espone l'importo pagato (quota refundabile) e il metodo: serve
+            # al frontend per reidratare _payState dopo un reload e mostrare
+            # "Importo versato" corretto nel modal di cancel. Usa total_eur
+            # (l'importo effettivamente consumato dal payment_token) perche'
+            # e' la stessa base che _CancelledError handler in
+            # generation_engine.py passa a cancel_policy.compute_cancel_retention.
             _paym_sse = job.get("payment") or {}
             if _paym_sse:
-                _gest = _paym_sse.get("gemini_est") or {}
                 try:
-                    payload["paid_eur"] = round(float(_gest.get("user_price_eur", 0.0) or 0.0), 2)
+                    payload["paid_eur"] = round(float(_paym_sse.get("total_eur", 0.0) or 0.0), 2)
                 except (TypeError, ValueError):
                     payload["paid_eur"] = 0.0
                 payload["paid_method"] = _paym_sse.get("method", "")
