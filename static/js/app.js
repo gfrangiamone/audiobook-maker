@@ -654,9 +654,37 @@ async function loadVoices(){
         _googleTtsBudget=null;
     }
     voices=data;
+    _applyPremiumAvailability();
     fillLangs();
   }catch(e){
     /* swallow: see comment above */
+  }
+}
+
+// Mostra/nasconde il tab "Voci PREMIUM" in base alla presenza effettiva di
+// voci Gemini in /api/voices. Quando l'admin disattiva il kill-switch o la
+// chiave API non e' configurata, il backend omette le voci gemini: e qui
+// nascondiamo l'intero tab (button + pannello). Se il tab Premium era
+// attivo, ripiega su Standard.
+function _applyPremiumAvailability(){
+  let hasPremium=false;
+  try{
+    for(const k in voices){
+      const list=(voices[k]&&voices[k].voices)||[];
+      for(const v of list){
+        if(v&&typeof v.id==='string'&&v.id.startsWith('gemini:')){hasPremium=true;break;}
+      }
+      if(hasPremium)break;
+    }
+  }catch(_e){}
+  const btn=document.getElementById('tabPremiumBtn');
+  const panel=document.getElementById('tabPremium');
+  if(btn)btn.hidden=!hasPremium;
+  if(!hasPremium){
+    if(panel)panel.hidden=true;
+    if(wizardState&&wizardState.audioTab==='premium'&&typeof switchAudioTab==='function'){
+      switchAudioTab('standard');
+    }
   }
 }
 function fillLangs(){

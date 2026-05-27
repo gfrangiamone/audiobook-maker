@@ -3334,7 +3334,7 @@ def admin_logs_page():
       <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
       <div class="agg-box"><div class="agg-label">Costo Google</div><div class="agg-value" id="aggCost">-</div></div>
       <div class="agg-box"><div class="agg-label">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label">Delta % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
     </div>
   </div>
 
@@ -3344,7 +3344,7 @@ def admin_logs_page():
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th>Costo G.</th>
-        <th>Prezzo &euro;</th><th>&Delta; &euro;</th><th title="DELTA % = DELTA € / Costo Google · scostamento di ricarico rispetto alla regola">&Delta; %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine % = Margine / Costo Google · markup applicato">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="auditRecordsBody">
         <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -3499,7 +3499,10 @@ def admin_logs_page():
     $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
     $("aggCost").textContent = fmtEur(agg.google_cost_eur);
     $("aggMargin").textContent = fmtEur(agg.margin_eur);
-    $("aggDelta").innerHTML = fmtPct(agg.delta_pct_avg);
+    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
+      ? (Number(agg.margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      : 0;
+    $("aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
 
   function esc(s){
@@ -3522,16 +3525,16 @@ def admin_logs_page():
     });
     tbody.innerHTML = recs.map(r => {
       const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
-      // Prezzo/Δ effettivi: per cancel anticipato usa quanto trattenuto
+      // Prezzo effettivo: per cancel anticipato usa quanto trattenuto
       // (cancel_retained_eur) invece dell'originale pre-pagato; per record
       // normali coincide con user_price_eur_charged.
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
-      const dEur = (r._eff_delta_eur != null) ? Number(r._eff_delta_eur)
-                                              : Number(r.delta_eur || 0);
       const gCost = Number(r.google_cost_eur_actual || 0);
-      const dPct = gCost > 0 ? (dEur / gCost * 100) : 0;
-      const dCls = dPct >= 0 ? "delta-positive" : "delta-negative";
+      // Margine = Prezzo − Costo Google (lordo, include fee PayPal).
+      const margEur = revenue - gCost;
+      const margPct = gCost > 0 ? (margEur / gCost * 100) : 0;
+      const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
       const isLive = !!r._live;
       const rowCls = isLive ? "row-live" : "";
       const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
@@ -3548,8 +3551,8 @@ def admin_logs_page():
         <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
         <td>${fmtEur(gCost)}</td>
         <td${cancelTip}>${fmtEur(revenue)}</td>
-        <td>${dEur.toFixed(4)}</td>
-        <td class="${dCls}">${dPct.toFixed(2)}%</td>
+        <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${dCls}">${margPct.toFixed(2)}%</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span></td>
       </tr>`;
     }).join("");
@@ -3750,7 +3753,7 @@ def admin_logs_page():
     const btn = $("ksToggleBtn");
     const target = btn.dataset.targetDisabled === "1";
     const reason = $("ksReasonInput").value.trim();
-    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\\n\\nLe stime e i pagamenti Premium risponderanno 503 finche` non viene riattivato.")) {
+    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\\n\\nLe stime e i pagamenti Premium risponderanno 503 finché non viene riattivato.")) {
       return;
     }
     btn.disabled = true;
