@@ -7,6 +7,23 @@
 
 ---
 
+> **AMENDMENT 2026-05-27 — Trattenuto al prezzo utente, non al costo nudo**
+>
+> Cambio di policy commerciale: il trattenuto ora applica il **margin (ricarico)** del modello sopra il costo Google, non solo il costo nudo. La quota di lavoro eseguita viene "fatturata" al cliente al prezzo che avrebbe pagato a job completato, preservando la marginalità commerciale.
+>
+> Nuova formula:
+> ```
+> floor   = google_cost_actual × (1 + margin/100) + paypal_fees_if_paypal
+> retained = min(paid, max(0, floor))
+> refund   = paid - retained
+> ```
+>
+> Implementazione: `cancel_policy.compute_cancel_retention` ha un nuovo parametro `margin_percent: float = 0.0` (default 0 → legacy). `generation_engine._CancelledError` lo recupera via `gemini_tts.get_margin_percent(model_key)` (`ABM_GEMINI_25FLASH_MARGIN_PERCENT` / `ABM_GEMINI_31FLASH_MARGIN_PERCENT`). Le PayPal fees restano calcolate sul `paid` originale come prima. Test in `test/test_cancel_policy.py::test_compute_cancel_retention_with_margin`.
+>
+> Riferimento commit: v3.22.4.
+
+---
+
 ## 1. Contesto e motivazione
 
 ### 1.1 Policy attuale (snapshot)

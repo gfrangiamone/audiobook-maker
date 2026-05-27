@@ -2718,7 +2718,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 paid = float(payment_meta.get("total_eur", 0) or 0)
                 method = payment_meta.get("method", "")
 
-                cr = cancel_policy.compute_cancel_retention(google_cost, method, paid)
+                # Margin (ricarico) del modello: il trattenuto corrisponde al
+                # PREZZO che l'utente avrebbe pagato per la quota di lavoro
+                # eseguita, non al solo costo Google. Mantiene la stessa
+                # marginalita' commerciale del job completato.
+                margin_pct = 0.0
+                try:
+                    if voice and gemini_tts is not None and voice.startswith("gemini:"):
+                        _mk, _, _ = gemini_tts.parse_voice_id(voice)
+                        margin_pct = float(gemini_tts.get_margin_percent(_mk) or 0.0)
+                except Exception as _mp_err:
+                    print(f"[{job_id}] margin lookup failed (using 0%): {_mp_err}")
+
+                cr = cancel_policy.compute_cancel_retention(
+                    google_cost, method, paid, margin_percent=margin_pct)
                 retained = cr["retained_eur"]
                 refund = cr["refund_eur"]
 
