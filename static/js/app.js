@@ -2884,26 +2884,40 @@ function cancelJob(){
   if(!jobId||!generating)return;
   var voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   if(_isGeminiVoiceId(voice)){
-    var paid=(window._payState && _payState.gemini) ? Number(_payState.gemini)||0 : 0;
-    var pct=Number(window._sseLastProgressPct||0);
-    _confirmCancelGeminiModal(paid, pct).then(function(yes){
-      if(!yes) return;
-      // Fetch (non sendBeacon) per intercettare 409 cancel_locked_progress.
-      // force=1: il modale di conferma è già un'azione esplicita dell'utente,
-      // by-passa la guardia server email_registered (che resta attiva solo per
-      // l'unload implicito della pagina).
-      fetch('/api/cancel/'+jobId+'?force=1',{method:'POST',credentials:'same-origin'}).then(function(r){
-        if(r.status===409){
-          return r.json().then(function(d){
-            _showCancelLockedModal((d&&d.lock_pct)||70);
-            return null;
-          });
-        }
-        _completeCancelUI();
-        return null;
-      }).catch(function(){
-        try{navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');}catch(e){}
-        _completeCancelUI();
+    // Snapshot autoritativo dal server: paid_eur viene letto da
+    // job.payment.total_eur (stessa fonte usata dal refund handler).
+    // Evita race condition con SSE quando l'utente fa F5 e clicca cancel
+    // prima che arrivi il primo evento progress (con _payState.gemini
+    // ancora a 0 -> modal mostrava "Importo versato: 0.00 EUR").
+    var paidFallback=(window._payState && _payState.gemini) ? Number(_payState.gemini)||0 : 0;
+    var pctFallback=Number(window._sseLastProgressPct||0);
+    fetch('/api/cancel_preview/'+jobId,{credentials:'same-origin'}).then(function(r){
+      return r.ok ? r.json() : null;
+    }).catch(function(){return null;}).then(function(d){
+      if(d && d.locked){
+        _showCancelLockedModal(Number(d.lock_pct)||70);
+        return;
+      }
+      var paid=d && typeof d.paid_eur==='number' ? d.paid_eur : paidFallback;
+      var pct=d && typeof d.progress_pct==='number' ? d.progress_pct : pctFallback;
+      _confirmCancelGeminiModal(paid, pct).then(function(yes){
+        if(!yes) return;
+        // force=1: il modale di conferma è già un'azione esplicita dell'utente,
+        // by-passa la guardia server email_registered (che resta attiva solo per
+        // l'unload implicito della pagina).
+        fetch('/api/cancel/'+jobId+'?force=1',{method:'POST',credentials:'same-origin'}).then(function(r){
+          if(r.status===409){
+            return r.json().then(function(d){
+              _showCancelLockedModal((d&&d.lock_pct)||70);
+              return null;
+            });
+          }
+          _completeCancelUI();
+          return null;
+        }).catch(function(){
+          try{navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');}catch(e){}
+          _completeCancelUI();
+        });
       });
     });
     return;

@@ -5753,6 +5753,50 @@ def api_cancel(job_id):
     return jsonify({"status": "cancelling"})
 
 
+@app.route("/api/cancel_preview/<job_id>", methods=["GET"])
+def api_cancel_preview(job_id):
+    """Snapshot sincrono dei parametri di cancel per la modale di conferma.
+
+    Il client legge da qui paid_eur/progress_pct invece di affidarsi a
+    _payState (in-memory, perso al reload) o all'evento SSE (latenza: dopo
+    F5 il primo evento puo' arrivare dopo il click su cancel, lasciando
+    il modal con "Importo versato: 0.00 EUR"). Server e' single source of
+    truth: legge payment.total_eur, identico a quanto consumato dal
+    refund handler in generation_engine._handle_cancelled_error.
+    """
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        if _sc == 404:
+            return jsonify({"status": "not_found"}), 404
+        return _err, _sc
+    with _jobs_lock:
+        if job_id not in jobs:
+            return jsonify({"status": "not_found"}), 404
+        job = jobs[job_id]
+        paym = job.get("payment") or {}
+        try:
+            paid_eur = round(float(paym.get("total_eur", 0.0) or 0.0), 2)
+        except (TypeError, ValueError):
+            paid_eur = 0.0
+        paid_method = paym.get("method", "") or ""
+        try:
+            from generation_engine import _progress_pct
+            pct = _progress_pct(job)
+        except Exception:
+            pct = 0
+        try:
+            lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
+        except (TypeError, ValueError):
+            lock_pct = 70
+    return jsonify({
+        "paid_eur": paid_eur,
+        "paid_method": paid_method,
+        "progress_pct": pct,
+        "lock_pct": lock_pct,
+        "locked": (0 < lock_pct < 100 and pct > lock_pct),
+    })
+
+
 @app.route("/api/heartbeat/<job_id>", methods=["POST"])
 def api_heartbeat(job_id):
     """Keep-alive: il client segnala che è ancora sulla pagina."""
