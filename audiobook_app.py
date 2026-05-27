@@ -3757,7 +3757,7 @@ def admin_logs_page():
     const btn = $("ksToggleBtn");
     const target = btn.dataset.targetDisabled === "1";
     const reason = $("ksReasonInput").value.trim();
-    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\\n\\nLe stime e i pagamenti Premium risponderanno 503 finché non viene riattivato.")) {
+    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\n\nLe stime e i pagamenti Premium risponderanno 503 finché non viene riattivato.")) {
       return;
     }
     btn.disabled = true;
