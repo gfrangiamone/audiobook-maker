@@ -83,6 +83,28 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `MAX_CONCURRENT_LLM_PER_CLIENT` | da `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` (default `1`) | `audiobook_app.py` | 152 |
 | `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 115 |
 | `_CLIENT_COOKIE_MAX_AGE` | `31536000` (1 anno in secondi) | `audiobook_app.py` | 116 |
+| `_ANALYZE_RL_PER_MIN` | `5` upload `/api/analyze` / IP / minuto (sliding window) | `audiobook_app.py` | — |
+| `_ANALYZE_RL_PER_HOUR` | `30` upload `/api/analyze` / IP / ora | `audiobook_app.py` | — |
+| `_PREVIEW_RL_PER_MIN` | `20` preview `/api/preview_audio` / IP / minuto | `audiobook_app.py` | — |
+| `_PREVIEW_RL_PER_HOUR` | `200` preview `/api/preview_audio` / IP / ora | `audiobook_app.py` | — |
+
+Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
+
+### 3.3.1 Sicurezza applicativa (CSRF, HSTS, archivi, MIME)
+
+| Parametro | Valore default | Env var | File | Riga |
+|-----------|----------------|---------|------|------|
+| `ZIP_MAX_ENTRY_UNCOMPRESSED` | `200` MB per entry uncompressed | `ABM_ZIP_MAX_ENTRY_MB` | `secure_archive.py` | 16 |
+| `ZIP_MAX_TOTAL_UNCOMPRESSED` | `500` MB totale uncompressed | `ABM_ZIP_MAX_TOTAL_MB` | `secure_archive.py` | 18 |
+| `ZIP_MAX_COMPRESSION_RATIO` | `200` (uncompressed/compressed) | `ABM_ZIP_MAX_RATIO` | `secure_archive.py` | 20 |
+
+- **CSRF**: `_csrf_protect()` before_request hook valida `Origin`/`Referer` su ogni `POST/PUT/PATCH/DELETE`. Richieste cross-site da browser bloccate con `403`. Richieste senza `Origin` e senza `Referer` (curl, mobile app) passano (CSRF richiede browser+cookie).
+- **HSTS**: header `Strict-Transport-Security: max-age=31536000; includeSubDomains` aggiunto da `add_security_headers()` solo se `request.is_secure` (richiede TLS termination corretto via `ProxyFix`).
+- **Zip-safety**: `secure_archive.py` centralizza protezione zip-slip (`safe_zip_path`), zip-bomb (`check_zip_bomb`) e XXE (`safe_xml_fromstring` via `defusedxml`). Applicato a parsing EPUB (`epub_to_tts.py`, `audio_utils.py`) e ABM (`generation_engine.py`). Override soglie via env var sopra. Errori sollevano `ZipSafetyError`.
+- **MIME validation upload**: `/api/analyze` legge i primi 8 byte del file salvato e valida magic bytes contro l'estensione dichiarata (EPUB/ABM → `PK\x03\x04`, PDF → `%PDF-`, TXT → no NUL byte tranne BOM UTF-16). Bypass extension blacklist + protezione storage abuse.
+- **CSV injection export**: `_csv_safe(val)` prefissa con apostrofo (`'`) qualunque cella che inizi con `= + - @ \t \r` per neutralizzare formula execution in Excel/LibreOffice. Applicato in `/admin/log-activity/export` (sia CSV fallback sia XLSX) per i campi user-controllabili (filename, voice, browser_lang, client_id, client_ip, last_op, events, sid).
+- **Atomic JSON write**: `_payments.json`, `_vouchers.json`, `_download_tokens.json` scritti via tmpfile + `fsync` + `os.replace()` per evitare file corrotti su crash a metà write.
+- **Legacy job warning**: `_check_job_ownership()` logga `[SECURITY-WARN] Legacy job senza client_id` quando un job pre-enforcement viene acceduto. Permette monitor della coorte legacy in vista di future restrizioni.
 
 ### 3.6.1 PayPal (pagamenti ottimizzazione LLM)
 
@@ -104,7 +126,10 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 - **Voucher refund (errore/cancel)**: se l'ottimizzazione fallisce o viene annullata dopo un pagamento con voucher, l'importo viene **ri-accreditato integralmente** sul voucher originale tramite `_voucher_refund()`. Se il pagamento era PayPal, viene emesso un nuovo buono pari all'importo pagato + `ABM_VOUCHER_BONUS_PERCENT`%.
 - **Recovery avvio server**: `_recover_orphaned_voucher_charges()` eseguita allo startup controlla gli addebiti voucher delle ultime 2 ore; se il job_id non è più in memoria né tra i completati (`_paid_opt_done.json`), ri-accredita automaticamente l'importo. Copre il caso di crash/riavvio durante un'ottimizzazione a pagamento.
 - **Saldo residuo (consumo parziale)**: ogni voucher ha un campo `remaining_eur` (inizializzato all'importo totale) che viene decrementato di `estimated_cost` ad ogni operazione. Il buono torna "USED" solo quando il saldo scende sotto 0.01 EUR; fino a quel momento conserva stato `PARTIAL` e può essere usato più volte fino a scadenza. Lo storico delle spese è in `uses[]` (`job_id`, `amount_eur`, `at`, `remaining_after`). Record legacy senza `remaining_eur` vengono letti in compat: `used=True` → residuo 0; altrimenti residuo = `amount_eur`. La revoca admin azzera `remaining_eur`.
-- **Idempotenza capture**: re-capture sullo stesso `order_id` ritorna il token esistente senza doppio addebito.
+- **Idempotenza capture**: `payment.capture_and_store_order(order_id)` acquisisce `_capture_lock` (global), verifica se il record esiste già (idempotency cache), altrimenti chiama PayPal API. 5+ thread concorrenti producono 1 sola chiamata API.
+- **Amount reconciliation**: `_pending_orders` traccia in-memory `{order_id: amount_requested_eur, purpose, ts}` registrato in `_paypal_create_order`. Al capture, l'importo PayPal viene confrontato con il pending (tolerance 0.01 EUR); mismatch → `CaptureAmountMismatchError`. Difende contro tampering del cliente sull'importo. TTL pending: 1h (cleanup automatico).
+- **PayPal mode mandatory**: `ABM_PAYPAL_MODE` (`sandbox` | `live`) **obbligatorio** se `ABM_PAYPAL_CLIENT_ID` è settato. Module-level `RuntimeError` al boot se mancante o invalido. Difende contro deploy accidentale in sandbox in produzione.
+- **Refund bonus disabilitato su cancel volontario**: `generation_engine._refund_job_payment(reason=...)` passa `apply_bonus=(reason != "cancel")` a `_create_voucher`. Cancel volontario → rimborso 1:1, NON bonus. Bonus +10% riservato a fallimenti piattaforma (errore/eccezione) per evitare abuso "cancel per bonus".
 - **Ricevuta email**: inviata automaticamente post-capture al payer email PayPal.
 - **GDPR**: dati pagamento conservati `ABM_PAYMENT_RETENTION_DAYS` giorni (default 24 mesi) per compliance fiscale.
 - **Endpoint diagnostico**: `GET /api/paypal_debug_order/<order_id>` per ispezionare un ordine via API PayPal v2.
@@ -113,12 +138,14 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `VOUCHER_RL_PER_MIN` | `5` tentativi voucher_validate / IP / minuto | `audiobook_app.py` | ~350 |
-| `VOUCHER_RL_PER_HOUR` | `30` tentativi voucher_validate / IP / ora | `audiobook_app.py` | ~351 |
-| `VOUCHER_EMAIL_FAIL_LIMIT` | `10` fallimenti consecutivi per email prima del lockout | `audiobook_app.py` | ~352 |
-| `VOUCHER_EMAIL_LOCKOUT_SEC` | `900` (15 min di lockout email) | `audiobook_app.py` | ~353 |
+| `VOUCHER_RL_PER_MIN` | `5` tentativi voucher_validate / IP / minuto | `payment.py` | 108 |
+| `VOUCHER_RL_PER_HOUR` | `30` tentativi voucher_validate / IP / ora | `payment.py` | 109 |
+| `VOUCHER_EMAIL_FAIL_LIMIT` | `10` fallimenti consecutivi per email prima del lockout | `payment.py` | 110 |
+| `VOUCHER_EMAIL_LOCKOUT_SEC` | `900` (15 min di lockout email) | `payment.py` | 111 |
+| `ABM_VOUCHER_GLOBAL_PER_MIN` | `100` tentativi/min TOTALI sul processo (safety net distributed scan) | `payment.py` | 115 |
+| `ABM_VOUCHER_GLOBAL_PER_HOUR` | `1000` tentativi/ora TOTALI sul processo | `payment.py` | 116 |
 
-- **Rate limit**: `/api/voucher_validate` protetto da sliding window per IP e lockout temporaneo per email; oltre soglia risponde `429` con header `Retry-After`.
+- **Rate limit**: `/api/voucher_validate` protetto da sliding window per IP, per email (lockout temporaneo) e globale (burst cap). Oltre soglia risponde `429` con header `Retry-After` e `reason` (`rate_limit_ip_minute` | `rate_limit_ip_hour` | `email_locked` | `rate_limit_global_minute` | `rate_limit_global_hour`).
 - **Log strutturato**: ogni tentativo genera un evento `VOUCHER_ATTEMPT` (o `VOUCHER_ATTEMPT_BLOCKED:<reason>`) nel log attività mensile, con IP, codice mascherato e outcome (`OK`, `NOT_FOUND`, `USED`, `EXPIRED`, `EMAIL_MISMATCH`, `MISSING_FIELDS`).
 - **Schema voucher esteso**: ogni record ha `kind` (`refund` | `promo` | `gift`), `note` (≤500 char), `created_by` (`auto_refund` | `admin`). I voucher generati da CLI usano prefisso `PROMO-` o `GIFT-` per distinguerli a colpo d'occhio.
 - **CLI amministrativa**: `scripts/admin_voucher.py` (zero superficie web) con sottocomandi `create`, `list`, `revoke`, `show`. Opera direttamente su `_vouchers.json` in `ABM_DATA_DIR` e logga ogni operazione in `voucher_admin.log`. Esempio: `python scripts/admin_voucher.py create --email user@ex.com --amount 2 --days 180 --kind promo --note "campagna lancio"`.
@@ -438,6 +465,7 @@ Sovrascrivibili in caso di adeguamento listino Google.
 - Chunk max chars: `700` globale, override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`).
 - Quality tuning: `ABM_GEMINI_TEMPERATURE=0.75` riduce la deriva metallica, `ABM_GEMINI_INTER_CHUNK_GAP_MS=100` inserisce un micro-silenzio tra chunk consecutivi in PCM, e `ABM_GEMINI_TRIM_TAIL_MS=800` tronca il trailing silence naturale che ogni chunk Gemini porta con se` (la combinazione dei due elimina pause percepibili di "qualche secondo" tra chunk lasciando un boundary acustico naturale).
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
+- **Kill-switch admin** persistito in `<ABM_DATA_DIR>/gemini_admin_state.json` (`{disabled, reason, updated_at}`). Quando `disabled=true`, `gemini_tts.is_available()` ritorna `False`: il pannello Voci PREMIUM scompare dalla UI utente, stime e pagamenti Premium rispondono 503. Toggle via `GET/POST /admin/api/gemini_kill_switch` o dalla pagina `/admin/audit-tts`. Stato ricaricato in `gemini_tts.init()` al boot.
 - **Cancel volontario PREMIUM** (`generation_engine.py:2708+`): branch `_CancelledError` calcola `retained_eur` via `cancel_policy.compute_cancel_retention(google_cost, method, paid)` con floor = `provider_cost + fee_PayPal` (solo se metodo `paypal`). Esiti:
   - `retained > 0` → outcome audit `cancelled_partial`, refund parziale = `paid - retained`, MP3 parziale codificato dai `chunk_*.pcm` accumulati, token download creato, email `_send_gemini_cancelled_partial_email` (IT-only) inviata se email registrata e MP3 generato.
   - `retained == 0` → outcome audit `cancelled_refunded`, refund integrale, nessuna email custom (resta path legacy).

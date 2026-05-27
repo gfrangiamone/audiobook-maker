@@ -685,6 +685,63 @@ def _budget_hard_stop():
     return _b("ABM_GEMINI_BUDGET_HARD_STOP", True)
 
 
+# -- Atomic budget reservation -----------------------------------------------
+# Concurrency: preflight_budget_check legge get_daily_spent_eur() dal JSONL
+# audit, ma il cost viene scritto solo a fine job. Due job concorrenti vedono
+# lo stesso "spent" e possono entrambi passare preflight superando il cap
+# combinato. La reservation in-memory chiude la finestra di race.
+import threading as _threading_budget
+_active_reservations: dict = {}            # job_id -> reserved_eur
+_reservations_lock = _threading_budget.Lock()
+
+
+def _reserved_sum_eur():
+    """Somma EUR riservate da job in corso (chiamare sotto lock)."""
+    return sum(float(v or 0) for v in _active_reservations.values())
+
+
+def reserve_budget(job_id, estimated_cost_eur):
+    """Atomicamente verifica + riserva budget per un job. Solleva
+    GeminiBudgetExceeded se il cap verrebbe sforato considerando lo speso
+    odierno + le reservation attive di altri job.
+
+    Idempotente per job_id: chiamata ripetuta aggiorna senza sommare.
+    """
+    if estimated_cost_eur is None or estimated_cost_eur < 0:
+        return
+    daily = _daily_budget_eur()
+    if daily <= 0:
+        return  # cap disabilitato, niente da riservare
+    hard = _budget_hard_stop()
+    with _reservations_lock:
+        spent = get_daily_spent_eur()
+        # Escludi la reservation di questo stesso job (idempotenza)
+        other_reserved = sum(
+            float(v or 0) for k, v in _active_reservations.items() if k != job_id
+        )
+        projected = spent + other_reserved + estimated_cost_eur
+        if projected > daily:
+            if hard:
+                raise GeminiBudgetExceeded(
+                    f"Job would push daily spend to {projected:.2f} EUR "
+                    f"(cap {daily:.2f} EUR, spent {spent:.2f} EUR, "
+                    f"reserved by others {other_reserved:.2f} EUR)",
+                    scope="daily",
+                    estimated_eur=estimated_cost_eur,
+                    cap_eur=daily,
+                    used_eur=spent,
+                )
+            # soft mode: registra comunque per visibilità
+        _active_reservations[job_id] = float(estimated_cost_eur)
+
+
+def release_reservation(job_id):
+    """Rilascia la reservation di un job (chiamare a fine job, dopo che il
+    cost è stato scritto nel JSONL audit, oppure su cancel/refund)."""
+    with _reservations_lock:
+        _active_reservations.pop(job_id, None)
+
+
 def get_daily_spent_eur():
     """Spesa Google del giorno corrente in EUR (UTC). Aggrega l'audit log
     gemini_cost_audit_YYYY-MM.jsonl filtrando per data odierna. Cade su 0
@@ -824,7 +881,7 @@ _usage_cache = None
 def init(data_dir):
     """Inizializza il modulo con la directory dati persistente."""
     global _data_dir, _usage_file_path, _usage_cache, _preview_file_path, _preview_cache
-    global _rpd_file_path, _rpd_cache
+    global _rpd_file_path, _rpd_cache, _admin_state_path
     _data_dir = Path(data_dir)
     _data_dir.mkdir(parents=True, exist_ok=True)
     _usage_file_path = _data_dir / "gemini_tts_usage.json"
@@ -833,6 +890,104 @@ def init(data_dir):
     _preview_cache = None
     _rpd_file_path = _data_dir / "gemini_tts_rpd.json"
     _rpd_cache = None
+    _admin_state_path = _data_dir / "gemini_admin_state.json"
+    _load_admin_state()
+
+
+# ---------------------------------------------------------------------------
+# Kill-switch amministrativo (disattivazione runtime delle voci PREMIUM)
+# ---------------------------------------------------------------------------
+# Persistito in ABM_DATA_DIR/gemini_admin_state.json + mirror in-memory.
+# Controllato in cima a is_available(): se disabled=True, le voci PREMIUM
+# non vengono offerte agli utenti (UI /api/voices non le include, endpoint
+# di stima e pagamento Premium rispondono 503).
+
+_admin_state_path = None  # type: ignore[assignment]
+_admin_disabled = False
+_admin_disabled_reason = ""
+_admin_disabled_at = ""
+_admin_state_lock = threading.Lock()
+
+
+def _load_admin_state():
+    """Legge lo stato kill-switch da disco al boot/init."""
+    global _admin_disabled, _admin_disabled_reason, _admin_disabled_at
+    if _admin_state_path is None:
+        return
+    try:
+        with open(_admin_state_path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        _admin_disabled = bool(d.get("disabled", False))
+        _admin_disabled_reason = str(d.get("reason", "") or "")
+        _admin_disabled_at = str(d.get("updated_at", "") or "")
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        _admin_disabled = False
+        _admin_disabled_reason = ""
+        _admin_disabled_at = ""
+
+
+def is_admin_disabled():
+    """True se l'admin ha disattivato manualmente le voci PREMIUM."""
+    return bool(_admin_disabled)
+
+
+def is_capability_available():
+    """True se Gemini TTS e' tecnicamente configurato, ignorando il
+    kill-switch admin. Usato dalla diagnostica admin per distinguere
+    'spento per scelta' da 'non configurato'.
+    """
+    global _available
+    if _available is not None:
+        return _available
+    with _available_lock:
+        if _available is not None:
+            return _available
+        backend = _resolve_backend()
+        if backend is None:
+            _available = False
+            return False
+        try:
+            from google import genai  # noqa: F401
+            _available = True
+            return True
+        except ImportError:
+            _available = False
+            return False
+
+
+def admin_disabled_state():
+    """Snapshot dello stato kill-switch (disabled/reason/updated_at)."""
+    return {
+        "disabled": bool(_admin_disabled),
+        "reason": _admin_disabled_reason,
+        "updated_at": _admin_disabled_at,
+    }
+
+
+def set_admin_disabled(disabled, reason=""):
+    """Imposta il kill-switch e lo persiste. Thread-safe.
+
+    Non resetta la cache di capability detection: la cache governa solo
+    "Gemini e' tecnicamente configurabile?"; il kill-switch e' un livello
+    sopra e viene controllato in cima a is_available().
+    """
+    global _admin_disabled, _admin_disabled_reason, _admin_disabled_at
+    with _admin_state_lock:
+        _admin_disabled = bool(disabled)
+        _admin_disabled_reason = (reason or "")[:200]
+        _admin_disabled_at = datetime.now(timezone.utc).isoformat()
+        if _admin_state_path is not None:
+            try:
+                _admin_state_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_admin_state_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "disabled": _admin_disabled,
+                        "reason": _admin_disabled_reason,
+                        "updated_at": _admin_disabled_at,
+                    }, f, ensure_ascii=False, indent=2)
+            except OSError as e:
+                print(f"[gemini-tts] WARN: cannot persist admin state: {e}")
+    return admin_disabled_state()
 
 
 def _current_month():
@@ -1260,7 +1415,13 @@ def is_available():
     - Vertex AI: ABM_GCP_PROJECT_ID + ABM_GOOGLE_CREDENTIALS_FILE (file leggibile).
     - API key:   ABM_GEMINI_API_KEY non vuota.
     Selettore esplicito: ABM_GEMINI_BACKEND=vertex|apikey|auto (default: auto).
+
+    Override admin: se il kill-switch e' attivo (vedi set_admin_disabled),
+    ritorna sempre False indipendentemente dalla capability detection,
+    cosi` le voci PREMIUM non vengono offerte agli utenti.
     """
+    if _admin_disabled:
+        return False
     global _available
     if _available is not None:
         return _available

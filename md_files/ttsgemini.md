@@ -73,7 +73,8 @@ tts_split.py
 
 - `gemini_tts` non importa mai `audiobook_app` né `generation_engine` (no circular).
 - `tts_split` fa late-import di `gemini_tts` (`import gemini_tts` dentro la funzione) per mantenere il modulo opzionale: se `google-genai` non è installato, Edge/Google continuano a funzionare.
-- `gemini_tts.is_available()` è la *single source of truth* per "Gemini è utilizzabile". Cached dopo la prima chiamata (lock-protected).
+- `gemini_tts.is_available()` è la *single source of truth* per "Gemini è utilizzabile". Cached dopo la prima chiamata (lock-protected). Override admin in cima: se il kill-switch `is_admin_disabled()` è True, ritorna sempre `False` indipendentemente dalla capability detection.
+- **Kill-switch admin** (`set_admin_disabled(disabled, reason)`) persistito in `ABM_DATA_DIR/gemini_admin_state.json` (mirror in-memory `_admin_disabled`, ricaricato in `init()`). Endpoint: `GET/POST /admin/api/gemini_kill_switch`. UI: pannello in `/admin/audit-tts`. Quando attivo, `/api/voices` non include più l'optgroup PREMIUM, le stime e i flussi di pagamento Premium rispondono 503 (gateano già su `is_available()`). `is_capability_available()` espone la capability bypassando il kill-switch (usata dal pannello admin per distinguere "spento per scelta" da "non configurato").
 
 ---
 
@@ -377,6 +378,8 @@ Cap su spesa **EUR** (non token / chunk). Indipendente da RPD, complementare. Pe
 `get_daily_spent_eur()` aggrega i record del giorno corrente da `gemini_cost_audit_YYYY-MM.jsonl` (campo `google_cost_eur_actual`). Lettura graceful: cade su `0.0` se il file non esiste / corrotto.
 
 `budget_status()` snapshot per admin: `daily_cap_eur`, `daily_spent_eur`, `daily_remaining_eur`, `daily_used_pct`, `per_job_cap_eur`, `alert_pct`, `hard_stop`.
+
+**Atomic budget reservation** (`reserve_budget(job_id, eur)` / `release_reservation(job_id)`): tracker in-memory `_active_reservations: dict[job_id, eur]` sotto `_reservations_lock`. Necessario perché il cost viene scritto nel JSONL audit solo a fine job: due preflight concorrenti vedono lo stesso `spent` e potrebbero entrambi passare il cap. `reserve_budget` somma `spent + sum(other reservations) + new` e raise `GeminiBudgetExceeded` se >= `daily_cap`. Chiamato da `audiobook_app.api_generate` dopo `preflight_budget_check`; rilasciato in `generation_engine.run_generation` dopo `gemini_cost_audit.append_record` (e su ogni early-return tra preflight e dispatch async). Idempotente per `job_id`.
 
 ---
 

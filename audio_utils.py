@@ -70,22 +70,32 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
     """
     import zipfile
     import io
-    import xml.etree.ElementTree as ET
+    from secure_archive import (safe_xml_fromstring, safe_zip_path,
+                                check_zip_bomb, ZipSafetyError)
 
     try:
         from PIL import Image
     except ImportError:
         return None
 
+    def _safe_href(opf_dir, href):
+        """Normalizza l'href OPF e rifiuta path-traversal."""
+        joined = (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href.replace('\\', '/')
+        try:
+            return safe_zip_path(joined)
+        except ZipSafetyError as e:
+            print(f"[cover] unsafe OPF href skipped: {e}")
+            return None
+
     def _find_cover_in_opf(zf):
         opf_path = None
         try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
+            container = safe_xml_fromstring(zf.read("META-INF/container.xml"))
             ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
             rootfile = container.find(".//c:rootfile", ns)
             if rootfile is not None:
                 opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
+        except Exception:
             pass
         if not opf_path:
             for n in zf.namelist():
@@ -95,8 +105,8 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
         if not opf_path:
             return None
         try:
-            opf = ET.fromstring(zf.read(opf_path))
-        except (KeyError, ET.ParseError):
+            opf = safe_xml_fromstring(zf.read(opf_path))
+        except Exception:
             return None
         opf_dir = os.path.dirname(opf_path)
         cover_id = None
@@ -115,11 +125,11 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
                 manifest_items[item_id] = (href, mt, props)
         for item_id, (href, mt, props) in manifest_items.items():
             if "cover-image" in props and mt.startswith("image/"):
-                return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                return _safe_href(opf_dir, href)
         if cover_id and cover_id in manifest_items:
             href, mt, _ = manifest_items[cover_id]
             if mt.startswith("image/"):
-                return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                return _safe_href(opf_dir, href)
         return None
 
     def _find_cover_by_name(zf):
@@ -142,6 +152,11 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
 
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:
+            try:
+                check_zip_bomb(zf)
+            except ZipSafetyError as _ze:
+                print(f"[cover] EPUB rejected: {_ze}")
+                return None
             img_path = (_find_cover_in_opf(zf)
                         or _find_cover_by_name(zf)
                         or _find_largest_image(zf))
@@ -238,17 +253,26 @@ def _extract_cover_for_preview(epub_path, output_dir):
     - Without Pillow: extracts raw image bytes as-is
     """
     import zipfile
-    import xml.etree.ElementTree as ET
+    from secure_archive import (safe_xml_fromstring, safe_zip_path,
+                                check_zip_bomb, ZipSafetyError)
+
+    def _safe_href2(opf_dir, href):
+        joined = (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href.replace('\\', '/')
+        try:
+            return safe_zip_path(joined)
+        except ZipSafetyError as e:
+            print(f"[cover] unsafe OPF href skipped: {e}")
+            return None
 
     def _find_cover_path_in_zip(zf):
         opf_path = None
         try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
+            container = safe_xml_fromstring(zf.read("META-INF/container.xml"))
             ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
             rootfile = container.find(".//c:rootfile", ns)
             if rootfile is not None:
                 opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
+        except Exception:
             pass
         if not opf_path:
             for n in zf.namelist():
@@ -257,7 +281,7 @@ def _extract_cover_for_preview(epub_path, output_dir):
                     break
         if opf_path:
             try:
-                opf = ET.fromstring(zf.read(opf_path))
+                opf = safe_xml_fromstring(zf.read(opf_path))
                 opf_dir = os.path.dirname(opf_path)
                 cover_id = None
                 for meta in opf.iter():
@@ -274,12 +298,12 @@ def _extract_cover_for_preview(epub_path, output_dir):
                             item.get("properties", ""))
                 for iid, (href, mt, props) in manifest.items():
                     if "cover-image" in props and mt.startswith("image/"):
-                        return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                        return _safe_href2(opf_dir, href)
                 if cover_id and cover_id in manifest:
                     href, mt, _ = manifest[cover_id]
                     if mt.startswith("image/"):
-                        return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
-            except (KeyError, ET.ParseError):
+                        return _safe_href2(opf_dir, href)
+            except Exception:
                 pass
 
         for n in zf.namelist():
@@ -299,6 +323,11 @@ def _extract_cover_for_preview(epub_path, output_dir):
 
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:
+            try:
+                check_zip_bomb(zf)
+            except ZipSafetyError as _ze:
+                print(f"[cover] EPUB rejected: {_ze}")
+                return None, None
             img_zip_path = _find_cover_path_in_zip(zf)
             if not img_zip_path:
                 print(f"[cover] No cover image found in {os.path.basename(epub_path)}")

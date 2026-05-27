@@ -28,8 +28,25 @@ from pathlib import Path
 
 PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
-PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
+# Fail-fast: quando PayPal e' configurato, ABM_PAYPAL_MODE deve essere esplicito
+# (sandbox|live). Un default "sandbox" silenzioso in produzione dirotterebbe
+# pagamenti reali su test endpoint con conseguente perdita di revenue.
+_PAYPAL_MODE_RAW = os.environ.get("ABM_PAYPAL_MODE", "").strip().lower()
+if PAYPAL_CLIENT_ID and not _PAYPAL_MODE_RAW:
+    raise RuntimeError(
+        "ABM_PAYPAL_MODE non impostato. Quando ABM_PAYPAL_CLIENT_ID e' "
+        "configurato, devi settare esplicitamente ABM_PAYPAL_MODE=sandbox "
+        "oppure ABM_PAYPAL_MODE=live."
+    )
+if _PAYPAL_MODE_RAW and _PAYPAL_MODE_RAW not in ("sandbox", "live"):
+    raise RuntimeError(
+        f"ABM_PAYPAL_MODE invalido: {_PAYPAL_MODE_RAW!r} "
+        f"(valori ammessi: 'sandbox', 'live')"
+    )
+PAYPAL_MODE = _PAYPAL_MODE_RAW or "sandbox"
 PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+if PAYPAL_CLIENT_ID:
+    print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
 LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
 LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
@@ -68,16 +85,36 @@ _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, use
 _payments_lock = threading.RLock()
 _vouchers_lock = threading.RLock()
 
+# Pending orders: tracker in-memory degli ordini PayPal creati ma non ancora
+# capturati. Serve per amount reconciliation (confronto fra l'amount con cui
+# l'ordine e' stato creato e quello restituito da PayPal alla cattura).
+# Cleanup automatico oltre PENDING_ORDER_TTL_SEC.
+_pending_orders = {}
+_pending_orders_lock = threading.Lock()
+PENDING_ORDER_TTL_SEC = 60 * 60  # 1 ora
+
+# Capture lock: serializza il flusso check-idempotency + capture + store per
+# evitare race condition con due richieste capture parallele sullo stesso order.
+# Hold time massimo: una chiamata HTTP a PayPal (~secondi), accettabile vista
+# la frequenza ridotta dei capture.
+_capture_lock = threading.Lock()
+
 # Rate limit voucher_validate
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
+# Global -> deque ts di TUTTI i tentativi (safety net contro distributed scan).
 _voucher_attempts_ip = {}
 _voucher_attempts_email = {}
+_voucher_attempts_global: list = []
 _voucher_rl_lock = threading.Lock()
 VOUCHER_RL_PER_MIN = 5
 VOUCHER_RL_PER_HOUR = 30
 VOUCHER_EMAIL_FAIL_LIMIT = 10    # fallimenti consecutivi prima del lockout
 VOUCHER_EMAIL_LOCKOUT_SEC = 900  # 15 minuti
+# Global burst cap: ~100/min totali su tutto il processo bloccano un attacker
+# con rotating IP e generated emails. Soglie override-abili via env.
+VOUCHER_GLOBAL_PER_MIN = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_MIN", "100"))
+VOUCHER_GLOBAL_PER_HOUR = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_HOUR", "1000"))
 
 # Tracking job pagati completati con successo (persistenza su disco)
 _paid_opt_done: set = set()
@@ -94,8 +131,18 @@ _paid_jobs_lock = threading.Lock()
 
 def _voucher_rl_check(ip, email):
     """Return (allowed, retry_after_sec, reason)."""
+    global _voucher_attempts_global
     now = time.time()
     with _voucher_rl_lock:
+        # Global burst safety net (taglia attacker con rotating IP+email)
+        _voucher_attempts_global = [t for t in _voucher_attempts_global if now - t < 3600]
+        gmin = [t for t in _voucher_attempts_global if now - t < 60]
+        if len(gmin) >= VOUCHER_GLOBAL_PER_MIN:
+            retry = 60 - int(now - gmin[0])
+            return False, max(1, retry), "rate_limit_global_minute"
+        if len(_voucher_attempts_global) >= VOUCHER_GLOBAL_PER_HOUR:
+            retry = 3600 - int(now - _voucher_attempts_global[0])
+            return False, max(1, retry), "rate_limit_global_hour"
         # IP sliding window
         hits = _voucher_attempts_ip.get(ip, [])
         hits = [t for t in hits if now - t < 3600]
@@ -114,9 +161,10 @@ def _voucher_rl_check(ip, email):
             info = _voucher_attempts_email.get(em)
             if info and info.get("lockout_until", 0) > now:
                 return False, int(info["lockout_until"] - now), "email_locked"
-        # Record hit for IP — caller can trigger email-fail separately
+        # Record hit for IP + global — caller can trigger email-fail separately
         hits.append(now)
         _voucher_attempts_ip[ip] = hits
+        _voucher_attempts_global.append(now)
     return True, 0, None
 
 
@@ -142,11 +190,25 @@ def _voucher_rl_record_result(email, success):
 # Persistence: payments
 # ---------------------------------------------------------------------------
 
+def _atomic_json_write(path, payload):
+    """Scrive JSON in modo atomico: tmp file + fsync + rename.
+    Evita file corrotti se il processo crasha a meta' write."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass  # filesystem non supporta fsync (rari edge case)
+    os.replace(str(tmp), str(path))
+
+
 def _save_payments():
     try:
         with _payments_lock:
-            with open(_PAYMENTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(_payments, f, ensure_ascii=False, indent=2)
+            _atomic_json_write(_PAYMENTS_FILE, _payments)
     except Exception as e:
         print(f"[payments] Failed to save: {e}")
 
@@ -176,8 +238,7 @@ def _load_payments():
 def _save_vouchers():
     try:
         with _vouchers_lock:
-            with open(_VOUCHERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(_vouchers, f, ensure_ascii=False, indent=2)
+            _atomic_json_write(_VOUCHERS_FILE, _vouchers)
     except Exception as e:
         print(f"[vouchers] Failed to save: {e}")
 
@@ -561,7 +622,43 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
         timeout=15,
     )
     r.raise_for_status()
-    return r.json()
+    resp = r.json()
+    order_id = resp.get("id")
+    if order_id:
+        _register_pending_order(order_id, amount_eur, purpose=(custom_id or ""))
+    return resp
+
+
+def _register_pending_order(order_id, amount_requested_eur, purpose=""):
+    """Registra un ordine PayPal appena creato per amount reconciliation alla
+    cattura. Cleanup automatico delle voci stantie (oltre PENDING_ORDER_TTL_SEC).
+    """
+    now = time.time()
+    cutoff = now - PENDING_ORDER_TTL_SEC
+    with _pending_orders_lock:
+        for oid in list(_pending_orders.keys()):
+            if _pending_orders[oid].get("created_at", 0) < cutoff:
+                del _pending_orders[oid]
+        _pending_orders[order_id] = {
+            "amount_requested_eur": round(float(amount_requested_eur), 2),
+            "created_at": now,
+            "purpose": purpose,
+        }
+
+
+def _get_pending_amount(order_id):
+    """Ritorna amount richiesto al create, oppure None se non tracciato (es.
+    server restart fra create e capture, oppure TTL scaduto).
+    """
+    with _pending_orders_lock:
+        rec = _pending_orders.get(order_id)
+        return float(rec["amount_requested_eur"]) if rec else None
+
+
+def _consume_pending_order(order_id):
+    """Rimuove l'ordine dal tracker pending (chiamato dopo cattura riuscita)."""
+    with _pending_orders_lock:
+        _pending_orders.pop(order_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -640,3 +737,111 @@ def _paypal_capture_order(order_id):
     )
     r.raise_for_status()
     return r.json()
+
+
+class CaptureAmountMismatchError(ValueError):
+    """Capture amount non corrisponde a quanto creato (price tampering)."""
+
+
+def capture_and_store_order(order_id: str, job_id: str = "",
+                            amount_tolerance: float = 0.01):
+    """Cattura un ordine PayPal in modo atomico con amount reconciliation.
+
+    Acquisisce ``_capture_lock`` per tutto il flusso (idempotency check ->
+    capture API -> validazione amount -> store) per evitare race condition
+    su capture concorrenti dello stesso ``order_id``.
+
+    Ritorna dict con: amount_eur, email, capture_id, captured_at, already_captured.
+
+    Raise:
+      - ``ValueError`` su input invalido o capture rifiutata da PayPal
+      - ``CaptureAmountMismatchError`` se l'amount catturato differisce da quello
+        registrato al create oltre la tolleranza (price tampering defense).
+    """
+    if not order_id:
+        raise ValueError("missing order_id")
+
+    with _capture_lock:
+        # Idempotency: se gia' capturato, ritorna lo stato salvato
+        with _payments_lock:
+            pay = _payments.get(order_id)
+        if pay:
+            return {
+                "amount_eur": pay.get("amount_eur", 0),
+                "email": pay.get("email", ""),
+                "capture_id": pay.get("capture_id", ""),
+                "captured_at": pay.get("captured_at", 0),
+                "already_captured": True,
+            }
+
+        # Capture via PayPal API
+        captured = _paypal_capture_order(order_id)
+
+        purchase_units = captured.get("purchase_units", [])
+        if not purchase_units:
+            raise ValueError("invalid capture response: no purchase_units")
+        pu = purchase_units[0]
+        captures = pu.get("payments", {}).get("captures", [])
+        if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
+            raise ValueError("payment not completed")
+        cap = captures[0]
+        try:
+            amount_eur = float(cap.get("amount", {}).get("value", "0"))
+        except (TypeError, ValueError):
+            raise ValueError("invalid captured amount")
+
+        # Amount reconciliation: confronto con quanto registrato al create.
+        # Se pending non disponibile (server restart fra create e capture),
+        # log warning e accetta l'amount catturato (graceful degradation).
+        expected = _get_pending_amount(order_id)
+        if expected is not None:
+            if abs(amount_eur - expected) > amount_tolerance:
+                raise CaptureAmountMismatchError(
+                    f"capture amount {amount_eur:.2f} != requested {expected:.2f} "
+                    f"(order {order_id})"
+                )
+        else:
+            print(f"[paypal] WARN capture without pending record: order={order_id} "
+                  f"amount={amount_eur:.2f} (server restart or expired TTL)")
+
+        payer = captured.get("payer", {})
+        email = (payer.get("email_address") or "").lower().strip()
+
+        with _payments_lock:
+            # Re-check sotto _payments_lock (defense-in-depth: il _capture_lock
+            # gia' serializza, ma garantiamo coerenza completa con altri reader)
+            if order_id in _payments:
+                pay = _payments[order_id]
+                return {
+                    "amount_eur": pay.get("amount_eur", 0),
+                    "email": pay.get("email", ""),
+                    "capture_id": pay.get("capture_id", ""),
+                    "captured_at": pay.get("captured_at", 0),
+                    "already_captured": True,
+                }
+            now = time.time()
+            _payments[order_id] = {
+                "order_id": order_id,
+                "amount_eur": amount_eur,
+                "amount_requested_eur": expected if expected is not None else amount_eur,
+                "email": email,
+                "job_id": job_id,
+                "captured_at": now,
+                "used": False,
+                "used_at": None,
+                "capture_id": cap.get("id", ""),
+            }
+            try:
+                _save_payments()
+            except Exception as e:
+                print(f"[paypal] save_payments failed (post-capture): {e}")
+
+        _consume_pending_order(order_id)
+
+        return {
+            "amount_eur": amount_eur,
+            "email": email,
+            "capture_id": cap.get("id", ""),
+            "captured_at": _payments[order_id]["captured_at"],
+            "already_captured": False,
+        }

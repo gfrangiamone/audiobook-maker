@@ -196,12 +196,52 @@ app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50")
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
 
+# Endpoint esenti da CSRF check (whitelist esplicita).
+# Da aggiungere SOLO endpoint che ricevono webhook server-to-server (es. PayPal
+# webhook firmato): attualmente nessuno.
+_CSRF_EXEMPT_PATHS: set[str] = set()
+
+
+@app.before_request
+def _csrf_protect():
+    """CSRF protection: verifica Origin/Referer su metodi mutating.
+
+    - GET/HEAD/OPTIONS: nessun check (operazioni read-only).
+    - POST/PUT/PATCH/DELETE: se ``Origin`` presente, deve matchare ``host_url``;
+      altrimenti se ``Referer`` presente, stesso check. Se entrambi assenti
+      (client non-browser come curl/script), passa.
+    - I cookie ``SameSite=Strict`` (admin) e ``SameSite=Lax`` (abm_cid) gia'
+      offrono difesa parziale; questo check chiude il gap residuo per browser
+      vecchi e per ``SameSite=Lax`` su navigazioni top-level.
+    """
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    if request.path in _CSRF_EXEMPT_PATHS:
+        return None
+    origin = request.headers.get("Origin", "")
+    referer = request.headers.get("Referer", "")
+    expected = request.host_url.rstrip("/")
+    if origin:
+        if not (origin == expected or origin.startswith(expected + "/")):
+            return jsonify({"error": "CSRF: origin mismatch"}), 403
+    elif referer:
+        if not referer.startswith(expected + "/") and referer != expected:
+            return jsonify({"error": "CSRF: referer mismatch"}), 403
+    return None
+
+
 @app.after_request
 def add_security_headers(response):
     """Aggiunge header di sicurezza alle risposte HTTP."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+    # HSTS: forza HTTPS sui browser per 1 anno (incl. subdomain).
+    # Nginx in produzione probabilmente lo aggiunge gia'; lo settiamo qui per
+    # defense-in-depth ed evitare regressioni se la config nginx cambia.
+    # Solo su HTTPS per non bloccare dev locale HTTP.
+    if request.is_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     # Content Security Policy (base)
     # Permettiamo script inline per la nostra app (SPA-like) ma blocchiamo fonti esterne non autorizzate.
     # Nota: per una configurazione più rigida, bisognerebbe usare i nonce.
@@ -429,7 +469,7 @@ def _check_job_owner(job_id):
     backward compatibility, but new jobs always store it at creation.
 
     Admin bypass: una richiesta autenticata come admin (header X-Admin-Token o cookie
-    abm_admin_session valido) passa il controllo. Necessario per la pagina /logs che
+    abm_admin_session valido) passa il controllo. Necessario per la pagina /admin/log-activity che
     fa polling di /api/job_status/<job_id> per mostrare la % delle conversioni in corso.
     """
     if job_id not in jobs:
@@ -443,6 +483,12 @@ def _check_job_owner(job_id):
             if _admin_auth_ok(_admin_auth_from_request()):
                 return job, None, 0
             return None, jsonify({"error": "Forbidden"}), 403
+    else:
+        # Legacy job senza client_id (creato prima dell'enforcement). Lascia
+        # passare per compat ma logga warning: l'admin puo' monitorare e
+        # decidere di rimuovere il bypass dopo che la coorte legacy e' esaurita.
+        print(f"[SECURITY-WARN] Legacy job senza client_id: {job_id} "
+              f"(status={job.get('status', '?')}) - bypass ownership check")
     return job, None, 0
 
 
@@ -764,8 +810,16 @@ def _save_tokens():
                     "output_m4b": info.get("output_m4b", ""),
                     "ai_optimized": info.get("ai_optimized", False),
                 }
-            with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
+            # Atomic write: tmp + fsync + rename per evitare corruzione su crash
+            _tmp_tokens = _TOKENS_FILE.with_suffix(_TOKENS_FILE.suffix + ".tmp")
+            with open(_tmp_tokens, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(_tmp_tokens), str(_TOKENS_FILE))
     except Exception as e:
         print(f"[tokens] Failed to save tokens: {e}")
 
@@ -804,7 +858,7 @@ def _load_tokens():
 # PAYMENTS & VOUCHERS (for LLM optimization) — state lives in payment.py
 # ----------------------------------------------------------------------
 
-# Sospensione avvio nuovi processi (attivabile da admin via /logs)
+# Sospensione avvio nuovi processi (attivabile da admin via /admin/log-activity)
 _suspend_new_jobs = False
 _suspend_lock = threading.Lock()
 
@@ -1397,7 +1451,6 @@ Allow: /
 Disallow: /api/
 Disallow: /data/
 Disallow: /dl/
-Disallow: /logs
 Disallow: /admin/
 Disallow: /community/api/
 Disallow: /*?job=
@@ -1632,9 +1685,9 @@ def web_manifest():
     }
 
 
-#  -  -  -  Admin log viewer (/logs)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
-# URL: /logs?2026-03  (parametro = anno-mese)
-# Non indicizzato (Disallow: /logs in robots.txt consigliato)
+#  -  -  -  Admin log viewer (/admin/log-activity)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+# URL: /admin/log-activity?2026-03  (parametro = anno-mese)
+# Non indicizzato (gia` coperto da Disallow: /admin/ in robots.txt)
 
 
 def _parse_log_sessions(ym):
@@ -1764,11 +1817,11 @@ def _session_in_progress(s, sid):
     return False
 
 
-@app.route("/logs")
+@app.route("/admin/log-activity")
 def admin_logs():
     if not ADMIN_TOKEN: return "Logs UI disabled.", 404
     token = _admin_auth_from_request()
-    if not _admin_auth_ok(token): return _render_admin_gate("Logs Viewer", "/logs"), 200, {"Content-Type": "text/html; charset=utf-8"}
+    if not _admin_auth_ok(token): return _render_admin_gate("Log Activity", "/admin/log-activity"), 200, {"Content-Type": "text/html; charset=utf-8"}
     _log_i18n = {
         "it": {
             "sessions": "Sessioni", "gen_completed": "Gen. completata",
@@ -2087,7 +2140,7 @@ def admin_logs():
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
-        months_nav += f'<a href="/logs?{m}{token_qs}"{active_cls}>{m}</a> '
+        months_nav += f'<a href="/admin/log-activity?{m}{token_qs}"{active_cls}>{m}</a> '
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2180,7 +2233,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
         <a class="btn btn-accent" href="/admin/audit-tts?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
-        <a class="btn btn-accent" href="/logs/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
+        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -2498,7 +2551,22 @@ checkSuspendStatus();
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.route("/logs/export")
+def _csv_safe(val):
+    """Sanitizza un valore per esportazioni CSV/XLSX contro CSV-injection.
+
+    Excel/LibreOffice interpretano celle che iniziano con =, +, -, @, TAB, CR
+    come formule. Prefissiamo con apostrofo ('), che disabilita l'interpretazione
+    e non viene mostrato nella cella.
+    """
+    if val is None:
+        return ""
+    s = str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+@app.route("/admin/log-activity/export")
 def admin_logs_export():
     """Export activity log as Excel (.xlsx) file."""
     if not ADMIN_TOKEN: return "Export disabled.", 404
@@ -2535,11 +2603,13 @@ def admin_logs_export():
         cid = s.get("client_id", "")
         recurring = "Yes" if client_session_count.get(cid, 0) >= 2 else "No"
         writer.writerow([
-            sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+            _csv_safe(sid), s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
             s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"), duration_min,
-            s["filename"], s["last_op"], "  →  ".join(s["events"]),
-            cid, s.get("client_ip", ""), s.get("voice", ""),
-            s.get("browser_lang", ""), completed, in_progress, recurring,
+            _csv_safe(s["filename"]), _csv_safe(s["last_op"]),
+            _csv_safe("  →  ".join(s["events"])),
+            _csv_safe(cid), _csv_safe(s.get("client_ip", "")),
+            _csv_safe(s.get("voice", "")),
+            _csv_safe(s.get("browser_lang", "")), completed, in_progress, recurring,
         ])
 
     try:
@@ -2581,11 +2651,13 @@ def admin_logs_export():
         data_font = Font(name="Arial", size=10, color="e2e8f0")
         for row_idx, (sid, s) in enumerate(reversed(list(sessions.items())), 5):
             delta = s["last_dt"] - s["first_dt"]
-            row_data = [sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+            row_data = [_csv_safe(sid), s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
                         s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"),
-                        round(delta.total_seconds() / 60, 1), s["filename"], s["last_op"],
-                        "  →  ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
-                        s.get("voice", ""), s.get("browser_lang", ""),
+                        round(delta.total_seconds() / 60, 1),
+                        _csv_safe(s["filename"]), _csv_safe(s["last_op"]),
+                        _csv_safe("  →  ".join(s["events"])),
+                        _csv_safe(s.get("client_id", "")), _csv_safe(s.get("client_ip", "")),
+                        _csv_safe(s.get("voice", "")), _csv_safe(s.get("browser_lang", "")),
                         "✅" if _session_completed(s) else "❌",
                         "✅" if _session_in_progress(s, sid) else "",
                         "✅" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
@@ -3188,7 +3260,20 @@ def admin_logs_page():
   .toggle-row input{width:auto}
 </style></head>
 <body>
-<h1>Admin - Audit TTS <a href="/logs" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+<h1>Admin - Audit TTS <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+
+<div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
+  <div style="flex:1;min-width:280px">
+    <h2 style="margin:0 0 4px">Voci PREMIUM (Gemini TTS)</h2>
+    <div id="ksStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
+    <div id="ksReason" style="font-size:.8rem;color:var(--muted);margin-top:4px;display:none"></div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="text" id="ksReasonInput" placeholder="Motivo (facoltativo)"
+           maxlength="200" style="width:240px;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.85rem">
+    <button type="button" id="ksToggleBtn" disabled>...</button>
+  </div>
+</div>
 
 <div class="tab-bar">
   <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
@@ -3616,8 +3701,80 @@ def admin_logs_page():
   $("evRefreshBtn").addEventListener("click", fetchEvents);
   $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
 
+  // ---- Kill-switch voci PREMIUM ----
+  async function ksRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) {
+        $("ksStatus").textContent = "Errore caricamento stato (" + r.status + ")";
+        return;
+      }
+      const s = await r.json();
+      ksApply(s);
+    } catch (e) {
+      $("ksStatus").textContent = "Errore: " + e;
+    }
+  }
+  function ksApply(s){
+    const btn = $("ksToggleBtn");
+    const status = $("ksStatus");
+    const reasonRow = $("ksReason");
+    btn.disabled = false;
+    if (!s.capability_ok && !s.disabled) {
+      status.innerHTML = '<span style="color:var(--muted)">Gemini TTS non configurato (nessun backend valido).</span>';
+      btn.textContent = "Non disponibile";
+      btn.disabled = true;
+      reasonRow.style.display = "none";
+      return;
+    }
+    if (s.disabled) {
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">DISATTIVO</span> · pannello voci PREMIUM nascosto agli utenti';
+      btn.textContent = "Riattiva voci PREMIUM";
+      btn.style.background = "var(--ok)";
+      if (s.reason) {
+        reasonRow.textContent = "Motivo: " + s.reason + (s.updated_at ? " (" + s.updated_at.slice(0,19).replace("T"," ") + ")" : "");
+        reasonRow.style.display = "block";
+      } else {
+        reasonRow.style.display = "none";
+      }
+    } else {
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">ATTIVO</span> · voci PREMIUM offerte agli utenti';
+      btn.textContent = "Disattiva voci PREMIUM";
+      btn.style.background = "var(--err)";
+      reasonRow.style.display = "none";
+    }
+    btn.dataset.targetDisabled = s.disabled ? "0" : "1";
+  }
+  async function ksToggle(){
+    const btn = $("ksToggleBtn");
+    const target = btn.dataset.targetDisabled === "1";
+    const reason = $("ksReasonInput").value.trim();
+    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\\n\\nLe stime e i pagamenti Premium risponderanno 503 finche` non viene riattivato.")) {
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({disabled: target, reason: reason}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await ksRefresh(); return; }
+      const s = await r.json();
+      ksApply(s);
+      if (!target) $("ksReasonInput").value = "";
+    } catch (e) {
+      alert("Errore: " + e);
+      await ksRefresh();
+    }
+  }
+  $("ksToggleBtn").addEventListener("click", ksToggle);
+
   // Auto-load on page open: prima popola la dropdown lingue, poi carica i record.
   loadLanguageOptions().finally(fetchAudit);
+  ksRefresh();
 })();
 </script>
 </body></html>"""
@@ -3800,6 +3957,59 @@ def admin_api_gemini_cost_audit():
                     "date_from": date_from, "date_to": date_to},
     }
     return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/gemini_kill_switch", methods=["GET", "POST"])
+def admin_api_gemini_kill_switch():
+    """Kill-switch admin per disattivare runtime le voci PREMIUM.
+
+    GET  -> stato corrente {disabled, reason, updated_at, capability_ok}.
+    POST -> attiva/disattiva. Body JSON: {"disabled": bool, "reason": str?}.
+
+    Quando disabled=True, gemini_tts.is_available() ritorna False e il
+    pannello Voci PREMIUM scompare dalla UI utente (incluse stime e flusso
+    di pagamento Premium, che gia` gateano su is_available()).
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if gemini_tts is None:
+        return jsonify({"error": "Gemini TTS module not loaded"}), 503
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        disabled = bool(data.get("disabled", False))
+        reason = str(data.get("reason", "") or "")
+        state = gemini_tts.set_admin_disabled(disabled, reason)
+        # Invalida la cache voci cosi` la prossima /api/voices riflette subito
+        # il cambio (rimozione/aggiunta dell'optgroup PREMIUM).
+        _invalidate_voices_cache()
+        _log_activity("", "", "ADMIN_GEMINI_KILLSWITCH", "", _get_client_ip(),
+                      "disabled" if disabled else "enabled", reason[:80])
+        print(f"[admin] Gemini PREMIUM kill-switch: "
+              f"{'DISABLED' if disabled else 'ENABLED'} reason={reason!r}")
+        return jsonify({**state, "capability_ok": _gemini_capability_ok()})
+
+    return jsonify({
+        **gemini_tts.admin_disabled_state(),
+        "capability_ok": _gemini_capability_ok(),
+    })
+
+
+def _gemini_capability_ok():
+    """True se Gemini TTS e' tecnicamente configurato (a prescindere dal
+    kill-switch). Usato dal pannello admin per distinguere 'spento per scelta'
+    da 'non configurato'.
+    """
+    if gemini_tts is None:
+        return False
+    try:
+        return bool(gemini_tts.is_capability_available())
+    except Exception:
+        return False
 
 
 @app.route("/admin/api/gemini_cost_audit/languages", methods=["GET"])
@@ -4079,6 +4289,52 @@ _feedback_email_last = 0.0
 _FB_EMAIL_THROTTLE = 1800.0  # 30 min
 
 _IP_SALT = os.environ.get("ABM_IP_SALT") or "abm-default-salt-v1"
+
+
+# ─── Rate limit generico IP-based (sliding window) ─────────────────
+# Usato per endpoint costosi (upload, preview audio) per limitare DoS.
+_ip_rl_lock = threading.Lock()
+_ip_rl_buckets: dict[str, dict[str, list[float]]] = {}
+
+
+def _client_ip() -> str:
+    """Estrae IP client (rispetta X-Forwarded-For del reverse proxy)."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
+    """Sliding-window rate limit IP-based. Ritorna (allowed, retry_after_sec).
+    bucket: identificativo logico (es. 'analyze', 'preview').
+    """
+    if not ip:
+        return True, 0
+    now = time.time()
+    with _ip_rl_lock:
+        per_bucket = _ip_rl_buckets.setdefault(bucket, {})
+        hits = per_bucket.get(ip, [])
+        hits = [t for t in hits if now - t < 3600]
+        last_min = [t for t in hits if now - t < 60]
+        if len(last_min) >= limit_per_min:
+            retry = 60 - int(now - last_min[0])
+            per_bucket[ip] = hits
+            return False, max(1, retry)
+        if len(hits) >= limit_per_hour:
+            retry = 3600 - int(now - hits[0])
+            per_bucket[ip] = hits
+            return False, max(1, retry)
+        hits.append(now)
+        per_bucket[ip] = hits
+    return True, 0
+
+
+# Default limits (override via env per ops emergency)
+_ANALYZE_RL_PER_MIN = int(os.environ.get("ABM_ANALYZE_RL_PER_MIN", "5"))
+_ANALYZE_RL_PER_HOUR = int(os.environ.get("ABM_ANALYZE_RL_PER_HOUR", "30"))
+_PREVIEW_RL_PER_MIN = int(os.environ.get("ABM_PREVIEW_RL_PER_MIN", "20"))
+_PREVIEW_RL_PER_HOUR = int(os.environ.get("ABM_PREVIEW_RL_PER_HOUR", "200"))
 
 
 def _hash_ip(ip: str) -> str:
@@ -4825,7 +5081,13 @@ loadFb();
 @app.route("/api/admin/google_tts_status")
 def api_admin_google_tts_status():
     """Endpoint admin: stato dettagliato Google TTS (consumo locale + cloud).
-    Forza una riconciliazione on-demand se ?reconcile=1."""
+    Forza una riconciliazione on-demand se ?reconcile=1.
+    Richiede admin token: il path /admin/ implica scope ristretto e l'endpoint
+    espone metriche operative (caratteri consumati / limiti) che possono
+    rivelare la capacita' residua del servizio a competitor o attaccanti.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
     if google_tts is None:
         return jsonify({"error": "google_tts module not loaded"}), 503
     if not google_tts.is_available():
@@ -4873,6 +5135,12 @@ def _file_hash(path):
 
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
+    # Rate-limit IP-based: previene spam upload / DoS.
+    _allowed, _retry = _ip_rl_check(
+        "analyze", _client_ip(), _ANALYZE_RL_PER_MIN, _ANALYZE_RL_PER_HOUR
+    )
+    if not _allowed:
+        return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
     if "epub" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     file = request.files["epub"]
@@ -4898,6 +5166,35 @@ def api_analyze():
     work_dir.mkdir(exist_ok=True)
     file_path = work_dir / safe_name
     file.save(str(file_path))
+
+    # Magic-bytes validation: blocca file con estensione mentita (es. .exe rinominato .epub).
+    # I parser a valle gia` rifiuterebbero, ma fail-fast evita storage waste + log inutili.
+    try:
+        with open(str(file_path), "rb") as _f:
+            _head = _f.read(8)
+    except Exception:
+        _head = b""
+    if (is_epub or is_abm) and not _head.startswith(b"PK"):
+        try: file_path.unlink()
+        except Exception: pass
+        try: work_dir.rmdir()
+        except Exception: pass
+        return jsonify({"error": "Invalid file: not a valid ZIP-based archive"}), 400
+    if is_pdf and not _head.startswith(b"%PDF-"):
+        try: file_path.unlink()
+        except Exception: pass
+        try: work_dir.rmdir()
+        except Exception: pass
+        return jsonify({"error": "Invalid file: not a valid PDF"}), 400
+    if is_txt:
+        # TXT non ha magic; rifiuta solo se contiene byte chiaramente binari nel head
+        # (NUL byte). Accetta UTF-8 BOM (\xef\xbb\xbf), UTF-16 BOM, ecc.
+        if b"\x00" in _head and not (_head.startswith(b"\xff\xfe") or _head.startswith(b"\xfe\xff")):
+            try: file_path.unlink()
+            except Exception: pass
+            try: work_dir.rmdir()
+            except Exception: pass
+            return jsonify({"error": "Invalid file: not a valid text file"}), 400
 
     client_id = _get_client_id()
     file_hash = _file_hash(str(file_path))
@@ -5119,6 +5416,14 @@ def api_preview_audio(job_id):
     _job, _err, _sc = _check_job_owner(job_id)
     if _err is not None:
         return _err, _sc
+
+    # Rate-limit IP-based: anteprime sono costose (genera TTS sample),
+    # impedisce abuso e burst di generazione voci diverse.
+    _allowed, _retry = _ip_rl_check(
+        "preview", _client_ip(), _PREVIEW_RL_PER_MIN, _PREVIEW_RL_PER_HOUR
+    )
+    if not _allowed:
+        return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
 
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
@@ -5595,6 +5900,9 @@ def api_generate():
             preflight = gemini_tts.preflight_budget_check(_google_cost_pre)
             if preflight.get("warning"):
                 print(f"[{job_id}] Budget warning (preflight): {preflight['warning']}")
+            # Atomic reservation: blocca race fra job concorrenti che vedrebbero
+            # lo stesso `spent` (audit JSONL viene scritto solo a fine job).
+            gemini_tts.reserve_budget(job_id, _google_cost_pre)
         except gemini_tts.GeminiBudgetExceeded as _bex:
             return jsonify({
                 "error": "budget_exceeded",
@@ -5673,6 +5981,8 @@ def api_generate():
                                              _admin_alert_text)
             except Exception as _ae:
                 print(f"[{job_id}] Admin alert (sync) failed: {_ae}")
+            try: gemini_tts.release_reservation(job_id)
+            except Exception: pass
             return jsonify({
                 "error": "Generation not started: PREMIUM voices are temporarily overloaded.",
                 "error_code": "gemini_overload",
@@ -5684,6 +5994,8 @@ def api_generate():
         threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
         if total_eur_pre > threshold_pre:
             if not payment_token:
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
                 return jsonify({
                     "error": "payment_required",
                     "total_eur": total_eur_pre,
@@ -5694,6 +6006,8 @@ def api_generate():
                     payment_token, total_eur_pre, job_id, purpose="gemini"
                 )
             except ValueError as _pay_err:
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
                 return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
             # Stash payment info on job for refund + audit
             job["payment"] = {
@@ -5714,10 +6028,14 @@ def api_generate():
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
             _refund_payment_on_orphan(job_id, job, "status_conflict")
+            try: gemini_tts.release_reservation(job_id)
+            except Exception: pass
             return jsonify({"error": "Generation already running or completed."}), 400
         if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
             if _active_generating_for_client_unlocked(client_id) >= MAX_CONCURRENT_PER_CLIENT:
                 _refund_payment_on_orphan(job_id, job, "concurrent_limit")
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
                 return jsonify({
                     "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
                     "error_code": "concurrent_limit",
@@ -6329,61 +6647,39 @@ def api_paypal_capture_order():
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
-    # Idempotency: if already captured, return existing token
-    if order_id in payment._payments:
-        pay = payment._payments[order_id]
-        return jsonify({
-            "payment_token": order_id,
-            "amount_eur": pay.get("amount_eur", 0),
-            "email": pay.get("email", ""),
-            "already_captured": True,
-        })
-
+    # Atomic flow: idempotency + capture + amount reconciliation + store
+    # serializzato da payment._capture_lock per prevenire double-capture race.
     try:
-        captured = _paypal_capture_order(order_id)
+        result = payment.capture_and_store_order(order_id, job_id=job_id)
+    except payment.CaptureAmountMismatchError as e:
+        print(f"[paypal] AMOUNT MISMATCH order={order_id} job={job_id}: {e}")
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_AMOUNT_MISMATCH", "", "", "", str(e))
+        return jsonify({"error": "Payment amount mismatch (refused)"}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         print(f"[paypal] capture_order failed: {e}")
         return jsonify({"error": f"PayPal capture error: {e}"}), 500
 
-    # Extract payment details from capture response
-    purchase_units = captured.get("purchase_units", [])
-    if not purchase_units:
-        return jsonify({"error": "Invalid capture response"}), 500
-    pu = purchase_units[0]
-    captures = pu.get("payments", {}).get("captures", [])
-    if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
-        return jsonify({"error": "Payment not completed"}), 400
-    cap = captures[0]
-    amount_eur = float(cap.get("amount", {}).get("value", "0"))
-    payer = captured.get("payer", {})
-    email = (payer.get("email_address") or "").lower().strip()
+    amount_eur = result["amount_eur"]
+    email = result["email"]
 
-    payment._payments[order_id] = {
-        "order_id": order_id,
-        "amount_eur": amount_eur,
-        "email": email,
-        "job_id": job_id,
-        "captured_at": time.time(),
-        "used": False,
-        "used_at": None,
-        "capture_id": cap.get("id", ""),
-    }
-    _save_payments()
-
-    _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
-                  "PAYMENT_CAPTURED", "", "", "", "")
-
-    # Send receipt email (non-blocking best-effort)
-    if email and _smtp_available():
-        try:
-            _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
-        except Exception as e:
-            print(f"[paypal] receipt email failed: {e}")
+    if not result.get("already_captured"):
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_CAPTURED", "", "", "", "")
+        # Send receipt email (non-blocking best-effort)
+        if email and _smtp_available():
+            try:
+                _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
+            except Exception as e:
+                print(f"[paypal] receipt email failed: {e}")
 
     return jsonify({
         "payment_token": order_id,
         "amount_eur": amount_eur,
         "email": email,
+        "already_captured": result.get("already_captured", False),
     })
 
 

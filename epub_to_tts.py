@@ -859,6 +859,18 @@ def _is_title_content(title: str) -> bool:
 
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     """Parsa un file EPUB ed estrae capitoli ottimizzati per TTS."""
+    # Pre-flight zip-bomb / total-size guard: ebooklib.read_epub() carica tutto
+    # in memoria, quindi un EPUB malformato/malicious con entries enormi
+    # causerebbe OOM. Validiamo i limiti PRIMA del parsing.
+    try:
+        import zipfile as _zf
+        from secure_archive import check_zip_bomb as _check_bomb, ZipSafetyError as _ZSE
+        with _zf.ZipFile(epub_path, "r") as _z:
+            _check_bomb(_z)
+    except _ZSE as _e:
+        raise ValueError(f"EPUB rifiutato (zip safety): {_e}")
+    except _zf.BadZipFile:
+        raise ValueError("EPUB rifiutato: non e' uno ZIP valido")
     book = epub.read_epub(epub_path, options={"ignore_ncx": False})
 
     # Metadati

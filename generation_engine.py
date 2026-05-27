@@ -280,7 +280,14 @@ def parse_abm(file_path):
     if not zipfile.is_zipfile(str(path)):
         raise ValueError("Invalid .abm file: not a valid ZIP archive")
 
+    from secure_archive import safe_zip_path, check_zip_bomb, ZipSafetyError
+
     with zipfile.ZipFile(str(path), "r") as zf:
+        # Zip-bomb / total-size guard PRIMA di leggere qualsiasi cosa
+        try:
+            check_zip_bomb(zf)
+        except ZipSafetyError as e:
+            raise ValueError(f"Invalid .abm file: {e}")
         # Read and validate manifest
         try:
             manifest_data = zf.read("manifest.json")
@@ -310,7 +317,13 @@ def parse_abm(file_path):
             ch_title = cm.get("title", f"Chapter {cm.get('index', '?')}")
             ch_index = cm.get("index", len(chapters) + 1)
 
-            ch_path = f"chapters/{fname}" if not fname.startswith("chapters/") else fname
+            raw_path = f"chapters/{fname}" if not fname.startswith("chapters/") else fname
+            try:
+                # Zip-slip: rifiuta path che escono dalla virtual root "chapters/"
+                ch_path = safe_zip_path(raw_path, base="chapters")
+            except ZipSafetyError as e:
+                print(f"[abm] WARNING: skipping unsafe chapter path '{raw_path}': {e}")
+                continue
             try:
                 ch_text = zf.read(ch_path).decode("utf-8").strip()
             except KeyError:
@@ -340,13 +353,19 @@ def parse_abm(file_path):
         # Extract cover if present
         cover_info = None
         if manifest.get("has_cover") and manifest.get("cover_file"):
-            cover_file = manifest["cover_file"]
+            cover_file_raw = manifest["cover_file"]
             try:
-                cover_data = zf.read(cover_file)
-                if len(cover_data) > 100:  # sanity check
-                    cover_info = {"data": cover_data, "filename": cover_file}
-            except KeyError:
-                pass
+                cover_file = safe_zip_path(cover_file_raw)
+            except ZipSafetyError as e:
+                print(f"[abm] WARNING: skipping unsafe cover path '{cover_file_raw}': {e}")
+                cover_file = None
+            if cover_file:
+                try:
+                    cover_data = zf.read(cover_file)
+                    if len(cover_data) > 100:  # sanity check
+                        cover_info = {"data": cover_data, "filename": cover_file}
+                except KeyError:
+                    pass
 
     return info, cover_info
 
@@ -1337,7 +1356,11 @@ def _refund_job_payment(job_id, job, reason="error"):
                           job.get("client_id", ""), "", "", "")
             print(f"[{job_id}] Voucher {payment_token} refunded {paid_amount:.2f} EUR (reason={reason})")
         elif payment_type == "paypal" and payment_email:
-            # Emetti nuovo voucher con bonus per pagamenti PayPal
+            # Emetti nuovo voucher per pagamenti PayPal.
+            # Bonus +10% riservato a failure piattaforma (reason != "cancel");
+            # cancel volontari ottengono solo l'importo nominale (evita abuso
+            # cancel-per-bonus).
+            _apply_bonus = (reason != "cancel")
             code, bonus_amount = payment._create_voucher(
                 payment_email, paid_amount,
                 origin_order_id=payment_token,
@@ -1345,6 +1368,7 @@ def _refund_job_payment(job_id, job, reason="error"):
                 kind="refund",
                 created_by="auto_refund",
                 note=f"Rimborso automatico ottimizzazione AI ({reason})",
+                apply_bonus=_apply_bonus,
             )
             email_service._send_voucher_email(code, payment_email, bonus_amount, book_title)
             job["refund_voucher_code"] = code
@@ -1731,6 +1755,13 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        # Release atomic budget reservation (cost ora persistito nel JSONL,
+        # quindi futuri preflight lo conteranno in `spent` direttamente).
+        try:
+            import gemini_tts as _gtts
+            _gtts.release_reservation(job_id)
+        except Exception:
+            pass
         # Diagnostica: job completato sopra soglia gratuita senza pagamento
         # registrato e' sintomo di bug (token consumato in un branch che non
         # stasha job["payment"], oppure stima divergente fra frontend/server
