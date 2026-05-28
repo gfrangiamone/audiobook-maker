@@ -619,10 +619,24 @@ def _call_llm(user_content, job=None, max_retries=None):
             if job is not None and partial_streamed > 0:
                 job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
             err_name = type(e).__name__
+            # Errori di rete client-side (httpx/openai connection wrappers).
             transient = any(s in err_name for s in (
                 "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
                 "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
             ))
+            # Errori provider-side: 429/5xx → retry con backoff. Necessario perche'
+            # openai.InternalServerError (503), RateLimitError (429), APIStatusError
+            # non matchano la lista per-nome ma sono comunque transient.
+            # status_code e' esposto sia da openai.APIStatusError sia (via response)
+            # da alcune subclassi; usiamo getattr con fallback su response.status_code.
+            if not transient:
+                _sc = getattr(e, "status_code", None)
+                if _sc is None:
+                    _resp = getattr(e, "response", None)
+                    if _resp is not None:
+                        _sc = getattr(_resp, "status_code", None)
+                if isinstance(_sc, int) and _sc in (429, 500, 502, 503, 504):
+                    transient = True
             if not transient or attempt >= max_retries - 1:
                 raise
             wait = 2 ** attempt  # 1, 2, 4, 8 seconds
