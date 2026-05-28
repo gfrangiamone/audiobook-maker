@@ -2644,6 +2644,37 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["output_name"] = f"{safe_name}.zip"
             job["output_zip"] = zip_path
 
+            # Storage cleanup: per output_format zip / zip_rss i singoli MP3 sono
+            # gia' contenuti nello ZIP (duplicazione completa su disco). Verifichiamo
+            # integrita' dello ZIP, poi rimuoviamo i sorgenti per liberare spazio.
+            # Per zip_rss richiediamo anche l'embed RSS riuscito: senza, il fallback
+            # in /api/download_podcast ricostruisce lo ZIP dai singoli MP3.
+            if output_format in ('zip', 'zip_rss'):
+                _purge_ok = False
+                try:
+                    import zipfile as _zf_check
+                    _purge_ok = (os.path.exists(zip_path)
+                                 and os.path.getsize(zip_path) > 0
+                                 and _zf_check.is_zipfile(zip_path))
+                except Exception as _e_zfchk:
+                    print(f"[{job_id}] ZIP integrity check failed: {_e_zfchk}")
+                if output_format == 'zip_rss' and not job.get("podcast_rss_included"):
+                    _purge_ok = False
+                if _purge_ok:
+                    _freed_bytes = 0
+                    _purged_count = 0
+                    for _mp3 in mp3_files:
+                        try:
+                            if os.path.exists(_mp3):
+                                _freed_bytes += os.path.getsize(_mp3)
+                                os.remove(_mp3)
+                                _purged_count += 1
+                        except OSError as _e_rm:
+                            print(f"[{job_id}] Cleanup MP3 skip {_mp3}: {_e_rm}")
+                    print(f"[{job_id}] ZIP cleanup: rimossi {_purged_count}/{len(mp3_files)} "
+                          f"MP3 individuali ({_freed_bytes} byte liberati) — "
+                          f"contenuto preservato in {os.path.basename(zip_path)}")
+
             # background M4B generation even in ZIP mode (skip for mp3, zip and zip_rss formats)
             if output_format not in ('mp3', 'zip', 'zip_rss'):
                 try:
