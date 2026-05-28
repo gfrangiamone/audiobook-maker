@@ -431,7 +431,13 @@ function onOutputChange(){
   const podcastUrlGroup=document.getElementById('podcastUrlGroup');
   if(podcastUrlGroup)podcastUrlGroup.style.display=(outputFormat==='zip_rss')?'':'none';
   const podcastUrlInput=document.getElementById('podcastUrlInput');
-  if(podcastUrlInput)podcastBaseUrl=podcastUrlInput.value.trim();
+  if(podcastUrlInput){
+    podcastBaseUrl=podcastUrlInput.value.trim();
+    if(!podcastUrlInput._abmBound){
+      podcastUrlInput._abmBound=true;
+      podcastUrlInput.addEventListener('input',()=>{podcastBaseUrl=podcastUrlInput.value.trim();});
+    }
+  }
   _updateSummary&&_updateSummary();
   updateSelection();
 }
