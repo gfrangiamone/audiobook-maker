@@ -5637,10 +5637,20 @@ def api_preview_audio(job_id):
                     )
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_usage failed (non-fatal): {e}")
-                # Sample rate empirico: lingua del libro + velocita` come tag
+                # Sample rate empirico: lingua TTS scelta (NON metadata libro).
+                # Priorita`: query `lang` -> job.opt_lang/gen_lang -> info.language.
+                # Senza questo, una preview con voce italiana su EPUB arabo
+                # registrava sample "ar" inquinando l'empirical rate per "it".
                 try:
-                    _job_info = jobs[job_id].get("info")
-                    _preview_lang = (getattr(_job_info, "language", None) or "it")[:2].lower()
+                    _job_pv = jobs[job_id]
+                    _job_info = _job_pv.get("info")
+                    _q_lang = (request.args.get("lang") or "").strip().split("-")[0].lower()
+                    _preview_lang = (
+                        _q_lang
+                        or (_job_pv.get("opt_lang") or "").strip().split("-")[0].lower()
+                        or (_job_pv.get("gen_lang") or "").strip().split("-")[0].lower()
+                        or (getattr(_job_info, "language", None) or "it").split("-")[0].lower()
+                    )[:2]
                     _norm_chars = len(gemini_tts._normalize_text(preview_text))
                     gemini_tts.record_rate_sample(
                         _norm_chars,
@@ -7295,6 +7305,13 @@ def api_optimize():
                     job["payment_type"] = _consumed_method
                     job["payment_email"] = _consumed_email
                     job["payment_amount_eur"] = _expected_total
+                    # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
+                    # all'audit per allineare i campi *_est al prezzo lockato
+                    # in payment["total_eur"]. Senza questo snapshot,
+                    # _finalize_optimization_complete ricalcolerebbe la stima
+                    # su testo post-LLM (potenzialmente piu` lungo/corto),
+                    # distorcendo delta_pct/margin nell'audit JSONL.
+                    job["gemini_estimate"] = _est_gemini
                     print(f"[{job_id}] combined payment consumed at /api/optimize: "
                           f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                           f"= {_expected_total:.2f}€ ({_consumed_method})")
@@ -7469,7 +7486,7 @@ def token_download_page(token):
     if elapsed > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return _render_dl_expired_page(lang), 410
+        return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
     # Check job exists in memory OR files still on disk
     job_id = token_info["job_id"]
@@ -7481,7 +7498,7 @@ def token_download_page(token):
     if not job_in_memory and not files_on_disk:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return _render_dl_expired_page(lang), 410
+        return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
     remaining_sec = max(60, int(_ret - elapsed))
     remaining_h = remaining_sec // 3600
@@ -7540,7 +7557,8 @@ def token_download_page(token):
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
-                           output_format=output_format)
+                           output_format=output_format,
+                           retention_hours=round(_ret / 3600))
 
 
 @app.route("/dl/<token>/abm")
@@ -8113,9 +8131,15 @@ def _serve_podcast_download(token_info, job, job_id):
                      download_name=f"{safe_name}_podcast.zip")
 
 
-def _render_dl_expired_page(lang="en"):
+def _render_dl_expired_page(lang="en", retention_hours=0):
     expired_t = _DL_PAGES_I18N.get("expired", {})
     t = expired_t.get(lang, expired_t.get("en", {}))
+    # Se il chiamante non passa la retention reale del token (es. token gia`
+    # rimosso e non recuperabile), usa il default standard come fallback.
+    # Vale come "almeno X ore sono passate"; per token Gemini il caller passa 48.
+    if not retention_hours:
+        retention_hours = int(EMAIL_FILE_RETENTION_SEC / 3600)
+    p1_text = t['p1'].replace("{h}", str(int(retention_hours)))
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
@@ -8134,7 +8158,7 @@ a:hover{{text-decoration:underline}}
 <div class="box">
 <h1>&#x23F0;</h1>
 <h2>{t['h2']}</h2>
-<p>{t['p1']}</p>
+<p>{p1_text}</p>
 <p>{t['p2']}</p>
 <p><a href="/">&#x1F3A7; Audiobook Maker</a></p>
 </div></body></html>"""
@@ -8227,7 +8251,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format=""):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -8330,7 +8354,10 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         abm_label = _abm_labels.get(lang, _abm_labels["en"])
         abm_btn_html = f'<p><a href="/dl/{token}/abm" class="btn btn-abm">{abm_label}</a></p>'
 
-    warn_text = t["warn"].replace("{r}", remaining_str)
+    # Retention totale: deve riflettere _ret reale del token (es. Gemini=48h,
+    # standard=18h), non un valore hardcoded. Senza questo, la riga "Dopo X ore"
+    # mostrava sempre "24" anche quando il countdown sopra reportava ~48h.
+    warn_text = t["warn"].replace("{r}", remaining_str).replace("{h}", str(int(retention_hours)))
 
     share_url = BASE_URL or "https://audiobook-maker.com"
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')

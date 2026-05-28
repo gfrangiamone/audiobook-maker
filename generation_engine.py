@@ -1640,8 +1640,14 @@ def run_optimization(job_id, selected_chapters=None):
             # Persisti la stima Gemini per l'audit (popola i campi *_est del
             # JSONL altrimenti sempre 0 in questo path: il flusso auto-gen
             # bypassa /api/generate dove la stima viene calcolata).
+            # IMPORTANTE: se /api/optimize ha gia` salvato lo snapshot pre-LLM
+            # (combined_optimize_autogen flow), NON sovrascrivere — il prezzo
+            # lockato in payment["total_eur"] e` stato calcolato su quella
+            # stima, e ricalcolarla qui su testo post-LLM disallinea cost_est
+            # da charged nell'audit JSONL (artefatto delta_pct/margin).
             if (gemini_tts is not None and voice
-                    and voice.startswith("gemini:")):
+                    and voice.startswith("gemini:")
+                    and not job.get("gemini_estimate")):
                 try:
                     _ui_lang_autogen = (job.get("opt_lang") or "").lower()
                     _lang_autogen = (_ui_lang_autogen
@@ -1733,18 +1739,30 @@ def _engine_for_voice(voice):
 # ---------------------------------------------------------------------------
 
 def _audit_language(job, info):
-    """Lingua da registrare nell'audit Gemini.
+    """Lingua da registrare nell'audit Gemini e in `record_rate_sample`.
 
     Per i job PREMIUM la lingua di interesse e' quella TTS scelta dall'utente
     (perche' determina la voce e il prompt), non la lingua metadata del libro:
     es. libro arabo letto da voce italiana -> audit deve mostrare "it", non
-    "ar-sa". Preferenze in ordine: `job["opt_lang"]` (settato da /api/optimize),
-    `job["gen_lang"]` (settato da /api/generate quando la richiesta porta
-    `lang`), `info.language` come ultimo fallback.
+    "ar-sa". Preferenze in ordine:
+      1. `job["opt_lang"]`  — settato da /api/optimize (body `lang`)
+      2. `job["gen_lang"]`  — settato da /api/generate (body `lang`)
+      3. `job["payment"]["gemini_est"].language` — lingua passata a
+         `estimate_book_cost` al booking (riflette la stima lockata in
+         `payment.total_eur`)
+      4. `info.language` — fallback metadata libro (legacy / job senza
+         pagamento, es. preview free sub-soglia)
     """
     for src in (job.get("opt_lang"), job.get("gen_lang")):
         if isinstance(src, str) and src.strip():
             return src.strip().split("-")[0].lower()
+    try:
+        _est_lang = (((job.get("payment") or {}).get("gemini_est") or {})
+                     .get("language") or "")
+        if isinstance(_est_lang, str) and _est_lang.strip():
+            return _est_lang.strip().split("-")[0].lower()
+    except Exception:
+        pass
     fallback = getattr(info, "language", "") or ""
     return (fallback.split("-")[0].lower() if fallback else "")
 
@@ -2259,9 +2277,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         )
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
-                    # Empirical rate sample (chars normalizzati -> audio_seconds reali)
+                    # Empirical rate sample (chars normalizzati -> audio_seconds reali).
+                    # Lingua = TTS scelta (opt_lang/gen_lang), NON metadata libro:
+                    # cosi' i campioni rate sono raggruppati per lingua REALE della
+                    # voce, non per lingua dell'input (es. libro arabo -> voce IT
+                    # registra sample "it", utili per calibrazione voce italiana).
                     try:
-                        _lang = (getattr(info, "language", None) or "it")[:2].lower()
+                        _lang = (_audit_language(job, info) or "it")[:2]
                         _norm_chars = len(gemini_tts._normalize_text(block["text"]))
                         _audio_secs = result.get("audio_seconds_real")
                         if _audio_secs is None:
@@ -2552,9 +2574,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 )
                             except Exception as e:
                                 print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
-                            # Empirical rate sample
+                            # Empirical rate sample — vedi commento branch single-file
+                            # sopra per la motivazione del fallback _audit_language.
                             try:
-                                _lang = (getattr(info, "language", None) or "it")[:2].lower()
+                                _lang = (_audit_language(job, info) or "it")[:2]
                                 _norm_chars = len(gemini_tts._normalize_text(block["text"]))
                                 _audio_secs = result.get("audio_seconds_real")
                                 if _audio_secs is None:

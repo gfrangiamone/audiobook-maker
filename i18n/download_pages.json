@@ -3,43 +3,43 @@
     "it": {
       "title": "Link scaduto",
       "h2": "Link scaduto",
-      "p1": "Sono trascorse pi&ugrave; di 24 ore dall'invio dell'email. I file generati sono stati cancellati automaticamente per liberare spazio sul server.",
+      "p1": "Sono trascorse pi&ugrave; di {h} ore dall'invio dell'email. I file generati sono stati cancellati automaticamente per liberare spazio sul server.",
       "p2": "Per generare nuovamente l'audiolibro, visita:"
     },
     "en": {
       "title": "Link expired",
       "h2": "Link expired",
-      "p1": "More than 24 hours have passed since the email was sent. The generated files have been automatically deleted to free up server space.",
+      "p1": "More than {h} hours have passed since the email was sent. The generated files have been automatically deleted to free up server space.",
       "p2": "To generate the audiobook again, visit:"
     },
     "fr": {
       "title": "Lien expir&eacute;",
       "h2": "Lien expir&eacute;",
-      "p1": "Plus de 24 heures se sont &eacute;coul&eacute;es depuis l'envoi de l'email. Les fichiers g&eacute;n&eacute;r&eacute;s ont &eacute;t&eacute; automatiquement supprim&eacute;s pour lib&eacute;rer de l'espace sur le serveur.",
+      "p1": "Plus de {h} heures se sont &eacute;coul&eacute;es depuis l'envoi de l'email. Les fichiers g&eacute;n&eacute;r&eacute;s ont &eacute;t&eacute; automatiquement supprim&eacute;s pour lib&eacute;rer de l'espace sur le serveur.",
       "p2": "Pour g&eacute;n&eacute;rer &agrave; nouveau le livre audio, visitez :"
     },
     "es": {
       "title": "Enlace caducado",
       "h2": "Enlace caducado",
-      "p1": "Han pasado m&aacute;s de 24 horas desde el env&iacute;o del email. Los archivos generados se han eliminado autom&aacute;ticamente para liberar espacio en el servidor.",
+      "p1": "Han pasado m&aacute;s de {h} horas desde el env&iacute;o del email. Los archivos generados se han eliminado autom&aacute;ticamente para liberar espacio en el servidor.",
       "p2": "Para generar nuevamente el audiolibro, visita:"
     },
     "de": {
       "title": "Link abgelaufen",
       "h2": "Link abgelaufen",
-      "p1": "Es sind mehr als 24 Stunden seit dem Versand der E-Mail vergangen. Die erzeugten Dateien wurden automatisch gel&ouml;scht, um Speicherplatz auf dem Server freizugeben.",
+      "p1": "Es sind mehr als {h} Stunden seit dem Versand der E-Mail vergangen. Die erzeugten Dateien wurden automatisch gel&ouml;scht, um Speicherplatz auf dem Server freizugeben.",
       "p2": "Um das H&ouml;rbuch erneut zu erstellen, besuche:"
     },
     "zh": {
       "title": "链接已过期",
       "h2": "链接已过期",
-      "p1": "邮件发送已超过24小时。生成的文件已自动删除以释放服务器空间。",
+      "p1": "邮件发送已超过{h}小时。生成的文件已自动删除以释放服务器空间。",
       "p2": "要重新生成有声读物，请访问："
     },
     "hi": {
       "title": "लिंक समाप्त हो गया",
       "h2": "लिंक समाप्त हो गया",
-      "p1": "ईमेल भेजे जाने के बाद से 24 घंटे से अधिक समय बीत चुका है. सर्वर स्थान खाली करने के लिए जनरेट की गई फ़ाइलें स्वचालित रूप से हटा दी गई हैं.",
+      "p1": "ईमेल भेजे जाने के बाद से {h} घंटे से अधिक समय बीत चुका है. सर्वर स्थान खाली करने के लिए जनरेट की गई फ़ाइलें स्वचालित रूप से हटा दी गई हैं.",
       "p2": "ऑडियोबुक को फिर से जनरेट करने के लिए, यहाँ जाएँ:"
     }
   },
@@ -48,7 +48,7 @@
       "title": "Download",
       "h2": "Il tuo audiolibro &egrave; pronto!",
       "btn_no_m4b": "⬇️ Scarica audiolibro",
-      "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo 24 ore dall'invio dell'email verranno cancellati.",
+      "warn": "&#x23F0; Hai ancora {r} per scaricare i file.<br>Dopo {h} ore dall'invio dell'email verranno cancellati.",
       "share": "Ti &egrave; piaciuto? Condividi con i tuoi amici!",
       "share_text": "Ho appena trasformato un ebook in audiolibro con Audiobook Maker — gratis e direttamente dal browser!",
       "copied": "Copiato!"
@@ -57,7 +57,7 @@
       "title": "Download",
       "h2": "Your audiobook is ready!",
       "btn_no_m4b": "⬇️ Download audiobook",
-      "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted 24 hours after the email was sent.",
+      "warn": "&#x23F0; You have {r} left to download the files.<br>They will be deleted {h} hours after the email was sent.",
       "share": "Like it? Share with your friends!",
       "share_text": "I just turned an ebook into an audiobook with Audiobook Maker — free and right in the browser!",
       "copied": "Copied!"
@@ -66,7 +66,7 @@
       "title": "T&eacute;l&eacute;chargement",
       "h2": "Votre livre audio est pr&ecirc;t !",
       "btn_no_m4b": "⬇️ T&eacute;l&eacute;charger le livre audio",
-      "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s 24 heures apr&egrave;s l'envoi de l'email.",
+      "warn": "&#x23F0; Il vous reste {r} pour t&eacute;l&eacute;charger les fichiers.<br>Ils seront supprim&eacute;s {h} heures apr&egrave;s l'envoi de l'email.",
       "share": "Vous avez aim&eacute; ? Partagez avec vos amis !",
       "share_text": "Je viens de transformer un ebook en livre audio avec Audiobook Maker — gratuit et directement depuis le navigateur !",
       "copied": "Copi&eacute; !"
@@ -75,7 +75,7 @@
       "title": "Descarga",
       "h2": "&iexcl;Tu audiolibro est&aacute; listo!",
       "btn_no_m4b": "⬇️ Descargar audiolibro",
-      "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n 24 horas despu&eacute;s del env&iacute;o del email.",
+      "warn": "&#x23F0; Te quedan {r} para descargar los archivos.<br>Se eliminar&aacute;n {h} horas despu&eacute;s del env&iacute;o del email.",
       "share": "&iexcl;Te ha gustado? &iexcl;Comp&aacute;rtelo con tus amigos!",
       "share_text": "Acabo de convertir un ebook en audiolibro con Audiobook Maker — ¡gratis y desde el navegador!",
       "copied": "&iexcl;Copiado!"
@@ -84,7 +84,7 @@
       "title": "Download",
       "h2": "Dein H&ouml;rbuch ist fertig!",
       "btn_no_m4b": "⬇️ H&ouml;rbuch herunterladen",
-      "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden 24 Stunden nach dem E-Mail-Versand gel&ouml;scht.",
+      "warn": "&#x23F0; Du hast noch {r} zum Herunterladen.<br>Die Dateien werden {h} Stunden nach dem E-Mail-Versand gel&ouml;scht.",
       "share": "Hat es dir gefallen? Teile es mit deinen Freunden!",
       "share_text": "Ich habe gerade ein Ebook mit Audiobook Maker in ein Hörbuch umgewandelt — kostenlos und direkt im Browser!",
       "copied": "Kopiert!"
@@ -93,7 +93,7 @@
       "title": "下载",
       "h2": "您的有声读物已准备好！",
       "btn_no_m4b": "⬇️ 下载有声读物",
-      "warn": "&#x23F0; 您还有 {r} 的时间下载文件。<br>文件将在邮件发送后24小时删除。",
+      "warn": "&#x23F0; 您还有 {r} 的时间下载文件。<br>文件将在邮件发送后{h}小时删除。",
       "share": "觉得不错？分享给你的朋友！",
       "share_text": "我刚用 Audiobook Maker 把一本电子书转成了有声书——免费且在浏览器即可完成！",
       "copied": "已复制！"
@@ -102,7 +102,7 @@
       "title": "डाउनलोड",
       "h2": "आपकी ऑडियोबुक तैयार है!",
       "btn_no_m4b": "⬇️ ऑडियोबुक डाउनलोड करें",
-      "warn": "&#x23F0; फ़ाइलें डाउनलोड करने के लिए आपके पास {r} शेष हैं.<br>ईमेल भेजे जाने के 24 घंटे बाद उन्हें हटा दिया जाएगा.",
+      "warn": "&#x23F0; फ़ाइलें डाउनलोड करने के लिए आपके पास {r} शेष हैं.<br>ईमेल भेजे जाने के {h} घंटे बाद उन्हें हटा दिया जाएगा.",
       "share": "पसंद आया? अपने दोस्तों के साथ साझा करें!",
       "share_text": "मैंने अभी Audiobook Maker के साथ एक ईबुक को ऑडियोबुक में बदल दिया — मुफ़्त और सीधे ब्राउज़र से!",
       "copied": "कॉपी किया गया!"

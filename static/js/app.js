@@ -1308,10 +1308,22 @@ function _buildPreviewUrl(){
   const style=_isGeminiVoiceId(voice)
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
+  // Lingua TTS scelta dall'utente: il backend la usa per il rate sample
+  // empirico (gemini_tts_rate_log) cosi' i campioni vengono raggruppati
+  // per lingua REALE della voce, non per metadata libro.
+  let _selLang='';
+  try{
+    const _audioTab=(typeof wizardState!=='undefined'&&wizardState&&wizardState.audioTab)?wizardState.audioTab:'';
+    const _el=(_audioTab==='premium')
+      ?document.getElementById('vlPremium')
+      :document.getElementById('vl');
+    _selLang=(_el&&_el.value)?_el.value:'';
+  }catch(_){ _selLang=''; }
   let u='/api/preview_audio/'+bookData.job_id
     +'?voice='+encodeURIComponent(voice)
     +'&rate='+encodeURIComponent(rate);
   if(style)u+='&style='+encodeURIComponent(style);
+  if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
   const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   sel.forEach(i=>{u+='&selected_chapters='+encodeURIComponent(i);});
   return u;
@@ -3470,8 +3482,13 @@ function _updateGenNoticeWarning(){
   const txt=document.getElementById('genActiveNoticeText');
   if(!notice||!txt)return;
   if(emailRegistered){
+    // Email recepita: il banner di avviso è fuorviante (la conferma verde
+    // sotto la progress bar comunica già lo stato safe). Nascondiamo il
+    // banner ATTENZIONE per evitare il messaggio contraddittorio.
     notice.classList.remove('warn');
+    notice.style.display='none';
   }else{
+    notice.style.display='';
     notice.classList.add('warn');
     const w=t('gen_active_notice_warn');
     if(w)txt.textContent=w;
