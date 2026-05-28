@@ -25,10 +25,16 @@ AUDIO_SAMPLE_WIDTH_BYTES = 2
 AAC_BITRATE_M4B = "96k"
 MP3_BITRATE_DEFAULT = "64k"
 
-# Per-language token ratios (chars per token)
+# Per-language token ratios (chars per token).
+# Copre tutte le lingue ufficialmente supportate da Gemini TTS (vedi
+# SUPPORTED_UI_LANGUAGES) + zh legacy. Latin ~4.0, Cyrillic ~3.0, CJK ~1.5,
+# Indic/Arabic/Thai ~2.0.
 CHARS_PER_TOKEN_BY_LANG = {
     "it": 4.0, "en": 4.0, "fr": 4.0, "es": 4.0, "de": 4.0, "pt": 4.0,
-    "ru": 3.0, "zh": 1.5, "ja": 1.5, "hi": 2.0, "ar": 2.0,
+    "nl": 4.0, "pl": 4.0, "ro": 4.0, "tr": 4.0, "id": 4.0, "vi": 4.0,
+    "ru": 3.0, "uk": 3.0,
+    "zh": 1.5, "ja": 1.5, "ko": 1.5,
+    "hi": 2.0, "ar": 2.0, "bn": 2.0, "mr": 2.0, "ta": 2.0, "te": 2.0, "th": 2.0,
     "default": 4.0,
 }
 
@@ -412,10 +418,24 @@ def parse_voice_id(voice_id):
     return model_key, _resolve_model_id(model_key), voice_name
 
 
-SUPPORTED_UI_LANGUAGES = ["it", "en", "fr", "es", "de", "zh", "hi"]
+# Lingue ufficialmente supportate da Gemini TTS (Google AI Studio docs):
+# 24 locali ufficiali + zh-CN legacy (presente da prima della formalizzazione
+# del catalogo Google; mantenuto perche` empiricamente funziona).
+# Fonte: https://ai.google.dev/gemini-api/docs/speech-generation#languages
+SUPPORTED_UI_LANGUAGES = [
+    "it", "en", "fr", "es", "de", "pt", "nl", "pl", "ro", "tr",
+    "ru", "uk", "ja", "ko", "zh",
+    "hi", "ar", "bn", "mr", "ta", "te", "th", "id", "vi",
+]
 _LANG_LOCALE = {
     "it": "it-IT", "en": "en-US", "fr": "fr-FR", "es": "es-ES",
-    "de": "de-DE", "zh": "zh-CN", "hi": "hi-IN",
+    "de": "de-DE", "pt": "pt-BR", "nl": "nl-NL", "pl": "pl-PL",
+    "ro": "ro-RO", "tr": "tr-TR",
+    "ru": "ru-RU", "uk": "uk-UA",
+    "ja": "ja-JP", "ko": "ko-KR", "zh": "zh-CN",
+    "hi": "hi-IN", "ar": "ar-EG", "bn": "bn-BD", "mr": "mr-IN",
+    "ta": "ta-IN", "te": "te-IN", "th": "th-TH",
+    "id": "id-ID", "vi": "vi-VN",
 }
 
 
@@ -568,6 +588,16 @@ def compute_user_price_eur(google_cost_eur, model_key):
         base   = google_cost x (1 + margin/100)
         gross  = (base + PAYPAL_FIXED_FEE) / (1 - PAYPAL_PERCENT_FEE/100)
         user_price = round(gross, 2)
+
+    IMPORTANTE - semantica di `margin/100`:
+        E` il margine NETTO operatore (cio` che intaschi DOPO la quota PayPal),
+        non il ricarico apparente che vede l'utente. Il prezzo finale e` gonfiato
+        ulteriormente dalle fee PayPal (gross-up percentuale + fee fissa) che
+        ricadono sul cliente. Conseguenza: con `margin=30`, l'utente vede un
+        ricarico effettivo di ~39-40% rispetto al costo Google netto (su libri
+        lunghi dove la fee fissa e` diluita). Asintoto: user_price/google_cost
+        -> (1 + margin/100) / (1 - PAYPAL_PERCENT_FEE/100). Dettagli e tabella
+        in md_files/ttsgemini.md §11.1.1.
 
     Sotto FREE_THRESHOLD_EUR: user_price = 0.0, is_free = True.
     """

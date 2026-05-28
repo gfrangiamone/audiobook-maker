@@ -715,7 +715,14 @@ function fillLangs(){
   sel.onchange=()=>{
     updVoices();
     const dst=document.getElementById('vlPremium');
-    if(dst){dst.value=sel.value;updVoicesPremium&&updVoicesPremium();}
+    if(dst){
+      // Propaga la lingua al tab Premium solo se compatibile con il catalogo
+      // Gemini; altrimenti lascia la precedente selezione Premium intatta
+      // (evita il side-effect "value=stringa non presente" che azzera il select).
+      const ok=Array.from(dst.options).some(o=>o.value===sel.value);
+      if(ok)dst.value=sel.value;
+      updVoicesPremium&&updVoicesPremium();
+    }
     // La lingua entra nella stima (cluster rate-log + ratio chars/token).
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   };
@@ -737,15 +744,35 @@ function fillLangs(){
   syncLanguageOptions();
 }
 
-// Mantiene allineate le option list dei selettori #vl (Standard) e
-// #vlPremium (Premium). Va chiamata dopo aver popolato #vl in fillLangs(),
-// così entrambi i tab mostrano le stesse lingue e lo stesso valore corrente.
+// Popola il selettore #vlPremium SOLO con le lingue per cui esiste almeno una
+// voce Premium (id `gemini:`). Le lingue Edge che Gemini non supporta vengono
+// escluse: l'utente le vede comunque nel tab Standard, mentre nel tab Premium
+// il dropdown elenca esclusivamente l'offerta effettiva di Gemini TTS.
+// Va chiamata dopo aver popolato #vl in fillLangs(), così la pre-selezione
+// corrente di #vl viene rispettata (con fallback alla prima lingua disponibile
+// se quella corrente non ha voci Premium).
 function syncLanguageOptions(){
   const src=document.getElementById('vl');
   const dst=document.getElementById('vlPremium');
   if(!src||!dst)return;
-  dst.innerHTML=src.innerHTML;
-  dst.value=src.value;
+  const currentVal=src.value;
+  // Filtra: una lingua entra nel Premium dropdown solo se voices[lang].voices
+  // contiene almeno una voce con id che inizia per "gemini:".
+  const hasPremium=lc=>{
+    const v=voices&&voices[lc];
+    if(!v||!Array.isArray(v.voices))return false;
+    return v.voices.some(x=>x&&typeof x.id==='string'&&x.id.startsWith('gemini:'));
+  };
+  // Mantieni l'ordine di #vl (priorità it, en, fr, de, es, pt poi alfabetico).
+  const ordered=[];
+  for(const o of src.options){
+    if(hasPremium(o.value))ordered.push(o);
+  }
+  while(dst.firstChild)dst.removeChild(dst.firstChild);
+  for(const o of ordered)dst.appendChild(o.cloneNode(true));
+  // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
+  if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
+  else if(ordered.length>0)dst.value=ordered[0].value;
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}

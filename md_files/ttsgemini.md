@@ -18,7 +18,7 @@ Gemini TTS è il terzo motore di sintesi vocale dell'app, accanto a:
 
 Gemini si distingue per:
 
-- **Voci multilingue native**: 30 voci × 2 modelli, ciascuna disponibile sotto ogni lingua UI (it, en, fr, es, de, zh, hi). Non c'è un catalogo per lingua: la stessa voce parla qualsiasi delle 7 lingue supportate.
+- **Voci multilingue native**: 30 voci × 2 modelli, ciascuna disponibile sotto ogni lingua UI supportata (vedi `SUPPORTED_UI_LANGUAGES` in `gemini_tts.py:415`: 23 codici ISO 639-1 ufficiali Google + `zh` legacy = 24 lingue; `en-US` ed `en-IN` collassano sotto `en`). Non c'è un catalogo per lingua: la stessa voce parla qualsiasi delle lingue supportate.
 - **Stile controllabile via prompt**: `style_instruction` (max 200 char user-side; cap calibrato per lasciare spazio alla rate directive ~95 char nello stesso blocco `[style: ...]`) viene prefissata a ogni chunk per orientare tono/emozione.
 - **Direttive di velocità in linguaggio naturale**: 7 step (`-30%`..`+30%`) mappati su istruzioni testuali ("Read this text slowly...", "Read this text very quickly...") perché Gemini non espone una `speaking_rate` API.
 - **Costing per token**: input + output token tariffati separatamente in USD per MTok, con conversione EUR + margine + fee PayPal.
@@ -104,7 +104,11 @@ Definiti in `GEMINI_MODELS` (`gemini_tts.py:62`). Ogni entry contiene id API (AP
 
 ### 3.3 Catalogo voci
 
-`get_voices()` produce il dict `{lang_code: [voice_entry, ...]}` consumato dal frontend. Ogni voce è esposta **sotto ogni lingua UI** (vedi `SUPPORTED_UI_LANGUAGES`) perché le voci Gemini sono multilingue native — la stessa `Zephyr` legge IT, EN, FR ecc. senza scelta esplicita di locale al backend.
+`get_voices()` produce il dict `{lang_code: [voice_entry, ...]}` consumato dal frontend. Ogni voce è esposta **sotto ogni lingua UI** (vedi `SUPPORTED_UI_LANGUAGES`, `gemini_tts.py:415`) perché le voci Gemini sono multilingue native — la stessa `Zephyr` legge IT, EN, FR ecc. senza scelta esplicita di locale al backend.
+
+Lingue esposte (24 ISO 639-1): le **23 ufficiali** Google AI per Gemini TTS al netto del doppione `en-US`/`en-IN` (`it, en, fr, es, de, pt, nl, pl, ro, tr, ru, uk, ja, ko, hi, ar, bn, mr, ta, te, th, id, vi`; locale di default in `_LANG_LOCALE`, `gemini_tts.py:422`) **+ `zh` legacy** (non ufficialmente supportato da Google ma funzionante empiricamente, mantenuto per retrocompatibilità).
+
+Filtro UI: il dropdown `#vlPremium` del tab Premium (`static/js/app.js`, funzione `syncLanguageOptions()`) **elenca solo le lingue per cui esiste almeno una voce Premium** (id `gemini:`). Le lingue Edge non coperte da Gemini restano disponibili nel tab Standard ma non compaiono nel Premium dropdown — evita la pessima UX dell'elenco voci vuoto al cambio lingua.
 
 Ordine output: tutte le **Female** prima (in ordine alfabetico), poi tutte le **Male**, in coerenza con l'`<optgroup>` del selettore voci Edge. Gender mappato in `GEMINI_VOICE_GENDER` (fonte: documentazione ufficiale Google AI Studio).
 
@@ -464,6 +468,26 @@ is_free         = user_price_eur < FREE_THRESHOLD_EUR
 
 I default sono allineati al pricing pubblico Google al momento dello sviluppo. **Aggiornare i valori di pricing**: bumpare le env in `.env` di produzione; il modulo li legge a runtime (no caching), quindi un restart applica i nuovi valori.
 
+### 11.1.1 Semantica di `MARGIN_PERCENT` (IMPORTANTE)
+
+`MARGIN_PERCENT` è il **margine netto operatore**, NON il ricarico apparente all'utente. La formula è costruita in modo che, dopo che PayPal preleva la sua quota, l'operatore intaschi esattamente `google_cost × (1 + margin/100)`. Le fee PayPal vengono scaricate sopra (gross-up) e gonfiano il prezzo finale visibile all'utente.
+
+Esempio numerico con `flash31` (output $20/MTok), `MARGIN_PERCENT=30`, `USD_EUR_RATE=0.86`, `PAYPAL_PERCENT_FEE=3.4`, `PAYPAL_FIXED_FEE_EUR=0.34`, libro di 290 minuti audio:
+
+| Componente | EUR | % vs Google |
+|------------|-----|-------------|
+| Google cost (1500 tok/min × 290 min × $20/MTok × 0.86) | 7.49 | base |
+| + Margine operatore 30% | +2.25 | +30.0% |
+| + PayPal 3.4% sul totale (gross-up) | +0.34 | +4.6% |
+| + PayPal €0.34 fissa | +0.34 | +4.5% |
+| **= Prezzo utente** | **10.42** | **+39.1%** |
+
+Rate per minuto mostrato in UI: ~€0.0359/min. Il "ricarico apparente" 39–40% è atteso e non un bug: 30% finiscono all'operatore netti, ~9% sono fee PayPal che il cliente paga oltre il margine.
+
+Asintoto su libri grandi (fee fissa diluita): `user_per_min → google_per_min × (1 + margin/100) / (1 − paypal_pct/100)` ≈ Google × 1.346 con i parametri di default.
+
+Per ottenere un ricarico utente apparente del 30%: impostare `MARGIN_PERCENT ≈ 21` (così `1.21 / 0.966 ≈ 1.253`, più la fee fissa diluita ≈ 30% complessivo a libro lungo). Trade-off: il margine netto operatore scende dal 30% al 21%.
+
 ### 11.2 Free threshold
 
 Quando `user_price_eur < FREE_THRESHOLD_EUR`, `compute_user_price_eur` restituisce `user_price_eur=0.0, is_free=True`: il job parte senza pagamento. Anche `ABM_LLM_FREE_THRESHOLD_EUR` esiste per l'ottimizzazione DeepSeek; il valore tipico è lo stesso (`0.50`) ma sono indipendenti.
@@ -628,6 +652,12 @@ Inoltre `run_optimization()` persiste `job["gemini_estimate"]` (output di `estim
 ### 15.1 Selettore voci
 
 `<optgroup label="Voci PREMIUM">` aggregato nel frontend in `static/js/app.js` quando `gemini_tts.is_available()` ritorna True (esposto via `/api/voices`). All'utente sono presentate le voci nella lingua TTS scelta (dropdown lingua), ordinate F poi M.
+
+Il dropdown lingua del tab Premium (`#vlPremium`) è popolato da `syncLanguageOptions()` filtrando le option di `#vl` per le sole lingue in cui `voices[lang].voices` contiene almeno una voce con id `gemini:`. Conseguenze:
+
+- Le lingue Edge non coperte da Gemini (es. `nb`, `cs`, `sv`, `sw`, ecc.) **non compaiono** nel dropdown Premium — l'utente non viene messo nella condizione di selezionare una lingua a cui non corrisponde nessuna voce Premium.
+- Quando l'utente cambia lingua nel tab Standard, il listener di `#vl` propaga il valore a `#vlPremium` **solo se compatibile**; altrimenti `#vlPremium` mantiene la sua selezione corrente (no value reset silenzioso).
+- Il set di lingue Premium viene dalla intersezione `(SUPPORTED_UI_LANGUAGES Gemini) ∩ (lingue presenti in /api/voices)`. Aggiungere/rimuovere lingue da `gemini_tts.SUPPORTED_UI_LANGUAGES` si riflette automaticamente nel dropdown senza modifiche JS.
 
 ### 15.2 Modali
 
