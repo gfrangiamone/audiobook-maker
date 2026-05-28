@@ -3698,7 +3698,12 @@ function _computeSelectedChars(){
 function _showSelTooLargeModal(charsSelected,limit){
   const body=document.getElementById('selTooLargeBody');
   if(body){
-    const k='sel_too_large_body';
+    // Premium variant quando il `limit` corrisponde al cap Gemini (es. 800k):
+    // messaggio dice "fissato per le voci PREMIUM" e invita a usare Voci Standard.
+    // Altrimenti (cap Standard ~1.5M) usa il messaggio generico.
+    const _premCap=(bookData&&bookData.max_gemini_text_chars)|0;
+    const isPrem=(_premCap>0 && limit===_premCap);
+    const k=isPrem?'sel_too_large_body_premium':'sel_too_large_body';
     const tpl=t(k,{chars:(charsSelected||0).toLocaleString(),limit:(limit||0).toLocaleString()});
     body.textContent=(tpl&&tpl!==k)?tpl:('Selection too large: '+(charsSelected||0).toLocaleString()+' characters (limit '+(limit||0).toLocaleString()+'). Please reduce the chapter selection.');
   }
