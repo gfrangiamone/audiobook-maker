@@ -363,7 +363,8 @@ def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None
 def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
                                   audit_outcome, reason_detail="",
                                   voucher_code=None, chars_total=None,
-                                  chunks_total=None, chunks_failed=None):
+                                  chunks_total=None, chunks_failed=None,
+                                  forensic_until=None, work_dir_path=""):
     """Notifica IMMEDIATA all'admin di un fallimento job Gemini TTS che ha
     comportato rimborso (o di un blocco preventivo).
 
@@ -431,6 +432,34 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
     reason_safe = _sanitize_header(reason_detail or "", max_len=300)
     subject = (f"[ABM-ADMIN] Gemini TTS — {kind_label} "
                f"— job {job_id[:8]}")
+
+    # Forensic retention block: dir preservata + link download ZIP
+    forensic_block = ""
+    if forensic_until and BASE_URL:
+        import urllib.parse as _urlparse
+        from datetime import datetime as _dt
+        try:
+            until_iso = _dt.fromtimestamp(float(forensic_until)).strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError):
+            until_iso = "?"
+        forensic_url = (BASE_URL.rstrip("/")
+                        + f"/admin/job/{_urlparse.quote(job_id, safe='')}/forensic.zip")
+        wd_safe = _sanitize_header(work_dir_path or "", max_len=300)
+        forensic_block = f"""
+  <div style="margin-top:16px;padding:14px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px">
+    <div style="font-weight:600;color:#0f172a;margin-bottom:8px">Analisi forense</div>
+    <div style="font-size:13px;color:#334155;margin-bottom:8px">
+      Cartella di lavoro preservata per <strong>analisi post-mortem</strong> fino al <strong>{until_iso}</strong>.
+      Dopo tale data il cleanup automatico la rimuoverà.
+    </div>
+    <div style="font-size:12px;color:#475569;margin-bottom:10px;font-family:monospace;word-break:break-all">
+      {wd_safe or '(path non disponibile)'}
+    </div>
+    <a href="{forensic_url}" style="display:inline-block;padding:9px 14px;background:#2563eb;color:#fff;border-radius:5px;text-decoration:none;font-weight:600;font-size:13px">Scarica ZIP forense</a>
+    <div style="margin-top:8px;font-size:11px;color:#64748b">
+      Richiede login admin (cookie su /admin/audit-tts). Se ricevi 401, fai login e ritorna a questo link.
+    </div>
+  </div>"""
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">
   <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
     <h2 style="margin:0;font-size:18px">Gemini TTS — {kind_label}</h2>
@@ -445,6 +474,7 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
     {refund_line}
     <tr><td style="padding:8px 12px"><strong>Dettaglio</strong></td><td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#555">{reason_safe or '—'}</td></tr>
   </table>
+  {forensic_block}
   <p style="color:#888;font-size:12px;margin-top:16px">Alert generato automaticamente. Per disattivare rimuovere <code>ABM_ADMIN_EMAIL</code>. Console eventi: <code>{BASE_URL}/admin/#tab-gemini</code></p>
 </div>"""
     try:

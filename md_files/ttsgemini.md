@@ -507,6 +507,37 @@ Per migliorare nel tempo l'accuratezza della stima durata audio, ogni preview/jo
 
 ## 14. Audit & reconciliation
 
+### 14.0 Forensic retention della work_dir
+
+Quando un job Gemini fallisce con refund (qualunque `kind` ∈ `quality` / `quota` / `budget` / `preflight` / `generic`), la sua `work_dir` (`<ABM_DATA_DIR>/<job_id>/`) viene **preservata** per analisi post-mortem invece di essere cancellata dal cleanup automatico.
+
+**Meccanismo**:
+1. `generation_engine._admin_alert_gemini_failure()` (linea ~1123) chiama `_write_forensic_marker()` che scrive un file JSON `.forensic_retain.json` nella work_dir:
+   ```json
+   {
+     "retain_until": 1748459337.0,
+     "created_at": 1748456337.0,
+     "kind": "quality",
+     "outcome": "failed_quality_refunded",
+     "reason": "1/625 chunk silenziati (0.2%)",
+     "job_id": "...",
+     "days": 7
+   }
+   ```
+2. `audiobook_app._forensic_marker_protects()` (linea ~8956) controlla `now < retain_until` ed è invocato in:
+   - `_cleanup_job()` (status `error` dopo 120s),
+   - branch "token-orphan dir" del cleanup loop,
+   - branch "orphan output dir",
+   - branch "orphan dir" generico.
+
+L'entry in memoria del job viene comunque rimossa (così il loop non si ripropone), ma la dir su disco sopravvive.
+
+**Configurazione**: `ABM_GEMINI_FORENSIC_RETENTION_DAYS` (default 7; 0 disabilita). Vedi `PARAMETRI_CONFIGURAZIONE.md`.
+
+**Endpoint download admin**: `GET /admin/job/<job_id>/forensic.zip` (`audiobook_app.admin_forensic_zip`) — zippa on-the-fly la `work_dir` includendo `chunk_*.pcm`, `_silence.pcm`, output finale, file ABM, eventuali prompt debug se `ABM_GEMINI_DEBUG_PROMPTS=true`. Auth: cookie HttpOnly `abm_admin_session` (set da `/admin/login`) o header `X-Admin-Token` (ABM_ADMIN_TOKEN richiesto). 404 se la dir è scaduta o non esistente, 401 se non autenticato.
+
+**Email admin**: `email_service._admin_notify_gemini_failure()` aggiunge un blocco "Analisi forense" con scadenza retention e link diretto allo ZIP.
+
 ### 14.1 Audit file mensile
 
 `gemini_cost_audit_YYYY-MM.jsonl` (uno per mese, JSON-lines). Append-only. Scritto da `_write_gemini_audit()` (`generation_engine.py:1549`) alla fine di ogni job (success, error, cancel). Record:

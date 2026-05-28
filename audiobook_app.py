@@ -3204,6 +3204,53 @@ def admin_api_voucher_revoke(code):
     return jsonify({"ok": True, "code": code})
 
 
+@app.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
+def admin_forensic_zip(job_id):
+    """Scarica ZIP della work_dir di un job Gemini fallito per analisi post-mortem.
+    Richiede admin auth via cookie HttpOnly (set da /admin/login) o header
+    X-Admin-Token. Disponibile finché la dir è protetta dal marker forense
+    (default 7 giorni dal refund; ABM_GEMINI_FORENSIC_RETENTION_DAYS).
+    """
+    if not ADMIN_TOKEN:
+        return ("Admin disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return ("Unauthorized. Effettua login su /admin/audit-tts e ritorna a questo link.",
+                401, {"Content-Type": "text/plain; charset=utf-8"})
+    if "/" in job_id or "\\" in job_id or ".." in job_id:
+        return ("Invalid job_id", 400, {"Content-Type": "text/plain; charset=utf-8"})
+    work_dir = UPLOAD_DIR / job_id
+    if not work_dir.exists() or not work_dir.is_dir():
+        return ("Work dir not found (cleanup completed or never existed).",
+                404, {"Content-Type": "text/plain; charset=utf-8"})
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for root, _dirs, files in os.walk(str(work_dir)):
+                for fn in files:
+                    fp = Path(root) / fn
+                    try:
+                        arc = fp.relative_to(work_dir.parent)
+                        zf.write(str(fp), str(arc))
+                    except (OSError, ValueError):
+                        continue
+    except OSError as e:
+        return (f"Zip build failed: {e}", 500, {"Content-Type": "text/plain; charset=utf-8"})
+    payload = buf.getvalue()
+    safe = re.sub(r'[^a-zA-Z0-9_-]', '_', job_id).strip("_") or "job"
+    return Response(
+        payload,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="forensic_{safe}.zip"',
+            "Content-Length": str(len(payload)),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.route("/admin/audit-tts", methods=["GET"])
 def admin_logs_page():
     """Admin TTS audit dashboard. Hosts the Gemini Cost Audit and Events/Refunds tabs."""
@@ -8881,6 +8928,19 @@ EMAIL_MARKER_FILENAME = ".email_sent"
 _EMAIL_MARKER_PENDING = "pending"
 EMAIL_PENDING_MAX_AGE_SEC = 48 * 3600  # cap di sicurezza se la lavorazione si interrompe senza email
 
+# Marker scritto in work_dir dei job Gemini falliti con refund per consentire
+# analisi forense post-mortem. Contiene JSON {retain_until, created_at, kind,
+# outcome, reason, job_id, days}. Sopravvive a restart del service e blocca
+# TUTTI i branch di cleanup (status=error, orphan dir, token-orphan, orphan
+# output) finché now < retain_until. Retention configurabile via
+# ABM_GEMINI_FORENSIC_RETENTION_DAYS (default 7; 0 = disabilita).
+FORENSIC_MARKER_FILENAME = ".forensic_retain.json"
+try:
+    FORENSIC_RETENTION_DAYS = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+except (TypeError, ValueError):
+    FORENSIC_RETENTION_DAYS = 7
+FORENSIC_RETENTION_DAYS = max(0, FORENSIC_RETENTION_DAYS)
+
 
 def _write_email_marker(work_dir, when=None):
     """Marca una job dir come 'email inviata' (timestamp epoch in secondi).
@@ -8953,15 +9013,44 @@ def _email_marker_protects(work_dir, now):
     ) + 300
 
 
+def _forensic_marker_protects(work_dir, now):
+    """True se il marker forense protegge la work_dir dal cleanup.
+    Scritto da generation_engine al refund per job Gemini falliti; sopravvive
+    a restart e blocca tutti i branch di cleanup finché now < retain_until.
+    """
+    marker = Path(work_dir) / FORENSIC_MARKER_FILENAME
+    try:
+        if not marker.exists():
+            return False
+    except OSError:
+        return False
+    try:
+        with marker.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        retain_until = float(data.get("retain_until", 0) or 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    return now < retain_until
+
+
 def _cleanup_job(job_id, reason=""):
     """Remove all files for a job and delete the job entry.
     NOTA: nessun gate marker qui — questo path viene invocato solo dal branch
     per-status che opera su `jobs` locali con info complete (cancelled/error/
-    done+retention-scaduta). La protezione cross-worker è nei branch orfani."""
+    done+retention-scaduta). La protezione cross-worker è nei branch orfani.
+
+    Gate forense: se la work_dir contiene `.forensic_retain.json` valido
+    (refund Gemini in attesa di analisi admin), rimuoviamo l'entry in memoria
+    ma preserviamo la dir su disco finché il marker è valido.
+    """
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
     if work_dir.exists():
+        if _forensic_marker_protects(work_dir, time.time()):
+            print(f"[cleanup] {job_id} entry removed but dir preserved "
+                  f"(forensic retention) — {reason}")
+            return
         shutil.rmtree(str(work_dir), ignore_errors=True)
     print(f"[cleanup] {job_id} removed ({reason})")
 
@@ -9085,6 +9174,8 @@ def _cleanup_loop():
                 if not job_in_memory and job_dir.exists():
                     if _email_marker_protects(job_dir, now):
                         continue
+                    if _forensic_marker_protects(job_dir, now):
+                        continue
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
@@ -9140,6 +9231,8 @@ def _cleanup_loop():
                     ):
                         if _email_marker_protects(od.parent, now):
                             continue
+                        if _forensic_marker_protects(od.parent, now):
+                            continue
                         shutil.rmtree(str(od), ignore_errors=True)
                         print(f"[cleanup] Orphan output dir removed: {od} (age: {int(age)}s)")
         except OSError:
@@ -9165,6 +9258,8 @@ def _cleanup_loop():
                     continue
                 if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
                     if _email_marker_protects(entry, now):
+                        continue
+                    if _forensic_marker_protects(entry, now):
                         continue
                     shutil.rmtree(str(entry), ignore_errors=True)
                     print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")

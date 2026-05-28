@@ -1120,14 +1120,66 @@ def _send_optimization_email(job_id):
 # Payment refund helper
 # ---------------------------------------------------------------------------
 
+def _write_forensic_marker(job_id, kind, outcome, reason_detail=""):
+    """Scrive marker .forensic_retain.json nella work_dir del job per
+    impedire al cleanup automatico di cancellarla. Sopravvive a restart
+    e protegge contro TUTTI i branch di cleanup (status=error, orphan dir,
+    token-orphan, orphan output). Retention configurabile via
+    ABM_GEMINI_FORENSIC_RETENTION_DAYS (default 7 giorni; 0 = disabilita).
+
+    Best-effort, non-fatal. Ritorna retain_until epoch o None.
+    """
+    import json as _json
+    try:
+        days = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+    except (TypeError, ValueError):
+        days = 7
+    days = max(0, days)
+    if days <= 0:
+        return None
+    try:
+        if _upload_dir is None:
+            return None
+        work_dir = _upload_dir / job_id
+        if not work_dir.exists():
+            return None
+        now = time.time()
+        retain_until = now + days * 86400
+        marker_path = work_dir / ".forensic_retain.json"
+        payload = {
+            "retain_until": retain_until,
+            "created_at": now,
+            "kind": kind,
+            "outcome": outcome,
+            "reason": (reason_detail or "")[:500],
+            "job_id": job_id,
+            "days": days,
+        }
+        marker_path.write_text(
+            _json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"[{job_id}] Forensic marker written: retain_until="
+              f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(retain_until))} "
+              f"({days}d) outcome={outcome}")
+        return retain_until
+    except Exception as e:
+        print(f"[{job_id}] Forensic marker write failed (non-fatal): {e}")
+        return None
+
+
 def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
                                  reason_detail="",
                                  chunks_total=None, chunks_failed=None):
     """Notifica IMMEDIATA all'admin per ogni job Gemini fallito (con rimborso)
     o bloccato preventivamente. Best-effort, non-fatal.
 
+    Scrive anche il marker forense sulla work_dir per consentire post-mortem
+    (download ZIP dall'endpoint admin) prima del cleanup automatico.
+
     kind: "quota" | "budget" | "quality" | "preflight" | "generic"
     """
+    forensic_until = _write_forensic_marker(job_id, kind, audit_outcome, reason_detail)
     try:
         payment_meta = job.get("payment") or {}
         amount_eur = float(payment_meta.get("total_eur", 0) or 0)
@@ -1170,6 +1222,8 @@ def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
             chars_total=chars_total,
             chunks_total=chunks_total,
             chunks_failed=chunks_failed,
+            forensic_until=forensic_until,
+            work_dir_path=str(_upload_dir / job_id) if _upload_dir else "",
         )
     except Exception as e:
         print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
