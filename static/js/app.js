@@ -693,7 +693,10 @@ function fillLangs(){
   const oldVal = sel.value;
   sel.innerHTML='';
   
-  // Ordine alfabetico basato sul nome tradotto
+  // Ordine alfabetico basato sul nome tradotto. Il `count` mostrato accanto al
+  // nome riflette solo le voci effettivamente visibili nel tab Standard: voci
+  // gemini: escluse (vivono nel tab Premium), altrimenti "(64)" comparirebbe
+  // identico tra i due tab anche quando in Standard si vedono 4 voci Edge.
   const sortedLangs = Object.entries(voices).map(([c, l]) => {
     let ln = c;
     if (L[cl] && L[cl].langs && L[cl].langs[c]) {
@@ -703,7 +706,8 @@ function fillLangs(){
     } else {
       ln = l.name || c;
     }
-    return { code: c, name: ln, count: l.voices.length };
+    const standardCount = (Array.isArray(l.voices) ? l.voices : []).filter(v => !(v && typeof v.id === 'string' && v.id.startsWith('gemini:'))).length;
+    return { code: c, name: ln, count: standardCount };
   }).sort((a, b) => a.name.localeCompare(b.name, cl));
 
   for(const l of sortedLangs){
@@ -768,8 +772,31 @@ function syncLanguageOptions(){
   for(const o of src.options){
     if(hasPremium(o.value))ordered.push(o);
   }
+  // Conta le voci Gemini DISTINTE per lingua (non le entry duplicate per
+  // model_key): nella UI Premium l'utente sceglie prima il modello e poi la
+  // voce, quindi il count rilevante è quello delle voci uniche disponibili.
+  const geminiCount=lc=>{
+    const v=voices&&voices[lc];
+    if(!v||!Array.isArray(v.voices))return 0;
+    const names=new Set();
+    for(const x of v.voices){
+      if(x&&typeof x.id==='string'&&x.id.startsWith('gemini:')){
+        const parts=x.id.split(':');
+        names.add(parts[parts.length-1]);
+      }
+    }
+    return names.size;
+  };
   while(dst.firstChild)dst.removeChild(dst.firstChild);
-  for(const o of ordered)dst.appendChild(o.cloneNode(true));
+  for(const o of ordered){
+    const clone=o.cloneNode(true);
+    // Riscrive "Italiano (64)" → "Italiano (30)" per riflettere il numero di
+    // voci Gemini effettive (regardless of model). Mantiene il nome tradotto
+    // dell'opzione di origine senza re-eseguire la lookup i18n.
+    const baseName=(o.textContent||'').replace(/\s*\(\d+\)\s*$/,'');
+    clone.textContent=baseName+' ('+geminiCount(o.value)+')';
+    dst.appendChild(clone);
+  }
   // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
   if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
   else if(ordered.length>0)dst.value=ordered[0].value;
@@ -915,6 +942,20 @@ function updateModelRateHint(data){
 
 function switchAudioTab(tab){
   const prev=wizardState.audioTab;
+  // Guard Premium: blocca lo switch se la selezione capitoli supera il cap
+  // Gemini (`max_gemini_text_chars`, di norma 800k). Il warning va mostrato
+  // SOLO al click sul tab Premium — non in `tryGoToAudioSettings()` dove
+  // bloccherebbe l'utente che vuole solo usare voci Standard (cap 1.5M).
+  if(tab==='premium'&&prev!=='premium'){
+    const cap=(bookData&&bookData.max_gemini_text_chars)|0;
+    if(cap>0){
+      const chars=_computeSelectedChars();
+      if(chars>cap){
+        _showSelTooLargeModal(chars,cap);
+        return; // niente switch: il tab resta su Standard
+      }
+    }
+  }
   wizardState.audioTab=tab;
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;
@@ -3645,15 +3686,15 @@ function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();
   if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
   const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
-  // Cap dipendente dalla tab voce: Premium usa max_gemini_text_chars (piu' restrittivo)
-  // quando disponibile, altrimenti fallback al cap standard.
-  const _premiumActive=(wizardState.audioTab==='premium');
-  const _capPremium=(bookData&&bookData.max_gemini_text_chars)|0;
+  // Cap qui SEMPRE quello Standard (`max_text_chars`, ~1.5M): a questo step
+  // l'utente non ha ancora dichiarato di voler usare Premium. Il cap Gemini
+  // (`max_gemini_text_chars`, ~800k) viene invece controllato in
+  // `switchAudioTab('premium')` — l'unico punto in cui l'intento Premium è
+  // esplicito. Cosi` chi resta su Standard non viene bloccato a torto.
   const _capStd=(bookData&&bookData.max_text_chars)|0;
-  const limit=(_premiumActive&&_capPremium>0)?_capPremium:_capStd;
-  if(limit>0){
+  if(_capStd>0){
     const chars=_computeSelectedChars();
-    if(chars>limit){_showSelTooLargeModal(chars,limit);return}
+    if(chars>_capStd){_showSelTooLargeModal(chars,_capStd);return}
   }
   goToStep(3);
 }

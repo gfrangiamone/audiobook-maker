@@ -604,6 +604,16 @@ L'entry in memoria del job viene comunque rimossa (così il loop non si ripropon
 
 **Diagnostic WARNING**: se `outcome == "completed"` e `user_price_eur_charged <= 0` mentre `should_have_been > ABM_GEMINI_FREE_THRESHOLD_EUR`, `_write_gemini_audit()` stampa una riga `[<job_id>] AUDIT WARNING: completed job sopra soglia ma charged=0 ...` su stdout. Sintomo di token non consumato server-side: indagare il flusso di pagamento per quel job_id.
 
+**Lingua registrata (campo `language`)**: derivata da `generation_engine._audit_language(job, info)` (generation_engine.py:1714) e rappresenta la **lingua TTS scelta dall'utente**, non la lingua metadata del libro. Preferenze in ordine: (1) `job["opt_lang"]` settato da `/api/optimize` quando il body porta `lang`; (2) `job["gen_lang"]` settato da `/api/generate` (branch Gemini, audiobook_app.py:5950) quando il body porta `lang`; (3) `info.language` (metadata libro) come ultimo fallback. Esempio: libro arabo (`info.language="ar-sa"`) letto da voce italiana → audit registra `language="it"`. Tutti i 6 callsite (`completed`, `failed_quality_refunded`, `failed_quota_refunded`, `failed_budget_refunded`, `failed_refunded`, `preflight_blocked_refunded`, `cancelled_partial`, `cancelled_refunded`) usano l'helper. **Effetto retroattivo nullo**: i record JSONL già scritti con `ar-sa` non vengono riscritti.
+
+**Ricavo effettivo nella UI `/admin/audit-tts`**: i record persistiti conservano sempre `user_price_eur_charged` come importo originario pagato. Prima del rendering, `audiobook_app._apply_cancel_effective()` (audiobook_app.py:3908) calcola tre campi derivati (`_eff_revenue_eur`, `_eff_margin_eur`, `_eff_delta_eur`) applicando questa logica:
+
+- **Outcome di rimborso totale** (`_FULL_REFUND_OUTCOMES`: `failed_refunded`, `failed_quota_refunded`, `failed_budget_refunded`, `failed_quality_refunded`, `preflight_blocked_refunded`, `cancelled_refunded`): ricavo effettivo = `0`, quindi margine = `−google_cost_eur_actual` (perdita pari al costo Google non recuperato).
+- **`cancelled_partial`**: ricavo effettivo = `cancel_retained_eur` (quota trattenuta a copertura del consumato).
+- **Altri** (`completed`, `running`, ecc.): ricavo effettivo = `user_price_eur_charged`.
+
+Le colonne Prezzo €/Margine €/Margine % della tabella `/admin/audit-tts` usano questi campi `_eff_*`. Gli aggregati in alto (Ricavi/Costo/Margine totali) escludono già a monte gli outcome non-revenue contando solo `completed`, `running`, `cancelled_partial` (linea ~3998).
+
 ### 14.3 Combined payment in auto-generate flow
 
 Quando l'utente avvia un job con ottimizzazione AI + voce Gemini e PayPal combined token, il flusso normale è:
@@ -658,12 +668,16 @@ Il dropdown lingua del tab Premium (`#vlPremium`) è popolato da `syncLanguageOp
 - Le lingue Edge non coperte da Gemini (es. `nb`, `cs`, `sv`, `sw`, ecc.) **non compaiono** nel dropdown Premium — l'utente non viene messo nella condizione di selezionare una lingua a cui non corrisponde nessuna voce Premium.
 - Quando l'utente cambia lingua nel tab Standard, il listener di `#vl` propaga il valore a `#vlPremium` **solo se compatibile**; altrimenti `#vlPremium` mantiene la sua selezione corrente (no value reset silenzioso).
 - Il set di lingue Premium viene dalla intersezione `(SUPPORTED_UI_LANGUAGES Gemini) ∩ (lingue presenti in /api/voices)`. Aggiungere/rimuovere lingue da `gemini_tts.SUPPORTED_UI_LANGUAGES` si riflette automaticamente nel dropdown senza modifiche JS.
+- Il **conteggio voci** mostrato accanto al nome lingua è **per-tab**: in `#vl` (Standard) viene escluso `engine=gemini` (es. `Italiano (4)` = 4 voci Edge); in `#vlPremium` viene riscritto in `syncLanguageOptions()` con il numero di **voci Gemini distinte** (regardless del model, es. `Italiano (30)` = 30 voci uniche). Senza questa separazione, l'elenco Premium mostrava lo stesso conteggio totale del Standard (es. `Italiano (64)` = 4 Edge + 60 entry Gemini), facendo apparire identiche le due liste.
 
 ### 15.2 Modali
 
 - **`geminiPayModal`**: mostrato dopo `/api/gemini_estimate` se `user_price_eur > 0`. Pulsanti: "Paga con PayPal" / "Usa voucher" / "Annulla". Equivalente PAID-LLM ma per il TTS Premium.
 - **`geminiOverloadModal`**: triggerato da SSE `error_kind=gemini_overload`. Mostra countdown a mezzanotte UTC + messaggio "Servizio in sovraccarico, riprova alle HH:MM". NON addebita.
-- **`selTooLargeModal`**: triggerato se la selezione capitoli supera `ABM_GEMINI_PER_JOB_BUDGET_EUR` (preflight). Pulsante "Riduci selezione".
+- **`selTooLargeModal`**: triggerato in due punti distinti, mai prima:
+  - `tryGoToAudioSettings()` (panel 2 → panel 3, pulsante "Continue"): cap **Standard** (`max_text_chars`, ~1.5M). A questo step l'utente non ha ancora dichiarato di voler usare Premium, quindi non si applica il cap Gemini.
+  - `switchAudioTab('premium')` (click sul tab "Voci PREMIUM" da Standard): cap **Gemini** (`max_gemini_text_chars`, ~800k). Se la selezione lo supera, lo switch viene annullato (`return` prima di mutare `wizardState.audioTab`) e il tab resta su Standard.
+  Cosi` chi usa solo voci Standard non viene bloccato a torto da un cap che non lo riguarda, e il warning Gemini compare nel momento esatto in cui l'utente esprime l'intento Premium.
 
 ### 15.3 Tab Premium
 
