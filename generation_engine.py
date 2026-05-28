@@ -1641,6 +1641,17 @@ def run_optimization(job_id, selected_chapters=None):
                 except Exception as _e_est_ag:
                     print(f"[{job_id}] auto-gen gemini_estimate persist failed (non-fatal): {_e_est_ag}")
 
+            # Tracking nell'Activity Log: il flusso auto-gen bypassa
+            # /api/generate (dove l'evento GENERATE viene scritto con voice),
+            # quindi la voce non comparirebbe nella UI admin. Mirroriamo qui
+            # il log per allineamento.
+            try:
+                _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
+                              job.get("client_id", ""), job.get("client_ip", ""),
+                              voice, job.get("browser_lang", ""))
+            except Exception:
+                pass
+
             run_generation(job_id, info, voice, rate, single_file,
                            output_format=output_format,
                            podcast_base_url=podcast_base_url)
@@ -1706,6 +1717,23 @@ def _engine_for_voice(voice):
 # ---------------------------------------------------------------------------
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
+
+def _audit_language(job, info):
+    """Lingua da registrare nell'audit Gemini.
+
+    Per i job PREMIUM la lingua di interesse e' quella TTS scelta dall'utente
+    (perche' determina la voce e il prompt), non la lingua metadata del libro:
+    es. libro arabo letto da voce italiana -> audit deve mostrare "it", non
+    "ar-sa". Preferenze in ordine: `job["opt_lang"]` (settato da /api/optimize),
+    `job["gen_lang"]` (settato da /api/generate quando la richiesta porta
+    `lang`), `info.language` come ultimo fallback.
+    """
+    for src in (job.get("opt_lang"), job.get("gen_lang")):
+        if isinstance(src, str) and src.strip():
+            return src.strip().split("-")[0].lower()
+    fallback = getattr(info, "language", "") or ""
+    return (fallback.split("-")[0].lower() if fallback else "")
+
 
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
@@ -1969,7 +1997,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # Audit
                 try:
                     _write_gemini_audit(job_id, job, voice,
-                                        getattr(info, "language", None) or "",
+                                        _audit_language(job, info),
                                         "preflight_blocked_refunded")
                 except Exception:
                     pass
@@ -2708,7 +2736,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                   f"-> full refund triggered.")
             try:
                 _write_gemini_audit(job_id, job, voice,
-                                    getattr(info, "language", None) or "",
+                                    _audit_language(job, info),
                                     "failed_quality_refunded")
             except Exception:
                 pass
@@ -2767,7 +2795,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("voice", ""), job.get("browser_lang", ""))
 
         if use_gemini:
-            _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "completed")
+            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
         # Send email notification if user registered
         notify_email = job.get("notify_email")
@@ -2871,7 +2899,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 outcome = "cancelled_partial" if retained > 0 else "cancelled_refunded"
                 _write_gemini_audit(job_id, job, voice,
-                                    getattr(info, "language", None) or "", outcome)
+                                    _audit_language(job, info), outcome)
 
                 refund_result = _refund_gemini_payment(
                     job_id, job, "cancelled", retained_eur=retained)
@@ -2897,7 +2925,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Cancel partial flow error (fallback to legacy): {cancel_err}")
                 try:
                     _write_gemini_audit(job_id, job, voice,
-                                        getattr(info, "language", None) or "",
+                                        _audit_language(job, info),
                                         "cancelled_refunded")
                 except Exception:
                     pass
@@ -2978,7 +3006,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["user_facing_error"] = _user_msg
             try:
                 _write_gemini_audit(job_id, job, voice,
-                                    getattr(info, "language", None) or "",
+                                    _audit_language(job, info),
                                     "failed_quota_refunded" if _is_quota
                                     else "failed_budget_refunded")
             except Exception:
@@ -3012,7 +3040,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _set_job_status(job, "error")
         job["error"] = str(e)
         if use_gemini:
-            _write_gemini_audit(job_id, job, voice, getattr(info, "language", None) or "", "failed_refunded")
+            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
             # F3: Refund the user payment (voucher or paypal) for failed Gemini job
             _refund_gemini_payment(job_id, job, f"failed: {e}")
             # Notifica utente con copy "qualita'" (errore generico, parziale non consegnabile)

@@ -3905,13 +3905,27 @@ def _synth_running_gemini_audit_records():
     return out
 
 
-def _apply_cancel_effective(rec):
-    """Augmenta il record con `_eff_*` che riflettono i rimborsi da cancel.
+# Outcome che rappresentano un rimborso TOTALE all'utente: il ricavo
+# effettivo e' 0 a prescindere da `user_price_eur_charged` originario.
+# I `cancelled_partial` sono trattati a parte tramite `cancel_retained_eur`.
+_FULL_REFUND_OUTCOMES = frozenset({
+    "failed_refunded",
+    "failed_quota_refunded",
+    "failed_budget_refunded",
+    "failed_quality_refunded",
+    "preflight_blocked_refunded",
+    "cancelled_refunded",
+})
 
-    Per record di cancellazione anticipata, il ricavo effettivo non e' il
-    prezzo originario pagato (`user_price_eur_charged`) ma la quota trattenuta
-    a copertura del consumato (`cancel_retained_eur`). Calcola in coerenza
-    revenue/margin/delta effettivi.
+
+def _apply_cancel_effective(rec):
+    """Augmenta il record con `_eff_*` che riflettono i rimborsi reali.
+
+    - `cancelled_partial`: ricavo = quota trattenuta (`cancel_retained_eur`),
+      a copertura del consumato; eventuale eccedenza restituita.
+    - `*_refunded` (rimborso totale: qualita`/quota/budget/preflight/cancel
+      pre-attivita`/failure generico): ricavo = 0, quindi margine = -costo.
+    - altri (completed, running, ...): ricavo = `user_price_eur_charged`.
     """
     if not isinstance(rec, dict):
         return rec
@@ -3919,7 +3933,10 @@ def _apply_cancel_effective(rec):
     cost = float(rec.get("google_cost_eur_actual", 0) or 0)
     should = float(rec.get("user_price_eur_should_have_been", 0) or 0)
     cancel_retained = rec.get("cancel_retained_eur")
-    if cancel_retained is not None:
+    outcome = rec.get("outcome") or ""
+    if outcome in _FULL_REFUND_OUTCOMES:
+        revenue = 0.0
+    elif cancel_retained is not None:
         revenue = float(cancel_retained or 0)
     else:
         revenue = charged
@@ -5927,6 +5944,13 @@ def api_generate():
         lang_pre = (_ui_lang_pre
                     or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
                     or "it")
+        # Persisti la lingua TTS effettivamente scelta dall'utente. Serve
+        # all'audit Gemini (`_audit_language`) per non registrare la lingua
+        # metadata del libro quando la voce TTS opera su una lingua diversa
+        # (es. libro arabo con voce italiana -> audit deve mostrare "it").
+        # Coesiste con `opt_lang` (settato da /api/optimize) come fallback.
+        if _ui_lang_pre:
+            job["gen_lang"] = _ui_lang_pre
         try:
             # Il rate scelto influisce sulla stima (estimate_audio_seconds scala
             # con rate_pct): il ricalcolo server-side deve usarlo per allinearsi
