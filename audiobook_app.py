@@ -1775,49 +1775,26 @@ def _session_completed(s):
 def _session_in_progress(s, sid):
     """Return True if session has an active AI optimization or TTS generation.
 
-    Un'attività è considerata "in corso" se:
-      - È stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
-      - Non risulta fra gli eventi una conclusione (COMPLETE / DOWNLOAD* / OPT_COMPLETE),
-      - Non risulta un'annullamento (CANCEL / OPT_CANCEL),
-      - Il job esiste ancora in memoria con stato attivo (`generating`, `optimizing`,
-        `optimized` in attesa di auto-gen, ecc.).
+    Lo stato runtime del job (`jobs[sid]["status"]`) e' la fonte autoritativa:
+    se il job e' ancora in memoria in uno stato attivo (optimizing, optimized
+    in attesa di auto-gen, generating, running, ecc.) la sessione e' in corso
+    indipendentemente da cosa contiene il log. Questo evita il bug per cui
+    un job auto-gen (OPT_COMPLETE -> generazione TTS) appariva "non in corso"
+    in attesa che l'evento GENERATE venisse scritto, perche' OPT_COMPLETE
+    chiudeva il ramo opt_live e GENERATE non era ancora presente nel log.
+
+    Fallback (job non piu' in memoria, es. dopo restart server): si guarda al
+    log eventi e si applica la regola conservativa "start senza terminator e
+    senza cancel", ma siccome il job manca, si ritorna comunque False per
+    evitare falsi positivi su sessioni storiche zombie.
     """
-    events = set(s["events"])
-    has_work_start = ("GENERATE" in events) or ("OPTIMIZE" in events)
-    if not has_work_start:
-        return False
-
-    # Terminazioni TTS
-    tts_done = bool(events & {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
-                              "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST"})
-    tts_cancel = "CANCEL" in events
-    # Terminazioni ottimizzazione
-    opt_cancel = "OPT_CANCEL" in events
-
-    tts_started = "GENERATE" in events
-    opt_started = "OPTIMIZE" in events
-
-    # Un'ottimizzazione ancora in corso: avviata e non cancellata/completata.
-    # Nota: OPT_COMPLETE è seguito tipicamente da GENERATE se auto_generate è attivo,
-    # quindi non lo consideriamo un terminatore definitivo a livello di sessione.
-    opt_live = opt_started and not opt_cancel and "OPT_COMPLETE" not in events
-    # Una generazione TTS ancora in corso: avviata e non cancellata/completata.
-    tts_live = tts_started and not tts_done and not tts_cancel
-
-    if not (opt_live or tts_live):
-        return False
-
-    # Cross-reference con lo stato runtime del job per evitare "zombie" da log.
     job = jobs.get(sid)
     if job:
         st = job.get("status", "")
-        active_states = {"generating", "optimizing", "optimized"}
-        if st in active_states:
-            return True
-        # job esistente ma in stato finale  →  non più in corso
-        return False
-    # Fallback (job non più in memoria): non considerare "in corso" le sessioni
-    # storiche  -  ritorna False per evitare falsi positivi dopo un restart del server.
+        # Unione di _ACTIVE_JOB_STATUSES (Gemini audit, vedi 3838) e degli
+        # stati intermedi del flusso ottimizzazione/auto-gen.
+        active_states = set(_ACTIVE_JOB_STATUSES) | {"optimizing", "optimized"}
+        return st in active_states
     return False
 
 
