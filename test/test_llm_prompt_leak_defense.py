@@ -134,3 +134,74 @@ def test_is_prompt_leak_handles_empty_inputs():
     assert ge._is_prompt_leak("", "qualcosa") is False
     assert ge._is_prompt_leak("qualcosa", "") is False
     assert ge._is_prompt_leak("", "") is False
+
+
+def test_call_llm_raises_prompt_leak_error_on_persistent_echo(monkeypatch):
+    """Se l'LLM echeggia il prompt per N tentativi consecutivi, _call_llm raises."""
+    prompt = ge._get_llm_prompt("it")
+    assert prompt
+
+    class _FakeDelta:
+        def __init__(self, content): self.content = content
+        reasoning_content = None
+
+    class _FakeChoice:
+        def __init__(self, content): self.delta = _FakeDelta(content)
+
+    class _FakeEvent:
+        def __init__(self, content): self.choices = [_FakeChoice(content)]
+
+    class _FakeStream:
+        def __init__(self, payload): self._payload = payload
+        def __iter__(self):
+            # Stream il prompt completo come "output"
+            for chunk_size in range(0, len(self._payload), 500):
+                yield _FakeEvent(self._payload[chunk_size:chunk_size + 500])
+        def close(self): pass
+
+    class _FakeCompletions:
+        def __init__(self, payload): self._payload = payload
+        def create(self, **kwargs): return _FakeStream(self._payload)
+
+    class _FakeChat:
+        def __init__(self, payload): self.completions = _FakeCompletions(payload)
+
+    class _FakeClient:
+        def __init__(self, payload): self.chat = _FakeChat(payload)
+
+    monkeypatch.setattr(ge, "_llm_client", _FakeClient(prompt))
+
+    job = {"opt_lang": "it"}
+    with pytest.raises(ge._PromptLeakError):
+        ge._call_llm("Prosa narrativa di test molto lunga per non triggerare il pre-filtro." * 5,
+                     job=job, max_retries=1)
+
+
+def test_call_llm_returns_normal_output(monkeypatch):
+    """Sanity: output normale non triggera _PromptLeakError."""
+
+    class _FakeDelta:
+        def __init__(self, content): self.content = content
+        reasoning_content = None
+    class _FakeChoice:
+        def __init__(self, content): self.delta = _FakeDelta(content)
+    class _FakeEvent:
+        def __init__(self, content): self.choices = [_FakeChoice(content)]
+    class _FakeStream:
+        def __init__(self, payload): self._payload = payload
+        def __iter__(self):
+            yield _FakeEvent(self._payload)
+        def close(self): pass
+    class _FakeCompletions:
+        def __init__(self, payload): self._payload = payload
+        def create(self, **kwargs): return _FakeStream(self._payload)
+    class _FakeChat:
+        def __init__(self, payload): self.completions = _FakeCompletions(payload)
+    class _FakeClient:
+        def __init__(self, payload): self.chat = _FakeChat(payload)
+
+    payload = "Testo ottimizzato normalmente, niente di sospetto qui."
+    monkeypatch.setattr(ge, "_llm_client", _FakeClient(payload))
+
+    result = ge._call_llm("input lungo per superare pre-filtro " * 10, job={"opt_lang": "it"}, max_retries=1)
+    assert result == payload

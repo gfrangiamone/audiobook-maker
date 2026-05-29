@@ -98,6 +98,7 @@ LLM_MAX_RETRIES           = _env_int("ABM_LLM_MAX_RETRIES", 4)
 LLM_INTER_CHUNK_SLEEP_SEC = _env_float("ABM_LLM_INTER_CHUNK_SLEEP_SEC", 0.5)
 LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
+LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 
 # Derived (computed, not directly configurable)
 LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
@@ -608,31 +609,45 @@ def _call_llm(user_content, job=None, max_retries=None):
         {"role": "user", "content": user_content},
     ]
     last_exc = None
-    for attempt in range(max_retries):
+    leak_attempts = 0
+    attempt = 0
+    # Loop con due budget indipendenti:
+    # - `attempt` -> retry transient (network/5xx/429), consuma slot solo su Exception
+    # - `leak_attempts` -> retry anti-leak, consuma slot solo su prompt-leak detectato
+    # Il leak retry NON consuma il budget transient e viceversa.
+    while attempt < max_retries:
         result_parts = []
         partial_streamed = 0
         try:
-            # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort)
+            # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort).
+            # Su retry anti-leak: temperature un filo piu' alta + reasoning off,
+            # per ridurre la probabilita' che il modello "continui" il prompt.
+            effective_temp = LLM_TEMPERATURE
+            effective_reasoning = LLM_REASONING_EFFORT
+            if leak_attempts > 0:
+                effective_temp = min(LLM_TEMPERATURE + 0.1 * leak_attempts, 1.0)
+                effective_reasoning = "none"
+
             kwargs = {
                 "model": LLM_MODEL,
                 "messages": messages,
                 "max_tokens": LLM_MAX_TOKENS,
-                "temperature": LLM_TEMPERATURE,
+                "temperature": effective_temp,
                 "stream": True,
                 "timeout": LLM_REQUEST_TIMEOUT_SEC,
             }
-            if LLM_REASONING_EFFORT != "none":
-                kwargs["reasoning_effort"] = LLM_REASONING_EFFORT
-            if LLM_THINKING:
+            if effective_reasoning != "none":
+                kwargs["reasoning_effort"] = effective_reasoning
+            if LLM_THINKING and leak_attempts == 0:
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-                
+
             stream = _llm_client.chat.completions.create(**kwargs)
             for event in stream:
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
                     raise _CancelledError("Optimization cancelled during streaming")
-                
+
                 # Capture normal content
                 if event.choices and event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
@@ -655,7 +670,26 @@ def _call_llm(user_content, job=None, max_retries=None):
                         0, job.get("opt_streamed_chars", 0) - removed
                     )
                 print(f"  [LLM] sanitized output: removed {removed} chars of meta/duplicates")
+
+            # Detection prompt-leak. Su match: scarica chars accumulati e ritenta
+            # con parametri degradati. Esauriti i tentativi -> _PromptLeakError
+            # che il chiamante traduce in fallback all'input originale.
+            if _is_prompt_leak(cleaned, prompt):
+                if job is not None and partial_streamed > 0:
+                    job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
+                if leak_attempts < LLM_LEAK_MAX_RETRIES:
+                    leak_attempts += 1
+                    print(f"  [LLM] prompt-leak detected (attempt {leak_attempts}/{LLM_LEAK_MAX_RETRIES}), retrying with degraded params")
+                    time.sleep(1.0)
+                    continue
+                print(f"  [LLM] prompt-leak persists after {LLM_LEAK_MAX_RETRIES} retries — giving up")
+                raise _PromptLeakError("LLM output contains system-prompt echo")
+
             return cleaned
+        except _PromptLeakError:
+            raise
+        except _CancelledError:
+            raise
         except Exception as e:
             last_exc = e
             if job is not None and partial_streamed > 0:
@@ -684,6 +718,7 @@ def _call_llm(user_content, job=None, max_retries=None):
             wait = 2 ** attempt  # 1, 2, 4, 8 seconds
             print(f"  [LLM] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
             time.sleep(wait)
+            attempt += 1
     if last_exc:
         raise last_exc
     return "".join(result_parts)
