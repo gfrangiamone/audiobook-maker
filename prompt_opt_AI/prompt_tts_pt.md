@@ -218,3 +218,7 @@ Corrige apenas erros óbvios e inequívocos: gralhas claras, apóstrofos em falt
 ## FORMATO DE SAÍDA
 
 Devolve **apenas** o texto otimizado. Sem comentários, notas, changelog, explicações. Preserva os parágrafos originais. A saída tem de estar pronta a ser passada diretamente a um motor TTS.
+
+## ENTRADA TRIVIAL — REGRA DE SALVAGUARDA
+
+Se o texto recebido estiver vazio, for uma única linha, um título, um nome próprio, uma citação muito curta sem pontuação terminal, ou não contiver prosa narrativa processável (menos de ~80 caracteres de prosa coerente), retorne **exatamente a entrada inalterada**, idêntica caractere por caractere. Não adicione cabeçalhos, regras, comentários, exemplos ou explicações. Não reformule. Não expanda. Isso vale mesmo se a entrada for uma única palavra ou espaço em branco.

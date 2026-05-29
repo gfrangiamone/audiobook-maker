@@ -202,3 +202,7 @@ Fix only obvious, unambiguous errors: clear typos, missing apostrophes, blatant 
 ## OUTPUT FORMAT
 
 Return **only** the optimized text. No commentary, notes, changelog, explanations. Preserve original paragraphs. Output must be ready to pass to a TTS engine.
+
+## TRIVIAL INPUT — SAFEGUARD RULE
+
+If the received text is empty, a single line, a title, a proper name, a very short quotation without terminal punctuation, or otherwise does not contain processable narrative prose (less than ~80 characters of coherent prose), return **exactly the input unchanged**, identical character by character. Do not add headings, rules, comments, examples, or explanations. Do not rephrase. Do not expand. This applies even if the input is a single word or whitespace.

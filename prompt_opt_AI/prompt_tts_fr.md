@@ -143,3 +143,7 @@ Corrige seulement les erreurs évidentes et univoques : coquilles claires, apost
 ## FORMAT DE SORTIE
 
 Renvoie **uniquement** le texte optimisé. Pas de commentaires, notes, changelog, explications. Préserve les paragraphes originaux. La sortie doit être prête à être passée au moteur TTS.
+
+## ENTRÉE TRIVIALE — RÈGLE DE SAUVEGARDE
+
+Si le texte reçu est vide, une seule ligne, un titre, un nom propre, une citation très courte sans ponctuation terminale, ou ne contient pas de prose narrative exploitable (moins de ~80 caractères de prose cohérente), retourne **exactement l'entrée inchangée**, identique caractère par caractère. N'ajoute pas de titres, règles, commentaires, exemples ou explications. Ne reformule pas. N'élargis pas. Cela vaut même si l'entrée est un seul mot ou un espace blanc.

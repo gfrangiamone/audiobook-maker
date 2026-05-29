@@ -152,3 +152,7 @@ Correggi solo errori palesi e univoci: refusi evidenti, apostrofi mancanti, acco
 ## FORMATO DI OUTPUT
 
 Restituisci **solo** il testo ottimizzato. Niente commenti, note, changelog, spiegazioni. Preserva i paragrafi originali. L'output deve essere pronto per essere passato al motore TTS.
+
+## INPUT BANALE — REGOLA DI SALVAGUARDIA
+
+Se il testo ricevuto è vuoto, una sola riga, un titolo, un nome proprio, una citazione cortissima senza punteggiatura terminale, o comunque non contiene prosa narrativa elaborabile (meno di ~80 caratteri di prosa coerente), restituisci **esattamente l'input invariato**, identico al carattere. Non aggiungere intestazioni, regole, commenti, esempi, o spiegazioni. Non riformulare. Non espandere. Questo vale anche se l'input è una singola parola o uno spazio bianco.
