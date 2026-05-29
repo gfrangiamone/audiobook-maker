@@ -332,3 +332,54 @@ def test_write_llm_audit_is_safe_when_upload_dir_none(monkeypatch):
     """Se _upload_dir non e' inizializzato, l'audit e' no-op (non lancia)."""
     monkeypatch.setattr(ge, "_upload_dir", None)
     ge._write_llm_audit(job_id="x", outcome="prompt_leak_fallback")
+
+
+def test_generate_optimized_abm_sanitizes_leaked_chapter(tmp_path, monkeypatch):
+    """Se ch.text contiene il system prompt, lo zip ottiene un placeholder + flag."""
+    import io, zipfile
+    from dataclasses import dataclass, field
+
+    monkeypatch.setattr(ge, "_upload_dir", tmp_path)
+
+    @dataclass
+    class _Ch:
+        index: int
+        title: str
+        text: str
+        word_count: int = 0
+        char_count: int = 0
+
+    @dataclass
+    class _Info:
+        title: str = "Test Book"
+        author: str = "Anon"
+        language: str = "it"
+        chapters: list = field(default_factory=list)
+
+    prompt = ge._get_llm_prompt("it")
+    assert prompt
+    info = _Info(chapters=[
+        _Ch(index=1, title="Cap1", text="Prosa normale e tranquilla."),
+        _Ch(index=2, title="Cap2 leaked", text=prompt),  # leak simulato
+    ])
+
+    job_id = "job-test"
+    work_dir = tmp_path / job_id
+    work_dir.mkdir()
+    ge._jobs = {job_id: {"info": info, "opt_lang": "it",
+                          "optimized_chapters": [1, 2],
+                          "original_filename": "test.epub"}}
+
+    abm_path, abm_name = ge._generate_optimized_abm(job_id)
+    assert abm_path and Path(abm_path).exists()
+
+    with zipfile.ZipFile(abm_path, "r") as zf:
+        names = zf.namelist()
+        leaked_file = [n for n in names if "Cap2" in n][0]
+        leaked_content = zf.read(leaked_file).decode("utf-8")
+        assert "Sei un editor audio specializzato" not in leaked_content
+        assert "LINGUA DELL'OUTPUT" not in leaked_content
+        # Manifest deve segnalare il problema
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        ch2 = [c for c in manifest["chapters"] if c["index"] == 2][0]
+        assert ch2.get("prompt_leak") is True

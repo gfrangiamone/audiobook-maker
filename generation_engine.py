@@ -910,6 +910,18 @@ def _generate_optimized_abm(job_id):
     else:
         chapter_set = None
 
+    # Carica il system prompt della lingua del job per il check di sicurezza.
+    # Best-effort: se manca lang, salta il check (graceful).
+    safety_prompt = ""
+    job_lang = (job.get("opt_lang") or "").split("-")[0].lower()
+    if not job_lang and getattr(info, "language", ""):
+        job_lang = info.language.split("-")[0].lower()
+    if job_lang:
+        try:
+            safety_prompt = _get_llm_prompt(job_lang)
+        except Exception:
+            safety_prompt = ""
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
         for ch in info.chapters:
@@ -917,13 +929,41 @@ def _generate_optimized_abm(job_id):
                 continue
             ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
-            zf.writestr(f"chapters/{ch_filename}", ch.text)
-            chapters_manifest.append({
+
+            # Safety-net: se il testo del capitolo contiene un echo del system
+            # prompt, sanitizzalo prima di scriverlo. Non deve mai finire nel
+            # .abm (e ancor meno nel TTS a valle).
+            ch_text_safe = ch.text
+            prompt_leak_flag = False
+            if safety_prompt and _is_prompt_leak(ch_text_safe, safety_prompt):
+                prompt_leak_flag = True
+                print(f"[{job_id}] .abm safety-net: chapter {ch.index} contains "
+                      f"prompt echo - replacing with placeholder")
+                ch_text_safe = (f"[Capitolo non disponibile - anomalia di "
+                                f"ottimizzazione rilevata in fase finale: "
+                                f"{ch.title}]")
+                _write_llm_audit(
+                    job=job,
+                    job_id=job_id,
+                    chapter_num=ch.index,
+                    chapter_title=ch.title,
+                    chunk_index=None,
+                    outcome="prompt_leak_safety_net",
+                    chars_input=0,
+                    chars_output=len(ch.text),
+                    leaked_preview=ch.text[:200],
+                )
+
+            zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
+            entry = {
                 "index": ch.index,
                 "filename": ch_filename,
                 "title": ch.title,
                 "word_count": ch.word_count,
-            })
+            }
+            if prompt_leak_flag:
+                entry["prompt_leak"] = True
+            chapters_manifest.append(entry)
 
         # Cover
         has_cover = False
