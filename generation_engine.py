@@ -931,15 +931,17 @@ def _generate_optimized_abm(job_id):
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
 
             # Safety-net: se il testo del capitolo contiene un echo del system
-            # prompt, sanitizzalo prima di scriverlo. Non deve mai finire nel
-            # .abm (e ancor meno nel TTS a valle).
+            # prompt, sostituiscilo con un placeholder prima di scriverlo nel
+            # .abm. Difesa di ultimo miglio per lo SNAPSHOT scaricabile: il TTS
+            # gia' usa ch.text direttamente, ergo il leak nel TTS va prevenuto
+            # a monte (Task 4/5 in _call_llm + _optimize_chapter_text).
             ch_text_safe = ch.text
             prompt_leak_flag = False
             if safety_prompt and _is_prompt_leak(ch_text_safe, safety_prompt):
                 prompt_leak_flag = True
                 print(f"[{job_id}] .abm safety-net: chapter {ch.index} contains "
                       f"prompt echo - replacing with placeholder")
-                ch_text_safe = (f"[Capitolo non disponibile - anomalia di "
+                ch_text_safe = (f"[Capitolo non disponibile — anomalia di "
                                 f"ottimizzazione rilevata in fase finale: "
                                 f"{ch.title}]")
                 _write_llm_audit(
