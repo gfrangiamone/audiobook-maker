@@ -254,3 +254,32 @@ def test_optimize_chapter_chunked_falls_back_per_chunk(monkeypatch):
     # Il chunk 2 deve contenere il paragrafo originale "due", non il placeholder OPT[]
     assert "Paragrafo due" in result
     assert len(job.get("opt_leak_chapters", [])) >= 1
+
+
+def test_optimize_chapter_all_chunks_leak_preserves_header(monkeypatch):
+    """Tutti i chunk falliscono → ritorna testo originale senza sanitizzazione.
+
+    Regressione: `_sanitize_llm_output` ha euristiche aggressive (preamble strip,
+    header con ':' fino a 80 char) pensate per output LLM, non per prosa
+    originale. Se applicate al fallback completo, possono mangiare un header
+    del capitolo. Il fix usa il flag `any_llm_output` per saltare la
+    sanitizzazione quando nessun chunk ha prodotto output LLM.
+    """
+    monkeypatch.setattr(ge, "LLM_SAFE_OUTPUT_CHUNK", 200)
+    monkeypatch.setattr(ge, "LLM_INTER_CHUNK_SLEEP_SEC", 0)
+    monkeypatch.setattr(ge, "_write_llm_audit", lambda **kw: None)
+
+    header = "Capitolo Primo:"
+    body_a = "Una mattina di marzo, il vento. " * 10
+    body_b = "Continuazione del racconto. " * 10
+    text = f"{header}\n\n{body_a}\n\n{body_b}"
+
+    def _fake_call(user_content, job=None, max_retries=None):
+        raise ge._PromptLeakError("everything leaks")
+
+    monkeypatch.setattr(ge, "_call_llm", _fake_call)
+    job = {"opt_lang": "it"}
+    result = ge._optimize_chapter_text(text, chapter_num=1, total_chapters=1, job=job)
+
+    assert header in result, "Header originale eroso dal sanitizer sul fallback"
+    assert len(job.get("opt_leak_chapters", [])) >= 2

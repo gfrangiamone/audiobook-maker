@@ -808,6 +808,7 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
     chunks = _split_text_into_chunks(text, LLM_SAFE_OUTPUT_CHUNK)
     print(f"  {label} LLM chunked: {len(chunks)} chunks ({len(text):,} chars total)")
     results = []
+    any_llm_output = False
     for i, chunk in enumerate(chunks):
         if job is not None and job.get("opt_cancelled"):
             raise _CancelledError("Optimization cancelled between chunks")
@@ -822,14 +823,20 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             user_content = chunk
         try:
             results.append(_call_llm(user_content, job=job))
+            any_llm_output = True
         except _PromptLeakError:
             print(f"  {label} prompt-leak fallback on chunk {i+1}/{len(chunks)}: using original chunk")
             _record_leak(i, chunk)
             results.append(chunk)
         if i < len(chunks) - 1:
             time.sleep(LLM_INTER_CHUNK_SLEEP_SEC)  # rate limiting tra chunk
-    # Seconda passata di sanitizzazione sul testo ricomposto
-    return _sanitize_llm_output("\n\n".join(results))
+    joined = "\n\n".join(results)
+    # Salta la sanitizzazione finale se tutto il contenuto e' fallback originale:
+    # _sanitize_llm_output ha euristiche aggressive (preamble strip, dedup) che
+    # sono pensate per output LLM, non per prosa originale dell'utente.
+    if not any_llm_output:
+        return joined
+    return _sanitize_llm_output(joined)
 
 
 # ---------------------------------------------------------------------------
