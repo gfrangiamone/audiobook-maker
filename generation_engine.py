@@ -652,9 +652,12 @@ def _is_trivial_input(text):
     """True se il testo è troppo banale per giustificare una chiamata LLM.
 
     Sono trivial:
-    - Testo vuoto o solo whitespace
-    - Sotto LLM_TRIVIAL_INPUT_MIN_CHARS char (strippati)
-    - Una sola riga senza punteggiatura terminale (titolo, nome proprio)
+    - Testo vuoto o solo whitespace.
+    - Sotto LLM_TRIVIAL_INPUT_MIN_CHARS char (strippati).
+    - Una sola riga di lunghezza < 2 * LLM_TRIVIAL_INPUT_MIN_CHARS senza
+      punteggiatura terminale (titolo, nome proprio, intestazione). Il cap
+      superiore evita di trattare come trivial prosa mal-estratta che ha
+      perso la punteggiatura.
 
     Pass-through del testo originale elimina la causa principale di echo
     del system prompt (input povero di contesto).
@@ -667,7 +670,9 @@ def _is_trivial_input(text):
     if len(stripped) < LLM_TRIVIAL_INPUT_MIN_CHARS:
         return True
     nonblank_lines = [ln for ln in stripped.splitlines() if ln.strip()]
-    if len(nonblank_lines) == 1 and not stripped.endswith((".", "!", "?", "…", '."')):
+    if (len(nonblank_lines) == 1
+            and len(stripped) < 2 * LLM_TRIVIAL_INPUT_MIN_CHARS
+            and not stripped.endswith((".", "!", "?", "…", '."'))):
         return True
     return False
 
