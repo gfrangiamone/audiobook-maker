@@ -553,8 +553,44 @@ def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
                     chapter_title="", chunk_index=None, outcome="",
                     chars_input=0, chars_output=0,
                     leaked_preview=""):
-    """Append-only JSONL audit per eventi prompt-leak. Stub — implementato in Task 6."""
-    return None
+    """Append-only JSONL audit per eventi prompt-leak (best-effort, non-fatal).
+
+    File: _upload_dir / "llm_leak_audit_YYYY-MM.jsonl"
+    Schema: ts, job_id, chapter_num/title, chunk_index, outcome, model,
+    lang, chars_input/output, leaked_preview (max 200 char).
+    """
+    try:
+        if _upload_dir is None:
+            return
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc)
+        month = ts.strftime("%Y-%m")
+        path = _upload_dir / f"llm_leak_audit_{month}.jsonl"
+        # Risolvi lang/job_id da job se non passati esplicitamente
+        resolved_job_id = job_id
+        lang = ""
+        if job is not None:
+            if not resolved_job_id:
+                resolved_job_id = job.get("job_id", "")
+            lang = (job.get("opt_lang") or "").split("-")[0].lower()
+        rec = {
+            "ts": ts.isoformat(),
+            "job_id": resolved_job_id or "",
+            "chapter_num": chapter_num,
+            "chapter_title": chapter_title or "",
+            "chunk_index": chunk_index,
+            "outcome": outcome,
+            "model": LLM_MODEL,
+            "lang": lang,
+            "chars_input": int(chars_input or 0),
+            "chars_output": int(chars_output or 0),
+            "leaked_preview": (leaked_preview or "")[:200],
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        # Audit non deve mai bloccare il flusso utente
+        print(f"[llm-audit] write failed: {e}")
 
 
 _llm_prompts = {} # Cache per i prompt multilingua
@@ -691,6 +727,9 @@ def _call_llm(user_content, job=None, max_retries=None):
                     time.sleep(1.0)
                     continue
                 print(f"  [LLM] prompt-leak persists after {LLM_LEAK_MAX_RETRIES} retries — giving up")
+                if job is not None:
+                    job["_last_leak_preview"] = cleaned[:200]
+                    job["_last_leak_chars_output"] = len(cleaned)
                 raise _PromptLeakError("LLM output contains system-prompt echo")
 
             return cleaned
@@ -777,12 +816,16 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
         chapter_title = job.get("opt_current_chapter", "") or ""
 
     def _record_leak(chunk_idx, chunk_text):
+        leaked_preview = ""
+        chars_output = 0
         if job is not None:
             job.setdefault("opt_leak_chapters", []).append({
                 "chapter_num": chapter_num,
                 "chunk_index": chunk_idx,
                 "ts": time.time(),
             })
+            leaked_preview = job.pop("_last_leak_preview", "")
+            chars_output = job.pop("_last_leak_chars_output", 0)
         _write_llm_audit(
             job=job,
             job_id=(job.get("job_id") if job else None),
@@ -791,8 +834,8 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             chunk_index=chunk_idx,
             outcome="prompt_leak_fallback",
             chars_input=len(chunk_text),
-            chars_output=0,
-            leaked_preview="",
+            chars_output=chars_output,
+            leaked_preview=leaked_preview,
         )
 
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS

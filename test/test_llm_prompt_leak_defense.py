@@ -283,3 +283,52 @@ def test_optimize_chapter_all_chunks_leak_preserves_header(monkeypatch):
 
     assert header in result, "Header originale eroso dal sanitizer sul fallback"
     assert len(job.get("opt_leak_chapters", [])) >= 2
+
+
+def test_write_llm_audit_creates_jsonl_record(tmp_path, monkeypatch):
+    """Un evento di leak deve essere appended come riga JSONL valida."""
+    monkeypatch.setattr(ge, "_upload_dir", tmp_path)
+    ge._write_llm_audit(
+        job=None,
+        job_id="job-abc",
+        chapter_num=15,
+        chapter_title="«E voi chi dite che io sia»",
+        chunk_index=None,
+        outcome="prompt_leak_fallback",
+        chars_input=18,
+        chars_output=13328,
+        leaked_preview="Sei un editor audio specializzato.",
+    )
+
+    files = list(tmp_path.glob("llm_leak_audit_*.jsonl"))
+    assert len(files) == 1
+    lines = files[0].read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["job_id"] == "job-abc"
+    assert rec["chapter_num"] == 15
+    assert rec["outcome"] == "prompt_leak_fallback"
+    assert rec["chars_input"] == 18
+    assert rec["leaked_preview"].startswith("Sei un editor")
+    assert "ts" in rec
+
+
+def test_write_llm_audit_appends_subsequent_events(tmp_path, monkeypatch):
+    """Due eventi nello stesso mese -> due righe nello stesso file."""
+    monkeypatch.setattr(ge, "_upload_dir", tmp_path)
+    for n in (1, 2):
+        ge._write_llm_audit(
+            job=None, job_id=f"job-{n}", chapter_num=n,
+            outcome="prompt_leak_fallback",
+            chars_input=10, chars_output=0,
+        )
+    files = list(tmp_path.glob("llm_leak_audit_*.jsonl"))
+    assert len(files) == 1
+    lines = files[0].read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+
+
+def test_write_llm_audit_is_safe_when_upload_dir_none(monkeypatch):
+    """Se _upload_dir non e' inizializzato, l'audit e' no-op (non lancia)."""
+    monkeypatch.setattr(ge, "_upload_dir", None)
+    ge._write_llm_audit(job_id="x", outcome="prompt_leak_fallback")
