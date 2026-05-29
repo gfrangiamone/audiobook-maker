@@ -391,6 +391,43 @@ Il delta caratteri rimossi viene **sottratto** da `opt_streamed_chars` per coere
 
 Log: `[LLM] sanitized output: removed N chars of meta/duplicates`.
 
+### 7.1 Difesa contro echo del system prompt
+
+Failure mode noto degli LLM: su input povero di contesto (es. capitolo con solo un titolo) il modello a volte restituisce il system prompt come output. Caso reale: cap. 15 di `Libretto_Es_Frat2026_optimized.abm` (2026-05) conteneva il file `prompt_tts_it.md` letterale.
+
+Difesa a 5 strati in `generation_engine.py`:
+
+1. **Hardening prompt** — ogni `prompt_tts_*.md` (10 file) termina con sezione "INPUT BANALE / TRIVIAL INPUT — REGOLA DI SALVAGUARDIA" che istruisce il modello a restituire l'input invariato per testi banali (titoli, nomi propri, < ~80 char di prosa).
+2. **Pre-filtro `_is_trivial_input(text)`** — soglia `LLM_TRIVIAL_INPUT_MIN_CHARS` (env `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS`, default 80). Sotto soglia o single-line < 2×soglia senza punteggiatura terminale → `_optimize_chapter_text` ritorna l'input senza chiamare l'LLM.
+3. **Detector `_is_prompt_leak(text, system_prompt)`** — prefix match (primi `_LEAK_PREFIX_LEN`=120 char del prompt nei primi `_LEAK_SEARCH_WINDOW`=400 char dell'output) o block match (blocco contiguo di `_LEAK_BLOCK_LEN`=200 char del prompt presente nell'output, stride `_LEAK_BLOCK_STEP`=150). Su detection: `_call_llm` ritenta fino a `LLM_LEAK_MAX_RETRIES` (env `ABM_LLM_LEAK_MAX_RETRIES`, default 2) volte con `temperature` +0.1 per attempt (capped 1.0), `reasoning_effort="none"` forzato, thinking off. Il budget retry anti-leak è indipendente da quello transient (429/5xx/network). Esauriti i retry → raise `_PromptLeakError`; prima del raise, stash di `job["_last_leak_preview"]` (200 char) e `job["_last_leak_chars_output"]` per l'audit.
+4. **Fallback in `_optimize_chapter_text`** — su `_PromptLeakError` (single-call o per-chunk) ritorna l'input originale, registra in `job["opt_leak_chapters"]` (lista di `{chapter_num, chunk_index, ts}`) e appende a `llm_leak_audit_YYYY-MM.jsonl` via `_write_llm_audit`. Se TUTTI i chunk leakano, il join finale salta `_sanitize_llm_output` (le euristiche aggressive del sanitizer sono pensate per output LLM, non per prosa originale).
+5. **Safety-net pre-write in `_generate_optimized_abm`** — ultima linea di difesa: prima di scrivere ogni chapter nello zip `.abm`, ri-applica `_is_prompt_leak(ch.text, _get_llm_prompt(job_lang))`; se positivo, sostituisce il testo con placeholder `[Capitolo non disponibile — anomalia di ottimizzazione rilevata in fase finale: <titolo>]`, scrive audit con `outcome="prompt_leak_safety_net"`, e aggiunge `prompt_leak: true` nel manifest del chapter. Protegge solo lo SNAPSHOT scaricabile; il TTS legge `ch.text` direttamente, quindi la prevenzione del leak nell'audio avviene a monte (strati 1-4).
+
+**Audit JSONL** — `<ABM_DATA_DIR>/llm_leak_audit_YYYY-MM.jsonl` (append-only, best-effort, never raises). Schema:
+
+| campo            | tipo | descrizione                                            |
+|------------------|------|--------------------------------------------------------|
+| `ts`             | str  | ISO UTC timestamp                                      |
+| `job_id`         | str  | risolto da `job["job_id"]` se non passato esplicito    |
+| `chapter_num`    | int? |                                                        |
+| `chapter_title`  | str  |                                                        |
+| `chunk_index`    | int? | null per single-call                                   |
+| `outcome`        | str  | `prompt_leak_fallback` o `prompt_leak_safety_net`      |
+| `model`          | str  | `LLM_MODEL`                                            |
+| `lang`           | str  | codice ISO 2 lettere                                   |
+| `chars_input`    | int  |                                                        |
+| `chars_output`   | int  | lunghezza output leaked (0 per fallback senza stash)   |
+| `leaked_preview` | str  | primi 200 char dell'output leaked (debug)              |
+
+**Variabili d'ambiente nuove** (vedi anche `PARAMETRI_CONFIGURAZIONE.md`):
+
+| Variabile                          | Default | File sorgente             |
+|------------------------------------|---------|---------------------------|
+| `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS`  | 80      | `generation_engine.py`    |
+| `ABM_LLM_LEAK_MAX_RETRIES`         | 2       | `generation_engine.py`    |
+
+Tutti i test del piano vivono in `test/test_llm_prompt_leak_defense.py` (21+ test).
+
 ---
 
 ## 8. Differenze comportamentali per motore TTS

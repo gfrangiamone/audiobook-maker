@@ -177,6 +177,8 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
 | `LLM_INTER_CHUNK_SLEEP_SEC` | `0.5` | `ABM_LLM_INTER_CHUNK_SLEEP_SEC` | `generation_engine.py` | 96 |
 | `LLM_HEARTBEAT_TIMEOUT_SEC` | `60.0` (auto-cancel solo interactive) | `ABM_LLM_HEARTBEAT_TIMEOUT_SEC` | `generation_engine.py` | 97 |
+| `LLM_TRIVIAL_INPUT_MIN_CHARS` | `80` (sotto soglia, o single-line < 2× senza punteggiatura terminale → pass-through, no LLM call. Antidoto a prompt-leak su input banali) | `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS` | `generation_engine.py` | 100 |
+| `LLM_LEAK_MAX_RETRIES` | `2` (retry anti-leak con `temperature` +0.1 per attempt capped 1.0, `reasoning_effort="none"`, thinking off. Budget indipendente da `LLM_MAX_RETRIES` transient. Esauriti → raise `_PromptLeakError` → fallback originale + audit JSONL) | `ABM_LLM_LEAK_MAX_RETRIES` | `generation_engine.py` | 101 |
 | `LLM_RESERVED_OUTPUT_TOKENS` | derived = `LLM_MAX_TOKENS` | — | `generation_engine.py` | 100 |
 | `LLM_MAX_INPUT_TOKENS` | derived = ~930k | — | `generation_engine.py` | 101 |
 | `LLM_MAX_INPUT_CHARS` | derived = ~3.26M | — | `generation_engine.py` | 102 |
