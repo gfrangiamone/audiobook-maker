@@ -457,9 +457,17 @@ def _get_client_id():
 
 
 def _new_job_id():
-    """Generate a high-entropy job identifier (128 bit, URL-safe)."""
+    """Generate a high-entropy job identifier (128 bit, URL-safe).
+    Never starts with ``_`` — the ``_`` prefix is the protected system
+    namespace (``_payments.json``, ``_vouchers.json``, …) and the cleanup
+    loop skips all dirs starting with it.  ``_`` occurs in 1/64
+    url-safe-base64 IDs; this loop keeps rolling until we get one
+    without it."""
     import secrets as _secrets
-    return _secrets.token_urlsafe(16)
+    while True:
+        jid = _secrets.token_urlsafe(16)
+        if not jid.startswith("_"):
+            return jid
 
 
 def _check_job_owner(job_id):
