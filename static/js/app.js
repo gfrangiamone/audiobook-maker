@@ -659,6 +659,14 @@ async function loadVoices(){
     else{
         _googleTtsBudget=null;
     }
+    // Stato Premium (capability/admin_disabled) salvato in variabile dedicata
+    // e rimosso dal dict, cosi` fillLangs() non lo tratta come una lingua.
+    if(data._premium_status){
+        _premiumStatus=data._premium_status;
+        delete data._premium_status;
+    }else{
+        _premiumStatus=null;
+    }
     voices=data;
     _applyPremiumAvailability();
     fillLangs();
@@ -667,11 +675,18 @@ async function loadVoices(){
   }
 }
 
-// Mostra/nasconde il tab "Voci PREMIUM" in base alla presenza effettiva di
-// voci Gemini in /api/voices. Quando l'admin disattiva il kill-switch o la
-// chiave API non e' configurata, il backend omette le voci gemini: e qui
-// nascondiamo l'intero tab (button + pannello). Se il tab Premium era
-// attivo, ripiega su Standard.
+// Mostra/nasconde il tab "Voci PREMIUM" in base allo stato Premium dal backend.
+// Tre casi distinti:
+//   1) Capability OK + voci presenti      → tab visibile, cliccabile normalmente
+//   2) Capability OK ma admin_disabled    → tab visibile MA cliccare apre popup
+//      di manutenzione (vedi switchAudioTab). Cosi` l'utente sa che la feature
+//      esiste ed e' temporaneamente sospesa, invece di vedere combo vuote.
+//   3) Capability KO (non configurata)    → tab nascosto (come prima)
+// La flag globale `_premiumMaintenance` viene letta da switchAudioTab() per
+// bloccare il passaggio al tab con un modal. `_premiumStatus` e` popolata da
+// loadVoices() leggendo la meta `_premium_status` di /api/voices.
+let _premiumMaintenance=false;
+let _premiumStatus=null;
 function _applyPremiumAvailability(){
   let hasPremium=false;
   try{
@@ -683,15 +698,94 @@ function _applyPremiumAvailability(){
       if(hasPremium)break;
     }
   }catch(_e){}
+  // Distinzione admin-disabled vs non-configured tramite meta `_premiumStatus`.
+  const ps=_premiumStatus;
+  const capOk=ps?!!ps.capability_ok:false;
+  const adminDisabled=ps?!!ps.admin_disabled:false;
+  _premiumMaintenance=(capOk&&adminDisabled);
+  const showTab=hasPremium||_premiumMaintenance;
   const btn=document.getElementById('tabPremiumBtn');
   const panel=document.getElementById('tabPremium');
-  if(btn)btn.hidden=!hasPremium;
-  if(!hasPremium){
+  if(btn)btn.hidden=!showTab;
+  if(!showTab){
     if(panel)panel.hidden=true;
     if(wizardState&&wizardState.audioTab==='premium'&&typeof switchAudioTab==='function'){
       switchAudioTab('standard');
     }
+  }else if(_premiumMaintenance&&wizardState&&wizardState.audioTab==='premium'){
+    // Edge case: kill-switch attivato mentre il tab Premium era aperto.
+    // Forza il ritorno a Standard cosi` l'utente non resta su un pannello
+    // svuotato. Il prossimo click su Premium mostrera` il popup.
+    if(panel)panel.hidden=true;
+    if(typeof switchAudioTab==='function')switchAudioTab('standard');
   }
+}
+
+// Modal dedicato per la manutenzione del tab Premium. Costruito on-demand via
+// DOM API (no innerHTML) cosi` non collide con altri modali e si autodistrugge
+// alla chiusura. Stesso wrapper .modal-overlay/.modal usato altrove per CSS.
+function _showPremiumMaintenanceModal(){
+  const msgKey='premium_maintenance_msg';
+  const titleKey='premium_maintenance_title';
+  const fallbackMsg='The [PREMIUM Voices] feature is under maintenance and will be re-enabled in the next few hours.';
+  const fallbackTitle='Feature under maintenance';
+  let msg=fallbackMsg, ttl=fallbackTitle;
+  try{
+    const m=(typeof t==='function')?t(msgKey):msgKey;
+    if(m&&m!==msgKey)msg=m;
+    const tt=(typeof t==='function')?t(titleKey):titleKey;
+    if(tt&&tt!==titleKey)ttl=tt;
+  }catch(_e){}
+  let okLabel='OK';
+  try{const ok=(typeof t==='function')?t('sel_too_large_ok'):null;if(ok&&ok!=='sel_too_large_ok')okLabel=ok;}catch(_e){}
+  const prev=document.getElementById('premiumMaintModal');
+  if(prev&&prev.parentNode)prev.parentNode.removeChild(prev);
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay open';
+  overlay.id='premiumMaintModal';
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  const modal=document.createElement('div');
+  modal.className='modal';
+  modal.style.maxWidth='460px';
+  // Stesso layout di #selTooLargeModal: head (titolo + close), body (testo + button OK).
+  const head=document.createElement('div');
+  head.className='modal-head';
+  const headSpan=document.createElement('span');
+  headSpan.textContent=ttl;
+  head.appendChild(headSpan);
+  const closeBtn=document.createElement('button');
+  closeBtn.className='modal-close';
+  closeBtn.setAttribute('aria-label','Close');
+  closeBtn.textContent='×';
+  head.appendChild(closeBtn);
+  const bodyDiv=document.createElement('div');
+  bodyDiv.className='modal-body';
+  const msgP=document.createElement('p');
+  msgP.style.margin='0 0 18px';
+  msgP.style.lineHeight='1.6';
+  msgP.style.fontSize='.92rem';
+  msgP.textContent=msg;
+  bodyDiv.appendChild(msgP);
+  const actions=document.createElement('div');
+  actions.style.display='flex';
+  actions.style.gap='10px';
+  actions.style.flexWrap='wrap';
+  actions.style.justifyContent='flex-end';
+  const okBtn=document.createElement('button');
+  okBtn.type='button';
+  okBtn.className='btn btn-ok';
+  okBtn.textContent=okLabel;
+  actions.appendChild(okBtn);
+  bodyDiv.appendChild(actions);
+  modal.appendChild(head);
+  modal.appendChild(bodyDiv);
+  overlay.appendChild(modal);
+  const close=()=>{if(overlay.parentNode)overlay.parentNode.removeChild(overlay);};
+  okBtn.addEventListener('click',close);
+  closeBtn.addEventListener('click',close);
+  overlay.addEventListener('click',(e)=>{if(e.target===overlay)close();});
+  document.body.appendChild(overlay);
 }
 function fillLangs(){
   const sel=document.getElementById('vl');
@@ -948,7 +1042,16 @@ function updateModelRateHint(data){
 
 function switchAudioTab(tab){
   const prev=wizardState.audioTab;
-  // Guard Premium: blocca lo switch se la selezione capitoli supera il cap
+  // Guard Premium #1: kill-switch admin (manutenzione). Se le voci PREMIUM
+  // sono temporaneamente disabilitate dall'admin, il tab resta visibile ma
+  // cliccarlo NON cambia tab — mostra solo un popup di manutenzione. Cosi`
+  // l'utente sa che la funzionalita` esiste e tornera`, invece di vedere
+  // combo lingua/voce svuotate che fanno sembrare l'app rotta.
+  if(tab==='premium'&&prev!=='premium'&&_premiumMaintenance){
+    _showPremiumMaintenanceModal();
+    return;
+  }
+  // Guard Premium #2: blocca lo switch se la selezione capitoli supera il cap
   // Gemini (`max_gemini_text_chars`, di norma 800k). Il warning va mostrato
   // SOLO al click sul tab Premium — non in `tryGoToAudioSettings()` dove
   // bloccherebbe l'utente che vuole solo usare voci Standard (cap 1.5M).

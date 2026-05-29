@@ -3263,7 +3263,8 @@ def admin_logs_page():
   th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
   td{padding:6px 8px;border-bottom:1px solid #1e293b}
   .agg-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}
-  @media(max-width:900px){.agg-grid{grid-template-columns:1fr 1fr}}
+  .agg-grid-6{grid-template-columns:repeat(6,1fr)}
+  @media(max-width:900px){.agg-grid,.agg-grid-6{grid-template-columns:1fr 1fr}}
   .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
   .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
   .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
@@ -3357,11 +3358,12 @@ def admin_logs_page():
 
   <div class="panel">
     <h2>Aggregati</h2>
-    <div class="agg-grid" id="auditAggregates">
+    <div class="agg-grid agg-grid-6" id="auditAggregates">
       <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
       <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
       <div class="agg-box"><div class="agg-label">Costo Google</div><div class="agg-value" id="aggCost">-</div></div>
-      <div class="agg-box"><div class="agg-label">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi − Costo Google (include fee PayPal)">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine − fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
       <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
     </div>
   </div>
@@ -3372,10 +3374,10 @@ def admin_logs_page():
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th>Costo G.</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine % = Margine / Costo Google · markup applicato">Margine %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine / Costo Google · markup applicato">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="auditRecordsBody">
-        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+        <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
       </tbody>
     </table>
   </div>
@@ -3527,6 +3529,14 @@ def admin_logs_page():
     $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
     $("aggCost").textContent = fmtEur(agg.google_cost_eur);
     $("aggMargin").textContent = fmtEur(agg.margin_eur);
+    // Margine netto: gia` decurtato delle fee PayPal lato server (voucher=0).
+    const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
+                      : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
+    const netEl = $("aggNetMargin");
+    if (netEl) {
+      netEl.textContent = fmtEur(netMargin);
+      netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
+    }
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
@@ -3542,7 +3552,7 @@ def admin_logs_page():
   function renderRecords(recs){
     const tbody = $("auditRecordsBody");
     if (!recs.length) {
-      tbody.innerHTML = '<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">Nessun record trovato.</td></tr>';
       return;
     }
     // Ordina mettendo i live "running" sempre in cima, poi gli altri per ts desc.
@@ -3561,8 +3571,21 @@ def admin_logs_page():
       const gCost = Number(r.google_cost_eur_actual || 0);
       // Margine = Prezzo − Costo Google (lordo, include fee PayPal).
       const margEur = revenue - gCost;
+      // Margine netto: prende _net_margin_eur dal server (gia` decurta fee
+      // PayPal per i record paypal, zero per voucher/free). Fallback locale:
+      // se il campo manca (record antichi non passati per _apply_cancel_effective),
+      // assume nessuna fee.
+      const fee = Number(r._paypal_fee_eur || 0);
+      const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
+                                                  : (margEur - fee);
+      const method = (r.payment_method || "").toLowerCase();
+      const netTip = method === "paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
+        : (method === "voucher" ? "Voucher: nessuna fee PayPal"
+            : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
       const margPct = gCost > 0 ? (margEur / gCost * 100) : 0;
       const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
+      const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const isLive = !!r._live;
       const rowCls = isLive ? "row-live" : "";
       const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
@@ -3580,6 +3603,7 @@ def admin_logs_page():
         <td>${fmtEur(gCost)}</td>
         <td${cancelTip}>${fmtEur(revenue)}</td>
         <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span></td>
       </tr>`;
@@ -3895,6 +3919,39 @@ _FULL_REFUND_OUTCOMES = frozenset({
 })
 
 
+def _compute_paypal_fee_eur(revenue_eur, payment_method):
+    """Stima fee PayPal addebitata sul ricavo PER QUESTO record.
+
+    Applica la formula PayPal standard (`% gross + fissa`) solo se il record
+    è stato pagato via PayPal e ha ricavo > 0; altrimenti ritorna 0:
+    - `voucher`: PayPal non e' coinvolto (lo era stato all'origine del voucher,
+      ma la fee era gia` stata pagata in quella transazione → non si addebita
+      due volte qui).
+    - rimborso totale (revenue_eur = 0): la fee viene quasi sempre trattenuta
+      da PayPal anche sui rimborsi, ma per l'audit del margine sul singolo job
+      consideriamo 0 (non c'e' ricavo da decurtare).
+    - free (nessun pagamento): 0.
+    - record legacy senza `payment_method`: 0 (conservativo: non assumiamo
+      paypal in assenza di dato).
+    """
+    try:
+        rev = float(revenue_eur or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if rev <= 0:
+        return 0.0
+    if (payment_method or "").lower() != "paypal":
+        return 0.0
+    if gemini_tts is None:
+        return 0.0
+    try:
+        pct = float(gemini_tts.PAYPAL_PERCENT_FEE)
+        fixed = float(gemini_tts.PAYPAL_FIXED_FEE_EUR)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    return round(rev * pct / 100.0 + fixed, 4)
+
+
 def _apply_cancel_effective(rec):
     """Augmenta il record con `_eff_*` che riflettono i rimborsi reali.
 
@@ -3903,6 +3960,9 @@ def _apply_cancel_effective(rec):
     - `*_refunded` (rimborso totale: qualita`/quota/budget/preflight/cancel
       pre-attivita`/failure generico): ricavo = 0, quindi margine = -costo.
     - altri (completed, running, ...): ricavo = `user_price_eur_charged`.
+
+    Aggiunge inoltre `_paypal_fee_eur` e `_net_margin_eur` (margine al netto
+    delle fee PayPal: zero per voucher/free).
     """
     if not isinstance(rec, dict):
         return rec
@@ -3921,6 +3981,9 @@ def _apply_cancel_effective(rec):
     rec["_eff_margin_eur"] = round(revenue - cost, 4)
     rec["_eff_delta_eur"] = round(should - revenue, 4)
     rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / cost * 100), 2) if cost > 0 else 0.0
+    fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""))
+    rec["_paypal_fee_eur"] = round(fee, 4)
+    rec["_net_margin_eur"] = round(revenue - cost - fee, 4)
     return rec
 
 
@@ -3987,6 +4050,7 @@ def admin_api_gemini_cost_audit():
     agg_rev = 0.0
     agg_cost = 0.0
     agg_delta = 0.0
+    agg_fee = 0.0
     for r in recs:
         oc = r.get("outcome") or ""
         if oc not in ("completed", "running", "cancelled_partial"):
@@ -3995,11 +4059,14 @@ def admin_api_gemini_cost_audit():
         agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
         agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
         agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
+        agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
     agg = {
         "count": agg_n,
         "revenue_eur": round(agg_rev, 4),
         "google_cost_eur": round(agg_cost, 4),
         "margin_eur": round(agg_rev - agg_cost, 4),
+        "paypal_fees_eur": round(agg_fee, 4),
+        "net_margin_eur": round(agg_rev - agg_cost - agg_fee, 4),
         "delta_pct_avg": round((agg_delta / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
         "filters": {"model": _norm(model), "language": _norm(language),
                     "date_from": date_from, "date_to": date_to},
@@ -4179,6 +4246,20 @@ def api_voices():
                 "chars_remaining": remaining,
                 "chars_limit": limit,
             }
+        # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
+        # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
+        # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
+        # cosi` l'utente non vede combo vuote che fanno sembrare l'app rotta.
+        if gemini_tts is not None:
+            try:
+                cap_ok = bool(gemini_tts.is_capability_available())
+                admin_state = gemini_tts.admin_disabled_state()
+                voices["_premium_status"] = {
+                    "capability_ok": cap_ok,
+                    "admin_disabled": bool(admin_state.get("disabled", False)),
+                }
+            except Exception:
+                pass
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

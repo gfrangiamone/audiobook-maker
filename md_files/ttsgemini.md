@@ -75,6 +75,7 @@ tts_split.py
 - `tts_split` fa late-import di `gemini_tts` (`import gemini_tts` dentro la funzione) per mantenere il modulo opzionale: se `google-genai` non è installato, Edge/Google continuano a funzionare.
 - `gemini_tts.is_available()` è la *single source of truth* per "Gemini è utilizzabile". Cached dopo la prima chiamata (lock-protected). Override admin in cima: se il kill-switch `is_admin_disabled()` è True, ritorna sempre `False` indipendentemente dalla capability detection.
 - **Kill-switch admin** (`set_admin_disabled(disabled, reason)`) persistito in `ABM_DATA_DIR/gemini_admin_state.json` (mirror in-memory `_admin_disabled`, ricaricato in `init()`). Endpoint: `GET/POST /admin/api/gemini_kill_switch`. UI: pannello in `/admin/audit-tts`. Quando attivo, `/api/voices` non include più l'optgroup PREMIUM, le stime e i flussi di pagamento Premium rispondono 503 (gateano già su `is_available()`). `is_capability_available()` espone la capability bypassando il kill-switch (usata dal pannello admin per distinguere "spento per scelta" da "non configurato").
+- **Meta `_premium_status` in `/api/voices`** (`audiobook_app.py:api_voices`): chiave speciale che espone `{capability_ok, admin_disabled}` letti rispettivamente da `gemini_tts.is_capability_available()` e `gemini_tts.admin_disabled_state()`. Serve al frontend per distinguere "non configurato" (tab PREMIUM nascosto) da "kill-switch attivo" (tab PREMIUM visibile ma cliccarlo apre un modal `premium_maintenance_msg` invece di switchare). Senza questa distinzione il tab spariva in entrambi i casi e l'utente non sapeva che la feature esisteva. Vedi §15.3.
 
 ---
 
@@ -608,13 +609,15 @@ L'entry in memoria del job viene comunque rimossa (così il loop non si ripropon
 
 **Rate log empirico (`gemini_tts_rate_log.json`)**: stessa regola del campo `language` dell'audit. `record_rate_sample(lang=...)` viene chiamato dai 3 callsite Gemini con la lingua TTS scelta (`_audit_language(job, info)` nei branch single-file e multi-file di `generation_engine.py`, `request.args["lang"] || job.opt_lang || job.gen_lang || info.language` nel preview di `audiobook_app.py`). Senza questa risoluzione i campioni char/sec di una voce italiana applicata a un EPUB arabo finivano nel cluster `lang=ar` distorcendo `get_empirical_rate("ar", ...)`. Frontend: `_buildPreviewUrl()` (static/js/app.js) aggiunge `&lang=<selLang>` per propagare la scelta UI al server.
 
-**Ricavo effettivo nella UI `/admin/audit-tts`**: i record persistiti conservano sempre `user_price_eur_charged` come importo originario pagato. Prima del rendering, `audiobook_app._apply_cancel_effective()` (audiobook_app.py:3908) calcola tre campi derivati (`_eff_revenue_eur`, `_eff_margin_eur`, `_eff_delta_eur`) applicando questa logica:
+**Ricavo effettivo nella UI `/admin/audit-tts`**: i record persistiti conservano sempre `user_price_eur_charged` come importo originario pagato. Prima del rendering, `audiobook_app._apply_cancel_effective()` (audiobook_app.py:3908) calcola cinque campi derivati (`_eff_revenue_eur`, `_eff_margin_eur`, `_eff_delta_eur`, `_paypal_fee_eur`, `_net_margin_eur`) applicando questa logica:
 
 - **Outcome di rimborso totale** (`_FULL_REFUND_OUTCOMES`: `failed_refunded`, `failed_quota_refunded`, `failed_budget_refunded`, `failed_quality_refunded`, `preflight_blocked_refunded`, `cancelled_refunded`): ricavo effettivo = `0`, quindi margine = `−google_cost_eur_actual` (perdita pari al costo Google non recuperato).
 - **`cancelled_partial`**: ricavo effettivo = `cancel_retained_eur` (quota trattenuta a copertura del consumato).
 - **Altri** (`completed`, `running`, ecc.): ricavo effettivo = `user_price_eur_charged`.
 
-Le colonne Prezzo €/Margine €/Margine % della tabella `/admin/audit-tts` usano questi campi `_eff_*`. Gli aggregati in alto (Ricavi/Costo/Margine totali) escludono già a monte gli outcome non-revenue contando solo `completed`, `running`, `cancelled_partial` (linea ~3998).
+**Fee PayPal e margine netto (introdotti 2026-05)**: `_compute_paypal_fee_eur(revenue, payment_method)` (audiobook_app.py:3898) calcola la fee applicando la formula `revenue × PAYPAL_PERCENT_FEE/100 + PAYPAL_FIXED_FEE_EUR` (default 3.4% + 0.34€, costanti in `gemini_tts.py:186-187`) **solo** se `payment_method == "paypal"`; per `voucher`, stringa vuota o record gratuiti la fee è `0`. Il margine netto è `_net_margin_eur = _eff_revenue_eur − google_cost_eur_actual − _paypal_fee_eur`.
+
+Le colonne Prezzo €/Margine €/Margine % della tabella `/admin/audit-tts` usano i campi `_eff_*`; la colonna **Margine netto €** usa `_net_margin_eur`. Gli aggregati in alto (Ricavi/Costo/Margine/Margine netto totali) escludono già a monte gli outcome non-revenue contando solo `completed`, `running`, `cancelled_partial` (linea ~3998); il campo aggregato `paypal_fees_eur` è la somma di `_paypal_fee_eur` sui soli record contati negli aggregati e `net_margin_eur = margin_eur − paypal_fees_eur`.
 
 ### 14.3 Combined payment in auto-generate flow
 
@@ -692,6 +695,16 @@ Tab dedicato (oltre a Standard/Free) che espone:
 - Stima durata + costo live (chiama `/api/gemini_estimate` on-change).
 
 I dettagli tecnici di provider/modello sono **nascosti** all'utente. Vedi `feedback_ui_provider_naming.md`.
+
+**Visibilità del tab `#tabPremiumBtn`** — gestita da `_applyPremiumAvailability()` in `static/js/app.js` leggendo la meta `_premium_status` di `/api/voices` (vedi §2 "Vincoli di dipendenza"). Tre casi:
+
+| Stato | `capability_ok` | `admin_disabled` | Voci `gemini:` in /api/voices | UI tab Premium |
+|-------|-----------------|------------------|-------------------------------|----------------|
+| Non configurato | `False` | irrelevant | nessuna | **Nascosto** (`btn.hidden=true`) |
+| Operativo | `True` | `False` | presenti | **Visibile + cliccabile** |
+| Manutenzione (kill-switch) | `True` | `True` | **nessuna** (gateate da `is_available()`) | **Visibile** ma click → modal `premium_maintenance_msg` (no switch) |
+
+Il modal di manutenzione è costruito on-demand in `_showPremiumMaintenanceModal()` (no markup statico in template): legge le chiavi i18n `premium_maintenance_title` / `premium_maintenance_msg` (presenti in `templates/_fragments/i18n_data.js` per tutte e 7 le lingue). La guard è in `switchAudioTab(tab)`: se `tab==='premium'` e `_premiumMaintenance=true`, mostra il popup e ritorna senza mutare `wizardState.audioTab`. Edge case: se il kill-switch viene attivato mentre il tab Premium è già aperto, `_applyPremiumAvailability` forza il ritorno a Standard.
 
 ### 15.4 Cancel volontario PREMIUM (cancel-floor)
 
