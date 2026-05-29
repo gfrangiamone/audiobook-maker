@@ -205,3 +205,52 @@ def test_call_llm_returns_normal_output(monkeypatch):
 
     result = ge._call_llm("input lungo per superare pre-filtro " * 10, job={"opt_lang": "it"}, max_retries=1)
     assert result == payload
+
+
+def test_optimize_chapter_falls_back_to_original_on_leak(monkeypatch):
+    """Single-call: leak → restituisce text originale + flag in job."""
+    original = "Prosa narrativa di test molto lunga, ben oltre la soglia di pre-filtro." * 3
+
+    def _fake_call(user_content, job=None, max_retries=None):
+        raise ge._PromptLeakError("test leak")
+
+    monkeypatch.setattr(ge, "_call_llm", _fake_call)
+
+    job = {"opt_lang": "it"}
+    # Disabilita audit per questo test (sara' coperto in Task 6)
+    monkeypatch.setattr(ge, "_write_llm_audit", lambda **kw: None)
+
+    result = ge._optimize_chapter_text(original, chapter_num=15,
+                                       total_chapters=38, job=job)
+    assert result == original
+    assert len(job.get("opt_leak_chapters", [])) == 1
+    assert job["opt_leak_chapters"][0]["chapter_num"] == 15
+
+
+def test_optimize_chapter_chunked_falls_back_per_chunk(monkeypatch):
+    """Chunked: leak su un chunk usa l'originale di quel chunk."""
+    # Forza chunking riducendo la soglia
+    monkeypatch.setattr(ge, "LLM_SAFE_OUTPUT_CHUNK", 200)
+    monkeypatch.setattr(ge, "LLM_INTER_CHUNK_SLEEP_SEC", 0)
+    monkeypatch.setattr(ge, "_write_llm_audit", lambda **kw: None)
+
+    para_a = "Paragrafo uno. " * 20
+    para_b = "Paragrafo due. " * 20
+    para_c = "Paragrafo tre. " * 20
+    text = f"{para_a}\n\n{para_b}\n\n{para_c}"
+
+    calls = []
+
+    def _fake_call(user_content, job=None, max_retries=None):
+        calls.append(user_content)
+        if "due" in user_content:
+            raise ge._PromptLeakError("leak on chunk 2")
+        return "OPT[" + user_content[:20] + "]"
+
+    monkeypatch.setattr(ge, "_call_llm", _fake_call)
+    job = {"opt_lang": "it"}
+    result = ge._optimize_chapter_text(text, chapter_num=1, total_chapters=1, job=job)
+
+    # Il chunk 2 deve contenere il paragrafo originale "due", non il placeholder OPT[]
+    assert "Paragrafo due" in result
+    assert len(job.get("opt_leak_chapters", [])) >= 1

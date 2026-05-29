@@ -549,6 +549,14 @@ def _is_prompt_leak(text, system_prompt):
     return False
 
 
+def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
+                    chapter_title="", chunk_index=None, outcome="",
+                    chars_input=0, chars_output=0,
+                    leaked_preview=""):
+    """Append-only JSONL audit per eventi prompt-leak. Stub — implementato in Task 6."""
+    return None
+
+
 _llm_prompts = {} # Cache per i prompt multilingua
 
 def _get_llm_prompt(lang_code="it"):
@@ -764,10 +772,39 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
         print(f"  {label} LLM skipped: trivial input ({len(text)} chars)")
         return text
 
+    chapter_title = ""
+    if job is not None:
+        chapter_title = job.get("opt_current_chapter", "") or ""
+
+    def _record_leak(chunk_idx, chunk_text):
+        if job is not None:
+            job.setdefault("opt_leak_chapters", []).append({
+                "chapter_num": chapter_num,
+                "chunk_index": chunk_idx,
+                "ts": time.time(),
+            })
+        _write_llm_audit(
+            job=job,
+            job_id=(job.get("job_id") if job else None),
+            chapter_num=chapter_num,
+            chapter_title=chapter_title,
+            chunk_index=chunk_idx,
+            outcome="prompt_leak_fallback",
+            chars_input=len(chunk_text),
+            chars_output=0,
+            leaked_preview="",
+        )
+
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
     if len(text) <= LLM_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
-        return _call_llm(text, job=job)
+        try:
+            return _call_llm(text, job=job)
+        except _PromptLeakError:
+            print(f"  {label} prompt-leak fallback: returning original chapter text")
+            _record_leak(None, text)
+            return text
+
     chunks = _split_text_into_chunks(text, LLM_SAFE_OUTPUT_CHUNK)
     print(f"  {label} LLM chunked: {len(chunks)} chunks ({len(text):,} chars total)")
     results = []
@@ -783,7 +820,12 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
                 user_content = f"[Parte {i+1} di {len(chunks)} \u2014 continuazione]\n\n{chunk}"
         else:
             user_content = chunk
-        results.append(_call_llm(user_content, job=job))
+        try:
+            results.append(_call_llm(user_content, job=job))
+        except _PromptLeakError:
+            print(f"  {label} prompt-leak fallback on chunk {i+1}/{len(chunks)}: using original chunk")
+            _record_leak(i, chunk)
+            results.append(chunk)
         if i < len(chunks) - 1:
             time.sleep(LLM_INTER_CHUNK_SLEEP_SEC)  # rate limiting tra chunk
     # Seconda passata di sanitizzazione sul testo ricomposto
