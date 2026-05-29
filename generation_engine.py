@@ -515,15 +515,22 @@ class _PromptLeakError(Exception):
     """
 
 
+_LEAK_PREFIX_LEN = 120      # char di "fingerprint" presi dal capo del prompt
+_LEAK_PREFIX_MIN = 60       # soglia minima utile per evitare match casuali su prompt cortissimi
+_LEAK_SEARCH_WINDOW = 400   # finestra iniziale dell'output in cui cercare il prefix (tollera heading saltati)
+_LEAK_BLOCK_LEN = 200       # dimensione blocco contiguo per lo scan generale
+_LEAK_BLOCK_STEP = 150      # passo dello scan: overlap di 50 char per non perdere match a cavallo del confine
+
+
 def _is_prompt_leak(text, system_prompt):
     """True se `text` appare essere un echo del system prompt.
 
     Strategia (uno qualsiasi dei check basta → leak):
-    - prefix match: i primi ~120 char strippati del prompt appaiono nei
-      primi 400 char dell'output (offset tollerato — il modello a volte
-      salta il primo heading markdown);
-    - block match: almeno un blocco contiguo di 200 char del system prompt
-      compare letterale nell'output.
+    - prefix match: i primi ~_LEAK_PREFIX_LEN char strippati del prompt
+      appaiono nei primi _LEAK_SEARCH_WINDOW char dell'output
+      (offset tollerato — il modello a volte salta il primo heading markdown);
+    - block match: almeno un blocco contiguo di _LEAK_BLOCK_LEN char del
+      system prompt compare letterale nell'output.
 
     Robusto cross-lingua: non dipende da marker hardcoded ma dal contenuto
     effettivo del prompt caricato.
@@ -531,13 +538,12 @@ def _is_prompt_leak(text, system_prompt):
     if not text or not system_prompt:
         return False
     prompt_norm = system_prompt.strip()
-    prompt_head = prompt_norm[:120].strip()
-    if len(prompt_head) >= 60 and prompt_head in text[:400]:
+    prompt_head = prompt_norm[:_LEAK_PREFIX_LEN].strip()
+    if len(prompt_head) >= _LEAK_PREFIX_MIN and prompt_head in text[:_LEAK_SEARCH_WINDOW]:
         return True
-    step = 150
-    for offset in range(0, max(1, len(prompt_norm) - 200), step):
-        block = prompt_norm[offset:offset + 200]
-        if len(block) >= 200 and block in text:
+    for offset in range(0, max(1, len(prompt_norm) - _LEAK_BLOCK_LEN), _LEAK_BLOCK_STEP):
+        block = prompt_norm[offset:offset + _LEAK_BLOCK_LEN]
+        if len(block) >= _LEAK_BLOCK_LEN and block in text:
             return True
     return False
 
