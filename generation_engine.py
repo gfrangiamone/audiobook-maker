@@ -97,6 +97,7 @@ LLM_REQUEST_TIMEOUT_SEC   = _env_float("ABM_LLM_REQUEST_TIMEOUT_SEC", 120.0)
 LLM_MAX_RETRIES           = _env_int("ABM_LLM_MAX_RETRIES", 4)
 LLM_INTER_CHUNK_SLEEP_SEC = _env_float("ABM_LLM_INTER_CHUNK_SLEEP_SEC", 0.5)
 LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
+LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 
 # Derived (computed, not directly configurable)
 LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
@@ -647,9 +648,41 @@ def _call_llm(user_content, job=None, max_retries=None):
     return "".join(result_parts)
 
 
+def _is_trivial_input(text):
+    """True se il testo è troppo banale per giustificare una chiamata LLM.
+
+    Sono trivial:
+    - Testo vuoto o solo whitespace
+    - Sotto LLM_TRIVIAL_INPUT_MIN_CHARS char (strippati)
+    - Una sola riga senza punteggiatura terminale (titolo, nome proprio)
+
+    Pass-through del testo originale elimina la causa principale di echo
+    del system prompt (input povero di contesto).
+    """
+    if not text:
+        return True
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if len(stripped) < LLM_TRIVIAL_INPUT_MIN_CHARS:
+        return True
+    nonblank_lines = [ln for ln in stripped.splitlines() if ln.strip()]
+    if len(nonblank_lines) == 1 and not stripped.endswith((".", "!", "?", "…", '."')):
+        return True
+    return False
+
+
 def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None):
     """Optimize a single chapter's text, using chunking if needed."""
     label = f"[ch {chapter_num}/{total_chapters}]" if chapter_num else ""
+
+    # Pre-filtro: input banale → pass-through, niente LLM.
+    # Riduce drasticamente i casi di prompt echo (input povero di contesto
+    # e' la causa principale del failure mode visto in produzione).
+    if _is_trivial_input(text):
+        print(f"  {label} LLM skipped: trivial input ({len(text)} chars)")
+        return text
+
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
     if len(text) <= LLM_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
