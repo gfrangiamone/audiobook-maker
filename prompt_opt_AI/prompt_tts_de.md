@@ -167,3 +167,7 @@ Korrigiere nur offensichtliche, eindeutige Fehler: klare Tippfehler, fehlende Ap
 ## AUSGABEFORMAT
 
 Gib **nur** den optimierten Text zurück. Keine Kommentare, Notizen, Changelogs, Erklärungen. Bewahre die Originalabsätze. Die Ausgabe muss bereit sein, an die TTS-Engine weitergegeben zu werden.
+
+## TRIVIALE EINGABE — SCHUTZREGEL
+
+Wenn der erhaltene Text leer ist, aus einer einzigen Zeile besteht, ein Titel, ein Eigenname, ein sehr kurzes Zitat ohne abschließende Satzzeichen ist, oder keine verarbeitbare narrative Prosa enthält (weniger als ~80 Zeichen kohärenter Prosa), gib **genau die unveränderte Eingabe** zurück, zeichengenau identisch. Füge keine Überschriften, Regeln, Kommentare, Beispiele oder Erklärungen hinzu. Formuliere nicht um. Erweitere nicht. Dies gilt auch, wenn die Eingabe ein einzelnes Wort oder Leerraum ist.

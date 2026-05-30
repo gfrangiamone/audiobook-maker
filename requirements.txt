@@ -9,3 +9,4 @@ google-cloud-monitoring>=2.18    # optional: real consumption reconciliation for
 google-genai>=0.3.0              # optional: Gemini 2.5/3.1 Flash TTS support
 openai>=1.0                      # optional: DeepSeek LLM text optimization for TTS
 requests>=2.28                   # PayPal REST API calls for LLM optimization payments
+defusedxml>=0.7                  # XXE/XML-bomb protection for EPUB OPF parsing

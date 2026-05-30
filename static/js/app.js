@@ -324,7 +324,16 @@ document.addEventListener('DOMContentLoaded',()=>{
   setupUpload();loadVoices();
   // Wizard generation button
   const btnGenerate=document.getElementById('btnGenerate');
-  if(btnGenerate)btnGenerate.onclick=startCombinedGeneration;
+  if(btnGenerate)btnGenerate.onclick=onGenerateClick;
+  // Payment modal (Gemini Premium) listeners
+  document.getElementById('btnPayCancel')?.addEventListener('click', closePaymentModal);
+  document.getElementById('btnPayCancel2')?.addEventListener('click', closePaymentModal);
+  document.getElementById('btnPayConfirm')?.addEventListener('click', onPayConfirm);
+  document.querySelectorAll('.pay-tab').forEach(el => {
+    el.addEventListener('click', () => switchPayTab(el.dataset.paytab));
+  });
+  document.getElementById('geminiPayVoucherCode')?.addEventListener('blur', validateVoucherForPayment);
+  document.getElementById('geminiPayVoucherEmail')?.addEventListener('blur', validateVoucherForPayment);
   // Download buttons (panel 5)
   const btnD=document.getElementById('btnD');
   if(btnD)btnD.onclick=()=>downloadFile('zip');
@@ -358,7 +367,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     speedSlider.addEventListener('input',function(){
       var idx=parseInt(this.value)+3;
       _setSpeed(idx);
-      if(_previewGenerated)_resetPreviewState();
+      _onPreviewParamsChanged();
+      if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
     });
     // Also sync on change (for keyboard/accessibility)
     speedSlider.addEventListener('change',function(){
@@ -375,12 +385,45 @@ document.addEventListener('DOMContentLoaded',()=>{
   const chAll=document.getElementById('chAll');if(chAll)chAll.onchange=chMasterToggle;
   // AI toggle init
   _initAiOptToggle();
+  // Tab bar (Standard / Premium) + Premium controls
+  document.querySelectorAll('.tab-bar .tab').forEach(btn=>{
+    btn.addEventListener('click',()=>switchAudioTab(btn.dataset.tab));
+  });
+  const vlPrem=document.getElementById('vlPremium');
+  if(vlPrem)vlPrem.addEventListener('change',()=>{
+    const src=document.getElementById('vl');
+    if(src){src.value=vlPrem.value;updVoices();}
+    updVoicesPremium();
+    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  });
+  const vmPrem=document.getElementById('vmPremium');
+  if(vmPrem)vmPrem.addEventListener('change',()=>{
+    updVoicesPremium();
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+    // Il modello è codificato nel voice id (gemini:<model>:<voice>): cambia il sig.
+    _onPreviewParamsChanged();
+  });
+  const gStyle=document.getElementById('geminiStyle');
+  if(gStyle){
+    gStyle.addEventListener('input',(e)=>{
+      const counter=document.getElementById('styleCounter');
+      if(counter)counter.textContent=e.target.value.length;
+    });
+    // Lo stile entra nella firma solo per voci Gemini. Trigger su 'change'
+    // (perdita focus o invio) per non riprocessare a ogni tasto premuto.
+    gStyle.addEventListener('change',()=>{_onPreviewParamsChanged();});
+  }
+  // Cost estimate triggers (no re-estimate on voice change)
+  document.getElementById('aiToggle')?.addEventListener('change',requestCombinedEstimate);
   // Initialize wizard
   updateWizardSteps(1);
 });
 
 let outputFormat='m4b';
 let podcastBaseUrl='';
+// wizardState centralizza lo stato del wizard. audioTab: 'standard' | 'premium'.
+const wizardState = { audioTab: 'standard' };
 function onOutputChange(){
   const sel=document.getElementById('vOut');
   outputFormat=sel?sel.value:'m4b';
@@ -474,6 +517,7 @@ function lockUI(){
   });
   // Show cancel area
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='';
+  _updateGenNoticeWarning();
 }
 function unlockUI(){
   generating=false;
@@ -571,6 +615,7 @@ async function analyzeEpub(file){
       if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;}
     }
     updVoices();
+    if(typeof syncLanguageOptions==='function')syncLanguageOptions();
     const _vOut=document.getElementById('vOut');
     if(isTxtFile){
       if(_vOut){_vOut.value='m4b';onOutputChange();}
@@ -614,11 +659,133 @@ async function loadVoices(){
     else{
         _googleTtsBudget=null;
     }
+    // Stato Premium (capability/admin_disabled) salvato in variabile dedicata
+    // e rimosso dal dict, cosi` fillLangs() non lo tratta come una lingua.
+    if(data._premium_status){
+        _premiumStatus=data._premium_status;
+        delete data._premium_status;
+    }else{
+        _premiumStatus=null;
+    }
     voices=data;
+    _applyPremiumAvailability();
     fillLangs();
   }catch(e){
     /* swallow: see comment above */
   }
+}
+
+// Mostra/nasconde il tab "Voci PREMIUM" in base allo stato Premium dal backend.
+// Tre casi distinti:
+//   1) Capability OK + voci presenti      → tab visibile, cliccabile normalmente
+//   2) Capability OK ma admin_disabled    → tab visibile MA cliccare apre popup
+//      di manutenzione (vedi switchAudioTab). Cosi` l'utente sa che la feature
+//      esiste ed e' temporaneamente sospesa, invece di vedere combo vuote.
+//   3) Capability KO (non configurata)    → tab nascosto (come prima)
+// La flag globale `_premiumMaintenance` viene letta da switchAudioTab() per
+// bloccare il passaggio al tab con un modal. `_premiumStatus` e` popolata da
+// loadVoices() leggendo la meta `_premium_status` di /api/voices.
+let _premiumMaintenance=false;
+let _premiumStatus=null;
+function _applyPremiumAvailability(){
+  let hasPremium=false;
+  try{
+    for(const k in voices){
+      const list=(voices[k]&&voices[k].voices)||[];
+      for(const v of list){
+        if(v&&typeof v.id==='string'&&v.id.startsWith('gemini:')){hasPremium=true;break;}
+      }
+      if(hasPremium)break;
+    }
+  }catch(_e){}
+  // Distinzione admin-disabled vs non-configured tramite meta `_premiumStatus`.
+  const ps=_premiumStatus;
+  const capOk=ps?!!ps.capability_ok:false;
+  const adminDisabled=ps?!!ps.admin_disabled:false;
+  _premiumMaintenance=(capOk&&adminDisabled);
+  const showTab=hasPremium||_premiumMaintenance;
+  const btn=document.getElementById('tabPremiumBtn');
+  const panel=document.getElementById('tabPremium');
+  if(btn)btn.hidden=!showTab;
+  if(!showTab){
+    if(panel)panel.hidden=true;
+    if(wizardState&&wizardState.audioTab==='premium'&&typeof switchAudioTab==='function'){
+      switchAudioTab('standard');
+    }
+  }else if(_premiumMaintenance&&wizardState&&wizardState.audioTab==='premium'){
+    // Edge case: kill-switch attivato mentre il tab Premium era aperto.
+    // Forza il ritorno a Standard cosi` l'utente non resta su un pannello
+    // svuotato. Il prossimo click su Premium mostrera` il popup.
+    if(panel)panel.hidden=true;
+    if(typeof switchAudioTab==='function')switchAudioTab('standard');
+  }
+}
+
+// Modal dedicato per la manutenzione del tab Premium. Costruito on-demand via
+// DOM API (no innerHTML) cosi` non collide con altri modali e si autodistrugge
+// alla chiusura. Stesso wrapper .modal-overlay/.modal usato altrove per CSS.
+function _showPremiumMaintenanceModal(){
+  const msgKey='premium_maintenance_msg';
+  const titleKey='premium_maintenance_title';
+  const fallbackMsg='The [PREMIUM Voices] feature is under maintenance and will be re-enabled in the next few hours.';
+  const fallbackTitle='Feature under maintenance';
+  let msg=fallbackMsg, ttl=fallbackTitle;
+  try{
+    const m=(typeof t==='function')?t(msgKey):msgKey;
+    if(m&&m!==msgKey)msg=m;
+    const tt=(typeof t==='function')?t(titleKey):titleKey;
+    if(tt&&tt!==titleKey)ttl=tt;
+  }catch(_e){}
+  let okLabel='OK';
+  try{const ok=(typeof t==='function')?t('sel_too_large_ok'):null;if(ok&&ok!=='sel_too_large_ok')okLabel=ok;}catch(_e){}
+  const prev=document.getElementById('premiumMaintModal');
+  if(prev&&prev.parentNode)prev.parentNode.removeChild(prev);
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay open';
+  overlay.id='premiumMaintModal';
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  const modal=document.createElement('div');
+  modal.className='modal';
+  modal.style.maxWidth='460px';
+  // Stesso layout di #selTooLargeModal: head (titolo + close), body (testo + button OK).
+  const head=document.createElement('div');
+  head.className='modal-head';
+  const headSpan=document.createElement('span');
+  headSpan.textContent=ttl;
+  head.appendChild(headSpan);
+  const closeBtn=document.createElement('button');
+  closeBtn.className='modal-close';
+  closeBtn.setAttribute('aria-label','Close');
+  closeBtn.textContent='×';
+  head.appendChild(closeBtn);
+  const bodyDiv=document.createElement('div');
+  bodyDiv.className='modal-body';
+  const msgP=document.createElement('p');
+  msgP.style.margin='0 0 18px';
+  msgP.style.lineHeight='1.6';
+  msgP.style.fontSize='.92rem';
+  msgP.textContent=msg;
+  bodyDiv.appendChild(msgP);
+  const actions=document.createElement('div');
+  actions.style.display='flex';
+  actions.style.gap='10px';
+  actions.style.flexWrap='wrap';
+  actions.style.justifyContent='flex-end';
+  const okBtn=document.createElement('button');
+  okBtn.type='button';
+  okBtn.className='btn btn-ok';
+  okBtn.textContent=okLabel;
+  actions.appendChild(okBtn);
+  bodyDiv.appendChild(actions);
+  modal.appendChild(head);
+  modal.appendChild(bodyDiv);
+  overlay.appendChild(modal);
+  const close=()=>{if(overlay.parentNode)overlay.parentNode.removeChild(overlay);};
+  okBtn.addEventListener('click',close);
+  closeBtn.addEventListener('click',close);
+  overlay.addEventListener('click',(e)=>{if(e.target===overlay)close();});
+  document.body.appendChild(overlay);
 }
 function fillLangs(){
   const sel=document.getElementById('vl');
@@ -626,7 +793,10 @@ function fillLangs(){
   const oldVal = sel.value;
   sel.innerHTML='';
   
-  // Ordine alfabetico basato sul nome tradotto
+  // Ordine alfabetico basato sul nome tradotto. Il `count` mostrato accanto al
+  // nome riflette solo le voci effettivamente visibili nel tab Standard: voci
+  // gemini: escluse (vivono nel tab Premium), altrimenti "(64)" comparirebbe
+  // identico tra i due tab anche quando in Standard si vedono 4 voci Edge.
   const sortedLangs = Object.entries(voices).map(([c, l]) => {
     let ln = c;
     if (L[cl] && L[cl].langs && L[cl].langs[c]) {
@@ -636,7 +806,8 @@ function fillLangs(){
     } else {
       ln = l.name || c;
     }
-    return { code: c, name: ln, count: l.voices.length };
+    const standardCount = (Array.isArray(l.voices) ? l.voices : []).filter(v => !(v && typeof v.id === 'string' && v.id.startsWith('gemini:'))).length;
+    return { code: c, name: ln, count: standardCount };
   }).sort((a, b) => a.name.localeCompare(b.name, cl));
 
   for(const l of sortedLangs){
@@ -645,8 +816,21 @@ function fillLangs(){
     o.textContent=l.name+' ('+l.count+')';
     sel.appendChild(o);
   }
-  sel.onchange=updVoices;
-  
+  sel.onchange=()=>{
+    updVoices();
+    const dst=document.getElementById('vlPremium');
+    if(dst){
+      // Propaga la lingua al tab Premium solo se compatibile con il catalogo
+      // Gemini; altrimenti lascia la precedente selezione Premium intatta
+      // (evita il side-effect "value=stringa non presente" che azzera il select).
+      const ok=Array.from(dst.options).some(o=>o.value===sel.value);
+      if(ok)dst.value=sel.value;
+      updVoicesPremium&&updVoicesPremium();
+    }
+    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
+    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  };
+
   if(oldVal && voices[oldVal]) sel.value = oldVal;
   else {
     // Pre-selezione logica:
@@ -659,8 +843,63 @@ function fillLangs(){
     if(voices[defaultLang]) sel.value=defaultLang;
     else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
   }
-  
+
   updVoices();
+  syncLanguageOptions();
+}
+
+// Popola il selettore #vlPremium SOLO con le lingue per cui esiste almeno una
+// voce Premium (id `gemini:`). Le lingue Edge che Gemini non supporta vengono
+// escluse: l'utente le vede comunque nel tab Standard, mentre nel tab Premium
+// il dropdown elenca esclusivamente l'offerta effettiva di Gemini TTS.
+// Va chiamata dopo aver popolato #vl in fillLangs(), così la pre-selezione
+// corrente di #vl viene rispettata (con fallback alla prima lingua disponibile
+// se quella corrente non ha voci Premium).
+function syncLanguageOptions(){
+  const src=document.getElementById('vl');
+  const dst=document.getElementById('vlPremium');
+  if(!src||!dst)return;
+  const currentVal=src.value;
+  // Filtra: una lingua entra nel Premium dropdown solo se voices[lang].voices
+  // contiene almeno una voce con id che inizia per "gemini:".
+  const hasPremium=lc=>{
+    const v=voices&&voices[lc];
+    if(!v||!Array.isArray(v.voices))return false;
+    return v.voices.some(x=>x&&typeof x.id==='string'&&x.id.startsWith('gemini:'));
+  };
+  // Mantieni l'ordine di #vl (priorità it, en, fr, de, es, pt poi alfabetico).
+  const ordered=[];
+  for(const o of src.options){
+    if(hasPremium(o.value))ordered.push(o);
+  }
+  // Conta le voci Gemini DISTINTE per lingua (non le entry duplicate per
+  // model_key): nella UI Premium l'utente sceglie prima il modello e poi la
+  // voce, quindi il count rilevante è quello delle voci uniche disponibili.
+  const geminiCount=lc=>{
+    const v=voices&&voices[lc];
+    if(!v||!Array.isArray(v.voices))return 0;
+    const names=new Set();
+    for(const x of v.voices){
+      if(x&&typeof x.id==='string'&&x.id.startsWith('gemini:')){
+        const parts=x.id.split(':');
+        names.add(parts[parts.length-1]);
+      }
+    }
+    return names.size;
+  };
+  while(dst.firstChild)dst.removeChild(dst.firstChild);
+  for(const o of ordered){
+    const clone=o.cloneNode(true);
+    // Riscrive "Italiano (64)" → "Italiano (30)" per riflettere il numero di
+    // voci Gemini effettive (regardless of model). Mantiene il nome tradotto
+    // dell'opzione di origine senza re-eseguire la lookup i18n.
+    const baseName=(o.textContent||'').replace(/\s*\(\d+\)\s*$/,'');
+    clone.textContent=baseName+' ('+geminiCount(o.value)+')';
+    dst.appendChild(clone);
+  }
+  // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
+  if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
+  else if(ordered.length>0)dst.value=ordered[0].value;
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
@@ -681,9 +920,16 @@ function updVoices(){
   if(!voices[lc])return;
   const lang=voices[lc];
   // Separa voci per engine, edge prima poi google
-  const edgeVoices=lang.voices.filter(v=>(v.engine||'edge')==='edge');
+  // SKIP gemini in Standard tab — voci premium gestite da updVoicesPremium()
+  const edgeVoices=lang.voices.filter(v=>{
+    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
+    return (v.engine||'edge')==='edge';
+  });
   // Mostra le voci Google solo se il budget mensile copre il libro corrente
-  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>v.engine==='google'):[];
+  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>{
+    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
+    return v.engine==='google';
+  }):[];
   let lg='';
   // Voci Microsoft Edge
   for(const v of edgeVoices){
@@ -707,7 +953,7 @@ function updVoices(){
       sel.lastElementChild.appendChild(o);
     }
   }
-  // Voci Gemini: deliberatamente NON inserite nella select utente.
+  // Voci Gemini TTS NON inserite nella select Standard (vedi tab Premium).
   // Preserve user's prior voice selection if still available in the rebuilt list.
   // Setting sel.value to a non-existent option silently fails (sel.value becomes ''),
   // so we can detect a real restore by comparing back.
@@ -717,10 +963,13 @@ function updVoices(){
     restored=(sel.value===oldVoice);
   }
   if(!restored){
-    const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||lang.voices[0];
+    const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
     if(dv)sel.value=dv.id;
   }
-  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();if(_previewGenerated)_resetPreviewState();};
+  // Su cambio voce: _onPreviewParamsChanged() gestisce il reset dello stato
+  // anteprima in base alla signature dei parametri (no cache su nuove combo,
+  // restore se gia` generata in passato). Sostituisce _resetPreviewState().
+  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();_onPreviewParamsChanged();};
   _updateVoiceChip();checkVoiceMismatch();
   // Reset speed to "Normal" (+0%) only when the voice actually changed (language change or first build).
   // When the previous selection is preserved (e.g. applyI18n→fillLangs→updVoices triggered by a modal),
@@ -735,8 +984,453 @@ function updVoices(){
   }
 }
 
+// ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
+
+function updVoicesPremium(){
+  const vlEl=document.getElementById('vlPremium');
+  const vmEl=document.getElementById('vmPremium');
+  const sel=document.getElementById('vvPremium');
+  if(!sel)return;
+  const lang=(vlEl&&vlEl.value)||'it';
+  const modelKey=(vmEl&&vmEl.value)||'flash25';
+  sel.innerHTML='';
+  // Costruisce la lista voci Premium da voices[lang].voices filtrando per engine=gemini
+  // e per modelKey (encoded nell'id come "gemini:<modelKey>:<voiceName>").
+  const langData=voices[lang];
+  const all=langData&&Array.isArray(langData.voices)?langData.voices:[];
+  const prefix='gemini:'+modelKey+':';
+  // Filtra per modello selezionato e lingua (voci Gemini sono multilingue).
+  const premiumVoices=all.filter(v=>{
+    if(!v||!v.id)return false;
+    if(!v.id.startsWith(prefix))return false;
+    if(v.lang&&v.lang!==lang&&v.lang!=='multi')return false;
+    return true;
+  });
+  // Raggruppa per gender con <optgroup label="♀|♂">, replicando il pattern
+  // del combo Edge (updVoices). Il backend ordina già Female prima di Male.
+  let lg='';
+  for(const v of premiumVoices){
+    if(v.gender!==lg){
+      const g=document.createElement('optgroup');
+      g.label=v.gender==='Female'?'♀':(v.gender==='Male'?'♂':'•');
+      sel.appendChild(g);
+      lg=v.gender;
+    }
+    const opt=document.createElement('option');
+    opt.value=v.id;
+    opt.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.label||v.id.split(':').pop());
+    const target=sel.lastElementChild&&sel.lastElementChild.tagName==='OPTGROUP'?sel.lastElementChild:sel;
+    target.appendChild(opt);
+  }
+  sel.onchange=()=>{_onPreviewParamsChanged();};
+  // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
+}
+
+function updateModelRateHint(data){
+  // Rate per-minute derivato dall'ultima stima del backend, così rate x minuti = totale.
+  // data: payload di /api/combined_estimate (può essere null se non ancora disponibile).
+  const hint=document.getElementById('modelRateHint');
+  if(!hint)return;
+  if(!data||!data.gemini_breakdown){hint.textContent='';return;}
+  const mins=Number(data.gemini_breakdown.audio_minutes||0);
+  const eur=Number(data.gemini_eur||0);
+  if(!(mins>0)||!(eur>0)){hint.textContent='';return;}
+  const ratePerMin=eur/mins;
+  const tmpl=(window.t&&t('model_rate_per_min'))||'~€{r}/min audio (stima)';
+  hint.textContent=tmpl.replace('{r}',ratePerMin.toFixed(4));
+}
+
+function switchAudioTab(tab){
+  const prev=wizardState.audioTab;
+  // Guard Premium #1: kill-switch admin (manutenzione). Se le voci PREMIUM
+  // sono temporaneamente disabilitate dall'admin, il tab resta visibile ma
+  // cliccarlo NON cambia tab — mostra solo un popup di manutenzione. Cosi`
+  // l'utente sa che la funzionalita` esiste e tornera`, invece di vedere
+  // combo lingua/voce svuotate che fanno sembrare l'app rotta.
+  if(tab==='premium'&&prev!=='premium'&&_premiumMaintenance){
+    _showPremiumMaintenanceModal();
+    return;
+  }
+  // Guard Premium #2: blocca lo switch se la selezione capitoli supera il cap
+  // Gemini (`max_gemini_text_chars`, di norma 800k). Il warning va mostrato
+  // SOLO al click sul tab Premium — non in `tryGoToAudioSettings()` dove
+  // bloccherebbe l'utente che vuole solo usare voci Standard (cap 1.5M).
+  if(tab==='premium'&&prev!=='premium'){
+    const cap=(bookData&&bookData.max_gemini_text_chars)|0;
+    if(cap>0){
+      const chars=_computeSelectedChars();
+      if(chars>cap){
+        _showSelTooLargeModal(chars,cap);
+        return; // niente switch: il tab resta su Standard
+      }
+    }
+  }
+  wizardState.audioTab=tab;
+  document.querySelectorAll('.tab-bar .tab').forEach(t=>{
+    const active=t.dataset.tab===tab;
+    t.classList.toggle('active',active);
+    t.setAttribute('aria-selected',active?'true':'false');
+  });
+  const tStd=document.getElementById('tabStandard');
+  const tPrm=document.getElementById('tabPremium');
+  if(tStd)tStd.hidden=(tab!=='standard');
+  if(tPrm)tPrm.hidden=(tab!=='premium');
+  // Il box stima costo è rilevante solo per il tab Premium (Standard è gratis).
+  const cpBox=document.getElementById('costPreviewBox');
+  if(cpBox)cpBox.hidden=(tab!=='premium');
+  // Fallback class per browser senza :has(): tinge la border-bottom della tab-bar
+  // del colore dorato quando Premium è attivo.
+  document.querySelectorAll('.tab-bar').forEach(b=>{
+    b.classList.toggle('tabbar-premium-active',tab==='premium');
+  });
+  // Mantieni la selezione voce in entrambi i tab: tornando al tab di origine,
+  // l'anteprima eventualmente già generata (firma in _knownPreviewSigs) deve
+  // restare disponibile. La voce "attiva" è risolta da getCurrentVoiceId() in
+  // base al tab corrente, quindi non serve azzerare l'altro tab.
+  if(tab==='premium'){
+    updVoicesPremium();
+  }
+  if(prev!==tab){
+    // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
+    // del tab attivo: se la firma è in _knownPreviewSigs ricarica l'audio,
+    // altrimenti nasconde il player ma NON cancella le firme note.
+    const a=document.getElementById('previewAudioWiz');if(a)a.pause();
+    if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+  }
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+}
+
+// Helper: ritorna l'id della voce attualmente attiva, in base al tab selezionato.
+function getCurrentVoiceId(){
+  if(wizardState.audioTab==='premium'){
+    const el=document.getElementById('vvPremium');
+    return el?el.value:'';
+  }
+  const el=document.getElementById('vv');
+  return el?el.value:'';
+}
+
+// ── Combined cost estimate (debounced + cached) ──
+// Trigger: tab change / model change / ai_opt toggle / chapter selection change.
+// no re-estimate on voice change (cost is per-model, not per-voice)
+let estimateDebounceTimer=null;
+const _estimateCache={key:null,value:null};
+function getEstimateCacheKey(){
+  const tab=wizardState.audioTab||'standard';
+  const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
+  const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
+  const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
+  const rate=document.getElementById('vr')?.value||'+0%';
+  const langEl=(tab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
+  const lang=(langEl&&langEl.value)||cl||'';
+  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+lang+'|'+chapters;
+}
+function requestCombinedEstimate(){
+  if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
+  estimateDebounceTimer=setTimeout(_doCombinedEstimate,300);
+}
+async function _doCombinedEstimate(){
+  if(!jobId){renderEstimate(null);return;}
+  const key=getEstimateCacheKey();
+  if(_estimateCache.key===key&&_estimateCache.value){renderEstimate(_estimateCache.value);return;}
+  const voiceId=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  const selected=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+  if(!selected||selected.length===0){renderEstimate(null);return;}
+  // Lingua TTS scelta in "Impostazioni audio": prevale su metadata libro
+  // per stima durata/costo (cluster rate-log + ratio chars/token).
+  const selLangEl=(wizardState.audioTab==='premium')
+    ?document.getElementById('vlPremium')
+    :document.getElementById('vl');
+  const selLang=(selLangEl&&selLangEl.value)||cl||'';
+  const payload={
+    job_id:jobId,
+    voice_id:voiceId||'',
+    selected_chapters:selected,
+    ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,
+    rate:document.getElementById('vr')?.value||'+0%',
+    lang:selLang,
+  };
+  try{
+    const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok)throw new Error('estimate failed');
+    const data=await r.json();
+    if(getEstimateCacheKey()!==key)return;
+    if(data.paypal_client_id!==undefined){
+      llmConfig.paypalClientId=data.paypal_client_id||"";
+      llmConfig.paypalMode=data.paypal_mode||"sandbox";
+      llmConfig.paypalAvailable=!!data.paypal_available;
+    }
+    _estimateCache.key=key;
+    _estimateCache.value=data;
+    renderEstimate(data);
+  }catch(e){
+    console.warn('combined_estimate error:',e);
+    if(getEstimateCacheKey()===key)renderEstimate(null);
+  }
+}
+function renderEstimate(data){
+  const valueEl=document.getElementById('costPreviewValue');
+  const detailEl=document.getElementById('costPreviewDetail');
+  const labelEl=document.querySelector('#costPreviewBox .cost-label');
+  const costAmount=document.getElementById('costAmount');
+  // Label condizionale: "audiolibro" se tutti i capitoli selezionati, "capitoli selezionati" altrimenti.
+  if(labelEl){
+    let isPartial=false;
+    try{
+      const allCbs=(typeof _getAllCheckboxes==='function')?_getAllCheckboxes():[];
+      const selCount=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes().length:0;
+      isPartial=(allCbs&&allCbs.length>0&&selCount>0&&selCount<allCbs.length);
+    }catch(_){}
+    const key=isPartial?'cost_estimate_label_partial':'cost_estimate_label';
+    const fallback=isPartial?'Stima costo capitoli selezionati':'Stima costo audiolibro';
+    labelEl.textContent=(window.t&&t(key))||fallback;
+    labelEl.setAttribute('data-t',key);
+  }
+  if(!data){
+    if(valueEl)valueEl.textContent='—';
+    if(detailEl)detailEl.textContent='';
+    updateModelRateHint(null);
+    return;
+  }
+  // Nota: data.gemini_overloaded e' una proprieta' informativa restituita dal
+  // server per il modello selezionato; la valutazione del blocco avviene solo
+  // al click di "Prosegui" (vedi onGenerateClick), non qui — l'utente puo'
+  // continuare ad esplorare modelli/voci senza popup intrusivi.
+  if(valueEl){
+    if(data.is_free){valueEl.textContent=(window.t&&t('cost_free'))||'Gratis';}
+    else{valueEl.textContent='€'+Number(data.total_eur).toFixed(2);}
+  }
+  if(detailEl){
+    const mins=Number(data.gemini_breakdown&&data.gemini_breakdown.audio_minutes||0);
+    // La stima minuti scala ora con rate_pct (vedi gemini_tts.estimate_audio_seconds):
+    // la label velocità deve quindi riflettere il rate selezionato dallo slider.
+    const rateStep=(data.rate_step!=null)?Number(data.rate_step)
+                   :(data.gemini_breakdown&&data.gemini_breakdown.rate_step!=null?Number(data.gemini_breakdown.rate_step):0);
+    const SPEED_KEYS=['sp_vs','sp_s','sp_ss','sp_n','sp_sf','sp_f','sp_vf'];
+    const speedLabel=(window.t&&t(SPEED_KEYS[Math.max(0,Math.min(6,rateStep+3))]))||'normale';
+    const minsTmpl=(window.t&&t('cost_minutes_detail_speed'))||'≈ {n} min audio (velocità: {speed})';
+    const minsStr=(mins>0)?minsTmpl.replace('{n}',mins.toFixed(1)).replace('{speed}',speedLabel):'';
+    if(data.is_free){
+      const threshold=Number(data.threshold_eur||0).toFixed(2);
+      const base='≤ €'+threshold+' '+((window.t&&t('cost_under_threshold'))||'sotto soglia');
+      detailEl.textContent=minsStr?(base+' · '+minsStr):base;
+    }else{
+      // La voce "Voci PREMIUM €X" è ridondante col totale in grande; mostriamo
+      // solo l'addendo AI quando presente (per spiegare la differenza dal solo Premium).
+      const parts=[];
+      if(data.llm_eur>0)parts.push('+ Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
+      const extra=parts.join(' ');
+      const segs=[];
+      if(extra)segs.push(extra);
+      if(minsStr)segs.push(minsStr);
+      detailEl.textContent=segs.join(' · ');
+    }
+  }
+  if(costAmount)costAmount.textContent='€'+Number(data.total_eur).toFixed(2);
+  updateModelRateHint(data);
+}
+
+// ═══════════════════ PAYMENT MODAL (combined cost) ═══════════════════
+let _payState = { total: 0, gemini: 0, llm: 0, token: null, method: null };
+let _generatingModal = false;
+
+async function onGenerateClick() {
+  if (_generatingModal) return;
+  _generatingModal = true;
+  try {
+    await _doCombinedEstimate();
+    const est = _estimateCache && _estimateCache.value;
+    // Preflight RPD: blocca PRIMA della richiesta pagamento.
+    if (est && est.gemini_overloaded) {
+      try { _showGeminiOverloadModal(est.gemini_overload_info||{}); } catch(_e){}
+      return;
+    }
+    if (!est || est.is_free) {
+      return startCombinedGeneration();
+    }
+    openPaymentModal(est);
+  } finally {
+    _generatingModal = false;
+  }
+}
+
+function openPaymentModal(estimate) {
+  _payState = {
+    total: estimate.total_eur, gemini: estimate.gemini_eur,
+    llm: estimate.llm_eur, token: null, method: null,
+  };
+  const lineG = document.getElementById('payLineGemini');
+  if (lineG) lineG.textContent = estimate.gemini_eur > 0 ? `€${estimate.gemini_eur.toFixed(2)}` : '—';
+  const lineL = document.getElementById('payLineLlm');
+  if (lineL) lineL.textContent = estimate.llm_eur > 0 ? `€${estimate.llm_eur.toFixed(2)}` : '—';
+  const tot = document.getElementById('payModalTotal');
+  if (tot) tot.textContent = `€${estimate.total_eur.toFixed(2)}`;
+  const vErr = document.getElementById('payVoucherError');
+  if (vErr) { vErr.textContent = ''; vErr.style.color = ''; }
+  const pErr = document.getElementById('payPaypalError');
+  if (pErr) pErr.textContent = '';
+  const btn = document.getElementById('btnPayConfirm');
+  if (btn) btn.disabled = true;
+  switchPayTab('voucher');
+  const modal = document.getElementById('geminiPayModal');
+  if (modal) modal.hidden = false;
+}
+
+function closePaymentModal() {
+  const modal = document.getElementById('geminiPayModal');
+  if (modal) modal.hidden = true;
+}
+
+// ─────────── PayPal buttons in combined payment modal ───────────
+let _paypalGeminiButtonsInstance = null;
+function _payPaypalErr(msg){const e=document.getElementById('payPaypalError');if(e){e.style.color='';e.textContent=msg||''}}
+async function renderPaypalGeminiButtons(){
+  const container=document.getElementById('paypalGeminiContainer');
+  if(!container)return;
+  container.innerHTML='';_payPaypalErr('');
+  if(!llmConfig.paypalAvailable||!llmConfig.paypalClientId){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
+  try{await _loadPaypalSdk(llmConfig.paypalClientId)}catch(e){_payPaypalErr((typeof t==='function'&&t('pay_paypal_load_failed'))||'Caricamento PayPal fallito');return}
+  if(typeof paypal==='undefined'||!window.paypal||!window.paypal.Buttons){_payPaypalErr((typeof t==='function'&&t('pay_paypal_unavailable'))||'PayPal non disponibile');return}
+  if(_paypalGeminiButtonsInstance){try{_paypalGeminiButtonsInstance.close()}catch(e){}_paypalGeminiButtonsInstance=null}
+  _paypalGeminiButtonsInstance=window.paypal.Buttons({
+    style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
+    createOrder:async function(){
+      // Lingua UI: deve combaciare con quella usata in /api/combined_estimate
+      // altrimenti il server-side amount check rifiuta l'ordine.
+      const _selLangEl=(wizardState.audioTab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
+      const _selLang=(_selLangEl&&_selLangEl.value)||cl||'';
+      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,rate:document.getElementById('vr')?.value||'+0%',lang:_selLang,amount_eur:_payState.total};
+      const r=await fetch('/api/paypal_create_order_gemini',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
+    },
+    onApprove:async function(data){
+      try{
+        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
+        const d=await r.json();
+        if(d.error||!d.payment_token){_payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
+        _payState.token=d.payment_token;_payState.method='paypal';
+        const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;
+        const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
+      }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
+    },
+    onError:function(err){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(err&&err.message?err.message:''))},
+    onCancel:function(){}
+  });
+  try{_paypalGeminiButtonsInstance.render('#paypalGeminiContainer')}catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
+}
+
+function switchPayTab(tab) {
+  document.querySelectorAll('.pay-tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.paytab === tab);
+  });
+  const pv = document.getElementById('payPanelVoucher');
+  if (pv) pv.hidden = (tab !== 'voucher');
+  const pp = document.getElementById('payPanelPaypal');
+  if (pp) pp.hidden = (tab !== 'paypal');
+  if (tab === 'paypal' && typeof renderPaypalGeminiButtons === 'function') {
+    renderPaypalGeminiButtons();
+  }
+}
+
+async function validateVoucherForPayment() {
+  const code = (document.getElementById('geminiPayVoucherCode')?.value || '').trim();
+  const email = (document.getElementById('geminiPayVoucherEmail')?.value || '').trim();
+  const errEl = document.getElementById('payVoucherError');
+  if (!errEl) return;
+  errEl.style.color = '';
+  errEl.textContent = '';
+  if (!code || !email) {
+    errEl.textContent = (typeof t === 'function' && t('pay_err_empty')) || 'Inserisci codice e email';
+    return;
+  }
+  try {
+    const r = await fetch('/api/voucher_validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ code, email, purpose: 'gemini', amount_eur: _payState.total }),
+    });
+    const d = await r.json();
+    if (!d.valid) {
+      const map = {
+        not_found: (typeof t === 'function' && t('pay_err_voucher_not_found')) || 'Buono non trovato',
+        email_mismatch: (typeof t === 'function' && t('pay_err_email_mismatch')) || 'Email non corrispondente',
+        revoked: (typeof t === 'function' && t('pay_err_revoked')) || 'Buono revocato',
+        insufficient: (typeof t === 'function' && t('pay_err_insufficient')) || 'Saldo insufficiente',
+        expired: (typeof t === 'function' && t('pay_err_expired')) || 'Buono scaduto',
+        used: (typeof t === 'function' && t('pay_err_used')) || 'Buono già utilizzato',
+      };
+      errEl.textContent = map[d.reason] || ((typeof t === 'function' && t('pay_err_unknown')) || 'Errore validazione');
+      return;
+    }
+    _payState.token = code;
+    _payState.method = 'voucher';
+    const btn = document.getElementById('btnPayConfirm');
+    if (btn) btn.disabled = false;
+    errEl.style.color = '#27ae60';
+    const rem = (typeof d.remaining_eur === 'number') ? d.remaining_eur.toFixed(2) : '0.00';
+    errEl.textContent = ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
+  } catch (e) {
+    errEl.textContent = (typeof t === 'function' && t('pay_err_network')) || 'Errore di rete';
+  }
+}
+
+function onPayConfirm() {
+  if (!_payState.token) return;
+  closePaymentModal();
+  startCombinedGeneration(_payState.token);
+}
+
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
 let _prevLoading=false, _previewGenerated=false;
+// Firma dell'anteprima attualmente caricata nel player (voce|rate|stile)
+// e set delle firme già generate in questa sessione (cache-hit lato server garantito).
+let _currentPreviewSig=null;
+const _knownPreviewSigs=new Set();
+
+function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
+
+function _getSelectedChaptersKey(){
+  try{
+    const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+    return sel.slice().sort((a,b)=>a-b).join(',');
+  }catch(_){return '';}
+}
+
+function _getPreviewSig(){
+  const voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  const rate=document.getElementById('vr')?.value||'+0%';
+  const style=_isGeminiVoiceId(voice)
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
+    : '';
+  return voice+'|'+rate+'|'+style+'|'+_getSelectedChaptersKey();
+}
+
+function _buildPreviewUrl(){
+  const voice=getCurrentVoiceId();
+  const rate=document.getElementById('vr').value;
+  const style=_isGeminiVoiceId(voice)
+    ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
+    : '';
+  // Lingua TTS scelta dall'utente: il backend la usa per il rate sample
+  // empirico (gemini_tts_rate_log) cosi' i campioni vengono raggruppati
+  // per lingua REALE della voce, non per metadata libro.
+  let _selLang='';
+  try{
+    const _audioTab=(typeof wizardState!=='undefined'&&wizardState&&wizardState.audioTab)?wizardState.audioTab:'';
+    const _el=(_audioTab==='premium')
+      ?document.getElementById('vlPremium')
+      :document.getElementById('vl');
+    _selLang=(_el&&_el.value)?_el.value:'';
+  }catch(_){ _selLang=''; }
+  let u='/api/preview_audio/'+bookData.job_id
+    +'?voice='+encodeURIComponent(voice)
+    +'&rate='+encodeURIComponent(rate);
+  if(style)u+='&style='+encodeURIComponent(style);
+  if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
+  const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
+  sel.forEach(i=>{u+='&selected_chapters='+encodeURIComponent(i);});
+  return u;
+}
 
 function _updatePreviewBtn(){
   const btn=document.getElementById('btnPrev');
@@ -748,8 +1442,39 @@ function _updatePreviewBtn(){
   if(txt)txt.textContent=t(_previewGenerated?'btn_regen_preview':'btn_gen_preview');
 }
 
+// Chiamato quando un parametro che influisce sull'anteprima cambia
+// (voce, modello, velocità, stile). Decide se:
+//  - non fare nulla (firma invariata)
+//  - mostrare direttamente il player con audio cached (firma già generata)
+//  - nascondere il player e riabilitare il bottone Rigenera (firma nuova)
+function _onPreviewParamsChanged(){
+  if(!bookData||!bookData.preview_text)return;
+  const newSig=_getPreviewSig();
+  if(newSig===_currentPreviewSig)return;
+  const audio=document.getElementById('previewAudioWiz');
+  const wrap=document.getElementById('previewAudioWrap');
+  const btn=document.getElementById('btnPrev');
+  if(_knownPreviewSigs.has(newSig)){
+    // Anteprima già in cache lato server: carica direttamente nel player.
+    if(audio){audio.src=_buildPreviewUrl();audio.load();}
+    if(wrap)wrap.classList.add('visible');
+    _currentPreviewSig=newSig;
+    _previewGenerated=true;
+    _updatePreviewBtn();
+    if(btn)btn.disabled=true;
+  } else {
+    // Nuova combinazione: nascondi player, abilita "Rigenera anteprima".
+    if(audio){audio.pause();audio.removeAttribute('src');audio.load();}
+    if(wrap)wrap.classList.remove('visible');
+    _currentPreviewSig=null;
+    _updatePreviewBtn();
+    if(btn)btn.disabled=!(bookData&&bookData.preview_text&&!generating&&!jobDone);
+  }
+}
+
 function _resetPreviewState(){
   _previewGenerated=false;
+  _currentPreviewSig=null;
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
   const audio=document.getElementById('previewAudioWiz');
@@ -777,51 +1502,104 @@ async function previewRead(){
 
   _prevLoading=true;
   const btn=document.getElementById('btnPrev');
+  const prevTxt=document.getElementById('prevTxt');
+  const _origTxt=prevTxt?prevTxt.textContent:'';
   btn.disabled=true;
   btn.classList.add('loading');
+  if(prevTxt)prevTxt.textContent=t('prev_loading')||'Generazione anteprima in corso…';
+  const _restoreBtn=()=>{btn.classList.remove('loading');if(prevTxt)prevTxt.textContent=_origTxt;};
 
   // Hide previous player if any
   const wrap=document.getElementById('previewAudioWrap');
   if(wrap)wrap.classList.remove('visible');
 
-  const voice=document.getElementById('vv').value;
-  const rate =document.getElementById('vr').value;
+  const voice=getCurrentVoiceId();
   const audio=document.getElementById('previewAudioWiz');
-
-  const url='/api/preview_audio/'+bookData.job_id
-    +'?voice='+encodeURIComponent(voice)
-    +'&rate='+encodeURIComponent(rate);
+  const _sigAtRequest=_getPreviewSig();
+  const url=_buildPreviewUrl();
 
   // Voci Gemini: prefetch via fetch() per intercettare 429 (cap superato) e 503 (non configurato).
   if(_isGeminiVoice(voice)){
+    // Client-side timeout via AbortController, model-aware.
+    // Catena server: HTTP Google -> wrapper ThreadPoolExecutor -> handler.
+    //   flash25:  HTTP 25s -> wrapper 30s -> client 35s (5s buffer).
+    //   flash31:  HTTP 60s -> wrapper 65s -> client 70s (5s buffer).
+    // flash31 e` strutturalmente piu` lento (RPM cap 3/300 vs 10/750 +
+    // audio gen piu` lenta lato Google); senza buffer il client abortiva
+    // mentre il server stava completando con successo, generando il falso
+    // positivo "Il servizio TTS impiega troppo tempo".
+    const _ctrl=new AbortController();
+    const _toMs = voice.indexOf(':flash31:') !== -1 ? 70000 : 35000;
+    const _toHandle=setTimeout(()=>{try{_ctrl.abort();}catch(_){}},_toMs);
     try{
-      const r=await fetch(url);
+      const r=await fetch(url,{signal:_ctrl.signal});
+      clearTimeout(_toHandle);
       if(r.status===429){
         const data=await r.json().catch(()=>({}));
         const minutes=Math.ceil((data.reset_in_seconds||0)/60);
         const msg=t('gemini_preview_cap_exceeded')
           .replace('{n}',data.used||0).replace('{cap}',data.cap||5).replace('{min}',minutes);
         alert(msg);
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
         return;
       }
       if(r.status===503){
-        alert(t('gemini_not_configured'));
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
+        // 503 ha 3 sotto-casi distinti:
+        // - code=quota_exhausted: RPD server-wide per il modello -> suggerisci altro modello
+        // - code=budget_exceeded: budget EUR daily -> suggerisci voci Standard
+        // - default (no code): servizio non configurato (env mancanti)
+        const data=await r.json().catch(()=>({}));
+        const c=data && data.code;
+        if(c==='quota_exhausted'){
+          alert((data && data.error)||t('gemini_quota_exhausted')||'Il modello voci PREMIUM ha raggiunto il limite giornaliero. Riprova piu` tardi o seleziona un modello differente.');
+        }else if(c==='budget_exceeded'){
+          alert((data && data.error)||t('gemini_budget_exceeded')||'Le voci PREMIUM hanno raggiunto il budget giornaliero. Riprova piu` tardi o seleziona una voce Standard.');
+        }else{
+          alert(t('gemini_not_configured'));
+        }
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
+        return;
+      }
+      // 502 con code=empty_response: il modello ha risposto ma senza audio
+      // (finish_reason=OTHER tipicamente, instabilita` model-specific
+      // su combo voce/rate/lingua). Suggeriamo retry o cambio voce/modello
+      // perche` lo stesso payload sullo stesso modello tende a restituire
+      // lo stesso esito (non e` transient di rete).
+      if(r.status===502){
+        const data=await r.json().catch(()=>({}));
+        if(data && data.code==='empty_response'){
+          const reason=data.finish_reason||'unknown';
+          const tmpl=t('gemini_empty_response')||'Il modello TTS non ha prodotto audio (motivo: {reason}). Riprova o seleziona una voce o un modello differente.';
+          alert(tmpl.replace('{reason}',reason));
+        }else{
+          alert((data && data.error) || t('prev_error'));
+        }
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
+        return;
+      }
+      // 504: timeout server-side (il servizio TTS non ha risposto entro 30s).
+      // Tipicamente indica overload temporaneo del modello: invito a retry.
+      if(r.status===504){
+        alert(t('gemini_timeout')||'Il servizio TTS impiega troppo tempo a rispondere. Riprova tra qualche secondo o seleziona una voce differente.');
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
         return;
       }
       if(!r.ok){
-        _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
-        alert(t('prev_error'));
+        // Tentativo di parse JSON per estrarre error message strutturato.
+        const data=await r.json().catch(()=>({}));
+        _prevLoading=false;btn.disabled=false;_restoreBtn();
+        alert((data && data.error) || t('prev_error'));
         return;
       }
       const blob=await r.blob();
       const blobUrl=URL.createObjectURL(blob);
       audio.oncanplay=()=>{
         _prevLoading=false;
-        btn.classList.remove('loading');
+        _restoreBtn();
         btn.disabled=true;
         _previewGenerated=true;
+        _currentPreviewSig=_sigAtRequest;
+        _knownPreviewSigs.add(_sigAtRequest);
         _updatePreviewBtn();
         if(wrap)wrap.classList.add('visible');
         previewListened=true;
@@ -832,7 +1610,7 @@ async function previewRead(){
         if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
         URL.revokeObjectURL(blobUrl);
         _prevLoading=false;
-        btn.classList.remove('loading');
+        _restoreBtn();
         btn.disabled=false;
         if(wrap)wrap.classList.remove('visible');
         alert(t('prev_error'));
@@ -841,18 +1619,28 @@ async function previewRead(){
       audio.load();
       return;
     }catch(err){
+      clearTimeout(_toHandle);
       console.error('[gemini-preview] fetch error:',err);
-      _prevLoading=false;btn.disabled=false;btn.classList.remove('loading');
-      alert(t('prev_error'));
+      _prevLoading=false;btn.disabled=false;_restoreBtn();
+      // AbortError = timeout client-side (25s). Mostriamo il messaggio
+      // timeout invece di generico prev_error: l'utente capisce che il
+      // problema e` lentezza del servizio, non un suo errore.
+      if(err && err.name==='AbortError'){
+        alert(t('gemini_timeout')||'Il servizio TTS impiega troppo tempo a rispondere. Riprova tra qualche secondo o seleziona una voce differente.');
+      }else{
+        alert(t('prev_error'));
+      }
       return;
     }
   }
 
   audio.oncanplay=()=>{
     _prevLoading=false;
-    btn.classList.remove('loading');
+    _restoreBtn();
     btn.disabled=true;
     _previewGenerated=true;
+    _currentPreviewSig=_sigAtRequest;
+    _knownPreviewSigs.add(_sigAtRequest);
     _updatePreviewBtn();
     if(wrap)wrap.classList.add('visible');
     previewListened=true;
@@ -861,7 +1649,7 @@ async function previewRead(){
   audio.onerror=()=>{
     if(audio.error&&audio.error.code===audio.MEDIA_ERR_ABORTED)return;
     _prevLoading=false;
-    btn.classList.remove('loading');
+    _restoreBtn();
     btn.disabled=false;
     if(wrap)wrap.classList.remove('visible');
     alert(t('prev_error'));
@@ -1000,6 +1788,9 @@ function updateSelection(){
     toggleAIOptimization();
   }
   _updateAiOptUI();
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  // L'anteprima è estratta dai capitoli selezionati: invalida la cache lato client.
+  if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
 }
 
 function _getAllCheckboxes(){let cbs=document.querySelectorAll('#chl .col-sel input[type=checkbox]');if(!cbs.length)cbs=document.querySelectorAll('#chapterRows .chapter-row input[type=checkbox]');return cbs}
@@ -1093,6 +1884,15 @@ function _updateAiOptCard(){
 
 async function _fetchCostEstimate(){
   if(!jobId)return;
+  // Con voci PREMIUM il costo LLM (anche oltre soglia) e' bundlato nel
+  // pagamento combinato Premium+AI gestito dal modale aperto da onGenerateClick.
+  // Saltare il popup voucher LLM-only per evitare una doppia richiesta di pagamento.
+  if(wizardState.audioTab==='premium'){
+    const costEl=document.getElementById('costEstimate');if(costEl)costEl.classList.remove('visible');
+    const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
+    const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
+    return;
+  }
   try{
     let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
     const selLang=document.getElementById('vl').value||cl;
@@ -1179,11 +1979,19 @@ function _updateSummary(){
   const sumCh=document.getElementById('summaryChapters');
   if(sumCh)sumCh.textContent=cnt+'/'+(bookData?bookData.total_chapters:'—');
 
-  const vv=document.getElementById('vv'),vr=document.getElementById('vr');
+  const vr=document.getElementById('vr');
   const sumVoice=document.getElementById('summaryVoice');
-  if(sumVoice&&vv){
-    const vSel=vv.options[vv.selectedIndex];
-    const voiceName=vSel?vSel.text.replace(/\s*\(.*?\)\s*/g,'').replace(/Microsoft\s+/g,'').trim():'—';
+  if(sumVoice){
+    let voiceName;
+    if(wizardState.audioTab==='premium'){
+      const vvP=document.getElementById('vvPremium');
+      const vSel=vvP&&vvP.selectedIndex>=0?vvP.options[vvP.selectedIndex]:null;
+      voiceName=vSel?vSel.text:'—';
+    }else{
+      const vv=document.getElementById('vv');
+      const vSel=vv&&vv.selectedIndex>=0?vv.options[vv.selectedIndex]:null;
+      voiceName=vSel?vSel.text.replace(/\s*\(.*?\)\s*/g,'').replace(/Microsoft\s+/g,'').trim():'—';
+    }
     const rate=vr?vr.options[vr.selectedIndex].text:'Normal';
     sumVoice.textContent=voiceName+' — '+rate;
   }
@@ -1201,16 +2009,19 @@ function _updateSummary(){
 // ═══════════════════ PAYMENT (LLM optimization) ═══════════════════
 let llmConfig={rate:1.1,threshold:0.5,bonus:10,expiry:180,paypalClientId:"",paypalMode:"sandbox",paypalAvailable:false};
 let paypalSdkLoaded=false;
+let _paypalSdkPromise=null;
 
 function _loadPaypalSdk(clientId){
-  return new Promise(function(resolve,reject){
-    if(paypalSdkLoaded&&window.paypal){resolve();return}
+  if(paypalSdkLoaded&&window.paypal)return Promise.resolve();
+  if(_paypalSdkPromise)return _paypalSdkPromise;
+  _paypalSdkPromise=new Promise(function(resolve,reject){
     var s=document.createElement('script');
     s.src='https://www.paypal.com/sdk/js?client-id='+encodeURIComponent(clientId)+'&currency=EUR&intent=capture';
     s.onload=function(){paypalSdkLoaded=true;resolve()};
-    s.onerror=function(){reject(new Error('Failed to load PayPal SDK'))};
+    s.onerror=function(){_paypalSdkPromise=null;reject(new Error('Failed to load PayPal SDK'))};
     document.head.appendChild(s);
   });
+  return _paypalSdkPromise;
 }
 
 async function _showPaymentModal(costEur,chars){
@@ -1294,7 +2105,9 @@ async function _validateLanguage() {
   }
   // 2. Case: Mismatch between detected/metadata language and selected voice
   const bookLang = bookData.language ? bookData.language.split('-')[0].toLowerCase() : '';
-  const voiceLang = document.getElementById('vl').value;
+  const voiceLang = (wizardState.audioTab === 'premium')
+    ? document.getElementById('vlPremium').value
+    : document.getElementById('vl').value;
   if(bookLang && voiceLang && bookLang !== voiceLang && !previewListened) {
     // Show the same warning modal (it asks to verify voice/language)
     return await _showLangWarning();
@@ -1302,7 +2115,7 @@ async function _validateLanguage() {
   return true;
 }
 
-async function startCombinedGeneration(){
+async function startCombinedGeneration(combinedPaymentToken){
   if(!jobId||generating)return;
 
   // Check admin suspend
@@ -1312,8 +2125,10 @@ async function startCombinedGeneration(){
   }catch(e){}
 
   if(!(await _validateLanguage()))return;
-  // Donate modal for returning users
-  if(_shouldShowDonateModal()){await _showDonateModal();}
+  // Donate modal for returning users — saltato per Voci PREMIUM: chiedere
+  // una donazione subito dopo (o in luogo di) un pagamento Premium e' UX
+  // contraddittoria. La generazione gratis con voci Standard mantiene il prompt.
+  if(wizardState.audioTab!=='premium' && _shouldShowDonateModal()){await _showDonateModal();}
   _markGeneration();
 
   // Collect selected chapters
@@ -1330,17 +2145,22 @@ async function startCombinedGeneration(){
   if(aiOptEnabled&&!_allSelectedOptimized()){
     // ── AI optimization flow ──
     // Payment check
-    var paymentToken=null;
+    var paymentToken=combinedPaymentToken||null;
     try{
       let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-      const selLang=document.getElementById('vl').value||cl;
+      const selLang=(wizardState.audioTab==='premium')
+        ?document.getElementById('vlPremium').value||cl
+        :document.getElementById('vl').value||cl;
       url.searchParams.append('lang',selLang);
+      // Passa la voce cosi' il server applica il cap corretto (Gemini ha MAX_GEMINI_TEXT_CHARS piu' restrittivo).
+      const _voiceForEst=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+      if(_voiceForEst)url.searchParams.append('voice',_voiceForEst);
       if(selectedChapters&&selectedChapters.length>0){
         selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
       }
       var est=await fetch(url.toString()).then(r=>r.json());
       if(est.error){showS3Err(est.error);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
-      if(est.requires_payment){
+      if(est.requires_payment&&!paymentToken){
         // Reuse token already validated via the popup (showCoupon)
         if(window._couponPaymentToken){
           paymentToken=window._couponPaymentToken;
@@ -1364,19 +2184,28 @@ async function startCombinedGeneration(){
     _setCancelButtonMode('opt');
     lockUI();
     try{
-      const selLang=document.getElementById('vl').value||cl;
+      console.log('[startCombinedGeneration] preparing /api/optimize payload', {jobId, paymentToken: !!paymentToken, selectedChapters, audioTab: wizardState.audioTab});
+      const selLangEl=(wizardState.audioTab==='premium')
+        ?document.getElementById('vlPremium')
+        :document.getElementById('vl');
+      const selLang=(selLangEl&&selLangEl.value)||cl;
+      const vrEl=document.getElementById('vr');
+      const voiceId=getCurrentVoiceId();
       var payload={job_id:jobId,batch:false,lang:selLang};
       if(paymentToken)payload.payment_token=paymentToken;
       if(selectedChapters)payload.selected_chapters=selectedChapters;
       // Always use auto_generate in wizard flow
       payload.auto_generate=true;
-      payload.voice=document.getElementById('vv').value;
-      payload.rate=document.getElementById('vr').value;
+      payload.voice=voiceId;
+      payload.rate=(vrEl&&vrEl.value)||'+0%';
       payload.single_file=singleFile;
       payload.output_format=outputFormat;
       payload.podcast_base_url=podcastBaseUrl;
+      console.log('[startCombinedGeneration] POST /api/optimize', payload);
       var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      console.log('[startCombinedGeneration] /api/optimize response', r.status);
       var d=await r.json();
+      console.log('[startCombinedGeneration] /api/optimize body', d);
       if(d.error){
         if(d.error_code==='selection_too_large'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -1391,15 +2220,29 @@ async function startCombinedGeneration(){
         unlockUI();return;
       }
       _listenOptProgressWiz();
-    }catch(e){showPErr('Error: '+e.message);unlockUI()}
+    }catch(e){
+      console.error('[startCombinedGeneration] exception during /api/optimize', e);
+      showPErr('Error: '+e.message);
+      const pMsgEl=document.getElementById('pMsg');
+      if(pMsgEl){pMsgEl.textContent='Errore: '+e.message;pMsgEl.style.color='var(--err)';}
+      unlockUI();
+    }
   }else{
     // ── Direct TTS generation ──
     _showWizProgress();
     _setCancelButtonMode('gen');
     lockUI();
     try{
-      var genPayload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+      var _genLang=(wizardState.audioTab==='premium')
+        ?(document.getElementById('vlPremium')?.value||cl)
+        :(document.getElementById('vl')?.value||cl);
+      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
+      if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
+      if(_isGeminiVoiceId(getCurrentVoiceId())){
+        var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
+        if(_gs)genPayload.gemini_style_instruction=_gs;
+      }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
@@ -1420,6 +2263,14 @@ async function startCombinedGeneration(){
           document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
           document.getElementById('btnRetryWiz').onclick=retryGeneration;
           unlockUI();return;
+        }
+        if(gd.error_code==='gemini_overload'){
+          // Pre-flight block sincrono: nessun job avviato, nessun payment consumato.
+          unlockUI();generating=false;
+          document.getElementById('cnA').style.display='none';
+          try{console.log('[abm] gemini_overload (sync /api/generate):', gd);}catch(e){}
+          _showGeminiOverloadModal(gd);
+          return;
         }
         showPErr(gd.error);unlockUI();return;
       }
@@ -1488,6 +2339,97 @@ function _updateJobRunningPct(pct,forJobId){
   if(span)span.textContent=Math.round(pct||0);
 }
 
+// Popup mostrato quando il pre-flight rileva che le voci PREMIUM sono
+// sature (RPD esaurito): rimborso gia' emesso, l'utente puo' tornare alla
+// scelta voce e scegliere un'altra opzione (altro modello PREMIUM o voci
+// Standard). Niente redirect alla home.
+function _showGeminiOverloadModal(d){
+  // Helper: t() ritorna la chiave stessa se la traduzione manca, quindi
+  // l'idioma "t(k)||fallback" non scatta mai (la chiave e' truthy).
+  // _tf invece riconosce il caso "non tradotto" e usa il fallback.
+  function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
+  // Cleanup eventuale modal residuo
+  var old=document.getElementById('geminiOverloadModal');
+  if(old)old.remove();
+  // Distingue caso preventivo (controllo PRIMA del pagamento → nessun rimborso da mostrare)
+  // dal caso post-pagamento (refund_method valorizzato → mostriamo la riga rimborso).
+  var hasRefund=!!(d&&d.refund_method);
+  var refundLine='';
+  if(hasRefund){
+    if(d.refund_method==='paypal'&&d.refund_voucher_code){
+      refundLine='<p style="margin:8px 0 0;color:#374151">'+esc(_tf('gemini_overload_refund_paypal','L\'importo ti e\' stato rimborsato sotto forma di voucher'))+
+        ' <code style="background:rgba(0,0,0,.06);color:#111;padding:2px 6px;border-radius:4px;font-weight:600">'+esc(d.refund_voucher_code)+'</code> '+
+        esc(_tf('gemini_overload_refund_email_hint','(anche via email).'))+'</p>';
+    }else if(d.refund_method==='voucher'){
+      refundLine='<p style="margin:8px 0 0;color:#374151">'+esc(_tf('gemini_overload_refund_voucher','L\'importo e\' stato riaccreditato sul voucher che hai usato.'))+'</p>';
+    }
+  }
+  // Retry hint (solo se >0 e sotto 24h)
+  var retryLine='';
+  var rs=Number(d&&d.retry_after_sec||0);
+  if(rs>0&&rs<86400){
+    var h=Math.ceil(rs/3600);
+    retryLine='<p style="margin:8px 0 0;color:#6b7280;font-size:.92em">'+
+      esc(_tf('gemini_overload_retry_hint','Le voci PREMIUM tornano disponibili tra circa {h} h.').replace('{h}',h))+'</p>';
+  }
+  // Testo del popup: preventivo (no pagamento) vs post-pagamento.
+  var title, body, btnLabel;
+  if(hasRefund){
+    title=esc(_tf('gemini_overload_title','Voci PREMIUM temporaneamente non disponibili'));
+    body=esc(_tf('gemini_overload_body',
+      'Le voci PREMIUM non sono disponibili in questo momento. La generazione non e\' partita e hai ricevuto il rimborso integrale. Puoi proseguire scegliendo:'));
+    btnLabel=esc(_tf('gemini_overload_btn','Torna alla scelta voce'));
+  }else{
+    title=esc(_tf('gemini_overload_title_pre','Voci PREMIUM temporaneamente non disponibili'));
+    body=esc(_tf('gemini_overload_body_pre',
+      'Le voci PREMIUM hanno raggiunto il limite giornaliero di utilizzo. Per proseguire puoi scegliere:'));
+    btnLabel=esc(_tf('gemini_overload_btn_pre','Ho capito'));
+  }
+  var optA=esc(_tf('gemini_overload_opt_a','un altro modello di voci PREMIUM'));
+  var optB=esc(_tf('gemini_overload_opt_b','le voci Standard (sempre disponibili, gratuite)'));
+  var el=document.createElement('div');
+  el.id='geminiOverloadModal';
+  el.className='modal-overlay open';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;color:#111';
+  el.innerHTML=
+    '<div class="modal" style="max-width:540px;background:#fff;color:#111;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)">'+
+      '<div class="modal-head" style="padding:18px 22px 12px;border-bottom:1px solid #e5e7eb"><h2 style="margin:0;font-size:1.15em;color:#111;font-weight:700">'+title+'</h2></div>'+
+      '<div class="modal-body" style="padding:14px 22px 18px;color:#111;line-height:1.5">'+
+        '<p style="margin:0 0 10px;color:#1f2937">'+body+'</p>'+
+        '<ul style="margin:0 0 6px;padding-left:22px;color:#1f2937"><li>'+optA+'</li><li>'+optB+'</li></ul>'+
+        refundLine+retryLine+
+        '<div style="margin-top:18px;text-align:right">'+
+          '<button id="geminiOverloadBtn" class="btn btn-primary" style="padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer">'+btnLabel+'</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(el);
+  function dismiss(){
+    el.remove();
+    // Pulisci eventuale errore inline residuo nello step di progress
+    var pra=document.getElementById('pra');if(pra)pra.innerHTML='';
+    // Torna allo step 3 (scelta voce/audio)
+    try{goToStep(3);}catch(e){}
+    // Libera lo stato wizard per consentire un nuovo avvio.
+    // IMPORTANTE: NON azzerare jobId. Nel preflight sincrono il job rimane
+    // in status="analyzed" lato server e l'utente puo' cambiare modello /
+    // tab voce e ripartire. Azzerando jobId rompiamo /api/combined_estimate
+    // (che richiede jobId) e la "STIMA COSTO CAPITOLI SELEZIONATI" non si
+    // ricalcola piu' al cambio modello.
+    try{
+      jobDone=false;generating=false;
+      var gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+      var p4f=document.getElementById('panel4Footer');if(p4f)p4f.style.display='';
+      var gan=document.getElementById('generationActiveNotice');if(gan)gan.style.display='none';
+    }catch(e){}
+    // Ricalcola la stima per il modello/voce attualmente selezionato.
+    try{if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();}catch(e){}
+  }
+  var btn=document.getElementById('geminiOverloadBtn');
+  if(btn)btn.onclick=dismiss;
+  el.onclick=function(ev){if(ev.target===el)dismiss();};
+}
+
 function _showWizProgress(){
   _stopAnalyzedHeartbeat();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='';
@@ -1511,6 +2453,8 @@ function _showWizProgress(){
 
 function _listenOptProgressWiz(){
   var myJobId=jobId;
+  _updateGenNoticeWarning();
+  _autoRegisterEmailFromStorage(myJobId);
   var es=new EventSource('/api/optimize_progress/'+myJobId);
   es.onmessage=function(ev){
     var d=JSON.parse(ev.data);
@@ -1722,8 +2666,15 @@ async function startGen(){
   _setCancelButtonMode('gen');
   lockUI();
   try{
-    const payload={job_id:jobId,voice:document.getElementById('vv').value,rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl};
+    const _genLang2=(wizardState.audioTab==='premium')
+      ?(document.getElementById('vlPremium')?.value||cl)
+      :(document.getElementById('vl')?.value||cl);
+    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
+    if(_isGeminiVoiceId(getCurrentVoiceId())){
+      const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
+      if(_gs)payload.gemini_style_instruction=_gs;
+    }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
@@ -1743,6 +2694,13 @@ async function startGen(){
         document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
         document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
       }
+      if(d.error_code==='gemini_overload'){
+        unlockUI();generating=false;
+        document.getElementById('cnA').style.display='none';
+        try{console.log('[abm] gemini_overload (sync /api/generate):', d);}catch(e){}
+        _showGeminiOverloadModal(d);
+        return;
+      }
       showPErr(d.error);unlockUI();return
     }
     listenProgress();
@@ -1753,15 +2711,44 @@ function listenProgress(){
   let retries=0;
   const maxRetries=5;
   const myJobId=jobId;
+  _updateGenNoticeWarning();
+  _autoRegisterEmailFromStorage(myJobId);
   function connect(){
     const es=new EventSource('/api/progress/'+myJobId);
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
-      if(d.status==='error'){es.close();_hideJobRunningModal(true,myJobId);showPErr(d.error);unlockUI();generating=false;document.getElementById('cnA').style.display='none';return}
-      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;return}
+      if(d.status==='error'){
+        es.close();
+        unlockUI();
+        generating=false;
+        document.getElementById('cnA').style.display='none';
+        try{console.log('[abm] job error payload:', d);}catch(e){}
+        if(d.error_kind==='gemini_overload'){
+          // Restiamo nel wizard per mostrare il modal Gemini overload;
+          // no resetAll. Passiamo myJobId per evitare di chiudere modal
+          // di altri job concorrenti.
+          _hideJobRunningModal(false,myJobId);
+          _showGeminiOverloadModal(d);
+        }else{
+          _hideJobRunningModal(true,myJobId);
+          showPErr(d.error||'Errore');
+        }
+        return;
+      }
+      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;_renderGeminiCancelSummary(d);return}
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
+      window._sseLastProgressPct=pct;
+      // Reidrata _payState dopo reload pagina: il server espone paid_eur
+      // (quota gemini effettivamente pagata) nello stream SSE; senza questo,
+      // il modal di cancel mostrerebbe "Importo versato: 0.00 EUR" dopo F5.
+      if(typeof d.paid_eur==='number' && d.paid_eur>0 && !(_payState && _payState.gemini>0)){
+        if(!_payState) _payState={total:0,gemini:0,llm:0,token:null,method:null};
+        _payState.gemini=d.paid_eur;
+        if(d.paid_method && !_payState.method) _payState.method=d.paid_method;
+      }
+      _updateGeminiCancelLockUI(pct);
       // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
       document.getElementById('pBar').style.width=pct+'%';
@@ -1924,9 +2911,173 @@ function cancelOptimization(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
 }
 
-function cancelJob(){
-  if(!jobId||!generating)return;
-  navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
+// Helper: crea un modal-overlay neutro (titolo + body container + footer).
+// Ritorna {root, body, footer, close(v?)} dove close rimuove l'overlay e
+// (se passata) risolve la Promise associata.
+function _mkCancelModal(modalId, titleText, resolveFn){
+  var old=document.getElementById(modalId); if(old)old.remove();
+  var ov=document.createElement('div');
+  ov.id=modalId;
+  ov.className='modal-overlay open';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;color:#111';
+  var box=document.createElement('div');
+  box.className='modal';
+  box.style.cssText='max-width:520px;background:#fff;color:#111;border-radius:12px;padding:0;box-shadow:0 10px 40px rgba(0,0,0,.25)';
+  var head=document.createElement('div');
+  head.className='modal-head';
+  head.style.cssText='padding:18px 22px 12px;border-bottom:1px solid #e5e7eb';
+  var h2=document.createElement('h2');
+  h2.style.cssText='margin:0;font-size:1.15em;color:#111;font-weight:700';
+  h2.textContent=titleText;
+  head.appendChild(h2);
+  var body=document.createElement('div');
+  body.className='modal-body';
+  body.style.cssText='padding:14px 22px 18px;color:#111;line-height:1.5';
+  var footer=document.createElement('div');
+  footer.style.cssText='margin-top:18px;text-align:right';
+  body.appendChild(footer);
+  box.appendChild(head);
+  box.appendChild(body);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  var settled=false;
+  function close(v){
+    if(settled) return;
+    settled=true;
+    ov.remove();
+    if(resolveFn) resolveFn(v);
+  }
+  ov.addEventListener('click', function(ev){ if(ev.target===ov) close(false); });
+  return {root:ov, body:body, footer:footer, close:close};
+}
+
+// Modal di conferma cancel per voci PREMIUM (Gemini): l'utente sta per
+// rinunciare a parte dell'importo gia' versato. Promise<bool>.
+function _confirmCancelGeminiModal(paid, pct){
+  return new Promise(function(resolve){
+    function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
+    var paidNum=Number(paid)||0;
+    var pctNum=Math.max(0,Math.min(100, Math.round(Number(pct)||0)));
+    var refundEst=Math.max(0, paidNum * (100 - pctNum) / 100 - 0.34);
+    var m=_mkCancelModal('cancelConfirmModal',
+      _tf('cancel_confirm_title','Annullare la generazione?'), resolve);
+    var p=document.createElement('p');
+    p.style.cssText='margin:0 0 12px;color:#1f2937';
+    p.textContent=_tf('cancel_confirm_body','Stai per annullare la generazione delle voci PREMIUM. Riceverai l\'audio parziale già generato, ma una parte dell\'importo versato sarà trattenuta per coprire il costo del servizio già consumato.');
+    m.body.insertBefore(p, m.footer);
+    var ul=document.createElement('ul');
+    ul.style.cssText='margin:0 0 12px;padding-left:8px;color:#1f2937;list-style:none';
+    var lines=[
+      _tf('cancel_confirm_paid','Importo versato: {paid} EUR').replace('{paid}', paidNum.toFixed(2)),
+      _tf('cancel_confirm_progress','Avanzamento attuale: {pct}%').replace('{pct}', String(pctNum)),
+      _tf('cancel_confirm_refund_est','Rimborso stimato: ~{refund} EUR').replace('{refund}', refundEst.toFixed(2))
+    ];
+    lines.forEach(function(txt){
+      var li=document.createElement('li');
+      li.style.cssText='margin:4px 0';
+      li.textContent='• '+txt;
+      ul.appendChild(li);
+    });
+    m.body.insertBefore(ul, m.footer);
+    var btnNo=document.createElement('button');
+    btnNo.className='btn';
+    btnNo.style.cssText='padding:8px 16px;border-radius:8px;background:#e5e7eb;color:#111;border:none;font-weight:600;cursor:pointer;margin-right:8px';
+    btnNo.textContent=_tf('cancel_confirm_no','Continua generazione');
+    btnNo.addEventListener('click', function(){ m.close(false); });
+    var btnYes=document.createElement('button');
+    btnYes.className='btn btn-danger';
+    btnYes.style.cssText='padding:8px 16px;border-radius:8px;background:#dc2626;color:#fff;border:none;font-weight:600;cursor:pointer';
+    btnYes.textContent=_tf('cancel_confirm_yes','Sì, annulla');
+    btnYes.addEventListener('click', function(){ m.close(true); });
+    m.footer.appendChild(btnNo);
+    m.footer.appendChild(btnYes);
+  });
+}
+
+// Modal informativo: il server ha rifiutato il cancel perche' il job e'
+// oltre la soglia di lock (ABM_GEMINI_CANCEL_LOCK_PCT).
+function _showCancelLockedModal(lockPct){
+  function _tf(k, fallback){var v=t(k); return (v===k||!v)?fallback:v;}
+  var lockNum=Math.max(0,Math.min(100, Math.round(Number(lockPct)||70)));
+  var m=_mkCancelModal('cancelLockedModal',
+    _tf('cancel_locked_title','Annullamento non disponibile'), null);
+  var p=document.createElement('p');
+  p.style.cssText='margin:0 0 12px;color:#1f2937';
+  p.textContent=_tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento. Per non perdere quasi tutto l\'importo versato, attendi il completamento.').replace('{lock}', String(lockNum));
+  m.body.insertBefore(p, m.footer);
+  var btnOk=document.createElement('button');
+  btnOk.className='btn btn-primary';
+  btnOk.style.cssText='padding:8px 16px;border-radius:8px;background:var(--ac,#4f46e5);color:#fff;border:none;font-weight:600;cursor:pointer';
+  btnOk.textContent=_tf('news_modal_ok','Ho capito');
+  btnOk.addEventListener('click', function(){ m.close(); });
+  m.footer.appendChild(btnOk);
+}
+
+// Renderizza link MP3 parziale + refund summary post-cancel voci PREMIUM.
+// d e' il payload SSE con campi opzionali partial_download_url e cancel_meta
+// (paid_eur, retained_eur, refund_eur, progress_pct, partial_audio_delivered).
+function _renderGeminiCancelSummary(d){
+  if(!d || (!d.cancel_meta && !d.partial_download_url)) return;
+  function _tf(k, fb){var v=t(k); return (v===k||!v)?fb:v;}
+  var host=document.getElementById('pra');
+  if(!host) return;
+  var existing=document.getElementById('geminiCancelSummary');
+  if(existing) existing.remove();
+  var box=document.createElement('div');
+  box.id='geminiCancelSummary';
+  box.style.cssText='margin-top:18px;padding:16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#111;max-width:560px';
+  if(d.partial_download_url){
+    var dlWrap=document.createElement('div');
+    dlWrap.style.cssText='margin-bottom:12px;text-align:center';
+    var a=document.createElement('a');
+    a.href=d.partial_download_url;
+    a.setAttribute('rel','noopener');
+    a.style.cssText='display:inline-block;background:#8b5cf6;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600';
+    a.textContent=_tf('cancel_partial_dl','Scarica audio parziale (MP3)');
+    dlWrap.appendChild(a);
+    box.appendChild(dlWrap);
+  }
+  var cm=d.cancel_meta||{};
+  var paid=Number(cm.paid_eur||0).toFixed(2);
+  var ret=Number(cm.retained_eur||0).toFixed(2);
+  var ref=Number(cm.refund_eur||0).toFixed(2);
+  var summary=document.createElement('p');
+  summary.style.cssText='margin:0;color:#374151;font-size:.95em;text-align:center';
+  summary.textContent=_tf('cancel_summary','Versati {paid} EUR · Trattenuti {retained} EUR · Rimborsati {refund} EUR').replace('{paid}',paid).replace('{retained}',ret).replace('{refund}',ref);
+  box.appendChild(summary);
+  host.appendChild(box);
+}
+
+// Disabilita il pulsante Cancel quando il job voci PREMIUM e' oltre la
+// soglia client-side (default 70). La gate finale e' comunque server-side
+// in /api/cancel (ABM_GEMINI_CANCEL_LOCK_PCT). Tooltip via title attribute.
+var _GEMINI_CANCEL_LOCK_PCT_CLIENT = 70;
+function _updateGeminiCancelLockUI(pct){
+  var btnC = document.getElementById('btnC');
+  if(!btnC) return;
+  var voice = (typeof getCurrentVoiceId==='function') ? getCurrentVoiceId() : '';
+  if(!_isGeminiVoiceId(voice)){
+    if(btnC.disabled && btnC.dataset.lockedByCancelFloor==='1'){
+      btnC.disabled=false;
+      btnC.title='';
+      delete btnC.dataset.lockedByCancelFloor;
+    }
+    return;
+  }
+  var p = Math.max(0, Math.min(100, Math.round(Number(pct)||0)));
+  if(p > _GEMINI_CANCEL_LOCK_PCT_CLIENT){
+    function _tf(k, fb){var v=t(k); return (v===k||!v)?fb:v;}
+    btnC.disabled=true;
+    btnC.dataset.lockedByCancelFloor='1';
+    btnC.title=_tf('cancel_locked_body','La generazione è ormai oltre il {lock}% del completamento.').replace('{lock}', String(_GEMINI_CANCEL_LOCK_PCT_CLIENT));
+  } else if(btnC.dataset.lockedByCancelFloor==='1'){
+    btnC.disabled=false;
+    btnC.title='';
+    delete btnC.dataset.lockedByCancelFloor;
+  }
+}
+
+function _completeCancelUI(){
   generating=false;
   unlockUI();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
@@ -1941,9 +3092,55 @@ function cancelJob(){
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
   document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
-  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
+  const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;const sp=document.createElement('span');sp.setAttribute('data-t','btn_gen');sp.textContent=t('btn_gen');btnGen.replaceChildren(sp);}
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   updateSelection();
+}
+
+function cancelJob(){
+  if(!jobId||!generating)return;
+  var voice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  if(_isGeminiVoiceId(voice)){
+    // Snapshot autoritativo dal server: paid_eur viene letto da
+    // job.payment.total_eur (stessa fonte usata dal refund handler).
+    // Evita race condition con SSE quando l'utente fa F5 e clicca cancel
+    // prima che arrivi il primo evento progress (con _payState.gemini
+    // ancora a 0 -> modal mostrava "Importo versato: 0.00 EUR").
+    var paidFallback=(window._payState && _payState.gemini) ? Number(_payState.gemini)||0 : 0;
+    var pctFallback=Number(window._sseLastProgressPct||0);
+    fetch('/api/cancel_preview/'+jobId,{credentials:'same-origin'}).then(function(r){
+      return r.ok ? r.json() : null;
+    }).catch(function(){return null;}).then(function(d){
+      if(d && d.locked){
+        _showCancelLockedModal(Number(d.lock_pct)||70);
+        return;
+      }
+      var paid=d && typeof d.paid_eur==='number' ? d.paid_eur : paidFallback;
+      var pct=d && typeof d.progress_pct==='number' ? d.progress_pct : pctFallback;
+      _confirmCancelGeminiModal(paid, pct).then(function(yes){
+        if(!yes) return;
+        // force=1: il modale di conferma è già un'azione esplicita dell'utente,
+        // by-passa la guardia server email_registered (che resta attiva solo per
+        // l'unload implicito della pagina).
+        fetch('/api/cancel/'+jobId+'?force=1',{method:'POST',credentials:'same-origin'}).then(function(r){
+          if(r.status===409){
+            return r.json().then(function(d){
+              _showCancelLockedModal((d&&d.lock_pct)||70);
+              return null;
+            });
+          }
+          _completeCancelUI();
+          return null;
+        }).catch(function(){
+          try{navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');}catch(e){}
+          _completeCancelUI();
+        });
+      });
+    });
+    return;
+  }
+  navigator.sendBeacon('/api/cancel/'+jobId+'?force=1');
+  _completeCancelUI();
 }
 
 function retryGen(){retryGeneration()}
@@ -2046,6 +3243,12 @@ async function downloadFile(type){
         return;
       }
       const isLastDl=(r.headers.get('X-Download-Last')==='1');
+      // Se il server ha fatto fallback (es. M4B non disponibile → MP3), il client
+      // deve trattare la risposta come del tipo effettivamente servito, non come
+      // quello richiesto: altrimenti il safety net qui sotto aggiungerebbe una
+      // seconda estensione (es. "X.mp3.m4b") al filename già corretto.
+      const fallbackKind=(r.headers.get('X-Fallback')||'').toLowerCase();
+      const effectiveType=fallbackKind || type;
       const dlLabel=t('dl_downloading')||'Downloading…';
       const blob=await _streamToBlob(r,(rx,total)=>{
         if(total>0){
@@ -2064,13 +3267,13 @@ async function downloadFile(type){
       if(!fname){mm=cd.match(/filename\s*=\s*"([^"]+)"/i);if(mm)fname=mm[1]}
       if(!fname){mm=cd.match(/filename\s*=\s*([^;\n]+)/i);if(mm)fname=mm[1].trim()}
       let defName = 'audiobook.zip';
-      if(type === 'm4b') defName = 'audiobook.m4b';
-      if(type === 'abm') defName = 'project.abm';
-      if(type === 'mp3') defName = 'audiobook.mp3';
+      if(effectiveType === 'm4b') defName = 'audiobook.m4b';
+      if(effectiveType === 'abm') defName = 'project.abm';
+      if(effectiveType === 'mp3') defName = 'audiobook.mp3';
       if(!fname) fname=defName;
       // Safety net: enforce the expected extension if the parsed filename is missing it.
       const extByType={zip:'.zip',m4b:'.m4b',mp3:'.mp3',abm:'.abm'};
-      const expectedExt=extByType[type];
+      const expectedExt=extByType[effectiveType];
       if(expectedExt && !fname.toLowerCase().endsWith(expectedExt)) fname += expectedExt;
 
       const a=document.createElement('a');
@@ -2272,6 +3475,7 @@ function resetAll(){
   previewStop();
   bookData=null;jobId=null;
   emailRegistered=false;previewListened=false;
+  _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
   const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';
   // Reset wizard generation UI
@@ -2376,6 +3580,48 @@ async function validateCoupon(){
   }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
 }
 
+function _updateGenNoticeWarning(){
+  const notice=document.getElementById('generationActiveNotice');
+  const txt=document.getElementById('genActiveNoticeText');
+  if(!notice||!txt)return;
+  if(emailRegistered){
+    // Email recepita: il banner di avviso è fuorviante (la conferma verde
+    // sotto la progress bar comunica già lo stato safe). Nascondiamo il
+    // banner ATTENZIONE per evitare il messaggio contraddittorio.
+    notice.classList.remove('warn');
+    notice.style.display='none';
+  }else{
+    notice.style.display='';
+    notice.classList.add('warn');
+    const w=t('gen_active_notice_warn');
+    if(w)txt.textContent=w;
+  }
+}
+
+function _setEmailLateConfirm(area,msg){
+  if(!area)return;
+  while(area.firstChild)area.removeChild(area.firstChild);
+  const span=document.createElement('span');
+  span.style.color='var(--ok)';
+  span.style.fontSize='.84rem';
+  span.textContent=msg;
+  area.appendChild(span);
+}
+
+async function _autoRegisterEmailFromStorage(myJobId){
+  // Pre-popola il campo di notifica con l'email del voucher (o un'email
+  // gia' usata in passato) ma NON la registra: la conferma deve essere
+  // esplicita via pulsante. Evita di "ereditare" silenziosamente l'email
+  // del buono per la notifica, quando l'utente potrebbe volerla diversa.
+  if(emailRegistered)return false;
+  let stored='';
+  try{stored=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
+  if(!stored||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stored))return false;
+  const input=document.getElementById('notifyEmailLate');
+  if(input&&!input.value)input.value=stored;
+  return false;
+}
+
 async function submitEmailLate(){
   const email=(document.getElementById('notifyEmailLate').value||'').trim();
   if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return;
@@ -2391,7 +3637,8 @@ async function submitEmailLate(){
     const noticeEl=document.getElementById('genActiveNoticeText');
     if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',email);
     const area=document.getElementById('emailLateArea');
-    if(area)area.innerHTML='<span style="color:var(--ok);font-size:.84rem">✅ '+(t('email_late_ok')||'Email registered!')+'</span>';
+    _setEmailLateConfirm(area,'✅ '+(t('email_late_ok')||'Email registered!'));
+    _updateGenNoticeWarning();
   }catch(e){alert('Error: '+e.message)}
 }
 
@@ -2554,7 +3801,12 @@ function _computeSelectedChars(){
 function _showSelTooLargeModal(charsSelected,limit){
   const body=document.getElementById('selTooLargeBody');
   if(body){
-    const k='sel_too_large_body';
+    // Premium variant quando il `limit` corrisponde al cap Gemini (es. 800k):
+    // messaggio dice "fissato per le voci PREMIUM" e invita a usare Voci Standard.
+    // Altrimenti (cap Standard ~1.5M) usa il messaggio generico.
+    const _premCap=(bookData&&bookData.max_gemini_text_chars)|0;
+    const isPrem=(_premCap>0 && limit===_premCap);
+    const k=isPrem?'sel_too_large_body_premium':'sel_too_large_body';
     const tpl=t(k,{chars:(charsSelected||0).toLocaleString(),limit:(limit||0).toLocaleString()});
     body.textContent=(tpl&&tpl!==k)?tpl:('Selection too large: '+(charsSelected||0).toLocaleString()+' characters (limit '+(limit||0).toLocaleString()+'). Please reduce the chapter selection.');
   }
@@ -2565,10 +3817,15 @@ function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();
   if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
   const s3err=document.getElementById('s3err');if(s3err)s3err.innerHTML='';
-  const limit=(bookData&&bookData.max_text_chars)|0;
-  if(limit>0){
+  // Cap qui SEMPRE quello Standard (`max_text_chars`, ~1.5M): a questo step
+  // l'utente non ha ancora dichiarato di voler usare Premium. Il cap Gemini
+  // (`max_gemini_text_chars`, ~800k) viene invece controllato in
+  // `switchAudioTab('premium')` — l'unico punto in cui l'intento Premium è
+  // esplicito. Cosi` chi resta su Standard non viene bloccato a torto.
+  const _capStd=(bookData&&bookData.max_text_chars)|0;
+  if(_capStd>0){
     const chars=_computeSelectedChars();
-    if(chars>limit){_showSelTooLargeModal(chars,limit);return}
+    if(chars>_capStd){_showSelTooLargeModal(chars,_capStd);return}
   }
   goToStep(3);
 }

@@ -5,8 +5,8 @@ Funzioni principali:
   - configure(): inietta i riferimenti globali condivisi (jobs, upload_dir, ecc.)
   - _CancelledError, _SimpleChapter, _SimpleBookInfo: classi helper
   - parse_txt, parse_abm: parser file di testo/progetto
-  - _init_deepseek, _llm_available: inizializzazione client DeepSeek
-  - _call_deepseek, _optimize_chapter_text: ottimizzazione LLM
+  - _init_llm, _llm_available: inizializzazione client LLM
+  - _call_llm, _optimize_chapter_text: ottimizzazione LLM
   - _generate_optimized_abm: genera snapshot .abm post-ottimizzazione
   - _send_completion_email, _send_optimization_email: email di completamento
   - _refund_job_payment: rimborso pagamento in caso di errore/cancellazione
@@ -31,10 +31,12 @@ from pathlib import Path
 
 import email_service
 import payment
+import cancel_policy
 try:
     import gemini_tts
 except ImportError:
     gemini_tts = None
+import gemini_cost_audit
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -43,36 +45,73 @@ from audio_utils import (
     _generate_podcast_rss,
     pcm_size_to_seconds,
     pcm_to_mp3, pcm_to_aac_m4b,
+    trim_pcm_trailing_silence,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
-    _pick_chunk_max_chars, generate_chunk_pcm_gemini, _generate_silence_pcm,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    generate_chunk_pcm_gemini, _generate_silence_pcm,
 )
 
 # ---------------------------------------------------------------------------
-# DeepSeek LLM config (letti da os.environ)
+# LLM (text-optimization) config — engine-agnostic, env-driven
 # ---------------------------------------------------------------------------
+# Tutti i parametri sono override-able via ABM_LLM_* environment variables.
+# I default attuali sono tarati su DeepSeek-Chat (provider corrente). Cambiare
+# provider richiede solo di rivalorizzare le env var (no code change).
 
-DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
-DEEPSEEK_API_BASE = "https://api.deepseek.com"
-DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
-DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
-DEEPSEEK_MAX_TOKENS = 384000
-DEEPSEEK_TEMPERATURE = 0.3
-DEEPSEEK_CHARS_PER_TOKEN = 3.5
-DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000  # 1M context window (DeepSeek V4 Flash)
-DEEPSEEK_RESERVED_OUTPUT_TOKENS = 384000
-DEEPSEEK_RESERVED_PROMPT_TOKENS = 4000
-DEEPSEEK_MAX_INPUT_TOKENS = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_RESERVED_OUTPUT_TOKENS - DEEPSEEK_RESERVED_PROMPT_TOKENS
-DEEPSEEK_MAX_INPUT_CHARS = int(DEEPSEEK_MAX_INPUT_TOKENS * DEEPSEEK_CHARS_PER_TOKEN)
-# Per-chunk safe size: ~1.14M chars per chunk with 384k output tokens.
-# Single API call per chapter for virtually any real book — no chunking needed.
-DEEPSEEK_SAFE_OUTPUT_CHUNK = int(DEEPSEEK_MAX_TOKENS * DEEPSEEK_CHARS_PER_TOKEN * 0.85)
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+def _env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+def _env_bool(name, default):
+    return os.environ.get(name, "true" if default else "false").strip().lower() in ("true", "1", "yes", "on")
+
+# Connection
+LLM_API_KEY  = os.environ.get("ABM_LLM_API_KEY", "")
+LLM_API_BASE = os.environ.get("ABM_LLM_API_BASE", "https://api.deepseek.com")
+LLM_MODEL    = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+
+# Generation behavior
+LLM_THINKING         = _env_bool("ABM_LLM_THINKING", False)
+LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").strip().lower()
+LLM_TEMPERATURE      = _env_float("ABM_LLM_TEMPERATURE", 0.3)
+LLM_MAX_TOKENS       = _env_int("ABM_LLM_MAX_TOKENS", 65536)
+
+# Token-economy helpers
+LLM_CHARS_PER_TOKEN        = _env_float("ABM_LLM_CHARS_PER_TOKEN", 3.5)
+LLM_MAX_CONTEXT_TOKENS     = _env_int("ABM_LLM_MAX_CONTEXT_TOKENS", 1000000)
+LLM_RESERVED_PROMPT_TOKENS = _env_int("ABM_LLM_RESERVED_PROMPT_TOKENS", 4000)
+LLM_OUTPUT_SAFETY_MARGIN   = _env_float("ABM_LLM_OUTPUT_SAFETY_MARGIN", 0.85)
+
+# Reliability / pacing
+LLM_REQUEST_TIMEOUT_SEC   = _env_float("ABM_LLM_REQUEST_TIMEOUT_SEC", 120.0)
+LLM_MAX_RETRIES           = _env_int("ABM_LLM_MAX_RETRIES", 4)
+LLM_INTER_CHUNK_SLEEP_SEC = _env_float("ABM_LLM_INTER_CHUNK_SLEEP_SEC", 0.5)
+LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
+LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
+LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
+
+# Derived (computed, not directly configurable)
+LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
+LLM_MAX_INPUT_TOKENS = LLM_MAX_CONTEXT_TOKENS - LLM_RESERVED_OUTPUT_TOKENS - LLM_RESERVED_PROMPT_TOKENS
+LLM_MAX_INPUT_CHARS = int(LLM_MAX_INPUT_TOKENS * LLM_CHARS_PER_TOKEN)
+# Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
+# Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
+# per ogni chunk → regole sempre rispettate anche su libri lunghi.
+LLM_SAFE_OUTPUT_CHUNK = int(LLM_MAX_TOKENS * LLM_CHARS_PER_TOKEN * LLM_OUTPUT_SAFETY_MARGIN)
 
 _SCRIPT_DIR = Path(__file__).parent.resolve()
 
-_deepseek_client = None
+_llm_client = None
 
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
@@ -88,7 +127,23 @@ _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op
 _google_tts = None      # optional google_tts module
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
+_gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
+
+
+def _is_gemini_voice(voice):
+    """True per voice id Gemini (`gemini:<model>:<voice>`)."""
+    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+
+
+def _retention_for_job(job):
+    """Retention sec per il job (Gemini -> _gemini_retention_sec).
+    Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice`
+    non e' ancora settato (lo /api/generate lo scrive, /api/optimize no)."""
+    if not isinstance(job, dict):
+        return _retention_sec
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    return _gemini_retention_sec if _is_gemini_voice(v) else _retention_sec
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
@@ -104,13 +159,13 @@ def _set_job_status(job, status):
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
-              retention_sec=None, write_email_marker_fn=None):
+              retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
-    global _write_email_marker
+    global _gemini_retention_sec, _write_email_marker
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -121,39 +176,40 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
     _retention_sec = retention_sec if retention_sec is not None else 64800
+    _gemini_retention_sec = gemini_retention_sec if gemini_retention_sec is not None else 172800
     _write_email_marker = write_email_marker_fn
     
-    # Inizializza DeepSeek (se API key presente)
-    _init_deepseek()
+    # Inizializza client LLM (se API key presente)
+    _init_llm()
 
 
 # ---------------------------------------------------------------------------
-# DeepSeek client init
+# LLM client init (OpenAI-compatible)
 # ---------------------------------------------------------------------------
 
-def _init_deepseek():
-    """Initialize DeepSeek client and verify presence of essential prompts."""
-    global _deepseek_client
-    if not DEEPSEEK_API_KEY:
-        print("[startup] DeepSeek LLM optimization disabled (ABM_DEEPSEEK_API_KEY not set)")
+def _init_llm():
+    """Initialize LLM client and verify presence of essential prompts."""
+    global _llm_client
+    if not LLM_API_KEY:
+        print("[startup] LLM text optimization disabled (ABM_LLM_API_KEY not set)")
         return
     try:
         from openai import OpenAI
-        _deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_API_BASE)
+        _llm_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE)
         # Verifica almeno il prompt generico
         generic_path = _SCRIPT_DIR / "prompt_opt_AI" / "prompt_tts_generic.md"
         if not generic_path.exists():
             print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
         else:
-            print(f"[startup] DeepSeek LLM optimization enabled (Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING})")
+            print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING})")
     except ImportError:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
-        _deepseek_client = None
+        _llm_client = None
 
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
-    return _deepseek_client is not None
+    return _llm_client is not None
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +282,14 @@ def parse_abm(file_path):
     if not zipfile.is_zipfile(str(path)):
         raise ValueError("Invalid .abm file: not a valid ZIP archive")
 
+    from secure_archive import safe_zip_path, check_zip_bomb, ZipSafetyError
+
     with zipfile.ZipFile(str(path), "r") as zf:
+        # Zip-bomb / total-size guard PRIMA di leggere qualsiasi cosa
+        try:
+            check_zip_bomb(zf)
+        except ZipSafetyError as e:
+            raise ValueError(f"Invalid .abm file: {e}")
         # Read and validate manifest
         try:
             manifest_data = zf.read("manifest.json")
@@ -256,7 +319,13 @@ def parse_abm(file_path):
             ch_title = cm.get("title", f"Chapter {cm.get('index', '?')}")
             ch_index = cm.get("index", len(chapters) + 1)
 
-            ch_path = f"chapters/{fname}" if not fname.startswith("chapters/") else fname
+            raw_path = f"chapters/{fname}" if not fname.startswith("chapters/") else fname
+            try:
+                # Zip-slip: rifiuta path che escono dalla virtual root "chapters/"
+                ch_path = safe_zip_path(raw_path, base="chapters")
+            except ZipSafetyError as e:
+                print(f"[abm] WARNING: skipping unsafe chapter path '{raw_path}': {e}")
+                continue
             try:
                 ch_text = zf.read(ch_path).decode("utf-8").strip()
             except KeyError:
@@ -286,13 +355,19 @@ def parse_abm(file_path):
         # Extract cover if present
         cover_info = None
         if manifest.get("has_cover") and manifest.get("cover_file"):
-            cover_file = manifest["cover_file"]
+            cover_file_raw = manifest["cover_file"]
             try:
-                cover_data = zf.read(cover_file)
-                if len(cover_data) > 100:  # sanity check
-                    cover_info = {"data": cover_data, "filename": cover_file}
-            except KeyError:
-                pass
+                cover_file = safe_zip_path(cover_file_raw)
+            except ZipSafetyError as e:
+                print(f"[abm] WARNING: skipping unsafe cover path '{cover_file_raw}': {e}")
+                cover_file = None
+            if cover_file:
+                try:
+                    cover_data = zf.read(cover_file)
+                    if len(cover_data) > 100:  # sanity check
+                        cover_info = {"data": cover_data, "filename": cover_file}
+                except KeyError:
+                    pass
 
     return info, cover_info
 
@@ -433,17 +508,102 @@ def _sanitize_llm_output(text: str) -> str:
     return "\n\n".join(final_paragraphs).strip()
 
 
-_deepseek_prompts = {} # Cache per i prompt multilingua
+class _PromptLeakError(Exception):
+    """Sollevata quando l'output LLM contiene un echo del system prompt.
 
-def _get_deepseek_prompt(lang_code="it"):
+    Caso reale osservato: cap. 15 di Libretto_Es_Frat2026_optimized.abm
+    conteneva il file prompt_tts_it.md letterale al posto del capitolo.
+    """
+
+
+_LEAK_PREFIX_LEN = 120      # char di "fingerprint" presi dal capo del prompt
+_LEAK_PREFIX_MIN = 60       # soglia minima utile per evitare match casuali su prompt cortissimi
+_LEAK_SEARCH_WINDOW = 400   # finestra iniziale dell'output in cui cercare il prefix (tollera heading saltati)
+_LEAK_BLOCK_LEN = 200       # dimensione blocco contiguo per lo scan generale
+_LEAK_BLOCK_STEP = 150      # passo dello scan: overlap di 50 char per non perdere match a cavallo del confine
+
+
+def _is_prompt_leak(text, system_prompt):
+    """True se `text` appare essere un echo del system prompt.
+
+    Strategia (uno qualsiasi dei check basta → leak):
+    - prefix match: i primi ~_LEAK_PREFIX_LEN char strippati del prompt
+      appaiono nei primi _LEAK_SEARCH_WINDOW char dell'output
+      (offset tollerato — il modello a volte salta il primo heading markdown);
+    - block match: almeno un blocco contiguo di _LEAK_BLOCK_LEN char del
+      system prompt compare letterale nell'output.
+
+    Robusto cross-lingua: non dipende da marker hardcoded ma dal contenuto
+    effettivo del prompt caricato.
+    """
+    if not text or not system_prompt:
+        return False
+    prompt_norm = system_prompt.strip()
+    prompt_head = prompt_norm[:_LEAK_PREFIX_LEN].strip()
+    if len(prompt_head) >= _LEAK_PREFIX_MIN and prompt_head in text[:_LEAK_SEARCH_WINDOW]:
+        return True
+    for offset in range(0, max(1, len(prompt_norm) - _LEAK_BLOCK_LEN), _LEAK_BLOCK_STEP):
+        block = prompt_norm[offset:offset + _LEAK_BLOCK_LEN]
+        if len(block) >= _LEAK_BLOCK_LEN and block in text:
+            return True
+    return False
+
+
+def _write_llm_audit(*, job=None, job_id=None, chapter_num=None,
+                    chapter_title="", chunk_index=None, outcome="",
+                    chars_input=0, chars_output=0,
+                    leaked_preview=""):
+    """Append-only JSONL audit per eventi prompt-leak (best-effort, non-fatal).
+
+    File: _upload_dir / "llm_leak_audit_YYYY-MM.jsonl"
+    Schema: ts, job_id, chapter_num/title, chunk_index, outcome, model,
+    lang, chars_input/output, leaked_preview (max 200 char).
+    """
+    try:
+        if _upload_dir is None:
+            return
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc)
+        month = ts.strftime("%Y-%m")
+        path = _upload_dir / f"llm_leak_audit_{month}.jsonl"
+        # Risolvi lang/job_id da job se non passati esplicitamente
+        resolved_job_id = job_id
+        lang = ""
+        if job is not None:
+            if not resolved_job_id:
+                resolved_job_id = job.get("job_id", "")
+            lang = (job.get("opt_lang") or "").split("-")[0].lower()
+        rec = {
+            "ts": ts.isoformat(),
+            "job_id": resolved_job_id or "",
+            "chapter_num": chapter_num,
+            "chapter_title": chapter_title or "",
+            "chunk_index": chunk_index,
+            "outcome": outcome,
+            "model": LLM_MODEL,
+            "lang": lang,
+            "chars_input": int(chars_input or 0),
+            "chars_output": int(chars_output or 0),
+            "leaked_preview": (leaked_preview or "")[:200],
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        # Audit non deve mai bloccare il flusso utente
+        print(f"[llm-audit] write failed: {e}")
+
+
+_llm_prompts = {} # Cache per i prompt multilingua
+
+def _get_llm_prompt(lang_code="it"):
     """
     Ritorna il prompt specifico per la lingua, o quello generico come fallback.
     lang_code può essere un codice ISO (it, en, fr...) o un locale (it-IT).
     """
-    global _deepseek_prompts
+    global _llm_prompts
     lang = (lang_code or "it").split("-")[0].lower()
-    if lang in _deepseek_prompts:
-        return _deepseek_prompts[lang]
+    if lang in _llm_prompts:
+        return _llm_prompts[lang]
     
     prompt_dir = _SCRIPT_DIR / "prompt_opt_AI"
     filename = f"prompt_tts_{lang}.md"
@@ -454,58 +614,84 @@ def _get_deepseek_prompt(lang_code="it"):
         
     if path.exists():
         try:
-            print(f"[DeepSeek] Using prompt file: {path.name}")
+            print(f"[LLM] Using prompt file: {path.name}")
             content = path.read_text(encoding="utf-8").strip()
-            _deepseek_prompts[lang] = content
+            _llm_prompts[lang] = content
             return content
         except Exception as e:
             print(f"Error reading prompt {path}: {e}")
             
     return ""
 
-def _call_deepseek(user_content, job=None, max_retries=4):
-    """Call DeepSeek API with streaming. Returns optimized text.
+def _call_llm(user_content, job=None, max_retries=None):
+    """Call LLM API with streaming. Returns optimized text.
     Retries on transient network errors with exponential backoff.
     """
-    # Determina la lingua dal job (usando la voce selezionata)
+    # Lingua del prompt LLM = lingua TTS selezionata dall'utente (non lingua
+    # dell'input). Fonte primaria: opt_lang (settato da /api/optimize a partire
+    # dal selector di lingua TTS). Fallback: estrazione dal voice id, che pero'
+    # funziona solo per voci Edge/Google (es. "it-IT-X", "en-US-Chirp3-HD-X")
+    # e fallisce per Gemini (es. "gemini:flash25:Zephyr" -> nessuna lingua
+    # estraibile -> prompt generico).
     lang = "it"
     if job:
-        voice = job.get("voice") or job.get("opt_voice", "")
-        if voice:
-            lang = voice.split("-")[0].lower()
-            
-    prompt = _get_deepseek_prompt(lang)
-    
+        opt_lang = (job.get("opt_lang") or "").strip()
+        if opt_lang:
+            lang = opt_lang.split("-")[0].lower()
+        else:
+            voice = job.get("voice") or job.get("opt_voice", "")
+            if isinstance(voice, str) and voice and not voice.startswith("gemini:"):
+                lang = voice.split("-")[0].lower()
+
+    prompt = _get_llm_prompt(lang)
+
+    if max_retries is None:
+        max_retries = LLM_MAX_RETRIES
+
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": user_content},
     ]
     last_exc = None
-    for attempt in range(max_retries):
+    leak_attempts = 0
+    attempt = 0
+    # Loop con due budget indipendenti:
+    # - `attempt` -> retry transient (network/5xx/429), consuma slot solo su Exception
+    # - `leak_attempts` -> retry anti-leak, consuma slot solo su prompt-leak detectato
+    # Il leak retry NON consuma il budget transient e viceversa.
+    while attempt < max_retries:
         result_parts = []
         partial_streamed = 0
         try:
-            # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort)
+            # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort).
+            # Su retry anti-leak: temperature un filo piu' alta + reasoning off,
+            # per ridurre la probabilita' che il modello "continui" il prompt.
+            effective_temp = LLM_TEMPERATURE
+            effective_reasoning = LLM_REASONING_EFFORT
+            if leak_attempts > 0:
+                effective_temp = min(LLM_TEMPERATURE + 0.1 * leak_attempts, 1.0)
+                effective_reasoning = "none"
+
             kwargs = {
-                "model": DEEPSEEK_MODEL,
+                "model": LLM_MODEL,
                 "messages": messages,
-                "max_tokens": DEEPSEEK_MAX_TOKENS,
-                "temperature": DEEPSEEK_TEMPERATURE,
+                "max_tokens": LLM_MAX_TOKENS,
+                "temperature": effective_temp,
                 "stream": True,
-                "timeout": 120.0,
+                "timeout": LLM_REQUEST_TIMEOUT_SEC,
             }
-            if DEEPSEEK_REASONING_EFFORT != "none":
-                kwargs["reasoning_effort"] = DEEPSEEK_REASONING_EFFORT
-            if DEEPSEEK_THINKING:
+            if effective_reasoning != "none":
+                kwargs["reasoning_effort"] = effective_reasoning
+            if LLM_THINKING and leak_attempts == 0:
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-                
-            stream = _deepseek_client.chat.completions.create(**kwargs)
+
+            stream = _llm_client.chat.completions.create(**kwargs)
             for event in stream:
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
                     raise _CancelledError("Optimization cancelled during streaming")
-                
+
                 # Capture normal content
                 if event.choices and event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
@@ -527,37 +713,145 @@ def _call_deepseek(user_content, job=None, max_retries=4):
                     job["opt_streamed_chars"] = max(
                         0, job.get("opt_streamed_chars", 0) - removed
                     )
-                print(f"  [DeepSeek] sanitized output: removed {removed} chars of meta/duplicates")
+                print(f"  [LLM] sanitized output: removed {removed} chars of meta/duplicates")
+
+            # Detection prompt-leak. Su match: scarica chars accumulati e ritenta
+            # con parametri degradati. Esauriti i tentativi -> _PromptLeakError
+            # che il chiamante traduce in fallback all'input originale.
+            if _is_prompt_leak(cleaned, prompt):
+                if job is not None and partial_streamed > 0:
+                    job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
+                if leak_attempts < LLM_LEAK_MAX_RETRIES:
+                    leak_attempts += 1
+                    print(f"  [LLM] prompt-leak detected (attempt {leak_attempts}/{LLM_LEAK_MAX_RETRIES}), retrying with degraded params")
+                    time.sleep(1.0)
+                    continue
+                print(f"  [LLM] prompt-leak persists after {LLM_LEAK_MAX_RETRIES} retries — giving up")
+                if job is not None:
+                    job["_last_leak_preview"] = cleaned[:200]
+                    job["_last_leak_chars_output"] = len(cleaned)
+                raise _PromptLeakError("LLM output contains system-prompt echo")
+
             return cleaned
+        except _PromptLeakError:
+            raise
+        except _CancelledError:
+            raise
         except Exception as e:
             last_exc = e
             if job is not None and partial_streamed > 0:
                 job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
             err_name = type(e).__name__
+            # Errori di rete client-side (httpx/openai connection wrappers).
             transient = any(s in err_name for s in (
                 "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
                 "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
             ))
+            # Errori provider-side: 429/5xx → retry con backoff. Necessario perche'
+            # openai.InternalServerError (503), RateLimitError (429), APIStatusError
+            # non matchano la lista per-nome ma sono comunque transient.
+            # status_code e' esposto sia da openai.APIStatusError sia (via response)
+            # da alcune subclassi; usiamo getattr con fallback su response.status_code.
+            if not transient:
+                _sc = getattr(e, "status_code", None)
+                if _sc is None:
+                    _resp = getattr(e, "response", None)
+                    if _resp is not None:
+                        _sc = getattr(_resp, "status_code", None)
+                if isinstance(_sc, int) and _sc in (429, 500, 502, 503, 504):
+                    transient = True
             if not transient or attempt >= max_retries - 1:
                 raise
             wait = 2 ** attempt  # 1, 2, 4, 8 seconds
-            print(f"  [DeepSeek] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
+            print(f"  [LLM] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
             time.sleep(wait)
+            attempt += 1
     if last_exc:
         raise last_exc
     return "".join(result_parts)
 
 
+def _is_trivial_input(text):
+    """True se il testo è troppo banale per giustificare una chiamata LLM.
+
+    Sono trivial:
+    - Testo vuoto o solo whitespace.
+    - Sotto LLM_TRIVIAL_INPUT_MIN_CHARS char (strippati).
+    - Una sola riga di lunghezza < 2 * LLM_TRIVIAL_INPUT_MIN_CHARS senza
+      punteggiatura terminale (titolo, nome proprio, intestazione). Il cap
+      superiore evita di trattare come trivial prosa mal-estratta che ha
+      perso la punteggiatura.
+
+    Pass-through del testo originale elimina la causa principale di echo
+    del system prompt (input povero di contesto).
+    """
+    if not text:
+        return True
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if len(stripped) < LLM_TRIVIAL_INPUT_MIN_CHARS:
+        return True
+    nonblank_lines = [ln for ln in stripped.splitlines() if ln.strip()]
+    if (len(nonblank_lines) == 1
+            and len(stripped) < 2 * LLM_TRIVIAL_INPUT_MIN_CHARS
+            and not stripped.endswith((".", "!", "?", "…", '."'))):
+        return True
+    return False
+
+
 def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None):
     """Optimize a single chapter's text, using chunking if needed."""
     label = f"[ch {chapter_num}/{total_chapters}]" if chapter_num else ""
+
+    # Pre-filtro: input banale → pass-through, niente LLM.
+    # Riduce drasticamente i casi di prompt echo (input povero di contesto
+    # e' la causa principale del failure mode visto in produzione).
+    if _is_trivial_input(text):
+        print(f"  {label} LLM skipped: trivial input ({len(text)} chars)")
+        return text
+
+    chapter_title = ""
+    if job is not None:
+        chapter_title = job.get("opt_current_chapter", "") or ""
+
+    def _record_leak(chunk_idx, chunk_text):
+        leaked_preview = ""
+        chars_output = 0
+        if job is not None:
+            job.setdefault("opt_leak_chapters", []).append({
+                "chapter_num": chapter_num,
+                "chunk_index": chunk_idx,
+                "ts": time.time(),
+            })
+            leaked_preview = job.pop("_last_leak_preview", "")
+            chars_output = job.pop("_last_leak_chars_output", 0)
+        _write_llm_audit(
+            job=job,
+            job_id=(job.get("job_id") if job else None),
+            chapter_num=chapter_num,
+            chapter_title=chapter_title,
+            chunk_index=chunk_idx,
+            outcome="prompt_leak_fallback",
+            chars_input=len(chunk_text),
+            chars_output=chars_output,
+            leaked_preview=leaked_preview,
+        )
+
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
-    if len(text) <= DEEPSEEK_SAFE_OUTPUT_CHUNK:
+    if len(text) <= LLM_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
-        return _call_deepseek(text, job=job)
-    chunks = _split_text_into_chunks(text, DEEPSEEK_SAFE_OUTPUT_CHUNK)
+        try:
+            return _call_llm(text, job=job)
+        except _PromptLeakError:
+            print(f"  {label} prompt-leak fallback: returning original chapter text")
+            _record_leak(None, text)
+            return text
+
+    chunks = _split_text_into_chunks(text, LLM_SAFE_OUTPUT_CHUNK)
     print(f"  {label} LLM chunked: {len(chunks)} chunks ({len(text):,} chars total)")
     results = []
+    any_llm_output = False
     for i, chunk in enumerate(chunks):
         if job is not None and job.get("opt_cancelled"):
             raise _CancelledError("Optimization cancelled between chunks")
@@ -570,11 +864,22 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
                 user_content = f"[Parte {i+1} di {len(chunks)} \u2014 continuazione]\n\n{chunk}"
         else:
             user_content = chunk
-        results.append(_call_deepseek(user_content, job=job))
+        try:
+            results.append(_call_llm(user_content, job=job))
+            any_llm_output = True
+        except _PromptLeakError:
+            print(f"  {label} prompt-leak fallback on chunk {i+1}/{len(chunks)}: using original chunk")
+            _record_leak(i, chunk)
+            results.append(chunk)
         if i < len(chunks) - 1:
-            time.sleep(0.5)  # rate limiting tra chunk
-    # Seconda passata di sanitizzazione sul testo ricomposto
-    return _sanitize_llm_output("\n\n".join(results))
+            time.sleep(LLM_INTER_CHUNK_SLEEP_SEC)  # rate limiting tra chunk
+    joined = "\n\n".join(results)
+    # Salta la sanitizzazione finale se tutto il contenuto e' fallback originale:
+    # _sanitize_llm_output ha euristiche aggressive (preamble strip, dedup) che
+    # sono pensate per output LLM, non per prosa originale dell'utente.
+    if not any_llm_output:
+        return joined
+    return _sanitize_llm_output(joined)
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +910,18 @@ def _generate_optimized_abm(job_id):
     else:
         chapter_set = None
 
+    # Carica il system prompt della lingua del job per il check di sicurezza.
+    # Best-effort: se manca lang, salta il check (graceful).
+    safety_prompt = ""
+    job_lang = (job.get("opt_lang") or "").split("-")[0].lower()
+    if not job_lang and getattr(info, "language", ""):
+        job_lang = info.language.split("-")[0].lower()
+    if job_lang:
+        try:
+            safety_prompt = _get_llm_prompt(job_lang)
+        except Exception:
+            safety_prompt = ""
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
         for ch in info.chapters:
@@ -612,13 +929,43 @@ def _generate_optimized_abm(job_id):
                 continue
             ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
-            zf.writestr(f"chapters/{ch_filename}", ch.text)
-            chapters_manifest.append({
+
+            # Safety-net: se il testo del capitolo contiene un echo del system
+            # prompt, sostituiscilo con un placeholder prima di scriverlo nel
+            # .abm. Difesa di ultimo miglio per lo SNAPSHOT scaricabile: il TTS
+            # gia' usa ch.text direttamente, ergo il leak nel TTS va prevenuto
+            # a monte (Task 4/5 in _call_llm + _optimize_chapter_text).
+            ch_text_safe = ch.text
+            prompt_leak_flag = False
+            if safety_prompt and _is_prompt_leak(ch_text_safe, safety_prompt):
+                prompt_leak_flag = True
+                print(f"[{job_id}] .abm safety-net: chapter {ch.index} contains "
+                      f"prompt echo - replacing with placeholder")
+                ch_text_safe = (f"[Capitolo non disponibile — anomalia di "
+                                f"ottimizzazione rilevata in fase finale: "
+                                f"{ch.title}]")
+                _write_llm_audit(
+                    job=job,
+                    job_id=job_id,
+                    chapter_num=ch.index,
+                    chapter_title=ch.title,
+                    chunk_index=None,
+                    outcome="prompt_leak_safety_net",
+                    chars_input=0,
+                    chars_output=len(ch.text),
+                    leaked_preview=ch.text[:200],
+                )
+
+            zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
+            entry = {
                 "index": ch.index,
                 "filename": ch_filename,
                 "title": ch.title,
                 "word_count": ch.word_count,
-            })
+            }
+            if prompt_leak_flag:
+                entry["prompt_leak"] = True
+            chapters_manifest.append(entry)
 
         # Cover
         has_cover = False
@@ -702,7 +1049,8 @@ def _send_completion_email(job_id):
             pass
         return
     print(f"[{job_id}] _send_completion_email: preparing send to {job['notify_email']}", flush=True)
-    retention_h = _retention_sec // 3600
+    _ret_sec_job = _retention_for_job(job)
+    retention_h = _ret_sec_job // 3600
     email = job["notify_email"]
     info = job.get("info", None)
     book_title = info.title if info else "Audiobook"
@@ -737,6 +1085,8 @@ def _send_completion_email(job_id):
         # Optional: optimized .abm snapshot (when auto_generate flow produced one)
         "optimized_abm_path": job.get("optimized_abm_path", ""),
         "optimized_abm_name": job.get("optimized_abm_name", ""),
+        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
     }
     _save_tokens()
     job["email_token"] = token
@@ -900,7 +1250,8 @@ def _send_optimization_email(job_id):
     job = _jobs.get(job_id)
     if not job or not job.get("notify_email"):
         return
-    retention_h = _retention_sec // 3600
+    _ret_sec_job = _retention_for_job(job)
+    retention_h = _ret_sec_job // 3600
     email = job["notify_email"]
     info = job.get("info")
     book_title = info.title if info else "Audiobook"
@@ -921,6 +1272,9 @@ def _send_optimization_email(job_id):
         "lang": lang,
         "output_format": "",
         "ai_optimized": True,
+        # Token .abm di sola ottimizzazione: la retention sarà comunque pilotata
+        # dal flag voce se l'utente dopo procede a generazione PREMIUM.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
     }
     _save_tokens()
     job["email_token"] = token
@@ -1028,6 +1382,269 @@ def _send_optimization_email(job_id):
 # Payment refund helper
 # ---------------------------------------------------------------------------
 
+def _write_forensic_marker(job_id, kind, outcome, reason_detail=""):
+    """Scrive marker .forensic_retain.json nella work_dir del job per
+    impedire al cleanup automatico di cancellarla. Sopravvive a restart
+    e protegge contro TUTTI i branch di cleanup (status=error, orphan dir,
+    token-orphan, orphan output). Retention configurabile via
+    ABM_GEMINI_FORENSIC_RETENTION_DAYS (default 7 giorni; 0 = disabilita).
+
+    Best-effort, non-fatal. Ritorna retain_until epoch o None.
+    """
+    import json as _json
+    try:
+        days = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+    except (TypeError, ValueError):
+        days = 7
+    days = max(0, days)
+    if days <= 0:
+        return None
+    try:
+        if _upload_dir is None:
+            return None
+        work_dir = _upload_dir / job_id
+        if not work_dir.exists():
+            return None
+        now = time.time()
+        retain_until = now + days * 86400
+        marker_path = work_dir / ".forensic_retain.json"
+        payload = {
+            "retain_until": retain_until,
+            "created_at": now,
+            "kind": kind,
+            "outcome": outcome,
+            "reason": (reason_detail or "")[:500],
+            "job_id": job_id,
+            "days": days,
+        }
+        marker_path.write_text(
+            _json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"[{job_id}] Forensic marker written: retain_until="
+              f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(retain_until))} "
+              f"({days}d) outcome={outcome}")
+        return retain_until
+    except Exception as e:
+        print(f"[{job_id}] Forensic marker write failed (non-fatal): {e}")
+        return None
+
+
+def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
+                                 reason_detail="",
+                                 chunks_total=None, chunks_failed=None):
+    """Notifica IMMEDIATA all'admin per ogni job Gemini fallito (con rimborso)
+    o bloccato preventivamente. Best-effort, non-fatal.
+
+    Scrive anche il marker forense sulla work_dir per consentire post-mortem
+    (download ZIP dall'endpoint admin) prima del cleanup automatico.
+
+    kind: "quota" | "budget" | "quality" | "preflight" | "generic"
+    """
+    forensic_until = _write_forensic_marker(job_id, kind, audit_outcome, reason_detail)
+    try:
+        payment_meta = job.get("payment") or {}
+        amount_eur = float(payment_meta.get("total_eur", 0) or 0)
+        method = payment_meta.get("method", "")
+        voucher_code = job.get("refund_voucher_code") or None
+        # Determina email destinataria
+        email = ""
+        try:
+            tok = payment_meta.get("token")
+            if method == "voucher" and tok:
+                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                email = v.get("email", "") or ""
+            elif method == "paypal" and tok:
+                pay = payment._payments.get(tok, {})
+                email = pay.get("email", "") or ""
+        except Exception:
+            email = ""
+        # Titolo libro
+        book_title = ""
+        try:
+            info = job.get("info")
+            if info is not None:
+                book_title = getattr(info, "title", "") or job.get("original_filename", "")
+            else:
+                book_title = job.get("original_filename", "")
+        except Exception:
+            book_title = job.get("original_filename", "")
+        chars_total = job.get("total_chars")
+        if chunks_total is None:
+            chunks_total = job.get("total_chunks")
+        email_service._admin_notify_gemini_failure(
+            job_id=job_id,
+            kind=kind,
+            amount_eur=amount_eur,
+            email=email,
+            book_title=book_title,
+            audit_outcome=audit_outcome,
+            reason_detail=reason_detail,
+            voucher_code=voucher_code,
+            chars_total=chars_total,
+            chunks_total=chunks_total,
+            chunks_failed=chunks_failed,
+            forensic_until=forensic_until,
+            work_dir_path=str(_upload_dir / job_id) if _upload_dir else "",
+        )
+    except Exception as e:
+        print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
+
+
+def _progress_pct(job: dict) -> int:
+    """Percentuale di completamento (0..100) di un job in corso.
+
+    Robusta a campi mancanti o valori anomali: clamp 0..100, 0 se denominatore
+    nullo/mancante.
+    """
+    try:
+        total = float(job.get("progress_total", 0) or 0)
+        if total <= 0:
+            return 0
+        current = float(job.get("progress_current", 0) or 0)
+        pct = int(round(current / total * 100))
+        return max(0, min(100, pct))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
+    """F3: Refund Gemini payment on cancel/error.
+
+    For voucher tokens, refunds the amount on the original voucher.
+    For PayPal tokens, emits a refund voucher to the buyer's email.
+
+    `retained_eur` (default 0.0) e' l'importo trattenuto dalla piattaforma
+    per coprire i costi gia' sostenuti (Google + fee PayPal). Solo i cancel
+    volontari (reason == "cancelled") con costo provider > 0 lo usano;
+    quota/budget/errori continuano a passare 0.0 -> rimborso integrale.
+
+    apply_bonus al voucher PayPal emesso: True per failure piattaforma
+    (default), False per cancel volontario (retained_eur > 0 oppure
+    reason == "cancelled").
+
+    Non-fatal: any failure is logged and swallowed.
+
+    Returns a dict with refund details (or None if no refund applied):
+        {"method": "voucher"|"paypal", "amount_eur": float,
+         "email": str, "voucher_code": str|None}
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    paid = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or paid <= 0:
+        return None
+    refund_amt = round(max(0.0, paid - float(retained_eur or 0.0)), 2)
+    apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
+    result = {"method": method, "amount_eur": refund_amt, "email": "", "voucher_code": None}
+    if refund_amt <= 0:
+        try:
+            if method == "voucher":
+                v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                result["email"] = v.get("email", "") or ""
+            elif method == "paypal":
+                pay = payment._payments.get(tok, {})
+                result["email"] = pay.get("email", "") or ""
+        except Exception:
+            pass
+        return result
+    try:
+        if method == "voucher":
+            payment._voucher_refund(tok, refund_amt, job_id=job_id, reason=reason)
+            voucher = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+            result["email"] = voucher.get("email", "") or ""
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+            result["email"] = email
+            if email:
+                code, _bonus = payment._create_voucher(
+                    email, refund_amt, origin_order_id=tok, origin_job_id=job_id,
+                    kind="refund", note=f"refund {reason} job {job_id}",
+                    apply_bonus=apply_bonus,
+                )
+                result["voucher_code"] = code
+                job["refund_voucher_code"] = code
+            else:
+                print(
+                    f"[{job_id}] WARNING: cannot emit refund voucher — "
+                    f"PayPal order {tok} has no buyer email "
+                    f"(amount {refund_amt:.2f} EUR, reason {reason})"
+                )
+    except Exception as _ref_err:
+        print(f"[{job_id}] refund failed ({reason}, non-fatal): {_ref_err}")
+        return None
+    return result
+
+
+def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
+                                    failure_kind=None):
+    """Invia email all'utente che ha pagato un job Gemini fallito.
+    Deve essere chiamata DOPO _refund_gemini_payment.
+
+    failure_kind: "quota" | "budget" | "quality". Se None, viene derivato da
+    is_quota per retrocompatibilita'.
+
+    Recupera l'email destinataria dal payment metadata (PayPal -> pay.email,
+    voucher -> voucher.email). Non-fatal: errori vengono ingoiati.
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or amt <= 0:
+        return
+    email = ""
+    voucher_code = job.get("refund_voucher_code") or None
+    try:
+        if method == "voucher":
+            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+            email = v.get("email", "") or ""
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+    except Exception:
+        email = ""
+    if not email:
+        print(f"[{job_id}] No email available for refund notification "
+              f"(method={method}, token={tok}).")
+        return
+    if failure_kind is None:
+        failure_kind = "quota" if is_quota else "budget"
+    if failure_kind == "quota":
+        reason_label = (
+            "il provider del servizio voci ha esaurito la quota giornaliera "
+            "di richieste sul nostro piano corrente"
+        )
+    elif failure_kind == "budget":
+        reason_label = (
+            "e' stato raggiunto il limite di spesa giornaliero del servizio"
+        )
+    else:  # quality
+        reason_label = (
+            "alcune porzioni del testo non sono state sintetizzate "
+            "correttamente e l'audio risultante sarebbe stato incompleto"
+        )
+    book_title = ""
+    try:
+        info = job.get("info")
+        if info is not None:
+            book_title = getattr(info, "title", "") or job.get("original_filename", "")
+        else:
+            book_title = job.get("original_filename", "")
+    except Exception:
+        book_title = job.get("original_filename", "")
+    try:
+        email_service._send_gemini_failed_refund_email(
+            email, amt, book_title, reason_label, voucher_code=voucher_code,
+        )
+        print(f"[{job_id}] Refund notification email sent to {email} "
+              f"(amount={amt:.2f} EUR, reason={pause_reason}).")
+    except Exception as e:
+        print(f"[{job_id}] Failed to send refund notification email: {e}")
+
+
 def _refund_job_payment(job_id, job, reason="error"):
     """Rimborsa il pagamento di un job di ottimizzazione fallito o annullato.
     - payment_type == "voucher": ri-accredita l'importo sul voucher originale.
@@ -1055,7 +1672,11 @@ def _refund_job_payment(job_id, job, reason="error"):
                           job.get("client_id", ""), "", "", "")
             print(f"[{job_id}] Voucher {payment_token} refunded {paid_amount:.2f} EUR (reason={reason})")
         elif payment_type == "paypal" and payment_email:
-            # Emetti nuovo voucher con bonus per pagamenti PayPal
+            # Emetti nuovo voucher per pagamenti PayPal.
+            # Bonus +10% riservato a failure piattaforma (reason != "cancel");
+            # cancel volontari ottengono solo l'importo nominale (evita abuso
+            # cancel-per-bonus).
+            _apply_bonus = (reason != "cancel")
             code, bonus_amount = payment._create_voucher(
                 payment_email, paid_amount,
                 origin_order_id=payment_token,
@@ -1063,6 +1684,7 @@ def _refund_job_payment(job_id, job, reason="error"):
                 kind="refund",
                 created_by="auto_refund",
                 note=f"Rimborso automatico ottimizzazione AI ({reason})",
+                apply_bonus=_apply_bonus,
             )
             email_service._send_voucher_email(code, payment_email, bonus_amount, book_title)
             job["refund_voucher_code"] = code
@@ -1106,7 +1728,7 @@ def _google_tts_refund_unused(job_id, job):
 # ---------------------------------------------------------------------------
 
 def run_optimization(job_id, selected_chapters=None):
-    """Background thread: optimize text of all chapters via DeepSeek LLM.
+    """Background thread: optimize text of all chapters via LLM.
     If selected_chapters is provided (list of indices), only those are optimized.
     """
     job = _jobs[job_id]
@@ -1135,15 +1757,18 @@ def run_optimization(job_id, selected_chapters=None):
     finalization_weight = max(MIN_FINALIZATION_CHARS, int(total_chars * FINALIZATION_RATIO))
     total_chars_extended = total_chars + finalization_weight
 
-    # Carica il prompt per la lingua del job
-    lang = job.get("lang", "it")
-    prompt = _get_deepseek_prompt(lang)
+    # Carica il prompt per la lingua TTS selezionata (non per la lingua
+    # dell'input): l'ottimizzazione deve produrre testo adatto alla voce
+    # che lo leggera`. Fallback finale: lingua del libro estratta in fase
+    # di parsing (utile solo se per qualche motivo opt_lang non e` settato).
+    lang = job.get("opt_lang") or job.get("lang") or "it"
+    prompt = _get_llm_prompt(lang)
     if prompt:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
-              f"Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
     else:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!). "
-              f"Model: {DEEPSEEK_MODEL}, MaxTokens: {DEEPSEEK_MAX_TOKENS}, Reasoning: {DEEPSEEK_REASONING_EFFORT}, Thinking: {DEEPSEEK_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
@@ -1169,7 +1794,7 @@ def run_optimization(job_id, selected_chapters=None):
             # Heartbeat check (skip if email registered — batch mode)
             if not job.get("email_registered"):
                 last_poll = job.get("last_poll", start_time)
-                if time.time() - last_poll > 60:
+                if time.time() - last_poll > LLM_HEARTBEAT_TIMEOUT_SEC:
                     raise _CancelledError("Optimization cancelled (heartbeat lost)")
 
             job["opt_progress_current"] = i
@@ -1260,6 +1885,41 @@ def run_optimization(job_id, selected_chapters=None):
                     info.total_chars = sum(ch.char_count for ch in filtered)
                     info.estimated_duration_minutes = info.total_words / 150
 
+            # Persisti la stima Gemini per l'audit (popola i campi *_est del
+            # JSONL altrimenti sempre 0 in questo path: il flusso auto-gen
+            # bypassa /api/generate dove la stima viene calcolata).
+            # IMPORTANTE: se /api/optimize ha gia` salvato lo snapshot pre-LLM
+            # (combined_optimize_autogen flow), NON sovrascrivere — il prezzo
+            # lockato in payment["total_eur"] e` stato calcolato su quella
+            # stima, e ricalcolarla qui su testo post-LLM disallinea cost_est
+            # da charged nell'audit JSONL (artefatto delta_pct/margin).
+            if (gemini_tts is not None and voice
+                    and voice.startswith("gemini:")
+                    and not job.get("gemini_estimate")):
+                try:
+                    _ui_lang_autogen = (job.get("opt_lang") or "").lower()
+                    _lang_autogen = (_ui_lang_autogen
+                                     or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                     or "it")
+                    _est_autogen = gemini_tts.estimate_book_cost(
+                        info.chapters, voice,
+                        language=_lang_autogen, rate_pct=rate,
+                    )
+                    job["gemini_estimate"] = _est_autogen
+                except Exception as _e_est_ag:
+                    print(f"[{job_id}] auto-gen gemini_estimate persist failed (non-fatal): {_e_est_ag}")
+
+            # Tracking nell'Activity Log: il flusso auto-gen bypassa
+            # /api/generate (dove l'evento GENERATE viene scritto con voice),
+            # quindi la voce non comparirebbe nella UI admin. Mirroriamo qui
+            # il log per allineamento.
+            try:
+                _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
+                              job.get("client_id", ""), job.get("client_ip", ""),
+                              voice, job.get("browser_lang", ""))
+            except Exception:
+                pass
+
             run_generation(job_id, info, voice, rate, single_file,
                            output_format=output_format,
                            podcast_base_url=podcast_base_url)
@@ -1326,12 +1986,190 @@ def _engine_for_voice(voice):
 # run_generation — background thread TTS
 # ---------------------------------------------------------------------------
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+def _audit_language(job, info):
+    """Lingua da registrare nell'audit Gemini e in `record_rate_sample`.
+
+    Per i job PREMIUM la lingua di interesse e' quella TTS scelta dall'utente
+    (perche' determina la voce e il prompt), non la lingua metadata del libro:
+    es. libro arabo letto da voce italiana -> audit deve mostrare "it", non
+    "ar-sa". Preferenze in ordine:
+      1. `job["opt_lang"]`  — settato da /api/optimize (body `lang`)
+      2. `job["gen_lang"]`  — settato da /api/generate (body `lang`)
+      3. `job["payment"]["gemini_est"].language` — lingua passata a
+         `estimate_book_cost` al booking (riflette la stima lockata in
+         `payment.total_eur`)
+      4. `info.language` — fallback metadata libro (legacy / job senza
+         pagamento, es. preview free sub-soglia)
+    """
+    for src in (job.get("opt_lang"), job.get("gen_lang")):
+        if isinstance(src, str) and src.strip():
+            return src.strip().split("-")[0].lower()
+    try:
+        _est_lang = (((job.get("payment") or {}).get("gemini_est") or {})
+                     .get("language") or "")
+        if isinstance(_est_lang, str) and _est_lang.strip():
+            return _est_lang.strip().split("-")[0].lower()
+    except Exception:
+        pass
+    fallback = getattr(info, "language", "") or ""
+    return (fallback.split("-")[0].lower() if fallback else "")
+
+
+def _write_gemini_audit(job_id, job, voice_id, language, outcome):
+    """Append audit record at end of Gemini job. Best-effort, non-fatal."""
+    try:
+        if not voice_id or not voice_id.startswith("gemini:"):
+            return
+        actual = job.get("gemini_actual") or {}
+        parts = voice_id.split(":")
+        model_key = parts[1] if len(parts) >= 3 else "?"
+        payment = job.get("payment") or {}
+        charged = float(payment.get("total_eur", 0) or 0)
+        payment_method = payment.get("method", "") or ""
+        payment_source = payment.get("source", "") or ""
+        payment_token_full = payment.get("token", "") or ""
+        # Fallback: il flusso auto_generate post-optimize storicamente non
+        # impostava job["payment"] (l'unico setter era /api/generate). Per
+        # job legacy o path non ancora coperti, accettiamo come ripiego la
+        # cifra registrata da /api/optimize (job["payment_amount_eur"]).
+        # Nel JSONL marchiamo l'origine con payment_source="legacy_fallback"
+        # cosi' un'eventuale doppia copertura e' rintracciabile.
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        # Token mascherato per audit (mai esporre il PayPal order_id completo).
+        if payment_token_full:
+            payment_token_short = (payment_token_full[:8] + "..."
+                                   if len(payment_token_full) > 12
+                                   else payment_token_full)
+        else:
+            payment_token_short = ""
+        google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
+        try:
+            if gemini_tts is not None:
+                should = gemini_tts.compute_user_price_eur(google_cost_actual, model_key)
+                should_have_been = float(should.get("user_price_eur", 0.0))
+            else:
+                should_have_been = 0.0
+        except Exception:
+            should_have_been = 0.0
+        delta_eur = round(should_have_been - charged, 4)
+        # DELTA % = scostamento di ricarico in punti percentuali rispetto al
+        # costo Google. Ricarico effettivo = (charged - cost)/cost; ricarico
+        # atteso = (should - cost)/cost; il delta tra i due = delta_eur/cost.
+        # NB: non si divide piu` per `charged` (era ambiguo: scostamento di
+        # prezzo, non di margine).
+        delta_pct = round((delta_eur / google_cost_actual * 100), 2) if google_cost_actual > 0 else 0.0
+        est = job.get("gemini_estimate") or {}
+        # Rate scelto dall'utente: il prezzo proposto scala col fattore di
+        # velocità, quindi va tracciato per consentire calibrazione per
+        # rate_step (vedi recalc-params, raggruppato anche su rate_step).
+        rate_raw = job.get("rate", "+0%")
+        try:
+            if isinstance(rate_raw, str):
+                rate_pct_val = int(rate_raw.replace("%", "").replace("+", "").strip() or 0)
+            else:
+                rate_pct_val = int(rate_raw or 0)
+        except Exception:
+            rate_pct_val = 0
+        try:
+            if gemini_tts is not None and hasattr(gemini_tts, "_rate_pct_to_step"):
+                rate_step_val = int(gemini_tts._rate_pct_to_step(rate_pct_val))
+            else:
+                rate_step_val = max(-3, min(3, round(rate_pct_val / 10.0)))
+        except Exception:
+            rate_step_val = 0
+        rec = {
+            "job_id": job_id,
+            "model_key": model_key,
+            "language": language or "",
+            "rate_pct": rate_pct_val,
+            "rate_step": rate_step_val,
+            "chars_total": int(actual.get("chars", 0) or 0),
+            "input_tokens_est": int(est.get("input_tokens_est", 0) or 0),
+            "input_tokens_actual": int(actual.get("input_tokens", 0) or 0),
+            "output_tokens_est": int(est.get("output_tokens_est", 0) or 0),
+            "output_tokens_actual": int(actual.get("output_tokens", 0) or 0),
+            "audio_seconds_est": float(est.get("audio_seconds_est", 0) or 0),
+            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "google_cost_eur_est": float(est.get("google_cost_eur", 0) or 0),
+            "google_cost_eur_actual": round(google_cost_actual, 4),
+            "user_price_eur_charged": charged,
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "delta_pct": delta_pct,
+            "margin_eur_actual": round(charged - google_cost_actual, 4),
+            "outcome": outcome,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+        }
+        _cancel_meta = job.get("cancel_meta")
+        if isinstance(_cancel_meta, dict):
+            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
+            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
+            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
+            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
+            rec["cancel_partial_audio_delivered"] = bool(
+                _cancel_meta.get("partial_audio_delivered", False))
+        gemini_cost_audit.append_record(rec)
+        # Release atomic budget reservation (cost ora persistito nel JSONL,
+        # quindi futuri preflight lo conteranno in `spent` direttamente).
+        try:
+            import gemini_tts as _gtts
+            _gtts.release_reservation(job_id)
+        except Exception:
+            pass
+        # Diagnostica: job completato sopra soglia gratuita senza pagamento
+        # registrato e' sintomo di bug (token consumato in un branch che non
+        # stasha job["payment"], oppure stima divergente fra frontend/server
+        # che salta il branch payment). Stampa WARNING esplicito cosi' la
+        # prossima occorrenza emerge nei log senza dover scavare nel JSONL.
+        try:
+            _free_thr = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+        except (TypeError, ValueError):
+            _free_thr = 0.50
+        if (outcome == "completed"
+                and charged <= 0.0
+                and should_have_been > _free_thr):
+            print(f"[{job_id}] AUDIT WARNING: completed job sopra soglia "
+                  f"({should_have_been:.2f}€) senza pagamento registrato "
+                  f"(payment_method={payment_method or 'NONE'}, "
+                  f"payment_token_in_job={'YES' if job.get('payment_token') else 'NO'}). "
+                  f"Possibile bug: token consumato in un path che non stasha "
+                  f"job['payment']. Vedi md_files/ttsgemini.md sezione audit.")
+        # Reconciliation a livello mensile (gemini_tts_usage.json): registra
+        # il delta stima/reale per consentire calibrazione del modello di costo.
+        # Solo job davvero completati - per i cancel partiali la stima ex-ante
+        # non sarebbe confrontabile con un costo reale "tronco".
+        try:
+            if (gemini_tts is not None and outcome == "completed"
+                    and model_key in ("flash25", "flash31")):
+                gemini_tts.record_job_completion(
+                    model_key,
+                    estimated_eur=float(est.get("google_cost_eur", 0) or 0),
+                    actual_eur=google_cost_actual,
+                    user_price_eur=charged,
+                )
+        except Exception as e:
+            print(f"[{job_id}] record_job_completion failed (non-fatal): {e}")
+    except Exception as e:
+        print(f"[{job_id}] audit write failed (non-fatal): {e}")
+
+
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     job = _jobs[job_id]
     _set_job_status(job, "generating")
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
+    # Conserva il rate scelto sul job: serve all'audit Gemini (calibrazione
+    # per rate_step) e a eventuali ri-letture diagnostiche del job state.
+    job["rate"] = rate
     work_dir = _upload_dir / job_id
     work_dir.mkdir(exist_ok=True)
     # Per-epoch output directory: each /api/generate call creates its own
@@ -1367,11 +2205,128 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
               f"chapters={len(info.chapters)}, single_file={single_file}, "
               f"output_format={output_format}, engine={engine}")
         max_chars = _pick_chunk_max_chars(voice, getattr(info, "language", None) or "")
-        plan = _plan_chunks(info, max_chars=max_chars)
+        max_bytes = _pick_chunk_max_bytes(voice)
+        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes)
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
+        job["gemini_actual"] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "chars": 0,
+            "audio_seconds": 0.0,
+            "google_cost_eur": 0.0,
+            "model_key": None,
+        }
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
+        job["total_chars"] = total_chars
+        job["total_chunks"] = total_chunks
+
+        # Pre-flight RPD check: per job Gemini, se i chunk previsti superano
+        # la quota giornaliera residua (cap - used - reserve), abortire ANTE
+        # di sintetizzare alcunche': rimborso integrale, notifica utente
+        # generica "voci PREMIUM sovraccarico", admin alert.
+        if use_gemini and gemini_tts is not None:
+            try:
+                _parts_v = (voice or "").split(":")
+                _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash25"
+                _pf = gemini_tts.preflight_can_run(_model_key, total_chunks)
+                # Log RPD status sempre (anche quando ok) per visibilita' operativa.
+                # cap=0 = nessun cap locale configurato (l'API Google fa da unica barriera).
+                _cap_v = _pf.get("cap", 0)
+                if _cap_v and _cap_v > 0:
+                    print(f"[{job_id}] RPD status [{_model_key}]: "
+                          f"used={_pf.get('used', 0)}/{_cap_v}, "
+                          f"reserve={_pf.get('reserve', 0)}, "
+                          f"available={_pf.get('available', 0)}, "
+                          f"needed={_pf.get('needed', 0)} "
+                          f"-> {'OK' if _pf.get('ok') else 'BLOCK (shortfall=' + str(_pf.get('shortfall', 0)) + ')'}")
+                else:
+                    print(f"[{job_id}] RPD status [{_model_key}]: no local cap "
+                          f"(ABM_GEMINI_RPD_{_model_key.upper()}=0), needed={_pf.get('needed', 0)}")
+            except Exception as _pf_err:
+                print(f"[{job_id}] Preflight check error (non-fatal, proceeding): {_pf_err}")
+                _pf = {"ok": True}
+            if not _pf.get("ok"):
+                _reason = (f"preflight_block: model={_model_key} "
+                           f"needed={_pf.get('needed')} "
+                           f"available={_pf.get('available')} "
+                           f"shortfall={_pf.get('shortfall')} "
+                           f"cap={_pf.get('cap')} used={_pf.get('used')} "
+                           f"reserve={_pf.get('reserve')}")
+                print(f"[{job_id}] PREFLIGHT BLOCK -> {_reason}")
+                _user_msg = ("Generazione non avviata: il motore voci PREMIUM "
+                             "e' temporaneamente sovraccarico. Hai diritto al "
+                             "rimborso integrale, gia' emesso automaticamente. "
+                             "Riprova tra qualche ora.")
+                # IMPORTANTE: settare i marker del preflight block PRIMA di
+                # cambiare status a "error". Lo stream SSE in /api/progress
+                # polla ogni secondo e si chiude al primo tick con status=error;
+                # se gemini_preflight_block non e' ancora settato a quel tick,
+                # il frontend non riceve error_kind=gemini_overload e cade nel
+                # branch errore generico (e nel popup non viene mostrato).
+                job["error"] = _user_msg
+                job["user_facing_error"] = _user_msg
+                job["gemini_preflight_block"] = {
+                    "model_key": _model_key,
+                    "needed": _pf.get("needed"),
+                    "available": _pf.get("available"),
+                    "retry_after_sec": _pf.get("retry_after_sec"),
+                }
+                _set_job_status(job, "error")
+                # Audit
+                try:
+                    _write_gemini_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "preflight_blocked_refunded")
+                except Exception:
+                    pass
+                # Refund
+                _refund_info = None
+                try:
+                    _refund_info = _refund_gemini_payment(
+                        job_id, job, f"preflight_block: {_reason}",
+                    )
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Preflight refund failed (non-fatal): {_ref_err}")
+                # Notifica utente (overload copy)
+                try:
+                    payment_meta = job.get("payment") or {}
+                    amt = float(payment_meta.get("total_eur", 0) or 0)
+                    method = payment_meta.get("method", "")
+                    tok = payment_meta.get("token")
+                    _email_to = ""
+                    try:
+                        if method == "voucher" and tok:
+                            v = payment._vouchers.get(tok, {}) if hasattr(payment, "_vouchers") else {}
+                            _email_to = v.get("email", "") or ""
+                        elif method == "paypal" and tok:
+                            pay = payment._payments.get(tok, {})
+                            _email_to = pay.get("email", "") or ""
+                    except Exception:
+                        _email_to = ""
+                    _book_title = ""
+                    try:
+                        _book_title = getattr(info, "title", "") or job.get("original_filename", "")
+                    except Exception:
+                        _book_title = job.get("original_filename", "")
+                    if _email_to and amt > 0:
+                        email_service._send_gemini_overload_email(
+                            _email_to, amt, _book_title,
+                            voucher_code=job.get("refund_voucher_code"),
+                            retry_after_sec=_pf.get("retry_after_sec", 0),
+                        )
+                except Exception as _notif_err:
+                    print(f"[{job_id}] Preflight user notification failed (non-fatal): {_notif_err}")
+                # Admin alert
+                _admin_alert_gemini_failure(
+                    job_id, job, kind="preflight",
+                    audit_outcome="preflight_blocked_refunded",
+                    reason_detail=_reason,
+                    chunks_total=total_chunks,
+                )
+                return
+
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
@@ -1422,6 +2377,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["current_chapter_num"] = block["chapter_index"]
             job["elapsed_seconds"] = round(elapsed)
 
+        # Gap inter-chunk Gemini (Premium quality). Calcolato qui per essere
+        # disponibile sia nel ramo single-file sia nel ramo multi-file.
+        gap_ms_inter = (gemini_tts.inter_chunk_gap_ms()
+                        if (use_gemini and gemini_tts is not None) else 0)
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -1432,6 +2392,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
             failed_chunks = 0
+            # Gap inter-chunk (Premium quality Gemini): pcm_concat inserira` un
+            # silenzio di gap_ms_inter ms PRIMA di ogni elemento di all_parts
+            # tranne il primo. Per mantenere allineati i marker M4B aggiorniamo
+            # current_ms e l'end del capitolo corrente PRIMA di ogni append a
+            # all_parts (escluso il primo). Il gap viene quindi attribuito al
+            # capitolo "uscente" se inserito prima del silence_path, e al
+            # capitolo "entrante" se inserito prima di un chunk audio (sia
+            # all'interno di un capitolo, sia come primo chunk di un capitolo
+            # nuovo senza silence_path: in questo caso l'ascoltatore sente
+            # ~gap_ms di silenzio in testa al cap, che e` esteticamente OK).
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
@@ -1443,6 +2413,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # Silenzio all'inizio di ogni capitolo
                 if ch_idx != prev_chapter_idx:
                     if os.path.exists(silence_path):
+                        # Bump per il gap che verra` inserito PRIMA del silence:
+                        # appartiene alla coda del capitolo precedente.
+                        if gap_ms_inter and all_parts:
+                            current_ms += gap_ms_inter
+                            if m4b_chapters:
+                                m4b_chapters[-1]["end"] += gap_ms_inter
                         all_parts.append(silence_path)
                         if m4b_chapters:
                             m4b_chapters[-1]["end"] = current_ms
@@ -1456,7 +2432,39 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
+                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
+                    # chunk del capitolo (vecchio design cost-saving) faceva
+                    # percepire all'utente uno stile diverso tra preview (1 chunk,
+                    # sempre con stile) e job finale (1 chunk su N con stile).
+                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
+                    # prefix x N chunk: pochi millicent per libro tipico).
+                    style_for_chunk = gemini_style_instruction
+                    try:
+                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                           style_instruction=style_for_chunk,
+                                                           rate=rate,
+                                                           debug_prompt_path=debug_prompt_path)
+                    except Exception as _quota_or_budget_err:
+                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
+                        # marcare il job come paused/error che silenziare il resto
+                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
+                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
+                                                                  (gemini_tts.GeminiQuotaExhausted,
+                                                                   gemini_tts.GeminiBudgetExceeded)):
+                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
+                            reason = getattr(_quota_or_budget_err, "reason",
+                                             getattr(_quota_or_budget_err, "scope", "quota"))
+                            job["gemini_paused"] = True
+                            job["gemini_pause_reason"] = reason
+                            job["gemini_pause_retry_after_sec"] = retry_after
+                            job["gemini_pause_message"] = str(_quota_or_budget_err)
+                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
+                                  f"reason={reason} retry_after={retry_after}s. "
+                                  f"Err: {str(_quota_or_budget_err)[:200]}")
+                            raise
+                        # Errore generico non quota-related: rilancia
+                        raise
                     if result is False:
                         failed_chunks += 1
                     else:
@@ -1464,6 +2472,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                         if not gemini_usage["model_key"]:
                             gemini_usage["model_key"] = result.get("model_key")
+                        ga = job["gemini_actual"]
+                        ga["input_tokens"] += result.get("input_tokens", 0)
+                        ga["output_tokens"] += result.get("output_tokens", 0)
+                        ga["chars"] += len(block["text"])
+                        bw = result.get("bytes_written", 0)
+                        ga["audio_seconds"] += bw / (24000.0 * 2)
+                        model_key = result.get("model_key", "flash25")
+                        if not ga["model_key"]:
+                            ga["model_key"] = model_key
+                        # Costo Google REALE del chunk (token reali da usage_metadata
+                        # x rate per MTok). Calcolato una sola volta, riusato sia per
+                        # l'aggregato job (gemini_actual) sia per record_usage().
+                        chunk_google_cost_eur = 0.0
+                        if gemini_tts is not None:
+                            try:
+                                bd = gemini_tts.google_cost_breakdown(
+                                    result.get("input_tokens", 0),
+                                    result.get("output_tokens", 0),
+                                    model_key,
+                                )
+                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
+                                ga["google_cost_eur"] += chunk_google_cost_eur
+                            except Exception as e:
+                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
+                        result["_google_cost_eur"] = chunk_google_cost_eur
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:
@@ -1472,6 +2505,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
                     if result is False:
                         failed_chunks += 1
+                # Bump per il gap che verra` inserito PRIMA di questo part_path
+                # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
+                if gap_ms_inter and all_parts:
+                    current_ms += gap_ms_inter
+                    if m4b_chapters:
+                        m4b_chapters[-1]["end"] += gap_ms_inter
                 all_parts.append(part_path)
                 # Record Gemini usage per chunk (so partial completions on cancel still book it)
                 if use_gemini and result is not False and gemini_tts is not None:
@@ -1481,11 +2520,44 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             len(block["text"]),
                             result.get("input_tokens", 0),
                             result.get("output_tokens", 0),
-                            0.0,
+                            float(result.get("_google_cost_eur", 0.0) or 0.0),
                             0.0,
                         )
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
+                    # Empirical rate sample (chars normalizzati -> audio_seconds reali).
+                    # Lingua = TTS scelta (opt_lang/gen_lang), NON metadata libro:
+                    # cosi' i campioni rate sono raggruppati per lingua REALE della
+                    # voce, non per lingua dell'input (es. libro arabo -> voce IT
+                    # registra sample "it", utili per calibrazione voce italiana).
+                    try:
+                        _lang = (_audit_language(job, info) or "it")[:2]
+                        _norm_chars = len(gemini_tts._normalize_text(block["text"]))
+                        _audio_secs = result.get("audio_seconds_real")
+                        if _audio_secs is None:
+                            _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
+                        gemini_tts.record_rate_sample(
+                            _norm_chars, _audio_secs, _lang,
+                            result.get("model_key", "flash25"),
+                            rate_pct=rate,
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
+
+                    # Trim trailing silence dal PCM chunk Gemini per ridurre le
+                    # pause percepibili tra chunk consecutivi. Cap a trim_tail_ms()
+                    # per evitare di tagliare l'attacco/coda di parola. NON applicato
+                    # se result is False (sotto e` silenzio puro segnaposto).
+                    if gemini_tts is not None:
+                        try:
+                            _trim_cap = gemini_tts.trim_tail_ms()
+                            _trim_thr = gemini_tts.trim_tail_threshold()
+                            if _trim_cap > 0:
+                                trim_pcm_trailing_silence(
+                                    part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
+                                )
+                        except Exception as _e_trim:
+                            print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
                 if i == 0:
@@ -1523,13 +2595,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if output_format in ('mp3', 'zip', 'zip_rss'):
                     # Solo MP3 finale richiesto
-                    pcm_to_mp3(all_parts, final_mp3)
+                    pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
                     print(f"[{job_id}] PCM->MP3 merged: {final_mp3}, "
-                          f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
+                          f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}, "
+                          f"gap_ms={gap_ms_inter}")
                 else:
                     # M4B richiesto: percorso PCM->AAC diretto (niente MP3 intermedio)
                     job["progress_message"] = "Converting to M4B..."
-                    print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b}")
+                    print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b} (gap_ms={gap_ms_inter})")
                     m4b_ok = False
                     for attempt in range(1, 3):
                         if attempt > 1:
@@ -1542,6 +2615,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             date=getattr(info, "date", None),
                             language=getattr(info, "language", None),
                             description=getattr(info, "description", None),
+                            gap_ms=gap_ms_inter,
                         ):
                             job["output_m4b"] = final_m4b
                             job["m4b_failed"] = False
@@ -1550,7 +2624,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if not m4b_ok:
                         job["m4b_failed"] = True
                         # Fallback: produci MP3 cosi' l'utente ha qualcosa
-                        pcm_to_mp3(all_parts, final_mp3)
+                        pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
                         print(f"[{job_id}] M4B failed, fallback MP3 produced: {final_mp3}")
             else:
                 # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
@@ -1651,7 +2725,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         if use_gemini:
-                            pcm_to_mp3(current_chapter_parts, mp3_path)
+                            pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
                         else:
                             _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
@@ -1675,7 +2749,39 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if use_gemini:
                     part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path)
+                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
+                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
+                    # chunk del capitolo (vecchio design cost-saving) faceva
+                    # percepire all'utente uno stile diverso tra preview (1 chunk,
+                    # sempre con stile) e job finale (1 chunk su N con stile).
+                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
+                    # prefix x N chunk: pochi millicent per libro tipico).
+                    style_for_chunk = gemini_style_instruction
+                    try:
+                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                           style_instruction=style_for_chunk,
+                                                           rate=rate,
+                                                           debug_prompt_path=debug_prompt_path)
+                    except Exception as _quota_or_budget_err:
+                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
+                        # marcare il job come paused/error che silenziare il resto
+                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
+                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
+                                                                  (gemini_tts.GeminiQuotaExhausted,
+                                                                   gemini_tts.GeminiBudgetExceeded)):
+                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
+                            reason = getattr(_quota_or_budget_err, "reason",
+                                             getattr(_quota_or_budget_err, "scope", "quota"))
+                            job["gemini_paused"] = True
+                            job["gemini_pause_reason"] = reason
+                            job["gemini_pause_retry_after_sec"] = retry_after
+                            job["gemini_pause_message"] = str(_quota_or_budget_err)
+                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
+                                  f"reason={reason} retry_after={retry_after}s. "
+                                  f"Err: {str(_quota_or_budget_err)[:200]}")
+                            raise
+                        # Errore generico non quota-related: rilancia
+                        raise
                     if result is False:
                         failed_chunks += 1
                     else:
@@ -1683,6 +2789,27 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         gemini_usage["output_tokens"] += result.get("output_tokens", 0)
                         if not gemini_usage["model_key"]:
                             gemini_usage["model_key"] = result.get("model_key")
+                        ga = job["gemini_actual"]
+                        ga["input_tokens"] += result.get("input_tokens", 0)
+                        ga["output_tokens"] += result.get("output_tokens", 0)
+                        ga["chars"] += len(block["text"])
+                        bw = result.get("bytes_written", 0)
+                        ga["audio_seconds"] += bw / (24000.0 * 2)
+                        model_key_local = result.get("model_key", "flash25")
+                        if not ga["model_key"]:
+                            ga["model_key"] = model_key_local
+                        chunk_google_cost_eur = 0.0
+                        if gemini_tts is not None:
+                            try:
+                                bd = gemini_tts.google_cost_breakdown(
+                                    result.get("input_tokens", 0),
+                                    result.get("output_tokens", 0),
+                                    model_key_local,
+                                )
+                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
+                                ga["google_cost_eur"] += chunk_google_cost_eur
+                            except Exception as e:
+                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
                         if gemini_tts is not None:
                             try:
                                 gemini_tts.record_usage(
@@ -1690,11 +2817,38 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                     len(block["text"]),
                                     result.get("input_tokens", 0),
                                     result.get("output_tokens", 0),
-                                    0.0,
+                                    chunk_google_cost_eur,
                                     0.0,
                                 )
                             except Exception as e:
                                 print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
+                            # Empirical rate sample — vedi commento branch single-file
+                            # sopra per la motivazione del fallback _audit_language.
+                            try:
+                                _lang = (_audit_language(job, info) or "it")[:2]
+                                _norm_chars = len(gemini_tts._normalize_text(block["text"]))
+                                _audio_secs = result.get("audio_seconds_real")
+                                if _audio_secs is None:
+                                    _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
+                                gemini_tts.record_rate_sample(
+                                    _norm_chars, _audio_secs, _lang,
+                                    result.get("model_key", "flash25"),
+                                    rate_pct=rate,
+                                )
+                            except Exception as e:
+                                print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
+
+                        # Trim trailing silence dal PCM Gemini (idem single-file branch).
+                        if gemini_tts is not None:
+                            try:
+                                _trim_cap = gemini_tts.trim_tail_ms()
+                                _trim_thr = gemini_tts.trim_tail_threshold()
+                                if _trim_cap > 0:
+                                    trim_pcm_trailing_silence(
+                                        part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
+                                    )
+                            except Exception as _e_trim:
+                                print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
                 else:
                     part_path = str(work_dir / f"chunk_{i:06d}.mp3")
                     if use_google:
@@ -1723,7 +2877,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 if use_gemini:
-                    pcm_to_mp3(current_chapter_parts, mp3_path)
+                    pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
                 else:
                     _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
@@ -1774,6 +2928,37 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["output_files"] = mp3_files
             job["output_name"] = f"{safe_name}.zip"
             job["output_zip"] = zip_path
+
+            # Storage cleanup: per output_format zip / zip_rss i singoli MP3 sono
+            # gia' contenuti nello ZIP (duplicazione completa su disco). Verifichiamo
+            # integrita' dello ZIP, poi rimuoviamo i sorgenti per liberare spazio.
+            # Per zip_rss richiediamo anche l'embed RSS riuscito: senza, il fallback
+            # in /api/download_podcast ricostruisce lo ZIP dai singoli MP3.
+            if output_format in ('zip', 'zip_rss'):
+                _purge_ok = False
+                try:
+                    import zipfile as _zf_check
+                    _purge_ok = (os.path.exists(zip_path)
+                                 and os.path.getsize(zip_path) > 0
+                                 and _zf_check.is_zipfile(zip_path))
+                except Exception as _e_zfchk:
+                    print(f"[{job_id}] ZIP integrity check failed: {_e_zfchk}")
+                if output_format == 'zip_rss' and not job.get("podcast_rss_included"):
+                    _purge_ok = False
+                if _purge_ok:
+                    _freed_bytes = 0
+                    _purged_count = 0
+                    for _mp3 in mp3_files:
+                        try:
+                            if os.path.exists(_mp3):
+                                _freed_bytes += os.path.getsize(_mp3)
+                                os.remove(_mp3)
+                                _purged_count += 1
+                        except OSError as _e_rm:
+                            print(f"[{job_id}] Cleanup MP3 skip {_mp3}: {_e_rm}")
+                    print(f"[{job_id}] ZIP cleanup: rimossi {_purged_count}/{len(mp3_files)} "
+                          f"MP3 individuali ({_freed_bytes} byte liberati) — "
+                          f"contenuto preservato in {os.path.basename(zip_path)}")
 
             # background M4B generation even in ZIP mode (skip for mp3, zip and zip_rss formats)
             if output_format not in ('mp3', 'zip', 'zip_rss'):
@@ -1830,9 +3015,78 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["completed_at"] = time.time()
         job["last_poll"] = time.time()
         job["failed_chunks"] = failed_chunks
-        if failed_chunks > 0:
+        # Calcolo ratio chunk falliti per decidere se il job e' "done" oppure "partial".
+        # Soglia configurabile via ABM_GEMINI_MAX_FAILED_RATIO (default 5%).
+        try:
+            _max_failed_ratio = float(os.environ.get("ABM_GEMINI_MAX_FAILED_RATIO", "0.05"))
+        except (TypeError, ValueError):
+            _max_failed_ratio = 0.05
+        # Soglia per refund automatico su engine Gemini: se la frazione di
+        # chunk silenziati supera questo valore, il job e' considerato fallito
+        # (refund + notifica) invece di consegnato parziale. Default 0.0 =
+        # qualsiasi chunk silenziato innesca il refund. Disabilita con un valore
+        # > 1 (es. 2.0).
+        try:
+            _refund_failed_ratio = float(os.environ.get("ABM_GEMINI_REFUND_FAILED_RATIO", "0.0"))
+        except (TypeError, ValueError):
+            _refund_failed_ratio = 0.0
+        _tot_chunks_safe = max(1, int(total_chunks))
+        _fail_ratio = failed_chunks / _tot_chunks_safe
+        job["failed_chunks_ratio"] = round(_fail_ratio, 4)
+        job["total_chunks"] = _tot_chunks_safe
+        # Auto-refund su qualita' insufficiente (chunk silenziati sopra soglia).
+        # Applicato solo su engine Gemini, dove il fallback a silenzio non
+        # rappresenta l'output che l'utente ha pagato.
+        if use_gemini and failed_chunks > 0 and _fail_ratio > _refund_failed_ratio:
+            _set_job_status(job, "error")
+            _user_msg = (
+                f"Generazione interrotta: {failed_chunks}/{_tot_chunks_safe} segmenti "
+                f"({_fail_ratio:.1%}) non sintetizzati correttamente. L'audio risultante "
+                f"sarebbe stato incompleto: rimborso integrale gia' emesso."
+            )
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            job["failed_chunks_ratio"] = round(_fail_ratio, 4)
+            print(f"[{job_id}] Gemini job FAILED for quality "
+                  f"({failed_chunks}/{_tot_chunks_safe}={_fail_ratio:.1%}) "
+                  f"-> full refund triggered.")
+            try:
+                _write_gemini_audit(job_id, job, voice,
+                                    _audit_language(job, info),
+                                    "failed_quality_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot_chunks_safe}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            try:
+                _notify_user_gemini_job_failed(job_id, job, "quality_failed",
+                                               failure_kind="quality")
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="quality",
+                audit_outcome="failed_quality_refunded",
+                reason_detail=f"{failed_chunks}/{_tot_chunks_safe} chunk silenziati ({_fail_ratio:.1%})",
+                chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
+            )
+            return
+        _is_partial = _fail_ratio > _max_failed_ratio
+        if _is_partial:
+            job["status_partial_reason"] = (
+                f"failed_chunks_ratio={_fail_ratio:.1%} exceeds threshold "
+                f"{_max_failed_ratio:.1%}"
+            )
+            job["progress_message"] = (
+                f"Completato parzialmente: {failed_chunks}/{_tot_chunks_safe} chunk falliti "
+                f"({_fail_ratio:.1%})"
+            )
+            print(f"[{job_id}] PARTIAL: {job['status_partial_reason']}")
+        elif failed_chunks > 0:
             job["progress_message"] = f"Done! ({failed_chunks} chunk(s) skipped due to TTS errors)"
-            print(f"[{job_id}] Completed with {failed_chunks} failed chunk(s)")
+            print(f"[{job_id}] Completed with {failed_chunks} failed chunk(s) "
+                  f"(ratio {_fail_ratio:.1%} <= {_max_failed_ratio:.1%})")
         else:
             job["progress_message"] = "Done!"
 
@@ -1851,10 +3105,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        _set_job_status(job, "done")
+        _set_job_status(job, "partial" if _is_partial else "done")
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
+
+        if use_gemini:
+            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
         # Send email notification if user registered
         notify_email = job.get("notify_email")
@@ -1884,34 +3141,235 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
+        partial_audio_delivered = False
+        partial_download_url = None
+
+        if still_current and use_gemini:
+            try:
+                actual = job.get("gemini_actual") or {}
+                google_cost = float(actual.get("google_cost_eur", 0.0) or 0.0)
+                payment_meta = job.get("payment") or {}
+                paid = float(payment_meta.get("total_eur", 0) or 0)
+                method = payment_meta.get("method", "")
+
+                # Margin (ricarico) del modello: il trattenuto corrisponde al
+                # PREZZO che l'utente avrebbe pagato per la quota di lavoro
+                # eseguita, non al solo costo Google. Mantiene la stessa
+                # marginalita' commerciale del job completato.
+                margin_pct = 0.0
+                try:
+                    if voice and gemini_tts is not None and voice.startswith("gemini:"):
+                        _mk, _, _ = gemini_tts.parse_voice_id(voice)
+                        margin_pct = float(gemini_tts.get_margin_percent(_mk) or 0.0)
+                except Exception as _mp_err:
+                    print(f"[{job_id}] margin lookup failed (using 0%): {_mp_err}")
+
+                cr = cancel_policy.compute_cancel_retention(
+                    google_cost, method, paid, margin_percent=margin_pct)
+                retained = cr["retained_eur"]
+                refund = cr["refund_eur"]
+
+                # Encoding MP3 parziale (best-effort)
+                try:
+                    pcm_files = []
+                    if work_dir.exists():
+                        pcm_files = sorted(work_dir.glob("chunk_*.pcm"))
+                        pcm_files = [str(p) for p in pcm_files if p.stat().st_size > 0]
+                    if pcm_files:
+                        partial_mp3 = output_dir / f"{job_id}_partial.mp3"
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        gap = gemini_tts.inter_chunk_gap_ms() if gemini_tts is not None else 100
+                        ok = pcm_to_mp3(pcm_files, str(partial_mp3), gap_ms=gap)
+                        if ok and partial_mp3.exists() and partial_mp3.stat().st_size > 0:
+                            partial_audio_delivered = True
+                            token = str(uuid.uuid4())
+                            _download_tokens[token] = {
+                                "job_id": job_id,
+                                "created_at": time.time(),
+                                "download_type": "audio",
+                                "output_file": str(partial_mp3),
+                                "output_format": "mp3",
+                                "book_title": (getattr(info, "title", "") or
+                                               job.get("original_filename", "")),
+                                "original_filename": job.get("original_filename", ""),
+                                "lang": job.get("browser_lang", "en"),
+                                "is_gemini": True,
+                                "partial_cancel": True,
+                            }
+                            _save_tokens()
+                            partial_download_url = (f"{BASE_URL}/dl/{token}/download"
+                                                     if BASE_URL else f"/dl/{token}/download")
+                            job["partial_download_url"] = partial_download_url
+                            job["partial_download_token"] = token
+                except Exception as enc_err:
+                    print(f"[{job_id}] Cancel partial encoding failed (non-fatal): {enc_err}")
+
+                progress_pct = _progress_pct(job)
+                job["cancel_meta"] = {
+                    "paid_eur": round(paid, 2),
+                    "retained_eur": retained,
+                    "refund_eur": refund,
+                    "progress_pct": progress_pct,
+                    "partial_audio_delivered": partial_audio_delivered,
+                }
+
+                outcome = "cancelled_partial" if retained > 0 else "cancelled_refunded"
+                _write_gemini_audit(job_id, job, voice,
+                                    _audit_language(job, info), outcome)
+
+                refund_result = _refund_gemini_payment(
+                    job_id, job, "cancelled", retained_eur=retained)
+
+                if (refund_result and refund_result.get("email")
+                        and partial_audio_delivered
+                        and hasattr(email_service, "_send_gemini_cancelled_partial_email")):
+                    try:
+                        email_service._send_gemini_cancelled_partial_email(
+                            email=refund_result["email"],
+                            paid_eur=round(paid, 2),
+                            retained_eur=retained,
+                            refund_eur=refund,
+                            voucher_code=refund_result.get("voucher_code"),
+                            book_title=(getattr(info, "title", "") or
+                                        job.get("original_filename", "")),
+                            download_url=partial_download_url,
+                            lang=job.get("browser_lang", "it"),
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] cancel partial email failed: {e}")
+            except Exception as cancel_err:
+                print(f"[{job_id}] Cancel partial flow error (fallback to legacy): {cancel_err}")
+                try:
+                    _write_gemini_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "cancelled_refunded")
+                except Exception:
+                    pass
+                try:
+                    _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+                except Exception:
+                    pass
+        elif use_gemini and not still_current:
+            print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
+
+        if use_google:
+            _google_tts_refund_unused(job_id, job)
+
         if still_current:
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
-        # Refund caratteri Google TTS non consumati e forza riconciliazione
-        if use_google:
-            _google_tts_refund_unused(job_id, job)
-        # Gemini: nessun refund (pay-per-call gia' record_usage per chunk).
-        # Logghiamo solo il totale parziale per debug.
-        if use_gemini:
-            print(f"[{job_id}] Gemini partial usage (no refund): "
-                  f"model={gemini_usage.get('model_key')} "
-                  f"input_tok={gemini_usage.get('input_tokens', 0)} "
-                  f"output_tok={gemini_usage.get('output_tokens', 0)}")
-        # Cleanup temp files (solo se nessuna nuova generazione è partita)
-        if still_current:
             try:
                 if work_dir.exists():
-                    shutil.rmtree(str(work_dir), ignore_errors=True)
+                    # Conserva l'MP3 parziale finche' il token download e' vivo:
+                    # rimuoviamo solo i PCM/sub-dir intermedi, non output_dir.
+                    for p in work_dir.glob("chunk_*.pcm"):
+                        try: p.unlink()
+                        except OSError: pass
+                    for p in work_dir.glob("prompt*.txt"):
+                        try: p.unlink()
+                        except OSError: pass
+                    sil = work_dir / "_silence.pcm"
+                    if sil.exists():
+                        try: sil.unlink()
+                        except OSError: pass
+                    # Se NON e' stato consegnato audio parziale, rimuovi tutta la work_dir.
+                    if not partial_audio_delivered:
+                        shutil.rmtree(str(work_dir), ignore_errors=True)
             except Exception:
                 pass
-        print(f"[{job_id}] Generation cancelled, resources freed{' (stale)' if not still_current else ''}.")
+
+        print(f"[{job_id}] Generation cancelled, resources freed"
+              f"{' (stale)' if not still_current else ''}.")
         _log_activity(job_id, job.get("original_filename", ""), "CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
 
     except Exception as e:
+        # Quota Gemini (RPD/daily) e budget guard interno: il job e' interrotto
+        # a meta'. L'audio parziale non viene consegnato, quindi l'operazione e'
+        # da considerare FALLITA per l'utente -> refund integrale + notifica.
+        _is_quota = False
+        _is_budget = False
+        if use_gemini and gemini_tts is not None:
+            try:
+                _is_quota = isinstance(e, gemini_tts.GeminiQuotaExhausted)
+                _is_budget = isinstance(e, gemini_tts.GeminiBudgetExceeded)
+            except Exception:
+                _is_quota = False
+                _is_budget = False
+        if _is_quota or _is_budget:
+            pause_reason = getattr(e, "reason",
+                                   getattr(e, "scope",
+                                           "budget" if _is_budget else "quota"))
+            retry_after = getattr(e, "retry_after_sec", None)
+            # Salviamo i campi pause_* per diagnostica (UI/log) ma marchiamo
+            # il job come ERROR: l'utente vede l'operazione fallita e riceve
+            # rimborso completo (i chunk prodotti non sono consegnabili).
+            job["gemini_paused"] = True
+            job["gemini_pause_reason"] = pause_reason
+            job["gemini_pause_retry_after_sec"] = retry_after
+            job["gemini_pause_message"] = str(e)
+            _set_job_status(job, "error")
+            if _is_quota:
+                _user_msg = ("Generazione interrotta: quota giornaliera del "
+                             "servizio voci PREMIUM esaurita. Hai diritto al "
+                             "rimborso integrale, gia' emesso automaticamente.")
+            else:
+                _user_msg = ("Generazione interrotta: limite di spesa "
+                             "raggiunto. Hai diritto al rimborso integrale, "
+                             "gia' emesso automaticamente.")
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            try:
+                _write_gemini_audit(job_id, job, voice,
+                                    _audit_language(job, info),
+                                    "failed_quota_refunded" if _is_quota
+                                    else "failed_budget_refunded")
+            except Exception:
+                pass
+            print(f"[{job_id}] Gemini job FAILED for {pause_reason} "
+                  f"(retry_after={retry_after}s) -> full refund triggered.")
+            try:
+                _refund_gemini_payment(job_id, job,
+                                       f"quota_exhausted: {pause_reason}"
+                                       if _is_quota
+                                       else f"budget_exceeded: {pause_reason}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            # Notifica esplicita all'utente che ha pagato il job (oltre al
+            # voucher gia' inviato per PayPal da _refund_gemini_payment).
+            try:
+                _notify_user_gemini_job_failed(job_id, job, pause_reason,
+                                               is_quota=_is_quota)
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job,
+                kind="quota" if _is_quota else "budget",
+                audit_outcome="failed_quota_refunded" if _is_quota
+                              else "failed_budget_refunded",
+                reason_detail=f"{pause_reason} | retry_after={retry_after}s | {str(e)[:200]}",
+            )
+            import traceback
+            traceback.print_exc()
+            return
         _set_job_status(job, "error")
         job["error"] = str(e)
+        if use_gemini:
+            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
+            # F3: Refund the user payment (voucher or paypal) for failed Gemini job
+            _refund_gemini_payment(job_id, job, f"failed: {e}")
+            # Notifica utente con copy "qualita'" (errore generico, parziale non consegnabile)
+            try:
+                _notify_user_gemini_job_failed(job_id, job, f"generic_error: {e}",
+                                               failure_kind="quality")
+            except Exception as _notif_err:
+                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+            _admin_alert_gemini_failure(
+                job_id, job, kind="generic",
+                audit_outcome="failed_refunded",
+                reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
+            )
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
             try:

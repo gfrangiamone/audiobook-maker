@@ -86,6 +86,14 @@ body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','N
 [data-theme="dark"] .theme-btn{background:#2a2520;border-color:#4a3f32;color:#a09080}
 .theme-btn:hover{border-color:var(--ac);color:var(--ac)}
 
+/* ═══ BREADCRUMB ═══ */
+.bc-nav{max-width:760px;margin:0 auto;padding:10px 12px 0}
+.bc-nav ol{display:flex;align-items:center;gap:6px;list-style:none;margin:0;padding:0;font-size:.80rem;color:var(--txm)}
+.bc-nav a{color:var(--ac);text-decoration:none}
+.bc-nav a:hover{text-decoration:underline}
+.bc-nav .bc-sep{color:var(--txm);font-size:.85rem;user-select:none}
+@media(max-width:760px){.bc-nav{padding:8px 10px 0}}
+
 /* ═══ FREE BOOKS BUTTON (hidden, content moved to FAQ) ═══ */
 .fb-btn{display:none}
 
@@ -127,6 +135,8 @@ details.faq-item summary::-webkit-details-marker{display:none}
 details.faq-item summary::before{content:"+";display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--acs);color:var(--ac);text-align:center;line-height:18px;font-size:.8rem;font-weight:600;flex-shrink:0;transition:transform .2s}
 details.faq-item[open] summary::before{content:"\2212"}
 details.faq-item .faq-answer{font-size:.82rem;color:var(--txd);padding:4px 0 8px 26px;line-height:1.5}
+.faq-see-all{display:inline-block;margin-top:10px;font-size:.82rem;color:var(--ac);text-decoration:none;font-weight:550}
+.faq-see-all:hover{text-decoration:underline}
 
 /* ═══ COMMUNITY CARDS (Donation + Social, full-width) ═══ */
 .community-card{background:var(--srf);border-radius:var(--rs);border:1px solid var(--brd);padding:24px 28px;margin-bottom:24px}
@@ -286,6 +296,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .btn-preview.loading{opacity:.7;cursor:wait}
 .btn-loading,.btn.btn-loading:disabled{opacity:.85;cursor:wait;pointer-events:none}
 .btn-loading::after{content:'';display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;margin-left:8px;vertical-align:-2px;opacity:.85}
+#btnPrev.loading{opacity:.85;cursor:wait;pointer-events:none}
+#btnPrev.loading > svg{display:none}
+#btnPrev.loading::before{content:'';display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:-2px}
 
 @keyframes spin{to{transform:rotate(360deg)}}
 
@@ -580,11 +593,25 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ═══ PREVIEW SECTION (inline in panel 3) ═══ */
 .preview-section{margin-top:22px;padding:18px 22px;background:var(--srf2);border-radius:var(--rs);border:1px solid var(--brd)}
+/* Layout affiancato: Anteprima lettura a sinistra, Stima costo a destra.
+   Su schermi stretti i due box vanno a capo (cost-preview-box sotto). */
+.preview-cost-row{display:flex;flex-wrap:wrap;gap:16px;align-items:stretch;margin-top:22px}
+.preview-cost-row .preview-section{flex:1 1 320px;margin-top:0}
+.preview-cost-row .cost-preview-box:not([hidden]){flex:1 1 220px;margin:0;display:flex;flex-direction:column;justify-content:center}
 .preview-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .preview-header .preview-label{font-size:.85rem;font-weight:600;color:var(--txd);white-space:nowrap}
 .preview-audio-wrap{display:none;margin-top:14px}
 .preview-audio-wrap.visible{display:block;animation:fadeSlideIn .3s ease}
 .preview-audio-wrap audio{width:100%;height:36px}
+/* Audio anteprima: nascondi lo slider del volume, mantieni solo l'icona mute/unmute.
+   Pseudo-elementi WebKit/Chromium (Firefox usa shadow DOM chiuso e ignora la regola). */
+#previewAudioWiz::-webkit-media-controls-volume-slider,
+#previewAudioWiz::-webkit-media-controls-volume-control-hover-background,
+#previewAudioWiz::-webkit-media-controls-volume-slider-container{display:none!important}
+/* Spaziatura verticale fine: meno spazio sopra "Velocità di lettura"
+   (subito dopo la textarea Istruzioni), più spazio sopra "Formato di output". */
+.form-row:has(>.speed-slider-group){margin-top:-6px}
+.form-row:has(>#fgOut){margin-top:14px}
 
 /* ═══ AI OPTIMIZATION CARD ═══ */
 .ai-opt-card{border:2px solid #c8b8e0;border-radius:var(--rs);padding:22px 26px;margin-bottom:22px;transition:all .2s;background:linear-gradient(135deg,rgba(139,92,240,.04) 0%,rgba(139,92,240,.02) 100%)}
@@ -636,6 +663,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .progress-stats-wiz .pct{color:var(--ac);font-weight:650;font-variant-numeric:tabular-nums}
 .generation-active-notice{display:none;align-items:center;gap:8px;font-size:.8rem;color:var(--ac);font-weight:550;margin-bottom:16px;padding:10px 16px;background:var(--acs);border-radius:var(--rs);border:1px solid rgba(196,122,42,.15)}
 .generation-active-notice .pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--ac);flex-shrink:0;animation:pulse 1.4s infinite}
+.generation-active-notice.warn{color:#b91c1c;background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.3);font-weight:600;font-size:.85rem;line-height:1.4;align-items:flex-start}
+.generation-active-notice.warn .pulse-dot{background:#dc2626;margin-top:5px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* ═══ EMAIL LATE AREA ═══ */
@@ -806,9 +835,20 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .news-modal-body{color:var(--txd);font-size:.95rem;line-height:1.55;margin:0 0 18px;white-space:pre-wrap}
 .news-modal-footer{display:flex;justify-content:flex-end}
 
-/* ─── FEEDBACK WIDGET ─── */
+/* ─── FEEDBACK WIDGET + WHATSAPP COMMUNITY ROW ─── */
 .fbw{padding:0;overflow:hidden}
 #fbWidget{width:100%;max-width:760px;margin:0 auto 24px}
+.fbw-row{display:flex;align-items:flex-start;justify-content:center;gap:14px;max-width:840px;margin:0 auto 24px;padding:0 8px}
+.fbw-row #fbWidget{margin:0;flex:1 1 760px;min-width:0}
+.tg-community-btn{display:inline-flex;align-items:center;justify-content:center;background:#229ED9;color:#fff;text-decoration:none;border-radius:var(--rs);border:1px solid #1c8cc1;box-shadow:0 1px 2px rgba(0,0,0,.08);transition:filter .2s,transform .15s;flex:0 0 auto;align-self:flex-start;width:52px;height:52px;padding:0}
+.tg-community-btn:hover{filter:brightness(1.05);transform:translateY(-1px);text-decoration:none;color:#fff}
+.tg-community-btn:focus-visible{outline:2px solid #229ED9;outline-offset:2px}
+.tg-community-btn svg{width:24px;height:24px;flex-shrink:0}
+@media(max-width:760px){
+  .fbw-row{flex-direction:column;align-items:center;max-width:760px}
+  .fbw-row #fbWidget{flex:1 1 auto;width:100%}
+  .fbw-row .tg-community-btn{width:100%;height:48px;border-radius:var(--rs)}
+}
 .fbw-toggle{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;background:transparent;border:none;padding:14px 18px;cursor:pointer;color:var(--tx);font-size:1rem;font-weight:400;text-align:left}
 .fbw-toggle:hover{background:rgba(217,164,65,.05)}
 .fbw-toggle-left{display:flex;align-items:center;gap:8px}
@@ -867,3 +907,76 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .fbw-stars-row{gap:6px}
   .fbw-star{font-size:1.4rem}
 }
+/* ─── Tab-bar Panel 3 (Standard / Premium voices) ─── */
+.tab-bar { display:flex; gap:6px; width:100%; box-sizing:border-box;
+            border-bottom:2px solid var(--brd,#dcd6c8); align-items:flex-end;
+            transition:border-bottom-color .18s ease; }
+/* Quando il tab Premium è attivo, la riga inferiore resta del colore di default
+   nella parte a sinistra del bottone; a destra del bottone Premium e fino al
+   bordo destro del pannello la linea diventa dorata, tramite un pseudo-elemento
+   flex che riempie lo spazio rimanente. */
+.tab-bar:has(#tabPremiumBtn.active)::after,
+.tab-bar.tabbar-premium-active::after {
+  content:""; flex:1 1 auto; align-self:stretch;
+  border-bottom:2px solid #b8862e; margin-bottom:-2px;
+  pointer-events:none;
+}
+.tab-bar .tab { padding:8px 14px; background:transparent; border:0; border-bottom:2px solid transparent;
+                 margin-bottom:-2px; cursor:pointer; font-weight:700; color:var(--txm,#9e9890);
+                 transition:color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
+.tab-bar .tab.active { color:var(--accent,#a07d3a); border-bottom-color:var(--accent,#a07d3a); }
+/* Tab "Voci PREMIUM": stessa estetica del tab Standard; l'enfasi premium
+   è concentrata sulla stella iniziale (dorata), così il tab non sembra
+   selezionato quando in realtà è inattivo. */
+.tab-bar #tabPremiumBtn { display:inline-block; }
+.tab-bar #tabPremiumBtn::first-letter { color:#d4a83a; font-size:1.05em;
+                                        text-shadow:0 1px 0 rgba(255,255,255,.35); }
+.tab-panel { padding-top:16px; }
+.tab-panel[hidden] { display:none; }
+.cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
+.cost-preview-box .cost-label { font-size:12px; color:var(--txm,#9e9890); text-transform:uppercase; }
+.cost-preview-box .cost-value { font-size:22px; font-weight:600; color:var(--accent,#a07d3a); }
+.cost-preview-box .cost-detail { font-size:12px; color:var(--txm,#9e9890); margin-top:4px; }
+.char-counter { font-size:11px; color:var(--txm,#9e9890); text-align:right; margin-top:2px; }
+/* Textarea "Istruzioni di stile" (premium): coerente con i campi di testo
+   del widget feedback — stessa palette, padding e focus dorato. */
+#geminiStyle { width:100%; box-sizing:border-box; background:var(--srf);
+               border:1px solid var(--brd); border-radius:6px; color:var(--tx);
+               padding:8px 10px; font:inherit; font-size:.9rem;
+               resize:vertical; min-height:54px;
+               transition:border-color .18s ease; }
+#geminiStyle:focus { outline:none; border-color:var(--ac,#a07d3a); }
+.model-rate-hint { font-size:11px; color:var(--txm,#9e9890); margin-top:4px; }
+/* ── Payment modal (Premium voices / AI optimization) ── */
+.modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5);
+                  display:flex; align-items:center; justify-content:center; z-index:1050; }
+.modal-backdrop[hidden] { display:none; }
+.payment-modal { background:var(--srf,#fff); color:var(--tx,#222);
+                 border-radius:8px; max-width:480px; width:90%;
+                 box-shadow:0 8px 32px rgba(0,0,0,0.18); }
+.payment-modal .modal-header { display:flex; justify-content:space-between; align-items:center;
+                               padding:14px 18px; border-bottom:1px solid var(--brd,#eee); }
+.payment-modal .modal-header h3 { margin:0; font-size:1.05rem; }
+.payment-modal .modal-close { background:transparent; border:0; font-size:1.4rem;
+                              cursor:pointer; color:var(--tx,#222); line-height:1; padding:2px 6px; }
+.payment-modal .modal-body { padding:18px; }
+.payment-modal .modal-footer { padding:12px 18px; border-top:1px solid var(--brd,#eee);
+                               display:flex; gap:8px; justify-content:flex-end; }
+.pay-summary { background:var(--srf2,#f7f4ec); border-radius:6px; padding:10px 14px; margin-bottom:14px; }
+.pay-line { display:flex; justify-content:space-between; padding:3px 0; font-size:.9rem; }
+.pay-line.pay-total { border-top:1px solid var(--brd,#ddd); margin-top:6px; padding-top:8px; font-size:1rem; }
+.pay-tabs { display:flex; gap:4px; border-bottom:1px solid var(--brd,#ddd); margin-bottom:12px; }
+.pay-tab { background:transparent; border:0; padding:8px 14px; cursor:pointer;
+           border-bottom:2px solid transparent; margin-bottom:-1px; color:var(--tx,#222); }
+.pay-tab.active { border-bottom-color:var(--ac,#a07d3a); color:var(--ac,#a07d3a); }
+.pay-tab-panel[hidden] { display:none; }
+.pay-tab-panel label { display:block; font-size:.85rem; margin:8px 0 4px; }
+.pay-tab-panel input { width:100%; box-sizing:border-box; padding:8px 10px;
+                       border:1px solid var(--brd,#ccc); border-radius:6px;
+                       background:var(--srf,#fff); color:var(--tx,#222); font-size:.9rem; }
+.pay-error { color:#c0392b; font-size:.8rem; margin-top:6px; min-height:18px; }
+.payment-modal .btn-primary { background:var(--ac,#a07d3a); color:#fff;
+                              border:0; padding:8px 14px; border-radius:6px; cursor:pointer; }
+.payment-modal .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+.payment-modal .btn-secondary { background:transparent; color:var(--tx,#222);
+                                border:1px solid var(--brd,#ccc); padding:8px 14px; border-radius:6px; cursor:pointer; }

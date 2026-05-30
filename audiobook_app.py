@@ -81,6 +81,7 @@ from tts_split import (
     _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
     _edge_tts_call, generate_chunk_mp3, generate_chunk_mp3_google,
     _strip_parenthetical, _ensure_heading_pause, _plan_chunks,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes,
 )
 
 import email_service
@@ -98,16 +99,40 @@ try:
 except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
-#  -  -  DeepSeek LLM per ottimizzazione testo TTS  -  opzionale  -  -
-# (Configurati e gestiti in generation_engine.py)
-DEEPSEEK_API_KEY = os.environ.get("ABM_DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.environ.get("ABM_DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_THINKING = os.environ.get("ABM_DEEPSEEK_THINKING", "false").lower() == "true"
-DEEPSEEK_REASONING_EFFORT = os.environ.get("ABM_DEEPSEEK_REASONING_EFFORT", "none").lower()
+#  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
+# (Configurati e gestiti in generation_engine.py; lette qui solo per startup log)
+LLM_API_KEY = os.environ.get("ABM_LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
+LLM_THINKING = os.environ.get("ABM_LLM_THINKING", "false").lower() == "true"
+LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").lower()
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
     return generation_engine._llm_available()
+
+
+def _estimate_chapter_seconds(ch, language):
+    """Stima durata audio di un capitolo in secondi.
+
+    Usa la stessa funzione di stima del pannello "Voci PREMIUM"
+    (gemini_tts.estimate_audio_seconds con rate empirico) per allineare
+    il dato mostrato nel pannello selezione capitoli con quello del
+    pannello Premium. Fallback a 150 WPM se gemini_tts non disponibile.
+    """
+    try:
+        if gemini_tts is not None:
+            secs = gemini_tts.estimate_audio_seconds(
+                getattr(ch, "text", "") or "",
+                language=language,
+                model_key="flash25",
+                rate_pct=0,
+            )
+            if secs and secs > 0:
+                return float(secs)
+    except Exception:
+        pass
+    # Fallback: 150 WPM (storica)
+    return (getattr(ch, "word_count", 0) or 0) * 60.0 / 150.0
 
 
 # Payment / voucher state and operations live in payment.py.
@@ -171,12 +196,52 @@ app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50")
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
 
+# Endpoint esenti da CSRF check (whitelist esplicita).
+# Da aggiungere SOLO endpoint che ricevono webhook server-to-server (es. PayPal
+# webhook firmato): attualmente nessuno.
+_CSRF_EXEMPT_PATHS: set[str] = set()
+
+
+@app.before_request
+def _csrf_protect():
+    """CSRF protection: verifica Origin/Referer su metodi mutating.
+
+    - GET/HEAD/OPTIONS: nessun check (operazioni read-only).
+    - POST/PUT/PATCH/DELETE: se ``Origin`` presente, deve matchare ``host_url``;
+      altrimenti se ``Referer`` presente, stesso check. Se entrambi assenti
+      (client non-browser come curl/script), passa.
+    - I cookie ``SameSite=Strict`` (admin) e ``SameSite=Lax`` (abm_cid) gia'
+      offrono difesa parziale; questo check chiude il gap residuo per browser
+      vecchi e per ``SameSite=Lax`` su navigazioni top-level.
+    """
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    if request.path in _CSRF_EXEMPT_PATHS:
+        return None
+    origin = request.headers.get("Origin", "")
+    referer = request.headers.get("Referer", "")
+    expected = request.host_url.rstrip("/")
+    if origin:
+        if not (origin == expected or origin.startswith(expected + "/")):
+            return jsonify({"error": "CSRF: origin mismatch"}), 403
+    elif referer:
+        if not referer.startswith(expected + "/") and referer != expected:
+            return jsonify({"error": "CSRF: referer mismatch"}), 403
+    return None
+
+
 @app.after_request
 def add_security_headers(response):
     """Aggiunge header di sicurezza alle risposte HTTP."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+    # HSTS: forza HTTPS sui browser per 1 anno (incl. subdomain).
+    # Nginx in produzione probabilmente lo aggiunge gia'; lo settiamo qui per
+    # defense-in-depth ed evitare regressioni se la config nginx cambia.
+    # Solo su HTTPS per non bloccare dev locale HTTP.
+    if request.is_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     # Content Security Policy (base)
     # Permettiamo script inline per la nostra app (SPA-like) ma blocchiamo fonti esterne non autorizzate.
     # Nota: per una configurazione più rigida, bisognerebbe usare i nonce.
@@ -186,6 +251,7 @@ def add_security_headers(response):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https://api.producthunt.com; "
+        "media-src 'self' blob:; "
         "connect-src 'self' https://api-m.sandbox.paypal.com https://api-m.paypal.com https://*.google-analytics.com; "
         "frame-src https://www.paypal.com;"
     )
@@ -197,7 +263,11 @@ def add_security_headers(response):
     ct = response.content_type or ''
     path = (request.path or '') if request else ''
     if 'Cache-Control' not in response.headers:
-        if 'text/html' in ct:
+        # Admin/API non devono mai essere cachati (cambi di stato real-time).
+        if path.startswith('/admin') or path.startswith('/api/'):
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+        elif 'text/html' in ct:
             # 5-min cache + 1h stale-while-revalidate: lets new approved
             # reviews surface in the embedded JSON-LD/visible block within a
             # few minutes while keeping repeat-visit perf high.
@@ -272,6 +342,93 @@ from email_service import (
 )
 
 EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
+# Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
+# i pagamenti Premium meritano una finestra di download/email piu' ampia.
+GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
+# Hard cap caratteri per audiolibro completo (taglia output audio):
+# - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
+# - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'
+#   le voci Gemini hanno cost-per-char piu' alto e RPM/RPD piu' restrittive.
+MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
+
+
+def _is_gemini_voice(voice):
+    """True se la voce e' una voce PREMIUM Gemini (formato gemini:<model>:<voice>)."""
+    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+
+
+def _max_text_chars_for_voice(voice):
+    """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
+    return MAX_GEMINI_TEXT_CHARS if _is_gemini_voice(voice) else MAX_TEXT_CHARS
+
+
+def _retention_for_job(job):
+    """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce Gemini, altrimenti EMAIL_FILE_RETENTION_SEC.
+    Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice` non e' ancora settato."""
+    if not isinstance(job, dict):
+        return EMAIL_FILE_RETENTION_SEC
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    return GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
+
+
+def _retention_for_token_info(info):
+    """Retention sec applicabile a un download token: usa is_gemini se salvato sul token."""
+    if isinstance(info, dict) and info.get("is_gemini"):
+        return GEMINI_FILE_RETENTION_SEC
+    return EMAIL_FILE_RETENTION_SEC
+
+
+# Protezione no-download per voci PREMIUM (costose): se il job/token Gemini
+# non ha mai registrato un download, raddoppiamo la retention prima di
+# cancellare gli output. Salvaguardia per utenti che ricevono l'email tardi
+# o non aprono subito il link.
+GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER = 2
+
+
+def _effective_retention_for_job(job):
+    """Retention con protezione no-download per job PREMIUM/Gemini.
+    Se il job e' Gemini e non risulta alcun download (job["downloaded_at"] vuoto),
+    raddoppia la retention base. Per voci standard: identica a _retention_for_job."""
+    base = _retention_for_job(job)
+    if not isinstance(job, dict):
+        return base
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    if _is_gemini_voice(v) and not job.get("downloaded_at"):
+        return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
+    return base
+
+
+def _effective_retention_for_token_info(info):
+    """Retention con protezione no-download per token PREMIUM/Gemini.
+    Se il token e' is_gemini e nessun /dl/<token>/* ha mai servito il file
+    (downloaded_at vuoto), raddoppia la retention base."""
+    base = _retention_for_token_info(info)
+    if isinstance(info, dict) and info.get("is_gemini") and not info.get("downloaded_at"):
+        return base * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
+    return base
+
+
+def _mark_token_downloaded(token_info):
+    """Registra che il file del token e' stato servito (download reale, non
+    probe/HEAD/Range). Aggiorna token_info in-place e persiste su disco per
+    sopravvivere ai restart, disattivando la protezione no-download
+    (_effective_retention_for_token_info). Idempotente: skip su probe/HEAD/
+    Range e se gia' marcato."""
+    try:
+        if _is_resume_or_probe_request():
+            return
+    except Exception:
+        pass
+    if not isinstance(token_info, dict):
+        return
+    if token_info.get("downloaded_at"):
+        return
+    token_info["downloaded_at"] = time.time()
+    try:
+        _save_tokens()
+    except Exception as e:
+        print(f"[tokens] _mark_token_downloaded persist failed: {e}")
 
 #  -  -  Admin activity digest (email log)  -  - 
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
@@ -324,7 +481,7 @@ def _check_job_owner(job_id):
     backward compatibility, but new jobs always store it at creation.
 
     Admin bypass: una richiesta autenticata come admin (header X-Admin-Token o cookie
-    abm_admin_session valido) passa il controllo. Necessario per la pagina /logs che
+    abm_admin_session valido) passa il controllo. Necessario per la pagina /admin/log-activity che
     fa polling di /api/job_status/<job_id> per mostrare la % delle conversioni in corso.
     """
     if job_id not in jobs:
@@ -338,6 +495,12 @@ def _check_job_owner(job_id):
             if _admin_auth_ok(_admin_auth_from_request()):
                 return job, None, 0
             return None, jsonify({"error": "Forbidden"}), 403
+    else:
+        # Legacy job senza client_id (creato prima dell'enforcement). Lascia
+        # passare per compat ma logga warning: l'admin puo' monitorare e
+        # decidere di rimuovere il bypass dopo che la coorte legacy e' esaurita.
+        print(f"[SECURITY-WARN] Legacy job senza client_id: {job_id} "
+              f"(status={job.get('status', '?')}) - bypass ownership check")
     return job, None, 0
 
 
@@ -375,6 +538,45 @@ def _active_generating_for_client_unlocked(client_id):
         1 for j in jobs.values()
         if j.get("client_id") == client_id and j.get("status") == "generating"
     )
+
+
+def _refund_payment_on_orphan(job_id, job, reason):
+    """Refund Gemini payment if /api/generate rejected after the token was consumed.
+
+    Mirrors generation_engine._refund_gemini_payment: voucher → _voucher_refund,
+    paypal → emit refund voucher. Best-effort; non-fatal on errors.
+    Also clears job['payment'] so a retry doesn't see stale state.
+    """
+    payment_meta = job.get("payment") or {}
+    tok = payment_meta.get("token")
+    amt = float(payment_meta.get("total_eur", 0) or 0)
+    method = payment_meta.get("method", "")
+    if not tok or amt <= 0:
+        return
+    try:
+        if method == "voucher":
+            payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
+        elif method == "paypal":
+            pay = payment._payments.get(tok, {})
+            email = pay.get("email", "") or ""
+            if email:
+                payment._create_voucher(
+                    email, amt, origin_order_id=tok, origin_job_id=job_id,
+                    kind="refund", note=f"refund {reason} job {job_id}",
+                )
+            else:
+                print(
+                    f"[{job_id}] WARNING: orphan refund voucher not emitted — "
+                    f"PayPal order {tok} has no buyer email "
+                    f"(amount {amt:.2f} EUR, reason {reason})"
+                )
+            # Free up the PayPal order to be re-spent (or leave used=True and let
+            # the refund voucher carry the value forward; we choose refund voucher
+            # to keep idempotency simple)
+    except Exception as e:
+        print(f"[{job_id}] orphan refund failed ({reason}, non-fatal): {e}")
+    finally:
+        job.pop("payment", None)
 
 
 def _active_optimizing_for_client(client_id):
@@ -568,7 +770,9 @@ def _merge_tokens_from_disk():
                 created = float(info.get("created_at", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            if (now - created) > EMAIL_FILE_RETENTION_SEC + 300:
+            # Per token PREMIUM (is_gemini) la retention e' GEMINI_FILE_RETENTION_SEC,
+            # raddoppiata se non risulta alcun download (_effective_*).
+            if (now - created) > _effective_retention_for_token_info(info) + 300:
                 continue
             if tok not in _download_tokens:
                 _download_tokens[tok] = info
@@ -607,14 +811,27 @@ def _save_tokens():
                     "lang": info.get("lang", "en"),
                     "optimized_abm_path": info.get("optimized_abm_path", ""),
                     "optimized_abm_name": info.get("optimized_abm_name", ""),
+                    # Marker per scegliere retention: True se job ha generato con voce PREMIUM.
+                    "is_gemini": bool(info.get("is_gemini", False)),
+                    # Timestamp primo download reale del file via /dl/<token>/*.
+                    # 0/None = mai scaricato (attiva protezione 2x per voci PREMIUM).
+                    "downloaded_at": info.get("downloaded_at") or 0,
                     # Fields required by /dl/<token> rendering after worker restart
                     # or cross-worker token merge (Gunicorn multi-process).
                     "output_format": info.get("output_format", ""),
                     "output_m4b": info.get("output_m4b", ""),
                     "ai_optimized": info.get("ai_optimized", False),
                 }
-            with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
+            # Atomic write: tmp + fsync + rename per evitare corruzione su crash
+            _tmp_tokens = _TOKENS_FILE.with_suffix(_TOKENS_FILE.suffix + ".tmp")
+            with open(_tmp_tokens, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(_tmp_tokens), str(_TOKENS_FILE))
     except Exception as e:
         print(f"[tokens] Failed to save tokens: {e}")
 
@@ -631,8 +848,9 @@ def _load_tokens():
         loaded = 0
         expired = 0
         for tok, info in data.items():
-            # Skip expired tokens
-            if (now - info.get("created_at", 0)) > EMAIL_FILE_RETENTION_SEC + 300:
+            # Skip expired tokens (retention dipende da is_gemini sul token,
+            # raddoppiata se downloaded_at non e' settato).
+            if (now - info.get("created_at", 0)) > _effective_retention_for_token_info(info) + 300:
                 expired += 1
                 continue
             # Verify that job files still exist
@@ -652,7 +870,7 @@ def _load_tokens():
 # PAYMENTS & VOUCHERS (for LLM optimization) — state lives in payment.py
 # ----------------------------------------------------------------------
 
-# Sospensione avvio nuovi processi (attivabile da admin via /logs)
+# Sospensione avvio nuovi processi (attivabile da admin via /admin/log-activity)
 _suspend_new_jobs = False
 _suspend_lock = threading.Lock()
 
@@ -741,9 +959,29 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Google voices: {e}")
 
-    # 3. Voci Gemini: deliberatamente NON esposte all'elenco UI in nessun caso.
-    #    Il modulo gemini_tts resta importato per la pipeline interna, ma le sue
-    #    voci non devono mai apparire nel selector lato utente.
+    # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
+    # `gemini_tts is not None` significa solo che il modulo è importato;
+    # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
+    # NB: il branch GEMINI espone le voci nel tab "PREMIUM" (la rimozione
+    # fatta su main era temporanea per la release pre-feature).
+    if gemini_tts is not None and gemini_tts.is_available():
+        try:
+            gem_dict = gemini_tts.get_voices()
+            for lc_short, v_list in gem_dict.items():
+                if lc_short not in languages:
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                # Gemini voices are multilingual; gender è impostato in
+                # gemini_tts.get_voices() da GEMINI_VOICE_GENDER (doc Google).
+                # Lo shim resta come fallback per voci eventuali senza metadata.
+                for v in v_list:
+                    v.setdefault("gender", "Neutral")
+                    v.setdefault("gender_icon", "★")
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            print(f"Error merging Gemini voices: {e}")
 
     # Sorting
     for lang in languages.values():
@@ -801,10 +1039,11 @@ def parse_abm(path):
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url=''):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     try:
         return generation_engine.run_generation(job_id, info, voice, rate, single_file,
-                                                 output_format=output_format, podcast_base_url=podcast_base_url)
+                                                 output_format=output_format, podcast_base_url=podcast_base_url,
+                                                 gemini_style_instruction=gemini_style_instruction)
     except Exception as e:
         print(f"[{job_id}] CRITICAL: run_generation wrapper crashed: {e}")
         import traceback
@@ -1027,6 +1266,128 @@ def index_hi():
     return _serve_lang("hi")
 
 
+# ── FAQ Page (dedicated) ────────────────────────────────────────────
+
+_FAQ_TITLES = {
+    "it": "Domande Frequenti — Audiobook Maker",
+    "en": "Frequently Asked Questions — Audiobook Maker",
+    "fr": "Questions Fréquentes — Audiobook Maker",
+    "es": "Preguntas Frecuentes — Audiobook Maker",
+    "de": "Häufig Gestellte Fragen — Audiobook Maker",
+    "zh": "常见问题 — Audiobook Maker",
+    "hi": "अक्सर पूछे जाने वाले प्रश्न — Audiobook Maker",
+}
+
+
+@app.route("/faq/")
+def faq_page_root():
+    """Redirect root FAQ to the browser-language or English variant."""
+    lang = _detect_lang()
+    if not lang or lang not in _SUPPORTED_LANGS:
+        lang = "en"
+    base = BASE_URL or ""
+    if base:
+        return redirect(f"{base}/faq/{lang}/", code=301)
+    return redirect(f"/faq/{lang}/", code=301)
+
+
+@app.route("/faq/<lang>/")
+def faq_page(lang):
+    """Dedicated FAQ page per language. Crawler-facing minimal HTML with
+    JSON-LD FAQPage schema and full hreflang alternates."""
+    if lang not in _SUPPORTED_LANGS:
+        return "Language not supported", 404
+
+    html_lang = {"zh": "zh-Hans"}.get(lang, lang)
+    c = seo_content._CONTENT.get(lang, seo_content._CONTENT.get("en", {}))
+    title = html_mod.escape(_FAQ_TITLES.get(lang, _FAQ_TITLES["en"]))
+    desc = html_mod.escape(c.get("direct_answer", ""))
+    base = BASE_URL or ""
+    canonical = f"{base}/faq/{lang}/"
+
+    # Build hreflang links for FAQ page
+    hreflang_lines = []
+    lc_to_hl = {
+        "it": "it", "en": "en", "fr": "fr", "es": "es",
+        "de": "de", "zh": "zh-Hans", "hi": "hi",
+    }
+    for lc, hl in lc_to_hl.items():
+        href = f"{base}/faq/{lc}/" if base else f"/faq/{lc}/"
+        hreflang_lines.append(
+            f'<link rel="alternate" hreflang="{hl}" href="{href}">'
+        )
+    x_default_href = f"{base}/faq/en/" if base else "/faq/en/"
+    hreflang_lines.append(
+        f'<link rel="alternate" hreflang="x-default" href="{x_default_href}">'
+    )
+    hreflang_block = "\n    ".join(hreflang_lines)
+
+    # Build FAQ HTML
+    faqs_html = ""
+    faq_ld_items = []
+    for q, a in c.get("faqs", []):
+        faqs_html += (
+            f'  <details open><summary>{html_mod.escape(q)}</summary>\n'
+            f'    <p>{html_mod.escape(a)}</p>\n'
+            f'  </details>\n\n'
+        )
+        faq_ld_items.append({
+            "@type": "Question",
+            "name": q,
+            "acceptedAnswer": {"@type": "Answer", "text": a},
+        })
+
+    faq_ld_json = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": faq_ld_items,
+    }, ensure_ascii=False)
+
+    iso_modified = datetime.now().strftime("%Y-%m-%d")
+
+    page = f'''<!DOCTYPE html>
+<html lang="{html_lang}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{title}</title>
+    <meta name="description" content="{desc}">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="{canonical}">
+    {hreflang_block}
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{title}">
+    <meta property="og:description" content="{desc}">
+    <meta property="og:url" content="{canonical}">
+    <meta property="article:published_time" content="2022-06-01">
+    <meta property="article:modified_time" content="{iso_modified}">
+    <script type="application/ld+json">{faq_ld_json}</script>
+    <style>
+        body{{margin:0;padding:0;background:#f5f3ef;font-family:system-ui,sans-serif;color:#2c2a26}}
+        main{{max-width:760px;margin:0 auto;padding:24px 20px 48px}}
+        h1{{font-size:1.5rem;font-weight:700;margin:0 0 8px}}
+        .sub{{color:#8B7B6B;margin:0 0 32px;font-size:.95rem}}
+        details{{border:1px solid #d5d0c8;border-radius:8px;padding:16px 20px;margin-bottom:12px;background:#fff}}
+        summary{{font-weight:600;cursor:pointer;font-size:1rem;color:#c29a6c}}
+        summary:hover{{color:#a07840}}
+        details p{{margin:12px 0 0;line-height:1.6;color:#4a4640;font-size:.95rem}}
+        .footer{{text-align:center;color:#8B7B6B;font-size:.82rem;margin-top:40px}}
+        .footer a{{color:#c29a6c}}
+    </style>
+</head>
+<body>
+<main>
+    <h1>{title}</h1>
+    <p class="sub">{desc}</p>
+{faqs_html}</main>
+<div class="footer">
+    <a href="/">Audiobook Maker</a> &middot; {iso_modified}
+</div>
+</body>
+</html>'''
+    return page, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/content/<lang>/")
 def seo_content_page(lang):
     """Dedicated SEO content page per language. Minimal HTML wrapper around
@@ -1174,6 +1535,25 @@ def sitemap():
 {content_alternates}
   </url>""")
 
+    # FAQ pages — 7 lingue, priority 0.8 (high value for featured snippets)
+    faq_alt_lines = []
+    for lc, hl in lang_hreflang_map.items():
+        faq_alt_lines.append(
+            f'      <xhtml:link rel="alternate" hreflang="{hl}" href="{BASE_URL}/faq/{lc}/"/>'
+        )
+    faq_alt_lines.append(
+        f'      <xhtml:link rel="alternate" hreflang="x-default" href="{BASE_URL}/faq/en/"/>'
+    )
+    faq_alternates = "\n".join(faq_alt_lines)
+    for lc in lang_hreflang_map:
+        urls.append(f"""  <url>
+    <loc>{BASE_URL}/faq/{lc}/</loc>
+    <lastmod>{home_lastmod}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+{faq_alternates}
+  </url>""")
+
     # Guide pages — 4 guide × 7 lingue = 28 URL
     # Guide route is /guide/<id>/?lang=xx, canonical URL has ?lang= param
     for guide_id in sorted(_VALID_GUIDES):
@@ -1224,7 +1604,6 @@ Allow: /
 Disallow: /api/
 Disallow: /data/
 Disallow: /dl/
-Disallow: /logs
 Disallow: /admin/
 Disallow: /community/api/
 Disallow: /*?job=
@@ -1370,6 +1749,7 @@ When quoting facts from this site, cite one of:
 - [M4B Format Guide]({base}/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
 - [Text-to-Speech for Audiobooks]({base}/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
 - [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
+- [Frequently Asked Questions]({base}/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 
 ## How it works
 
@@ -1459,9 +1839,9 @@ def web_manifest():
     }
 
 
-#  -  -  -  Admin log viewer (/logs)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
-# URL: /logs?2026-03  (parametro = anno-mese)
-# Non indicizzato (Disallow: /logs in robots.txt consigliato)
+#  -  -  -  Admin log viewer (/admin/log-activity)  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
+# URL: /admin/log-activity?2026-03  (parametro = anno-mese)
+# Non indicizzato (gia` coperto da Disallow: /admin/ in robots.txt)
 
 
 def _parse_log_sessions(ym):
@@ -1545,57 +1925,34 @@ def _session_completed(s):
 def _session_in_progress(s, sid):
     """Return True if session has an active AI optimization or TTS generation.
 
-    Un'attività è considerata "in corso" se:
-      - È stato avviato un evento di lavoro (GENERATE = TTS, OPTIMIZE = ottimizzazione AI),
-      - Non risulta fra gli eventi una conclusione (COMPLETE / DOWNLOAD* / OPT_COMPLETE),
-      - Non risulta un'annullamento (CANCEL / OPT_CANCEL),
-      - Il job esiste ancora in memoria con stato attivo (`generating`, `optimizing`,
-        `optimized` in attesa di auto-gen, ecc.).
+    Lo stato runtime del job (`jobs[sid]["status"]`) e' la fonte autoritativa:
+    se il job e' ancora in memoria in uno stato attivo (optimizing, optimized
+    in attesa di auto-gen, generating, running, ecc.) la sessione e' in corso
+    indipendentemente da cosa contiene il log. Questo evita il bug per cui
+    un job auto-gen (OPT_COMPLETE -> generazione TTS) appariva "non in corso"
+    in attesa che l'evento GENERATE venisse scritto, perche' OPT_COMPLETE
+    chiudeva il ramo opt_live e GENERATE non era ancora presente nel log.
+
+    Fallback (job non piu' in memoria, es. dopo restart server): si guarda al
+    log eventi e si applica la regola conservativa "start senza terminator e
+    senza cancel", ma siccome il job manca, si ritorna comunque False per
+    evitare falsi positivi su sessioni storiche zombie.
     """
-    events = set(s["events"])
-    has_work_start = ("GENERATE" in events) or ("OPTIMIZE" in events)
-    if not has_work_start:
-        return False
-
-    # Terminazioni TTS
-    tts_done = bool(events & {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
-                              "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST"})
-    tts_cancel = "CANCEL" in events
-    # Terminazioni ottimizzazione
-    opt_cancel = "OPT_CANCEL" in events
-
-    tts_started = "GENERATE" in events
-    opt_started = "OPTIMIZE" in events
-
-    # Un'ottimizzazione ancora in corso: avviata e non cancellata/completata.
-    # Nota: OPT_COMPLETE è seguito tipicamente da GENERATE se auto_generate è attivo,
-    # quindi non lo consideriamo un terminatore definitivo a livello di sessione.
-    opt_live = opt_started and not opt_cancel and "OPT_COMPLETE" not in events
-    # Una generazione TTS ancora in corso: avviata e non cancellata/completata.
-    tts_live = tts_started and not tts_done and not tts_cancel
-
-    if not (opt_live or tts_live):
-        return False
-
-    # Cross-reference con lo stato runtime del job per evitare "zombie" da log.
     job = jobs.get(sid)
     if job:
         st = job.get("status", "")
-        active_states = {"generating", "optimizing", "optimized"}
-        if st in active_states:
-            return True
-        # job esistente ma in stato finale  →  non più in corso
-        return False
-    # Fallback (job non più in memoria): non considerare "in corso" le sessioni
-    # storiche  -  ritorna False per evitare falsi positivi dopo un restart del server.
+        # Unione di _ACTIVE_JOB_STATUSES (Gemini audit, vedi 3838) e degli
+        # stati intermedi del flusso ottimizzazione/auto-gen.
+        active_states = set(_ACTIVE_JOB_STATUSES) | {"optimizing", "optimized"}
+        return st in active_states
     return False
 
 
-@app.route("/logs")
+@app.route("/admin/log-activity")
 def admin_logs():
     if not ADMIN_TOKEN: return "Logs UI disabled.", 404
     token = _admin_auth_from_request()
-    if not _admin_auth_ok(token): return _render_admin_gate("Logs Viewer", "/logs"), 200, {"Content-Type": "text/html; charset=utf-8"}
+    if not _admin_auth_ok(token): return _render_admin_gate("Log Activity", "/admin/log-activity"), 200, {"Content-Type": "text/html; charset=utf-8"}
     _log_i18n = {
         "it": {
             "sessions": "Sessioni", "gen_completed": "Gen. completata",
@@ -1604,6 +1961,7 @@ def admin_logs():
             "recurring": "Ricorrenti", "months": "Mesi",
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
+            "gemini_started": "Gen. Gemini",
             "eta_label": "Stima completamento gen.",
         },
         "en": {
@@ -1613,6 +1971,7 @@ def admin_logs():
             "recurring": "Returning", "months": "Months",
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
+            "gemini_started": "Gemini runs",
             "eta_label": "ETA",
         },
         "fr": {
@@ -1622,6 +1981,7 @@ def admin_logs():
             "recurring": "Récurrents", "months": "Mois",
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
+            "gemini_started": "Gén. Gemini",
             "eta_label": "ETA",
         },
         "de": {
@@ -1631,6 +1991,7 @@ def admin_logs():
             "recurring": "Wiederkehrend", "months": "Monate",
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
+            "gemini_started": "Gemini-Läufe",
             "eta_label": "ETA",
         },
         "es": {
@@ -1640,6 +2001,7 @@ def admin_logs():
             "recurring": "Recurrentes", "months": "Meses",
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
+            "gemini_started": "Gen. Gemini",
             "eta_label": "ETA",
         },
         "zh": {
@@ -1649,6 +2011,7 @@ def admin_logs():
             "recurring": "常客", "months": "月份",
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
+            "gemini_started": "Gemini 生成",
             "eta_label": "预计剩余",
         },
         "hi": {
@@ -1658,6 +2021,7 @@ def admin_logs():
             "recurring": "नियमित", "months": "महीने",
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
+            "gemini_started": "Gemini जनरेशन",
             "eta_label": "शेष",
         },
     }
@@ -1693,6 +2057,12 @@ def admin_logs():
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
+    # Sessioni che hanno realmente avviato la generazione del libro con voci Gemini
+    # (esclude le anteprime: richiediamo GENERATE in events).
+    gemini_started = sum(
+        1 for s in sessions.values()
+        if "GENERATE" in s["events"] and str(s.get("voice", "")).startswith("gemini:")
+    )
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
@@ -1826,11 +2196,16 @@ def admin_logs():
             blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
 
             card_cls = "card card-in-progress" if is_progress else "card"
+            is_gemini_run = (
+                "GENERATE" in s["events"]
+                and str(voice_raw).startswith("gemini:")
+            )
             data_attrs = (
                 f'data-status="{card_status}" '
                 f'data-email="{1 if has_email else 0}" '
                 f'data-recurring="{1 if is_recurring else 0}" '
-                f'data-identified="{1 if is_identified else 0}"'
+                f'data-identified="{1 if is_identified else 0}" '
+                f'data-gemini="{1 if is_gemini_run else 0}"'
             )
 
             cards_html += f"""<div class="{card_cls}" {data_attrs}>
@@ -1896,7 +2271,7 @@ def admin_logs():
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
-        months_nav += f'<a href="/logs?{m}{token_qs}"{active_cls}>{m}</a> '
+        months_nav += f'<a href="/admin/log-activity?{m}{token_qs}"{active_cls}>{m}</a> '
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1933,8 +2308,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat.stat-green.active{{border-color:var(--green);box-shadow:0 0 0 2px rgba(34,197,94,.25)}}
 .stat.stat-red.active{{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.25)}}
 .stat.stat-orange.active{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.25)}}
+.stat.stat-gemini.active{{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.25)}}
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
-.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
 .stat-eta{{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}}
 .stat-eta .eta-lbl{{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}}
@@ -1987,7 +2363,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/logs/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
+        <a class="btn btn-accent" href="/admin/audit-tts?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
+        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -2001,6 +2378,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
     <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">{returning_clients}</div><div class="lbl">{t["recurring"]}</div></div>
+    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci Gemini (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
 </div>
 
 <div class="cards-container">
@@ -2149,6 +2527,7 @@ function filterCards(filter, el) {{
         else if (filter === 'email') {{ show = card.dataset.email === '1'; }} 
         else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }} 
         else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
+        else if (filter === 'gemini') {{ show = card.dataset.gemini === '1'; }}
         card.classList.toggle('card-hidden', !show);
     }});
     document.querySelectorAll('.day-group').forEach(group => {{
@@ -2303,7 +2682,22 @@ checkSuspendStatus();
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.route("/logs/export")
+def _csv_safe(val):
+    """Sanitizza un valore per esportazioni CSV/XLSX contro CSV-injection.
+
+    Excel/LibreOffice interpretano celle che iniziano con =, +, -, @, TAB, CR
+    come formule. Prefissiamo con apostrofo ('), che disabilita l'interpretazione
+    e non viene mostrato nella cella.
+    """
+    if val is None:
+        return ""
+    s = str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+@app.route("/admin/log-activity/export")
 def admin_logs_export():
     """Export activity log as Excel (.xlsx) file."""
     if not ADMIN_TOKEN: return "Export disabled.", 404
@@ -2340,11 +2734,13 @@ def admin_logs_export():
         cid = s.get("client_id", "")
         recurring = "Yes" if client_session_count.get(cid, 0) >= 2 else "No"
         writer.writerow([
-            sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+            _csv_safe(sid), s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
             s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"), duration_min,
-            s["filename"], s["last_op"], "  →  ".join(s["events"]),
-            cid, s.get("client_ip", ""), s.get("voice", ""),
-            s.get("browser_lang", ""), completed, in_progress, recurring,
+            _csv_safe(s["filename"]), _csv_safe(s["last_op"]),
+            _csv_safe("  →  ".join(s["events"])),
+            _csv_safe(cid), _csv_safe(s.get("client_ip", "")),
+            _csv_safe(s.get("voice", "")),
+            _csv_safe(s.get("browser_lang", "")), completed, in_progress, recurring,
         ])
 
     try:
@@ -2386,11 +2782,13 @@ def admin_logs_export():
         data_font = Font(name="Arial", size=10, color="e2e8f0")
         for row_idx, (sid, s) in enumerate(reversed(list(sessions.items())), 5):
             delta = s["last_dt"] - s["first_dt"]
-            row_data = [sid, s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
+            row_data = [_csv_safe(sid), s["first_dt"].strftime("%Y-%m-%d %H:%M:%S"),
                         s["last_dt"].strftime("%Y-%m-%d %H:%M:%S"),
-                        round(delta.total_seconds() / 60, 1), s["filename"], s["last_op"],
-                        "  →  ".join(s["events"]), s.get("client_id", ""), s.get("client_ip", ""),
-                        s.get("voice", ""), s.get("browser_lang", ""),
+                        round(delta.total_seconds() / 60, 1),
+                        _csv_safe(s["filename"]), _csv_safe(s["last_op"]),
+                        _csv_safe("  →  ".join(s["events"])),
+                        _csv_safe(s.get("client_id", "")), _csv_safe(s.get("client_ip", "")),
+                        _csv_safe(s.get("voice", "")), _csv_safe(s.get("browser_lang", "")),
                         "✅" if _session_completed(s) else "❌",
                         "✅" if _session_in_progress(s, sid) else "",
                         "✅" if client_session_count.get(s.get("client_id", ""), 0) >= 2 else ""]
@@ -2917,19 +3315,1073 @@ def admin_api_voucher_revoke(code):
         time.sleep(0.5)
         return jsonify({"error": "Unauthorized"}), 401
     code = (code or "").strip().upper()
-    if code not in payment._vouchers:
-        return jsonify({"error": "Not found"}), 404
-    v = payment._vouchers[code]
     reason = ((request.json or {}).get("reason") or "").strip()[:200]
-    v["used"] = True
-    v["used_at"] = time.time()
-    v["remaining_eur"] = 0.0
-    v["revoked"] = True
-    v["revoke_reason"] = reason or "admin revoke"
-    _save_vouchers()
+    with payment._vouchers_lock:
+        if code not in payment._vouchers:
+            return jsonify({"error": "Not found"}), 404
+        v = payment._vouchers[code]
+        v["used"] = True
+        v["used_at"] = time.time()
+        v["remaining_eur"] = 0.0
+        v["revoked"] = True
+        v["revoke_reason"] = reason or "admin revoke"
+        _save_vouchers()
     _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
+
+
+@app.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
+def admin_forensic_zip(job_id):
+    """Scarica ZIP della work_dir di un job Gemini fallito per analisi post-mortem.
+    Richiede admin auth via cookie HttpOnly (set da /admin/login) o header
+    X-Admin-Token. Disponibile finché la dir è protetta dal marker forense
+    (default 7 giorni dal refund; ABM_GEMINI_FORENSIC_RETENTION_DAYS).
+    """
+    if not ADMIN_TOKEN:
+        return ("Admin disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return ("Unauthorized. Effettua login su /admin/audit-tts e ritorna a questo link.",
+                401, {"Content-Type": "text/plain; charset=utf-8"})
+    if "/" in job_id or "\\" in job_id or ".." in job_id:
+        return ("Invalid job_id", 400, {"Content-Type": "text/plain; charset=utf-8"})
+    work_dir = UPLOAD_DIR / job_id
+    if not work_dir.exists() or not work_dir.is_dir():
+        return ("Work dir not found (cleanup completed or never existed).",
+                404, {"Content-Type": "text/plain; charset=utf-8"})
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for root, _dirs, files in os.walk(str(work_dir)):
+                for fn in files:
+                    fp = Path(root) / fn
+                    try:
+                        arc = fp.relative_to(work_dir.parent)
+                        zf.write(str(fp), str(arc))
+                    except (OSError, ValueError):
+                        continue
+    except OSError as e:
+        return (f"Zip build failed: {e}", 500, {"Content-Type": "text/plain; charset=utf-8"})
+    payload = buf.getvalue()
+    safe = re.sub(r'[^a-zA-Z0-9_-]', '_', job_id).strip("_") or "job"
+    return Response(
+        payload,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="forensic_{safe}.zip"',
+            "Content-Length": str(len(payload)),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.route("/admin/audit-tts", methods=["GET"])
+def admin_logs_page():
+    """Admin TTS audit dashboard. Hosts the Gemini Cost Audit and Events/Refunds tabs."""
+    if not ADMIN_TOKEN:
+        return ("Admin audit TTS UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return _render_admin_gate("Audit TTS", "/admin/audit-tts"), 200, {"Content-Type": "text/html; charset=utf-8"}
+    html = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - Audit TTS</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
+  .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
+  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
+  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+  button.secondary{background:#334155}
+  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:12px}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:6px 8px;border-bottom:1px solid #1e293b}
+  .agg-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}
+  .agg-grid-6{grid-template-columns:repeat(6,1fr)}
+  @media(max-width:900px){.agg-grid,.agg-grid-6{grid-template-columns:1fr 1fr}}
+  .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
+  .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
+  .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
+  .delta-positive{color:var(--ok)}
+  .delta-negative{color:var(--err)}
+  .empty-msg{text-align:center;color:var(--muted);padding:20px}
+  pre{background:#0f172a;padding:12px;border-radius:6px;overflow:auto;font-size:.8rem}
+  tr.row-refund{background:rgba(239,68,68,0.10)}
+  tr.row-refund td{border-bottom-color:rgba(239,68,68,0.35)}
+  tr.row-preflight{background:rgba(37,99,235,0.10)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .badge-ok{background:rgba(16,185,129,.18);color:#10b981}
+  .badge-err{background:rgba(239,68,68,.18);color:#ef4444}
+  .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
+  .badge-info{background:rgba(59,130,246,.18);color:#60a5fa}
+  .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
+  .badge-live{background:rgba(139,92,246,.22);color:var(--accent);animation:livePulse 1.8s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
+  tr.row-live{background:rgba(139,92,246,.10)}
+  tr.row-live td{border-bottom-color:rgba(139,92,246,.30)}
+  .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
+  .toggle-row input{width:auto}
+</style></head>
+<body>
+<h1>Admin - Audit TTS <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+
+<div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
+  <div style="flex:1;min-width:280px">
+    <h2 style="margin:0 0 4px">Voci PREMIUM (Gemini TTS)</h2>
+    <div id="ksStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
+    <div id="ksReason" style="font-size:.8rem;color:var(--muted);margin-top:4px;display:none"></div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="text" id="ksReasonInput" placeholder="Motivo (facoltativo)"
+           maxlength="200" style="width:240px;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.85rem">
+    <button type="button" id="ksToggleBtn" disabled>...</button>
+  </div>
+</div>
+
+<div class="tab-bar">
+  <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
+  <button type="button" class="tab-btn" data-tab="gemini_events">Eventi &amp; Rimborsi</button>
+</div>
+
+<div class="tab-panel active" id="tab_gemini_audit">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="auditModelFilter">Modello</label>
+        <select id="auditModelFilter">
+          <option value="all">Tutti</option>
+          <option value="flash25">Gemini 2.5 Flash TTS</option>
+          <option value="flash31">Gemini 3.1 Flash TTS</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditLangFilter">Lingua</label>
+        <select id="auditLangFilter">
+          <option value="all">Tutte</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditOutcomeFilter">Esito</label>
+        <select id="auditOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito generico (rimborsato)</option>
+          <option value="failed_quota_refunded">Fallito quota (rimborsato)</option>
+          <option value="failed_budget_refunded">Fallito budget (rimborsato)</option>
+          <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
+          <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+          <option value="cancelled_partial">Annullato (parziale)</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditDateFrom">Dal</label>
+        <input type="date" id="auditDateFrom">
+      </div>
+      <div>
+        <label for="auditDateTo">Al</label>
+        <input type="date" id="auditDateTo">
+      </div>
+    </div>
+    <button type="button" id="auditRefreshBtn">Aggiorna</button>
+    <button type="button" id="auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
+    <pre id="auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.5"></pre>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6" id="auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo Google</div><div class="agg-value" id="aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi − Costo Google (include fee PayPal)">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine − fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
+        <th>Char</th><th>Sec audio</th><th>Costo G.</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine / Costo Google · markup applicato">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="auditRecordsBody">
+        <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_gemini_events">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="evModelFilter">Modello</label>
+        <select id="evModelFilter">
+          <option value="all">Tutti</option>
+          <option value="flash25">Gemini 2.5 Flash TTS</option>
+          <option value="flash31">Gemini 3.1 Flash TTS</option>
+        </select>
+      </div>
+      <div>
+        <label for="evLangFilter">Lingua</label>
+        <select id="evLangFilter">
+          <option value="all">Tutte</option>
+        </select>
+      </div>
+      <div>
+        <label for="evDateFrom">Dal</label>
+        <input type="date" id="evDateFrom">
+      </div>
+      <div>
+        <label for="evDateTo">Al</label>
+        <input type="date" id="evDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="evRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <label><input type="checkbox" id="evOnlyRefunds"> Solo eventi con rimborso</label>
+      <span style="margin-left:auto;font-size:.85em">Eventi con rimborso evidenziati in rosso; blocchi preventivi in blu.</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati Eventi</h2>
+    <div class="agg-grid">
+      <div class="agg-box"><div class="agg-label">Totale eventi</div><div class="agg-value" id="evCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Completati</div><div class="agg-value" id="evCompleted">-</div></div>
+      <div class="agg-box"><div class="agg-label">Rimborsi</div><div class="agg-value" id="evRefunds" style="color:#ef4444">-</div></div>
+      <div class="agg-box"><div class="agg-label">Bloccati preflight</div><div class="agg-value" id="evPreflight" style="color:#60a5fa">-</div></div>
+      <div class="agg-box"><div class="agg-label">Annullati</div><div class="agg-value" id="evCancelled">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Eventi (ultimi 500)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Esito</th><th>Modello</th>
+        <th>Lingua</th><th>Char</th><th>Prezzo &euro;</th><th>Costo G. &euro;</th>
+      </tr></thead>
+      <tbody id="evRecordsBody">
+        <tr><td colspan="8" class="empty-msg">Premi "Aggiorna" per caricare gli eventi.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ADMIN_TOKEN = """ + '"' + token + '"' + r""";
+  const $ = (id) => document.getElementById(id);
+
+  function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  function fmtPct(n){
+    const v = Number(n)||0;
+    const cls = v >= 0 ? "delta-positive" : "delta-negative";
+    return `<span class="${cls}">${v.toFixed(2)}%</span>`;
+  }
+
+  // Italian display names per i codici lingua usati dal motore Gemini TTS.
+  // Coprire l'intero set ufficiale (24) cosi` la dropdown e` sensata anche
+  // quando in futuro verranno generati audio in lingue oggi non esposte in UI.
+  const LANG_NAMES = {
+    "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
+    "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
+    "ko":"Coreano","zh":"Cinese","hi":"Hindi","ar":"Arabo",
+    "id":"Indonesiano","nl":"Olandese","pl":"Polacco","th":"Thai",
+    "tr":"Turco","vi":"Vietnamita","ro":"Rumeno","uk":"Ucraino",
+    "bn":"Bengalese","mr":"Marathi","ta":"Tamil","te":"Telugu",
+  };
+  function langLabel(code){
+    const c = (code||"").toLowerCase();
+    return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
+  }
+
+  async function loadLanguageOptions(){
+    let codes = [];
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/languages",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (r.ok) {
+        const d = await r.json();
+        codes = Array.isArray(d.languages) ? d.languages : [];
+      }
+    } catch(e) { /* silenzioso: dropdown resta con solo "Tutte" */ }
+    codes = codes.slice().sort((a,b) =>
+      langLabel(a).localeCompare(langLabel(b), "it"));
+    for (const selId of ["auditLangFilter", "evLangFilter"]) {
+      const sel = $(selId);
+      if (!sel) continue;
+      const prev = sel.value;
+      // Rimuove option diverse da "all" e ripopola
+      Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
+      for (const code of codes) {
+        const opt = document.createElement("option");
+        opt.value = code;
+        opt.textContent = langLabel(code);
+        sel.appendChild(opt);
+      }
+      if (prev && Array.from(sel.options).some(o => o.value === prev)) {
+        sel.value = prev;
+      }
+    }
+  }
+
+  async function fetchAudit(){
+    const params = new URLSearchParams();
+    const m = $("auditModelFilter").value;
+    const l = $("auditLangFilter").value;
+    const o = $("auditOutcomeFilter").value;
+    const df = $("auditDateFrom").value;
+    const dt = $("auditDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (l && l !== "all") params.set("language", l);
+    if (o && o !== "all") params.set("outcome", o);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "200");
+    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
+    const d = await r.json();
+    renderAggregates(d.aggregates || {});
+    renderRecords(d.records || []);
+  }
+
+  function renderAggregates(agg){
+    $("aggCount").textContent = agg.count ?? 0;
+    $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("aggMargin").textContent = fmtEur(agg.margin_eur);
+    // Margine netto: gia` decurtato delle fee PayPal lato server (voucher=0).
+    const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
+                      : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
+    const netEl = $("aggNetMargin");
+    if (netEl) {
+      netEl.textContent = fmtEur(netMargin);
+      netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
+    }
+    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
+      ? (Number(agg.margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      : 0;
+    $("aggDelta").innerHTML = fmtPct(_margPctAvg);
+  }
+
+  function esc(s){
+    const d = document.createElement('div');
+    d.textContent = (s == null ? "" : String(s));
+    return d.innerHTML;
+  }
+
+  function renderRecords(recs){
+    const tbody = $("auditRecordsBody");
+    if (!recs.length) {
+      tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">Nessun record trovato.</td></tr>';
+      return;
+    }
+    // Ordina mettendo i live "running" sempre in cima, poi gli altri per ts desc.
+    recs = recs.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = recs.map(r => {
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      // Prezzo effettivo: per cancel anticipato usa quanto trattenuto
+      // (cancel_retained_eur) invece dell'originale pre-pagato; per record
+      // normali coincide con user_price_eur_charged.
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const gCost = Number(r.google_cost_eur_actual || 0);
+      // Margine = Prezzo − Costo Google (lordo, include fee PayPal).
+      const margEur = revenue - gCost;
+      // Margine netto: prende _net_margin_eur dal server (gia` decurta fee
+      // PayPal per i record paypal, zero per voucher/free). Fallback locale:
+      // se il campo manca (record antichi non passati per _apply_cancel_effective),
+      // assume nessuna fee.
+      const fee = Number(r._paypal_fee_eur || 0);
+      const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
+                                                  : (margEur - fee);
+      const method = (r.payment_method || "").toLowerCase();
+      const netTip = method === "paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
+        : (method === "voucher" ? "Voucher: nessuna fee PayPal"
+            : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
+      const margPct = gCost > 0 ? (margEur / gCost * 100) : 0;
+      const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
+      const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
+      const isLive = !!r._live;
+      const rowCls = isLive ? "row-live" : "";
+      const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      // Per cancel: mostra prezzo effettivo + tooltip con il pagato originale.
+      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
+        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
+        : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(r.model_key)}</td>
+        <td>${esc(langLabel(r.language))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td>${(Number(r.audio_seconds_actual) || 0).toFixed(1)}</td>
+        <td>${fmtEur(gCost)}</td>
+        <td${cancelTip}>${fmtEur(revenue)}</td>
+        <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
+        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("auditRefreshBtn").addEventListener("click", fetchAudit);
+
+  async function recalcParams(){
+    const out = $("auditRecalcOutput");
+    out.style.display = "block";
+    out.textContent = "Caricamento...";
+    try {
+      const r = await fetch("/admin/api/gemini_cost_audit/recalc-params",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) {
+        out.textContent = "Errore: " + r.status;
+        return;
+      }
+      const d = await r.json();
+      const sugg = d.suggestions || [];
+      if (!sugg.length) {
+        out.textContent = "Nessun suggerimento (campioni insufficienti).";
+      } else {
+        out.textContent = sugg.join("\n");
+      }
+    } catch (e) {
+      out.textContent = "Errore: " + e;
+    }
+  }
+  $("auditRecalcBtn").addEventListener("click", recalcParams);
+
+  // ---- Tab switching ----
+  function showTab(name){
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.tab === name);
+    });
+    document.querySelectorAll(".tab-panel").forEach(p => {
+      p.classList.toggle("active", p.id === "tab_" + name);
+    });
+    if (name === "gemini_events" && !window._evLoaded) {
+      window._evLoaded = true;
+      fetchEvents();
+    }
+    if (location.hash !== "#tab-" + name) {
+      location.hash = "#tab-" + name;
+    }
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+  });
+  if (location.hash === "#tab-gemini" || location.hash === "#tab-gemini_events") {
+    showTab("gemini_events");
+  }
+
+  // ---- Eventi & Rimborsi tab ----
+  const REFUND_OUTCOMES = new Set([
+    "failed_refunded", "failed_quota_refunded", "failed_budget_refunded",
+    "failed_quality_refunded", "preflight_blocked_refunded",
+    "cancelled_refunded", "cancelled_partial",
+  ]);
+  const OUTCOME_BADGE = {
+    "running":                    ["badge-live", "In corso"],
+    "completed":                  ["badge-ok",   "Completato"],
+    "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
+    "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
+    "failed_budget_refunded":     ["badge-err",  "Budget superato"],
+    "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
+    "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
+    "cancelled_refunded":         ["badge-muted","Annullato"],
+    "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
+    "cancelled":                  ["badge-muted","Annullato"],
+  };
+
+  async function fetchEvents(){
+    const params = new URLSearchParams();
+    const m = $("evModelFilter").value;
+    const l = $("evLangFilter").value;
+    const df = $("evDateFrom").value;
+    const dt = $("evDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (l && l !== "all") params.set("language", l);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "500");
+    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento eventi: " + r.status); return; }
+    const d = await r.json();
+    renderEvents(d.records || []);
+  }
+
+  function renderEvents(recs){
+    const onlyRefunds = $("evOnlyRefunds").checked;
+    let filtered = recs;
+    if (onlyRefunds) filtered = recs.filter(r => REFUND_OUTCOMES.has(r.outcome));
+    // Aggregati
+    let completed=0, refunds=0, preflight=0, cancelled=0;
+    for (const r of recs) {
+      if (r.outcome === "completed") completed++;
+      else if (r.outcome === "preflight_blocked_refunded") { preflight++; refunds++; }
+      else if (REFUND_OUTCOMES.has(r.outcome)) {
+        refunds++;
+        if (r.outcome.startsWith("cancelled")) cancelled++;
+      }
+    }
+    $("evCount").textContent = recs.length;
+    $("evCompleted").textContent = completed;
+    $("evRefunds").textContent = refunds;
+    $("evPreflight").textContent = preflight;
+    $("evCancelled").textContent = cancelled;
+
+    const tbody = $("evRecordsBody");
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Nessun evento.</td></tr>';
+      return;
+    }
+    // Live in cima, poi resto desc per ts.
+    filtered = filtered.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = filtered.map(r => {
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const out = r.outcome || "?";
+      const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
+      const rowCls = r._live ? "row-live"
+        : (REFUND_OUTCOMES.has(out)
+            ? (out === "preflight_blocked_refunded" ? "row-preflight" : "row-refund")
+            : "");
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
+        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
+        : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td>${esc(r.model_key)}</td>
+        <td>${esc(langLabel(r.language))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td${cancelTip}>${fmtEur(revenue)}</td>
+        <td>${fmtEur(r.google_cost_eur_actual)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("evRefreshBtn").addEventListener("click", fetchEvents);
+  $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
+
+  // ---- Kill-switch voci PREMIUM ----
+  async function ksRefresh(){
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) {
+        $("ksStatus").textContent = "Errore caricamento stato (" + r.status + ")";
+        return;
+      }
+      const s = await r.json();
+      ksApply(s);
+    } catch (e) {
+      $("ksStatus").textContent = "Errore: " + e;
+    }
+  }
+  function ksApply(s){
+    const btn = $("ksToggleBtn");
+    const status = $("ksStatus");
+    const reasonRow = $("ksReason");
+    btn.disabled = false;
+    if (!s.capability_ok && !s.disabled) {
+      status.innerHTML = '<span style="color:var(--muted)">Gemini TTS non configurato (nessun backend valido).</span>';
+      btn.textContent = "Non disponibile";
+      btn.disabled = true;
+      reasonRow.style.display = "none";
+      return;
+    }
+    if (s.disabled) {
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">DISATTIVO</span> · pannello voci PREMIUM nascosto agli utenti';
+      btn.textContent = "Riattiva voci PREMIUM";
+      btn.style.background = "var(--ok)";
+      if (s.reason) {
+        reasonRow.textContent = "Motivo: " + s.reason + (s.updated_at ? " (" + s.updated_at.slice(0,19).replace("T"," ") + ")" : "");
+        reasonRow.style.display = "block";
+      } else {
+        reasonRow.style.display = "none";
+      }
+    } else {
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">ATTIVO</span> · voci PREMIUM offerte agli utenti';
+      btn.textContent = "Disattiva voci PREMIUM";
+      btn.style.background = "var(--err)";
+      reasonRow.style.display = "none";
+    }
+    btn.dataset.targetDisabled = s.disabled ? "0" : "1";
+  }
+  async function ksToggle(){
+    const btn = $("ksToggleBtn");
+    const target = btn.dataset.targetDisabled === "1";
+    const reason = $("ksReasonInput").value.trim();
+    if (target && !confirm("Disattivare il pannello Voci PREMIUM per tutti gli utenti?\n\nLe stime e i pagamenti Premium risponderanno 503 finché non viene riattivato.")) {
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/gemini_kill_switch", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({disabled: target, reason: reason}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await ksRefresh(); return; }
+      const s = await r.json();
+      ksApply(s);
+      if (!target) $("ksReasonInput").value = "";
+    } catch (e) {
+      alert("Errore: " + e);
+      await ksRefresh();
+    }
+  }
+  $("ksToggleBtn").addEventListener("click", ksToggle);
+
+  // Auto-load on page open: prima popola la dropdown lingue, poi carica i record.
+  loadLanguageOptions().finally(fetchAudit);
+  ksRefresh();
+})();
+</script>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+_ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
+
+
+def _synth_running_gemini_audit_records():
+    """Snapshot dei job Gemini attivi sintetizzato in forma audit-shaped.
+
+    Permette a /admin/audit-tts di mostrare una riga immediatamente all'avvio
+    di una generazione Premium, aggiornata ad ogni refresh con i dati di
+    costo accumulati in `job["gemini_actual"]`. Quando il job termina, la riga
+    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
+    """
+    out = []
+    if gemini_tts is None:
+        return out
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for job_id, job in snapshot:
+        try:
+            if not isinstance(job, dict):
+                continue
+            status = job.get("status", "")
+            if status not in _ACTIVE_JOB_STATUSES:
+                continue
+            voice = job.get("voice") or job.get("opt_voice") or ""
+            if not _is_gemini_voice(voice):
+                continue
+            ga = job.get("gemini_actual") or {}
+            parts = voice.split(":")
+            model_key = parts[1] if len(parts) >= 3 else (ga.get("model_key") or "?")
+            info = job.get("info")
+            language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
+            payment = job.get("payment") or {}
+            charged = float(payment.get("total_eur", 0) or 0)
+            if charged <= 0:
+                charged = float(job.get("payment_amount_eur", 0) or 0)
+            google_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
+            try:
+                should = gemini_tts.compute_user_price_eur(google_cost_actual, model_key)
+                should_have_been = float(should.get("user_price_eur", 0.0))
+            except Exception:
+                should_have_been = 0.0
+            delta_eur = round(should_have_been - charged, 4)
+            rate_raw = job.get("rate", "+0%")
+            try:
+                rate_pct = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
+            except Exception:
+                rate_pct = 0
+            rec = {
+                "ts": job.get("started_at") or now_iso,
+                "job_id": job_id,
+                "model_key": model_key,
+                "language": language,
+                "rate_pct": rate_pct,
+                "chars_total": int(ga.get("chars", 0) or 0),
+                "audio_seconds_actual": round(float(ga.get("audio_seconds", 0) or 0), 2),
+                "google_cost_eur_actual": round(google_cost_actual, 4),
+                "user_price_eur_charged": round(charged, 4),
+                "user_price_eur_should_have_been": round(should_have_been, 2),
+                "delta_eur": delta_eur,
+                "margin_eur_actual": round(charged - google_cost_actual, 4),
+                "outcome": "running",
+                "_live": True,
+            }
+            out.append(rec)
+        except Exception:
+            continue
+    return out
+
+
+# Outcome che rappresentano un rimborso TOTALE all'utente: il ricavo
+# effettivo e' 0 a prescindere da `user_price_eur_charged` originario.
+# I `cancelled_partial` sono trattati a parte tramite `cancel_retained_eur`.
+_FULL_REFUND_OUTCOMES = frozenset({
+    "failed_refunded",
+    "failed_quota_refunded",
+    "failed_budget_refunded",
+    "failed_quality_refunded",
+    "preflight_blocked_refunded",
+    "cancelled_refunded",
+})
+
+
+def _compute_paypal_fee_eur(revenue_eur, payment_method):
+    """Stima fee PayPal addebitata sul ricavo PER QUESTO record.
+
+    Applica la formula PayPal standard (`% gross + fissa`) solo se il record
+    è stato pagato via PayPal e ha ricavo > 0; altrimenti ritorna 0:
+    - `voucher`: PayPal non e' coinvolto (lo era stato all'origine del voucher,
+      ma la fee era gia` stata pagata in quella transazione → non si addebita
+      due volte qui).
+    - rimborso totale (revenue_eur = 0): la fee viene quasi sempre trattenuta
+      da PayPal anche sui rimborsi, ma per l'audit del margine sul singolo job
+      consideriamo 0 (non c'e' ricavo da decurtare).
+    - free (nessun pagamento): 0.
+    - record legacy senza `payment_method`: 0 (conservativo: non assumiamo
+      paypal in assenza di dato).
+    """
+    try:
+        rev = float(revenue_eur or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if rev <= 0:
+        return 0.0
+    if (payment_method or "").lower() != "paypal":
+        return 0.0
+    if gemini_tts is None:
+        return 0.0
+    try:
+        pct = float(gemini_tts.PAYPAL_PERCENT_FEE)
+        fixed = float(gemini_tts.PAYPAL_FIXED_FEE_EUR)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    return round(rev * pct / 100.0 + fixed, 4)
+
+
+def _apply_cancel_effective(rec):
+    """Augmenta il record con `_eff_*` che riflettono i rimborsi reali.
+
+    - `cancelled_partial`: ricavo = quota trattenuta (`cancel_retained_eur`),
+      a copertura del consumato; eventuale eccedenza restituita.
+    - `*_refunded` (rimborso totale: qualita`/quota/budget/preflight/cancel
+      pre-attivita`/failure generico): ricavo = 0, quindi margine = -costo.
+    - altri (completed, running, ...): ricavo = `user_price_eur_charged`.
+
+    Aggiunge inoltre `_paypal_fee_eur` e `_net_margin_eur` (margine al netto
+    delle fee PayPal: zero per voucher/free).
+    """
+    if not isinstance(rec, dict):
+        return rec
+    charged = float(rec.get("user_price_eur_charged", 0) or 0)
+    cost = float(rec.get("google_cost_eur_actual", 0) or 0)
+    should = float(rec.get("user_price_eur_should_have_been", 0) or 0)
+    cancel_retained = rec.get("cancel_retained_eur")
+    outcome = rec.get("outcome") or ""
+    if outcome in _FULL_REFUND_OUTCOMES:
+        revenue = 0.0
+    elif cancel_retained is not None:
+        revenue = float(cancel_retained or 0)
+    else:
+        revenue = charged
+    rec["_eff_revenue_eur"] = round(revenue, 4)
+    rec["_eff_margin_eur"] = round(revenue - cost, 4)
+    rec["_eff_delta_eur"] = round(should - revenue, 4)
+    rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / cost * 100), 2) if cost > 0 else 0.0
+    fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""))
+    rec["_paypal_fee_eur"] = round(fee, 4)
+    rec["_net_margin_eur"] = round(revenue - cost - fee, 4)
+    return rec
+
+
+@app.route("/admin/api/gemini_cost_audit", methods=["GET"])
+def admin_api_gemini_cost_audit():
+    """List Gemini TTS audit records with filters + aggregates. Admin-only.
+
+    Restituisce, in aggiunta ai record persistiti su JSONL, righe sintetiche
+    `outcome="running"` per i job Gemini attualmente in corso (snapshot live).
+    Ogni record viene arricchito con campi `_eff_*` che applicano i rimborsi
+    da cancellazione anticipata su ricavo/margine/delta.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    model = request.args.get("model")
+    language = request.args.get("language")
+    outcome = request.args.get("outcome")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+
+    def _norm(v):
+        return v if v and v != "all" else None
+
+    persisted = list(gemini_cost_audit.iter_records(
+        model=_norm(model), language=_norm(language), outcome=_norm(outcome),
+        date_from=date_from, date_to=date_to,
+    ))
+    persisted_ids = {r.get("job_id") for r in persisted}
+
+    # Inietta i job in corso: rispetta i filtri model/lang; outcome="running"
+    # e' visibile solo quando outcome=all o esattamente "running".
+    live = []
+    out_filter = _norm(outcome)
+    if out_filter in (None, "running"):
+        for r in _synth_running_gemini_audit_records():
+            if r.get("job_id") in persisted_ids:
+                continue
+            if _norm(model) and r.get("model_key") != _norm(model):
+                continue
+            if _norm(language) and r.get("language") != _norm(language):
+                continue
+            live.append(r)
+
+    recs = live + persisted
+    for r in recs:
+        _apply_cancel_effective(r)
+    total = len(recs)
+    page = recs[offset:offset + limit]
+
+    # Aggregati ricomputati sui record arricchiti (solo "completed" + i live
+    # in corso, esclusi rimborsi totali). Ricavo/margine usano _eff_* per
+    # tener conto dei rimborsi da cancel.
+    agg_n = 0
+    agg_rev = 0.0
+    agg_cost = 0.0
+    agg_delta = 0.0
+    agg_fee = 0.0
+    for r in recs:
+        oc = r.get("outcome") or ""
+        if oc not in ("completed", "running", "cancelled_partial"):
+            continue
+        agg_n += 1
+        agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
+        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
+        agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
+    agg = {
+        "count": agg_n,
+        "revenue_eur": round(agg_rev, 4),
+        "google_cost_eur": round(agg_cost, 4),
+        "margin_eur": round(agg_rev - agg_cost, 4),
+        "paypal_fees_eur": round(agg_fee, 4),
+        "net_margin_eur": round(agg_rev - agg_cost - agg_fee, 4),
+        "delta_pct_avg": round((agg_delta / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "filters": {"model": _norm(model), "language": _norm(language),
+                    "date_from": date_from, "date_to": date_to},
+    }
+    return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/gemini_kill_switch", methods=["GET", "POST"])
+def admin_api_gemini_kill_switch():
+    """Kill-switch admin per disattivare runtime le voci PREMIUM.
+
+    GET  -> stato corrente {disabled, reason, updated_at, capability_ok}.
+    POST -> attiva/disattiva. Body JSON: {"disabled": bool, "reason": str?}.
+
+    Quando disabled=True, gemini_tts.is_available() ritorna False e il
+    pannello Voci PREMIUM scompare dalla UI utente (incluse stime e flusso
+    di pagamento Premium, che gia` gateano su is_available()).
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if gemini_tts is None:
+        return jsonify({"error": "Gemini TTS module not loaded"}), 503
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        disabled = bool(data.get("disabled", False))
+        reason = str(data.get("reason", "") or "")
+        state = gemini_tts.set_admin_disabled(disabled, reason)
+        # Invalida la cache voci cosi` la prossima /api/voices riflette subito
+        # il cambio (rimozione/aggiunta dell'optgroup PREMIUM).
+        _invalidate_voices_cache()
+        _log_activity("", "", "ADMIN_GEMINI_KILLSWITCH", "", _get_client_ip(),
+                      "disabled" if disabled else "enabled", reason[:80])
+        print(f"[admin] Gemini PREMIUM kill-switch: "
+              f"{'DISABLED' if disabled else 'ENABLED'} reason={reason!r}")
+        return jsonify({**state, "capability_ok": _gemini_capability_ok()})
+
+    return jsonify({
+        **gemini_tts.admin_disabled_state(),
+        "capability_ok": _gemini_capability_ok(),
+    })
+
+
+def _gemini_capability_ok():
+    """True se Gemini TTS e' tecnicamente configurato (a prescindere dal
+    kill-switch). Usato dal pannello admin per distinguere 'spento per scelta'
+    da 'non configurato'.
+    """
+    if gemini_tts is None:
+        return False
+    try:
+        return bool(gemini_tts.is_capability_available())
+    except Exception:
+        return False
+
+
+@app.route("/admin/api/gemini_cost_audit/languages", methods=["GET"])
+def admin_api_gemini_cost_audit_languages():
+    """Restituisce le lingue distinte realmente presenti nei record audit Gemini.
+
+    Usato dalla pagina /admin/audit-tts per popolare dinamicamente il filtro
+    lingua con i codici effettivamente generati, evitando di confondere
+    "lingue UI" con "lingue di generazione TTS".
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    seen = set()
+    for rec in gemini_cost_audit.iter_records():
+        lang = (rec.get("language") or "").strip().lower()
+        if lang:
+            seen.add(lang)
+    return jsonify({"languages": sorted(seen)})
+
+
+@app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])
+def admin_api_gemini_recalc_params():
+    """Aggrega audit records completed per (model, lang) e suggerisce tuning."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import gemini_cost_audit
+    # Doppio raggruppamento:
+    #   - groups_global: (model, lang)              — vista aggregata storica
+    #   - groups_rate:   (model, lang, rate_step)   — calibrazione per velocità
+    # La velocità incide direttamente sul prezzo proposto (estimate_audio_seconds
+    # scala con rate_pct), quindi i delta vanno monitorati anche per rate.
+    groups_global = {}
+    groups_rate = {}
+    for rec in gemini_cost_audit.iter_records(outcome="completed"):
+        model = rec.get("model_key") or "?"
+        lang = rec.get("language") or "?"
+        # I record precedenti l'introduzione di rate_step potrebbero non averlo:
+        # li trattiamo come rate_step=0 (velocità "normale").
+        try:
+            rstep = int(rec.get("rate_step") if rec.get("rate_step") is not None else 0)
+        except Exception:
+            rstep = 0
+        groups_global.setdefault((model, lang), []).append(rec)
+        groups_rate.setdefault((model, lang, rstep), []).append(rec)
+
+    def _label_for(avg_delta_pct):
+        if avg_delta_pct > 5:
+            return "margine alto, valuta riduzione tariffa utente"
+        if avg_delta_pct < -5:
+            return "margine in perdita, valuta aumento tariffa utente o sec_per_kchars"
+        return "parametri OK"
+
+    def _rate_label(step):
+        # Mappa step -> etichetta UI (cfr. SPEED_KEYS in app.js)
+        return {-3: "vs", -2: "s", -1: "ss", 0: "n", 1: "sf", 2: "f", 3: "vf"}.get(int(step), str(step))
+
+    # DELTA% = delta_eur / costo Google (formula del ricarico applicato).
+    # Calcolato sui totali del gruppo: piu` robusto della media semplice di
+    # percentuali (outlier su record con costo Google molto piccolo) e
+    # coerente sui record storici salvati con la vecchia formula.
+    def _avg_delta_pct(recs):
+        d_sum = sum(float(r.get("delta_eur") or 0) for r in recs)
+        c_sum = sum(float(r.get("google_cost_eur_actual") or 0) for r in recs)
+        return (d_sum / c_sum * 100.0) if c_sum > 0 else 0.0
+
+    suggestions = []
+    suggestions.append("=== Aggregato globale (model / lang) ===")
+    if not groups_global:
+        suggestions.append("  (nessun record disponibile)")
+    for (model, lang), recs in sorted(groups_global.items()):
+        if len(recs) < 3:
+            suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) campioni insufficienti (servono >=3)")
+            continue
+        avg = _avg_delta_pct(recs)
+        suggestions.append(f"  [{model} / {lang}] (n={len(recs)}) avg delta {avg:+.2f}% — {_label_for(avg)}")
+
+    suggestions.append("")
+    suggestions.append("=== Per velocità (model / lang / rate_step) ===")
+    if not groups_rate:
+        suggestions.append("  (nessun record disponibile)")
+    for (model, lang, rstep), recs in sorted(groups_rate.items()):
+        n = len(recs)
+        avg = _avg_delta_pct(recs)
+        rate_pcts = [int(r.get("rate_pct") or 0) for r in recs]
+        rp_min, rp_max = (min(rate_pcts), max(rate_pcts)) if rate_pcts else (0, 0)
+        rp_str = f"{rp_min:+d}%" if rp_min == rp_max else f"{rp_min:+d}%..{rp_max:+d}%"
+        head = f"  [{model} / {lang} / step={rstep:+d} ({_rate_label(rstep)}) {rp_str}] (n={n})"
+        if n < 3:
+            suggestions.append(f"{head} campioni insufficienti")
+        else:
+            suggestions.append(f"{head} avg delta {avg:+.2f}% — {_label_for(avg)}")
+    return jsonify({
+        "suggestions": suggestions,
+        "groups_total": len(groups_global),
+        "groups_evaluated": sum(1 for g in groups_global.values() if len(g) >= 3),
+        "groups_by_rate_total": len(groups_rate),
+        "groups_by_rate_evaluated": sum(1 for g in groups_rate.values() if len(g) >= 3),
+    })
 
 
 @app.route("/api/voices")
@@ -2944,6 +4396,20 @@ def api_voices():
                 "chars_remaining": remaining,
                 "chars_limit": limit,
             }
+        # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
+        # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
+        # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
+        # cosi` l'utente non vede combo vuote che fanno sembrare l'app rotta.
+        if gemini_tts is not None:
+            try:
+                cap_ok = bool(gemini_tts.is_capability_available())
+                admin_state = gemini_tts.admin_disabled_state()
+                voices["_premium_status"] = {
+                    "capability_ok": cap_ok,
+                    "admin_disabled": bool(admin_state.get("disabled", False)),
+                }
+            except Exception:
+                pass
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -3102,6 +4568,52 @@ _feedback_email_last = 0.0
 _FB_EMAIL_THROTTLE = 1800.0  # 30 min
 
 _IP_SALT = os.environ.get("ABM_IP_SALT") or "abm-default-salt-v1"
+
+
+# ─── Rate limit generico IP-based (sliding window) ─────────────────
+# Usato per endpoint costosi (upload, preview audio) per limitare DoS.
+_ip_rl_lock = threading.Lock()
+_ip_rl_buckets: dict[str, dict[str, list[float]]] = {}
+
+
+def _client_ip() -> str:
+    """Estrae IP client (rispetta X-Forwarded-For del reverse proxy)."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def _ip_rl_check(bucket: str, ip: str, limit_per_min: int, limit_per_hour: int):
+    """Sliding-window rate limit IP-based. Ritorna (allowed, retry_after_sec).
+    bucket: identificativo logico (es. 'analyze', 'preview').
+    """
+    if not ip:
+        return True, 0
+    now = time.time()
+    with _ip_rl_lock:
+        per_bucket = _ip_rl_buckets.setdefault(bucket, {})
+        hits = per_bucket.get(ip, [])
+        hits = [t for t in hits if now - t < 3600]
+        last_min = [t for t in hits if now - t < 60]
+        if len(last_min) >= limit_per_min:
+            retry = 60 - int(now - last_min[0])
+            per_bucket[ip] = hits
+            return False, max(1, retry)
+        if len(hits) >= limit_per_hour:
+            retry = 3600 - int(now - hits[0])
+            per_bucket[ip] = hits
+            return False, max(1, retry)
+        hits.append(now)
+        per_bucket[ip] = hits
+    return True, 0
+
+
+# Default limits (override via env per ops emergency)
+_ANALYZE_RL_PER_MIN = int(os.environ.get("ABM_ANALYZE_RL_PER_MIN", "5"))
+_ANALYZE_RL_PER_HOUR = int(os.environ.get("ABM_ANALYZE_RL_PER_HOUR", "30"))
+_PREVIEW_RL_PER_MIN = int(os.environ.get("ABM_PREVIEW_RL_PER_MIN", "20"))
+_PREVIEW_RL_PER_HOUR = int(os.environ.get("ABM_PREVIEW_RL_PER_HOUR", "200"))
 
 
 def _hash_ip(ip: str) -> str:
@@ -3848,7 +5360,13 @@ loadFb();
 @app.route("/api/admin/google_tts_status")
 def api_admin_google_tts_status():
     """Endpoint admin: stato dettagliato Google TTS (consumo locale + cloud).
-    Forza una riconciliazione on-demand se ?reconcile=1."""
+    Forza una riconciliazione on-demand se ?reconcile=1.
+    Richiede admin token: il path /admin/ implica scope ristretto e l'endpoint
+    espone metriche operative (caratteri consumati / limiti) che possono
+    rivelare la capacita' residua del servizio a competitor o attaccanti.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
     if google_tts is None:
         return jsonify({"error": "google_tts module not loaded"}), 503
     if not google_tts.is_available():
@@ -3896,6 +5414,12 @@ def _file_hash(path):
 
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
+    # Rate-limit IP-based: previene spam upload / DoS.
+    _allowed, _retry = _ip_rl_check(
+        "analyze", _client_ip(), _ANALYZE_RL_PER_MIN, _ANALYZE_RL_PER_HOUR
+    )
+    if not _allowed:
+        return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
     if "epub" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     file = request.files["epub"]
@@ -3921,6 +5445,35 @@ def api_analyze():
     work_dir.mkdir(exist_ok=True)
     file_path = work_dir / safe_name
     file.save(str(file_path))
+
+    # Magic-bytes validation: blocca file con estensione mentita (es. .exe rinominato .epub).
+    # I parser a valle gia` rifiuterebbero, ma fail-fast evita storage waste + log inutili.
+    try:
+        with open(str(file_path), "rb") as _f:
+            _head = _f.read(8)
+    except Exception:
+        _head = b""
+    if (is_epub or is_abm) and not _head.startswith(b"PK"):
+        try: file_path.unlink()
+        except Exception: pass
+        try: work_dir.rmdir()
+        except Exception: pass
+        return jsonify({"error": "Invalid file: not a valid ZIP-based archive"}), 400
+    if is_pdf and not _head.startswith(b"%PDF-"):
+        try: file_path.unlink()
+        except Exception: pass
+        try: work_dir.rmdir()
+        except Exception: pass
+        return jsonify({"error": "Invalid file: not a valid PDF"}), 400
+    if is_txt:
+        # TXT non ha magic; rifiuta solo se contiene byte chiaramente binari nel head
+        # (NUL byte). Accetta UTF-8 BOM (\xef\xbb\xbf), UTF-16 BOM, ecc.
+        if b"\x00" in _head and not (_head.startswith(b"\xff\xfe") or _head.startswith(b"\xfe\xff")):
+            try: file_path.unlink()
+            except Exception: pass
+            try: work_dir.rmdir()
+            except Exception: pass
+            return jsonify({"error": "Invalid file: not a valid text file"}), 400
 
     client_id = _get_client_id()
     file_hash = _file_hash(str(file_path))
@@ -3951,12 +5504,16 @@ def api_analyze():
         if status in ("analyzed", "optimized"):
             # Reuse existing analyzed/optimized job
             info = existing_job["info"]
+            _lang_re = (getattr(info, "language", None) or "it")[:2].lower()
             chapters = []
+            _total_secs_re = 0.0
             for ch in info.chapters:
+                _secs = _estimate_chapter_seconds(ch, _lang_re)
+                _total_secs_re += _secs
                 chapters.append({
                     "index": ch.index, "title": ch.title,
                     "words": ch.word_count, "chars": ch.char_count,
-                    "estimated_minutes": round(ch.word_count / 150, 1),
+                    "estimated_minutes": round(_secs / 60.0, 1),
                 })
             return jsonify({
                 "job_id": existing_jid, "title": info.title, "author": info.author,
@@ -3965,7 +5522,7 @@ def api_analyze():
                 "has_cover": bool(existing_job.get("cover_thumb")),
                 "total_chapters": len(info.chapters), "total_words": info.total_words,
                 "total_chars": info.total_chars,
-                "estimated_minutes": round(info.estimated_duration_minutes, 1),
+                "estimated_minutes": round(_total_secs_re / 60.0, 1),
                 "chapters": chapters,
                 "preview_text": existing_job.get("preview_text", ""),
                 "llm_available": _llm_available(),
@@ -4029,13 +5586,19 @@ def api_analyze():
                   jobs[job_id]["client_id"], jobs[job_id]["client_ip"],
                   browser_lang=jobs[job_id].get("browser_lang", ""))
 
+    _lang_new = (getattr(info, "language", None) or "it")[:2].lower()
     chapters = []
+    _total_secs_new = 0.0
     for ch in info.chapters:
+        _secs = _estimate_chapter_seconds(ch, _lang_new)
+        _total_secs_new += _secs
         chapters.append({
             "index": ch.index, "title": ch.title,
             "words": ch.word_count, "chars": ch.char_count,
-            "estimated_minutes": round(ch.word_count / 150, 1),
+            "estimated_minutes": round(_secs / 60.0, 1),
         })
+    # Override total estimated minutes for response consistency with per-chapter values.
+    _total_minutes_new = round(_total_secs_new / 60.0, 1)
 
     #  -  -  Preview text  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
     # EPUB: salta il front matter e usa un capitolo interno con contenuto narrativo reale.
@@ -4077,7 +5640,10 @@ def api_analyze():
             cut = max_chars
         return text[:cut].rstrip()
 
-    raw_preview = _pick_preview_text(info.chapters, is_txt or is_pdf or is_abm)
+    # Solo TXT puro usa la logica "primo capitolo con >=150 char": PDF e ABM
+    # hanno capitoli strutturati e beneficiano del filtro front-matter + scelta
+    # del secondo capitolo valido (narrativa, non introduzione).
+    raw_preview = _pick_preview_text(info.chapters, is_txt)
     preview_text = _trim_preview(raw_preview) if raw_preview else ""
     # Store for /api/preview_audio
     jobs[job_id]["preview_text"] = preview_text
@@ -4107,13 +5673,14 @@ def api_analyze():
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
         "total_chars": info.total_chars,
-        "estimated_minutes": round(info.estimated_duration_minutes, 1),
+        "estimated_minutes": _total_minutes_new,
         "chapters": chapters,
         "preview_text": preview_text,
         "llm_available": _llm_available(),
         "ai_optimized": abm_ai_optimized,
         "optimized_chapters": jobs[job_id].get("optimized_chapters", []),
-        "max_text_chars": int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")),
+        "max_text_chars": MAX_TEXT_CHARS,
+        "max_gemini_text_chars": MAX_GEMINI_TEXT_CHARS,
     })
 
 
@@ -4129,25 +5696,92 @@ def api_preview_audio(job_id):
     if _err is not None:
         return _err, _sc
 
-    preview_text = jobs[job_id].get("preview_text", "")
-    if not preview_text:
-        return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
+    # Rate-limit IP-based: anteprime sono costose (genera TTS sample),
+    # impedisce abuso e burst di generazione voci diverse.
+    _allowed, _retry = _ip_rl_check(
+        "preview", _client_ip(), _PREVIEW_RL_PER_MIN, _PREVIEW_RL_PER_HOUR
+    )
+    if not _allowed:
+        return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
 
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
+    style = (request.args.get("style") or "").strip()[:200]
+
+    # Se il client passa selected_chapters, l'anteprima deve essere un estratto
+    # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
+    # usa il preview_text fallback memorizzato all'upload.
+    try:
+        sel_raw = request.args.getlist("selected_chapters")
+        sel_idxs = [int(x) for x in sel_raw if str(x).strip()]
+    except (TypeError, ValueError):
+        sel_idxs = []
+    preview_text = ""
+    if sel_idxs:
+        info_pv = jobs[job_id].get("info")
+        all_chs_pv = list(getattr(info_pv, "chapters", []) or []) if info_pv else []
+        by_idx_pv = {ch.index: ch for ch in all_chs_pv}
+        sel_chs = [by_idx_pv[i] for i in sel_idxs if i in by_idx_pv]
+        if sel_chs:
+            try:
+                from epub_to_tts import is_content_chapter as _icc_pv
+                valid = [c for c in sel_chs
+                         if _icc_pv(c.text or "", c.title or "")
+                         and (c.word_count or 0) >= 80]
+            except Exception:
+                valid = [c for c in sel_chs if (c.word_count or 0) >= 80]
+            if not valid:
+                valid = [c for c in sel_chs if ((c.text or "").strip())]
+            if valid:
+                target = valid[1] if len(valid) > 1 else valid[0]
+                raw = (target.text or "").strip()
+                import re as _re_pv
+                raw = _re_pv.sub(r"\s+", " ", raw).strip()
+                # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
+                if len(raw) > 600:
+                    _win = raw[400:600]
+                    _m = _re_pv.search(r'[.!?]["”“»\)\s]', _win)
+                    _cut = (400 + _m.start() + 1) if _m else raw.rfind(" ", 400, 600)
+                    if _cut <= 0:
+                        _cut = 600
+                    preview_text = raw[:_cut].rstrip()
+                else:
+                    preview_text = raw
+    if not preview_text:
+        preview_text = jobs[job_id].get("preview_text", "")
+    if not preview_text:
+        return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
+
+    # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
+    # contenere il costo per-token (input + output sono fatturati).
+    if voice.startswith("gemini:"):
+        import re as _re
+        _t = _re.sub(r'\s+', ' ', preview_text).strip()
+        if len(_t) > 400:
+            _window = _t[250:400]
+            _m = _re.search(r'[.!?]["”“»\)\s]', _window)
+            _cut = (250 + _m.start() + 1) if _m else _t.rfind(' ', 250, 400)
+            if _cut <= 0:
+                _cut = 400
+            preview_text = _t[:_cut].rstrip()
+        else:
+            preview_text = _t
 
     work_dir = UPLOAD_DIR / job_id
     work_dir.mkdir(exist_ok=True)
-    preview_path = work_dir / "preview.mp3"
-    cache_key_path = work_dir / "preview.key"
-    current_key = f"{voice}|{rate}"
+    # Cache per (voice, rate, style, selezione): il nome del file è derivato da un
+    # hash della chiave, così tornare a una combinazione già generata serve il
+    # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
+    # La selezione capitoli entra nella chiave perché il testo varia con essa.
+    sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
+    cache_key = f"{voice}|{rate}|{style}|{sel_key}"
+    key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
+    preview_path = work_dir / f"preview_{key_hash}.mp3"
 
-    # Riusa il file se voce e velocità non sono cambiate
-    if preview_path.exists() and cache_key_path.exists():
-        if cache_key_path.read_text(encoding="utf-8").strip() == current_key:
-            return send_file(str(preview_path), mimetype="audio/mpeg",
-                             as_attachment=False, download_name="preview.mp3",
-                             conditional=True)
+    if preview_path.exists() and preview_path.stat().st_size > 0:
+        return send_file(str(preview_path), mimetype="audio/mpeg",
+                         as_attachment=False, download_name="preview.mp3",
+                         conditional=True)
 
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
@@ -4170,25 +5804,94 @@ def api_preview_audio(job_id):
                 "cap": gemini_tts.PREVIEW_CAP_PER_DAY,
                 "reset_in_seconds": reset_in,
             }), 429
+        # Preflight RPD: se il modello non ha quota per anche solo 1 chunk,
+        # falliamo immediatamente con 503 invece di lasciare la call al
+        # synthesize() che andrebbe in errore dopo aver consumato tempo.
+        # Senza questo check, su flash25 con RPD esaurito l'utente vedeva
+        # solo lo spinner per ~30s prima di un 504 generico.
+        try:
+            parts = voice.split(":")
+            _model_key_pf = parts[1] if len(parts) >= 3 else "flash25"
+            _pf = gemini_tts.preflight_can_run(_model_key_pf, 1)
+            if not _pf.get("ok"):
+                return jsonify({
+                    "error": ("Il modello voci PREMIUM ha esaurito la quota "
+                              "giornaliera. Riprova piu` tardi o seleziona "
+                              "un modello differente."),
+                    "code": "quota_exhausted",
+                    "model_key": _model_key_pf,
+                    "retry_after_sec": int(_pf.get("retry_after_sec") or 0),
+                    "available": _pf.get("available"),
+                }), 503
+        except Exception as _pf_err:
+            # Preflight non-fatal: log e prosegui. Meglio rischiare un 504
+            # downstream che bloccare un preview legittimo.
+            print(f"[preview] preflight check error (non-fatal): {_pf_err}")
 
     def _generate():
         if use_gemini_preview:
             # Native output is PCM — convert to MP3 inline for browser playback.
             pcm_tmp = str(preview_path) + ".pcm"
             try:
-                result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp)
+                # max_attempts=1: il path preview ha timeout client 30s. Se
+                # Gemini restituisce EMPTY-RESPONSE con finish_reason=OTHER
+                # (modello fermato per ragioni non specificate, tipico su
+                # combo voce/rate/lingua poco stabili come flash25), i 3
+                # retry default + backoff saturano il timeout → 504 lato
+                # browser. Falliamo veloce: il caller (preview_audio)
+                # converte l'errore in 502 con messaggio utile e l'utente
+                # puo` ritentare manualmente o cambiare voce/modello.
+                result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
+                                                style_instruction=style or None,
+                                                rate=rate,
+                                                max_attempts=1)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
+                # Costo Google REALE della preview (token reali x rate per MTok).
+                _preview_cost_eur = 0.0
+                try:
+                    _bd = gemini_tts.google_cost_breakdown(
+                        result.get("input_tokens", 0),
+                        result.get("output_tokens", 0),
+                        result.get("model_key", "flash25"),
+                    )
+                    _preview_cost_eur = float(_bd.get("total_eur", 0.0) or 0.0)
+                except Exception as e:
+                    print(f"[preview] google_cost_breakdown failed (non-fatal): {e}")
                 try:
                     gemini_tts.record_usage(
                         result.get("model_key", "flash25"),
                         len(preview_text),
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
-                        0.0,
+                        _preview_cost_eur,
                         0.0,
                     )
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_usage failed (non-fatal): {e}")
+                # Sample rate empirico: lingua TTS scelta (NON metadata libro).
+                # Priorita`: query `lang` -> job.opt_lang/gen_lang -> info.language.
+                # Senza questo, una preview con voce italiana su EPUB arabo
+                # registrava sample "ar" inquinando l'empirical rate per "it".
+                try:
+                    _job_pv = jobs[job_id]
+                    _job_info = _job_pv.get("info")
+                    _q_lang = (request.args.get("lang") or "").strip().split("-")[0].lower()
+                    _preview_lang = (
+                        _q_lang
+                        or (_job_pv.get("opt_lang") or "").strip().split("-")[0].lower()
+                        or (_job_pv.get("gen_lang") or "").strip().split("-")[0].lower()
+                        or (getattr(_job_info, "language", None) or "it").split("-")[0].lower()
+                    )[:2]
+                    _norm_chars = len(gemini_tts._normalize_text(preview_text))
+                    gemini_tts.record_rate_sample(
+                        _norm_chars,
+                        result.get("audio_seconds_real", 0.0),
+                        _preview_lang,
+                        result.get("model_key", "flash25"),
+                        rate_pct=rate,
+                    )
+                except Exception as e:
+                    print(f"[preview] gemini_tts.record_rate_sample failed (non-fatal): {e}")
                 gemini_tts.increment_preview(client_id)
             finally:
                 if os.path.exists(pcm_tmp):
@@ -4213,21 +5916,83 @@ def api_preview_audio(job_id):
             finally:
                 loop.close()
 
+    # Wrapper timeout model-aware: flash31 (gemini-3.1-flash-tts-preview) e`
+    # strutturalmente piu` lento di flash25 (RPM cap 3/300 vs 10/750 + audio
+    # gen piu` lenta lato Google). Senza maggiorazione, il wrapper a 30s
+    # strozza prima del timeout HTTP Google (60s per flash31) e produce
+    # 504 spuri anche su preview legittime. flash25 resta a 30s.
+    _wrapper_timeout = 30
+    if use_gemini_preview:
+        try:
+            _mk = voice.split(":")[1] if voice.startswith("gemini:") else ""
+            if _mk == "flash31":
+                _wrapper_timeout = int(os.environ.get(
+                    "ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31", "65"))
+        except Exception:
+            pass
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            ex.submit(_generate).result(timeout=30)
+            ex.submit(_generate).result(timeout=_wrapper_timeout)
     except concurrent.futures.TimeoutError:
-        return jsonify({"error": "Timeout: il servizio TTS non ha risposto in 30 secondi."}), 504
+        return jsonify({"error": f"Timeout: il servizio TTS non ha risposto in {_wrapper_timeout} secondi."}), 504
     except Exception as e:
+        # EMPTY-RESPONSE: Gemini ha risposto senza audio (finish_reason=OTHER
+        # o simili). Tipicamente combo voce/rate/lingua poco stabile su un
+        # modello specifico (es. flash25). Restituiamo 502 con messaggio
+        # actionable invece di 500 generico.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiEmptyResponse", ())):
+            _fr = getattr(e, "finish_reason", None) or "unknown"
+            return jsonify({
+                "error": (f"Il modello TTS non ha prodotto audio (motivo: {_fr}). "
+                          f"Riprova, oppure cambia voce o modello (la stessa voce su "
+                          f"un modello diverso spesso funziona)."),
+                "code": "empty_response",
+                "finish_reason": _fr,
+            }), 502
+        # Quota giornaliera RPD raggiunta server-wide per il modello. Diverso
+        # dal preview_cap per-client (429): qui e` un limite Gemini globale.
+        # Restituiamo 503 con code dedicato per messaggio actionable.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiQuotaExhausted", ())):
+            _ra = getattr(e, "retry_after_sec", None)
+            return jsonify({
+                "error": ("Il modello voci PREMIUM ha raggiunto il limite "
+                          "giornaliero. Riprova piu` tardi o seleziona un "
+                          "modello differente."),
+                "code": "quota_exhausted",
+                "retry_after_sec": _ra,
+            }), 503
+        # Budget EUR daily/per-job superato (raro in preview, ma possibile se
+        # il budget e` molto stretto). Stesso treatment di quota_exhausted ma
+        # con code distinto per logging lato server.
+        if gemini_tts is not None and isinstance(e, getattr(gemini_tts, "GeminiBudgetExceeded", ())):
+            return jsonify({
+                "error": ("Le voci PREMIUM hanno raggiunto il budget "
+                          "giornaliero. Riprova piu` tardi o seleziona "
+                          "una voce Standard."),
+                "code": "budget_exceeded",
+            }), 503
+        # HTTP timeout: il client genai non ha ricevuto risposta entro il
+        # timeout configurato (ABM_GEMINI_HTTP_TIMEOUT_MS, default 25s).
+        # Distinguiamo dal ThreadPoolExecutor timeout (504) perche` qui
+        # abbiamo info sulla causa (API lenta/irraggiungibile).
+        _ctx = getattr(e, "__context__", None)
+        _is_http_timeout = False
+        try:
+            import httpx
+            _is_http_timeout = isinstance(e, httpx.TimeoutException) or isinstance(_ctx, httpx.TimeoutException)
+        except ImportError:
+            pass
+        if _is_http_timeout:
+            return jsonify({
+                "error": ("Il servizio voci PREMIUM non risponde. Riprova "
+                          "tra qualche secondo o seleziona un modello/voce "
+                          "differente."),
+                "code": "http_timeout",
+            }), 504
         return jsonify({"error": f"Errore generazione anteprima: {e}"}), 500
 
     if not preview_path.exists():
         return jsonify({"error": "File MP3 non generato."}), 500
-
-    try:
-        cache_key_path.write_text(current_key, encoding="utf-8")
-    except Exception:
-        pass
 
     return send_file(str(preview_path), mimetype="audio/mpeg",
                      as_attachment=False, download_name="preview.mp3",
@@ -4368,18 +6133,205 @@ def api_generate():
         job["notify_download_type"] = "podcast"
         job["notify_base_url"] = podcast_base_url
 
-    # Check sospensione nuovi processi (admin toggle)
+    # Maintenance suspend check BEFORE payment preflight so we never consume
+    # a payment token when the system can't accept the job anyway.
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
+
+    # ----- F3: Gemini payment preflight -----
+    payment_token = (data.get("payment_token") or "").strip()
+    style_instruction = (data.get("gemini_style_instruction") or "")[:200]
+    if voice and voice.startswith("gemini:"):
+        # Recompute server-side total (mirror api_combined_estimate)
+        info_pre = job.get("info")
+        all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
+        sel = selected_chapters or []
+        if sel:
+            _by_index_pre = {ch.index: ch for ch in all_chs_pre}
+            chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
+        else:
+            chs_pre = all_chs_pre
+        # Lingua: priorita` (1) override UI da body request > (2) metadata libro
+        # > (3) "it". Stessa logica usata da /api/combined_estimate e
+        # /api/paypal_create_order_gemini: indispensabile per evitare amount
+        # mismatch fra preflight pagamento e stima frontend (file TXT senza
+        # metadata e EPUB/PDF con dc:language errato producono altrimenti
+        # stime divergenti -> total_eur_pre sotto soglia -> payment_token
+        # ignorato -> job["payment"] mai impostato -> audit charged=0).
+        _ui_lang_pre = (data.get("lang") or "").strip().split("-")[0].lower()
+        lang_pre = (_ui_lang_pre
+                    or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
+                    or "it")
+        # Persisti la lingua TTS effettivamente scelta dall'utente. Serve
+        # all'audit Gemini (`_audit_language`) per non registrare la lingua
+        # metadata del libro quando la voce TTS opera su una lingua diversa
+        # (es. libro arabo con voce italiana -> audit deve mostrare "it").
+        # Coesiste con `opt_lang` (settato da /api/optimize) come fallback.
+        if _ui_lang_pre:
+            job["gen_lang"] = _ui_lang_pre
+        try:
+            # Il rate scelto influisce sulla stima (estimate_audio_seconds scala
+            # con rate_pct): il ricalcolo server-side deve usarlo per allinearsi
+            # alla stima vista dall'utente e validare correttamente il pagamento.
+            est_pre = gemini_tts.estimate_book_cost(chs_pre, voice, language=lang_pre, rate_pct=rate)
+            gemini_eur_pre = round(est_pre["user_price_eur"], 2)
+            # Persisti la stima sul job: serve all'audit Gemini per popolare
+            # i campi *_est (input_tokens_est, output_tokens_est, audio_seconds_est,
+            # google_cost_eur_est) altrimenti sempre 0 nel JSONL.
+            job["gemini_estimate"] = est_pre
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        llm_eur_pre = 0.0
+        if data.get("ai_opt_enabled"):
+            chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
+            llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+        total_eur_pre = round(gemini_eur_pre + llm_eur_pre, 2)
+
+        # ----- Pre-flight budget guard (Google cost server-side) -----
+        # Indipendente dal pagamento utente: questo è il cap interno sui costi
+        # Google effettivi (per-job + daily). Se sforato, blocchiamo il job
+        # PRIMA di chiamare l'API, così non spendiamo nulla.
+        try:
+            _google_cost_pre = float(est_pre.get("google_cost_eur", 0.0) or 0.0)
+            preflight = gemini_tts.preflight_budget_check(_google_cost_pre)
+            if preflight.get("warning"):
+                print(f"[{job_id}] Budget warning (preflight): {preflight['warning']}")
+            # Atomic reservation: blocca race fra job concorrenti che vedrebbero
+            # lo stesso `spent` (audit JSONL viene scritto solo a fine job).
+            gemini_tts.reserve_budget(job_id, _google_cost_pre)
+        except gemini_tts.GeminiBudgetExceeded as _bex:
+            return jsonify({
+                "error": "budget_exceeded",
+                "scope": getattr(_bex, "scope", "unknown"),
+                "message": str(_bex),
+                "estimated_eur": getattr(_bex, "estimated_eur", _google_cost_pre),
+                "cap_eur": getattr(_bex, "cap_eur", None),
+                "used_eur": getattr(_bex, "used_eur", None),
+            }), 429
+        except Exception as _bgenerr:
+            # Errore non-budget: log e prosegui (graceful degradation).
+            print(f"[{job_id}] preflight_budget_check raised non-budget error: "
+                  f"{_bgenerr}")
+
+        # ----- Pre-flight RPD check SINCRONO (prima di consumare il payment) -----
+        # Eseguito qui per evitare la race condition fra il thread async di
+        # run_generation (che setta status=error + marker) e lo stream SSE in
+        # /api/progress (che a volte chiude il loop al primo tick prima che il
+        # marker sia visibile). Bloccando qui rispondiamo a /api/generate
+        # direttamente con error_code=gemini_overload e il frontend mostra il
+        # popup senza fare affidamento sul polling SSE.
+        try:
+            _info_chs_for_plan = chs_pre
+            _info_lang_for_plan = lang_pre
+            _max_chars_pf = _pick_chunk_max_chars(voice, _info_lang_for_plan)
+            _max_bytes_pf = _pick_chunk_max_bytes(voice)
+            class _PlanInfo:
+                pass
+            _plan_info = _PlanInfo()
+            _plan_info.chapters = _info_chs_for_plan
+            _plan_for_pf = _plan_chunks(_plan_info, max_chars=_max_chars_pf, max_bytes=_max_bytes_pf)
+            _total_chunks_pf = len(_plan_for_pf)
+            _parts_v_pf = (voice or "").split(":")
+            _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash25"
+            _pf_sync = gemini_tts.preflight_can_run(_model_key_pf, _total_chunks_pf)
+            # Log RPD status (richiesta utente) — sempre, anche se OK.
+            _cap_v_pf = _pf_sync.get("cap", 0)
+            if _cap_v_pf and _cap_v_pf > 0:
+                print(f"[{job_id}] RPD status [{_model_key_pf}]: "
+                      f"used={_pf_sync.get('used', 0)}/{_cap_v_pf}, "
+                      f"reserve={_pf_sync.get('reserve', 0)}, "
+                      f"available={_pf_sync.get('available', 0)}, "
+                      f"needed={_pf_sync.get('needed', 0)} "
+                      f"-> {'OK' if _pf_sync.get('ok') else 'BLOCK (shortfall=' + str(_pf_sync.get('shortfall', 0)) + ')'}")
+            else:
+                print(f"[{job_id}] RPD status [{_model_key_pf}]: no local cap "
+                      f"(ABM_GEMINI_RPD_{_model_key_pf.upper()}=0), needed={_pf_sync.get('needed', 0)}")
+        except Exception as _pf_sync_err:
+            print(f"[{job_id}] Sync preflight check error (non-fatal, proceeding): {_pf_sync_err}")
+            _pf_sync = {"ok": True}
+        if not _pf_sync.get("ok"):
+            _reason_sync = (f"preflight_block_sync: model={_model_key_pf} "
+                            f"needed={_pf_sync.get('needed')} "
+                            f"available={_pf_sync.get('available')} "
+                            f"shortfall={_pf_sync.get('shortfall')} "
+                            f"cap={_pf_sync.get('cap')} used={_pf_sync.get('used')} "
+                            f"reserve={_pf_sync.get('reserve')}")
+            print(f"[{job_id}] PREFLIGHT BLOCK (sync) -> {_reason_sync}")
+            # Nessun payment consumato a questo punto: niente refund da emettere.
+            # Admin alert (informativo) per parita' con il blocco async.
+            try:
+                _admin_alert_text = (
+                    f"[ABM-ADMIN] Gemini TTS — BLOCCO PREVENTIVO RPD (sync)\n\n"
+                    f"job_id={job_id} model={_model_key_pf}\n"
+                    f"needed={_pf_sync.get('needed')} "
+                    f"available={_pf_sync.get('available')} "
+                    f"shortfall={_pf_sync.get('shortfall')}\n"
+                    f"cap={_pf_sync.get('cap')} used={_pf_sync.get('used')} "
+                    f"reserve={_pf_sync.get('reserve')}\n"
+                    f"Nessun payment consumato (blocco prima del consume).\n"
+                )
+                _admin_email = os.environ.get("ABM_ADMIN_EMAIL", "")
+                if _admin_email:
+                    email_service.send_email(_admin_email,
+                                             "[ABM-ADMIN] Preflight RPD block (sync)",
+                                             _admin_alert_text)
+            except Exception as _ae:
+                print(f"[{job_id}] Admin alert (sync) failed: {_ae}")
+            try: gemini_tts.release_reservation(job_id)
+            except Exception: pass
+            return jsonify({
+                "error": "Generation not started: PREMIUM voices are temporarily overloaded.",
+                "error_code": "gemini_overload",
+                "retry_after_sec": int(_pf_sync.get("retry_after_sec") or 0),
+                "model_key": _model_key_pf,
+                "refund_method": "",
+            }), 429
+
+        threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+        if total_eur_pre > threshold_pre:
+            if not payment_token:
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
+                return jsonify({
+                    "error": "payment_required",
+                    "total_eur": total_eur_pre,
+                    "threshold_eur": threshold_pre,
+                }), 402
+            try:
+                _pay_method = payment.consume_payment_token(
+                    payment_token, total_eur_pre, job_id, purpose="gemini"
+                )
+            except ValueError as _pay_err:
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
+                return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
+            # Stash payment info on job for refund + audit
+            job["payment"] = {
+                "token": payment_token,
+                "total_eur": total_eur_pre,
+                "method": _pay_method,
+                "ts": time.time(),
+                "gemini_est": est_pre,
+                "llm_eur": llm_eur_pre,
+            }
+        # Stash style for run_generation
+        if style_instruction:
+            job["gemini_style_instruction"] = style_instruction
 
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
+            _refund_payment_on_orphan(job_id, job, "status_conflict")
+            try: gemini_tts.release_reservation(job_id)
+            except Exception: pass
             return jsonify({"error": "Generation already running or completed."}), 400
         if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
             if _active_generating_for_client_unlocked(client_id) >= MAX_CONCURRENT_PER_CLIENT:
+                _refund_payment_on_orphan(job_id, job, "concurrent_limit")
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
                 return jsonify({
                     "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
                     "error_code": "concurrent_limit",
@@ -4412,11 +6364,11 @@ def api_generate():
         info.total_words = sum(ch.word_count for ch in filtered)
         info.estimated_duration_minutes = info.total_words / 150
 
-    # Hard cap on TTS-bound text size for THIS run: applied only to the
-    # selected chapters. 1 char ≈ 50-100 bytes of MP3 output, so the limit
-    # keeps audio outputs under ~75-150 MB. The user can return to the
-    # chapter list and reduce the selection if exceeded.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # Hard cap on TTS-bound text size for THIS run: applied solo alla selezione.
+    # 1 char ~= 50-100 byte di MP3, quindi il limite mantiene l'output sotto
+    # ~75-150 MB. Per voci PREMIUM (gemini:) usiamo MAX_GEMINI_TEXT_CHARS
+    # (default 800k, piu' restrittivo) data la maggior pressione su cost/RPM.
+    max_text_chars = _max_text_chars_for_voice(voice)
     selected_chars = sum(ch.char_count for ch in info.chapters)
     if selected_chars > max_text_chars:
         with _jobs_lock:
@@ -4460,7 +6412,8 @@ def api_generate():
     job["gen_epoch"] = job.get("gen_epoch", 0) + 1
     thread = threading.Thread(
         target=run_generation, args=(job_id, info, voice, rate, single_file),
-        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url},
+        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url,
+                'gemini_style_instruction': job.get("gemini_style_instruction")},
         daemon=True
     )
     thread.start()
@@ -4530,13 +6483,58 @@ def api_progress(job_id):
                 "processed_chars": job.get("processed_chars", 0),
                 "total_chars": job.get("total_chars", 0),
             }
+            # Espone l'importo pagato (quota refundabile) e il metodo: serve
+            # al frontend per reidratare _payState dopo un reload e mostrare
+            # "Importo versato" corretto nel modal di cancel. Usa total_eur
+            # (l'importo effettivamente consumato dal payment_token) perche'
+            # e' la stessa base che _CancelledError handler in
+            # generation_engine.py passa a cancel_policy.compute_cancel_retention.
+            _paym_sse = job.get("payment") or {}
+            if _paym_sse:
+                try:
+                    payload["paid_eur"] = round(float(_paym_sse.get("total_eur", 0.0) or 0.0), 2)
+                except (TypeError, ValueError):
+                    payload["paid_eur"] = 0.0
+                payload["paid_method"] = _paym_sse.get("method", "")
             if job.get("status") == "error":
                 # Errore generico verso il client: il dettaglio resta nei log server-side.
                 payload["error"] = "generation_failed"
+                # Eccezione: per il pre-flight block delle voci PREMIUM,
+                # esponiamo un error_kind strutturato cosi' il frontend puo'
+                # mostrare un popup specifico e riportare l'utente alla scelta
+                # voce (invece di redirect generico alla home).
+                _pf_block = job.get("gemini_preflight_block")
+                if _pf_block:
+                    payload["error_kind"] = "gemini_overload"
+                    payload["retry_after_sec"] = int(_pf_block.get("retry_after_sec") or 0)
+                    _paym = job.get("payment") or {}
+                    payload["refund_method"] = _paym.get("method", "")
+                    # Codice voucher di rimborso solo se PayPal (per voucher
+                    # il riaccredito e' silenzioso sul codice originale).
+                    if _paym.get("method") == "paypal":
+                        _vcode = job.get("refund_voucher_code")
+                        if _vcode:
+                            payload["refund_voucher_code"] = _vcode
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("status") == "cancelled" or job.get("cancelled"):
                 payload["status"] = "cancelled"
+                # Espone metadati cancel volontario voci PREMIUM: refund summary
+                # (paid/retained/refund/progress) + link al MP3 parziale se
+                # generato. Vedi T7 generation_engine.py:_CancelledError branch.
+                _cm = job.get("cancel_meta")
+                if isinstance(_cm, dict):
+                    payload["cancel_meta"] = {
+                        "paid_eur": _cm.get("paid_eur", 0),
+                        "retained_eur": _cm.get("retained_eur", 0),
+                        "refund_eur": _cm.get("refund_eur", 0),
+                        "progress_pct": _cm.get("progress_pct", 0),
+                        "partial_audio_delivered": bool(
+                            _cm.get("partial_audio_delivered", False)),
+                    }
+                _pdl = job.get("partial_download_url")
+                if _pdl:
+                    payload["partial_download_url"] = _pdl
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("status") == "done":
@@ -4576,7 +6574,12 @@ def api_progress(job_id):
 
 @app.route("/api/cancel/<job_id>", methods=["POST"])
 def api_cancel(job_id):
-    """Cancella un job in corso."""
+    """Cancella un job in corso.
+
+    Per voci Gemini, il cancel volontario e' bloccato oltre la soglia
+    ABM_GEMINI_CANCEL_LOCK_PCT (default 70). Vedi
+    docs/superpowers/specs/2026-05-25-cancel-gemini-floor-design.md.
+    """
     _job, _err, _sc = _check_job_owner(job_id)
     if _err is not None:
         if _sc == 404:
@@ -4584,14 +6587,78 @@ def api_cancel(job_id):
         return _err, _sc
     with _jobs_lock:
         job = jobs[job_id]
+        voice = job.get("voice", "") or job.get("opt_voice", "") or ""
+        is_gemini = voice.startswith("gemini:")
+        if is_gemini:
+            try:
+                lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
+            except (TypeError, ValueError):
+                lock_pct = 70
+            if 0 < lock_pct < 100:
+                from generation_engine import _progress_pct
+                pct = _progress_pct(job)
+                if pct > lock_pct:
+                    return jsonify({
+                        "error": "cancel_locked_progress",
+                        "progress_pct": pct,
+                        "lock_pct": lock_pct,
+                    }), 409
         force = request.args.get("force") == "1"
         if job.get("email_registered") and not force:
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
         job["cancelled"] = True
-        job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+        # NB: non incrementiamo gen_epoch qui. Il bump epoch e' riservato
+        # al riavvio della generazione (/api/generate linea ~5548) per
+        # invalidare worker thread orfane. Bumparlo sul cancel volontario
+        # farebbe finire run_generation nel ramo STALE del _CancelledError
+        # handler, saltando refund + partial-audio email.
         job["status"] = "analyzed"
     return jsonify({"status": "cancelling"})
+
+
+@app.route("/api/cancel_preview/<job_id>", methods=["GET"])
+def api_cancel_preview(job_id):
+    """Snapshot sincrono dei parametri di cancel per la modale di conferma.
+
+    Il client legge da qui paid_eur/progress_pct invece di affidarsi a
+    _payState (in-memory, perso al reload) o all'evento SSE (latenza: dopo
+    F5 il primo evento puo' arrivare dopo il click su cancel, lasciando
+    il modal con "Importo versato: 0.00 EUR"). Server e' single source of
+    truth: legge payment.total_eur, identico a quanto consumato dal
+    refund handler in generation_engine._handle_cancelled_error.
+    """
+    _job, _err, _sc = _check_job_owner(job_id)
+    if _err is not None:
+        if _sc == 404:
+            return jsonify({"status": "not_found"}), 404
+        return _err, _sc
+    with _jobs_lock:
+        if job_id not in jobs:
+            return jsonify({"status": "not_found"}), 404
+        job = jobs[job_id]
+        paym = job.get("payment") or {}
+        try:
+            paid_eur = round(float(paym.get("total_eur", 0.0) or 0.0), 2)
+        except (TypeError, ValueError):
+            paid_eur = 0.0
+        paid_method = paym.get("method", "") or ""
+        try:
+            from generation_engine import _progress_pct
+            pct = _progress_pct(job)
+        except Exception:
+            pct = 0
+        try:
+            lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
+        except (TypeError, ValueError):
+            lock_pct = 70
+    return jsonify({
+        "paid_eur": paid_eur,
+        "paid_method": paid_method,
+        "progress_pct": pct,
+        "lock_pct": lock_pct,
+        "locked": (0 < lock_pct < 100 and pct > lock_pct),
+    })
 
 
 @app.route("/api/heartbeat/<job_id>", methods=["POST"])
@@ -4659,7 +6726,7 @@ def api_reset_to_chapters(job_id):
                     "optimized_abm_path", "optimized_abm_name",
                     "selected_chapters",
                     "opt_auto_generate", "opt_single_file", "opt_output_format",
-                    "opt_podcast_base_url", "opt_voice", "opt_rate",
+                    "opt_podcast_base_url", "opt_voice", "opt_rate", "opt_lang",
                     "email_token"):
             job.pop(key, None)
     # Keep: info, epub_path, cover_thumb, cover_mime, original_filename, preview_text,
@@ -4773,8 +6840,11 @@ def api_optimize_estimate(job_id):
     cost = _estimate_llm_cost_eur(total_chars)
 
     # Pre-validate the output-size cap against the full selected set so the
-    # user is informed before being asked to pay.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # user is informed before being asked to pay. La voce influisce sul cap
+    # (Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS): il
+    # frontend passa ?voice=... quando la conosce; in assenza si usa lo standard.
+    voice_q = (request.args.get("voice") or "").strip()
+    max_text_chars = _max_text_chars_for_voice(voice_q)
     if raw_sel:
         selected_set_cap = set(selected_indices)
     else:
@@ -4873,61 +6943,39 @@ def api_paypal_capture_order():
     if not order_id:
         return jsonify({"error": "Missing order_id"}), 400
 
-    # Idempotency: if already captured, return existing token
-    if order_id in payment._payments:
-        pay = payment._payments[order_id]
-        return jsonify({
-            "payment_token": order_id,
-            "amount_eur": pay.get("amount_eur", 0),
-            "email": pay.get("email", ""),
-            "already_captured": True,
-        })
-
+    # Atomic flow: idempotency + capture + amount reconciliation + store
+    # serializzato da payment._capture_lock per prevenire double-capture race.
     try:
-        captured = _paypal_capture_order(order_id)
+        result = payment.capture_and_store_order(order_id, job_id=job_id)
+    except payment.CaptureAmountMismatchError as e:
+        print(f"[paypal] AMOUNT MISMATCH order={order_id} job={job_id}: {e}")
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_AMOUNT_MISMATCH", "", "", "", str(e))
+        return jsonify({"error": "Payment amount mismatch (refused)"}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         print(f"[paypal] capture_order failed: {e}")
         return jsonify({"error": f"PayPal capture error: {e}"}), 500
 
-    # Extract payment details from capture response
-    purchase_units = captured.get("purchase_units", [])
-    if not purchase_units:
-        return jsonify({"error": "Invalid capture response"}), 500
-    pu = purchase_units[0]
-    captures = pu.get("payments", {}).get("captures", [])
-    if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
-        return jsonify({"error": "Payment not completed"}), 400
-    cap = captures[0]
-    amount_eur = float(cap.get("amount", {}).get("value", "0"))
-    payer = captured.get("payer", {})
-    email = (payer.get("email_address") or "").lower().strip()
+    amount_eur = result["amount_eur"]
+    email = result["email"]
 
-    payment._payments[order_id] = {
-        "order_id": order_id,
-        "amount_eur": amount_eur,
-        "email": email,
-        "job_id": job_id,
-        "captured_at": time.time(),
-        "used": False,
-        "used_at": None,
-        "capture_id": cap.get("id", ""),
-    }
-    _save_payments()
-
-    _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
-                  "PAYMENT_CAPTURED", "", "", "", "")
-
-    # Send receipt email (non-blocking best-effort)
-    if email and _smtp_available():
-        try:
-            _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
-        except Exception as e:
-            print(f"[paypal] receipt email failed: {e}")
+    if not result.get("already_captured"):
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_CAPTURED", "", "", "", "")
+        # Send receipt email (non-blocking best-effort)
+        if email and _smtp_available():
+            try:
+                _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
+            except Exception as e:
+                print(f"[paypal] receipt email failed: {e}")
 
     return jsonify({
         "payment_token": order_id,
         "amount_eur": amount_eur,
         "email": email,
+        "already_captured": result.get("already_captured", False),
     })
 
 
@@ -4942,41 +6990,61 @@ def api_voucher_validate():
     code = (data.get("code") or "").strip().upper()
     email = (data.get("email") or "").strip().lower()
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    purpose = (data.get("purpose") or "any")
+    try:
+        amount_required = float(data.get("amount_eur") or 0)
+    except (ValueError, TypeError):
+        amount_required = 0.0
 
-    #  -  Rate limit check  - 
+    #  -  Rate limit check  -
     allowed, retry_after, reason = _voucher_rl_check(ip, email)
     if not allowed:
         _log_activity("", "", f"VOUCHER_ATTEMPT_BLOCKED:{reason}", "", ip, "", "")
-        resp = jsonify({"error": "Too many attempts. Please try later.", "retry_after": retry_after})
+        resp = jsonify({
+            "valid": False,
+            "reason": reason or "rate_limit",
+            "error": "Too many attempts. Please try later.",
+            "retry_after": retry_after,
+        })
         resp.status_code = 429
         resp.headers["Retry-After"] = str(retry_after)
         return resp
 
-    #  -  Validation logic  - 
+    #  -  Validation logic  -
     outcome = "OK"
     status = 200
     body = None
     if not code or not email:
-        outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required"}
+        outcome, status, body = "MISSING_FIELDS", 400, {"error": "Code and email required", "valid": False, "reason": "missing_fields"}
     elif code not in payment._vouchers:
-        outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found"}
+        outcome, status, body = "NOT_FOUND", 404, {"error": "Voucher not found", "valid": False, "reason": "not_found"}
     else:
         v = payment._vouchers[code]
         remaining = _voucher_remaining(v)
         if v.get("expires_at", 0) < time.time():
-            outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired"}
+            outcome, status, body = "EXPIRED", 400, {"error": "Voucher expired", "valid": False, "reason": "expired"}
         elif v.get("email", "").lower() != email:
-            outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher"}
+            outcome, status, body = "EMAIL_MISMATCH", 400, {"error": "Email does not match voucher", "valid": False, "reason": "email_mismatch"}
         elif remaining < 0.01:
-            outcome, status, body = "USED", 400, {"error": "Voucher fully used"}
+            outcome, status, body = "USED", 400, {"error": "Voucher fully used", "valid": False, "reason": "used"}
+        elif amount_required > 0 and remaining < amount_required:
+            outcome, status, body = "INSUFFICIENT", 400, {
+                "valid": False,
+                "reason": "insufficient",
+                "error": "Voucher balance insufficient",
+                "remaining_eur": remaining,
+                "required_eur": amount_required,
+            }
         else:
             # Saldo residuo: l'UI lo usa come "amount_eur" spendibile.
             body = {
+                "valid": True,
                 "payment_token": code,
                 "amount_eur": remaining,
                 "remaining_eur": remaining,
                 "original_amount_eur": round(float(v.get("amount_eur", 0) or 0), 2),
                 "expires_at": v.get("expires_at"),
+                "purpose_requested": purpose,
             }
 
     success = (outcome == "OK")
@@ -4985,6 +7053,263 @@ def api_voucher_validate():
     code_masked = (code[:4] + "...") if code else ""
     _log_activity("", "", "VOUCHER_ATTEMPT", "", ip, code_masked, outcome)
     return jsonify(body), status
+
+
+@app.route("/api/gemini_estimate", methods=["POST"])
+def api_gemini_estimate():
+    """Stima costo Voci PREMIUM per il job corrente, capitoli selezionati."""
+    import gemini_tts as _gemini_tts_mod
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id", "")
+    voice_id = data.get("voice_id", "")
+    selected = data.get("selected_chapters") or []
+    rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+
+    if not voice_id.startswith("gemini:"):
+        return jsonify({"error": "voice_id must be a Gemini voice"}), 400
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "job has no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters selected"}), 400
+
+    # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
+    # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
+    # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+    try:
+        est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+    except Exception as e:
+        return jsonify({"error": f"estimate failed: {e}"}), 500
+
+    return jsonify({
+        "chars_total": est["chars_total"],
+        "audio_seconds_est": est["audio_seconds_est"],
+        "estimated_audio_minutes": round(est["estimated_audio_minutes"], 1),
+        "user_price_eur": est["user_price_eur"],
+        "is_free": est["is_free"],
+        "model_key": est["model_key"],
+        "model_label": est["model_label"],
+        "language": est["language"],
+        "rate_step": est.get("rate_step", 0),
+        "breakdown": {
+            "input_tokens_est": est["input_tokens_est"],
+            "output_tokens_est": est["output_tokens_est"],
+            "google_cost_eur": est["google_cost_eur"],
+            "margin_percent": est["margin_percent"],
+        },
+    })
+
+
+@app.route("/api/combined_estimate", methods=["POST"])
+def api_combined_estimate():
+    """Stima combinata Voci PREMIUM + ottimizzazione testo AI."""
+    import gemini_tts as _gemini_tts_mod
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id", "")
+    voice_id = data.get("voice_id", "")
+    selected = data.get("selected_chapters") or []
+    ai_opt = bool(data.get("ai_opt_enabled", False))
+    rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters"}), 400
+
+    # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
+    # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
+    # ratio chars/token: necessario per TXT (mai metadata) e per metadata errati.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+
+    gemini_eur = 0.0
+    gemini_breakdown = {}
+    rate_step = 0
+    if voice_id.startswith("gemini:"):
+        try:
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        gemini_eur = round(est["user_price_eur"], 2)
+        rate_step = est.get("rate_step", 0)
+        gemini_breakdown = {
+            "chars": est["chars_total"],
+            "audio_minutes": round(est["estimated_audio_minutes"], 1),
+            "google_cost_eur": est["google_cost_eur"],
+            "model_label": est["model_label"],
+            "rate_step": rate_step,
+        }
+
+    llm_eur = 0.0
+    llm_breakdown = {}
+    if ai_opt:
+        chars = sum(len(getattr(c, "text", "") or "") for c in chs)
+        llm_rate = LLM_RATE_EUR_PER_MCHAR
+        llm_eur = round((chars / 1_000_000.0) * llm_rate, 2)
+        llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
+
+    total = round(gemini_eur + llm_eur, 2)
+    threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+
+    # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
+    # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
+    # l'avviso "non disponibile" senza passare per il flusso pagamento/PayPal.
+    overload_info = None
+    if voice_id.startswith("gemini:"):
+        try:
+            _max_chars_cb = _pick_chunk_max_chars(voice_id, lang)
+            _max_bytes_cb = _pick_chunk_max_bytes(voice_id)
+            class _PlanInfoCB:
+                pass
+            _pi = _PlanInfoCB()
+            _pi.chapters = chs
+            _plan_cb = _plan_chunks(_pi, max_chars=_max_chars_cb, max_bytes=_max_bytes_cb)
+            _total_chunks_cb = len(_plan_cb)
+            _parts_cb = voice_id.split(":")
+            _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash25"
+            _pf_cb = _gemini_tts_mod.preflight_can_run(_model_key_cb, _total_chunks_cb)
+            if not _pf_cb.get("ok"):
+                overload_info = {
+                    "model_key": _model_key_cb,
+                    "retry_after_sec": int(_pf_cb.get("retry_after_sec") or 0),
+                    "needed": _pf_cb.get("needed"),
+                    "available": _pf_cb.get("available"),
+                }
+                print(f"[{job_id}] combined_estimate: gemini_overloaded "
+                      f"[{_model_key_cb}] needed={_pf_cb.get('needed')} "
+                      f"available={_pf_cb.get('available')}")
+        except Exception as _ce_pf_err:
+            print(f"[{job_id}] combined_estimate preflight error (non-fatal): {_ce_pf_err}")
+
+    return jsonify({
+        "gemini_eur": gemini_eur,
+        "llm_eur": llm_eur,
+        "total_eur": total,
+        "is_free": total <= threshold,
+        "threshold_eur": threshold,
+        "rate_step": rate_step,
+        "gemini_breakdown": gemini_breakdown,
+        "llm_breakdown": llm_breakdown,
+        "gemini_overloaded": overload_info is not None,
+        "gemini_overload_info": overload_info,
+        "paypal_available": _paypal_available(),
+        "paypal_client_id": PAYPAL_CLIENT_ID if _paypal_available() else "",
+        "paypal_mode": PAYPAL_MODE,
+    })
+
+
+@app.route("/api/paypal_create_order_gemini", methods=["POST"])
+def api_paypal_create_order_gemini():
+    """Create a PayPal order for Voci PREMIUM (+ optional AI text optimization).
+
+    Server-side amount check: recomputes the combined estimate
+    (gemini_eur + llm_eur) and rejects the request if the client-supplied
+    amount differs by more than 0.01 EUR. On match, calls
+    payment._paypal_create_order and returns {order_id, amount, status}.
+    """
+    import payment as _payment_mod
+    import gemini_tts as _gemini_tts_mod
+
+    data = request.get_json(silent=True) or {}
+    job_id = (data.get("job_id") or "").strip()
+    voice_id = (data.get("voice_id") or "").strip()
+    selected = data.get("selected_chapters") or []
+    ai_opt = bool(data.get("ai_opt_enabled", False))
+    rate = data.get("rate", "+0%")
+    ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+    try:
+        requested_amount = float(data.get("amount_eur") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid amount_eur"}), 400
+
+    with _jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    info = job.get("info")
+    if info is None or not getattr(info, "chapters", None):
+        return jsonify({"error": "no chapters"}), 400
+
+    all_chs = list(info.chapters)
+    if selected:
+        _by_index = {ch.index: ch for ch in all_chs}
+        chs = [_by_index[i] for i in selected if i in _by_index]
+    else:
+        chs = all_chs
+    if not chs:
+        return jsonify({"error": "no chapters"}), 400
+
+    # Lingua: stessa priorita` di /api/combined_estimate (UI > metadata > "it").
+    # Deve essere identica per evitare amount mismatch sul server-side check.
+    lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
+
+    gemini_eur = 0.0
+    if voice_id.startswith("gemini:"):
+        try:
+            # rate_pct: la stima dipende dalla velocità scelta, quindi va
+            # passata anche qui per coerenza con /api/combined_estimate.
+            est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        gemini_eur = round(est["user_price_eur"], 2)
+
+    llm_eur = 0.0
+    if ai_opt:
+        chars = sum(len(getattr(c, "text", "") or "") for c in chs)
+        rate = LLM_RATE_EUR_PER_MCHAR
+        llm_eur = round((chars / 1_000_000.0) * rate, 2)
+
+    server_total = round(gemini_eur + llm_eur, 2)
+
+    if abs(server_total - requested_amount) > 0.01:
+        return jsonify({
+            "error": f"amount mismatch (server={server_total}, client={requested_amount})",
+            "server_amount_eur": server_total,
+            "client_amount_eur": requested_amount,
+        }), 400
+
+    book_title = getattr(info, "title", "") or "Audiobook"
+    description = f"Audiobook Maker - Voci PREMIUM - {book_title[:60]}"
+    try:
+        order = _payment_mod._paypal_create_order(
+            amount_eur=server_total,
+            description=description,
+            custom_id=f"gemini:{job_id}",
+        )
+    except Exception as e:
+        print(f"[paypal] gemini create_order failed: {e}")
+        return jsonify({"error": f"paypal create failed: {e}"}), 500
+
+    return jsonify({
+        "order_id": order.get("id"),
+        "amount": server_total,
+        "status": order.get("status"),
+    })
 
 
 @app.route("/api/optimize", methods=["POST"])
@@ -5003,9 +7328,12 @@ def api_optimize():
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
-    # Store language for optimization prompt selection
+    # Lingua TTS selezionata in UI: e' la fonte autoritativa per scegliere
+    # il prompt LLM (prompt_tts_<lang>.md), perche' l'ottimizzazione deve
+    # produrre testo adatto alla voce TTS scelta, non alla lingua dell'input.
+    # Es: input EN ottimizzato per voce IT -> serve prompt_tts_it.md.
     if lang:
-        job["opt_voice"] = lang  # _call_deepseek uses this if "voice" is missing
+        job["opt_lang"] = (lang.split("-")[0] or "").lower() or None
 
     client_id = job.get("client_id", "")
     # Atomic concurrency check + status claim for optimization
@@ -5036,8 +7364,9 @@ def api_optimize():
     # Hard cap on text size for the final audio output, applied to the full
     # selected set (already-optimized + to-optimize). Blocks early so the
     # user doesn't pay for LLM optimization on a selection that cannot be
-    # rendered to audio.
-    max_text_chars = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
+    # rendered to audio. Per auto_generate con voce PREMIUM si applica il
+    # cap MAX_GEMINI_TEXT_CHARS (piu' restrittivo).
+    max_text_chars = _max_text_chars_for_voice(data.get("voice", ""))
     if info is not None:
         if selected_chapters:
             selected_set_for_cap = set(selected_chapters)
@@ -5060,7 +7389,14 @@ def api_optimize():
                 "chars_limit": max_text_chars,
             }), 413
     estimated_cost = _estimate_llm_cost_eur(total_chars)
-    if estimated_cost > LLM_FREE_THRESHOLD_EUR:
+    # Flusso combinato (auto_generate + voce Gemini): il payment_token
+    # copre sia LLM che Gemini. Il branch standalone LLM sotto NON deve
+    # consumarlo per la sola quota LLM — la gestione e` delegata al
+    # blocco "Combined payment" piu` avanti.
+    _is_combined_gemini = (auto_generate
+                           and data.get("voice", "").startswith("gemini:")
+                           and gemini_tts is not None)
+    if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
             return jsonify({
@@ -5112,6 +7448,120 @@ def api_optimize():
                 "error": "Invalid or already-used payment token.",
                 "error_code": "invalid_payment",
             }), 402
+
+    # ----- Combined payment (LLM + Gemini in auto_generate flow) -----
+    # Il flusso combinato usa UN unico token (PayPal order o voucher) che
+    # copre entrambe le quote LLM + Gemini. Il branch standalone LLM sopra
+    # e` stato saltato (_is_combined_gemini=True), quindi gestiamo il
+    # consumo qui per l'intero ammontare. Vedi md_files/ttsgemini.md.
+    if _is_combined_gemini:
+        _combined_token = (data.get("payment_token_combined")
+                           or data.get("payment_token") or "").strip()
+        if _combined_token:
+            # Ricalcolo quota Gemini server-side per validare l'importo.
+            _voice_for_est = data.get("voice", "")
+            _rate_for_est = data.get("rate", "+0%")
+            _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
+            _lang_for_est = (_ui_lang_for_est
+                             or (getattr(info, "language", "") or "").split("-")[0].lower()
+                             or "it")
+            # Capitoli selezionati per la generazione (stessa logica frontend
+            # combined_estimate: subset se selected_chapters, altrimenti tutti).
+            _all_chs = list(getattr(info, "chapters", []) or [])
+            _sel_list = _parse_selected_chapters(data.get("selected_chapters"))
+            if _sel_list:
+                _by_idx = {ch.index: ch for ch in _all_chs}
+                _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
+            else:
+                _chs_for_est = _all_chs
+            try:
+                _est_gemini = gemini_tts.estimate_book_cost(
+                    _chs_for_est, _voice_for_est,
+                    language=_lang_for_est, rate_pct=_rate_for_est,
+                )
+                _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
+            except Exception as _e_est:
+                print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
+                _est_gemini = None
+                _gemini_eur_quota = 0.0
+            _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
+            # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
+            # (allineata con /api/generate). Sotto soglia il job e' free.
+            _threshold_combined = float(
+                os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+            )
+            if _expected_total > _threshold_combined:
+                if not _combined_token:
+                    with _jobs_lock:
+                        if job.get("status") == "optimizing":
+                            job["status"] = "analyzed"
+                    return jsonify({
+                        "error": "Payment required for generation.",
+                        "error_code": "payment_required",
+                        "total_eur": _expected_total,
+                        "gemini_eur": _gemini_eur_quota,
+                        "llm_eur": estimated_cost,
+                        "threshold_eur": _threshold_combined,
+                    }), 402
+                # Validazione + consume del token combinato.
+                _consumed = False
+                if _combined_token in payment._payments:
+                    with payment._payments_lock:
+                        _pay = payment._payments.get(_combined_token)
+                        if (_pay and not _pay.get("used")
+                                and float(_pay.get("amount_eur", 0)) + 0.05
+                                >= _expected_total):
+                            _pay["used"] = True
+                            _pay["used_at"] = time.time()
+                            _pay["used_job_id"] = job_id
+                            _consumed_method = "paypal"
+                            _consumed_email = _pay.get("email", "") or ""
+                            _consumed = True
+                    if _consumed:
+                        _save_payments()
+                elif _combined_token in payment._vouchers:
+                    try:
+                        payment._voucher_consume(_combined_token, _expected_total,
+                                                 job_id=job_id)
+                        _v = payment._vouchers.get(_combined_token, {})
+                        _consumed_method = "voucher"
+                        _consumed_email = _v.get("email", "") or ""
+                        _consumed = True
+                    except ValueError as _vc_err:
+                        print(f"[{job_id}] combined voucher consume failed: {_vc_err}")
+                if _consumed:
+                    # Stash payment per:
+                    # - audit Gemini (_write_gemini_audit legge job["payment"])
+                    # - refund su cancel/error (_refund_gemini_payment)
+                    # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
+                    # l'audit Gemini legge solo la quota voce, non il combinato.
+                    job["payment"] = {
+                        "token": _combined_token,
+                        "total_eur": _gemini_eur_quota,
+                        "method": _consumed_method,
+                        "ts": time.time(),
+                        "gemini_est": _est_gemini,
+                        "llm_eur": float(estimated_cost),
+                        "source": "combined_optimize_autogen",
+                    }
+                    job["payment_token"] = _combined_token
+                    job["payment_type"] = _consumed_method
+                    job["payment_email"] = _consumed_email
+                    job["payment_amount_eur"] = _expected_total
+                    # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
+                    # all'audit per allineare i campi *_est al prezzo lockato
+                    # in payment["total_eur"]. Senza questo snapshot,
+                    # _finalize_optimization_complete ricalcolerebbe la stima
+                    # su testo post-LLM (potenzialmente piu` lungo/corto),
+                    # distorcendo delta_pct/margin nell'audit JSONL.
+                    job["gemini_estimate"] = _est_gemini
+                    print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                          f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                          f"= {_expected_total:.2f}€ ({_consumed_method})")
+                else:
+                    print(f"[{job_id}] WARNING: combined payment token "
+                          f"{_combined_token[:12]}... not consumable "
+                          f"(expected_total={_expected_total:.2f}€)")
 
     # Batch mode requires email
     if batch:
@@ -5272,12 +7722,14 @@ def token_download_page(token):
     lang = token_info.get("lang", "en")
     created_at = token_info["created_at"]
     elapsed = time.time() - created_at
+    # Retention per-token: PREMIUM (is_gemini) usa GEMINI_FILE_RETENTION_SEC.
+    _ret = _retention_for_token_info(token_info)
 
     # Check retention expiration
-    if elapsed > EMAIL_FILE_RETENTION_SEC:
+    if elapsed > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return _render_dl_expired_page(lang), 410
+        return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
     # Check job exists in memory OR files still on disk
     job_id = token_info["job_id"]
@@ -5289,9 +7741,9 @@ def token_download_page(token):
     if not job_in_memory and not files_on_disk:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return _render_dl_expired_page(lang), 410
+        return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
 
-    remaining_sec = max(60, int(EMAIL_FILE_RETENTION_SEC - elapsed))
+    remaining_sec = max(60, int(_ret - elapsed))
     remaining_h = remaining_sec // 3600
     remaining_m = (remaining_sec % 3600) // 60
     if remaining_h > 0:
@@ -5305,17 +7757,34 @@ def token_download_page(token):
     else:
         book_title = token_info.get("book_title", "")
 
-    # M4B / ABM / format: ALWAYS consult the token snapshot first, never the
-    # live job state. Each email token references a specific generation epoch;
-    # the live job mutates with subsequent generations and would otherwise leak
-    # the latest run's files into older tokens.
+    # M4B availability: regola di precedenza per non rompere l'isolamento
+    # per-epoch (un token email punta a UNA specifica generazione, il job vivo
+    # può aver prodotto altri file con epoche più nuove):
+    #   1) token snapshot -> output_m4b (path assoluto)
+    #   2) ricostruzione per basename dentro la cartella per-epoch del token
+    #   3) (legacy) job vivo -> output_m4b
+    #   4) (legacy) glob ricorsivo nella cartella del job, SOLO se il token
+    #      NON ha info di epoch (token vecchi creati prima del layout per-epoch).
+    m4b_available = False
     m4b_path_snap = token_info.get("output_m4b", "")
-    m4b_available = bool(m4b_path_snap) and os.path.exists(m4b_path_snap)
-    if not m4b_available and m4b_path_snap:
-        # Path reconstruction by basename inside the snapshot's epoch dir.
+    if m4b_path_snap and os.path.exists(m4b_path_snap):
+        m4b_available = True
+    elif m4b_path_snap:
+        # Per-epoch reconstruction: output_{epoch}/<basename>.m4b
         candidate = job_dir / Path(m4b_path_snap).parent.name / Path(m4b_path_snap).name
         if candidate.exists():
             m4b_available = True
+    else:
+        # Token legacy senza snapshot M4B: live job o glob ricorsivo come
+        # last-resort. Non rompe l'isolamento per-epoch perche' arriva qui
+        # solo se il token NON aveva originariamente un output_m4b.
+        if job_in_memory:
+            m4b_path_mem = jobs[job_id].get("output_m4b", "")
+            if m4b_path_mem and os.path.exists(m4b_path_mem):
+                m4b_available = True
+        if not m4b_available:
+            m4bs = list(job_dir.glob("**/*.m4b"))
+            m4b_available = len(m4bs) > 0
 
     abm_path_snap = token_info.get("optimized_abm_path", "")
     has_abm = bool(abm_path_snap) and os.path.exists(abm_path_snap)
@@ -5331,7 +7800,8 @@ def token_download_page(token):
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
-                           output_format=output_format)
+                           output_format=output_format,
+                           retention_hours=round(_ret / 3600))
 
 
 @app.route("/dl/<token>/abm")
@@ -5340,10 +7810,11 @@ def token_do_download_abm(token):
     token_info = _download_tokens.get(token)
     if not token_info:
         return "Link scaduto", 410
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
     job_id = token_info.get("job_id", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     # Always serve the .abm captured in this token's snapshot. Each generation
@@ -5367,52 +7838,97 @@ def token_do_download_abm(token):
     if not _is_resume_or_probe_request():
         _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
                       "DOWNLOAD_OPT_ABM", "", "", "", "")
+    _mark_token_downloaded(token_info)
     return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
 
 
 @app.route("/dl/<token>/m4b")
 def token_do_download_m4b(token):
-    """Execute the actual M4B file download via token."""
+    """Execute the actual M4B file download via token.
+
+    Allineato a /api/download/<job>?type=m4b:
+    - glob ricorsivo ("**/*.m4b") sulla job dir
+    - fallback su MP3 con header X-Fallback se M4B non esiste
+    - sync di job["output_m4b"] quando il file è trovato via glob
+    """
     token_info = _download_tokens.get(token)
     if not token_info:
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
-    # Always serve the M4B captured in this token's snapshot. The live job
-    # state would point to the latest generation's output, leaking files
-    # between sibling email tokens.
+    # Per-epoch isolation: il token email punta a UNA specifica generazione.
+    # Non usiamo MAI lo stato del job vivo (job["output_m4b"]) come fonte
+    # primaria, perche' una rigenerazione successiva potrebbe averlo aggiornato
+    # a un'epoch piu' nuova, esponendo file diversi al link email.
     job = jobs.get(job_id)
     if job:
         job["last_poll"] = time.time()
         job["downloaded_at"] = time.time()
+
     m4b_path = token_info.get("output_m4b", "")
     job_dir = UPLOAD_DIR / job_id
 
-    # Path reconstruction by basename inside the snapshot's epoch dir
-    # (covers data-dir migrations within the same job).
+    # 1) Path reconstruction per-epoch: cerca il basename del file dentro la
+    # cartella output_{epoch}/ catturata nello snapshot del token.
     if m4b_path and not os.path.exists(m4b_path):
         candidate = job_dir / Path(m4b_path).parent.name / Path(m4b_path).name
         if candidate.exists():
             m4b_path = str(candidate)
 
-    if not m4b_path or not os.path.exists(m4b_path):
-        print(f"[dl/m4b] 404 token={token} job={job_id} "
-              f"token_m4b={token_info.get('output_m4b','')!r} "
-              f"output_dirs={[d.name for d in _iter_output_dirs(job_dir)]}")
-        return "M4B file not available", 404
-
-    # Log solo sulla prima richiesta completa, non su HEAD o range request
-    if request.method != "HEAD" and not request.headers.get("Range"):
-        _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
-                      "", "", "", "")
+    # 2) Legacy fallback: per token CREATI PRIMA dell'introduzione del layout
+    # per-epoch (snapshot privo di output_m4b), usiamo un glob ricorsivo come
+    # ultima spiaggia. Non rompe l'isolamento: ci arriviamo solo se il token
+    # non aveva originariamente un path snapshotato.
+    if (not m4b_path) and (not token_info.get("output_m4b")):
+        m4bs = list(job_dir.glob("**/*.m4b"))
+        if m4bs:
+            m4b_path = str(m4bs[0])
 
     safe_name = _safe_filename(token_info.get("book_title", "audiolibro"))
-    return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+
+    if m4b_path and os.path.exists(m4b_path):
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
+                          "", "", "", "")
+        _mark_token_downloaded(token_info)
+        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+
+    # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
+    # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
+    print(f"[dl] M4B totally missing for job {job_id}. Falling back to MP3.")
+    mp3_path = ""
+    if job:
+        mp3_path = (job.get("output_files") or [""])[0]
+    if not mp3_path or not os.path.exists(mp3_path):
+        mp3s = list(job_dir.glob("**/*.mp3"))
+        if mp3s:
+            mp3_path = str(mp3s[0])
+
+    if mp3_path and os.path.exists(mp3_path):
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
+                          "", "", "", "")
+        _mark_token_downloaded(token_info)
+        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3")
+        try:
+            resp.headers["X-Fallback"] = "mp3"
+            prev = resp.headers.get("Access-Control-Expose-Headers", "")
+            resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+        except Exception:
+            pass
+        return resp
+
+    # Diagnostica completa: nessun M4B e nessun MP3 disponibile.
+    print(f"[dl/m4b] 404 token={token} job={job_id} "
+          f"token_m4b={token_info.get('output_m4b','')!r} "
+          f"output_dirs={[d.name for d in _iter_output_dirs(job_dir)]}")
+    return "M4B file not available", 404
 
 
 @app.route("/dl/<token>/download")
@@ -5423,10 +7939,11 @@ def token_do_download(token):
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    if time.time() - token_info["created_at"] > EMAIL_FILE_RETENTION_SEC:
+    _ret = _retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {EMAIL_FILE_RETENTION_SEC // 3600} ore", 410
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -5465,6 +7982,7 @@ def token_do_download(token):
                 if not _is_resume_or_probe_request():
                     _log_activity(job_id, token_info.get("original_filename", ""),
                                   "DOWNLOAD_OPT_ABM", "", "", "", "")
+                _mark_token_downloaded(token_info)
                 return _apply_no_cache(send_file(abm_path, as_attachment=True, download_name=abm_name))
             return "File not found", 404
 
@@ -5505,6 +8023,8 @@ def _serve_audio_download(token_info, job, job_id):
                       job.get("client_ip", "") if job else "",
                       job.get("voice", "") if job else "",
                       job.get("browser_lang", "") if job else "")
+        # Disattiva la protezione no-download per voci PREMIUM (cleanup loop).
+        _mark_token_downloaded(token_info)
 
     output_zip = token_info.get("output_zip", "")
     output_file = token_info.get("output_file", "")
@@ -5729,6 +8249,7 @@ def _serve_podcast_download(token_info, job, job_id):
                               job.get("client_id", "") if job else "",
                               job.get("client_ip", "") if job else "",
                               job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+            _mark_token_downloaded(token_info)
             return _send_file_throttled(output_zip, as_attachment=True,
                              download_name=os.path.basename(output_zip))
 
@@ -5801,6 +8322,7 @@ def _serve_podcast_download(token_info, job, job_id):
     cached_zip = epoch_dir / f"{safe_name}_podcast.zip"
     if cached_zip.exists() and cached_zip.stat().st_size > 0:
         print(f"[dl] Serving cached podcast zip: {cached_zip}")
+        _mark_token_downloaded(token_info)
         return _send_file_throttled(str(cached_zip), as_attachment=True,
                          download_name=f"{safe_name}_podcast.zip")
 
@@ -5847,13 +8369,20 @@ def _serve_podcast_download(token_info, job, job_id):
                       job.get("client_id", "") if job else "",
                       job.get("client_ip", "") if job else "",
                       job.get("voice", "") if job else "", job.get("browser_lang", "") if job else "")
+    _mark_token_downloaded(token_info)
     return _send_file_throttled(podcast_zip, as_attachment=True,
                      download_name=f"{safe_name}_podcast.zip")
 
 
-def _render_dl_expired_page(lang="en"):
+def _render_dl_expired_page(lang="en", retention_hours=0):
     expired_t = _DL_PAGES_I18N.get("expired", {})
     t = expired_t.get(lang, expired_t.get("en", {}))
+    # Se il chiamante non passa la retention reale del token (es. token gia`
+    # rimosso e non recuperabile), usa il default standard come fallback.
+    # Vale come "almeno X ore sono passate"; per token Gemini il caller passa 48.
+    if not retention_hours:
+        retention_hours = int(EMAIL_FILE_RETENTION_SEC / 3600)
+    p1_text = t['p1'].replace("{h}", str(int(retention_hours)))
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
@@ -5872,7 +8401,7 @@ a:hover{{text-decoration:underline}}
 <div class="box">
 <h1>&#x23F0;</h1>
 <h2>{t['h2']}</h2>
-<p>{t['p1']}</p>
+<p>{p1_text}</p>
 <p>{t['p2']}</p>
 <p><a href="/">&#x1F3A7; Audiobook Maker</a></p>
 </div></body></html>"""
@@ -5965,7 +8494,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format=""):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -6032,6 +8561,14 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         elif not fmt:
             fmt = "zip"
 
+        # Coerenza con la realtà del filesystem: se l'utente aveva chiesto M4B ma
+        # il file non esiste (es. conversione PCM->AAC fallita su Gemini, oppure
+        # output_format snapshottato come 'm4b' senza che il muxing sia avvenuto),
+        # degradiamo l'etichetta/route a MP3 anziché esporre un link M4B che il
+        # backend dovrà servire via fallback silenzioso.
+        if fmt == "m4b" and not m4b_available:
+            fmt = "mp3"
+
         if fmt == "m4b":
             label_data = _format_labels["m4b"]
             btn_url = f"/dl/{token}/m4b"
@@ -6060,7 +8597,10 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         abm_label = _abm_labels.get(lang, _abm_labels["en"])
         abm_btn_html = f'<p><a href="/dl/{token}/abm" class="btn btn-abm">{abm_label}</a></p>'
 
-    warn_text = t["warn"].replace("{r}", remaining_str)
+    # Retention totale: deve riflettere _ret reale del token (es. Gemini=48h,
+    # standard=18h), non un valore hardcoded. Senza questo, la riga "Dopo X ore"
+    # mostrava sempre "24" anche quando il countdown sopra reportava ~48h.
+    warn_text = t["warn"].replace("{r}", remaining_str).replace("{h}", str(int(retention_hours)))
 
     share_url = BASE_URL or "https://audiobook-maker.com"
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
@@ -6321,8 +8861,21 @@ def api_download(job_id):
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
             mp3_path = job.get("output_files", [""])[0]
+            if not mp3_path or not os.path.exists(mp3_path):
+                mp3s = list(job_dir.glob("**/*.mp3"))
+                if mp3s:
+                    mp3_path = str(mp3s[0])
             if mp3_path and os.path.exists(mp3_path):
-                return _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{_safe_filename(job['info'].title)}.mp3", no_cache=True, bypass_throttle=True)
+                resp = _send_file_throttled(mp3_path, as_attachment=True,
+                                            download_name=f"{_safe_filename(job['info'].title)}.mp3",
+                                            no_cache=True, bypass_throttle=True)
+                try:
+                    resp.headers["X-Fallback"] = "mp3"
+                    prev = resp.headers.get("Access-Control-Expose-Headers", "")
+                    resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+                except Exception:
+                    pass
+                return resp
             return "File not found", 404
 
     if download_type == "zip":
@@ -6646,6 +9199,19 @@ EMAIL_MARKER_FILENAME = ".email_sent"
 _EMAIL_MARKER_PENDING = "pending"
 EMAIL_PENDING_MAX_AGE_SEC = 48 * 3600  # cap di sicurezza se la lavorazione si interrompe senza email
 
+# Marker scritto in work_dir dei job Gemini falliti con refund per consentire
+# analisi forense post-mortem. Contiene JSON {retain_until, created_at, kind,
+# outcome, reason, job_id, days}. Sopravvive a restart del service e blocca
+# TUTTI i branch di cleanup (status=error, orphan dir, token-orphan, orphan
+# output) finché now < retain_until. Retention configurabile via
+# ABM_GEMINI_FORENSIC_RETENTION_DAYS (default 7; 0 = disabilita).
+FORENSIC_MARKER_FILENAME = ".forensic_retain.json"
+try:
+    FORENSIC_RETENTION_DAYS = int(os.environ.get("ABM_GEMINI_FORENSIC_RETENTION_DAYS", "7"))
+except (TypeError, ValueError):
+    FORENSIC_RETENTION_DAYS = 7
+FORENSIC_RETENTION_DAYS = max(0, FORENSIC_RETENTION_DAYS)
+
 
 def _write_email_marker(work_dir, when=None):
     """Marca una job dir come 'email inviata' (timestamp epoch in secondi).
@@ -6684,7 +9250,11 @@ def _write_email_pending_marker(work_dir):
 def _email_marker_protects(work_dir, now):
     """True se il marker email protegge la dir.
     Pending: protetto se mtime entro EMAIL_PENDING_MAX_AGE_SEC.
-    Timestamp: protetto se entro EMAIL_FILE_RETENTION_SEC + 300s."""
+    Timestamp: protetto se entro max(EMAIL_FILE_RETENTION_SEC,
+    GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER) + 300s.
+    Usiamo il max perche' il marker su disco non conosce voice/downloaded_at del job;
+    moltiplichiamo per il fattore no-download per non cancellare un Gemini job dir
+    mai scaricato prima della finestra estesa (default 96h)."""
     marker = Path(work_dir) / EMAIL_MARKER_FILENAME
     try:
         if not marker.exists():
@@ -6708,18 +9278,50 @@ def _email_marker_protects(work_dir, now):
             ts = marker.stat().st_mtime
         except OSError:
             return False
-    return (now - ts) < EMAIL_FILE_RETENTION_SEC + 300
+    return (now - ts) < max(
+        EMAIL_FILE_RETENTION_SEC,
+        GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
+    ) + 300
+
+
+def _forensic_marker_protects(work_dir, now):
+    """True se il marker forense protegge la work_dir dal cleanup.
+    Scritto da generation_engine al refund per job Gemini falliti; sopravvive
+    a restart e blocca tutti i branch di cleanup finché now < retain_until.
+    """
+    marker = Path(work_dir) / FORENSIC_MARKER_FILENAME
+    try:
+        if not marker.exists():
+            return False
+    except OSError:
+        return False
+    try:
+        with marker.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        retain_until = float(data.get("retain_until", 0) or 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    return now < retain_until
 
 
 def _cleanup_job(job_id, reason=""):
     """Remove all files for a job and delete the job entry.
     NOTA: nessun gate marker qui — questo path viene invocato solo dal branch
     per-status che opera su `jobs` locali con info complete (cancelled/error/
-    done+retention-scaduta). La protezione cross-worker è nei branch orfani."""
+    done+retention-scaduta). La protezione cross-worker è nei branch orfani.
+
+    Gate forense: se la work_dir contiene `.forensic_retain.json` valido
+    (refund Gemini in attesa di analisi admin), rimuoviamo l'entry in memoria
+    ma preserviamo la dir su disco finché il marker è valido.
+    """
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
     if work_dir.exists():
+        if _forensic_marker_protects(work_dir, time.time()):
+            print(f"[cleanup] {job_id} entry removed but dir preserved "
+                  f"(forensic retention) — {reason}")
+            return
         shutil.rmtree(str(work_dir), ignore_errors=True)
     print(f"[cleanup] {job_id} removed ({reason})")
 
@@ -6768,8 +9370,11 @@ def _cleanup_loop():
 
                 if status == "optimized":
                     opt_done = job.get("opt_completed_at") or job.get("email_sent_at") or now
-                    if (now - opt_done) > EMAIL_FILE_RETENTION_SEC:
-                        h = EMAIL_FILE_RETENTION_SEC // 3600
+                    # Effective retention: per voci PREMIUM senza alcun download
+                    # del .abm, raddoppia il timer.
+                    _ret = _effective_retention_for_job(job)
+                    if (now - opt_done) > _ret:
+                        h = _ret // 3600
                         reason = ("optimization email retention expired" if has_email
                                   else f"optimized project retention expired ({h}h)")
                         to_remove.append((jid, reason))
@@ -6790,7 +9395,8 @@ def _cleanup_loop():
                     last_poll = job.get("last_poll", 0)
 
                     if has_email and email_sent_at:
-                        if (now - email_sent_at) > EMAIL_FILE_RETENTION_SEC:
+                        # Effective retention: voci PREMIUM senza download → 2x.
+                        if (now - email_sent_at) > _effective_retention_for_job(job):
                             to_remove.append((jid, f"email retention expired ({int(now - email_sent_at)}s)"))
                         continue
 
@@ -6814,9 +9420,12 @@ def _cleanup_loop():
                 print(f"[cleanup] error removing {jid}: {e}")
 
         #  -  -  Cleanup expired download tokens  -  -
+        # Retention per-token: se il token e' marcato is_gemini (voce PREMIUM)
+        # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
+        # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
         with _tokens_lock:
             expired_tokens = [(t, info) for t, info in _download_tokens.items()
-                              if (now - info["created_at"]) > EMAIL_FILE_RETENTION_SEC + 300]
+                              if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
         for t, t_info in expired_tokens:
             with _tokens_lock:
                 _download_tokens.pop(t, None)
@@ -6835,6 +9444,8 @@ def _cleanup_loop():
                         print(f"[cleanup] Legacy archive removed (token expired): {archive_path}")
                 if not job_in_memory and job_dir.exists():
                     if _email_marker_protects(job_dir, now):
+                        continue
+                    if _forensic_marker_protects(job_dir, now):
                         continue
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
@@ -6882,8 +9493,16 @@ def _cleanup_loop():
                         age = now - od.stat().st_mtime
                     except OSError:
                         continue
-                    if age > EMAIL_FILE_RETENTION_SEC:
+                    # Senza contesto-job, usiamo la retention piu' lunga (Gemini)
+                    # moltiplicata per il fattore no-download: la dir orfana puo'
+                    # appartenere a un job PREMIUM mai scaricato.
+                    if age > max(
+                        EMAIL_FILE_RETENTION_SEC,
+                        GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
+                    ):
                         if _email_marker_protects(od.parent, now):
+                            continue
+                        if _forensic_marker_protects(od.parent, now):
                             continue
                         shutil.rmtree(str(od), ignore_errors=True)
                         print(f"[cleanup] Orphan output dir removed: {od} (age: {int(age)}s)")
@@ -6911,6 +9530,8 @@ def _cleanup_loop():
                 if dir_age > CLEANUP_ORPHAN_DIR_AGE_SEC:
                     if _email_marker_protects(entry, now):
                         continue
+                    if _forensic_marker_protects(entry, now):
+                        continue
                     shutil.rmtree(str(entry), ignore_errors=True)
                     print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
         except OSError:
@@ -6929,7 +9550,8 @@ def _cleanup_loop():
 _load_tokens()
 _load_payments()
 _load_vouchers()
-_load_paid_opt_done()
+payment._migrate_paid_opt_to_paid_jobs()
+payment._load_paid_jobs_done()
 payment._recover_orphaned_voucher_charges(jobs)
 
 # Configura il motore di generazione (spostato in generation_engine.py)
@@ -6943,6 +9565,7 @@ generation_engine.configure(
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,
     retention_sec=EMAIL_FILE_RETENTION_SEC,
+    gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
     write_email_marker_fn=_write_email_marker
 )
 
@@ -7003,7 +9626,7 @@ def _ensure_background_threads():
     print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
     if _llm_available():
-        print(f"[startup] LLM text optimization enabled (DeepSeek {DEEPSEEK_MODEL})")
+        print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:
@@ -7025,6 +9648,17 @@ if __name__ == "__main__":
     _max_text_chars_startup = os.environ.get("ABM_MAX_TEXT_CHARS", "1500000")
     print(f"  ABM_MAX_TEXT_CHARS: {_max_text_chars_startup} "
           f"({'env' if 'ABM_MAX_TEXT_CHARS' in os.environ else 'default'})")
+    _max_gemini_text_chars_startup = os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000")
+    print(f"  ABM_MAX_GEMINI_TEXT_CHARS: {_max_gemini_text_chars_startup} "
+          f"({'env' if 'ABM_MAX_GEMINI_TEXT_CHARS' in os.environ else 'default'})")
+    _job_retention_startup = os.environ.get("ABM_JOB_RETENTION_SEC", "64800")
+    print(f"  ABM_JOB_RETENTION_SEC: {_job_retention_startup}s "
+          f"(~{int(_job_retention_startup)//3600}h) "
+          f"({'env' if 'ABM_JOB_RETENTION_SEC' in os.environ else 'default'})")
+    _gemini_retention_startup = os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800")
+    print(f"  ABM_GEMINI_JOB_RETENTION_SEC: {_gemini_retention_startup}s "
+          f"(~{int(_gemini_retention_startup)//3600}h) "
+          f"({'env' if 'ABM_GEMINI_JOB_RETENTION_SEC' in os.environ else 'default'})")
     print(f"  Debug mode: {DEBUG} "
           f"({'env ABM_DEBUG' if 'ABM_DEBUG' in os.environ else 'default off'})")
     print(f"{'='*50}\n")

@@ -236,3 +236,7 @@ Fix only obvious, unambiguous errors: clear typos in well-known words, missing a
 ## SECTION F — OUTPUT FORMAT
 
 Return **only** the optimized text, in the same language and script as the input. No commentary, notes, changelog, explanations, or confidence statements. Preserve original paragraphs. The output must be ready to pass directly to a TTS engine.
+
+## TRIVIAL INPUT — SAFEGUARD RULE
+
+If the received text is empty, a single line, a title, a proper name, a very short quotation without terminal punctuation, or otherwise does not contain processable narrative prose (less than ~80 characters of coherent prose), return **exactly the input unchanged**, identical character by character. Do not add headings, rules, comments, examples, or explanations. Do not rephrase. Do not expand. This applies even if the input is a single word or whitespace. Always honor the language of the input — never switch language.

@@ -149,3 +149,7 @@ Corrige solo errores obvios e inequívocos: erratas evidentes, apóstrofos falta
 ## FORMATO DE SALIDA
 
 Devuelve **solo** el texto optimizado. Sin comentarios, notas, changelog, explicaciones. Preserva los párrafos originales. La salida debe estar lista para pasar al motor TTS.
+
+## ENTRADA TRIVIAL — REGLA DE SALVAGUARDIA
+
+Si el texto recibido está vacío, es una sola línea, un título, un nombre propio, una cita muy corta sin puntuación terminal, o no contiene prosa narrativa procesable (menos de ~80 caracteres de prosa coherente), devuelve **exactamente la entrada sin cambios**, idéntica carácter por carácter. No añadas títulos, reglas, comentarios, ejemplos ni explicaciones. No reformules. No expandas. Esto se aplica incluso si la entrada es una sola palabra o un espacio en blanco.

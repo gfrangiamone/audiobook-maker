@@ -17,6 +17,7 @@ Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 
 import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -27,8 +28,25 @@ from pathlib import Path
 
 PAYPAL_CLIENT_ID = os.environ.get("ABM_PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_SECRET = os.environ.get("ABM_PAYPAL_SECRET", "").strip()
-PAYPAL_MODE = os.environ.get("ABM_PAYPAL_MODE", "sandbox").strip().lower()  # sandbox|live
+# Fail-fast: quando PayPal e' configurato, ABM_PAYPAL_MODE deve essere esplicito
+# (sandbox|live). Un default "sandbox" silenzioso in produzione dirotterebbe
+# pagamenti reali su test endpoint con conseguente perdita di revenue.
+_PAYPAL_MODE_RAW = os.environ.get("ABM_PAYPAL_MODE", "").strip().lower()
+if PAYPAL_CLIENT_ID and not _PAYPAL_MODE_RAW:
+    raise RuntimeError(
+        "ABM_PAYPAL_MODE non impostato. Quando ABM_PAYPAL_CLIENT_ID e' "
+        "configurato, devi settare esplicitamente ABM_PAYPAL_MODE=sandbox "
+        "oppure ABM_PAYPAL_MODE=live."
+    )
+if _PAYPAL_MODE_RAW and _PAYPAL_MODE_RAW not in ("sandbox", "live"):
+    raise RuntimeError(
+        f"ABM_PAYPAL_MODE invalido: {_PAYPAL_MODE_RAW!r} "
+        f"(valori ammessi: 'sandbox', 'live')"
+    )
+PAYPAL_MODE = _PAYPAL_MODE_RAW or "sandbox"
 PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+if PAYPAL_CLIENT_ID:
+    print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
 LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
 LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
@@ -56,6 +74,7 @@ _DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
 _PAYMENTS_FILE = _DATA_DIR / "_payments.json"
 _VOUCHERS_FILE = _DATA_DIR / "_vouchers.json"
 _PAID_OPT_DONE_FILE = _DATA_DIR / "_paid_opt_done.json"
+_PAID_JOBS_DONE_FILE = _DATA_DIR / "_paid_jobs_done.json"
 
 # ---------------------------------------------------------------------------
 # Payment/voucher state
@@ -63,22 +82,47 @@ _PAID_OPT_DONE_FILE = _DATA_DIR / "_paid_opt_done.json"
 
 _payments = {}   # order_id -> {amount_eur, email, job_id, captured_at, used, used_at?}
 _vouchers = {}   # code -> {email, amount_eur, created_at, expires_at, used, used_at?, origin_order_id}
-_payments_lock = threading.Lock()
-_vouchers_lock = threading.Lock()
+_payments_lock = threading.RLock()
+_vouchers_lock = threading.RLock()
+
+# Pending orders: tracker in-memory degli ordini PayPal creati ma non ancora
+# capturati. Serve per amount reconciliation (confronto fra l'amount con cui
+# l'ordine e' stato creato e quello restituito da PayPal alla cattura).
+# Cleanup automatico oltre PENDING_ORDER_TTL_SEC.
+_pending_orders = {}
+_pending_orders_lock = threading.Lock()
+PENDING_ORDER_TTL_SEC = 60 * 60  # 1 ora
+
+# Capture lock: serializza il flusso check-idempotency + capture + store per
+# evitare race condition con due richieste capture parallele sullo stesso order.
+# Hold time massimo: una chiamata HTTP a PayPal (~secondi), accettabile vista
+# la frequenza ridotta dei capture.
+_capture_lock = threading.Lock()
 
 # Rate limit voucher_validate
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
+# Global -> deque ts di TUTTI i tentativi (safety net contro distributed scan).
 _voucher_attempts_ip = {}
 _voucher_attempts_email = {}
+_voucher_attempts_global: list = []
 _voucher_rl_lock = threading.Lock()
 VOUCHER_RL_PER_MIN = 5
 VOUCHER_RL_PER_HOUR = 30
 VOUCHER_EMAIL_FAIL_LIMIT = 10    # fallimenti consecutivi prima del lockout
 VOUCHER_EMAIL_LOCKOUT_SEC = 900  # 15 minuti
+# Global burst cap: ~100/min totali su tutto il processo bloccano un attacker
+# con rotating IP e generated emails. Soglie override-abili via env.
+VOUCHER_GLOBAL_PER_MIN = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_MIN", "100"))
+VOUCHER_GLOBAL_PER_HOUR = int(os.environ.get("ABM_VOUCHER_GLOBAL_PER_HOUR", "1000"))
 
 # Tracking job pagati completati con successo (persistenza su disco)
 _paid_opt_done: set = set()
+
+# Unified paid jobs store (F4): list of {"job_id", "purpose", "ts"}
+# All paid jobs (LLM optimization + Gemini TTS) are tracked here.
+_paid_jobs_done: list = []
+_paid_jobs_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +131,18 @@ _paid_opt_done: set = set()
 
 def _voucher_rl_check(ip, email):
     """Return (allowed, retry_after_sec, reason)."""
+    global _voucher_attempts_global
     now = time.time()
     with _voucher_rl_lock:
+        # Global burst safety net (taglia attacker con rotating IP+email)
+        _voucher_attempts_global = [t for t in _voucher_attempts_global if now - t < 3600]
+        gmin = [t for t in _voucher_attempts_global if now - t < 60]
+        if len(gmin) >= VOUCHER_GLOBAL_PER_MIN:
+            retry = 60 - int(now - gmin[0])
+            return False, max(1, retry), "rate_limit_global_minute"
+        if len(_voucher_attempts_global) >= VOUCHER_GLOBAL_PER_HOUR:
+            retry = 3600 - int(now - _voucher_attempts_global[0])
+            return False, max(1, retry), "rate_limit_global_hour"
         # IP sliding window
         hits = _voucher_attempts_ip.get(ip, [])
         hits = [t for t in hits if now - t < 3600]
@@ -107,9 +161,10 @@ def _voucher_rl_check(ip, email):
             info = _voucher_attempts_email.get(em)
             if info and info.get("lockout_until", 0) > now:
                 return False, int(info["lockout_until"] - now), "email_locked"
-        # Record hit for IP — caller can trigger email-fail separately
+        # Record hit for IP + global — caller can trigger email-fail separately
         hits.append(now)
         _voucher_attempts_ip[ip] = hits
+        _voucher_attempts_global.append(now)
     return True, 0, None
 
 
@@ -135,11 +190,25 @@ def _voucher_rl_record_result(email, success):
 # Persistence: payments
 # ---------------------------------------------------------------------------
 
+def _atomic_json_write(path, payload):
+    """Scrive JSON in modo atomico: tmp file + fsync + rename.
+    Evita file corrotti se il processo crasha a meta' write."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass  # filesystem non supporta fsync (rari edge case)
+    os.replace(str(tmp), str(path))
+
+
 def _save_payments():
     try:
         with _payments_lock:
-            with open(_PAYMENTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(_payments, f, ensure_ascii=False, indent=2)
+            _atomic_json_write(_PAYMENTS_FILE, _payments)
     except Exception as e:
         print(f"[payments] Failed to save: {e}")
 
@@ -169,8 +238,7 @@ def _load_payments():
 def _save_vouchers():
     try:
         with _vouchers_lock:
-            with open(_VOUCHERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(_vouchers, f, ensure_ascii=False, indent=2)
+            _atomic_json_write(_VOUCHERS_FILE, _vouchers)
     except Exception as e:
         print(f"[vouchers] Failed to save: {e}")
 
@@ -265,38 +333,42 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
     """Scala ``amount`` EUR dal saldo del voucher ``code``. Ritorna il nuovo saldo
     residuo. Se il saldo scende sotto 0.01 EUR il voucher viene marcato ``used=True``.
     Solleva ``ValueError`` se il voucher non e spendibile o il saldo e insufficiente.
+
+    Money-critical: the entire read-modify-write of ``remaining_eur`` must run
+    under ``_vouchers_lock`` to prevent concurrent overspend of the pool.
     """
-    v = _vouchers.get(code)
-    if not v:
-        raise ValueError("voucher not found")
-    if v.get("expires_at", 0) <= time.time():
-        raise ValueError("voucher expired")
-    remaining = _voucher_remaining(v)
-    # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
-    if amount > remaining + 0.01:
-        raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
-    spent = round(min(amount, remaining), 2)
-    new_remaining = round(remaining - spent, 2)
-    now = time.time()
-    v["remaining_eur"] = new_remaining
-    uses = v.get("uses")
-    if not isinstance(uses, list):
-        uses = []
-    uses.append({
-        "job_id": job_id,
-        "amount_eur": spent,
-        "at": now,
-        "remaining_after": new_remaining,
-    })
-    v["uses"] = uses
-    # Mark fully used solo quando il saldo e praticamente zero
-    if new_remaining < 0.01:
-        v["used"] = True
-        v["used_at"] = now
-    else:
-        v["used"] = False
-    _save_vouchers()
-    return new_remaining
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            raise ValueError("voucher not found")
+        if v.get("expires_at", 0) <= time.time():
+            raise ValueError("voucher expired")
+        remaining = _voucher_remaining(v)
+        # Arrotondamenti: se la differenza e <= 0.01 permettiamo lo spend (evita errori di 1 cent)
+        if amount > remaining + 0.01:
+            raise ValueError(f"insufficient balance: need {amount:.2f}, have {remaining:.2f}")
+        spent = round(min(amount, remaining), 2)
+        new_remaining = round(remaining - spent, 2)
+        now = time.time()
+        v["remaining_eur"] = new_remaining
+        uses = v.get("uses")
+        if not isinstance(uses, list):
+            uses = []
+        uses.append({
+            "job_id": job_id,
+            "amount_eur": spent,
+            "at": now,
+            "remaining_after": new_remaining,
+        })
+        v["uses"] = uses
+        # Mark fully used solo quando il saldo e praticamente zero
+        if new_remaining < 0.01:
+            v["used"] = True
+            v["used_at"] = now
+        else:
+            v["used"] = False
+        _save_vouchers()
+        return new_remaining
 
 
 def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = "") -> float:
@@ -304,31 +376,32 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
     Ritorna il nuovo saldo residuo. Se il voucher era marcato used, lo riattiva.
     Solleva ``ValueError`` se il voucher non esiste.
     """
-    v = _vouchers.get(code)
-    if not v:
-        raise ValueError("voucher not found")
-    remaining = _voucher_remaining(v)
-    original = float(v.get("amount_eur", 0) or 0)
-    new_remaining = round(min(remaining + amount, original), 2)
-    now = time.time()
-    v["remaining_eur"] = new_remaining
-    uses = v.get("uses")
-    if not isinstance(uses, list):
-        uses = []
-    uses.append({
-        "job_id": job_id,
-        "amount_eur": -round(amount, 2),  # negativo = refund
-        "at": now,
-        "remaining_after": new_remaining,
-        "reason": reason,
-    })
-    v["uses"] = uses
-    # Riattiva il voucher se aveva saldo e non e scaduto
-    if new_remaining >= 0.01:
-        v["used"] = False
-        if "used_at" in v:
-            del v["used_at"]
-    _save_vouchers()
+    with _vouchers_lock:
+        v = _vouchers.get(code)
+        if not v:
+            raise ValueError("voucher not found")
+        remaining = _voucher_remaining(v)
+        original = float(v.get("amount_eur", 0) or 0)
+        new_remaining = round(min(remaining + amount, original), 2)
+        now = time.time()
+        v["remaining_eur"] = new_remaining
+        uses = v.get("uses")
+        if not isinstance(uses, list):
+            uses = []
+        uses.append({
+            "job_id": job_id,
+            "amount_eur": -round(amount, 2),  # negativo = refund
+            "at": now,
+            "remaining_after": new_remaining,
+            "reason": reason,
+        })
+        v["uses"] = uses
+        # Riattiva il voucher se aveva saldo e non e scaduto
+        if new_remaining >= 0.01:
+            v["used"] = False
+            if "used_at" in v:
+                del v["used_at"]
+        _save_vouchers()
     print(f"[vouchers] Refund {amount:.2f} EUR -> {code} (new balance {new_remaining:.2f} EUR) reason={reason}")
     return new_remaining
 
@@ -359,9 +432,8 @@ def _load_paid_opt_done():
 
 
 def _mark_paid_opt_done(job_id: str):
-    """Segna un job come completato con successo (persistente su disco)."""
-    _paid_opt_done.add(job_id)
-    _save_paid_opt_done()
+    """DEPRECATED shim: routes legacy LLM opt completions to unified store."""
+    _mark_paid_job_done(job_id, purpose="llm")
 
 
 def _cleanup_paid_opt_done():
@@ -371,12 +443,74 @@ def _cleanup_paid_opt_done():
         _save_paid_opt_done()
 
 
+# ---------------------------------------------------------------------------
+# F4: Unified paid jobs store with atomic migration
+# ---------------------------------------------------------------------------
+
+def _atomic_write_json(path, data):
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    tmp.replace(path)
+
+
+def _migrate_paid_opt_to_paid_jobs():
+    """One-shot startup migration: legacy _paid_opt_done.json -> _paid_jobs_done.json.
+    Atomic + idempotent. All legacy records are tagged purpose='llm'.
+    """
+    if _PAID_JOBS_DONE_FILE.exists():
+        return  # already migrated
+    if not _PAID_OPT_DONE_FILE.exists():
+        _atomic_write_json(_PAID_JOBS_DONE_FILE, [])
+        return
+    bak = _PAID_OPT_DONE_FILE.with_suffix(".json.pre_unify_bak")
+    if not bak.exists():
+        shutil.copy2(_PAID_OPT_DONE_FILE, bak)
+    try:
+        with open(_PAID_OPT_DONE_FILE, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except Exception as e:
+        raise RuntimeError(f"FATAL migration: cannot read legacy _paid_opt_done.json: {e}")
+    if not isinstance(legacy, list):
+        raise RuntimeError(f"FATAL migration: legacy data not a list: {type(legacy)}")
+    unified = [{"job_id": jid, "purpose": "llm", "ts": 0} for jid in legacy if jid]
+    _atomic_write_json(_PAID_JOBS_DONE_FILE, unified)
+    print(f"[startup] Migrated {len(unified)} record(s) to _paid_jobs_done.json")
+
+
+def _load_paid_jobs_done():
+    global _paid_jobs_done
+    if not _PAID_JOBS_DONE_FILE.exists():
+        _paid_jobs_done = []
+        return
+    try:
+        with open(_PAID_JOBS_DONE_FILE, "r", encoding="utf-8") as f:
+            _paid_jobs_done = json.load(f)
+        print(f"[startup] Loaded {len(_paid_jobs_done)} paid job completion record(s)")
+    except Exception as e:
+        print(f"[paid_jobs_done] Load failed: {e}")
+        _paid_jobs_done = []
+
+
+def _save_paid_jobs_done():
+    with _paid_jobs_lock:
+        _atomic_write_json(_PAID_JOBS_DONE_FILE, list(_paid_jobs_done))
+
+
+def _is_paid_job_done(job_id: str) -> bool:
+    if not job_id:
+        return False
+    return any(r.get("job_id") == job_id for r in _paid_jobs_done)
+
+
 def _recover_orphaned_voucher_charges(jobs):
     """Recovery all'avvio: cerca addebiti voucher recenti (ultime 2 ore) il cui
     job_id non e ne in memoria (``jobs``) ne tra quelli completati con successo
-    (``_paid_opt_done``). Questo copre il caso in cui il server e stato
-    riavviato/crashato durante un'ottimizzazione a pagamento: il voucher era gia
-    stato addebitato ma il job non e mai terminato.
+    (verificato via ``_is_paid_job_done`` sul nuovo store unificato
+    ``_paid_jobs_done``, che copre sia LLM sia Gemini TTS). Questo copre il
+    caso in cui il server e stato riavviato/crashato durante un'operazione a
+    pagamento: il voucher era gia stato addebitato ma il job non e mai
+    terminato.
     Ri-accredita automaticamente l'importo sul voucher.
     """
     cutoff = time.time() - 2 * 3600  # ultime 2 ore
@@ -397,7 +531,7 @@ def _recover_orphaned_voucher_charges(jobs):
             if not use_job_id:
                 continue
             # Se il job e completato con successo  ->  non rimborsare
-            if use_job_id in _paid_opt_done:
+            if _is_paid_job_done(use_job_id):
                 continue
             # Se il job e ancora in memoria  ->  non rimborsare (non dovrebbe accadere al restart)
             if use_job_id in jobs:
@@ -488,7 +622,106 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
         timeout=15,
     )
     r.raise_for_status()
-    return r.json()
+    resp = r.json()
+    order_id = resp.get("id")
+    if order_id:
+        _register_pending_order(order_id, amount_eur, purpose=(custom_id or ""))
+    return resp
+
+
+def _register_pending_order(order_id, amount_requested_eur, purpose=""):
+    """Registra un ordine PayPal appena creato per amount reconciliation alla
+    cattura. Cleanup automatico delle voci stantie (oltre PENDING_ORDER_TTL_SEC).
+    """
+    now = time.time()
+    cutoff = now - PENDING_ORDER_TTL_SEC
+    with _pending_orders_lock:
+        for oid in list(_pending_orders.keys()):
+            if _pending_orders[oid].get("created_at", 0) < cutoff:
+                del _pending_orders[oid]
+        _pending_orders[order_id] = {
+            "amount_requested_eur": round(float(amount_requested_eur), 2),
+            "created_at": now,
+            "purpose": purpose,
+        }
+
+
+def _get_pending_amount(order_id):
+    """Ritorna amount richiesto al create, oppure None se non tracciato (es.
+    server restart fra create e capture, oppure TTL scaduto).
+    """
+    with _pending_orders_lock:
+        rec = _pending_orders.get(order_id)
+        return float(rec["amount_requested_eur"]) if rec else None
+
+
+def _consume_pending_order(order_id):
+    """Rimuove l'ordine dal tracker pending (chiamato dopo cattura riuscita)."""
+    with _pending_orders_lock:
+        _pending_orders.pop(order_id, None)
+
+
+# ---------------------------------------------------------------------------
+# F3: Payment token consumption (voucher or captured PayPal order)
+# ---------------------------------------------------------------------------
+
+def _paypal_order_is_captured(token: str) -> bool:
+    """True if token is a captured PayPal order not yet consumed."""
+    if not token:
+        return False
+    pay = _payments.get(token)
+    return bool(pay) and not pay.get("used", False)
+
+
+def _paypal_amount_matches(token: str, amount_eur: float, tolerance: float = 0.05) -> bool:
+    """True if captured order amount >= amount_eur (with tolerance for rounding)."""
+    pay = _payments.get(token)
+    if not pay:
+        return False
+    return float(pay.get("amount_eur", 0) or 0) + tolerance >= float(amount_eur)
+
+
+def _mark_paid_job_done(job_id: str, purpose: str = "gemini"):
+    """Append a completion record. Persists to disk."""
+    if not job_id:
+        return
+    with _paid_jobs_lock:
+        _paid_jobs_done.append({"job_id": job_id, "purpose": purpose, "ts": time.time()})
+    _save_paid_jobs_done()
+
+
+def consume_payment_token(token: str, amount_eur: float, job_id: str,
+                          purpose: str = "gemini") -> str:
+    """Consume a payment token (voucher or captured PayPal order).
+
+    Returns the method used ("voucher" or "paypal").
+    Raises ValueError if invalid / insufficient.
+    """
+    if not token:
+        raise ValueError("missing payment_token")
+    # Try voucher first
+    if token in _vouchers:
+        _voucher_consume(token, amount_eur, job_id=job_id)
+        _mark_paid_job_done(job_id, purpose=purpose)
+        return "voucher"
+    # Then PayPal captured order — atomic check-and-set under _payments_lock
+    # to prevent double-spend under concurrent requests.
+    with _payments_lock:
+        pay = _payments.get(token)
+        if pay and not pay.get("used", False):
+            if not _paypal_amount_matches(token, amount_eur):
+                raise ValueError("paypal amount mismatch")
+            # Mark order as used INSIDE the lock so other threads see used=True
+            pay["used"] = True
+            pay["used_at"] = time.time()
+            pay["used_for_job"] = job_id
+            try:
+                _save_payments()
+            except Exception:
+                pass  # best-effort persistence
+            _mark_paid_job_done(job_id, purpose=purpose)
+            return "paypal"
+    raise ValueError("invalid payment_token")
 
 
 def _paypal_capture_order(order_id):
@@ -504,3 +737,111 @@ def _paypal_capture_order(order_id):
     )
     r.raise_for_status()
     return r.json()
+
+
+class CaptureAmountMismatchError(ValueError):
+    """Capture amount non corrisponde a quanto creato (price tampering)."""
+
+
+def capture_and_store_order(order_id: str, job_id: str = "",
+                            amount_tolerance: float = 0.01):
+    """Cattura un ordine PayPal in modo atomico con amount reconciliation.
+
+    Acquisisce ``_capture_lock`` per tutto il flusso (idempotency check ->
+    capture API -> validazione amount -> store) per evitare race condition
+    su capture concorrenti dello stesso ``order_id``.
+
+    Ritorna dict con: amount_eur, email, capture_id, captured_at, already_captured.
+
+    Raise:
+      - ``ValueError`` su input invalido o capture rifiutata da PayPal
+      - ``CaptureAmountMismatchError`` se l'amount catturato differisce da quello
+        registrato al create oltre la tolleranza (price tampering defense).
+    """
+    if not order_id:
+        raise ValueError("missing order_id")
+
+    with _capture_lock:
+        # Idempotency: se gia' capturato, ritorna lo stato salvato
+        with _payments_lock:
+            pay = _payments.get(order_id)
+        if pay:
+            return {
+                "amount_eur": pay.get("amount_eur", 0),
+                "email": pay.get("email", ""),
+                "capture_id": pay.get("capture_id", ""),
+                "captured_at": pay.get("captured_at", 0),
+                "already_captured": True,
+            }
+
+        # Capture via PayPal API
+        captured = _paypal_capture_order(order_id)
+
+        purchase_units = captured.get("purchase_units", [])
+        if not purchase_units:
+            raise ValueError("invalid capture response: no purchase_units")
+        pu = purchase_units[0]
+        captures = pu.get("payments", {}).get("captures", [])
+        if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
+            raise ValueError("payment not completed")
+        cap = captures[0]
+        try:
+            amount_eur = float(cap.get("amount", {}).get("value", "0"))
+        except (TypeError, ValueError):
+            raise ValueError("invalid captured amount")
+
+        # Amount reconciliation: confronto con quanto registrato al create.
+        # Se pending non disponibile (server restart fra create e capture),
+        # log warning e accetta l'amount catturato (graceful degradation).
+        expected = _get_pending_amount(order_id)
+        if expected is not None:
+            if abs(amount_eur - expected) > amount_tolerance:
+                raise CaptureAmountMismatchError(
+                    f"capture amount {amount_eur:.2f} != requested {expected:.2f} "
+                    f"(order {order_id})"
+                )
+        else:
+            print(f"[paypal] WARN capture without pending record: order={order_id} "
+                  f"amount={amount_eur:.2f} (server restart or expired TTL)")
+
+        payer = captured.get("payer", {})
+        email = (payer.get("email_address") or "").lower().strip()
+
+        with _payments_lock:
+            # Re-check sotto _payments_lock (defense-in-depth: il _capture_lock
+            # gia' serializza, ma garantiamo coerenza completa con altri reader)
+            if order_id in _payments:
+                pay = _payments[order_id]
+                return {
+                    "amount_eur": pay.get("amount_eur", 0),
+                    "email": pay.get("email", ""),
+                    "capture_id": pay.get("capture_id", ""),
+                    "captured_at": pay.get("captured_at", 0),
+                    "already_captured": True,
+                }
+            now = time.time()
+            _payments[order_id] = {
+                "order_id": order_id,
+                "amount_eur": amount_eur,
+                "amount_requested_eur": expected if expected is not None else amount_eur,
+                "email": email,
+                "job_id": job_id,
+                "captured_at": now,
+                "used": False,
+                "used_at": None,
+                "capture_id": cap.get("id", ""),
+            }
+            try:
+                _save_payments()
+            except Exception as e:
+                print(f"[paypal] save_payments failed (post-capture): {e}")
+
+        _consume_pending_order(order_id)
+
+        return {
+            "amount_eur": amount_eur,
+            "email": email,
+            "capture_id": cap.get("id", ""),
+            "captured_at": _payments[order_id]["captured_at"],
+            "already_captured": False,
+        }

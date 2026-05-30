@@ -60,6 +60,10 @@ def is_available():
     """Verifica se Google Cloud TTS è configurato e disponibile."""
     global _gtts_available, _gtts_module, _gtts_client
 
+    # Google Cloud TTS (Chirp3-HD) disabilitato via codice: le voci sono servite
+    # esclusivamente tramite Vertex AI Gemini TTS Premium.
+    return False
+
     if _gtts_available is not None:
         return _gtts_available
 

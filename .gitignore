@@ -3,9 +3,12 @@ __pycache__/
 _debug*
 *.py[cod]
 *.log
+*.md
+*.env
 *.egg-info/
 firebase*
 data/
+md_files/
 mockup/
 scripts/
 test/
@@ -23,8 +26,7 @@ venv/
 node_modules/
 backup/
 public/
-CLAUDE.md
-GEMINI.md
+
 
 # App data (generated at runtime)
 data/
@@ -40,8 +42,9 @@ Thumbs.db
 *.swo
 
 # Environment
-.env
-.env.local
+# Tutti i file che iniziano con .env (incluso .env, .env.local, .env.*.example,
+# .env.production, ecc.) sono esclusi per evitare leak di chiavi/credenziali.
+.env*
 
 # Sensitive runtime data (should normally live in ABM_DATA_DIR outside repo,
 # but guard against accidental commits if ever present in the working tree)

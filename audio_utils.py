@@ -70,22 +70,32 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
     """
     import zipfile
     import io
-    import xml.etree.ElementTree as ET
+    from secure_archive import (safe_xml_fromstring, safe_zip_path,
+                                check_zip_bomb, ZipSafetyError)
 
     try:
         from PIL import Image
     except ImportError:
         return None
 
+    def _safe_href(opf_dir, href):
+        """Normalizza l'href OPF e rifiuta path-traversal."""
+        joined = (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href.replace('\\', '/')
+        try:
+            return safe_zip_path(joined)
+        except ZipSafetyError as e:
+            print(f"[cover] unsafe OPF href skipped: {e}")
+            return None
+
     def _find_cover_in_opf(zf):
         opf_path = None
         try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
+            container = safe_xml_fromstring(zf.read("META-INF/container.xml"))
             ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
             rootfile = container.find(".//c:rootfile", ns)
             if rootfile is not None:
                 opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
+        except Exception:
             pass
         if not opf_path:
             for n in zf.namelist():
@@ -95,8 +105,8 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
         if not opf_path:
             return None
         try:
-            opf = ET.fromstring(zf.read(opf_path))
-        except (KeyError, ET.ParseError):
+            opf = safe_xml_fromstring(zf.read(opf_path))
+        except Exception:
             return None
         opf_dir = os.path.dirname(opf_path)
         cover_id = None
@@ -115,11 +125,11 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
                 manifest_items[item_id] = (href, mt, props)
         for item_id, (href, mt, props) in manifest_items.items():
             if "cover-image" in props and mt.startswith("image/"):
-                return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                return _safe_href(opf_dir, href)
         if cover_id and cover_id in manifest_items:
             href, mt, _ = manifest_items[cover_id]
             if mt.startswith("image/"):
-                return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                return _safe_href(opf_dir, href)
         return None
 
     def _find_cover_by_name(zf):
@@ -142,6 +152,11 @@ def _extract_cover_from_epub(epub_path, output_path, target_size=1400):
 
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:
+            try:
+                check_zip_bomb(zf)
+            except ZipSafetyError as _ze:
+                print(f"[cover] EPUB rejected: {_ze}")
+                return None
             img_path = (_find_cover_in_opf(zf)
                         or _find_cover_by_name(zf)
                         or _find_largest_image(zf))
@@ -238,17 +253,26 @@ def _extract_cover_for_preview(epub_path, output_dir):
     - Without Pillow: extracts raw image bytes as-is
     """
     import zipfile
-    import xml.etree.ElementTree as ET
+    from secure_archive import (safe_xml_fromstring, safe_zip_path,
+                                check_zip_bomb, ZipSafetyError)
+
+    def _safe_href2(opf_dir, href):
+        joined = (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href.replace('\\', '/')
+        try:
+            return safe_zip_path(joined)
+        except ZipSafetyError as e:
+            print(f"[cover] unsafe OPF href skipped: {e}")
+            return None
 
     def _find_cover_path_in_zip(zf):
         opf_path = None
         try:
-            container = ET.fromstring(zf.read("META-INF/container.xml"))
+            container = safe_xml_fromstring(zf.read("META-INF/container.xml"))
             ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
             rootfile = container.find(".//c:rootfile", ns)
             if rootfile is not None:
                 opf_path = rootfile.get("full-path")
-        except (KeyError, ET.ParseError):
+        except Exception:
             pass
         if not opf_path:
             for n in zf.namelist():
@@ -257,7 +281,7 @@ def _extract_cover_for_preview(epub_path, output_dir):
                     break
         if opf_path:
             try:
-                opf = ET.fromstring(zf.read(opf_path))
+                opf = safe_xml_fromstring(zf.read(opf_path))
                 opf_dir = os.path.dirname(opf_path)
                 cover_id = None
                 for meta in opf.iter():
@@ -274,12 +298,12 @@ def _extract_cover_for_preview(epub_path, output_dir):
                             item.get("properties", ""))
                 for iid, (href, mt, props) in manifest.items():
                     if "cover-image" in props and mt.startswith("image/"):
-                        return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
+                        return _safe_href2(opf_dir, href)
                 if cover_id and cover_id in manifest:
                     href, mt, _ = manifest[cover_id]
                     if mt.startswith("image/"):
-                        return (opf_dir + '/' + href).replace('\\', '/') if opf_dir else href
-            except (KeyError, ET.ParseError):
+                        return _safe_href2(opf_dir, href)
+            except Exception:
                 pass
 
         for n in zf.namelist():
@@ -299,6 +323,11 @@ def _extract_cover_for_preview(epub_path, output_dir):
 
     try:
         with zipfile.ZipFile(epub_path, "r") as zf:
+            try:
+                check_zip_bomb(zf)
+            except ZipSafetyError as _ze:
+                print(f"[cover] EPUB rejected: {_ze}")
+                return None, None
             img_zip_path = _find_cover_path_in_zip(zf)
             if not img_zip_path:
                 print(f"[cover] No cover image found in {os.path.basename(epub_path)}")
@@ -1031,7 +1060,65 @@ def pcm_size_to_seconds(byte_size, sample_rate=24000, channels=1, sample_width=2
     return byte_size / bytes_per_second
 
 
-def pcm_concat(pcm_paths, output_path, skip_missing=False):
+def trim_pcm_trailing_silence(pcm_path, sample_rate=24000, channels=1, sample_width=2,
+                              threshold=200, max_trim_ms=800):
+    """Tronca in-place il silenzio finale di un file PCM raw mono 16-bit (s16le).
+
+    Scansiona dalla coda del file fino a `max_trim_ms` di campioni e rimuove
+    i samples finali consecutivi con |valore| < threshold. Usato per ridurre
+    le pause percepibili tra chunk Gemini TTS consecutivi (ogni chunk tende ad
+    avere trailing silence di durata variabile).
+
+    Args:
+        pcm_path: file PCM raw (s16le).
+        sample_rate, channels, sample_width: formato. Solo mono 16-bit supportato.
+        threshold: ampiezza assoluta (0-32767) sotto cui un sample e' "silenzio".
+                   200 ≈ -44 dB (sicuro contro tagli sull'attacco di parola).
+        max_trim_ms: cap massimo (ms) di silenzio da rimuovere. 0 = disabilita.
+
+    Returns:
+        int: millisecondi effettivamente troncati (0 se nessun trim o errore).
+    """
+    if max_trim_ms <= 0 or sample_width != 2 or channels != 1:
+        return 0
+    if not os.path.exists(pcm_path):
+        return 0
+    try:
+        size = os.path.getsize(pcm_path)
+        if size < 4:
+            return 0
+        max_trim_bytes = int(max_trim_ms * sample_rate / 1000) * channels * sample_width
+        scan_bytes = min(size, max_trim_bytes)
+        # Allinea su confine sample
+        scan_bytes -= scan_bytes % (channels * sample_width)
+        if scan_bytes <= 0:
+            return 0
+        import struct
+        with open(pcm_path, "rb") as f:
+            f.seek(size - scan_bytes)
+            tail = f.read(scan_bytes)
+        n_samples = len(tail) // 2
+        if n_samples == 0:
+            return 0
+        samples = struct.unpack(f"<{n_samples}h", tail)
+        cut_samples = 0
+        for i in range(n_samples - 1, -1, -1):
+            if abs(samples[i]) >= threshold:
+                break
+            cut_samples += 1
+        if cut_samples == 0:
+            return 0
+        cut_bytes = cut_samples * sample_width * channels
+        with open(pcm_path, "rb+") as f:
+            f.truncate(size - cut_bytes)
+        return int(cut_samples * 1000 / sample_rate)
+    except Exception as e:
+        print(f"[trim_pcm_trailing_silence] error on {pcm_path}: {e}")
+        return 0
+
+
+def pcm_concat(pcm_paths, output_path, skip_missing=False, gap_ms=0,
+               sample_rate=24000, channels=1, sample_width=2):
     """Concatena raw PCM byte-wise (tutti i file devono avere stesso formato).
 
     Non c'e' header da gestire: PCM raw e' solo sequenza di campioni.
@@ -1042,15 +1129,28 @@ def pcm_concat(pcm_paths, output_path, skip_missing=False):
         output_path: file di destinazione.
         skip_missing: se True, file non esistenti vengono saltati con log;
                       altrimenti raise FileNotFoundError.
+        gap_ms: silenzio (ms) inserito tra ogni coppia di PCM consecutivi
+                effettivamente scritti. 0 = nessun gap (concat byte-a-byte).
+                Utile per dare respiro acustico tra chunk TTS consecutivi.
+        sample_rate, channels, sample_width: formato sorgente, usato solo per
+                calcolare la dimensione del gap in byte.
     """
     out = open(output_path, "wb")
+    gap_bytes = b""
+    if gap_ms and gap_ms > 0:
+        n_samples = int(gap_ms * sample_rate / 1000)
+        gap_bytes = b"\x00" * (n_samples * channels * sample_width)
     try:
+        wrote_any = False
         for p in pcm_paths:
             if not os.path.exists(p):
                 if skip_missing:
                     print(f"[pcm_concat] skip missing: {p}")
                     continue
                 raise FileNotFoundError(p)
+            if wrote_any and gap_bytes:
+                out.write(gap_bytes)
+            wrote_any = True
             with open(p, "rb") as f:
                 while True:
                     chunk = f.read(1 << 20)
@@ -1062,7 +1162,7 @@ def pcm_concat(pcm_paths, output_path, skip_missing=False):
 
 
 def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
-               sample_width=2, bitrate="64k"):
+               sample_width=2, bitrate="64k", gap_ms=0):
     """Concatena raw PCM e codifica in MP3 con singola passata ffmpeg.
 
     Args:
@@ -1070,6 +1170,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
         output_path: file MP3 risultante.
         sample_rate, channels, sample_width: formato sorgente.
         bitrate: bitrate MP3 (es. '64k').
+        gap_ms: silenzio inter-chunk in ms (vedi pcm_concat).
 
     Returns:
         True se ok, False se nessun input o ffmpeg fallisce.
@@ -1084,7 +1185,8 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
     import subprocess
     tmp_pcm = output_path + ".tmp.pcm"
     try:
-        pcm_concat(pcm_paths, tmp_pcm)
+        pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
+                   channels=channels, sample_width=sample_width)
         cmd = [
             "ffmpeg", "-y",
             "-f", "s16le",
@@ -1113,7 +1215,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
 def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
                    sample_width=2, bitrate="96k", chapters=None, title=None,
                    author=None, cover_path=None, date=None, language=None,
-                   description=None, genre="Audiobook"):
+                   description=None, genre="Audiobook", gap_ms=0):
     """Codifica PCM concatenato direttamente in M4B (AAC) con capitoli/cover/metadati.
 
     Vantaggio vs pcm_to_mp3 + mp3_to_m4b: una sola encode AAC (no doppia lossy).
@@ -1140,7 +1242,8 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
     tmp_pcm = output_path + ".tmp.pcm"
     metadata_file = None
     try:
-        pcm_concat(pcm_paths, tmp_pcm)
+        pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
+                   channels=channels, sample_width=sample_width)
 
         def escape_meta(s):
             return str(s).replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#').replace('\n', ' ')
@@ -1189,12 +1292,22 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
             "-i", tmp_pcm,
         ]
         if metadata_file:
-            cmd.extend(["-i", metadata_file, "-map_metadata", "1", "-map_chapters", "1"])
+            cmd.extend(["-i", metadata_file])
         if cover_path and os.path.exists(cover_path):
-            cmd.extend(["-i", cover_path, "-map", "0:a", "-map", f"{2 if metadata_file else 1}:v",
+            cmd.extend(["-i", cover_path])
+
+        # Mapping streams: prima dei map_metadata/chapters (output options).
+        # Bug fix: con cover presente, mettere -map_metadata tra -i metadata e -i cover
+        # faceva interpretare a ffmpeg map_metadata come opzione di INPUT per cover.jpg,
+        # generando "Option map_metadata cannot be applied to input url ...".
+        cmd.extend(["-map", "0:a"])
+        if cover_path and os.path.exists(cover_path):
+            cover_idx = 2 if metadata_file else 1
+            cmd.extend(["-map", f"{cover_idx}:v",
                         "-disposition:v", "attached_pic", "-c:v", "copy"])
-        else:
-            cmd.extend(["-map", "0:a"])
+
+        if metadata_file:
+            cmd.extend(["-map_metadata", "1", "-map_chapters", "1"])
 
         cmd.extend(["-c:a", "aac", "-b:a", bitrate])
         if lang_iso:
@@ -1203,8 +1316,14 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
 
         result = subprocess.run(cmd, capture_output=True, timeout=3600, **_SUBPROCESS_FLAGS)
         if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="ignore")[:800]
-            print(f"[pcm_to_aac_m4b] ffmpeg failed: {stderr}")
+            # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
+            # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",
+            # "Error opening output file", "Unknown encoder 'aac'") sta in coda:
+            # tagliare con [:N] dall'inizio nascondeva sempre la causa reale.
+            stderr_full = result.stderr.decode("utf-8", errors="ignore")
+            stderr_tail = stderr_full[-1500:] if len(stderr_full) > 1500 else stderr_full
+            print(f"[pcm_to_aac_m4b] ffmpeg failed (rc={result.returncode}). "
+                  f"cmd={cmd!r}\nstderr_tail:\n{stderr_tail}")
             return False
         return True
     except Exception as e:

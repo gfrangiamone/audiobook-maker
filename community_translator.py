@@ -1,6 +1,6 @@
-"""Translate feedback/news content into all UI languages via DeepSeek LLM.
+"""Translate feedback/news content into all UI languages via LLM.
 
-Reuses the DeepSeek client and configuration already initialized in
+Reuses the LLM client and configuration already initialized in
 generation_engine.py. Exposes a synchronous translate() that returns a
 dict shaped as:
 
@@ -57,7 +57,7 @@ Output ONLY a single JSON object with this exact structure (no prose):
 
 
 def is_available() -> bool:
-    """True if the DeepSeek client is initialized."""
+    """True if the LLM client is initialized."""
     return ge._llm_available()
 
 
@@ -111,12 +111,12 @@ def _extract_json_object(raw: str) -> dict | None:
 
 
 def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool) -> str | None:
-    client = ge._deepseek_client
+    client = ge._llm_client
     if client is None:
         return None
     user_content = json.dumps(payload, ensure_ascii=False)
     kwargs = dict(
-        model=ge.DEEPSEEK_MODEL,
+        model=ge.LLM_MODEL,
         messages=[
             {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
@@ -137,7 +137,7 @@ def translate(payload: dict[str, str], *, timeout: float = 90.0) -> dict | None:
     Returns the translation dict, or None on failure.
     """
     if not is_available():
-        print("[community_translator] LLM unavailable (DeepSeek client not initialized)")
+        print("[community_translator] LLM unavailable (client not initialized)")
         return None
     if not isinstance(payload, dict) or not payload:
         print(f"[community_translator] empty/invalid payload: {payload!r}")

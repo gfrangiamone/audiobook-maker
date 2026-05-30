@@ -11,6 +11,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | Parametro | Valore default | File | Riga |
 |-----------|---------------|------|------|
 | `ABM_DATA_DIR` | `"/var/lib/audiobook-maker/data"` | `audiobook_app.py` | 77 |
+| `ABM_PORT` | `5601` (porta di bind di `app.run`, utile per affiancare istanze separate sullo stesso host — es. test vs prod) | `audiobook_app.py` | 8341 |
+| `ABM_DEBUG` | `0` (Werkzeug debugger + auto-reload; valori truthy: `1`/`true`/`yes`/`on`). In produzione **deve** restare disattivato | `audiobook_app.py` | 8342 |
 | `ABM_SMTP_HOST` | `""` (vuoto) | `audiobook_app.py` | 91 |
 | `ABM_SMTP_PORT` | `587` | `audiobook_app.py` | 92 |
 | `ABM_SMTP_USER` | `""` (vuoto) | `audiobook_app.py` | 93 |
@@ -19,10 +21,10 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_BASE_URL` | `""` (vuoto, con rstrip di `/`) | `audiobook_app.py` | 96 |
 | `ABM_ADMIN_EMAIL` | `""` (vuoto, se vuoto il digest admin e' disabilitato) | `audiobook_app.py` | 103 |
 | `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` | `audiobook_app.py` | 112 |
-| `ABM_DEEPSEEK_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 63 |
-| `ABM_DEEPSEEK_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 94 |
+| `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 104 |
+| `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 105 |
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 152 |
-| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) | `google_tts.py` | 69 |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — dal 2026-05-26 usato **anche** dal backend Vertex AI Gemini TTS (non più solo da Google Cloud TTS): un unico service account autentica entrambe le integrazioni quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `google_tts.py` | 69 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
 | `ABM_GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (1M caratteri/mese, free tier Google Cloud TTS) | `google_tts.py` | 33 |
 | `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 104 |
@@ -33,7 +35,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
-| `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download) | `audiobook_app.py` | 274 |
+| `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download per voci standard) | `audiobook_app.py` | 300 |
+| `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` inizia per `gemini:` o il token ha `is_gemini=True`. **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
 
 ---
 
@@ -42,7 +45,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `MAX_CONTENT_LENGTH` | da `ABM_MAX_UPLOAD_MB` (default `50` MB) | `audiobook_app.py` | 163 |
-| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) — applicato ai capitoli **selezionati** in `/api/generate`, `/api/optimize` e `/api/optimize_estimate`; il libro viene analizzato e mostrato a prescindere dalla dimensione totale | `audiobook_app.py` | — |
+| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) — cap caratteri **standard** (edge-tts/Google) applicato ai capitoli **selezionati** in `/api/generate`, `/api/optimize` e `/api/optimize_estimate`; il libro viene analizzato e mostrato a prescindere dalla dimensione totale | `audiobook_app.py` | 308 |
+| `ABM_MAX_GEMINI_TEXT_CHARS` | `800000` — cap caratteri **PREMIUM/Gemini**, più basso per allinearsi a costi/throughput Gemini TTS. Selezione via `_max_text_chars_for_voice(voice)` → applicato dagli stessi 3 endpoint quando `voice` inizia per `gemini:`. Il frontend riceve entrambi i cap nella risposta upload (`max_text_chars`, `max_gemini_text_chars`) e usa quello attivo in base al tab audio (Standard vs PREMIUM) per il controllo `tryGoToAudioSettings`. | `audiobook_app.py` | 309 |
 
 ---
 
@@ -66,7 +70,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `SMTP_PASS` | da `ABM_SMTP_PASS` | `audiobook_app.py` | 94 |
 | `SMTP_FROM` | da `ABM_SMTP_FROM` o fallback | `audiobook_app.py` | 95 |
 | `BASE_URL` | da `ABM_BASE_URL` (con rstrip) | `audiobook_app.py` | 96 |
-| `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) | `audiobook_app.py` | 97 |
+| `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) — retention voci standard | `audiobook_app.py` | 300 |
+| `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM/Gemini | `audiobook_app.py` | 301 |
 | `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 103 |
 | `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 104 |
 
@@ -78,6 +83,28 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `MAX_CONCURRENT_LLM_PER_CLIENT` | da `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` (default `1`) | `audiobook_app.py` | 152 |
 | `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 115 |
 | `_CLIENT_COOKIE_MAX_AGE` | `31536000` (1 anno in secondi) | `audiobook_app.py` | 116 |
+| `_ANALYZE_RL_PER_MIN` | `5` upload `/api/analyze` / IP / minuto (sliding window) | `audiobook_app.py` | — |
+| `_ANALYZE_RL_PER_HOUR` | `30` upload `/api/analyze` / IP / ora | `audiobook_app.py` | — |
+| `_PREVIEW_RL_PER_MIN` | `20` preview `/api/preview_audio` / IP / minuto | `audiobook_app.py` | — |
+| `_PREVIEW_RL_PER_HOUR` | `200` preview `/api/preview_audio` / IP / ora | `audiobook_app.py` | — |
+
+Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
+
+### 3.3.1 Sicurezza applicativa (CSRF, HSTS, archivi, MIME)
+
+| Parametro | Valore default | Env var | File | Riga |
+|-----------|----------------|---------|------|------|
+| `ZIP_MAX_ENTRY_UNCOMPRESSED` | `200` MB per entry uncompressed | `ABM_ZIP_MAX_ENTRY_MB` | `secure_archive.py` | 16 |
+| `ZIP_MAX_TOTAL_UNCOMPRESSED` | `500` MB totale uncompressed | `ABM_ZIP_MAX_TOTAL_MB` | `secure_archive.py` | 18 |
+| `ZIP_MAX_COMPRESSION_RATIO` | `200` (uncompressed/compressed) | `ABM_ZIP_MAX_RATIO` | `secure_archive.py` | 20 |
+
+- **CSRF**: `_csrf_protect()` before_request hook valida `Origin`/`Referer` su ogni `POST/PUT/PATCH/DELETE`. Richieste cross-site da browser bloccate con `403`. Richieste senza `Origin` e senza `Referer` (curl, mobile app) passano (CSRF richiede browser+cookie).
+- **HSTS**: header `Strict-Transport-Security: max-age=31536000; includeSubDomains` aggiunto da `add_security_headers()` solo se `request.is_secure` (richiede TLS termination corretto via `ProxyFix`).
+- **Zip-safety**: `secure_archive.py` centralizza protezione zip-slip (`safe_zip_path`), zip-bomb (`check_zip_bomb`) e XXE (`safe_xml_fromstring` via `defusedxml`). Applicato a parsing EPUB (`epub_to_tts.py`, `audio_utils.py`) e ABM (`generation_engine.py`). Override soglie via env var sopra. Errori sollevano `ZipSafetyError`.
+- **MIME validation upload**: `/api/analyze` legge i primi 8 byte del file salvato e valida magic bytes contro l'estensione dichiarata (EPUB/ABM → `PK\x03\x04`, PDF → `%PDF-`, TXT → no NUL byte tranne BOM UTF-16). Bypass extension blacklist + protezione storage abuse.
+- **CSV injection export**: `_csv_safe(val)` prefissa con apostrofo (`'`) qualunque cella che inizi con `= + - @ \t \r` per neutralizzare formula execution in Excel/LibreOffice. Applicato in `/admin/log-activity/export` (sia CSV fallback sia XLSX) per i campi user-controllabili (filename, voice, browser_lang, client_id, client_ip, last_op, events, sid).
+- **Atomic JSON write**: `_payments.json`, `_vouchers.json`, `_download_tokens.json` scritti via tmpfile + `fsync` + `os.replace()` per evitare file corrotti su crash a metà write.
+- **Legacy job warning**: `_check_job_ownership()` logga `[SECURITY-WARN] Legacy job senza client_id` quando un job pre-enforcement viene acceduto. Permette monitor della coorte legacy in vista di future restrizioni.
 
 ### 3.6.1 PayPal (pagamenti ottimizzazione LLM)
 
@@ -99,7 +126,10 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 - **Voucher refund (errore/cancel)**: se l'ottimizzazione fallisce o viene annullata dopo un pagamento con voucher, l'importo viene **ri-accreditato integralmente** sul voucher originale tramite `_voucher_refund()`. Se il pagamento era PayPal, viene emesso un nuovo buono pari all'importo pagato + `ABM_VOUCHER_BONUS_PERCENT`%.
 - **Recovery avvio server**: `_recover_orphaned_voucher_charges()` eseguita allo startup controlla gli addebiti voucher delle ultime 2 ore; se il job_id non è più in memoria né tra i completati (`_paid_opt_done.json`), ri-accredita automaticamente l'importo. Copre il caso di crash/riavvio durante un'ottimizzazione a pagamento.
 - **Saldo residuo (consumo parziale)**: ogni voucher ha un campo `remaining_eur` (inizializzato all'importo totale) che viene decrementato di `estimated_cost` ad ogni operazione. Il buono torna "USED" solo quando il saldo scende sotto 0.01 EUR; fino a quel momento conserva stato `PARTIAL` e può essere usato più volte fino a scadenza. Lo storico delle spese è in `uses[]` (`job_id`, `amount_eur`, `at`, `remaining_after`). Record legacy senza `remaining_eur` vengono letti in compat: `used=True` → residuo 0; altrimenti residuo = `amount_eur`. La revoca admin azzera `remaining_eur`.
-- **Idempotenza capture**: re-capture sullo stesso `order_id` ritorna il token esistente senza doppio addebito.
+- **Idempotenza capture**: `payment.capture_and_store_order(order_id)` acquisisce `_capture_lock` (global), verifica se il record esiste già (idempotency cache), altrimenti chiama PayPal API. 5+ thread concorrenti producono 1 sola chiamata API.
+- **Amount reconciliation**: `_pending_orders` traccia in-memory `{order_id: amount_requested_eur, purpose, ts}` registrato in `_paypal_create_order`. Al capture, l'importo PayPal viene confrontato con il pending (tolerance 0.01 EUR); mismatch → `CaptureAmountMismatchError`. Difende contro tampering del cliente sull'importo. TTL pending: 1h (cleanup automatico).
+- **PayPal mode mandatory**: `ABM_PAYPAL_MODE` (`sandbox` | `live`) **obbligatorio** se `ABM_PAYPAL_CLIENT_ID` è settato. Module-level `RuntimeError` al boot se mancante o invalido. Difende contro deploy accidentale in sandbox in produzione.
+- **Refund bonus disabilitato su cancel volontario**: `generation_engine._refund_job_payment(reason=...)` passa `apply_bonus=(reason != "cancel")` a `_create_voucher`. Cancel volontario → rimborso 1:1, NON bonus. Bonus +10% riservato a fallimenti piattaforma (errore/eccezione) per evitare abuso "cancel per bonus".
 - **Ricevuta email**: inviata automaticamente post-capture al payer email PayPal.
 - **GDPR**: dati pagamento conservati `ABM_PAYMENT_RETENTION_DAYS` giorni (default 24 mesi) per compliance fiscale.
 - **Endpoint diagnostico**: `GET /api/paypal_debug_order/<order_id>` per ispezionare un ordine via API PayPal v2.
@@ -108,12 +138,14 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `VOUCHER_RL_PER_MIN` | `5` tentativi voucher_validate / IP / minuto | `audiobook_app.py` | ~350 |
-| `VOUCHER_RL_PER_HOUR` | `30` tentativi voucher_validate / IP / ora | `audiobook_app.py` | ~351 |
-| `VOUCHER_EMAIL_FAIL_LIMIT` | `10` fallimenti consecutivi per email prima del lockout | `audiobook_app.py` | ~352 |
-| `VOUCHER_EMAIL_LOCKOUT_SEC` | `900` (15 min di lockout email) | `audiobook_app.py` | ~353 |
+| `VOUCHER_RL_PER_MIN` | `5` tentativi voucher_validate / IP / minuto | `payment.py` | 108 |
+| `VOUCHER_RL_PER_HOUR` | `30` tentativi voucher_validate / IP / ora | `payment.py` | 109 |
+| `VOUCHER_EMAIL_FAIL_LIMIT` | `10` fallimenti consecutivi per email prima del lockout | `payment.py` | 110 |
+| `VOUCHER_EMAIL_LOCKOUT_SEC` | `900` (15 min di lockout email) | `payment.py` | 111 |
+| `ABM_VOUCHER_GLOBAL_PER_MIN` | `100` tentativi/min TOTALI sul processo (safety net distributed scan) | `payment.py` | 115 |
+| `ABM_VOUCHER_GLOBAL_PER_HOUR` | `1000` tentativi/ora TOTALI sul processo | `payment.py` | 116 |
 
-- **Rate limit**: `/api/voucher_validate` protetto da sliding window per IP e lockout temporaneo per email; oltre soglia risponde `429` con header `Retry-After`.
+- **Rate limit**: `/api/voucher_validate` protetto da sliding window per IP, per email (lockout temporaneo) e globale (burst cap). Oltre soglia risponde `429` con header `Retry-After` e `reason` (`rate_limit_ip_minute` | `rate_limit_ip_hour` | `email_locked` | `rate_limit_global_minute` | `rate_limit_global_hour`).
 - **Log strutturato**: ogni tentativo genera un evento `VOUCHER_ATTEMPT` (o `VOUCHER_ATTEMPT_BLOCKED:<reason>`) nel log attività mensile, con IP, codice mascherato e outcome (`OK`, `NOT_FOUND`, `USED`, `EXPIRED`, `EMAIL_MISMATCH`, `MISSING_FIELDS`).
 - **Schema voucher esteso**: ogni record ha `kind` (`refund` | `promo` | `gift`), `note` (≤500 char), `created_by` (`auto_refund` | `admin`). I voucher generati da CLI usano prefisso `PROMO-` o `GIFT-` per distinguerli a colpo d'occhio.
 - **CLI amministrativa**: `scripts/admin_voucher.py` (zero superficie web) con sottocomandi `create`, `list`, `revoke`, `show`. Opera direttamente su `_vouchers.json` in `ABM_DATA_DIR` e logga ogni operazione in `voucher_admin.log`. Esempio: `python scripts/admin_voucher.py create --email user@ex.com --amount 2 --days 180 --kind promo --note "campagna lancio"`.
@@ -124,20 +156,35 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_ADMIN_TOKEN` | *(vuoto → UI disabilitata)* | Token segreto per accedere a `/admin/vouchers` |
 - **Gitignore**: `_vouchers.json`, `_payments.json`, `voucher_admin.log` esclusi esplicitamente da git per prevenire commit accidentali (in aggiunta a `data/`).
 
-### 3.6 DeepSeek LLM (ottimizzazione testo per TTS)
+### 3.6 LLM (ottimizzazione testo per TTS) — engine-agnostic
 
-| Parametro | Valore | File | Riga |
-|-----------|--------|------|------|
-| `DEEPSEEK_API_BASE` | `"https://api.deepseek.com"` | `generation_engine.py` | 49 |
-| `DEEPSEEK_MODEL` | `"deepseek-chat"` (configurabile via `ABM_DEEPSEEK_MODEL`) | `generation_engine.py` | 50 |
-| `DEEPSEEK_THINKING` | `"false"` (configurabile via `ABM_DEEPSEEK_THINKING`) | `generation_engine.py` | 51 |
-| `DEEPSEEK_REASONING_EFFORT` | `"none"` (configurabile via `ABM_DEEPSEEK_REASONING_EFFORT`: none, low, medium, high) | `generation_engine.py` | 52 |
-| `DEEPSEEK_MAX_TOKENS` | `8192` | `generation_engine.py` | 53 |
-| `DEEPSEEK_TEMPERATURE` | `0.3` | `generation_engine.py` | 54 |
-| `DEEPSEEK_CHARS_PER_TOKEN` | `3.5` (stima per italiano) | `generation_engine.py` | 55 |
-| `DEEPSEEK_MAX_INPUT_CHARS` | `~405.000` (calcolato da context 128K) | `generation_engine.py` | 60 |
-| `_call_deepseek(max_retries)` | `4` tentativi con backoff esponenziale (1/2/4/8s) su errori transitori di rete (`ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`) | `generation_engine.py` | 438 |
-| `timeout` streaming DeepSeek | `120.0s` esplicito per evitare stall indefiniti | `generation_engine.py` | 451 |
+Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (provider attuale) ma sostituibili senza modifiche al codice.
+
+| Parametro | Valore default | Env var | File | Riga |
+|-----------|----------------|---------|------|------|
+| `LLM_API_KEY` | *(empty)* | `ABM_LLM_API_KEY` | `generation_engine.py` | 77 |
+| `LLM_API_BASE` | `https://api.deepseek.com` | `ABM_LLM_API_BASE` | `generation_engine.py` | 78 |
+| `LLM_MODEL` | `deepseek-chat` | `ABM_LLM_MODEL` | `generation_engine.py` | 79 |
+| `LLM_THINKING` | `False` | `ABM_LLM_THINKING` | `generation_engine.py` | 82 |
+| `LLM_REASONING_EFFORT` | `none` | `ABM_LLM_REASONING_EFFORT` | `generation_engine.py` | 83 |
+| `LLM_TEMPERATURE` | `0.3` | `ABM_LLM_TEMPERATURE` | `generation_engine.py` | 84 |
+| `LLM_MAX_TOKENS` | `65536` (~195k char/chunk) | `ABM_LLM_MAX_TOKENS` | `generation_engine.py` | 85 |
+| `LLM_CHARS_PER_TOKEN` | `3.5` | `ABM_LLM_CHARS_PER_TOKEN` | `generation_engine.py` | 88 |
+| `LLM_MAX_CONTEXT_TOKENS` | `1000000` | `ABM_LLM_MAX_CONTEXT_TOKENS` | `generation_engine.py` | 89 |
+| `LLM_RESERVED_PROMPT_TOKENS` | `4000` | `ABM_LLM_RESERVED_PROMPT_TOKENS` | `generation_engine.py` | 90 |
+| `LLM_OUTPUT_SAFETY_MARGIN` | `0.85` | `ABM_LLM_OUTPUT_SAFETY_MARGIN` | `generation_engine.py` | 91 |
+| `LLM_REQUEST_TIMEOUT_SEC` | `120.0` | `ABM_LLM_REQUEST_TIMEOUT_SEC` | `generation_engine.py` | 94 |
+| `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
+| `LLM_INTER_CHUNK_SLEEP_SEC` | `0.5` | `ABM_LLM_INTER_CHUNK_SLEEP_SEC` | `generation_engine.py` | 96 |
+| `LLM_HEARTBEAT_TIMEOUT_SEC` | `60.0` (auto-cancel solo interactive) | `ABM_LLM_HEARTBEAT_TIMEOUT_SEC` | `generation_engine.py` | 97 |
+| `LLM_TRIVIAL_INPUT_MIN_CHARS` | `80` (sotto soglia, o single-line < 2× senza punteggiatura terminale → pass-through, no LLM call. Antidoto a prompt-leak su input banali) | `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS` | `generation_engine.py` | 100 |
+| `LLM_LEAK_MAX_RETRIES` | `2` (retry anti-leak con `temperature` +0.1 per attempt capped 1.0, `reasoning_effort="none"`, thinking off. Budget indipendente da `LLM_MAX_RETRIES` transient. Esauriti → raise `_PromptLeakError` → fallback originale + audit JSONL) | `ABM_LLM_LEAK_MAX_RETRIES` | `generation_engine.py` | 101 |
+| `LLM_RESERVED_OUTPUT_TOKENS` | derived = `LLM_MAX_TOKENS` | — | `generation_engine.py` | 100 |
+| `LLM_MAX_INPUT_TOKENS` | derived = ~930k | — | `generation_engine.py` | 101 |
+| `LLM_MAX_INPUT_CHARS` | derived = ~3.26M | — | `generation_engine.py` | 102 |
+| `LLM_SAFE_OUTPUT_CHUNK` | derived = `MAX_TOKENS × CHARS_PER_TOKEN × SAFETY_MARGIN` ≈ 195k char | — | `generation_engine.py` | 106 |
+
+Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`.
 
 ### 3.4 Generazione audio
 
@@ -256,7 +303,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 - `analyzed` → 3 min dopo l'ultimo heartbeat (anteprima mai avviata)
 - `optimizing` → cancellato se heartbeat perso per >60s (senza email) / tenuto in vita in batch (con email)
-- `optimized` → **`EMAIL_FILE_RETENTION_SEC` (default 18h, configurabile via `ABM_JOB_RETENTION_SEC`) dal `opt_completed_at`**, indipendentemente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per il periodo configurato dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
+- `optimized` → **retention per-job dal `opt_completed_at`**: `EMAIL_FILE_RETENTION_SEC` (default 18h, `ABM_JOB_RETENTION_SEC`) per voci standard, `GEMINI_FILE_RETENTION_SEC` (default 48h, `ABM_GEMINI_JOB_RETENTION_SEC`) quando `job["voice"]` inizia per `gemini:`. Selezione via `_retention_for_job(job)`. Indipendente dalla presenza di email registrata e dallo stato del browser. Garantisce che il bottone "Scarica progetto ottimizzato (.abm)" nell'UI continui a funzionare per il periodo configurato dalla fine dell'ottimizzazione AI, allineando lo scenario interactive a quello batch-email.
 - `generating` → tenuto in vita se email registrata; heartbeat timeout 60s altrimenti
 - `done` → 5 min dopo download diretto / `EMAIL_FILE_RETENTION_SEC` dall'invio email / 60s di heartbeat perso senza download
 - `error` → 2 min di grazia per leggere il messaggio
@@ -355,9 +402,13 @@ Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, accoun
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto, Gemini TTS è disabilitato |
-| `ABM_GEMINI_USE_VERTEX` | `false` | Se `true` usa Vertex AI (service account) |
-| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | Path JSON service account (se Vertex) |
+| `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto e backend non risolve a Vertex, Gemini TTS è disabilitato. Usato dal backend `apikey` (e fallback in modalità `auto`). |
+| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key. `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. File: `gemini_tts.py:_resolve_backend` (linea ~97). |
+| `ABM_GCP_PROJECT_ID` | *(vuoto)* | ID progetto GCP che ospita le API Vertex AI e Cloud TTS. Richiesto se `ABM_GEMINI_BACKEND=vertex` (o auto-risolto a Vertex). Esempio: `audiobook-maker-496208`. File: `gemini_tts.py:_vertex_project`. |
+| `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per il modello `gemini-2.5-flash-tts` (GA). Default `global`: routing automatico latency-aware. Pinnare `us-central1` se servono quote dedicate. File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash25"]["location_vertex"]`). |
+| `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per `gemini-3.1-flash-tts-preview`. Solo `us-central1` supporta il modello preview (verificato 2026-05-26 via `models.list()`). File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash31"]["location_vertex"]`). |
+| `ABM_GEMINI_USE_VERTEX` | `false` | **DEPRECATED** (2026-05-26): sostituita da `ABM_GEMINI_BACKEND=vertex` + `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`. Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
+| `ABM_GEMINI_VERTEX_CREDENTIALS_FILE` | *(vuoto)* | **DEPRECATED** (2026-05-26): sostituita da `ABM_GOOGLE_CREDENTIALS_FILE` (unico path JSON service account per Vertex AI Gemini TTS + Google Cloud TTS). Mantenuta per back-compat ma non più letta da `gemini_tts.py` dopo la migrazione Vertex (vedi `md_files/ttsgemini.md`). |
 
 ### 7.2 Costi Google (USD per 1M token)
 
@@ -390,17 +441,81 @@ Sovrascrivibili in caso di adeguamento listino Google.
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `5` (preview free per cookie, rolling 24h) |
-| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `4000` (cap UTF-8 per chiamata API) |
+| `ABM_GEMINI_PREVIEW_CAP_PER_DAY` | `3` (preview free per cookie, rolling 24h) |
+| `ABM_GEMINI_MAX_BYTES_PER_CALL` | `8000` (target qualita` UTF-8 sul **testo da sintetizzare** — soft cap: oltre questa soglia Gemini TTS degrada acusticamente; sopra soglia `synthesize()` logga warning ma procede. NB: i prefissi style/rate aggiunti internamente sono *direttive di prompt*, non testo audio, e non concorrono al conteggio) |
+| `ABM_GEMINI_API_HARD_BYTES_CAP` | `8000` (hard cap UTF-8 sul **payload completo** testo+prefissi inviato all'API; sopra soglia `synthesize()` solleva `ValueError`. E` il vero limite tecnico API, distinto dal target qualita`) |
+| `ABM_GEMINI_CHUNK_CHARS` | `700` (chunk size globale — chunk piccoli per stabilita` acustica, richiede Tier 2/3) |
+| `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` | override per lingua, vince su `ABM_GEMINI_CHUNK_CHARS` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`) |
+| `ABM_GEMINI_TEMPERATURE` | `0.75` (temperature passata al modello — abbassa la deriva metallica sui chunk lunghi) |
+| `ABM_GEMINI_INTER_CHUNK_GAP_MS` | `100` (silenzio PCM in ms inserito tra chunk consecutivi in concat. Default abbassato da 250 a 100 perche` i chunk Gemini hanno gia` trailing silence naturale che ora viene trimmato — sommare 250 ms creava pause percepibili di "qualche secondo" all'inizio del libro) |
+| `ABM_GEMINI_TRIM_TAIL_MS` | `800` (cap massimo in ms di silenzio finale da rimuovere a ogni PCM chunk Gemini prima della concat — riduce le pause percepibili tra chunk consecutivi. `0` disabilita il trim. Implementazione: `audio_utils.trim_pcm_trailing_silence()`) |
+| `ABM_GEMINI_TRIM_TAIL_THRESHOLD` | `200` (soglia ampiezza int16 assoluta sotto cui un sample e` considerato "silenzio" durante il trim; 200 ≈ -44 dB. Range 0-32767. Valori troppo alti rischiano di tagliare l'attacco/coda di parola) |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` (timeout HTTP in ms per le call su modello **`flash25`**; applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`. Per preview il ThreadPoolExecutor timeout di 30s funge da secondo limite) |
+| `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` (timeout HTTP in ms per le call su modello **`flash31`** — `gemini-3.1-flash-tts-preview`. Piu` lento di flash25 lato Google: RPM cap 3/300 vs 10/750 + audio gen piu` lenta. Senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161`) |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` (timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello `flash31`; vedi `audiobook_app.py:4934`. Deve essere ≥ HTTP timeout flash31 + buffer per non strozzare la call Google. flash25 resta hardcoded a 30s. Client JS legge il voice id e usa 70s sopra flash31 / 35s sopra flash25) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
+| `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
+| `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
+| `ABM_GEMINI_FORENSIC_RETENTION_DAYS` | `7` (giorni di retention forense della `work_dir` per i job Gemini falliti con refund — `kind` ∈ `quality`/`quota`/`budget`/`preflight`/`generic`. Marker JSON `.forensic_retain.json` scritto da `generation_engine._write_forensic_marker()` invocato in `_admin_alert_gemini_failure()` (linea ~1123); gate `audiobook_app._forensic_marker_protects()` (linea ~8956) applicato a `_cleanup_job` e ai tre branch orphan del cleanup loop. Sopravvive a restart del service. `0` = disabilita la retention forense (dir cancellata immediatamente al passaggio a `status=error`). La mail admin (`email_service._admin_notify_gemini_failure`) include link a `/admin/job/<job_id>/forensic.zip` — endpoint Flask `audiobook_app.admin_forensic_zip` che zippa on-the-fly la dir, gated da `ABM_ADMIN_TOKEN` via cookie HttpOnly o header `X-Admin-Token`) |
+| `ABM_GEMINI_CANCEL_LOCK_PCT` | `70` (soglia % di progresso oltre cui il cancel volontario di un job PREMIUM viene rifiutato da `/api/cancel` con HTTP 409 `cancel_locked_progress` + campo `lock_pct`; vedi `audiobook_app.py:5717`. Range valido `(0..100)`; valori `<=0` o `>=100` disabilitano il lock. Il client `static/js/app.js` disabilita preventivamente il pulsante "Cancel" sopra la stessa soglia hardcoded `_GEMINI_CANCEL_LOCK_PCT_CLIENT=70`; allineare se si cambia il server) |
 
 ### 7.6 Note operative
 
+- **Requisito**: Gemini Tier 2 o 3 (RPD elevato). Il default `ABM_GEMINI_CHUNK_CHARS=700` privilegia stabilita` acustica e prosodia uniforme sul numero di richieste; un libro medio genera centinaia di chunk e satura rapidamente i 100 RPD/modello del Tier 1.
 - Voice ID formato: `gemini:<model_key>:<voice_name>` (es. `gemini:flash25:Zephyr`).
 - Modelli supportati: `flash25` (Gemini 2.5 Flash TTS), `flash31` (Gemini 3.1 Flash TTS).
 - 30 voci prebuilt × 2 modelli = 60 entry per lingua UI.
-- Chunk max chars per lingua: 1500 per zh/ja/hi/ar, 2000 per le altre.
+- Chunk max chars: `700` globale, override per lingua via `ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>` (es. `ABM_GEMINI_MAX_CHUNK_CHARS_IT=850`).
+- Quality tuning: `ABM_GEMINI_TEMPERATURE=0.75` riduce la deriva metallica, `ABM_GEMINI_INTER_CHUNK_GAP_MS=100` inserisce un micro-silenzio tra chunk consecutivi in PCM, e `ABM_GEMINI_TRIM_TAIL_MS=800` tronca il trailing silence naturale che ogni chunk Gemini porta con se` (la combinazione dei due elimina pause percepibili di "qualche secondo" tra chunk lasciando un boundary acustico naturale).
 - Stato utilizzo persistito in `<ABM_DATA_DIR>/gemini_tts_usage.json`, preview cap in `gemini_tts_previews.json` (atomic write tmp+rename).
+- **Kill-switch admin** persistito in `<ABM_DATA_DIR>/gemini_admin_state.json` (`{disabled, reason, updated_at}`). Quando `disabled=true`, `gemini_tts.is_available()` ritorna `False`: il pannello Voci PREMIUM scompare dalla UI utente, stime e pagamenti Premium rispondono 503. Toggle via `GET/POST /admin/api/gemini_kill_switch` o dalla pagina `/admin/audit-tts`. Stato ricaricato in `gemini_tts.init()` al boot.
+- **Cancel volontario PREMIUM** (`generation_engine.py:2708+`): branch `_CancelledError` calcola `retained_eur` via `cancel_policy.compute_cancel_retention(google_cost, method, paid)` con floor = `provider_cost + fee_PayPal` (solo se metodo `paypal`). Esiti:
+  - `retained > 0` → outcome audit `cancelled_partial`, refund parziale = `paid - retained`, MP3 parziale codificato dai `chunk_*.pcm` accumulati, token download creato, email `_send_gemini_cancelled_partial_email` (IT-only) inviata se email registrata e MP3 generato.
+  - `retained == 0` → outcome audit `cancelled_refunded`, refund integrale, nessuna email custom (resta path legacy).
+  - Refund PayPal → nuovo voucher bonus (codice in email); refund su voucher originale → riaccredito silenzioso.
+  - Job campi popolati: `cancel_meta = {paid_eur, retained_eur, refund_eur, progress_pct, partial_audio_delivered}` + `partial_download_url` + `partial_download_token`. Esposti via SSE `/api/progress/<job_id>` (`audiobook_app.py:5643+`) per rendering UI client.
+  - Soglia anti-abuso: oltre `ABM_GEMINI_CANCEL_LOCK_PCT` (default 70%) `/api/cancel` ritorna HTTP 409 con `lock_pct`, il client mostra modal informativo invece di cancellare.
+
+### 7.7 Audit log dei costi (`gemini_cost_audit.py`)
+
+Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto un record JSONL nel file mensile `<ABM_DATA_DIR>/gemini_cost_audit_YYYY-MM.jsonl` (append-only, lock per scrittura).
+
+**Campi record (18 base + 5 condizionali su esito `cancelled_*`):**
+
+| Campo | Descrizione |
+|-------|-------------|
+| `ts` | Timestamp ISO8601 UTC della scrittura |
+| `job_id` | ID job applicativo |
+| `client_id` | Cookie client (opaco) |
+| `email` | Email associata al pagamento (vuota per free) |
+| `language` | Lingua sintesi |
+| `model_key` | `flash25` o `flash31` |
+| `voice` | Nome voce |
+| `chars_total` | Caratteri sintetizzati |
+| `chunks_total` | Numero chunk inviati |
+| `audio_seconds_estimated` | Stima ex-ante (rate model+lang) |
+| `audio_seconds_actual` | Misurato (bytes PCM / (24000·2)) |
+| `google_cost_eur_estimated` | Costo Google stimato ex-ante |
+| `google_cost_eur_actual` | Costo Google effettivo (token in/out × tariffa) |
+| `user_price_eur_charged` | Prezzo addebitato all'utente |
+| `margin_percent` | Margine applicato (`ABM_GEMINI_<model>_MARGIN_PERCENT`) |
+| `delta_eur` | `user_price - google_cost_actual` |
+| `delta_pct` | `delta_eur / google_cost_actual × 100` |
+| `outcome` | `completed` \| `failed_refunded` \| `cancelled_refunded` \| `cancelled_partial` \| `recovered_refunded` |
+| `cancel_paid_eur` | (solo `cancelled_*`) Importo pagato dall'utente, copiato da `job["cancel_meta"]["paid_eur"]` |
+| `cancel_retained_eur` | (solo `cancelled_*`) Trattenuto effettivo = costo provider + fee PayPal stimate (vedi `cancel_policy.compute_cancel_retention`) |
+| `cancel_refund_eur` | (solo `cancelled_*`) Refund = `paid - retained` |
+| `cancel_progress_pct` | (solo `cancelled_*`) % progresso al momento del cancel |
+| `cancel_partial_audio_delivered` | (solo `cancelled_*`) Bool: MP3 parziale consegnato all'utente via token download |
+
+**Retention:** manuale — i file sono piccoli (qualche KB/mese a regime). Ruotare/archiviare a discrezione admin.
+
+**Parametri di tuning:** se `delta_pct_avg` si discosta sistematicamente (vedi `/admin/logs` → "Audit Gemini" → "Calcola parametri suggeriti"), valutare:
+- aumento margin_percent del modello se delta negativo (`ABM_GEMINI_<model>_MARGIN_PERCENT`)
+- riduzione tariffa utente se delta positivo eccessivo
+- adeguamento del rapporto chars/secondi (tabella `_SEC_PER_KCHARS_BY_LANG` in `gemini_tts.py`) se la stima ex-ante diverge dalla realtà
+
+**Persistenza job pagati unificata:** dalla v3.13.x, sia i pagamenti per Ottimizzazione testo AI sia quelli per voci Premium sono tracciati in `<ABM_DATA_DIR>/_paid_jobs_done.json` (campo `purpose`: `"llm"` o `"gemini"`). La migrazione del vecchio `_paid_opt_done.json` è automatica all'avvio (backup `.pre_unify_bak`).
 
 ---
 

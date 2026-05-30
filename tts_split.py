@@ -20,6 +20,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 
 import edge_tts
 
@@ -36,21 +37,41 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
-# Lingue che richiedono chunk piu' piccoli per Gemini (espansione UTF-8 alta).
-_GEMINI_SMALL_CHUNK_LANGS = {"zh", "ja", "hi", "ar"}
-_GEMINI_SMALL_CHUNK_MAX = 1500
-
 
 def _pick_chunk_max_chars(voice_id, language):
     """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
 
-    Gemini: 1500 per zh/ja/hi/ar, 2000 per le altre. Edge/Google: 2000 sempre.
+    Gemini: delega a gemini_tts.get_max_chunk_chars(lang) (default 700 char
+    per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
+    ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
+
+    Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
     if isinstance(voice_id, str) and voice_id.startswith("gemini:"):
         lang_code = (language or "").lower().split("-")[0]
-        if lang_code in _GEMINI_SMALL_CHUNK_LANGS:
-            return _GEMINI_SMALL_CHUNK_MAX
+        try:
+            import gemini_tts
+            return gemini_tts.get_max_chunk_chars(lang_code)
+        except Exception:
+            return 700
     return CHUNK_MAX_CHARS
+
+
+def _pick_chunk_max_bytes(voice_id):
+    """Cap byte UTF-8 per chunk per voci Gemini, None per altri motori.
+
+    Si applica al SOLO testo da sintetizzare, in linea con la semantica di
+    MAX_BYTES_PER_CALL: e` un target qualita` acustica sul testo audio, non
+    sul payload API. I prefissi style/rate aggiunti da synthesize() sono
+    direttive di prompt e non concorrono al budget byte qui.
+    """
+    if not (isinstance(voice_id, str) and voice_id.startswith("gemini:")):
+        return None
+    try:
+        import gemini_tts
+        return int(gemini_tts.MAX_BYTES_PER_CALL)
+    except Exception:
+        return 700
 
 
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
@@ -65,11 +86,16 @@ _TTS_MAX_SENT_CHARS = 1500
 # Text splitting
 # ---------------------------------------------------------------------------
 
-def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
-    """Spezza il testo in chunk <= max_chars senza mai tagliare a metà frase.
+def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
+    """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8) senza mai
+    tagliare a meta' frase.
 
-    Strategia: tokenizza il testo in frasi (terminatori . ! ? … + spazio/newline),
-    poi accumula frasi nel chunk corrente finché il limite non viene raggiunto.
+    Strategia: tokenizza il testo in frasi (terminatori . ! ? ... + spazio/newline),
+    poi accumula frasi nel chunk corrente finche' uno dei due limiti non viene
+    raggiunto.
+
+    max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita
+        a byte e non a caratteri). Se None, viene applicato solo il cap chars.
     """
     if not text or not text.strip():
         return [text] if text else [""]
@@ -84,8 +110,12 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS):
     for sent in sentences:
         if not current:
             current = sent
-        elif len(current) + 1 + len(sent) <= max_chars:
-            current = current + " " + sent
+            continue
+        candidate = current + " " + sent
+        chars_ok = len(candidate) <= max_chars
+        bytes_ok = (max_bytes is None) or (len(candidate.encode("utf-8")) <= max_bytes)
+        if chars_ok and bytes_ok:
+            current = candidate
         else:
             chunks.append(current)
             current = sent
@@ -171,6 +201,45 @@ def _ensure_heading_pause(text):
     return "\n".join(result)
 
 
+def _normalize_for_title_match(s):
+    """Normalizza una stringa per fuzzy-match titolo: minuscolo, senza diacritici,
+    senza punteggiatura/quote, whitespace compatto.
+
+    Es: 'AINULINDALË"LA MUSICA"' -> 'ainulindale la musica'
+    """
+    if not s:
+        return ""
+    s = unicodedata.normalize('NFKD', s)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    return s.strip()
+
+
+def _title_already_in_text(title, text, lookahead_chars=300):
+    """True se il titolo del capitolo compare gia` in testa al testo del capitolo,
+    a meno di diacritici/punteggiatura/quote/prefissi numerici.
+
+    Evita la duplicazione quando l'estrazione capitoli include gia` un heading
+    nel body identico al titolo derivato dai metadati (es. EPUB + filename
+    normalizzato).
+    """
+    if not title or not text:
+        return False
+    norm_title = _normalize_for_title_match(title)
+    # Rimuovi prefisso numerico tipo "003 ", "01 ", "chapter 3 ", "capitolo 4 "
+    tokens = norm_title.split()
+    while tokens and (tokens[0].isdigit() or tokens[0] in ("chapter", "capitolo", "cap", "ch")):
+        tokens.pop(0)
+    norm_title_core = ' '.join(tokens)
+    # Titolo troppo corto/generico (<= 4 char): meglio non dedupliccare per evitare falsi positivi
+    if not norm_title_core or len(norm_title_core) <= 4:
+        return False
+    head = text[:lookahead_chars]
+    norm_head = _normalize_for_title_match(head)
+    return norm_title_core in norm_head
+
+
 def _sanitize_tts_text(text: str):
     """Pulisce il testo per TTS: rimuove caratteri di controllo/zero-width,
     collassa whitespace eccessivo, normalizza newline.
@@ -189,18 +258,26 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
-def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS):
+def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
                Per voci Gemini su lingue CJK/Hindi/Arabo passare 1500.
+    max_bytes: cap byte UTF-8 opzionale (None per Edge/Google, MAX_BYTES_PER_CALL
+               meno margine di sicurezza per Gemini).
     """
     plan = []
     for ch in info.chapters:
         clean_text = _strip_parenthetical(ch.text)
         clean_text = _ensure_heading_pause(clean_text)
-        full_text = f"{ch.title}.\n\n{clean_text}"
-        chunks = split_text_into_chunks(full_text, max_chars=max_chars)
+        # Dedup heading: se il titolo del capitolo compare gia` in testa al testo
+        # (a meno di diacritici/punteggiatura/quote/prefissi numerici), evita
+        # di prependerlo per non far leggere al TTS due volte la stessa frase.
+        if _title_already_in_text(ch.title, clean_text):
+            full_text = clean_text
+        else:
+            full_text = f"{ch.title}.\n\n{clean_text}"
+        chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,
@@ -307,19 +384,110 @@ def _generate_silence_pcm(output_path, duration_sec=1):
             f.write(b"\x00" * n_bytes)
 
 
-def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
+def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries,
+                                      debug_prompt_path=None, rate="+0%"):
+    """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
+    raw nel file output_path. Aggrega i risultati metrici sommando token/byte.
+
+    Ritorna il dict aggregato in stile synthesize(). False se anche un solo
+    sotto-chunk fallisce (in quel caso il caller decide se silenziare o
+    propagare).
+    """
+    import gemini_tts as _gemini
+
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    aggregate = {
+        "success": True,
+        "bytes_written": 0,
+        "audio_seconds_real": 0.0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "model_key": None,
+        "voice_name": None,
+        "attempts_used": 0,
+        "split_pieces": len(pieces),
+    }
+
+    tmp_parts = []
+    try:
+        with open(output_path, "wb") as fout:
+            for idx, piece_text in enumerate(pieces):
+                tmp_path = output_path + f".part{idx:03d}.pcm"
+                tmp_parts.append(tmp_path)
+                last_error = None
+                piece_ok = False
+                # Per-piece debug prompt path (es. prompt5.txt -> prompt5.part000.txt)
+                piece_debug_path = None
+                if debug_prompt_path:
+                    base, ext = os.path.splitext(debug_prompt_path)
+                    piece_debug_path = f"{base}.part{idx:03d}{ext or '.txt'}"
+                for attempt in range(max_retries):
+                    try:
+                        result = _gemini.synthesize(
+                            piece_text, voice_id, output_path=tmp_path,
+                            style_instruction=style_instruction,
+                            rate=rate,
+                            debug_prompt_path=piece_debug_path,
+                        )
+                        piece_ok = True
+                        aggregate["bytes_written"] += int(result.get("bytes_written", 0))
+                        aggregate["audio_seconds_real"] += float(result.get("audio_seconds_real", 0.0))
+                        aggregate["input_tokens"] += int(result.get("input_tokens", 0))
+                        aggregate["output_tokens"] += int(result.get("output_tokens", 0))
+                        aggregate["model_key"] = result.get("model_key") or aggregate["model_key"]
+                        aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
+                        aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
+                        break
+                    except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+                        raise
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            time.sleep(2 ** attempt)
+                if not piece_ok:
+                    snippet = piece_text[:60].replace('\n', ' ')
+                    print(f"[gemini-tts] Split-piece {idx+1}/{len(pieces)} failed "
+                          f"({len(piece_text)} chars: \"{snippet}...\"): {last_error}")
+                    return False
+                with open(tmp_path, "rb") as fpart:
+                    fout.write(fpart.read())
+        return aggregate
+    finally:
+        for p in tmp_parts:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
+                              debug_prompt_path=None, rate="+0%"):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
+
+    NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
+    (che è quota-aware e rispetta `retryDelay` dei 429). Qui manteniamo un
+    re-try sottile (default 1) per gestire errori non-API/transient di rete
+    a livello superiore. Errori di tipo `GeminiQuotaExhausted` o
+    `GeminiBudgetExceeded` vengono ri-sollevati senza fallback silenzio
+    perché significano "il chunk non va silenziato, va sospeso il job".
 
     Args:
         text: testo da sintetizzare.
         voice_id: 'gemini:<model_key>:<voice_name>' (es. 'gemini:flash25:Zephyr').
         output_path: percorso file PCM in output.
-        max_retries: numero di tentativi prima di fallback a silenzio (default 3).
+        max_retries: numero di tentativi (default 1; il backoff vero è in synthesize).
+        style_instruction: optional style/tone hint prepended to the prompt.
 
     Returns:
-        dict {success, bytes_written, input_tokens, output_tokens, model_key,
-        voice_name, attempts_used} on success, False on total failure
-        (silence PCM written).
+        dict on success, False on total failure (silence PCM written).
+
+    Raises:
+        gemini_tts.GeminiQuotaExhausted: quota raggiunta; il caller deve
+            sospendere il job invece di silenziare il chunk.
+        gemini_tts.GeminiBudgetExceeded: budget €/giorno o per-job sforato.
     """
     import gemini_tts as _gemini  # late import: keeps module optional
 
@@ -328,11 +496,41 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=3):
         _generate_silence_pcm(output_path, duration_sec=1)
         return False
 
+    # Emergency byte-split: se il chunk supera il byte-cap effettivo (cap API
+    # meno margine per i prefissi style/rate), invece di farlo silenziare
+    # spezziamo su confine frase e facciamo N chiamate API. Costa +RPD ma
+    # garantisce zero buchi audio (principio: qualita' > numero chiamate).
+    effective_cap = _pick_chunk_max_bytes(voice_id)
+    clean_bytes = len(clean.encode("utf-8"))
+    if effective_cap is not None and clean_bytes > effective_cap:
+        max_chars_for_split = max(1000, effective_cap // 2)
+        pieces = split_text_into_chunks(clean, max_chars=max_chars_for_split, max_bytes=effective_cap)
+        if len(pieces) >= 2:
+            print(f"[gemini-tts] Emergency byte-split: {clean_bytes} bytes > {effective_cap} cap, "
+                  f"splitting into {len(pieces)} sub-chunks")
+            agg = _synthesize_pcm_pieces_and_concat(
+                pieces, voice_id, output_path, style_instruction, max_retries,
+                debug_prompt_path=debug_prompt_path, rate=rate,
+            )
+            if agg is not False:
+                return agg
+            # Fall-through: se lo split fallisce, scriviamo silenzio sotto.
+            _generate_silence_pcm(output_path, duration_sec=1)
+            return False
+
     last_error = None
     for attempt in range(max_retries):
         try:
-            result = _gemini.synthesize(clean, voice_id, output_path=output_path)
+            result = _gemini.synthesize(
+                clean, voice_id, output_path=output_path,
+                style_instruction=style_instruction,
+                rate=rate,
+                debug_prompt_path=debug_prompt_path,
+            )
             return result
+        except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+            # Non silenziare: il caller decide se sospendere il job.
+            raise
         except Exception as e:
             last_error = e
             snippet = clean[:60].replace('\n', ' ')
