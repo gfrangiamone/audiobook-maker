@@ -3524,7 +3524,7 @@ def admin_logs_page():
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th>Costo G.</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine / Costo Google · markup applicato">Margine %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo Google · markup applicato">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="auditRecordsBody">
         <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
@@ -3688,7 +3688,7 @@ def admin_logs_page():
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
-      ? (Number(agg.margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
     $("aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
@@ -3733,7 +3733,7 @@ def admin_logs_page():
         ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
         : (method === "voucher" ? "Voucher: nessuna fee PayPal"
             : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
-      const margPct = gCost > 0 ? (margEur / gCost * 100) : 0;
+      const margPct = gCost > 0 ? (netMarg / gCost * 100) : 0;
       const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
       const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const isLive = !!r._live;
