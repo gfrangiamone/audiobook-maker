@@ -621,18 +621,24 @@ Le colonne Prezzo €/Margine €/Margine % della tabella `/admin/audit-tts` usa
 
 ### 14.3 Combined payment in auto-generate flow
 
-Quando l'utente avvia un job con ottimizzazione AI + voce Gemini e PayPal combined token, il flusso normale è:
+Quando l'utente avvia un job con ottimizzazione AI + voce Gemini e PayPal/voucher combined token, il flusso normale è:
 
 1. `/api/optimize` riceve `payment_token` (combined): valida → consuma → popola `job["payment"]` (Gemini portion) → ottimizza testo → al termine chiama `run_generation()` direttamente (bypass `/api/generate`).
 2. `_write_gemini_audit()` legge `job["payment"].total_eur` come `user_price_eur_charged`.
 
-**Edge case (fix 2026-05)**: se il costo LLM è sotto `LLM_FREE_THRESHOLD_EUR` (es. 0.08€ per 72k char @ 1.10€/MChar) il blocco di pagamento LLM originale veniva saltato e il token combined non era consumato → audit registrava `charged=0` nonostante PayPal capture confermato.
+**Edge case 1 — LLM sotto soglia (fix 2026-05)**: se il costo LLM è sotto `LLM_FREE_THRESHOLD_EUR` (es. 0.08€ per 72k char @ 1.10€/MChar) il blocco di pagamento LLM originale veniva saltato e il token combined non era consumato → audit registrava `charged=0` nonostante PayPal capture confermato.
 
-Fix: `/api/optimize` ora, prima di iniziare l'ottimizzazione, controlla esplicitamente la combinazione `auto_generate + voice Gemini + payment_token` e:
-- ricalcola server-side la quota Gemini via `gemini_tts.estimate_book_cost()`,
-- valida l'importo contro `_payments[token].amount_eur` con tolleranza 0.05€ (PayPal) o `consume_voucher()` (voucher),
-- popola `job["payment"] = {token, total_eur, method, ts, gemini_est, llm_eur, source: "combined_optimize_autogen"}`,
-- **persiste lo snapshot pre-LLM in `job["gemini_estimate"] = _est_gemini`** (audiobook_app.py:~7303): è la stima sulla quale è stato lockato `payment["total_eur"]`, quindi deve rimanere l'unica fonte per i campi `*_est` dell'audit JSONL.
+**Edge case 2 — LLM sopra soglia (fix 2026-05-30)**: se il costo LLM superava la soglia, il branch pagamento LLM consumava il token per la SOLA quota LLM e settava `job["payment_token"]`, impedendo al fallback combinato di eseguire (condizione `not job.get("payment_token")` falsa). Il TTS Gemini partiva senza addebito della quota voce → audit registrava `charged=LLM_only` con `payment_source="legacy_fallback"`.
+
+Fix unificato: `/api/optimize` calcola il flag `_is_combined_gemini = auto_generate and voice.startswith("gemini:") and gemini_tts is not None` e:
+
+- **Salta il branch standalone LLM** quando `_is_combined_gemini=True` (guardia `and not _is_combined_gemini`), delegando tutto il consumo al blocco combined.
+- **Blocco combined** (attivo per qualunque `_is_combined_gemini`, non più solo sotto-soglia):
+  - ricalcola server-side la quota Gemini via `gemini_tts.estimate_book_cost()`,
+  - se `_expected_total > threshold` e nessun token → 402 `payment_required` (previene generazione gratuita),
+  - valida l'importo contro `_payments[token].amount_eur` con tolleranza 0.05€ (PayPal) o `consume_voucher()` (voucher),
+  - popola `job["payment"] = {token, total_eur, method, ts, gemini_est, llm_eur, source: "combined_optimize_autogen"}`,
+  - **persiste lo snapshot pre-LLM in `job["gemini_estimate"] = _est_gemini`**: è la stima sulla quale è stato lockato `payment["total_eur"]`, quindi deve rimanere l'unica fonte per i campi `*_est` dell'audit JSONL.
 
 `_finalize_optimization_complete()` (`generation_engine.py:~1643`) recupera `job["gemini_estimate"]`: se è già presente (combined-payment path) **non lo sovrascrive**; lo ricalcola solo se assente (es. percorsi free sub-soglia o legacy). Questo evita il disallineamento storico tra `cost_est` (post-LLM) e `user_price_eur_charged` (pre-LLM lockato) che distorceva `delta_pct` e `margin_eur_actual` nei record JSONL del flusso auto-generate.
 

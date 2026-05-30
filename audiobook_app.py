@@ -1266,6 +1266,128 @@ def index_hi():
     return _serve_lang("hi")
 
 
+# ── FAQ Page (dedicated) ────────────────────────────────────────────
+
+_FAQ_TITLES = {
+    "it": "Domande Frequenti — Audiobook Maker",
+    "en": "Frequently Asked Questions — Audiobook Maker",
+    "fr": "Questions Fréquentes — Audiobook Maker",
+    "es": "Preguntas Frecuentes — Audiobook Maker",
+    "de": "Häufig Gestellte Fragen — Audiobook Maker",
+    "zh": "常见问题 — Audiobook Maker",
+    "hi": "अक्सर पूछे जाने वाले प्रश्न — Audiobook Maker",
+}
+
+
+@app.route("/faq/")
+def faq_page_root():
+    """Redirect root FAQ to the browser-language or English variant."""
+    lang = _detect_lang()
+    if not lang or lang not in _SUPPORTED_LANGS:
+        lang = "en"
+    base = BASE_URL or ""
+    if base:
+        return redirect(f"{base}/faq/{lang}/", code=301)
+    return redirect(f"/faq/{lang}/", code=301)
+
+
+@app.route("/faq/<lang>/")
+def faq_page(lang):
+    """Dedicated FAQ page per language. Crawler-facing minimal HTML with
+    JSON-LD FAQPage schema and full hreflang alternates."""
+    if lang not in _SUPPORTED_LANGS:
+        return "Language not supported", 404
+
+    html_lang = {"zh": "zh-Hans"}.get(lang, lang)
+    c = seo_content._CONTENT.get(lang, seo_content._CONTENT.get("en", {}))
+    title = html_mod.escape(_FAQ_TITLES.get(lang, _FAQ_TITLES["en"]))
+    desc = html_mod.escape(c.get("direct_answer", ""))
+    base = BASE_URL or ""
+    canonical = f"{base}/faq/{lang}/"
+
+    # Build hreflang links for FAQ page
+    hreflang_lines = []
+    lc_to_hl = {
+        "it": "it", "en": "en", "fr": "fr", "es": "es",
+        "de": "de", "zh": "zh-Hans", "hi": "hi",
+    }
+    for lc, hl in lc_to_hl.items():
+        href = f"{base}/faq/{lc}/" if base else f"/faq/{lc}/"
+        hreflang_lines.append(
+            f'<link rel="alternate" hreflang="{hl}" href="{href}">'
+        )
+    x_default_href = f"{base}/faq/en/" if base else "/faq/en/"
+    hreflang_lines.append(
+        f'<link rel="alternate" hreflang="x-default" href="{x_default_href}">'
+    )
+    hreflang_block = "\n    ".join(hreflang_lines)
+
+    # Build FAQ HTML
+    faqs_html = ""
+    faq_ld_items = []
+    for q, a in c.get("faqs", []):
+        faqs_html += (
+            f'  <details open><summary>{html_mod.escape(q)}</summary>\n'
+            f'    <p>{html_mod.escape(a)}</p>\n'
+            f'  </details>\n\n'
+        )
+        faq_ld_items.append({
+            "@type": "Question",
+            "name": q,
+            "acceptedAnswer": {"@type": "Answer", "text": a},
+        })
+
+    faq_ld_json = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": faq_ld_items,
+    }, ensure_ascii=False)
+
+    iso_modified = datetime.now().strftime("%Y-%m-%d")
+
+    page = f'''<!DOCTYPE html>
+<html lang="{html_lang}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{title}</title>
+    <meta name="description" content="{desc}">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="{canonical}">
+    {hreflang_block}
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{title}">
+    <meta property="og:description" content="{desc}">
+    <meta property="og:url" content="{canonical}">
+    <meta property="article:published_time" content="2022-06-01">
+    <meta property="article:modified_time" content="{iso_modified}">
+    <script type="application/ld+json">{faq_ld_json}</script>
+    <style>
+        body{{margin:0;padding:0;background:#f5f3ef;font-family:system-ui,sans-serif;color:#2c2a26}}
+        main{{max-width:760px;margin:0 auto;padding:24px 20px 48px}}
+        h1{{font-size:1.5rem;font-weight:700;margin:0 0 8px}}
+        .sub{{color:#8B7B6B;margin:0 0 32px;font-size:.95rem}}
+        details{{border:1px solid #d5d0c8;border-radius:8px;padding:16px 20px;margin-bottom:12px;background:#fff}}
+        summary{{font-weight:600;cursor:pointer;font-size:1rem;color:#c29a6c}}
+        summary:hover{{color:#a07840}}
+        details p{{margin:12px 0 0;line-height:1.6;color:#4a4640;font-size:.95rem}}
+        .footer{{text-align:center;color:#8B7B6B;font-size:.82rem;margin-top:40px}}
+        .footer a{{color:#c29a6c}}
+    </style>
+</head>
+<body>
+<main>
+    <h1>{title}</h1>
+    <p class="sub">{desc}</p>
+{faqs_html}</main>
+<div class="footer">
+    <a href="/">Audiobook Maker</a> &middot; {iso_modified}
+</div>
+</body>
+</html>'''
+    return page, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/content/<lang>/")
 def seo_content_page(lang):
     """Dedicated SEO content page per language. Minimal HTML wrapper around
@@ -1411,6 +1533,25 @@ def sitemap():
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
 {content_alternates}
+  </url>""")
+
+    # FAQ pages — 7 lingue, priority 0.8 (high value for featured snippets)
+    faq_alt_lines = []
+    for lc, hl in lang_hreflang_map.items():
+        faq_alt_lines.append(
+            f'      <xhtml:link rel="alternate" hreflang="{hl}" href="{BASE_URL}/faq/{lc}/"/>'
+        )
+    faq_alt_lines.append(
+        f'      <xhtml:link rel="alternate" hreflang="x-default" href="{BASE_URL}/faq/en/"/>'
+    )
+    faq_alternates = "\n".join(faq_alt_lines)
+    for lc in lang_hreflang_map:
+        urls.append(f"""  <url>
+    <loc>{BASE_URL}/faq/{lc}/</loc>
+    <lastmod>{home_lastmod}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+{faq_alternates}
   </url>""")
 
     # Guide pages — 4 guide × 7 lingue = 28 URL
@@ -1608,6 +1749,7 @@ When quoting facts from this site, cite one of:
 - [M4B Format Guide]({base}/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
 - [Text-to-Speech for Audiobooks]({base}/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
 - [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
+- [Frequently Asked Questions]({base}/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 
 ## How it works
 
@@ -7247,7 +7389,14 @@ def api_optimize():
                 "chars_limit": max_text_chars,
             }), 413
     estimated_cost = _estimate_llm_cost_eur(total_chars)
-    if estimated_cost > LLM_FREE_THRESHOLD_EUR:
+    # Flusso combinato (auto_generate + voce Gemini): il payment_token
+    # copre sia LLM che Gemini. Il branch standalone LLM sotto NON deve
+    # consumarlo per la sola quota LLM — la gestione e` delegata al
+    # blocco "Combined payment" piu` avanti.
+    _is_combined_gemini = (auto_generate
+                           and data.get("voice", "").startswith("gemini:")
+                           and gemini_tts is not None)
+    if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
             return jsonify({
@@ -7300,18 +7449,12 @@ def api_optimize():
                 "error_code": "invalid_payment",
             }), 402
 
-    # ----- Combined payment fallback (LLM sotto soglia + Gemini auto-gen) -----
-    # Caso: l'utente paga UN unico token PayPal per la stima combinata
-    # (Gemini + LLM) via /api/combined_estimate. Se LLM cost e' sotto la soglia
-    # gratuita, il branch sopra non consuma il token. Ma il token COPRE anche
-    # la quota Gemini del flusso auto_generate: se non lo consumiamo qui,
-    # /api/generate viene saltato (auto-gen invoca run_generation diretto),
-    # l'audit Gemini non vede mai job["payment"] e registra charged=0 anche
-    # se l'utente ha pagato. Vedi md_files/ttsgemini.md sezione audit.
-    if (auto_generate and not job.get("payment_token")
-            and data.get("voice", "").startswith("gemini:")
-            and (data.get("payment_token_combined") or data.get("payment_token"))
-            and gemini_tts is not None):
+    # ----- Combined payment (LLM + Gemini in auto_generate flow) -----
+    # Il flusso combinato usa UN unico token (PayPal order o voucher) che
+    # copre entrambe le quote LLM + Gemini. Il branch standalone LLM sopra
+    # e` stato saltato (_is_combined_gemini=True), quindi gestiamo il
+    # consumo qui per l'intero ammontare. Vedi md_files/ttsgemini.md.
+    if _is_combined_gemini:
         _combined_token = (data.get("payment_token_combined")
                            or data.get("payment_token") or "").strip()
         if _combined_token:
@@ -7348,6 +7491,18 @@ def api_optimize():
                 os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
             )
             if _expected_total > _threshold_combined:
+                if not _combined_token:
+                    with _jobs_lock:
+                        if job.get("status") == "optimizing":
+                            job["status"] = "analyzed"
+                    return jsonify({
+                        "error": "Payment required for generation.",
+                        "error_code": "payment_required",
+                        "total_eur": _expected_total,
+                        "gemini_eur": _gemini_eur_quota,
+                        "llm_eur": estimated_cost,
+                        "threshold_eur": _threshold_combined,
+                    }), 402
                 # Validazione + consume del token combinato.
                 _consumed = False
                 if _combined_token in payment._payments:
@@ -7378,9 +7533,8 @@ def api_optimize():
                     # Stash payment per:
                     # - audit Gemini (_write_gemini_audit legge job["payment"])
                     # - refund su cancel/error (_refund_gemini_payment)
-                    # total_eur = quota Gemini SOLO (LLM e' sotto soglia, e'
-                    # gratis lato sistema; combined_amount include LLM ma in
-                    # questo caso e' < 0.50€ quindi 0.0).
+                    # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
+                    # l'audit Gemini legge solo la quota voce, non il combinato.
                     job["payment"] = {
                         "token": _combined_token,
                         "total_eur": _gemini_eur_quota,

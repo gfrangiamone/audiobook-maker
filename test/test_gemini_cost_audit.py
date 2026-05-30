@@ -25,12 +25,19 @@ def test_iter_records_filters_by_model(tmp_path, monkeypatch):
 def test_aggregate_returns_delta_pct(tmp_path, monkeypatch):
     import gemini_cost_audit as gca
     monkeypatch.setattr(gca, "_DATA_DIR", tmp_path)
+    # delta_pct = delta_eur / google_cost * 100:
+    #   a: 0.10 / 1.0 * 100 = 10.0
+    #   b: 0.10 / 2.0 * 100 = 5.0
+    # aggregate() ricomputa delta_pct_avg dai totali euro:
+    #   sum(delta_eur) / sum(google_cost) * 100 = 0.20 / 3.0 * 100 = 6.67
     gca.append_record({"job_id":"a","model_key":"flash25","language":"it",
                        "user_price_eur_charged":1.0,"user_price_eur_should_have_been":1.10,
-                       "delta_eur":0.10,"delta_pct":10.0,"outcome":"completed"})
+                       "delta_eur":0.10,"delta_pct":10.0,
+                       "google_cost_eur_actual":1.0,"outcome":"completed"})
     gca.append_record({"job_id":"b","model_key":"flash25","language":"it",
                        "user_price_eur_charged":2.0,"user_price_eur_should_have_been":2.10,
-                       "delta_eur":0.10,"delta_pct":5.0,"outcome":"completed"})
+                       "delta_eur":0.10,"delta_pct":5.0,
+                       "google_cost_eur_actual":2.0,"outcome":"completed"})
     agg = gca.aggregate(model="flash25")
     assert agg["count"] == 2
-    assert agg["delta_pct_avg"] == pytest.approx(7.5, abs=0.1)
+    assert agg["delta_pct_avg"] == pytest.approx(6.67, abs=0.1)
