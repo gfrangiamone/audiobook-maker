@@ -175,7 +175,7 @@ _CONTENT = {
              "del progetto in formato .abm per riutilizzarla, modificarla o generare nuove "
              "versioni audio con voci diverse senza ripetere l'ottimizzazione."),
                     ("Cosa sono le Voci PREMIUM?",
-             "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 2.5 Flash e 3.2 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci."),
+             "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 2.5 Flash e 3.1 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci."),
 ],
         "privacy_heading": "Privacy e Sicurezza",
         "privacy": (
@@ -338,7 +338,7 @@ _CONTENT = {
              "it, edit it, or generate new audio versions with different voices without re-running "
              "the optimization."),
                     ("What are PREMIUM Voices?",
-             "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 2.5 Flash and 3.2 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector."),
+             "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 2.5 Flash and 3.1 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector."),
 ],
         "privacy_heading": "Privacy & Security",
         "privacy": (
@@ -502,7 +502,7 @@ _CONTENT = {
              "pour le réutiliser, le modifier ou générer de nouvelles versions audio avec des "
              "voix différentes sans relancer l'optimisation."),
                     ("Que sont les Voix PREMIUM ?",
-             "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 2.5 Flash et 3.2 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix."),
+             "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 2.5 Flash et 3.1 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix."),
 ],
         "privacy_heading": "Confidentialité et Sécurité",
         "privacy": (
@@ -665,7 +665,7 @@ _CONTENT = {
              "proyecto optimizado en formato .abm para reutilizarlo, modificarlo o generar "
              "nuevas versiones de audio con voces distintas sin repetir la optimización."),
                     ("¿Qué son las Voces PREMIUM?",
-             "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 2.5 Flash y 3.2 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces."),
+             "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 2.5 Flash y 3.1 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces."),
 ],
         "privacy_heading": "Privacidad y Seguridad",
         "privacy": (
@@ -831,7 +831,7 @@ _CONTENT = {
              "neue Audiofassungen mit anderen Stimmen zu erstellen, ohne die Optimierung erneut "
              "durchlaufen zu müssen."),
                     ("Was sind PREMIUM-Stimmen?",
-             "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 2.5 Flash- und 3.2 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet."),
+             "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 2.5 Flash- und 3.1 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet."),
 ],
         "privacy_heading": "Datenschutz und Sicherheit",
         "privacy": (
@@ -984,7 +984,7 @@ _CONTENT = {
              "您还可以下载.abm格式的优化后项目，"
              "以便复用、编辑或用不同声音生成新的音频版本，无需重新运行优化。"),
                     ("什么是 PREMIUM 语音？",
-             "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 2.5 Flash 和 3.2 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。"),
+             "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 2.5 Flash 和 3.1 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。"),
 ],
         "privacy_heading": "隐私与安全",
         "privacy": (
@@ -1132,7 +1132,7 @@ _CONTENT = {
              "आप .abm प्रारूप में अनुकूलित परियोजना डाउनलोड भी कर सकते हैं, "
              "पुन: उपयोग, संपादन या अनुकूलन को फिर से चलाए बिना विभिन्न आवाज़ों के साथ नए ऑडियो संस्करण जनरेट करने के लिए."),
                     ("प्रीमियम आवाज़ें क्या हैं?",
-             "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 2.5 Flash और 3.2 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"),
+             "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 2.5 Flash और 3.1 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"),
 ],
         "privacy_heading": "गोपनीयता और सुरक्षा",
         "privacy": (
