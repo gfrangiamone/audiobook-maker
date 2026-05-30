@@ -407,7 +407,7 @@ chars_total = sum(len(_normalize_text(ch.text)) for ch in chapters)
 input_tokens = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
 audio_seconds = chars_total / empirical_rate(lang, model)   # con fallback CHARS_PER_AUDIO_SECOND
 audio_seconds /= max(0.5, 1 + rate_pct/100)                 # scaling velocità
-output_tokens = audio_seconds * AUDIO_TOKENS_PER_SECOND      # 25 tok/s
+output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # per-model (flash25=25, flash31=29 default)
 google_cost_eur = (input_tokens × input_usd/MTok + output_tokens × output_usd/MTok) × USD_EUR_RATE
 user_price = compute_user_price_eur(google_cost_eur, model_key)
 ```
@@ -880,6 +880,9 @@ Resolver implementato in `gemini_tts.py`:
 | `ABM_GEMINI_31FLASH_OUTPUT_USD_PER_MTOK` | `20.00` | Pricing flash31 output |
 | `ABM_GEMINI_31FLASH_MARGIN_PERCENT` | `25.0` | Margine flash31 |
 | `ABM_GEMINI_RATE_MODE` | `prompt` | Modalità billing: `prompt`/`token`/`estimate` |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` | Token audio output per secondo (fallback globale). Default conservativo; preferire le varianti per-modello. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` | Token audio/sec per flash25. Default conservativo — verificare con `output_tokens / audio_seconds` dai record audit `completed`. |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `29.0` | Token audio/sec per flash31. Default calibrato empiricamente. Se il margine a consuntivo diverge dal `MARGIN_PERCENT`, ricalibrare. |
 
 ### Preview
 
