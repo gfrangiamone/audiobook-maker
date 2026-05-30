@@ -437,6 +437,18 @@ Sovrascrivibili in caso di adeguamento listino Google.
 | `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` |
 
+### 7.4.1 Stima token audio (calibrazione margine)
+
+Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()`. Una sottostima di questo valore causa margine % a consuntivo inferiore al `MARGIN_PERCENT` configurato (il prezzo viene lockato su costo stimato, ma il costo reale è più alto). Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` medio dei record `completed` per quel modello in `/admin/audit-tts`.
+
+| Variabile | Default |
+|-----------|---------|
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` (fallback globale, conservativo) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` (da verificare con dati reali) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `29.0` (calibrato empiricamente) |
+
+Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` → default hardcoded.
+
 ### 7.5 Limiti e anti-abuso
 
 | Variabile | Default |

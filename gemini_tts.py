@@ -17,8 +17,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Audio output constants
-AUDIO_TOKENS_PER_SECOND = 25
 CHARS_PER_AUDIO_SECOND = 15
+
+def _audio_tokens_per_second(model_key=None):
+    """Token audio output per secondo, per modello.
+
+    Cerca ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>; fallback a
+    ABM_GEMINI_AUDIO_TOKENS_PER_SECOND; default hardcoded per modello.
+    Default flash25=25 (conservativo, da verificare), flash31=29 (calibrato).
+    """
+    if model_key and model_key in GEMINI_MODELS:
+        suffix = model_key.upper().replace("-", "")
+        per_model = os.environ.get(f"ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_{suffix}")
+        if per_model:
+            try:
+                return float(per_model.replace(",", "."))
+            except (ValueError, TypeError):
+                pass
+    global_val = os.environ.get("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND")
+    if global_val:
+        try:
+            return float(global_val.replace(",", "."))
+        except (ValueError, TypeError):
+            pass
+    defaults = {"flash25": 25.0, "flash31": 29.0}
+    return defaults.get(model_key, 25.0) if model_key else 25.0
 AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH_BYTES = 2
@@ -556,8 +579,9 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
 
 
 def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0):
-    """Stima token audio output. 25 tok/s x secondi stimati alla velocita` data."""
-    return int(estimate_audio_seconds(text, language=language, model_key=model_key, rate_pct=rate_pct) * AUDIO_TOKENS_PER_SECOND)
+    """Stima token audio output. tok/s per-model x secondi stimati."""
+    tok_per_sec = _audio_tokens_per_second(model_key)
+    return int(estimate_audio_seconds(text, language=language, model_key=model_key, rate_pct=rate_pct) * tok_per_sec)
 
 
 def google_cost_breakdown(input_tokens, output_tokens, model_key):
