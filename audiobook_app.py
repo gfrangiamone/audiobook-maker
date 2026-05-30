@@ -430,7 +430,28 @@ def _mark_token_downloaded(token_info):
     except Exception as e:
         print(f"[tokens] _mark_token_downloaded persist failed: {e}")
 
-#  -  -  Admin activity digest (email log)  -  - 
+
+def _has_active_download_tokens(job_id, now=None):
+    """True se esiste almeno un download token non scaduto per il job_id.
+
+    Protegge job in stato analysed/cancelled dalla rimozione prematura
+    della directory quando esistono ancora link email validi.
+    I token vengono confrontati con _effective_retention_for_token_info
+    (+300s di margine come nel resto del cleanup)."""
+    if now is None:
+        now = time.time()
+    try:
+        for _t, info in list(_download_tokens.items()):
+            if info.get("job_id") != job_id:
+                continue
+            if (now - info.get("created_at", 0)) <= _effective_retention_for_token_info(info) + 300:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+#  -  -  Admin activity digest (email log)  -  -
 # Set ABM_ADMIN_EMAIL to enable. Leave empty to disable.
 #   export ABM_ADMIN_EMAIL=gfrangiamone@gmail.com
 # Rate limited: max 1 digest email per hour, batches all pending events.
@@ -9344,7 +9365,10 @@ def _cleanup_loop():
                 has_email = job.get("email_registered", False)
 
                 if status == "cancelled":
-                    to_remove.append((jid, "cancelled"))
+                    # Non rimuovere job con download token ancora attivi
+                    # (es. email inviata prima del cancel con link validi).
+                    if not _has_active_download_tokens(jid, now):
+                        to_remove.append((jid, "cancelled"))
                     continue
 
                 if status == "error":
@@ -9356,7 +9380,10 @@ def _cleanup_loop():
                 if status == "analyzed":
                     last_poll = job.get("last_poll", job.get("start_time", now))
                     if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:
-                        to_remove.append((jid, "stale analyzed"))
+                        # Non rimuovere job con download token ancora attivi
+                        # (es. email inviata in generazione precedente).
+                        if not _has_active_download_tokens(jid, now):
+                            to_remove.append((jid, "stale analyzed"))
                     continue
 
                 if status == "optimizing":
