@@ -60,6 +60,8 @@ __BAIDU_TONGJI__
 <meta property="og:image:type" content="image/png">
 <meta property="og:locale" content="__OG_LOCALE__">
 __OG_LOCALE_ALT__
+<meta property="article:published_time" content="__SEO_PUBLISHED__">
+<meta property="article:modified_time" content="__SEO_MODIFIED__">
 <link rel="canonical" href="__SEO_CANONICAL__">
 <!-- hreflang: versioni per lingua — indicizza l'app in 6 lingue su Google -->
 __SEO_HREFLANG__
@@ -145,6 +147,21 @@ __REVIEWS_LD__
       <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle dark/light theme">&#x2600;&#xFE0F;</button>
     </div>
   </header>
+
+  <!-- BREADCRUMB (visibile, con microdata schema.org) -->
+  <nav class="bc-nav" aria-label="Breadcrumb">
+    <ol itemscope itemtype="https://schema.org/BreadcrumbList">
+      <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
+        <a itemprop="item" href="/"><span itemprop="name">__SEO_BC_HOME__</span></a>
+        <meta itemprop="position" content="1">
+      </li>
+      <li class="bc-sep" aria-hidden="true">›</li>
+      <li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem">
+        <span itemprop="name">__SEO_CRUMB__</span>
+        <meta itemprop="position" content="2">
+      </li>
+    </ol>
+  </nav>
 
   <!-- NEWS MODAL POPUP (one-time per user) -->
   <div class="news-modal-overlay" id="newsModal" role="dialog" aria-modal="true" aria-labelledby="newsModalTitle" hidden>
@@ -695,7 +712,9 @@ __REVIEWS_LD__
         <details class="faq-item"><summary data-t="faq_q3"></summary><div class="faq-answer" data-t="faq_a3"></div></details>
         <details class="faq-item"><summary data-t="faq_q4"></summary><div class="faq-answer" data-t="faq_a4"></div></details>
         <details class="faq-item"><summary data-t="faq_q5"></summary><div class="faq-answer" data-t="faq_a5"></div></details>
+        <details class="faq-item"><summary data-t="faq_q6"></summary><div class="faq-answer" data-t="faq_a6"></div></details>
         <details class="faq-item"><summary data-t="faq_free_books_q"></summary><div class="faq-answer" data-t="faq_free_books_a"></div></details>
+        <a class="faq-see-all" href="/faq/__LANG_CODE__/"><span data-t="faq_see_all"></span></a>
       </div>
     </div>
 

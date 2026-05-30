@@ -86,6 +86,14 @@ body{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Hiragino Sans GB','N
 [data-theme="dark"] .theme-btn{background:#2a2520;border-color:#4a3f32;color:#a09080}
 .theme-btn:hover{border-color:var(--ac);color:var(--ac)}
 
+/* ═══ BREADCRUMB ═══ */
+.bc-nav{max-width:760px;margin:0 auto;padding:10px 12px 0}
+.bc-nav ol{display:flex;align-items:center;gap:6px;list-style:none;margin:0;padding:0;font-size:.80rem;color:var(--txm)}
+.bc-nav a{color:var(--ac);text-decoration:none}
+.bc-nav a:hover{text-decoration:underline}
+.bc-nav .bc-sep{color:var(--txm);font-size:.85rem;user-select:none}
+@media(max-width:760px){.bc-nav{padding:8px 10px 0}}
+
 /* ═══ FREE BOOKS BUTTON (hidden, content moved to FAQ) ═══ */
 .fb-btn{display:none}
 
@@ -127,6 +135,8 @@ details.faq-item summary::-webkit-details-marker{display:none}
 details.faq-item summary::before{content:"+";display:inline-block;width:18px;height:18px;border-radius:50%;background:var(--acs);color:var(--ac);text-align:center;line-height:18px;font-size:.8rem;font-weight:600;flex-shrink:0;transition:transform .2s}
 details.faq-item[open] summary::before{content:"\2212"}
 details.faq-item .faq-answer{font-size:.82rem;color:var(--txd);padding:4px 0 8px 26px;line-height:1.5}
+.faq-see-all{display:inline-block;margin-top:10px;font-size:.82rem;color:var(--ac);text-decoration:none;font-weight:550}
+.faq-see-all:hover{text-decoration:underline}
 
 /* ═══ COMMUNITY CARDS (Donation + Social, full-width) ═══ */
 .community-card{background:var(--srf);border-radius:var(--rs);border:1px solid var(--brd);padding:24px 28px;margin-bottom:24px}

@@ -30,6 +30,7 @@ import re
 # Keys whose translations must be visible to non-JS crawlers.
 # Ordered roughly by where they appear in the body.
 _SEO_KEYS: list[str] = [
+    "bc_home",
     "guides_heading",
     "guide_epub", "guide_m4b", "guide_tts", "guide_podcast",
     "faq_heading_short",
@@ -38,7 +39,9 @@ _SEO_KEYS: list[str] = [
     "faq_q3", "faq_a3",
     "faq_q4", "faq_a4",
     "faq_q5", "faq_a5",
+    "faq_q6", "faq_a6",
     "faq_free_books_q", "faq_free_books_a",
+    "faq_see_all",
 ]
 
 _LANGS: list[str] = ["it", "en", "fr", "es", "de", "zh", "hi"]
