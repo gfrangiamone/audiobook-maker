@@ -125,10 +125,6 @@ def build_html_template(
         ]
         og_locale_alt_block = "\n".join(og_locale_alt_lines)
 
-        # Localized "Home" label for visible breadcrumb
-        _BC_HOME = {"it": "Home", "en": "Home", "fr": "Accueil",
-                     "es": "Inicio", "de": "Start", "zh": "首页", "hi": "होम"}
-
         replacements = {
             "__HTML_LANG__":     html_lang,
             "__LANG_CODE__":     lang,          # ← inietta INIT_LANG per il JS
@@ -146,8 +142,6 @@ def build_html_template(
             "__OG_LOCALE_ALT__": og_locale_alt_block,
             "__SEO_PUBLISHED__": "2022-06-01",
             "__SEO_MODIFIED__":  datetime.now().strftime("%Y-%m-%d"),
-            "__SEO_BC_HOME__":   _BC_HOME.get(lang, "Home"),
-            "__SEO_CRUMB__":     seo.get("crumb", "Online Converter"),
         }
         for placeholder, value in replacements.items():
             html = html.replace(placeholder, value)
