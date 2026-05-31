@@ -2192,6 +2192,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                        "m4b_failed"):
         job.pop(_stale_key, None)
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     start_time = time.time()
 
     # Determina il motore TTS (3-way: edge / google / gemini)
@@ -2354,14 +2355,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         def _check_cancelled():
             """Controlla se il job e stato cancellato o il client disconnesso."""
             if job.get("gen_epoch", 0) != my_epoch:
+                print(f"[{job_id}] _check_cancelled: epoch mismatch "
+                      f"(job={job.get('gen_epoch')}, my={my_epoch})")
                 return True
             if job.get("cancelled"):
+                print(f"[{job_id}] _check_cancelled: explicit cancel flag")
                 return True
             if job.get("email_registered"):
                 return False
             # Heartbeat: se nessun client ha chiesto il progresso da 60+ sec
             last_poll = job.get("last_poll", start_time)
-            if time.time() - last_poll > 60:
+            idle = time.time() - last_poll
+            if idle > 60:
+                print(f"[{job_id}] _check_cancelled: heartbeat timeout "
+                      f"({idle:.0f}s idle > 60s)")
                 return True
             return False
 
@@ -2406,6 +2413,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
                 _update_progress(i, block)
+
+                # Periodic progress logging ogni 10 chunk
+                if i > 0 and (i % 10 == 0 or i == total_chunks - 1):
+                    pct = (i + 1) / total_chunks * 100
+                    print(f"[{job_id}] Progress: chunk {i+1}/{total_chunks} "
+                          f"({pct:.0f}%), failed_chunks={failed_chunks}, "
+                          f"elapsed={time.time()-start_time:.0f}s")
 
                 ch_idx = block["chapter_index"]
                 ch_title = block["chapter_title"]
@@ -2502,7 +2516,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if use_google:
                         result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
                     else:
-                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                        try:
+                            result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                        except Exception as _edge_err:
+                            print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
+                            import traceback
+                            traceback.print_exc()
+                            _generate_silence_mp3(part_path, duration_sec=1)
+                            result = False
                     if result is False:
                         failed_chunks += 1
                 # Bump per il gap che verra` inserito PRIMA di questo part_path
@@ -2718,6 +2739,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
                 _update_progress(i, block)
+                # Periodic progress logging ogni 10 chunk (multi-file)
+                if i > 0 and (i % 10 == 0 or i == total_chunks - 1):
+                    pct = (i + 1) / total_chunks * 100
+                    print(f"[{job_id}] Progress: chunk {i+1}/{total_chunks} "
+                          f"({pct:.0f}%), failed_chunks={failed_chunks}, "
+                          f"elapsed={time.time()-start_time:.0f}s")
                 if block["chapter_index"] != current_chapter_idx:
                     if current_chapter_parts and current_chapter_idx >= 0:
                         ch = chapter_by_idx[current_chapter_idx]
@@ -2854,7 +2881,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if use_google:
                         result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
                     else:
-                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                        try:
+                            result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                        except Exception as _edge_err:
+                            print(f"[{job_id}] edge-tts chunk {i} crashed (multi-file): {_edge_err}")
+                            import traceback
+                            traceback.print_exc()
+                            _generate_silence_mp3(part_path, duration_sec=1)
+                            result = False
                     if result is False:
                         failed_chunks += 1
                 current_chapter_parts.append(part_path)
@@ -3284,7 +3318,22 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
 
-    except Exception as e:
+    except BaseException as e:
+        # SystemExit/KeyboardInterrupt devono propagare — non sopprimerli.
+        if isinstance(e, (SystemExit, KeyboardInterrupt)):
+            raise
+
+        # Marker forense: preserva la work_dir per analisi post-mortem
+        # anche se il codice di cleanup successivo dovesse fallire.
+        _write_forensic_marker(
+            job_id,
+            kind="silent_death",
+            outcome="error",
+            reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
+        )
+        print(f"[{job_id}] FORENSIC: silent thread death — "
+              f"{type(e).__name__}: {e}")
+
         # Quota Gemini (RPD/daily) e budget guard interno: il job e' interrotto
         # a meta'. L'audio parziale non viene consegnato, quindi l'operazione e'
         # da considerare FALLITA per l'utente -> refund integrale + notifica.

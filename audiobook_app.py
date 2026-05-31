@@ -1065,7 +1065,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         return generation_engine.run_generation(job_id, info, voice, rate, single_file,
                                                  output_format=output_format, podcast_base_url=podcast_base_url,
                                                  gemini_style_instruction=gemini_style_instruction)
-    except Exception as e:
+    except BaseException as e:
+        # SystemExit/KeyboardInterrupt devono propagare — non sopprimerli.
+        if isinstance(e, (SystemExit, KeyboardInterrupt)):
+            raise
         print(f"[{job_id}] CRITICAL: run_generation wrapper crashed: {e}")
         import traceback
         traceback.print_exc()
