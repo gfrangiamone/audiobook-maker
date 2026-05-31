@@ -2438,9 +2438,9 @@ function _showWizProgress(){
   const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='none';
   const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='none';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.add('visible');
-  document.getElementById('pBar').style.width='0%';
-  document.getElementById('pPct').textContent='0%';
-  document.getElementById('pMsg').textContent=t('starting');
+  const pBar=document.getElementById('pBar');if(pBar)pBar.style.width='0%';
+  const pPct=document.getElementById('pPct');if(pPct)pPct.textContent='0%';
+  const pMsg=document.getElementById('pMsg');if(pMsg)pMsg.textContent=t('starting');
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   const progressPhase=document.getElementById('progressPhase');
@@ -2453,6 +2453,7 @@ function _showWizProgress(){
 
 function _listenOptProgressWiz(){
   var myJobId=jobId;
+  _ensureEmailAreaVisible();
   _updateGenNoticeWarning();
   _autoRegisterEmailFromStorage(myJobId);
   var es=new EventSource('/api/optimize_progress/'+myJobId);
@@ -2711,6 +2712,7 @@ function listenProgress(){
   let retries=0;
   const maxRetries=5;
   const myJobId=jobId;
+  _ensureEmailAreaVisible();
   _updateGenNoticeWarning();
   _autoRegisterEmailFromStorage(myJobId);
   function connect(){
@@ -3580,7 +3582,17 @@ async function validateCoupon(){
   }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
 }
 
+function _ensureEmailAreaVisible(){
+  // Safety net: garantisce che l'area email sia visibile anche se
+  // _showWizProgress() non ha potuto eseguire (es. DOM mancante).
+  const genProgress=document.getElementById('generationProgress');
+  if(genProgress&&genProgress.style.display==='none')genProgress.style.display='';
+  const emailArea=document.getElementById('emailLateArea');
+  if(emailArea&&!emailArea.classList.contains('visible'))emailArea.classList.add('visible');
+}
+
 function _updateGenNoticeWarning(){
+  _ensureEmailAreaVisible();
   const notice=document.getElementById('generationActiveNotice');
   const txt=document.getElementById('genActiveNoticeText');
   if(!notice||!txt)return;

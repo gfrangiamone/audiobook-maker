@@ -888,6 +888,57 @@ def _load_tokens():
 
 
 # ----------------------------------------------------------------------
+# CLIENT EMAILS — persistenza email di notifica per client_id (fallback UI)
+# ----------------------------------------------------------------------
+
+_CLIENT_EMAILS_FILE = UPLOAD_DIR / "_client_emails.json"
+_client_emails = {}
+_client_emails_lock = threading.Lock()
+
+
+def _load_client_emails():
+    """Carica la mappatura client_id → email, per fallback cross-job."""
+    global _client_emails
+    if not _CLIENT_EMAILS_FILE.exists():
+        return
+    try:
+        with open(_CLIENT_EMAILS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _client_emails = {k: v for k, v in data.items() if k and v}
+        print(f"[client_emails] Loaded {len(_client_emails)} entries")
+    except Exception as e:
+        print(f"[client_emails] Failed to load: {e}")
+
+
+def _save_client_emails():
+    """Persiste la mappatura client_id → email in scrittura atomica."""
+    try:
+        with _client_emails_lock:
+            tmp_file = _CLIENT_EMAILS_FILE.with_suffix(
+                _CLIENT_EMAILS_FILE.suffix + ".tmp"
+            )
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(_client_emails, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp_file), str(_CLIENT_EMAILS_FILE))
+    except Exception as e:
+        print(f"[client_emails] Failed to save: {e}")
+
+
+def _lookup_client_email(client_id):
+    """Cerca l'email associata a un client_id (thread-safe)."""
+    if not client_id:
+        return ""
+    with _client_emails_lock:
+        return _client_emails.get(client_id, "")
+
+
+# ----------------------------------------------------------------------
 # PAYMENTS & VOUCHERS (for LLM optimization) — state lives in payment.py
 # ----------------------------------------------------------------------
 
@@ -6799,6 +6850,12 @@ def api_register_email():
                   job.get("client_id", ""), job.get("client_ip", ""),
                   job.get("voice", ""), job.get("browser_lang", ""))
 
+    # Persist client_id → email per fallback su job futuri (difesa da UI fallita)
+    client_id = job.get("client_id", "")
+    if client_id:
+        _client_emails[client_id] = email
+        _save_client_emails()
+
     return jsonify({"status": "registered", "email": email})
 
 
@@ -9584,6 +9641,9 @@ payment._migrate_paid_opt_to_paid_jobs()
 payment._load_paid_jobs_done()
 payment._recover_orphaned_voucher_charges(jobs)
 
+# Load persisted client_id → email mapping for cross-job notification fallback
+_load_client_emails()
+
 # Configura il motore di generazione (spostato in generation_engine.py)
 generation_engine.configure(
     jobs=jobs,
@@ -9596,7 +9656,8 @@ generation_engine.configure(
     jobs_lock=_jobs_lock,
     retention_sec=EMAIL_FILE_RETENTION_SEC,
     gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
-    write_email_marker_fn=_write_email_marker
+    write_email_marker_fn=_write_email_marker,
+    lookup_client_email_fn=_lookup_client_email
 )
 
 if _paypal_available():

@@ -59,6 +59,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `SCRIPT_DIR` | `Path(__file__).parent.resolve()` | `audiobook_app.py` | 33 |
 | `UPLOAD_DIR` | `Path(_DATA_DIR)` (derivato da `ABM_DATA_DIR`) | `audiobook_app.py` | 78 |
 | `_TOKENS_FILE` | `UPLOAD_DIR / "_download_tokens.json"` | `audiobook_app.py` | 157 |
+| `_CLIENT_EMAILS_FILE` | `UPLOAD_DIR / "_client_emails.json"` | `audiobook_app.py` | 894 |
 
 ### 3.2 Email e notifiche
 
@@ -74,6 +75,19 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM/Gemini | `audiobook_app.py` | 301 |
 | `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 103 |
 | `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 104 |
+| `_client_emails` | `{}` dict `client_id → email`, persistito in `_client_emails.json`. Popolato da `/api/register_email`, letto da `gen._send_completion_email` come fallback se `job["notify_email"]` è vuoto | `audiobook_app.py` | 896 |
+| `_client_emails_lock` | `threading.Lock()` per accesso thread-safe alla mappa | `audiobook_app.py` | 897 |
+
+### 3.2.1 Fallback email cross-job
+
+Quando un job completa senza `notify_email` registrato (es. UI del campo email non mostrata per errore JS),
+il sistema cerca una email precedentemente associata allo stesso `client_id` nel file
+`_client_emails.json`. Se trovata, la usa come fallback e invia comunque la notifica.
+Il meccanismo è **difensivo**: copre scenari di fallimento UI preservando il consenso
+esplicito (solo email già confermate in precedenza dallo stesso client).
+
+File: `audiobook_app.py` funzioni `_load_client_emails()`, `_save_client_emails()`, `_lookup_client_email()`.
+Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()`.
 
 ### 3.3 Rate limiting e tracking client
 

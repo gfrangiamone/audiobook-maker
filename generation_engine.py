@@ -129,6 +129,7 @@ _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
 _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
+_lookup_client_email = lambda cid: ""  # callable(cid) -> email or ""
 
 
 def _is_gemini_voice(voice):
@@ -159,13 +160,14 @@ def _set_job_status(job, status):
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
-              retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None):
+              retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
+              lookup_client_email_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
-    global _gemini_retention_sec, _write_email_marker
+    global _gemini_retention_sec, _write_email_marker, _lookup_client_email
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -178,6 +180,8 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _retention_sec = retention_sec if retention_sec is not None else 64800
     _gemini_retention_sec = gemini_retention_sec if gemini_retention_sec is not None else 172800
     _write_email_marker = write_email_marker_fn
+    if lookup_client_email_fn is not None:
+        _lookup_client_email = lookup_client_email_fn
     
     # Inizializza client LLM (se API key presente)
     _init_llm()
@@ -1039,15 +1043,24 @@ def _send_completion_email(job_id):
             pass
         return
     if not job.get("notify_email"):
-        print(f"[{job_id}] _send_completion_email: notify_email empty "
-              f"(email_registered={job.get('email_registered')})", flush=True)
-        try:
-            _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_NOADDR",
-                          job.get("client_id", ""), job.get("client_ip", ""),
-                          job.get("voice", ""), job.get("browser_lang", ""))
-        except Exception:
-            pass
-        return
+        # Fallback: cerca email precedentemente registrata per lo stesso client
+        _cid = job.get("client_id", "")
+        if _cid:
+            _fallback = _lookup_client_email(_cid)
+            if _fallback:
+                job["notify_email"] = _fallback
+                print(f"[{job_id}] _send_completion_email: using fallback email "
+                      f"from client_id {_cid}", flush=True)
+        if not job.get("notify_email"):
+            print(f"[{job_id}] _send_completion_email: notify_email empty "
+                  f"(email_registered={job.get('email_registered')})", flush=True)
+            try:
+                _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_NOADDR",
+                              job.get("client_id", ""), job.get("client_ip", ""),
+                              job.get("voice", ""), job.get("browser_lang", ""))
+            except Exception:
+                pass
+            return
     print(f"[{job_id}] _send_completion_email: preparing send to {job['notify_email']}", flush=True)
     _ret_sec_job = _retention_for_job(job)
     retention_h = _ret_sec_job // 3600
@@ -3149,6 +3162,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         # Send email notification if user registered
         notify_email = job.get("notify_email")
+        if not notify_email:
+            # Fallback: cerca email precedentemente registrata per lo stesso client
+            _cid = job.get("client_id", "")
+            if _cid:
+                notify_email = _lookup_client_email(_cid)
+                if notify_email:
+                    job["notify_email"] = notify_email
+                    print(f"[{job_id}] post-COMPLETE: using fallback email "
+                          f"from client_id {_cid}", flush=True)
         if notify_email:
             print(f"[{job_id}] post-COMPLETE: triggering email to {notify_email}", flush=True)
             try:
