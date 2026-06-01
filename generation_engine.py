@@ -1109,7 +1109,8 @@ def _send_completion_email(job_id):
     # anche dal cleanup di altri worker Gunicorn che non vedono questo token.
     if _write_email_marker is not None:
         try:
-            _write_email_marker(_upload_dir / job_id, _sent_at)
+            _write_email_marker(_upload_dir / job_id, _sent_at,
+                                is_gemini=_is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")))
         except Exception as e:
             print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 
@@ -1295,7 +1296,8 @@ def _send_optimization_email(job_id):
     job["email_sent_at"] = _sent_at
     if _write_email_marker is not None:
         try:
-            _write_email_marker(_upload_dir / job_id, _sent_at)
+            _write_email_marker(_upload_dir / job_id, _sent_at,
+                                is_gemini=_is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")))
         except Exception as e:
             print(f"[{job_id}] email-marker write failed: {e}", flush=True)
 
@@ -3042,6 +3044,23 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Cleanup silence file
         if os.path.exists(silence_path):
             os.remove(silence_path)
+
+        # Sweep intermedi per-chunk rimasti in work_dir dopo l'assembly.
+        # Il loop su all_parts (single-file) e su current_chapter_parts (multi-file)
+        # rimuove i chunk audio, ma NON i file di debug per-chunk (prompt{i}.txt di
+        # Gemini, .part*.txt/.pcm di tts_split) ne' eventuali chunk residui di un
+        # branch interrotto. I file di output finali vivono in output_dir (subdir),
+        # quindi una glob non-ricorsiva sul livello di work_dir non li tocca.
+        try:
+            for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt"):
+                for _leftover in work_dir.glob(_pattern):
+                    if _leftover.is_file():
+                        try:
+                            os.remove(_leftover)
+                        except OSError as _e_rm:
+                            print(f"[{job_id}] sweep leftover skip {_leftover.name}: {_e_rm}")
+        except Exception as _e_sweep:
+            print(f"[{job_id}] work_dir leftover sweep failed (non-fatal): {_e_sweep}")
 
         # Caratteri Google TTS: sistema delta tra prenotato e consumato
         if use_google:

@@ -9340,14 +9340,43 @@ except (TypeError, ValueError):
 FORENSIC_RETENTION_DAYS = max(0, FORENSIC_RETENTION_DAYS)
 
 
-def _write_email_marker(work_dir, when=None):
+def _marker_protection_window(is_gemini):
+    """Finestra di protezione (sec) da incidere nel marker email, per tipo voce.
+
+    - Gemini (True): finestra estesa no-download (prudenza massima sui file
+      PREMIUM, mai cancellati prima della finestra completa).
+    - Standard (False): retention base email (18h): la dir standard NON va
+      sovra-protetta con la finestra Gemini.
+    - Ignoto (None): ritorna None → il lettore usa il fallback conservativo
+      max() (favorisce sempre la conservazione del file generato)."""
+    if is_gemini is True:
+        return GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER
+    if is_gemini is False:
+        return EMAIL_FILE_RETENTION_SEC
+    return None
+
+
+def _write_email_marker(work_dir, when=None, is_gemini=None):
     """Marca una job dir come 'email inviata' (timestamp epoch in secondi).
-    Sovrascrive un eventuale marker 'pending'. Idempotente."""
+    Sovrascrive un eventuale marker 'pending'. Idempotente.
+
+    Formato del contenuto:
+      - "<ts>"                  → legacy, lettura con fallback conservativo max().
+      - "<ts>|<retention_sec>"  → self-describing: il cleanup applica la finestra
+                                  CORRETTA per tipo voce senza sovra-proteggere le
+                                  dir standard con la finestra Gemini (96h).
+    Quando `is_gemini` è None (tipo voce ignoto) si scrive la forma legacy: il
+    lettore protegge in modo conservativo. La forma self-describing si usa solo
+    quando il tipo voce è noto con certezza."""
     try:
         ts = float(when) if when is not None else time.time()
         marker = Path(work_dir) / EMAIL_MARKER_FILENAME
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f"{ts:.3f}", encoding="utf-8")
+        window = _marker_protection_window(is_gemini)
+        if window is not None:
+            marker.write_text(f"{ts:.3f}|{int(window)}", encoding="utf-8")
+        else:
+            marker.write_text(f"{ts:.3f}", encoding="utf-8")
     except OSError as e:
         print(f"[email-marker] write failed in {work_dir}: {e}")
 
@@ -9364,8 +9393,10 @@ def _write_email_pending_marker(work_dir):
                 existing = marker.read_text(encoding="utf-8").strip()
                 if existing == _EMAIL_MARKER_PENDING:
                     return
-                # Se è un timestamp valido, l'email è già stata inviata: non degradare.
-                float(existing)
+                # Se è un timestamp valido (legacy "<ts>" o self-describing
+                # "<ts>|<win>"), l'email è già stata inviata: NON degradare a
+                # 'pending' (ridurrebbe la finestra di protezione del file).
+                float(existing.partition("|")[0])
                 return
             except (OSError, ValueError):
                 pass  # contenuto illeggibile/corrotto: sovrascriviamo
@@ -9398,17 +9429,29 @@ def _email_marker_protects(work_dir, now):
         except OSError:
             return False
         return (now - mtime) < EMAIL_PENDING_MAX_AGE_SEC
+    # Forma self-describing "<ts>|<retention_sec>": usa la finestra esplicita.
+    # Legacy "<ts>" o contenuto corrotto: fallback conservativo al max()
+    # (favorisce SEMPRE la conservazione del file generato).
+    ts_str, sep, win_str = content.partition("|")
     try:
-        ts = float(content)
+        ts = float(ts_str)
     except ValueError:
         try:
             ts = marker.stat().st_mtime
         except OSError:
             return False
-    return (now - ts) < max(
-        EMAIL_FILE_RETENTION_SEC,
-        GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
-    ) + 300
+    window = None
+    if sep:
+        try:
+            window = int(win_str)
+        except ValueError:
+            window = None
+    if window is None or window <= 0:
+        window = max(
+            EMAIL_FILE_RETENTION_SEC,
+            GEMINI_FILE_RETENTION_SEC * GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER,
+        )
+    return (now - ts) < window + 300
 
 
 def _forensic_marker_protects(work_dir, now):
