@@ -605,16 +605,18 @@ def _active_generating_for_client_unlocked(client_id):
 def _refund_payment_on_orphan(job_id, job, reason):
     """Refund Gemini payment if /api/generate rejected after the token was consumed.
 
-    Mirrors generation_engine._refund_gemini_payment: voucher → _voucher_refund,
-    paypal → emit refund voucher. Best-effort; non-fatal on errors.
-    Also clears job['payment'] so a retry doesn't see stale state.
+    Mirrors generation_engine._refund_gemini_payment: voucher → _voucher_refund
+    (riaccredito silenzioso sull'originale, ritorna None), paypal → emette voucher
+    di rimborso (ritorna il codice, per inserirlo nella mail). Best-effort;
+    non-fatal on errors. Clears job['payment'] so a retry doesn't see stale state.
     """
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     amt = float(payment_meta.get("total_eur", 0) or 0)
     method = payment_meta.get("method", "")
+    refund_code = None
     if not tok or amt <= 0:
-        return
+        return None
     try:
         if method == "voucher":
             payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
@@ -622,7 +624,7 @@ def _refund_payment_on_orphan(job_id, job, reason):
             pay = payment._payments.get(tok, {})
             email = pay.get("email", "") or ""
             if email:
-                payment._create_voucher(
+                refund_code, _ = payment._create_voucher(
                     email, amt, origin_order_id=tok, origin_job_id=job_id,
                     kind="refund", note=f"refund {reason} job {job_id}",
                 )
@@ -639,6 +641,7 @@ def _refund_payment_on_orphan(job_id, job, reason):
         print(f"[{job_id}] orphan refund failed ({reason}, non-fatal): {e}")
     finally:
         job.pop("payment", None)
+    return refund_code
 
 
 def _build_job_descriptor(job, phase):
@@ -674,6 +677,24 @@ def _build_job_descriptor(job, phase):
         "client_ip": job.get("client_ip", ""),
         "payment": job.get("payment"),
     }
+
+
+def _parse_book(path):
+    """Ri-parsa un file su disco nello stesso modo di /api/analyze, ritornando
+    il BookInfo. Dispatch per estensione. Usato dal recupero job orfani.
+    parse_abm ritorna (info, cover_info): qui si scarta la cover."""
+    import os
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext == "epub":
+        return parse_epub(path)
+    if ext == "pdf":
+        if parse_pdf is None:
+            raise RuntimeError("PDF parser non disponibile (PyMuPDF mancante)")
+        return parse_pdf(path)
+    if ext == "abm":
+        info, _cover = parse_abm(path)
+        return info
+    return parse_txt(path)
 
 
 def _active_optimizing_for_client(client_id):
