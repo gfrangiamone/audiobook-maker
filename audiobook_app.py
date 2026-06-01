@@ -8870,7 +8870,11 @@ def api_download(job_id):
         return ("Job not found" if sc == 404 else "Forbidden"), sc
     if job.get("status") != "done":
         return "Not ready", 400
-    
+
+    # Necessario per i fallback fisici (ricerca file su disco). In assenza di
+    # questa definizione il ramo M4B->MP3 sollevava NameError -> HTTP 500.
+    job_dir = UPLOAD_DIR / job_id
+
     download_type = request.args.get("type", "").lower()
     
     # Refresh heartbeat  -  evita che il cleanup rimuova il job durante il download
@@ -8941,7 +8945,9 @@ def api_download(job_id):
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
-            mp3_path = job.get("output_files", [""])[0]
+            # output_files puo' essere [] (assembly fallito): evita IndexError.
+            _out_files = job.get("output_files") or []
+            mp3_path = _out_files[0] if _out_files else ""
             if not mp3_path or not os.path.exists(mp3_path):
                 mp3s = list(job_dir.glob("**/*.mp3"))
                 if mp3s:
@@ -9422,7 +9428,13 @@ def _cleanup_loop():
             to_remove = []
             for jid, job in list(jobs.items()):
                 status = job.get("status", "")
-                has_email = job.get("email_registered", False)
+                # Un job e' "emailato" se l'utente ha registrato l'email OPPURE
+                # se una notifica e' comunque partita (path fallback post-COMPLETE
+                # che imposta email_sent_at senza email_registered). Senza questo
+                # OR, un job consegnato via email-fallback ricadeva nella regola
+                # "downloaded + 5 min" e veniva cancellato pochi minuti dopo il
+                # primo accesso, ignorando la retention 18h/48h.
+                has_email = bool(job.get("email_registered")) or bool(job.get("email_sent_at"))
 
                 if status == "cancelled":
                     # Non rimuovere job con download token ancora attivi

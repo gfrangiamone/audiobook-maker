@@ -3119,6 +3119,68 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
             )
             return
+
+        # Guardia output: un assembly fallito (es. ENOSPC / disco pieno, errore
+        # ffmpeg) puo' lasciare il job SENZA alcun file pur con failed_chunks=0
+        # (i chunk TTS sono andati, ma il merge finale PCM->M4B/MP3 no). Senza
+        # questo check il job verrebbe marcato "done" con output vuoto, con
+        # conseguenze a cascata: email con link rotti, snapshot token vuoto,
+        # /api/download in 500, e cleanup aggressivo che cancella la cartella.
+        # Lo trattiamo come fallimento: status error + rimborso integrale.
+        def _job_has_output():
+            if job.get("output_m4b") and os.path.exists(job["output_m4b"]):
+                return True
+            for _f in (job.get("output_files") or []):
+                if _f and os.path.exists(_f):
+                    return True
+            if job.get("output_zip") and os.path.exists(job["output_zip"]):
+                return True
+            return False
+
+        if not _job_has_output():
+            _set_job_status(job, "error")
+            _user_msg = (
+                "Generazione interrotta: impossibile salvare il file audio finale "
+                "(spazio su disco insufficiente o errore di conversione). "
+                "Nessun file e' stato prodotto: rimborso integrale gia' emesso."
+            )
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            print(f"[{job_id}] EMPTY OUTPUT after assembly "
+                  f"(failed_chunks={failed_chunks}, output_format={output_format}, "
+                  f"m4b_failed={job.get('m4b_failed')}) -> error + refund.")
+            if use_gemini:
+                try:
+                    _write_gemini_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "failed_no_output_refunded")
+                except Exception:
+                    pass
+                try:
+                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+                try:
+                    _notify_user_gemini_job_failed(job_id, job, "no_output",
+                                                   failure_kind="generic")
+                except Exception as _notif_err:
+                    print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+                try:
+                    _admin_alert_gemini_failure(
+                        job_id, job, kind="generic",
+                        audit_outcome="failed_no_output_refunded",
+                        reason_detail="empty output after assembly (disk full / ffmpeg error)",
+                        chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    _refund_job_payment(job_id, job, "no_output")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            return
+
         _is_partial = _fail_ratio > _max_failed_ratio
         if _is_partial:
             job["status_partial_reason"] = (
