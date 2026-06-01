@@ -9417,6 +9417,49 @@ CLEANUP_HEARTBEAT_TIMEOUT_SEC = 60          # heartbeat perso per 60s = browser 
 CLEANUP_INTERVAL_SEC = 60                   # check every 60 seconds
 CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimosse
 
+
+def _evict_hot_local():
+    """Cancella i file di output LOCALI dei job la cui finestra calda è scaduta
+    e che risultano già su cold storage. Preserva dir + marker .cloud_uploaded
+    così i download successivi vengono rediretti al presigned URL.
+    No-op se il cold storage non è configurato."""
+    if not storage_backend.is_enabled():
+        return
+    now = time.time()
+    with _jobs_lock:
+        job_by_id = dict(jobs)
+    try:
+        for jdir in UPLOAD_DIR.iterdir():
+            if not jdir.is_dir() or jdir.name.startswith("_"):
+                continue
+            job = job_by_id.get(jdir.name, {})
+            hot = storage_tiering.hot_window_sec(job)
+            for od in jdir.iterdir():
+                if not od.is_dir():
+                    continue
+                if not (od.name == "output" or od.name.startswith("output_")):
+                    continue
+                uploaded_at = storage_tiering.cloud_uploaded_at(od)
+                if uploaded_at is None or (now - uploaded_at) <= hot:
+                    continue
+                for f in od.rglob("*"):
+                    if not f.is_file() or not storage_tiering.is_offloadable(f.name):
+                        continue
+                    key = storage_tiering.key_for_path(str(f))
+                    if not key:
+                        continue
+                    try:
+                        if storage_backend.object_exists(key):
+                            f.unlink()
+                            print(f"[hot-evict] Local removed (cold copy ok): {f}")
+                    except OSError:
+                        pass
+                    except Exception as e:
+                        print(f"[hot-evict] error on {f}: {e}")
+    except OSError:
+        pass
+
+
 # Marker scritto nella job dir per proteggere la cartella dal cleanup orfani
 # di OGNI worker Gunicorn. Il filesystem è l'unica fonte autoritativa condivisa.
 # Due stati possibili nel contenuto del file:
@@ -9793,6 +9836,12 @@ def _cleanup_loop():
                         print(f"[cleanup] Orphan output dir removed: {od} (age: {int(age)}s)")
         except OSError:
             pass
+
+        #  -  -  Evacuazione finestra calda (hot -> cold)  -  -
+        try:
+            _evict_hot_local()
+        except Exception as e:
+            print(f"[hot-evict] loop error: {e}")
 
         #  -  -  Cleanup cartelle orfane su disco  -  -
         with _jobs_lock:
