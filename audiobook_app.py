@@ -706,8 +706,9 @@ def _check_download_throttle(file_path):
 
 def _check_cold_throttle(key):
     """Come _check_download_throttle ma keyed sulla chiave S3 (il file locale
-    non esiste più). Su max download cancella l'oggetto cold e ritorna 'deleted'.
-    Mantiene la semantica anti-redistribuzione anche per i file freddi."""
+    non esiste più). Su max download ritorna 'deleted' (cap per-worker) ma NON
+    cancella l'oggetto cold condiviso: la rimozione cold è di competenza solo
+    della retention cleanup. Mantiene la semantica anti-redistribuzione per-worker."""
     now = time.time()
     rec = _download_tracking.get(key)
     if rec:
@@ -716,15 +717,11 @@ def _check_cold_throttle(key):
             return ("cooldown", int(_DL_THROTTLE_SEC - elapsed))
     current = rec["count"] if rec else 0
     if current >= _DL_MAX_DOWNLOADS:
-        try:
-            storage_backend.delete_object(key)
-            _download_tracking.pop(key, None)
-            print(f"[throttle] Deleted cold object {key} after {_DL_MAX_DOWNLOADS} downloads")
-        except Exception as e:
-            # delete fallito (es. S3 transitorio): NON azzerare il record, così
-            # la prossima richiesta ritenta la delete e continua a servire 410
-            # invece di sbloccare nuovi download.
-            print(f"[throttle] Error deleting cold object {key}: {e}")
+        # cap per-worker raggiunto; NON cancellare l'oggetto cold condiviso
+        # (lo fa solo la retention cleanup _delete_cold_for_job). Il counter è
+        # per-worker (Gunicorn multi-process): cancellare qui distruggerebbe lo
+        # stato durevole condiviso sotto gli altri worker. Mantieni il record
+        # così le richieste successive continuano a ritornare 'deleted'.
         return ("deleted", None)
     new_count = current + 1
     if rec:
@@ -860,6 +857,24 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     if no_cache:
         _apply_no_cache(response)
     return response
+
+
+def _try_cold_serve(local_path, download_name=None):
+    """Se il file locale è assente ma esiste una copia cold confermata, ritorna
+    la Response di redirect 302 (via _send_file_throttled). Altrimenti None, così
+    il chiamante prosegue col suo comportamento originale (404/410).
+    Usa bypass_throttle=True: il throttle dei link email è già gestito a livello
+    di route/token; qui vogliamo solo il redirect alla copia cold."""
+    if not storage_backend.is_enabled() or not local_path:
+        return None
+    if os.path.exists(local_path):
+        return None
+    key = storage_tiering.key_for_path(local_path)
+    if not key or not storage_backend.object_exists(key):
+        return None
+    return _send_file_throttled(local_path, as_attachment=True,
+                                download_name=download_name, no_cache=True,
+                                bypass_throttle=True)
 
 
 def _read_tokens_file():
@@ -8058,6 +8073,9 @@ def token_do_download_abm(token):
             if alt.exists():
                 abm_path = str(alt)
     if not abm_path or not os.path.exists(abm_path):
+        _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
+        if _cold is not None:
+            return _cold
         return "File not available", 404
     if not _is_resume_or_probe_request():
         _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
@@ -8148,6 +8166,15 @@ def token_do_download_m4b(token):
             pass
         return resp
 
+    # Cold tier: il locale (m4b e mp3) è evacuato; se esiste la copia cold del
+    # M4B snapshotato, redirect 302 al presigned URL prima del 404.
+    _cold = _try_cold_serve(token_info.get("output_m4b", ""), download_name=f"{safe_name}.m4b")
+    if _cold is not None:
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN", "", "", "", "")
+        _mark_token_downloaded(token_info)
+        return _cold
+
     # Diagnostica completa: nessun M4B e nessun MP3 disponibile.
     print(f"[dl/m4b] 404 token={token} job={job_id} "
           f"token_m4b={token_info.get('output_m4b','')!r} "
@@ -8207,7 +8234,20 @@ def token_do_download(token):
                     _log_activity(job_id, token_info.get("original_filename", ""),
                                   "DOWNLOAD_OPT_ABM", "", "", "", "")
                 _mark_token_downloaded(token_info)
-                return _apply_no_cache(send_file(abm_path, as_attachment=True, download_name=abm_name))
+                # Route through _send_file_throttled (bypass_throttle: il token è
+                # già la chiave d'accesso) per coerenza con la chokepoint cold.
+                return _send_file_throttled(abm_path, as_attachment=True,
+                                            download_name=abm_name, no_cache=True,
+                                            bypass_throttle=True)
+            _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
+            if _cold is not None:
+                if job:
+                    job["downloaded_at"] = time.time()
+                if not _is_resume_or_probe_request():
+                    _log_activity(job_id, token_info.get("original_filename", ""),
+                                  "DOWNLOAD_OPT_ABM", "", "", "", "")
+                _mark_token_downloaded(token_info)
+                return _cold
             return "File not found", 404
 
         #  -  -  PODCAST download  -  - 
@@ -8316,6 +8356,14 @@ def _serve_audio_download(token_info, job, job_id):
             _do_log()
             return _send_file_throttled(zip_file, as_attachment=True,
                              download_name=output_name or "audiobook.zip")
+
+    # Cold tier: il locale è evacuato (finestra calda scaduta). Se la copia cold
+    # del file snapshotato (zip o single-file) esiste, redirect 302 al presigned.
+    for _p in (output_zip, output_file):
+        _cold = _try_cold_serve(_p, download_name=output_name)
+        if _cold is not None:
+            _do_log()
+            return _cold
 
     print(f"[dl] No files found for job {job_id} (job_dir exists: {job_dir.exists()})")
     print(f"[dl]   stored output_zip: {output_zip}")

@@ -40,9 +40,11 @@ def test_no_redirect_when_local_exists(app_client, monkeypatch, tmp_path):
     assert resp.status_code == 200
 
 
-def test_cold_delete_failure_keeps_deleted_state(app_client, monkeypatch, tmp_path):
-    """Se delete_object fallisce al raggiungimento del max, il record NON viene
-    azzerato: le richieste successive continuano a ritornare 'deleted'."""
+def test_cold_cap_keeps_deleted_state_without_deleting_object(app_client, monkeypatch, tmp_path):
+    """Al raggiungimento del cap per-worker, _check_cold_throttle ritorna
+    'deleted' e MANTIENE il record (richieste successive restano 'deleted'),
+    ma NON cancella mai l'oggetto cold condiviso: in multi-worker Gunicorn il
+    counter è per-processo e cancellerebbe lo stato durevole sotto gli altri."""
     audiobook_app, client = app_client
     import storage_backend
     audiobook_app._download_tracking.clear()
@@ -51,10 +53,12 @@ def test_cold_delete_failure_keeps_deleted_state(app_client, monkeypatch, tmp_pa
         "count": audiobook_app._DL_MAX_DOWNLOADS,
         "last_download": 0,
     }
+    called = {"delete": False}
     monkeypatch.setattr(storage_backend, "delete_object",
-                        lambda k: (_ for _ in ()).throw(OSError("s3 down")))
+                        lambda k: called.__setitem__("delete", True))
     s1, _ = audiobook_app._check_cold_throttle("k1")
     s2, _ = audiobook_app._check_cold_throttle("k1")
     assert s1 == "deleted"
-    assert s2 == "deleted"  # record non azzerato dal fallimento
+    assert s2 == "deleted"  # record mantenuto: cap per-worker persistente
     assert "k1" in audiobook_app._download_tracking
+    assert called["delete"] is False  # l'oggetto cold condiviso NON viene toccato
