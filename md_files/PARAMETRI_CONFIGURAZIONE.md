@@ -37,6 +37,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
 | `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download per voci standard) | `audiobook_app.py` | 300 |
 | `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` inizia per `gemini:` o il token ha `is_gemini=True`. **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
+| `ABM_RECOVER_ENABLED` | `1` (abilita il recupero al boot dei job **batch** interrotti da un riavvio/deploy; `0\|false\|no\|off` per disabilitare). Letto in `_recover_orphan_jobs()`. | `audiobook_app.py` | — |
+| `ABM_RECOVER_MAX_ATTEMPTS` | `2` (tentativi di recupero per job prima del fallback = rimborso secondo policy + mail "interrotto" + `state=failed`). Il contatore è persistito su disco **prima** di rilanciare (crash-safe) e azzerato al primo capitolo completato di un job recuperato. | `audiobook_app.py` | — |
 
 ---
 
@@ -640,11 +642,24 @@ Anti-spam feedback (in-memory, no DB): rate-limit `1/h, 5/24h` per IP-hash, hone
 
 ---
 
+## 13. Recupero job batch interrotti (`pending_jobs.py`)
+
+I job **batch** (con email registrata) vivono solo in memoria; un riavvio/deploy li perderebbe. Per recuperarli, ogni job batch viene descritto in un file su `ABM_DATA_DIR`:
+
+| File | Contenuto |
+|------|-----------|
+| `_pending_jobs.json` | Descrittori dei job batch in volo (id, phase `optimize\|generate`, attempts, state, input path, parametri TTS, notify_*, payment). Riusa `community_store.JsonStore`: write atomico tmp+rename, lock per file, backup `.bak`. |
+| `_pending_jobs.json.bak` | Backup automatico della versione precedente |
+
+Ciclo di vita del descrittore: **scritto** quando il job diventa batch (`/api/register_email`, submit batch di `/api/optimize`); **finalizzato/rimosso** quando la mail finale parte con successo (`_send_completion_email` e l'email optimize-only in `generation_engine.py`). Al boot, `_recover_orphan_jobs()` (thread one-shot in `_ensure_background_threads`) legge gli orfani, incrementa `attempts` su disco **prima** di rilanciare (crash-safe), ricostruisce il job ri-parsando l'input (riusa l'`.abm` ottimizzato se presente, saltando l'LLM) e respawna `run_optimization`/`run_generation`. Oltre `ABM_RECOVER_MAX_ATTEMPTS` tentativi → rimborso secondo policy esistente (voucher → riaccredito silenzioso; PayPal → nuovo voucher in mail) + mail "interrotto" + `state=failed`.
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |
 |-----------|:---:|
-| Variabili d'ambiente (`ABM_*`) | 21 |
+| Variabili d'ambiente (`ABM_*`) | 23 |
 | Configurazione Flask | 1 |
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
@@ -654,4 +669,4 @@ Anti-spam feedback (in-memory, no DB): rate-limit `1/h, 5/24h` per IP-hash, hone
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
-| **Totale** | **100** |
+| **Totale** | **102** |
