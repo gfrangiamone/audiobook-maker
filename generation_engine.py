@@ -2185,7 +2185,6 @@ def _offload_to_cloud(job_id, output_dir, when):
     c'è, quindi un upload fallito NON porta mai a perdita di file."""
     if not storage_backend.is_enabled():
         return
-    from pathlib import Path
     od = Path(output_dir)
     if not od.exists():
         return
@@ -2217,10 +2216,9 @@ def _spawn_cloud_offload(job_id, output_dir):
     nel frattempo i file da locale."""
     if not storage_backend.is_enabled():
         return
-    import threading, time as _t
     threading.Thread(
         target=_offload_to_cloud,
-        args=(job_id, output_dir, _t.time()),
+        args=(job_id, output_dir, time.time()),
         daemon=True,
     ).start()
 

@@ -35,3 +35,31 @@ def test_offload_noop_when_disabled(monkeypatch, tmp_path):
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
     generation_engine._offload_to_cloud("job2", str(out), when=1.0)
     assert storage_tiering.cloud_uploaded_at(out) is None
+
+
+def test_offload_no_marker_when_exists_returns_false(monkeypatch, tmp_path):
+    import storage_backend, storage_tiering, generation_engine
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    importlib.reload(storage_tiering)
+    out = tmp_path / "job3" / "output_1"
+    out.mkdir(parents=True)
+    (out / "book.mp3").write_bytes(b"x")
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: None)
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: False)  # remote non confermato
+    generation_engine._offload_to_cloud("job3", str(out), when=1.0)
+    assert storage_tiering.cloud_uploaded_at(out) is None  # invariante: nessun marker
+
+
+def test_offload_no_marker_when_upload_raises(monkeypatch, tmp_path):
+    import storage_backend, storage_tiering, generation_engine
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    importlib.reload(storage_tiering)
+    out = tmp_path / "job4" / "output_1"
+    out.mkdir(parents=True)
+    (out / "book.mp3").write_bytes(b"x")
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: (_ for _ in ()).throw(OSError("network")))
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: False)
+    generation_engine._offload_to_cloud("job4", str(out), when=1.0)
+    assert storage_tiering.cloud_uploaded_at(out) is None
