@@ -32,6 +32,8 @@ from pathlib import Path
 import email_service
 import payment
 import cancel_policy
+import storage_backend
+import storage_tiering
 try:
     import gemini_tts
 except ImportError:
@@ -2176,6 +2178,53 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
 
+def _offload_to_cloud(job_id, output_dir, when):
+    """Carica i file di output offloadable su cold storage e scrive il marker.
+    No-op se il backend S3 non è configurato. Verifica l'esistenza remota
+    prima di marcare: la finestra calda evacuerà il locale solo se il marker
+    c'è, quindi un upload fallito NON porta mai a perdita di file."""
+    if not storage_backend.is_enabled():
+        return
+    from pathlib import Path
+    od = Path(output_dir)
+    if not od.exists():
+        return
+    all_ok = True
+    uploaded_any = False
+    for f in od.rglob("*"):
+        if not f.is_file() or not storage_tiering.is_offloadable(f.name):
+            continue
+        key = storage_tiering.key_for_path(str(f))
+        if not key:
+            continue
+        try:
+            storage_backend.upload_file(str(f), key)
+            if not storage_backend.object_exists(key):
+                all_ok = False
+            else:
+                uploaded_any = True
+        except Exception as e:
+            print(f"[{job_id}] cloud offload error for {f.name}: {e}", flush=True)
+            all_ok = False
+    if all_ok and uploaded_any:
+        storage_tiering.mark_cloud_uploaded(od, when)
+        print(f"[{job_id}] cloud offload complete: {output_dir}", flush=True)
+
+
+def _spawn_cloud_offload(job_id, output_dir):
+    """Avvia l'upload su cold storage in un thread daemon: non blocca l'email
+    di completamento né il ritorno di run_generation. La finestra calda serve
+    nel frattempo i file da locale."""
+    if not storage_backend.is_enabled():
+        return
+    import threading, time as _t
+    threading.Thread(
+        target=_offload_to_cloud,
+        args=(job_id, output_dir, _t.time()),
+        daemon=True,
+    ).start()
+
+
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     job = _jobs[job_id]
     _set_job_status(job, "generating")
@@ -3237,6 +3286,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
+
+        # Offload asincrono su cold storage (se configurato). I file restano
+        # serviti da locale per tutta la finestra calda; l'upload gira intanto.
+        try:
+            _spawn_cloud_offload(job_id, job.get("output_dir", ""))
+        except Exception as e:
+            print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
 
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
