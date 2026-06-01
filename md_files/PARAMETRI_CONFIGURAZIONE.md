@@ -546,7 +546,38 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 
 ---
 
-## 8. Versione (`version.py`)
+## 8. Cold Storage S3 (tiering hot/cold)
+
+| Variabile | Descrizione | Default | Sorgente |
+|-----------|-------------|---------|----------|
+| `ABM_S3_ENDPOINT` | Endpoint S3-compatible (Aruba/R2/B2). Vuoto = tiering disabilitato. | *(vuoto)* | storage_backend.py |
+| `ABM_S3_ACCESS_KEY` | Access key ID | *(vuoto)* | storage_backend.py |
+| `ABM_S3_SECRET_KEY` | Secret access key | *(vuoto)* | storage_backend.py |
+| `ABM_S3_BUCKET` | Nome bucket | *(vuoto)* | storage_backend.py |
+| `ABM_S3_REGION` | Region | `us-east-1` | storage_backend.py |
+| `ABM_S3_KEY_PREFIX` | Prefisso di namespacing nel bucket | *(vuoto)* | storage_backend.py |
+| `ABM_S3_PRESIGN_TTL_SEC` | Validità presigned URL (s) | `21600` (6h) | storage_backend.py |
+| `ABM_HOT_WINDOW_SEC` | Finestra calda locale, voci standard (s) | `7200` (2h) | audiobook_app.py / storage_tiering.py |
+| `ABM_HOT_WINDOW_GEMINI_SEC` | Finestra calda locale, voci PREMIUM (s) | `14400` (4h) | audiobook_app.py / storage_tiering.py |
+
+**Retention totale (cold delete)** resta governata da `ABM_JOB_RETENTION_SEC` /
+`ABM_GEMINI_JOB_RETENTION_SEC`. Per lo scenario "48h/72h" impostare:
+`ABM_JOB_RETENTION_SEC=172800` (48h), `ABM_GEMINI_JOB_RETENTION_SEC=259200` (72h).
+
+Con tiering attivo i file vivono in locale solo per la finestra calda; oltre,
+sono serviti via redirect dal cold storage fino alla retention totale. Egress
+addebitato dal provider (con presigned i byte vanno storage→utente).
+
+**Architettura:** `storage_backend.py` (primitive S3 via boto3, multipart upload
+automatico, presigned URL) è l'unico punto provider-specifico; `storage_tiering.py`
+contiene la logica caldo/freddo (chiave = path relativo a ABM_DATA_DIR, finestra,
+marker `.cloud_uploaded`). Upload async dopo `done`; evacuazione locale a fine
+finestra calda solo se l'oggetto è confermato su S3; delete cold a fine retention
+totale (escluso per job sotto retention forense).
+
+---
+
+## 9. Versione (`version.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -555,7 +586,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 
 ---
 
-## 9. SEO Content (`seo_content.py`)
+## 10. SEO Content (`seo_content.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -564,7 +595,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 
 ---
 
-## 10. Nuovi moduli (v3.8.0)
+## 11. Nuovi moduli (v3.8.0)
 
 ### Architettura a moduli
 
@@ -581,7 +612,7 @@ A partire dalla v3.8.0, il codice è distribuito su più file per migliorare la 
 
 ---
 
-## 11. Community widget (v3.13.0)
+## 12. Community widget (v3.13.0)
 
 Live Stats, News e Feedback aggiungono questi file su `ABM_DATA_DIR`:
 
