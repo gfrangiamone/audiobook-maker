@@ -31,6 +31,7 @@ from pathlib import Path
 
 import email_service
 import payment
+import pending_jobs
 import cancel_policy
 import storage_backend
 import storage_tiering
@@ -1258,6 +1259,12 @@ def _send_completion_email(job_id):
         _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
+        # Job batch portato a termine e mail recapitata: chiudi il descrittore di
+        # recupero così non verrà più trattato come orfano a un riavvio successivo.
+        try:
+            pending_jobs.finalize(job_id)
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.finalize failed (non-fatal): {_e}", flush=True)
     else:
         _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
                       job.get("client_id", ""), job.get("client_ip", ""),
@@ -1392,6 +1399,12 @@ def _send_optimization_email(job_id):
         _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_SENT",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
+        # Optimize-only batch completato: anche questo path chiude il job. Senza
+        # finalize verrebbe recuperato come orfano al boot pur essendo completo.
+        try:
+            pending_jobs.finalize(job_id)
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.finalize (optimize-only) failed (non-fatal): {_e}", flush=True)
     else:
         _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_FAILED",
                       job.get("client_id", ""), job.get("client_ip", ""),
