@@ -34,8 +34,10 @@ from flask import (
     send_file, Response, stream_with_context, redirect
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
+import storage_backend
+import storage_tiering
 
-#  -  -  Import epub_to_tts (must be in the same folder)  -  - 
+#  -  -  Import epub_to_tts (must be in the same folder)  -  -
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -702,6 +704,36 @@ def _check_download_throttle(file_path):
     return ("ok", _DL_MAX_DOWNLOADS - new_count)
 
 
+def _check_cold_throttle(key):
+    """Come _check_download_throttle ma keyed sulla chiave S3 (il file locale
+    non esiste più). Su max download cancella l'oggetto cold e ritorna 'deleted'.
+    Mantiene la semantica anti-redistribuzione anche per i file freddi."""
+    now = time.time()
+    rec = _download_tracking.get(key)
+    if rec:
+        elapsed = now - rec["last_download"]
+        if elapsed < _DL_THROTTLE_SEC:
+            return ("cooldown", int(_DL_THROTTLE_SEC - elapsed))
+    current = rec["count"] if rec else 0
+    if current >= _DL_MAX_DOWNLOADS:
+        try:
+            storage_backend.delete_object(key)
+            print(f"[throttle] Deleted cold object {key} after {_DL_MAX_DOWNLOADS} downloads")
+        except Exception as e:
+            print(f"[throttle] Error deleting cold object {key}: {e}")
+        _download_tracking.pop(key, None)
+        return ("deleted", None)
+    new_count = current + 1
+    if rec:
+        rec["count"] = new_count
+        rec["last_download"] = now
+    else:
+        _download_tracking[key] = {"count": new_count, "last_download": now}
+    if new_count >= _DL_MAX_DOWNLOADS:
+        return ("last", 0)
+    return ("ok", _DL_MAX_DOWNLOADS - new_count)
+
+
 def _apply_no_cache(response):
     """Disabilita la cache HTTP sulla risposta (per contenuti rigenerati on-demand con URL stabile).
     SEND_FILE_MAX_AGE_DEFAULT è 1 anno: senza questa override il browser servirebbe la
@@ -755,6 +787,28 @@ def _find_files_in_outputs(job_dir, pattern):
 
 
 def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, **kwargs):
+    # --- Cold storage tier ---
+    # Se il file locale è stato evacuato (finestra calda scaduta) ma esiste su
+    # cold storage, applica il throttle sulla chiave e fai redirect 302 al
+    # presigned URL. I byte vanno storage->utente, off il server.
+    if storage_backend.is_enabled() and not os.path.exists(file_path):
+        key = storage_tiering.key_for_path(file_path)
+        if key and storage_backend.object_exists(key):
+            is_probe_cold = False
+            try:
+                is_probe_cold = request.method == "HEAD" or bool(request.headers.get("Range"))
+            except Exception:
+                pass
+            if not (is_probe_cold or bypass_throttle):
+                status, info = _check_cold_throttle(key)
+                if status == "cooldown":
+                    lang = _get_browser_lang() or "en"
+                    return _render_dl_cooldown_page(lang, info), 429
+                if status == "deleted":
+                    lang = _get_browser_lang() or "en"
+                    return _render_dl_deleted_page(lang), 410
+            url = storage_backend.presigned_get_url(key, download_name=download_name)
+            return redirect(url, code=302)
     # HEAD e Range request (anteprima/resume del browser o client email) non devono
     # consumare il quota di 5 download: serviamo il file senza toccare il counter.
     is_probe = False
