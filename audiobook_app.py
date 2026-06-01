@@ -352,6 +352,19 @@ GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "
 MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
 MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
 
+# Tolleranza di crescita del testo dovuta all'ottimizzazione AI. Un libro che
+# era ENTRO il cap prima dell'ottimizzazione (precondizione garantita dal cap
+# enforced in /api/optimize e /api/optimize_estimate sul testo originale) puo'
+# superare il cap fino a questa frazione DOPO l'espansione LLM ed essere
+# comunque generato, invece di essere rifiutato a valle. Default 5%.
+try:
+    LLM_OPT_GROWTH_TOLERANCE = float(
+        os.environ.get("ABM_LLM_OPT_GROWTH_TOLERANCE", "0.05").replace(",", ".")
+    )
+except (TypeError, ValueError):
+    LLM_OPT_GROWTH_TOLERANCE = 0.05
+LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
+
 
 def _is_gemini_voice(voice):
     """True se la voce e' una voce PREMIUM Gemini (formato gemini:<model>:<voice>)."""
@@ -361,6 +374,22 @@ def _is_gemini_voice(voice):
 def _max_text_chars_for_voice(voice):
     """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
     return MAX_GEMINI_TEXT_CHARS if _is_gemini_voice(voice) else MAX_TEXT_CHARS
+
+
+def _effective_max_text_chars(voice, job=None):
+    """Cap caratteri EFFETTIVO per la generazione/pagamento.
+
+    Identico a _max_text_chars_for_voice per i job non ottimizzati. Per i job
+    gia' ottimizzati con AI (`job["ai_optimized"]`) concede la tolleranza
+    LLM_OPT_GROWTH_TOLERANCE (default 5%) sul cap base: un libro che era entro i
+    limiti prima dell'ottimizzazione e che l'espansione LLM ha portato di poco
+    oltre viene comunque elaborato. NON usare questo helper per il cap PRE-
+    ottimizzazione (/api/optimize, /api/optimize_estimate): li' va applicato il
+    cap base sul testo originale, che e' la precondizione di questa tolleranza."""
+    base = _max_text_chars_for_voice(voice)
+    if isinstance(job, dict) and job.get("ai_optimized"):
+        return int(base * (1.0 + LLM_OPT_GROWTH_TOLERANCE))
+    return base
 
 
 def _retention_for_job(job):
@@ -6231,7 +6260,7 @@ def api_generate():
         # restrittivo: verificarlo qui garantisce che un libro troppo grande non
         # porti MAI a riservare budget o consumare il token PayPal/voucher per
         # poi essere rifiutato dal cap a valle (riga ~6448) senza rimborso.
-        _max_chars_pre = _max_text_chars_for_voice(voice)
+        _max_chars_pre = _effective_max_text_chars(voice, job)
         _sel_chars_pre = sum(getattr(ch, "char_count", 0) for ch in chs_pre)
         if _sel_chars_pre > _max_chars_pre:
             return jsonify({
@@ -6458,7 +6487,7 @@ def api_generate():
     # 1 char ~= 50-100 byte di MP3, quindi il limite mantiene l'output sotto
     # ~75-150 MB. Per voci PREMIUM (gemini:) usiamo MAX_GEMINI_TEXT_CHARS
     # (default 800k, piu' restrittivo) data la maggior pressione su cost/RPM.
-    max_text_chars = _max_text_chars_for_voice(voice)
+    max_text_chars = _effective_max_text_chars(voice, job)
     selected_chars = sum(ch.char_count for ch in info.chapters)
     if selected_chars > max_text_chars:
         with _jobs_lock:
@@ -7374,7 +7403,7 @@ def api_paypal_create_order_gemini():
     # essere generato da /api/generate (cap a riga ~6448), quindi NON deve
     # nemmeno arrivare a creare/catturare un ordine: altrimenti l'utente paga
     # e il job viene poi rifiutato senza che il denaro sia stato consumato.
-    _max_chars_voice = _max_text_chars_for_voice(voice_id)
+    _max_chars_voice = _effective_max_text_chars(voice_id, job)
     _sel_chars_voice = sum(getattr(ch, "char_count", 0) for ch in chs)
     if _sel_chars_voice > _max_chars_voice:
         return jsonify({
