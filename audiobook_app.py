@@ -92,6 +92,7 @@ import generation_engine
 import community_store
 import community_translator
 import community_moderator
+import pending_jobs
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -307,6 +308,7 @@ if gemini_tts is not None:
 
 # Inizializza JSON store community (news, feedback)
 community_store.init(_DATA_DIR)
+pending_jobs.init()  # richiede community_store.init() già chiamato
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
