@@ -9489,6 +9489,19 @@ except (TypeError, ValueError):
 FORENSIC_RETENTION_DAYS = max(0, FORENSIC_RETENTION_DAYS)
 
 
+def _delete_cold_for_job(job_id):
+    """Cancella tutti gli oggetti cold del job (prefisso '<job_id>/'). No-op se
+    il backend non è configurato. Tollerante agli errori: non deve mai bloccare
+    il cleanup locale."""
+    if not storage_backend.is_enabled() or not job_id:
+        return
+    try:
+        storage_backend.delete_prefix(f"{job_id}/")
+        print(f"[cleanup] Cold objects removed for job {job_id}")
+    except Exception as e:
+        print(f"[cleanup] Cold delete error for {job_id}: {e}")
+
+
 def _marker_protection_window(is_gemini):
     """Finestra di protezione (sec) da incidere nel marker email, per tipo voce.
 
@@ -9633,6 +9646,7 @@ def _cleanup_job(job_id, reason=""):
     (refund Gemini in attesa di analisi admin), rimuoviamo l'entry in memoria
     ma preserviamo la dir su disco finché il marker è valido.
     """
+    _delete_cold_for_job(job_id)
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
@@ -9778,6 +9792,7 @@ def _cleanup_loop():
                         continue
                     if _forensic_marker_protects(job_dir, now):
                         continue
+                    _delete_cold_for_job(jid)
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
         if expired_tokens:
@@ -9869,6 +9884,7 @@ def _cleanup_loop():
                         continue
                     if _forensic_marker_protects(entry, now):
                         continue
+                    _delete_cold_for_job(entry.name)
                     shutil.rmtree(str(entry), ignore_errors=True)
                     print(f"[cleanup] Orphan dir removed: {entry.name} (age: {int(dir_age)}s)")
         except OSError:
