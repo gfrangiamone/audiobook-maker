@@ -697,6 +697,119 @@ def _parse_book(path):
     return parse_txt(path)
 
 
+def _reenqueue_orphan(job_id, rec):
+    """Ricostruisce il job dal descrittore e rilancia il thread appropriato.
+    Riusa l'.abm ottimizzato se presente (salta l'LLM)."""
+    abm_path = rec.get("abm_path") or ""
+    use_abm = bool(abm_path) and os.path.exists(abm_path)
+    src = abm_path if use_abm else rec.get("input_path", "")
+    if not src or not os.path.exists(src):
+        raise FileNotFoundError(f"input mancante per {job_id}: {src!r}")
+    info = _parse_book(src)
+    job = {
+        "status": "queued",
+        "epub_path": rec.get("input_path", ""),
+        "original_filename": rec.get("original_filename", ""),
+        "info": info,
+        "voice": rec.get("voice", ""),
+        "rate": rec.get("rate", "+0%"),
+        "single_file": rec.get("single_file", True),
+        "output_format": rec.get("output_format", "m4b"),
+        "gemini_style_instruction": rec.get("gemini_style_instruction"),
+        "notify_email": rec.get("notify_email", ""),
+        "notify_download_type": rec.get("notify_download_type", "audio"),
+        "notify_base_url": rec.get("notify_base_url", ""),
+        "notify_lang": rec.get("notify_lang", "en"),
+        "email_registered": True,
+        "client_id": rec.get("client_id", ""),
+        "client_ip": rec.get("client_ip", ""),
+        "payment": rec.get("payment"),
+        "ai_optimized": bool(rec.get("ai_optimized")) or use_abm,
+        "recovered": True,
+        "gen_epoch": 1,
+    }
+    with _jobs_lock:
+        jobs[job_id] = job
+    if rec.get("phase") == "optimize" and not use_abm:
+        t = threading.Thread(
+            target=run_optimization,
+            args=(job_id, rec.get("selected_chapters")),
+            daemon=True,
+        )
+    else:
+        t = threading.Thread(
+            target=run_generation,
+            args=(job_id, info, job["voice"], job["rate"], job["single_file"]),
+            kwargs={"output_format": job["output_format"],
+                    "podcast_base_url": rec.get("podcast_base_url", ""),
+                    "gemini_style_instruction": job["gemini_style_instruction"]},
+            daemon=True,
+        )
+    t.start()
+
+
+def _send_interrupted_email(rec, refund_code=None):
+    """Notifica all'utente che l'elaborazione è stata interrotta e non recuperabile.
+    Riusa il template di rimborso job fallito esistente."""
+    email = rec.get("notify_email", "")
+    if not email or not _smtp_available():
+        return
+    amt = float((rec.get("payment") or {}).get("total_eur", 0) or 0)
+    title = rec.get("original_filename", "") or "Audiobook"
+    try:
+        email_service._send_gemini_failed_refund_email(
+            email, amt, title, "interrupted_restart", voucher_code=refund_code,
+        )
+    except Exception as e:
+        print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")
+
+
+def _orphan_fallback(job_id, rec):
+    """Dopo il cap tentativi: rimborso secondo policy + mail interrotto + mark failed."""
+    job_like = {"payment": rec.get("payment"),
+                "client_id": rec.get("client_id", ""),
+                "client_ip": rec.get("client_ip", "")}
+    refund_code = _refund_payment_on_orphan(job_id, job_like, "recover_failed")
+    _send_interrupted_email(rec, refund_code=refund_code)
+    try:
+        pending_jobs.mark_failed(job_id)
+    except Exception as e:
+        print(f"[recover] mark_failed {job_id} failed: {e}")
+
+
+def _recover_orphan_jobs():
+    """Eseguito UNA volta al boot: il dict jobs è vuoto, ogni descrittore non
+    finalizzato è orfano. Incrementa attempts su disco PRIMA di rilanciare."""
+    if os.environ.get("ABM_RECOVER_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    try:
+        orphans = pending_jobs.orphans()
+    except Exception as e:
+        print(f"[recover] impossibile leggere pending jobs: {e}")
+        return
+    if not orphans:
+        return
+    max_attempts = int(os.environ.get("ABM_RECOVER_MAX_ATTEMPTS", "2"))
+    print(f"[recover] {len(orphans)} job batch orfani da recuperare (cap={max_attempts})")
+    for rec in orphans:
+        job_id = rec.get("id")
+        try:
+            attempts = pending_jobs.mark_running_bump(job_id)  # persiste PRIMA del run
+        except Exception as e:
+            print(f"[recover] bump fallito {job_id}: {e}")
+            continue
+        if attempts > max_attempts:
+            print(f"[recover] {job_id}: superato cap ({attempts}>{max_attempts}) → fallback")
+            _orphan_fallback(job_id, rec)
+            continue
+        try:
+            _reenqueue_orphan(job_id, rec)
+            print(f"[recover] {job_id}: re-enqueued (tentativo {attempts})")
+        except Exception as e:
+            print(f"[recover] {job_id}: re-enqueue fallito (tentativo {attempts}): {e}")
+        time.sleep(2)  # throttle anti-spike se molti orfani
+
+
 def _active_optimizing_for_client(client_id):
     """Count how many jobs are currently optimizing for the given client_id. Thread-safe."""
     with _jobs_lock:
@@ -10099,6 +10212,8 @@ def _ensure_background_threads():
     _cleanup_started = True
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_loop, daemon=True).start()
+    # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
+    threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
     if google_tts is not None:
         threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
     
