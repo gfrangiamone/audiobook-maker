@@ -31,7 +31,7 @@ from pathlib import Path
 
 from flask import (
     Flask, render_template_string, request, jsonify,
-    send_file, Response, stream_with_context
+    send_file, Response, stream_with_context, redirect
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -345,6 +345,12 @@ EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))
 # Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
 # i pagamenti Premium meritano una finestra di download/email piu' ampia.
 GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
+# Finestra "calda" locale: dopo questo tempo dal completamento, i file output
+# vengono evacuati dal disco locale e serviti via redirect dal cold storage S3.
+# La retention TOTALE (disponibilità al download) resta governata da
+# EMAIL_FILE_RETENTION_SEC / GEMINI_FILE_RETENTION_SEC (cold delete su S3).
+HOT_WINDOW_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "7200"))            # 2h voci standard
+HOT_WINDOW_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "14400"))  # 4h voci PREMIUM
 # Hard cap caratteri per audiolibro completo (taglia output audio):
 # - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
 # - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'
