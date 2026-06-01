@@ -1855,6 +1855,15 @@ def run_optimization(job_id, selected_chapters=None):
             job["opt_streamed_chars"] = 0
             job["opt_current_chapter_chars"] = 0
 
+            # Progresso reale su un job recuperato: azzera i tentativi così due
+            # deploy ravvicinati non bruciano il cap durante un'elaborazione sana.
+            if job.get("recovered") and not job.get("_attempts_reset"):
+                job["_attempts_reset"] = True
+                try:
+                    pending_jobs.reset_attempts(job_id)
+                except Exception:
+                    pass
+
         # Recalculate BookInfo totals
         info.total_words = sum(ch.word_count for ch in info.chapters)
         info.total_chars = sum(ch.char_count for ch in info.chapters)
@@ -2520,6 +2529,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         if m4b_chapters:
                             m4b_chapters[-1]["end"] = current_ms
                         m4b_chapters.append({"title": ch_title, "start": current_ms, "end": current_ms})
+                    # Transizione da un capitolo reale al successivo = primo capitolo
+                    # completato: su un job recuperato azzera i tentativi (progresso
+                    # reale), così due deploy ravvicinati non bruciano il cap.
+                    if prev_chapter_idx != -1 and job.get("recovered") and not job.get("_attempts_reset"):
+                        job["_attempts_reset"] = True
+                        try:
+                            pending_jobs.reset_attempts(job_id)
+                        except Exception:
+                            pass
                     prev_chapter_idx = ch_idx
 
                 if use_gemini:
@@ -2846,6 +2864,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         for p in current_chapter_parts:
                             if os.path.exists(p) and p != silence_path:
                                 os.remove(p)
+
+                        # Primo capitolo (mp3) scritto: su un job recuperato azzera i
+                        # tentativi (progresso reale), anti-burn del cap su deploy ravvicinati.
+                        if job.get("recovered") and not job.get("_attempts_reset"):
+                            job["_attempts_reset"] = True
+                            try:
+                                pending_jobs.reset_attempts(job_id)
+                            except Exception:
+                                pass
                     current_chapter_parts = []
                     current_chapter_idx = block["chapter_index"]
                     # Silenzio all'inizio del capitolo
