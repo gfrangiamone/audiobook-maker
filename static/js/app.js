@@ -1238,6 +1238,19 @@ async function onGenerateClick() {
   if (_generatingModal) return;
   _generatingModal = true;
   try {
+    // Guard cap: se la voce attiva e' PREMIUM e la selezione supera il cap
+    // Gemini (max_gemini_text_chars), blocca PRIMA di stima/pagamento. La guard
+    // su switchAudioTab scatta solo al cambio tab: se l'utente entra in Premium
+    // con selezione valida e poi aggiunge capitoli oltre il cap, senza questo
+    // controllo arriverebbe a pagare un job non generabile.
+    const _activeVoice=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+    if(_isGeminiVoiceId(_activeVoice)){
+      const _cap=(bookData&&bookData.max_gemini_text_chars)|0;
+      if(_cap>0){
+        const _chars=_computeSelectedChars();
+        if(_chars>_cap){_showSelTooLargeModal(_chars,_cap);return;}
+      }
+    }
     await _doCombinedEstimate();
     const est = _estimateCache && _estimateCache.value;
     // Preflight RPD: blocca PRIMA della richiesta pagamento.

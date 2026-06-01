@@ -6226,6 +6226,21 @@ def api_generate():
             chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
         else:
             chs_pre = all_chs_pre
+        # Cap caratteri PRIMA di qualsiasi prenotazione budget o consumo del
+        # pagamento. Per le voci PREMIUM il cap (MAX_GEMINI_TEXT_CHARS) e` piu`
+        # restrittivo: verificarlo qui garantisce che un libro troppo grande non
+        # porti MAI a riservare budget o consumare il token PayPal/voucher per
+        # poi essere rifiutato dal cap a valle (riga ~6448) senza rimborso.
+        _max_chars_pre = _max_text_chars_for_voice(voice)
+        _sel_chars_pre = sum(getattr(ch, "char_count", 0) for ch in chs_pre)
+        if _sel_chars_pre > _max_chars_pre:
+            return jsonify({
+                "error": f"Selection too large: {_sel_chars_pre:,} characters "
+                         f"(limit {_max_chars_pre:,}). Please reduce the chapter selection.",
+                "error_code": "selection_too_large",
+                "chars_selected": _sel_chars_pre,
+                "chars_limit": _max_chars_pre,
+            }), 413
         # Lingua: priorita` (1) override UI da body request > (2) metadata libro
         # > (3) "it". Stessa logica usata da /api/combined_estimate e
         # /api/paypal_create_order_gemini: indispensabile per evitare amount
@@ -6449,6 +6464,15 @@ def api_generate():
         with _jobs_lock:
             if job["status"] == "generating":
                 job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
+        # Rete di sicurezza: i cap a monte (create_order_gemini + blocco
+        # pre-consume) dovrebbero impedire di arrivare qui con un pagamento gia`
+        # consumato. Resta pero` il caso del testo espanso dall'ottimizzazione
+        # LLM oltre il cap DOPO il consume: in quel caso rimborsa il pagamento e
+        # rilascia la prenotazione budget Gemini, cosi` non si trattiene denaro
+        # per un job non generabile.
+        _refund_payment_on_orphan(job_id, job, "selection_too_large")
+        try: gemini_tts.release_reservation(job_id)
+        except Exception: pass
         return jsonify({
             "error": f"Selection too large: {selected_chars:,} characters "
                      f"(limit {max_text_chars:,}). Please reduce the chapter selection.",
@@ -7344,6 +7368,22 @@ def api_paypal_create_order_gemini():
         chs = all_chs
     if not chs:
         return jsonify({"error": "no chapters"}), 400
+
+    # Cap caratteri PRIMA di creare l'ordine PayPal. Un libro che supera il cap
+    # della voce PREMIUM (MAX_GEMINI_TEXT_CHARS, default 800k) non potra` mai
+    # essere generato da /api/generate (cap a riga ~6448), quindi NON deve
+    # nemmeno arrivare a creare/catturare un ordine: altrimenti l'utente paga
+    # e il job viene poi rifiutato senza che il denaro sia stato consumato.
+    _max_chars_voice = _max_text_chars_for_voice(voice_id)
+    _sel_chars_voice = sum(getattr(ch, "char_count", 0) for ch in chs)
+    if _sel_chars_voice > _max_chars_voice:
+        return jsonify({
+            "error": f"Selection too large: {_sel_chars_voice:,} characters "
+                     f"(limit {_max_chars_voice:,}). Please reduce the chapter selection.",
+            "error_code": "selection_too_large",
+            "chars_selected": _sel_chars_voice,
+            "chars_limit": _max_chars_voice,
+        }), 413
 
     # Lingua: stessa priorita` di /api/combined_estimate (UI > metadata > "it").
     # Deve essere identica per evitare amount mismatch sul server-side check.
