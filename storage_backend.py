@@ -5,6 +5,8 @@ automatico (file grandi resumabili) e presigned URL temporanei per il redirect.
 Cambiare provider = cambiare le env var ABM_S3_*, nessuna modifica al codice.
 """
 import os
+import threading
+from urllib.parse import quote
 
 try:
     import boto3
@@ -24,11 +26,19 @@ _KEY_PREFIX = os.environ.get("ABM_S3_KEY_PREFIX", "").strip().strip("/")
 _PRESIGN_TTL = int(os.environ.get("ABM_S3_PRESIGN_TTL_SEC", "21600"))  # 6h default
 
 _client = None
+_client_lock = threading.Lock()
 
 
 def is_enabled():
-    """True se boto3 è installato e tutte le credenziali essenziali sono presenti."""
-    return bool(boto3 and _ENDPOINT and _ACCESS_KEY and _SECRET_KEY and _BUCKET)
+    """True se boto3 è installato e tutte le credenziali essenziali sono presenti.
+    Legge l'ambiente a runtime per non dipendere dal momento dell'import."""
+    return bool(
+        boto3
+        and os.environ.get("ABM_S3_ENDPOINT", "").strip()
+        and os.environ.get("ABM_S3_ACCESS_KEY", "").strip()
+        and os.environ.get("ABM_S3_SECRET_KEY", "").strip()
+        and os.environ.get("ABM_S3_BUCKET", "").strip()
+    )
 
 
 def _full_key(key):
@@ -38,17 +48,20 @@ def _full_key(key):
 
 
 def _get_client():
-    """Client boto3 S3 lazy + cached. signature_version s3v4 per compat presigned."""
+    """Client boto3 S3 lazy + cached, thread-safe. signature_version s3v4 per
+    compat presigned (upload concorrenti da più thread di offload)."""
     global _client
     if _client is None:
-        _client = boto3.client(
-            "s3",
-            endpoint_url=_ENDPOINT,
-            aws_access_key_id=_ACCESS_KEY,
-            aws_secret_access_key=_SECRET_KEY,
-            region_name=_REGION,
-            config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
-        )
+        with _client_lock:
+            if _client is None:
+                _client = boto3.client(
+                    "s3",
+                    endpoint_url=_ENDPOINT,
+                    aws_access_key_id=_ACCESS_KEY,
+                    aws_secret_access_key=_SECRET_KEY,
+                    region_name=_REGION,
+                    config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+                )
     return _client
 
 
@@ -75,8 +88,11 @@ def presigned_get_url(key, download_name=None, ttl=None):
     via Content-Disposition (preservato attraverso il redirect)."""
     params = {"Bucket": _BUCKET, "Key": _full_key(key)}
     if download_name:
-        safe = download_name.replace('"', "")
-        params["ResponseContentDisposition"] = f'attachment; filename="{safe}"'
+        ascii_name = (download_name.encode("ascii", "ignore").decode("ascii").replace('"', "")) or "download"
+        utf8_name = quote(download_name)
+        params["ResponseContentDisposition"] = (
+            f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
+        )
     return _get_client().generate_presigned_url(
         "get_object", Params=params, ExpiresIn=int(ttl or _PRESIGN_TTL)
     )
