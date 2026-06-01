@@ -2826,8 +2826,11 @@ if (document.querySelectorAll('.live-timer').length > 0) {{
 }}
 
 //  -  -  Admin: sospensione nuovi processi  -  -
-const ADMIN_TOKEN = new URLSearchParams(window.location.search).get('token') ||
-                    sessionStorage.getItem('abm_admin_token') || '';
+// Token admin per le API: header X-Admin-Token (il server NON accetta più il
+// token in query string). localStorage è persistito 30gg dal gate /admin/login,
+// così l'header è popolato anche in tab/sessioni nuove (sessionStorage vuoto).
+const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
+                    localStorage.getItem('abm_admin_token') || '';
 
 function updateSuspendButton(suspended) {{
     const btn = document.getElementById('btnSuspend');
@@ -2844,7 +2847,7 @@ function updateSuspendButton(suspended) {{
 async function checkSuspendStatus() {{
     if (!ADMIN_TOKEN) return;
     try {{
-        const r = await fetch('/api/admin/suspend?token=' + encodeURIComponent(ADMIN_TOKEN));
+        const r = await fetch('/api/admin/suspend', {{headers: {{'X-Admin-Token': ADMIN_TOKEN}}}});
         if (r.ok) {{
             const d = await r.json();
             updateSuspendButton(d.suspended);
@@ -2857,9 +2860,9 @@ async function toggleSuspend() {{
     if (!btn || !ADMIN_TOKEN) return;
     const currentlySuspended = btn.classList.contains('suspended');
     try {{
-        const r = await fetch('/api/admin/suspend?token=' + encodeURIComponent(ADMIN_TOKEN), {{
+        const r = await fetch('/api/admin/suspend', {{
             method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
+            headers: {{'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN}},
             body: JSON.stringify({{suspend: !currentlySuspended}})
         }});
         if (r.ok) {{
