@@ -718,10 +718,13 @@ def _check_cold_throttle(key):
     if current >= _DL_MAX_DOWNLOADS:
         try:
             storage_backend.delete_object(key)
+            _download_tracking.pop(key, None)
             print(f"[throttle] Deleted cold object {key} after {_DL_MAX_DOWNLOADS} downloads")
         except Exception as e:
+            # delete fallito (es. S3 transitorio): NON azzerare il record, così
+            # la prossima richiesta ritenta la delete e continua a servire 410
+            # invece di sbloccare nuovi download.
             print(f"[throttle] Error deleting cold object {key}: {e}")
-        _download_tracking.pop(key, None)
         return ("deleted", None)
     new_count = current + 1
     if rec:
@@ -799,16 +802,27 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
                 is_probe_cold = request.method == "HEAD" or bool(request.headers.get("Range"))
             except Exception:
                 pass
+            cold_status, cold_info = "ok", None
             if not (is_probe_cold or bypass_throttle):
-                status, info = _check_cold_throttle(key)
-                if status == "cooldown":
+                cold_status, cold_info = _check_cold_throttle(key)
+                if cold_status == "cooldown":
                     lang = _get_browser_lang() or "en"
-                    return _render_dl_cooldown_page(lang, info), 429
-                if status == "deleted":
+                    return _render_dl_cooldown_page(lang, cold_info), 429
+                if cold_status == "deleted":
                     lang = _get_browser_lang() or "en"
                     return _render_dl_deleted_page(lang), 410
             url = storage_backend.presigned_get_url(key, download_name=download_name)
-            return redirect(url, code=302)
+            resp = redirect(url, code=302)
+            try:
+                if cold_status == "last":
+                    resp.headers["X-Download-Last"] = "1"
+                    resp.headers["X-Download-Remaining"] = "0"
+                elif cold_status == "ok" and cold_info is not None:
+                    resp.headers["X-Download-Remaining"] = str(cold_info)
+                resp.headers["Access-Control-Expose-Headers"] = "X-Download-Last, X-Download-Remaining, Content-Disposition"
+            except Exception:
+                pass
+            return resp
     # HEAD e Range request (anteprima/resume del browser o client email) non devono
     # consumare il quota di 5 download: serviamo il file senza toccare il counter.
     is_probe = False

@@ -38,3 +38,23 @@ def test_no_redirect_when_local_exists(app_client, monkeypatch, tmp_path):
     with audiobook_app.app.test_request_context("/"):
         resp = audiobook_app._send_file_throttled(str(f), download_name="book.mp3", bypass_throttle=True)
     assert resp.status_code == 200
+
+
+def test_cold_delete_failure_keeps_deleted_state(app_client, monkeypatch, tmp_path):
+    """Se delete_object fallisce al raggiungimento del max, il record NON viene
+    azzerato: le richieste successive continuano a ritornare 'deleted'."""
+    audiobook_app, client = app_client
+    import storage_backend
+    audiobook_app._download_tracking.clear()
+    # record già al massimo
+    audiobook_app._download_tracking["k1"] = {
+        "count": audiobook_app._DL_MAX_DOWNLOADS,
+        "last_download": 0,
+    }
+    monkeypatch.setattr(storage_backend, "delete_object",
+                        lambda k: (_ for _ in ()).throw(OSError("s3 down")))
+    s1, _ = audiobook_app._check_cold_throttle("k1")
+    s2, _ = audiobook_app._check_cold_throttle("k1")
+    assert s1 == "deleted"
+    assert s2 == "deleted"  # record non azzerato dal fallimento
+    assert "k1" in audiobook_app._download_tracking
