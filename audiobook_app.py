@@ -9646,7 +9646,6 @@ def _cleanup_job(job_id, reason=""):
     (refund Gemini in attesa di analisi admin), rimuoviamo l'entry in memoria
     ma preserviamo la dir su disco finché il marker è valido.
     """
-    _delete_cold_for_job(job_id)
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
@@ -9654,8 +9653,11 @@ def _cleanup_job(job_id, reason=""):
         if _forensic_marker_protects(work_dir, time.time()):
             print(f"[cleanup] {job_id} entry removed but dir preserved "
                   f"(forensic retention) — {reason}")
-            return
+            return                         # cold objects ALSO preserved
+        _delete_cold_for_job(job_id)       # solo sul path che procede alla rimozione
         shutil.rmtree(str(work_dir), ignore_errors=True)
+    else:
+        _delete_cold_for_job(job_id)       # dir già assente, pulizia cold comunque
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
