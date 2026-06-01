@@ -641,6 +641,41 @@ def _refund_payment_on_orphan(job_id, job, reason):
         job.pop("payment", None)
 
 
+def _build_job_descriptor(job, phase):
+    """Snapshot scalare del job sufficiente a ricostruirlo dopo un restart.
+    `phase`: 'optimize' (job in ottimizzazione) o 'generate' (job in/verso TTS).
+    L'input originale e l'eventuale .abm ottimizzato vivono su disco; qui si
+    salvano solo path + parametri."""
+    from pathlib import Path
+    fname = job.get("original_filename", "") or ""
+    kind = (Path(fname).suffix.lower().lstrip(".") or "epub")
+    return {
+        "input_path": job.get("epub_path", ""),       # path file caricato (qualsiasi tipo)
+        "input_kind": kind,
+        "abm_path": job.get("optimized_abm_path", ""), # presente solo se LLM completato
+        "ai_optimized": bool(job.get("ai_optimized")),
+        # Per i job optimize-batch con auto-generate i parametri TTS vivono sotto
+        # prefisso opt_* (non ancora promossi a job["voice"] ecc.): fallback su quelli.
+        "voice": job.get("voice") or job.get("opt_voice", ""),
+        "rate": job.get("rate") or job.get("opt_rate", "+0%"),
+        "single_file": bool(job.get("single_file", job.get("opt_single_file", True))),
+        "output_format": job.get("output_format") or job.get("opt_output_format", "m4b"),
+        "podcast_base_url": (job.get("notify_base_url", "") or job.get("podcast_base_url", "")
+                             or job.get("opt_podcast_base_url", "")),
+        "gemini_style_instruction": job.get("gemini_style_instruction"),
+        "selected_chapters": job.get("opt_selected_chapters") or job.get("selected_chapters"),
+        "opt_auto_generate": bool(job.get("opt_auto_generate")),
+        "notify_email": job.get("notify_email", ""),
+        "notify_download_type": job.get("notify_download_type", "audio"),
+        "notify_base_url": job.get("notify_base_url", ""),
+        "notify_lang": job.get("notify_lang", "en"),
+        "original_filename": fname,
+        "client_id": job.get("client_id", ""),
+        "client_ip": job.get("client_ip", ""),
+        "payment": job.get("payment"),
+    }
+
+
 def _active_optimizing_for_client(client_id):
     """Count how many jobs are currently optimizing for the given client_id. Thread-safe."""
     with _jobs_lock:
@@ -6329,6 +6364,12 @@ def api_generate():
 
     # Store format and podcast URL for email/download handlers
     job["output_format"] = output_format
+    # Snapshot dei parametri di generazione sul job: servono al recupero batch
+    # (ricostruzione del descrittore in _build_job_descriptor) dopo un restart.
+    job["rate"] = rate
+    job["single_file"] = single_file
+    if podcast_base_url:
+        job["podcast_base_url"] = podcast_base_url
     if output_format == "zip_rss":
         job["notify_download_type"] = "podcast"
         job["notify_base_url"] = podcast_base_url
@@ -6993,6 +7034,13 @@ def api_register_email():
     # per tutta la lavorazione, finché _send_completion_email lo sovrascriverà
     # con il timestamp.
     _write_email_pending_marker(UPLOAD_DIR / job_id)
+
+    # Registra il descrittore di recupero: da qui il job è batch (email registrata).
+    # phase 'generate' perché register_email avviene durante/prima del TTS.
+    try:
+        pending_jobs.register(job_id, "generate", _build_job_descriptor(job, "generate"))
+    except Exception as _e:
+        print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
 
     print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",
@@ -7837,6 +7885,14 @@ def api_optimize():
             job["notify_base_url"] = ""
     else:
         job["opt_auto_generate"] = False
+
+    # Registra il descrittore di recupero per i job optimize batch (email registrata).
+    # Dopo l'impostazione dei parametri opt_* così il descrittore li cattura.
+    if job.get("email_registered"):
+        try:
+            pending_jobs.register(job_id, "optimize", _build_job_descriptor(job, "optimize"))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register (optimize) failed (non-fatal): {_e}", flush=True)
 
     thread = threading.Thread(
         target=run_optimization, args=(job_id, chapters_to_optimize), daemon=True
