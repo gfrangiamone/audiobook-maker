@@ -142,11 +142,14 @@ def _is_gemini_voice(voice):
 def _retention_for_job(job):
     """Retention sec per il job (Gemini -> _gemini_retention_sec).
     Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice`
-    non e' ancora settato (lo /api/generate lo scrive, /api/optimize no)."""
+    non e' ancora settato (lo /api/generate lo scrive, /api/optimize no).
+    Con cold storage S3 attivo, raddoppia: la disponibilità email riflette
+    la retention totale estesa dal cold storage."""
     if not isinstance(job, dict):
-        return _retention_sec
+        return _retention_sec * 2 if storage_backend.is_enabled() else _retention_sec
     v = job.get("voice", "") or job.get("opt_voice", "")
-    return _gemini_retention_sec if _is_gemini_voice(v) else _retention_sec
+    base = _gemini_retention_sec if _is_gemini_voice(v) else _retention_sec
+    return base * 2 if storage_backend.is_enabled() else base
 
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 

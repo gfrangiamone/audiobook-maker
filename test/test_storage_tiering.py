@@ -47,3 +47,14 @@ def test_is_cloud_audio_file(monkeypatch, tmp_path):
     assert st.is_offloadable("project.abm") is True
     assert st.is_offloadable(".cloud_uploaded") is False
     assert st.is_offloadable("cover.jpg") is False
+
+
+def test_hot_window_defaults_match_today(monkeypatch, tmp_path):
+    import importlib, os
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("ABM_HOT_WINDOW_SEC", raising=False)
+    monkeypatch.delenv("ABM_HOT_WINDOW_GEMINI_SEC", raising=False)
+    import storage_tiering
+    importlib.reload(storage_tiering)
+    assert storage_tiering.hot_window_sec({"voice": "it-IT-IsabellaNeural"}) == 64800
+    assert storage_tiering.hot_window_sec({"voice": "gemini:flash25:Zephyr"}) == 172800

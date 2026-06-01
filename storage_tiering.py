@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 
 _DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")).resolve()
-_HOT_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "7200"))
-_HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "14400"))
+_HOT_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "64800"))
+_HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
 
 _OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm")
 _MARKER_NAME = ".cloud_uploaded"

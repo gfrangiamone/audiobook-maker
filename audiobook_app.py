@@ -347,12 +347,6 @@ EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))
 # Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
 # i pagamenti Premium meritano una finestra di download/email piu' ampia.
 GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
-# Finestra "calda" locale: dopo questo tempo dal completamento, i file output
-# vengono evacuati dal disco locale e serviti via redirect dal cold storage S3.
-# La retention TOTALE (disponibilità al download) resta governata da
-# EMAIL_FILE_RETENTION_SEC / GEMINI_FILE_RETENTION_SEC (cold delete su S3).
-HOT_WINDOW_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "7200"))            # 2h voci standard
-HOT_WINDOW_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "14400"))  # 4h voci PREMIUM
 # Hard cap caratteri per audiolibro completo (taglia output audio):
 # - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
 # - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'
@@ -402,24 +396,32 @@ def _effective_max_text_chars(voice, job=None):
 
 def _retention_for_job(job):
     """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce Gemini, altrimenti EMAIL_FILE_RETENTION_SEC.
+    Con cold storage S3 attivo, raddoppia (COLD_RETENTION_MULTIPLIER): la
+    disponibilità totale si estende oltre la finestra calda servendo da cold.
     Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice` non e' ancora settato."""
     if not isinstance(job, dict):
-        return EMAIL_FILE_RETENTION_SEC
-    v = job.get("voice", "") or job.get("opt_voice", "")
-    return GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
+        base = EMAIL_FILE_RETENTION_SEC
+    else:
+        v = job.get("voice", "") or job.get("opt_voice", "")
+        base = GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
+    return base * COLD_RETENTION_MULTIPLIER if storage_backend.is_enabled() else base
 
 
 def _retention_for_token_info(info):
-    """Retention sec applicabile a un download token: usa is_gemini se salvato sul token."""
-    if isinstance(info, dict) and info.get("is_gemini"):
-        return GEMINI_FILE_RETENTION_SEC
-    return EMAIL_FILE_RETENTION_SEC
+    """Retention sec applicabile a un download token: usa is_gemini se salvato sul token.
+    Con cold storage S3 attivo, raddoppia (COLD_RETENTION_MULTIPLIER)."""
+    base = GEMINI_FILE_RETENTION_SEC if (isinstance(info, dict) and info.get("is_gemini")) else EMAIL_FILE_RETENTION_SEC
+    return base * COLD_RETENTION_MULTIPLIER if storage_backend.is_enabled() else base
 
 
 # Protezione no-download per voci PREMIUM (costose): se il job/token Gemini
 # non ha mai registrato un download, raddoppiamo la retention prima di
 # cancellare gli output. Salvaguardia per utenti che ricevono l'email tardi
 # o non aprono subito il link.
+# Con cold storage S3 attivo la disponibilità totale al download raddoppia:
+# i file vivono in locale per la finestra calda, poi sono serviti da cold fino
+# a base*COLD_RETENTION_MULTIPLIER. Con S3 OFF la retention resta invariata.
+COLD_RETENTION_MULTIPLIER = 2
 GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER = 2
 
 
