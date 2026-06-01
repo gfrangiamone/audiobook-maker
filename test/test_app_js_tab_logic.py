@@ -59,21 +59,23 @@ def test_startCombinedGeneration_estimate_uses_vlPremium():
     assert "vlPremium" in body, "vlPremium not used in startCombinedGeneration estimate"
 
 
-# ── Issue 3: switchAudioTab resets preview state on tab change ──
+# ── Issue 3: switchAudioTab re-valuta l'anteprima al cambio tab ──
+# Il reset/invalidazione anteprima è ora centralizzato in _onPreviewParamsChanged()
+# (basato su firma): se la combinazione voce/parametri non è già nota, nasconde il
+# player e forza la rigenerazione (cfr. commento app.js "Sostituisce _resetPreviewState()").
 def test_switchAudioTab_resets_preview_on_change():
     m = re.search(r"function switchAudioTab\(tab\)\{(.+?)^}", APP_JS, re.DOTALL | re.MULTILINE)
     assert m, "switchAudioTab function not found"
     body = m.group(1)
-    assert "_previewGenerated" in body, "_previewGenerated check missing in switchAudioTab"
-    assert "_resetPreviewState" in body or "previewStop" in body, \
-        "preview reset call missing in switchAudioTab"
+    assert "_onPreviewParamsChanged" in body or "_resetPreviewState" in body or "previewStop" in body, \
+        "preview re-evaluation/reset call missing in switchAudioTab"
 
 
-# ── Issue 4: updVoicesPremium attaches onchange to reset preview ──
+# ── Issue 4: updVoicesPremium aggancia onchange per re-valutare l'anteprima ──
 def test_updVoicesPremium_attaches_onchange_reset():
     m = re.search(r"function updVoicesPremium\(\)\{(.+?)^}", APP_JS, re.DOTALL | re.MULTILINE)
     assert m, "updVoicesPremium function not found"
     body = m.group(1)
     assert "onchange" in body, "onchange handler missing in updVoicesPremium"
-    assert "_resetPreviewState" in body or "previewStop" in body, \
-        "preview reset missing in updVoicesPremium onchange"
+    assert "_onPreviewParamsChanged" in body or "_resetPreviewState" in body or "previewStop" in body, \
+        "preview re-evaluation/reset missing in updVoicesPremium onchange"

@@ -60,7 +60,8 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
     (sempre con stile) e job finale (stile solo nel ~5% dell'audio)."""
     # Capture calls to generate_chunk_pcm_gemini through patch
     captured_calls = []
-    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
+    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None,
+                          debug_prompt_path=None, rate="+0%", **kwargs):
         captured_calls.append({
             "text": text, "style_instruction": style_instruction, "voice_id": voice_id,
         })
@@ -129,7 +130,8 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
 def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monkeypatch, tmp_path):
     """Stesso comportamento atteso nel branch single_file=False (multi-file)."""
     captured_calls = []
-    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
+    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None,
+                          debug_prompt_path=None, rate="+0%", **kwargs):
         captured_calls.append({"style_instruction": style_instruction})
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 1000)

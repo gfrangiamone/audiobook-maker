@@ -5,7 +5,8 @@ import gemini_tts
 def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
     """2 chapters x 3 chunks; each fake synth returns 100 in_tok, 500 out_tok, 1000 bytes.
     Expect job['gemini_actual'] sums to: in=600, out=3000, chars=sum(len(text)), audio=6*1000/(24000*2)."""
-    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None):
+    def fake_chunk_gemini(text, voice_id, output_path, max_retries=3, style_instruction=None,
+                          debug_prompt_path=None, rate="+0%", **kwargs):
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 1000)
         return {
@@ -31,11 +32,11 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
                 "text": "Hello world",  # 11 chars each
                 "chars": 11,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
-    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out: open(out, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out, **kw: open(out, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "pcm_to_aac_m4b", lambda *a, **k: True)
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
     monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
@@ -72,7 +73,7 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
 
 def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
     """If engine is google/edge, gemini_actual stays at zeros (initialised but never accumulated)."""
-    def fake_chunk_google(text, voice, rate, output_path, max_retries=3):
+    def fake_chunk_google(text, voice, rate, output_path, max_retries=3, **kwargs):
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 1000)
         return {"success": True}
@@ -82,7 +83,7 @@ def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
         "chapter_index": 1, "chapter_title": "C", "chunk_index": 0, "chunks_in_chapter": 1,
         "text": "x", "chars": 1,
     }]
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "google")
     monkeypatch.setattr(generation_engine, "_generate_silence_mp3", lambda p, s=1: True)

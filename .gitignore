@@ -4,6 +4,7 @@ _debug*
 *.py[cod]
 *.log
 *.md
+*.ps1
 *.env
 *.egg-info/
 firebase*

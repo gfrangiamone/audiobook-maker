@@ -1,4 +1,10 @@
-"""Test /admin/api/gemini_cost_audit/recalc-params endpoint."""
+"""Test /admin/api/gemini_cost_audit/recalc-params endpoint.
+
+NB: l'endpoint calcola DELTA% = sum(delta_eur) / sum(google_cost_eur_actual) * 100
+sul gruppo (model, lang) e produce un report a sezioni con header fissi
+("=== Aggregato globale ===", "=== Per velocità ==="). I record vengono valutati
+solo se il gruppo ha >=3 campioni.
+"""
 import pytest
 import gemini_cost_audit
 
@@ -17,16 +23,24 @@ def admin_headers():
     return {"X-Admin-Token": "test-admin-token"}
 
 
-def _add(model, lang, delta_pct, job_id):
+def _add(model, lang, delta_eur, job_id, google_cost=0.5):
     gemini_cost_audit.append_record({
         "job_id": job_id,
         "model_key": model,
         "language": lang,
         "outcome": "completed",
         "user_price_eur_charged": 1.0,
-        "google_cost_eur_actual": 0.5,
-        "delta_pct": delta_pct,
+        "google_cost_eur_actual": google_cost,
+        "delta_eur": delta_eur,
     })
+
+
+def _global_line(d, model, lang):
+    """Ritorna la riga del report 'Aggregato globale' per il gruppo dato."""
+    for s in d["suggestions"]:
+        if s.strip().startswith(f"[{model} / {lang}]"):
+            return s
+    return None
 
 
 def test_recalc_params_requires_auth(client):
@@ -34,60 +48,64 @@ def test_recalc_params_requires_auth(client):
     assert r.status_code in (401, 403, 404)
 
 
-def test_recalc_params_empty_returns_empty_suggestions(client, admin_headers):
+def test_recalc_params_empty_returns_no_groups(client, admin_headers):
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     assert r.status_code == 200, r.get_data(as_text=True)
     d = r.get_json()
-    assert d["suggestions"] == []
+    assert d["groups_total"] == 0
+    assert d["groups_evaluated"] == 0
+    assert any("nessun record disponibile" in s for s in d["suggestions"])
 
 
 def test_recalc_params_emits_suggestion_for_full_group(client, admin_headers):
-    # 3 records in same group => suggestion emitted
-    for i, dp in enumerate([6.0, 7.0, 8.0]):
-        _add("flash25", "it", dp, f"j{i}")
+    # 3 record stesso gruppo, delta positivo => DELTA% = 0.3/1.5 = +20% => margine alto
+    for i in range(3):
+        _add("flash25", "it", 0.1, f"j{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     assert r.status_code == 200
     d = r.get_json()
-    assert len(d["suggestions"]) == 1
-    s = d["suggestions"][0]
-    assert "flash25" in s
-    assert "it" in s
-    # avg = 7.0 => margine alto
-    assert "margine alto" in s
+    assert d["groups_evaluated"] == 1
+    line = _global_line(d, "flash25", "it")
+    assert line is not None
+    assert "margine alto" in line
 
 
 def test_recalc_params_skips_small_group(client, admin_headers):
-    # only 2 records => skipped
-    for i, dp in enumerate([6.0, 7.0]):
-        _add("flash25", "it", dp, f"j{i}")
+    # solo 2 record => gruppo non valutato (servono >=3)
+    for i in range(2):
+        _add("flash25", "it", 0.1, f"j{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     assert r.status_code == 200
     d = r.get_json()
-    assert d["suggestions"] == []
     assert d["groups_total"] == 1
     assert d["groups_evaluated"] == 0
+    line = _global_line(d, "flash25", "it")
+    assert line is not None
+    assert "campioni insufficienti" in line
 
 
 def test_recalc_params_loss_suggestion(client, admin_headers):
-    for i, dp in enumerate([-10.0, -8.0, -9.0]):
-        _add("pro25", "en", dp, f"k{i}")
+    # delta negativo => DELTA% = -0.3/1.5 = -20% => margine in perdita
+    for i in range(3):
+        _add("pro25", "en", -0.1, f"k{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     d = r.get_json()
-    assert len(d["suggestions"]) == 1
-    assert "perdita" in d["suggestions"][0]
-    assert "pro25" in d["suggestions"][0]
-    assert "en" in d["suggestions"][0]
+    line = _global_line(d, "pro25", "en")
+    assert line is not None
+    assert "perdita" in line
 
 
 def test_recalc_params_ok_suggestion(client, admin_headers):
-    for i, dp in enumerate([1.0, 2.0, 0.5]):
-        _add("flash25", "fr", dp, f"m{i}")
+    # delta piccolo => DELTA% = 0.03/1.5 = +2% (entro +-5%) => parametri OK
+    for i in range(3):
+        _add("flash25", "fr", 0.01, f"m{i}")
     r = client.get("/admin/api/gemini_cost_audit/recalc-params",
                    headers=admin_headers)
     d = r.get_json()
-    assert len(d["suggestions"]) == 1
-    assert "parametri OK" in d["suggestions"][0]
+    line = _global_line(d, "flash25", "fr")
+    assert line is not None
+    assert "parametri OK" in line

@@ -1,4 +1,4 @@
-"""Test /admin/logs page exists and has Gemini Audit tab structure."""
+"""Test /admin/audit-tts page exists and has Gemini Audit tab structure."""
 import os
 import pytest
 import audiobook_app
@@ -12,7 +12,7 @@ def client(monkeypatch):
 
 
 def test_admin_logs_page_exists_and_requires_auth(client):
-    r = client.get("/admin/logs")
+    r = client.get("/admin/audit-tts")
     # Without token -> admin gate page (200 with gate HTML) or 401
     assert r.status_code in (200, 401)
     if r.status_code == 200:
@@ -24,7 +24,7 @@ def test_admin_logs_page_exists_and_requires_auth(client):
 
 
 def test_admin_logs_page_renders_with_token(client):
-    r = client.get("/admin/logs", headers={"X-Admin-Token": "test-admin-token"})
+    r = client.get("/admin/audit-tts", headers={"X-Admin-Token": "test-admin-token"})
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     assert 'data-tab="gemini_audit"' in body
@@ -42,5 +42,5 @@ def test_admin_logs_page_renders_with_token(client):
 
 def test_admin_logs_page_disabled_without_admin_token(client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "")
-    r = client.get("/admin/logs")
+    r = client.get("/admin/audit-tts")
     assert r.status_code == 404

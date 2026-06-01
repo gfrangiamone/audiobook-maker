@@ -20,7 +20,7 @@ def test_panel3_premium_tab_has_model_selector():
 
 def test_panel3_premium_tab_has_style_textarea():
     assert 'id="geminiStyle"' in HTML
-    assert 'maxlength="300"' in HTML
+    assert 'maxlength="200"' in HTML
 
 def test_panel3_premium_tab_has_cost_preview_box():
     assert 'id="costPreviewBox"' in HTML

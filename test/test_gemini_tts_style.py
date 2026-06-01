@@ -58,16 +58,16 @@ def test_style_instruction_none_does_not_prepend(monkeypatch, tmp_path):
     assert captured["contents"] == "Ciao"
 
 
-def test_style_instruction_truncated_at_300_chars(monkeypatch, tmp_path):
+def test_style_instruction_truncated_at_200_chars(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     out = tmp_path / "x.pcm"
     long_style = "a" * 500
     gemini_tts.synthesize("Testo", "gemini:flash25:Zephyr", style_instruction=long_style, output_path=str(out))
-    # The style payload (between [style: and ]) must be capped at 300 chars
-    assert "a" * 300 in captured["contents"]
-    assert "a" * 301 not in captured["contents"]
+    # The style payload (between [style: and ]) must be capped at 200 chars
+    assert "a" * 200 in captured["contents"]
+    assert "a" * 201 not in captured["contents"]
 
 
 def test_style_instruction_coexists_with_rate(monkeypatch, tmp_path):
