@@ -9434,28 +9434,31 @@ def _evict_hot_local():
                 continue
             job = job_by_id.get(jdir.name, {})
             hot = storage_tiering.hot_window_sec(job)
-            for od in jdir.iterdir():
-                if not od.is_dir():
-                    continue
-                if not (od.name == "output" or od.name.startswith("output_")):
-                    continue
-                uploaded_at = storage_tiering.cloud_uploaded_at(od)
-                if uploaded_at is None or (now - uploaded_at) <= hot:
-                    continue
-                for f in od.rglob("*"):
-                    if not f.is_file() or not storage_tiering.is_offloadable(f.name):
+            try:
+                for od in jdir.iterdir():
+                    if not od.is_dir():
                         continue
-                    key = storage_tiering.key_for_path(str(f))
-                    if not key:
+                    if not (od.name == "output" or od.name.startswith("output_")):
                         continue
-                    try:
-                        if storage_backend.object_exists(key):
-                            f.unlink()
-                            print(f"[hot-evict] Local removed (cold copy ok): {f}")
-                    except OSError:
-                        pass
-                    except Exception as e:
-                        print(f"[hot-evict] error on {f}: {e}")
+                    uploaded_at = storage_tiering.cloud_uploaded_at(od)
+                    if uploaded_at is None or (now - uploaded_at) <= hot:
+                        continue
+                    for f in od.rglob("*"):
+                        if not f.is_file() or not storage_tiering.is_offloadable(f.name):
+                            continue
+                        key = storage_tiering.key_for_path(str(f))
+                        if not key:
+                            continue
+                        try:
+                            if storage_backend.object_exists(key):
+                                f.unlink()
+                                print(f"[hot-evict] Local removed (cold copy ok): {f}")
+                        except OSError:
+                            pass
+                        except Exception as e:
+                            print(f"[hot-evict] error on {f}: {e}")
+            except OSError:
+                continue
     except OSError:
         pass
 
