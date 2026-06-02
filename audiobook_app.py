@@ -7043,6 +7043,7 @@ def api_progress(job_id):
                 payload["output_m4b"] = bool(job.get("output_m4b"))
                 payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
                 payload["failed_chunks"] = job.get("failed_chunks", 0)
+                payload["m4b_failed"] = bool(job.get("m4b_failed", False))
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             yield f"data: {json.dumps(payload)}\n\n"

@@ -416,20 +416,22 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_progress_includes_m4b_subbar():
-    """Il template html_tail.html contiene il rendering per m4b_progress."""
+    """Il template html_head.html contiene il rendering per m4b_progress (html_tail.html non ha piu' duplicato)."""
     import os
     path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "..", "templates", "_fragments", "html_tail.html",
+        "..", "templates", "_fragments", "html_head.html",
     )
     path = os.path.abspath(path)
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
-    # Verifica che il template gestisca i 3 campi m4b_progress_*
-    assert "m4b_progress_total" in content, \
-        "html_tail.html non gestisce m4b_progress_total"
-    assert "m4b_progress_current" in content, \
-        "html_tail.html non gestisce m4b_progress_current"
+    # Verifica che il template contenga gli elementi JS-used del sub-bar M4B
+    assert "m4bProgressWrap" in content, \
+        "html_head.html non contiene m4bProgressWrap"
+    assert "m4bPct" in content, \
+        "html_head.html non contiene m4bPct"
+    assert "m4bProgressBar" in content, \
+        "html_head.html non contiene m4bProgressBar"
 
 
 # ---------------------------------------------------------------------------
@@ -488,3 +490,28 @@ def test_admin_card_renders_m4b_subbar(monkeypatch):
     assert resp.status_code == 200, f"admin endpoint errore: {resp.status_code}"
     body = resp.get_data(as_text=True)
     assert "card-m4b-progress" in body, "card-m4b-progress non trovato nella pagina admin"
+
+
+# ---------------------------------------------------------------------------
+# Final review — SSE payload espone m4b_failed per warning utente
+# ---------------------------------------------------------------------------
+
+def test_sse_payload_exposes_m4b_failed(monkeypatch):
+    """L'endpoint /api/progress/<job_id> deve esporre m4b_failed quando la fase M4B è fallita."""
+    import audiobook_app
+
+    job = {
+        "job_id": "J7", "status": "done",
+        "m4b_failed": True,  # M4B fallita, fallback MP3
+    }
+    if not hasattr(audiobook_app, "jobs"):
+        pytest.skip("audiobook_app.jobs non trovato")
+    audiobook_app.jobs = {"J7": job}
+
+    client = audiobook_app.app.test_client()
+    resp = client.get("/api/progress/J7")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "m4b_failed" in body
+    assert "true" in body.lower()  # il valore boolean serializzato
+
