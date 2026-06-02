@@ -48,6 +48,7 @@ from audio_utils import (
     _generate_podcast_rss,
     pcm_size_to_seconds,
     pcm_to_mp3, pcm_to_aac_m4b,
+    pcm_to_aac_m4b_monitored, _convert_mp3_to_m4b_monitored,
     trim_pcm_trailing_silence,
 )
 from tts_split import (
@@ -2798,25 +2799,73 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 else:
                     # M4B richiesto: percorso PCM->AAC diretto (niente MP3 intermedio)
                     job["progress_message"] = "Converting to M4B..."
+                    job["m4b_progress_current"] = 0
+                    job["m4b_progress_total"] = 100
+                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_started_at"] = time.time()
+                    job["_m4b_last_log_ts"] = 0.0
+
+                    _m4b_stop = threading.Event()
+                    # Stima durata FFmpeg dalla somma delle durate PCM (se disponibile)
+                    _pcm_durations_sec = []
+                    for _p in all_parts:
+                        try:
+                            _d = _get_audio_duration_ms(_p)
+                            if _d:
+                                _pcm_durations_sec.append(_d / 1000.0)
+                        except Exception:
+                            pass
+                    _audio_dur_sec = sum(_pcm_durations_sec) if _pcm_durations_sec else 60.0
+                    _m4b_sim = threading.Thread(
+                        target=_m4b_progress_simulator,
+                        args=(job, _audio_dur_sec, _m4b_stop),
+                        daemon=True,
+                    )
+                    _m4b_sim.start()
+
+                    from audiobook_app import _log_m4b_progress
+                    _log_m4b_progress(job, "START", size_mb=round(
+                        sum(os.path.getsize(p) for p in all_parts if os.path.exists(p)) / 1e6, 2
+                    ))
+
+                    def _m4b_phase_cb(pct, msg):
+                        job["m4b_progress_current"] = pct
+                        job["m4b_progress_message"] = msg
+
                     print(f"[{job_id}] Starting PCM->M4B direct conversion: {final_m4b} (gap_ms={gap_ms_inter})")
                     m4b_ok = False
-                    for attempt in range(1, 3):
-                        if attempt > 1:
-                            print(f"[{job_id}] Retrying PCM->M4B (attempt {attempt})...")
-                        if pcm_to_aac_m4b(
-                            all_parts, final_m4b,
-                            chapters=valid_m4b_ch or None,
-                            title=info.title, author=info.author or None,
-                            cover_path=cover_path,
-                            date=getattr(info, "date", None),
-                            language=getattr(info, "language", None),
-                            description=getattr(info, "description", None),
-                            gap_ms=gap_ms_inter,
-                        ):
-                            job["output_m4b"] = final_m4b
-                            job["m4b_failed"] = False
-                            m4b_ok = True
-                            break
+                    _m4b_status = {}
+                    try:
+                        for attempt in range(1, 3):
+                            if attempt > 1:
+                                print(f"[{job_id}] Retrying PCM->M4B (attempt {attempt})...")
+                            if pcm_to_aac_m4b_monitored(
+                                all_parts, final_m4b,
+                                on_phase=_m4b_phase_cb,
+                                status_out=_m4b_status,
+                                chapters=valid_m4b_ch or None,
+                                title=info.title, author=info.author or None,
+                                cover_path=cover_path,
+                                date=getattr(info, "date", None),
+                                language=getattr(info, "language", None),
+                                description=getattr(info, "description", None),
+                                gap_ms=gap_ms_inter,
+                            ):
+                                job["output_m4b"] = final_m4b
+                                job["m4b_failed"] = False
+                                m4b_ok = True
+                                break
+                    finally:
+                        _m4b_stop.set()
+                        if not m4b_ok:
+                            job["m4b_progress_total"] = 0  # nasconde sotto-barra
+                        _log_m4b_progress(
+                            job, "END",
+                            status=_m4b_status.get("status", "fail" if not m4b_ok else "ok"),
+                            pct=job.get("m4b_progress_current", 0),
+                            elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
+                        )
+
                     if not m4b_ok:
                         job["m4b_failed"] = True
                         # Fallback: produci MP3 cosi' l'utente ha qualcosa
@@ -2833,36 +2882,82 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if not use_gemini and output_format != 'mp3':
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 job["progress_message"] = "Converting to M4B..."
+                job["m4b_progress_current"] = 0
+                job["m4b_progress_total"] = 100
+                job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                job["m4b_started_at"] = time.time()
+                job["_m4b_last_log_ts"] = 0.0
+
+                _m4b_stop = threading.Event()
+                # Stima durata FFmpeg dalla durata dell'MP3 gia' concatenato
+                _mp3_dur_sec = 0.0
+                try:
+                    _d = _get_audio_duration_ms(final_mp3)
+                    if _d:
+                        _mp3_dur_sec = _d / 1000.0
+                except Exception:
+                    pass
+                _audio_dur_sec = _mp3_dur_sec or 60.0
+                _m4b_sim = threading.Thread(
+                    target=_m4b_progress_simulator,
+                    args=(job, _audio_dur_sec, _m4b_stop),
+                    daemon=True,
+                )
+                _m4b_sim.start()
+
+                from audiobook_app import _log_m4b_progress
+                _log_m4b_progress(job, "START", size_mb=round(
+                    os.path.getsize(final_mp3) / 1e6, 2
+                ))
+
+                def _m4b_phase_cb(pct, msg):
+                    job["m4b_progress_current"] = pct
+                    job["m4b_progress_message"] = msg
+
                 print(f"[{job_id}] Starting M4B conversion: {final_m4b}")
                 # Cover hi-res: EPUB 1400x1400 → thumb esistente → branded fallback (PDF/TXT)
                 cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
                 valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
 
                 # Retry logic: max 2 attempts
-                for attempt in range(1, 3):
-                    try:
-                        if attempt > 1:
-                            print(f"[{job_id}] Retrying M4B generation (attempt {attempt})...")
+                _m4b_status = {}
+                try:
+                    for attempt in range(1, 3):
+                        try:
+                            if attempt > 1:
+                                print(f"[{job_id}] Retrying M4B generation (attempt {attempt})...")
 
-                        if _convert_mp3_to_m4b(final_mp3, final_m4b,
-                                               chapters=valid_m4b_ch or None,
-                                               title=info.title, author=info.author or None,
-                                               cover_path=cover_path,
-                                               date=getattr(info, "date", None),
-                                               language=getattr(info, "language", None),
-                                               description=getattr(info, "description", None)):
-                            job["output_m4b"] = final_m4b
-                            job["m4b_failed"] = False
-                            break # Success!
-                        else:
-                            raise Exception("Conversion returned False")
-                    except Exception as e:
-                        print(f"[{job_id}] M4B conversion attempt {attempt} failed: {e}")
-                        if attempt == 2:
-                            job["m4b_failed"] = True
-                            if os.path.exists(final_m4b):
-                                try: os.remove(final_m4b)
-                                except OSError: pass
+                            if _convert_mp3_to_m4b_monitored(final_mp3, final_m4b,
+                                                           on_phase=_m4b_phase_cb,
+                                                           status_out=_m4b_status,
+                                                           chapters=valid_m4b_ch or None,
+                                                           title=info.title, author=info.author or None,
+                                                           cover_path=cover_path,
+                                                           date=getattr(info, "date", None),
+                                                           language=getattr(info, "language", None),
+                                                           description=getattr(info, "description", None)):
+                                job["output_m4b"] = final_m4b
+                                job["m4b_failed"] = False
+                                break  # Success!
+                            else:
+                                raise Exception("Conversion returned False")
+                        except Exception as e:
+                            print(f"[{job_id}] M4B conversion attempt {attempt} failed: {e}")
+                            if attempt == 2:
+                                job["m4b_failed"] = True
+                                if os.path.exists(final_m4b):
+                                    try: os.remove(final_m4b)
+                                    except OSError: pass
+                finally:
+                    _m4b_stop.set()
+                    if not job.get("output_m4b"):
+                        job["m4b_progress_total"] = 0  # nasconde sotto-barra
+                    _log_m4b_progress(
+                        job, "END",
+                        status=_m4b_status.get("status", "fail" if not job.get("output_m4b") else "ok"),
+                        pct=job.get("m4b_progress_current", 0),
+                        elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
+                    )
 
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
@@ -3187,16 +3282,65 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     final_m4b = str(output_dir / f"{safe_name}.m4b")
                     cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
 
-                    for attempt in range(1, 3):
-                        if _convert_mp3_to_m4b(temp_full_mp3, final_m4b,
-                                               chapters=m4b_chapters or None,
-                                               title=info.title, author=info.author or None,
-                                               cover_path=cover_path):
-                            job["output_m4b"] = final_m4b
-                            job["m4b_failed"] = False
-                            break
-                        else:
-                            if attempt == 2: job["m4b_failed"] = True
+                    job["m4b_progress_current"] = 0
+                    job["m4b_progress_total"] = 100
+                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_started_at"] = time.time()
+                    job["_m4b_last_log_ts"] = 0.0
+
+                    _m4b_stop = threading.Event()
+                    _mp3_dur_sec = 0.0
+                    try:
+                        _d = _get_audio_duration_ms(temp_full_mp3)
+                        if _d:
+                            _mp3_dur_sec = _d / 1000.0
+                    except Exception:
+                        pass
+                    _audio_dur_sec = _mp3_dur_sec or 60.0
+                    _m4b_sim = threading.Thread(
+                        target=_m4b_progress_simulator,
+                        args=(job, _audio_dur_sec, _m4b_stop),
+                        daemon=True,
+                    )
+                    _m4b_sim.start()
+
+                    from audiobook_app import _log_m4b_progress
+                    _log_m4b_progress(job, "START", size_mb=round(
+                        os.path.getsize(temp_full_mp3) / 1e6, 2
+                    ))
+
+                    def _m4b_phase_cb(pct, msg):
+                        job["m4b_progress_current"] = pct
+                        job["m4b_progress_message"] = msg
+
+                    _m4b_status = {}
+                    try:
+                        for attempt in range(1, 3):
+                            if _convert_mp3_to_m4b_monitored(temp_full_mp3, final_m4b,
+                                                           on_phase=_m4b_phase_cb,
+                                                           status_out=_m4b_status,
+                                                           chapters=m4b_chapters or None,
+                                                           title=info.title, author=info.author or None,
+                                                           cover_path=cover_path):
+                                job["output_m4b"] = final_m4b
+                                job["m4b_failed"] = False
+                                break
+                            else:
+                                if attempt == 2:
+                                    job["m4b_failed"] = True
+                                    if os.path.exists(final_m4b):
+                                        try: os.remove(final_m4b)
+                                        except OSError: pass
+                    finally:
+                        _m4b_stop.set()
+                        if not job.get("output_m4b"):
+                            job["m4b_progress_total"] = 0
+                        _log_m4b_progress(
+                            job, "END",
+                            status=_m4b_status.get("status", "fail" if not job.get("output_m4b") else "ok"),
+                            pct=job.get("m4b_progress_current", 0),
+                            elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
+                        )
 
                     if os.path.exists(temp_full_mp3):
                         os.remove(temp_full_mp3)
