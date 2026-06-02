@@ -65,17 +65,8 @@ def test_log_m4b_progress_end_no_throttle(monkeypatch):
 # Task 2 — _convert_mp3_to_m4b_monitored
 # ---------------------------------------------------------------------------
 
-def _make_fake_job():
-    return {
-        "job_id": "J", "client_id": "c", "ip": "1.1.1.1",
-        "voice": "v", "lang": "it", "original_filename": "book.epub",
-        "m4b_progress_current": 0, "m4b_progress_total": 0,
-        "m4b_progress_message": "",
-    }
-
-
 def test_convert_mp3_to_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
-    """Il wrapper monitored chiama on_phase a 0, 5, 98, 100 in successione monotona."""
+    """Il wrapper monitored chiama on_phase esattamente a 0, 5, 98, 100 in ordine."""
     import audio_utils
 
     mp3 = tmp_path / "in.mp3"
@@ -83,37 +74,29 @@ def test_convert_mp3_to_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
     mp3.write_bytes(b"x" * 1024)
     m4b.write_bytes(b"y" * 2048)
 
-    # Mock: simuliamo _convert_mp3_to_m4b come no-op che imposta subito m4b.
-    def fake_convert(*args, **kwargs):
-        return True
-    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", fake_convert)
-    # Mock: validazione ok
+    # Mock: simuliamo _convert_mp3_to_m4b come no-op che ritorna True.
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", lambda *a, **kw: True)
     monkeypatch.setattr(audio_utils, "_validate_m4b_file", lambda p: True)
-    # Mock: durata audio fissa
-    monkeypatch.setattr(audio_utils, "_get_audio_bitrate", lambda p: 48)
-    monkeypatch.setattr(audio_utils, "_get_audio_duration_ms", lambda p: 60_000)
 
     phases = []
-    def on_phase(pct, msg):
-        phases.append((pct, msg))
-
+    status_out = {}
     ok = audio_utils._convert_mp3_to_m4b_monitored(
-        str(mp3), str(m4b), on_phase=on_phase,
+        str(mp3), str(m4b),
+        on_phase=lambda p, m: phases.append((p, m)),
+        status_out=status_out,
         title="T", author="A",
     )
     assert ok is True
-    # Attesi pct: 0 (preparazione) → 5 (encoding) → 98 (validazione) → 100 (ok)
-    pcts = [p for p, _ in phases]
-    assert 0 in pcts
-    assert 5 in pcts
-    assert 98 in pcts
-    assert 100 in pcts
-    # Monotono non-strict
-    assert pcts == sorted(pcts)
+    assert len(phases) == 4
+    assert phases[0] == (0, "Conversione M4B — preparazione metadati…")
+    assert phases[1] == (5, "Conversione M4B — encoding AAC…")
+    assert phases[2] == (98, "Conversione M4B — validazione finale…")
+    assert phases[3] == (100, "Conversione M4B completata")
+    assert status_out == {"status": "ok", "pct": 100, "msg": "Conversione M4B completata"}
 
 
 def test_convert_mp3_to_m4b_monitored_handles_ffmpeg_fail(monkeypatch, tmp_path):
-    """Se la conversione interna fallisce, on_phase NON emette 100."""
+    """Se la conversione interna fallisce, status_out riceve 'fail' e pct non è 100."""
     import audio_utils
 
     mp3 = tmp_path / "in.mp3"
@@ -121,31 +104,77 @@ def test_convert_mp3_to_m4b_monitored_handles_ffmpeg_fail(monkeypatch, tmp_path)
     mp3.write_bytes(b"x")
     m4b.write_bytes(b"y")
 
-    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b",
-                        lambda *a, **kw: False)
-    monkeypatch.setattr(audio_utils, "_get_audio_bitrate", lambda p: 48)
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", lambda *a, **kw: False)
 
     phases = []
-    audio_utils._convert_mp3_to_m4b_monitored(
+    status_out = {}
+    ok = audio_utils._convert_mp3_to_m4b_monitored(
         str(mp3), str(m4b),
         on_phase=lambda p, m: phases.append(p),
+        status_out=status_out,
     )
+    assert ok is False
     assert 100 not in phases
+    assert status_out.get("status") == "fail"
 
 
-def test_convert_mp3_to_m4b_monitored_no_callback_when_filenotfound(monkeypatch):
-    """Se il file sorgente non esiste, on_phase non viene chiamato (skip rapido)."""
+def test_convert_mp3_to_m4b_monitored_no_callback_when_source_missing(tmp_path):
+    """Se il file sorgente non esiste, on_phase non viene chiamato e status='fail'."""
     import audio_utils
 
-    # Simuliamo sorgente mancante: _convert_mp3_to_m4b solleva FileNotFoundError
-    # prima di qualsiasi on_phase intermedio.
-    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b",
-                        lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError()))
-
     phases = []
+    status_out = {}
     ok = audio_utils._convert_mp3_to_m4b_monitored(
         "/nope/missing.mp3", "/tmp/out.m4b",
         on_phase=lambda p, m: phases.append(p),
+        status_out=status_out,
     )
     assert ok is False
     assert phases == []
+    assert status_out.get("status") == "fail"
+
+
+def test_convert_mp3_to_m4b_monitored_handles_timeout(monkeypatch, tmp_path):
+    """Se FFmpeg va in timeout, status_out riceve 'timeout'."""
+    import subprocess
+    import audio_utils
+
+    mp3 = tmp_path / "in.mp3"
+    m4b = tmp_path / "out.m4b"
+    mp3.write_bytes(b"x")
+    m4b.write_bytes(b"y")
+
+    def raise_timeout(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=3600)
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", raise_timeout)
+
+    status_out = {}
+    ok = audio_utils._convert_mp3_to_m4b_monitored(
+        str(mp3), str(m4b),
+        on_phase=lambda p, m: None,
+        status_out=status_out,
+    )
+    assert ok is False
+    assert status_out.get("status") == "timeout"
+
+
+def test_convert_mp3_to_m4b_monitored_handles_invalid_file(monkeypatch, tmp_path):
+    """Se la validazione ffprobe fallisce, status_out riceve 'invalid'."""
+    import audio_utils
+
+    mp3 = tmp_path / "in.mp3"
+    m4b = tmp_path / "out.m4b"
+    mp3.write_bytes(b"x")
+    m4b.write_bytes(b"y")
+
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", lambda *a, **kw: True)
+    monkeypatch.setattr(audio_utils, "_validate_m4b_file", lambda p: False)
+
+    status_out = {}
+    ok = audio_utils._convert_mp3_to_m4b_monitored(
+        str(mp3), str(m4b),
+        on_phase=lambda p, m: None,
+        status_out=status_out,
+    )
+    assert ok is False
+    assert status_out.get("status") == "invalid"
