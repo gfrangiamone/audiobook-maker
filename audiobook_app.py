@@ -1490,6 +1490,38 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
             pass
 
 
+def _log_m4b_progress(job: dict, event: str, **fields) -> None:
+    """Scrive riga in activity_YYYY-MM.log per eventi M4B_* con throttling 10s per PROGRESS.
+
+    event: "START" | "PROGRESS" | "END"
+    fields: size_mb, pct, msg, status, elapsed_s, duration_s (campi liberi, finiscono nel campo `voice`)
+    """
+    if event == "PROGRESS":
+        now = time.time()
+        if now - job.get("_m4b_last_log_ts", 0) < 10:
+            return
+        job["_m4b_last_log_ts"] = now
+
+    # Componi i fields in un payload sintetico nel campo `voice` (libero).
+    # Manteniamo la firma _log_activity(sid, filename, operation, client_id, ip, voice, lang).
+    payload_parts = [f"{k}={fields[k]}" for k in sorted(fields.keys())]
+    payload = " ".join(payload_parts)[:200]  # cap a 200 char
+
+    try:
+        _log_activity(
+            job.get("job_id", ""),
+            job.get("original_filename", ""),
+            "M4B_" + event,
+            client_id=job.get("client_id", ""),
+            client_ip=job.get("ip", ""),
+            voice=payload,
+            browser_lang=job.get("lang", ""),
+        )
+    except Exception as e:
+        # Logging non deve mai crashare il thread di generazione.
+        print(f"[_log_m4b_progress] errore scrittura log: {e}")
+
+
 def _is_resume_or_probe_request():
     """True se la richiesta corrente è HEAD o resume con Range header.
 
