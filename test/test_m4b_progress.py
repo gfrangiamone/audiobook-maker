@@ -287,3 +287,71 @@ def test_pcm_to_aac_m4b_monitored_handles_exception(monkeypatch, tmp_path):
     )
     assert ok is False
     assert status_out.get("status") == "fail"
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — _m4b_progress_simulator
+# ---------------------------------------------------------------------------
+
+def test_simulator_progresses_monotonically():
+    """Il simulator ticka progress_current 5→6→…→98 in modo monotono."""
+    import threading
+    import generation_engine
+
+    job = {"m4b_progress_current": 5, "m4b_progress_total": 100, "job_id": "J"}
+    stop = threading.Event()
+
+    # duration 50s → estimated_ffmpeg 1s → tick_interval 1/93 ≈ 0.011s.
+    # Avviamo e interrompiamo dopo 0.5s.
+    t = threading.Thread(
+        target=generation_engine._m4b_progress_simulator,
+        args=(job, 50.0, stop),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(0.5)
+    stop.set()
+    t.join(timeout=2.0)
+
+    cur = job["m4b_progress_current"]
+    assert 5 < cur <= 98, f"atteso tra 5 e 98, ottenuto {cur}"
+
+
+def test_simulator_stops_on_event():
+    """stop_event.set() interrompe il simulator entro 1s."""
+    import threading
+    import generation_engine
+
+    job = {"m4b_progress_current": 5, "m4b_progress_total": 100, "job_id": "J"}
+    stop = threading.Event()
+    t = threading.Thread(
+        target=generation_engine._m4b_progress_simulator,
+        args=(job, 50.0, stop),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(0.05)
+    stop.set()
+    t.join(timeout=1.0)
+    assert not t.is_alive()
+
+
+def test_simulator_resets_when_total_becomes_zero():
+    """Se m4b_progress_total torna 0 (fail), il simulator termina."""
+    import threading
+    import generation_engine
+
+    job = {"m4b_progress_current": 30, "m4b_progress_total": 100, "job_id": "J"}
+    stop = threading.Event()
+
+    t = threading.Thread(
+        target=generation_engine._m4b_progress_simulator,
+        args=(job, 50.0, stop),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(0.2)
+    # Simuliamo fail: il wrapper monitored resetta total=0.
+    job["m4b_progress_total"] = 0
+    t.join(timeout=1.0)
+    assert not t.is_alive()

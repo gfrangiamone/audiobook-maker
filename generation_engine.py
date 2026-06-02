@@ -1525,6 +1525,55 @@ def _admin_alert_gemini_failure(job_id, job, kind, audit_outcome,
         print(f"[{job_id}] admin alert send failed (non-fatal): {e}")
 
 
+def _m4b_progress_simulator(job: dict, duration_audio_sec: float, stop_event: "threading.Event") -> None:
+    """Thread daemon: ticka m4b_progress_current 5→98 linearmente, poi auto-estensione 1%/30s.
+
+    Args:
+        job: dict del job con campo m4b_progress_current (int, sarà aggiornato).
+            m4b_progress_total == 0 è usato come segnale di terminazione precoce
+            (impostato dal wrapper monitored su fail/timeout/invalid).
+        duration_audio_sec: durata audio MP3 in secondi (per stimare il tempo FFmpeg).
+        stop_event: evento che termina il thread se settato.
+
+    Comportamento:
+        - Stima tempo FFmpeg = max(2.0, duration_audio_sec / 50) (regola empirica server moderni).
+        - tick_interval = stima / 93 step.
+        - Per ogni step da 6 a 98: aspetta tick_interval, poi incrementa.
+        - Dopo 98: se stop_event non ancora settato, attende 30s e prova a salire a 98.
+        - Se in qualsiasi momento m4b_progress_total == 0 (fail/reset dal wrapper monitored),
+          il thread termina immediatamente.
+    """
+    try:
+        estimated_ffmpeg_sec = max(2.0, float(duration_audio_sec) / 50.0)
+        tick_interval = max(0.05, estimated_ffmpeg_sec / 93.0)
+
+        for pct in range(6, 99):  # 6..98 = 93 iterazioni
+            if stop_event.wait(tick_interval):
+                return
+            if not job.get("m4b_progress_total"):
+                return  # fail/cancel: wrapper monitored ha resettato
+            job["m4b_progress_current"] = pct
+
+        # Auto-estensione: tick lenti 1%/30s fino a che stop_event o total=0.
+        while not stop_event.is_set():
+            if stop_event.wait(30.0):
+                return
+            if not job.get("m4b_progress_total"):
+                return
+            cur = job.get("m4b_progress_current", 93)
+            if cur < 98:
+                job["m4b_progress_current"] = min(98, cur + 1)
+            else:
+                # Siamo già al 98: usciamo per non loopare all'infinito.
+                return
+    except Exception as e:
+        # Non propaghiamo: il thread muore ma FFmpeg va avanti comunque.
+        try:
+            print(f"[_m4b_progress_simulator] {job.get('job_id', '?')} error: {e}")
+        except Exception:
+            pass
+
+
 def _progress_pct(job: dict) -> int:
     """Percentuale di completamento (0..100) di un job in corso.
 
