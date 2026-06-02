@@ -2207,32 +2207,61 @@ def _offload_to_cloud(job_id, output_dir, when):
     """Carica i file di output offloadable su cold storage e scrive il marker.
     No-op se il backend S3 non è configurato. Verifica l'esistenza remota
     prima di marcare: la finestra calda evacuerà il locale solo se il marker
-    c'è, quindi un upload fallito NON porta mai a perdita di file."""
+    c'è, quindi un upload fallito NON porta mai a perdita di file.
+
+    Idempotente: i file già presenti su cold sono saltati (no re-upload), così
+    può essere richiamato da un pass di riconciliazione senza costi inutili.
+    NON è mai silenzioso: ogni esito (skip, partial, complete) viene loggato —
+    un no-op silenzioso lasciava i job PREMIUM senza copia cold e senza traccia.
+    Ritorna True se al termine il marker .cloud_uploaded è stato scritto."""
     if not storage_backend.is_enabled():
-        return
+        return False
     od = Path(output_dir)
     if not od.exists():
-        return
+        print(f"[{job_id}] cloud offload skip: output_dir mancante ({output_dir})", flush=True)
+        return False
+    offloadable = [f for f in od.rglob("*")
+                   if f.is_file() and storage_tiering.is_offloadable(f.name)]
+    if not offloadable:
+        print(f"[{job_id}] cloud offload skip: nessun file offloadable in {output_dir}", flush=True)
+        return False
     all_ok = True
     uploaded_any = False
-    for f in od.rglob("*"):
-        if not f.is_file() or not storage_tiering.is_offloadable(f.name):
-            continue
+    for f in offloadable:
         key = storage_tiering.key_for_path(str(f))
         if not key:
             continue
+        # Già su cold (es. chiamata da reconcile): non ricaricare.
         try:
-            storage_backend.upload_file(str(f), key)
-            if not storage_backend.object_exists(key):
-                all_ok = False
-            else:
+            if storage_backend.object_exists(key):
                 uploaded_any = True
-        except Exception as e:
-            print(f"[{job_id}] cloud offload error for {f.name}: {e}", flush=True)
+                continue
+        except Exception:
+            pass  # head fallita: procedi comunque con l'upload
+        ok = False
+        for attempt in range(3):
+            try:
+                storage_backend.upload_file(str(f), key)
+                if storage_backend.object_exists(key):
+                    ok = True
+                    break
+            except Exception as e:
+                print(f"[{job_id}] cloud offload error for {f.name} "
+                      f"(tentativo {attempt + 1}/3): {e}", flush=True)
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # backoff solo tra i tentativi
+        if ok:
+            uploaded_any = True
+        else:
             all_ok = False
     if all_ok and uploaded_any:
         storage_tiering.mark_cloud_uploaded(od, when)
         print(f"[{job_id}] cloud offload complete: {output_dir}", flush=True)
+        return True
+    print(f"[{job_id}] cloud offload INCOMPLETO (all_ok={all_ok}, "
+          f"uploaded_any={uploaded_any}): {output_dir} — marker NON scritto, "
+          f"verrà ritentato dal reconcile", flush=True)
+    return False
 
 
 def _spawn_cloud_offload(job_id, output_dir):

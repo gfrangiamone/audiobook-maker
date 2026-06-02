@@ -16,7 +16,10 @@ def test_offload_uploads_outputs_and_marks(monkeypatch, tmp_path):
     uploaded = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: uploaded.append(k))
-    monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
+    # Semantica realistica: l'oggetto NON esiste su cold prima dell'upload e
+    # risulta presente solo dopo (l'offload pre-controlla per essere idempotente
+    # quando richiamato dal pass di riconciliazione).
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: k in uploaded)
 
     generation_engine._offload_to_cloud("job1", str(out), when=1234.0)
 

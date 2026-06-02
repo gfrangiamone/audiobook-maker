@@ -1050,6 +1050,32 @@ def _try_cold_serve(local_path, download_name=None):
                                 bypass_throttle=True)
 
 
+def _cold_object_available(local_path):
+    """True se esiste una copia cold confermata per il path locale snapshottato.
+    Serve a NON dichiarare 'scaduto' un download il cui file vive ancora su cold
+    (locale evacuato o rimosso). Tollerante agli errori: False su qualunque
+    problema di rete/credenziali."""
+    if not storage_backend.is_enabled() or not local_path:
+        return False
+    key = storage_tiering.key_for_path(local_path)
+    if not key:
+        return False
+    try:
+        return storage_backend.object_exists(key)
+    except Exception:
+        return False
+
+
+def _token_cold_available(token_info):
+    """True se almeno uno degli output snapshottati nel token esiste su cold."""
+    if not isinstance(token_info, dict):
+        return False
+    for k in ("output_m4b", "output_file", "output_zip", "optimized_abm_path"):
+        if _cold_object_available(token_info.get(k, "")):
+            return True
+    return False
+
+
 def _read_tokens_file():
     """Read raw token dict from disk. Returns {} on missing/invalid file."""
     if not _TOKENS_FILE.exists():
@@ -1165,9 +1191,13 @@ def _load_tokens():
             if (now - info.get("created_at", 0)) > _effective_retention_for_token_info(info) + 300:
                 expired += 1
                 continue
-            # Verify that job files still exist
+            # Verify that job files still exist locally OR on cold storage.
+            # Con tiering S3 il locale può essere stato evacuato/rimosso mentre
+            # la copia cold è ancora servibile: in quel caso il token va
+            # MANTENUTO, altrimenti smette di proteggere la dir e l'orphan
+            # cleanup ne purgherebbe locale + cold (perdita totale PREMIUM).
             job_dir = UPLOAD_DIR / info.get("job_id", "")
-            if not job_dir.exists():
+            if not job_dir.exists() and not _token_cold_available(info):
                 expired += 1
                 continue
             _download_tokens[tok] = info
@@ -8173,8 +8203,13 @@ def token_download_page(token):
     dl_type = token_info.get("download_type", "audio")
     job_in_memory = job_id in jobs and jobs[job_id].get("status") in ("done", "optimized")
     files_on_disk = job_dir.exists()
+    # Cold-aware: se il locale è assente ma esiste ancora una copia su cold
+    # storage, il download NON è scaduto (gli endpoint /dl/<token>/m4b|abm
+    # servono dal presigned URL). Senza questo check la pagina dichiarava
+    # "scaduto in anticipo" dopo eviction/rimozione del locale.
+    cold_available = _token_cold_available(token_info) if not files_on_disk else False
 
-    if not job_in_memory and not files_on_disk:
+    if not job_in_memory and not files_on_disk and not cold_available:
         _download_tokens.pop(token, None)
         _save_tokens()
         return _render_dl_expired_page(lang, retention_hours=round(_ret / 3600)), 410
@@ -8221,6 +8256,9 @@ def token_download_page(token):
         if not m4b_available:
             m4bs = list(job_dir.glob("**/*.m4b"))
             m4b_available = len(m4bs) > 0
+    # Cold fallback: locale evacuato/rimosso ma copia cold presente.
+    if not m4b_available and _cold_object_available(m4b_path_snap):
+        m4b_available = True
 
     abm_path_snap = token_info.get("optimized_abm_path", "")
     has_abm = bool(abm_path_snap) and os.path.exists(abm_path_snap)
@@ -8228,6 +8266,8 @@ def token_download_page(token):
         candidate = job_dir / Path(abm_path_snap).parent.name / Path(abm_path_snap).name
         if candidate.exists():
             has_abm = True
+    if not has_abm and _cold_object_available(abm_path_snap):
+        has_abm = True
 
     output_format = token_info.get("output_format", "")
     if not output_format and job_in_memory:
@@ -9695,13 +9735,66 @@ def _evict_hot_local():
                         if not key:
                             continue
                         try:
-                            if storage_backend.object_exists(key):
+                            # INVARIANTE: non cancellare mai un file HOT senza una
+                            # copia COLD confermata. Verifica su cold; se manca,
+                            # COPIA prima, ri-verifica, e SOLO a copia confermata
+                            # rimuovi il locale. Altrimenti tieni il locale.
+                            on_cold = storage_backend.object_exists(key)
+                            if not on_cold:
+                                print(f"[hot-evict] cold copy MISSING — upload before evict: {f}")
+                                try:
+                                    storage_backend.upload_file(str(f), key)
+                                    on_cold = storage_backend.object_exists(key)
+                                except Exception as e:
+                                    print(f"[hot-evict] upload-before-evict failed for {f}: {e}")
+                                    on_cold = False
+                            if on_cold:
                                 f.unlink()
                                 print(f"[hot-evict] Local removed (cold copy ok): {f}")
+                            else:
+                                print(f"[hot-evict] KEEP local (cold copy NOT confirmed): {f}")
                         except OSError:
                             pass
                         except Exception as e:
                             print(f"[hot-evict] error on {f}: {e}")
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def _reconcile_cold_offload():
+    """Ri-tenta l'offload su cold per gli output completati che NON risultano
+    ancora caricati (marker .cloud_uploaded assente). Copre il caso in cui il
+    tentativo a fine generazione sia fallito o abbia fatto no-op silenzioso:
+    senza questo pass un job PREMIUM resterebbe single-tier (solo locale) e una
+    perdita del locale (anche un rm manuale) sarebbe irrecuperabile.
+    No-op se il cold storage non è configurato."""
+    if not storage_backend.is_enabled():
+        return
+    now = time.time()
+    try:
+        for jdir in UPLOAD_DIR.iterdir():
+            if not jdir.is_dir() or jdir.name.startswith("_"):
+                continue
+            try:
+                for od in jdir.iterdir():
+                    if not od.is_dir():
+                        continue
+                    if not (od.name == "output" or od.name.startswith("output_")):
+                        continue
+                    if storage_tiering.cloud_uploaded_at(od) is not None:
+                        continue  # già confermato su cold
+                    has_offloadable = any(
+                        f.is_file() and storage_tiering.is_offloadable(f.name)
+                        for f in od.rglob("*")
+                    )
+                    if not has_offloadable:
+                        continue
+                    try:
+                        generation_engine._offload_to_cloud(jdir.name, str(od), now)
+                    except Exception as e:
+                        print(f"[reconcile] offload error {od}: {e}")
             except OSError:
                 continue
     except OSError:
@@ -9775,17 +9868,26 @@ def _write_email_marker(work_dir, when=None, is_gemini=None):
     Quando `is_gemini` è None (tipo voce ignoto) si scrive la forma legacy: il
     lettore protegge in modo conservativo. La forma self-describing si usa solo
     quando il tipo voce è noto con certezza."""
-    try:
-        ts = float(when) if when is not None else time.time()
-        marker = Path(work_dir) / EMAIL_MARKER_FILENAME
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        window = _marker_protection_window(is_gemini)
-        if window is not None:
-            marker.write_text(f"{ts:.3f}|{int(window)}", encoding="utf-8")
-        else:
-            marker.write_text(f"{ts:.3f}", encoding="utf-8")
-    except OSError as e:
-        print(f"[email-marker] write failed in {work_dir}: {e}")
+    ts = float(when) if when is not None else time.time()
+    marker = Path(work_dir) / EMAIL_MARKER_FILENAME
+    window = _marker_protection_window(is_gemini)
+    content = f"{ts:.3f}|{int(window)}" if window is not None else f"{ts:.3f}"
+    # G6: il marker è l'unica protezione marker-based della dir dal cleanup.
+    # Una scrittura fallita silenziosamente lasciava la dir esposta: qui
+    # ritentiamo, verifichiamo la presenza e logghiamo forte il fallimento.
+    for attempt in range(3):
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(content, encoding="utf-8")
+            if marker.exists():
+                return
+        except OSError as e:
+            print(f"[email-marker] write failed in {work_dir} "
+                  f"(attempt {attempt + 1}/3): {e}")
+        if attempt < 2:
+            time.sleep(0.2 * (attempt + 1))
+    print(f"[email-marker] PERSISTENT FAILURE in {work_dir} — dir NON protetta "
+          f"dal cleanup marker-based (resta la protezione via token)")
 
 
 def _write_email_pending_marker(work_dir):
@@ -9894,15 +9996,30 @@ def _cleanup_job(job_id, reason=""):
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id
+    now = time.time()
     if work_dir.exists():
-        if _forensic_marker_protects(work_dir, time.time()):
+        if _forensic_marker_protects(work_dir, now):
             print(f"[cleanup] {job_id} entry removed but dir preserved "
                   f"(forensic retention) — {reason}")
             return                         # cold objects ALSO preserved
+        # G4: NON distruggere locale+cold finché il marker email protegge la dir
+        # o esiste un download token ancora valido. Evita che una transizione
+        # anomala a error/cancel cancelli un job già consegnato via email.
+        if _email_marker_protects(work_dir, now) or _has_active_download_tokens(job_id, now):
+            print(f"[cleanup] {job_id} entry removed but dir+cold preserved "
+                  f"(email marker/token still valid) — {reason}")
+            return
         _delete_cold_for_job(job_id)       # solo sul path che procede alla rimozione
         shutil.rmtree(str(work_dir), ignore_errors=True)
     else:
-        _delete_cold_for_job(job_id)       # dir già assente, pulizia cold comunque
+        # G5: dir già assente — cancella il cold SOLO se non resta alcun token
+        # vivo. Il cold è il tier durevole: non va purgato finché un link email
+        # è valido (anche se il locale è sparito).
+        if not _has_active_download_tokens(job_id, now):
+            _delete_cold_for_job(job_id)
+        else:
+            print(f"[cleanup] {job_id} local gone but cold preserved "
+                  f"(token still valid) — {reason}")
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
@@ -10039,6 +10156,11 @@ def _cleanup_loop():
                         continue
                     if _forensic_marker_protects(job_dir, now):
                         continue
+                    # G5: un job può avere più token (es. audio + .abm). Abbiamo
+                    # rimosso UNO scaduto, ma se un fratello è ancora valido NON
+                    # distruggere dir + cold.
+                    if _has_active_download_tokens(jid, now):
+                        continue
                     _delete_cold_for_job(jid)
                     shutil.rmtree(str(job_dir), ignore_errors=True)
                     print(f"[cleanup] Token-orphan dir removed: {jid}")
@@ -10101,6 +10223,15 @@ def _cleanup_loop():
                         print(f"[cleanup] Orphan output dir removed: {od} (age: {int(age)}s)")
         except OSError:
             pass
+
+        #  -  -  Riconciliazione offload cold (ri-tenta upload mancati/no-op)  -  -
+        # PRIMA dell'eviction: garantisce che la copia cold esista (e il marker
+        # sia scritto) prima di valutare la rimozione del locale. L'eviction non
+        # toccherà comunque i file appena caricati (sono dentro la finestra calda).
+        try:
+            _reconcile_cold_offload()
+        except Exception as e:
+            print(f"[reconcile] loop error: {e}")
 
         #  -  -  Evacuazione finestra calda (hot -> cold)  -  -
         try:

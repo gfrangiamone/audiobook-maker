@@ -61,7 +61,33 @@ def test_no_evict_if_object_not_confirmed(aa, monkeypatch, tmp_path):
 
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "object_exists", lambda k: False)
+    # La copia-prima-di-evict viene tentata ma non conferma (object_exists resta
+    # False) → il locale NON va cancellato.
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: None)
     audiobook_app.jobs["job3"] = {"voice": "it-IT-IsabellaNeural"}
 
     audiobook_app._evict_hot_local()
     assert audio.exists()
+
+
+def test_uploads_missing_cold_then_evicts(aa, monkeypatch, tmp_path):
+    """Se la copia cold manca, l'eviction la CARICA, la conferma e SOLO allora
+    cancella il locale (invariante: mai distruggere l'unica copia)."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "job5" / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"x")
+    storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: uploaded.append(k))
+    # Mancante prima dell'upload, presente dopo (semantica reale).
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: k in uploaded)
+    audiobook_app.jobs["job5"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert uploaded, "doveva caricare la copia mancante prima dell'eviction"
+    assert not audio.exists()  # rimosso solo dopo copia cold confermata
