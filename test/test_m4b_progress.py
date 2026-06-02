@@ -409,3 +409,61 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
     assert "m4b_progress_total" in body
     assert "m4b_progress_message" in body
     assert "Encoding AAC in corso" in body
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — admin card mostra sotto-barra M4B
+# ---------------------------------------------------------------------------
+
+def test_admin_card_renders_m4b_subbar(monkeypatch):
+    """La pagina /admin/log-activity contiene .card-m4b-progress quando il job ha m4b_progress_total > 0."""
+    import audiobook_app
+    import os
+    from datetime import datetime
+    from collections import OrderedDict
+
+    admin_token = os.environ.get("ABM_ADMIN_TOKEN", "test-token")
+    os.environ["ABM_ADMIN_TOKEN"] = admin_token
+
+    # sessions deriva da _parse_log_sessions (log file).jobs contiene m4b_progress_*.
+    # Prepariamo una sessione "in_progress" e un job con m4b_progress_total > 0.
+
+    test_session = {
+        "session_id": "J7", "first_dt": datetime(2026, 6, 1, 10, 0, 0),
+        "last_dt": datetime(2026, 6, 1, 10, 5, 0),
+        "filename": "test.epub", "last_op": "GENERATE",
+        "events": ["ANALYZE", "GENERATE"],
+        "client_id": "c1", "client_ip": "1.1.1.1",
+        "voice": "it-IT-Isola", "browser_lang": "it",
+    }
+
+    test_job = {
+        "job_id": "J7", "status": "generating",
+        "progress_current": 80, "progress_total": 100,
+        "progress_message": "Conversione M4B — encoding",
+        "m4b_progress_current": 45, "m4b_progress_total": 100,
+        "m4b_progress_message": "Encoding AAC in corso…",
+        "output_name": "test", "output_m4b": True,
+        "ai_optimized": False, "podcast_ready": False,
+    }
+
+    def fake_parse_log_sessions(ym):
+        sessions = OrderedDict()
+        sessions["J7"] = test_session
+        return sessions, {"c1": 1}
+
+    monkeypatch.setattr(audiobook_app, "_parse_log_sessions", fake_parse_log_sessions)
+
+    # jobs è il global dict in audiobook_app.
+    if not hasattr(audiobook_app, "jobs"):
+        pytest.skip("audiobook_app.jobs non trovato")
+    audiobook_app.jobs = {"J7": test_job}
+
+    client = audiobook_app.app.test_client()
+
+    # La pagina richiede auth: mandiamo header X-Admin-Token.
+    resp = client.get("/admin/log-activity?2026-06",
+                      headers={"X-Admin-Token": admin_token})
+    assert resp.status_code == 200, f"admin endpoint errore: {resp.status_code}"
+    body = resp.get_data(as_text=True)
+    assert "card-m4b-progress" in body, "card-m4b-progress non trovato nella pagina admin"

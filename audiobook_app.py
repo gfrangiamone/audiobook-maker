@@ -2339,6 +2339,21 @@ def _parse_log_sessions(ym):
     return sessions, client_session_count
 
 
+def _m4b_subbar_html(job):
+    """Ritorna HTML per la sotto-barra M4B, o stringa vuota se non applicabile."""
+    if not job or job.get("m4b_progress_total", 0) <= 0:
+        return ""
+    cur = job.get("m4b_progress_current", 0)
+    tot = job["m4b_progress_total"]
+    msg = job.get("m4b_progress_message", "")
+    pct = int(cur / tot * 100) if tot > 0 else 0
+    return f'''<div class="card-m4b-progress">
+  <span class="lbl">M4B</span>
+  <progress value="{cur}" max="{tot}"></progress>
+  <span class="msg">{pct}% · {msg}</span>
+</div>'''
+
+
 def _session_completed(s):
     """Return True if session reached generation completion (includes download scenarios)."""
     _completed_ops = {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
@@ -2631,6 +2646,7 @@ def admin_logs():
                 f'data-identified="{1 if is_identified else 0}" '
                 f'data-gemini="{1 if is_gemini_run else 0}"'
             )
+            m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
 
             cards_html += f"""<div class="{card_cls}" {data_attrs}>
 <div class="card-top">
@@ -2645,6 +2661,7 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " - "}</span></div>
 <div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
 </div>
+{m4b_subbar}
 </div>
 """
         cards_html += "</div></div>\n"
@@ -2753,6 +2770,10 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .card:hover{{border-color:var(--accent);box-shadow:0 0 0 1px rgba(56,189,248,.15)}}
 .card-in-progress{{border-color:var(--orange);background:rgba(249,115,22,.06);animation:pulse-border 2s ease-in-out infinite}}
 .card-in-progress:hover{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.3)}}
+.card-m4b-progress{{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.85em;color:var(--orange)}}
+.card-m4b-progress progress{{flex:1;height:8px;accent-color:var(--orange)}}
+.card-m4b-progress .lbl{{font-weight:600;min-width:32px}}
+.card-m4b-progress .msg{{color:#666;font-style:italic}}
 @keyframes pulse-border{{0%,100%{{border-color:var(--orange);box-shadow:0 0 0 0 rgba(249,115,22,.15)}}50%{{border-color:rgba(249,115,22,.5);box-shadow:0 0 8px 0 rgba(249,115,22,.2)}}}}
 .card.card-hidden{{display:none}}
 .day-group.day-hidden{{display:none}}
