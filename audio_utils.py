@@ -1406,3 +1406,62 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
                     os.remove(f)
                 except OSError:
                     pass
+
+
+def pcm_to_aac_m4b_monitored(pcm_paths, output_path, on_phase=None, status_out=None, **kwargs):
+    """Wrapper monitored di pcm_to_aac_m4b con callback on_phase(pct, msg) e status_out.
+
+    Args:
+        pcm_paths, output_path: come pcm_to_aac_m4b.
+        on_phase: callable(pct: int, msg: str) o None.
+        status_out: dict opzionale popolato a fine conversione con
+            {"status": "ok"|"fail"|"timeout"|"invalid", "pct": int, "msg": str}.
+        **kwargs: tutti gli altri parametri di pcm_to_aac_m4b.
+
+    Returns: bool come pcm_to_aac_m4b.
+    """
+    def _emit(pct, msg):
+        if on_phase:
+            try:
+                on_phase(pct, msg)
+            except Exception as e:
+                print(f"[pcm_to_aac_m4b_monitored] on_phase error: {e}")
+
+    def _finish(status, pct, msg):
+        if status_out is not None:
+            status_out["status"] = status
+            status_out["pct"] = pct
+            status_out["msg"] = msg
+
+    _emit(0, "Conversione M4B — preparazione…")
+    _emit(5, "Conversione M4B — encoding AAC (PCM→AAC diretto)…")
+    try:
+        result = pcm_to_aac_m4b(pcm_paths, output_path, **kwargs)
+    except subprocess.TimeoutExpired:
+        _emit(0, "Conversione M4B timeout")
+        _finish("timeout", 0, "Conversione M4B timeout")
+        return False
+    except Exception:
+        _emit(0, "Conversione M4B fallita")
+        _finish("fail", 0, "Conversione M4B fallita")
+        return False
+
+    if not result:
+        _emit(0, "Conversione M4B fallita")
+        _finish("fail", 0, "Conversione M4B fallita")
+        return False
+
+    _emit(98, "Conversione M4B — validazione finale…")
+    if _validate_m4b_file(output_path):
+        _emit(100, "Conversione M4B completata")
+        _finish("ok", 100, "Conversione M4B completata")
+        return True
+
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+    _emit(0, "Conversione M4B — file invalido")
+    _finish("invalid", 0, "Conversione M4B — file invalido")
+    return False

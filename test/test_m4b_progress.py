@@ -178,3 +178,112 @@ def test_convert_mp3_to_m4b_monitored_handles_invalid_file(monkeypatch, tmp_path
     )
     assert ok is False
     assert status_out.get("status") == "invalid"
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — pcm_to_aac_m4b_monitored
+# ---------------------------------------------------------------------------
+
+def test_pcm_to_aac_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
+    """Il wrapper pcm_to_aac_m4b_monitored chiama on_phase esattamente a 0, 5, 98, 100 in ordine."""
+    import audio_utils
+
+    out = tmp_path / "out.m4b"
+    out.write_bytes(b"x")
+
+    # Mock della funzione originale
+    monkeypatch.setattr(audio_utils, "pcm_to_aac_m4b", lambda *a, **kw: True)
+    monkeypatch.setattr(audio_utils, "_validate_m4b_file", lambda p: True)
+
+    phases = []
+    status_out = {}
+    ok = audio_utils.pcm_to_aac_m4b_monitored(
+        ["/tmp/a.pcm"], str(out),
+        on_phase=lambda p, m: phases.append((p, m)),
+        status_out=status_out,
+    )
+    assert ok is True
+    assert len(phases) == 4
+    assert phases[0] == (0, "Conversione M4B — preparazione…")
+    assert phases[1] == (5, "Conversione M4B — encoding AAC (PCM→AAC diretto)…")
+    assert phases[2] == (98, "Conversione M4B — validazione finale…")
+    assert phases[3] == (100, "Conversione M4B completata")
+    assert status_out == {"status": "ok", "pct": 100, "msg": "Conversione M4B completata"}
+
+
+def test_pcm_to_aac_m4b_monitored_handles_failure(monkeypatch, tmp_path):
+    """Se pcm_to_aac_m4b ritorna False, status_out='fail' e pct non è 100."""
+    import audio_utils
+
+    out = tmp_path / "out.m4b"
+    monkeypatch.setattr(audio_utils, "pcm_to_aac_m4b", lambda *a, **kw: False)
+
+    phases = []
+    status_out = {}
+    ok = audio_utils.pcm_to_aac_m4b_monitored(
+        ["/tmp/a.pcm"], str(out),
+        on_phase=lambda p, m: phases.append(p),
+        status_out=status_out,
+    )
+    assert ok is False
+    assert 100 not in phases
+    assert status_out.get("status") == "fail"
+
+
+def test_pcm_to_aac_m4b_monitored_handles_timeout(monkeypatch, tmp_path):
+    """Se pcm_to_aac_m4b va in timeout, status_out='timeout'."""
+    import subprocess
+    import audio_utils
+
+    out = tmp_path / "out.m4b"
+    def raise_timeout(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=3600)
+    monkeypatch.setattr(audio_utils, "pcm_to_aac_m4b", raise_timeout)
+
+    status_out = {}
+    ok = audio_utils.pcm_to_aac_m4b_monitored(
+        ["/tmp/a.pcm"], str(out),
+        on_phase=lambda p, m: None,
+        status_out=status_out,
+    )
+    assert ok is False
+    assert status_out.get("status") == "timeout"
+
+
+def test_pcm_to_aac_m4b_monitored_handles_invalid_file(monkeypatch, tmp_path):
+    """Se validazione fallisce, status_out='invalid'."""
+    import audio_utils
+
+    out = tmp_path / "out.m4b"
+    monkeypatch.setattr(audio_utils, "pcm_to_aac_m4b", lambda *a, **kw: True)
+    monkeypatch.setattr(audio_utils, "_validate_m4b_file", lambda p: False)
+
+    status_out = {}
+    ok = audio_utils.pcm_to_aac_m4b_monitored(
+        ["/tmp/a.pcm"], str(out),
+        on_phase=lambda p, m: None,
+        status_out=status_out,
+    )
+    assert ok is False
+    assert status_out.get("status") == "invalid"
+    # File invalido rimosso (cleanup)
+    assert not out.exists()
+
+
+def test_pcm_to_aac_m4b_monitored_handles_exception(monkeypatch, tmp_path):
+    """Eccezione generica → status_out='fail'."""
+    import audio_utils
+
+    out = tmp_path / "out.m4b"
+    def raise_generic(*a, **kw):
+        raise RuntimeError("ffmpeg crashed")
+    monkeypatch.setattr(audio_utils, "pcm_to_aac_m4b", raise_generic)
+
+    status_out = {}
+    ok = audio_utils.pcm_to_aac_m4b_monitored(
+        ["/tmp/a.pcm"], str(out),
+        on_phase=lambda p, m: None,
+        status_out=status_out,
+    )
+    assert ok is False
+    assert status_out.get("status") == "fail"
