@@ -883,6 +883,61 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         return False
 
 
+def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, **kwargs):
+    """Wrapper monitored di _convert_mp3_to_m4b: chiama on_phase(pct, msg) ai punti chiave.
+
+    Args:
+        mp3_path, m4b_path: come _convert_mp3_to_m4b.
+        on_phase: callable(pct: int, msg: str) o None per no-op.
+        **kwargs: tutti gli altri parametri di _convert_mp3_to_m4b (chapters, title, ...).
+
+    Returns: bool come _convert_mp3_to_m4b.
+    """
+    def _emit(pct, msg):
+        if on_phase:
+            try:
+                on_phase(pct, msg)
+            except Exception as e:
+                print(f"[_convert_mp3_to_m4b_monitored] on_phase error: {e}")
+
+    # Verifica rapida: se il file sorgente non esiste, skip senza emissioni.
+    if not os.path.exists(mp3_path):
+        return False
+
+    _emit(0, "Conversione M4B — preparazione metadati…")
+
+    # Delega alla funzione originale per la preparazione + FFmpeg + fallback.
+    try:
+        # Fase 1: encoding (5 → 98 lo simula il thread esterno, qui emettiamo solo il via).
+        _emit(5, "Conversione M4B — encoding AAC…")
+        result = _convert_mp3_to_m4b(mp3_path, m4b_path, **kwargs)
+    except FileNotFoundError:
+        # Sorgente mancante: nessuna emissione, ritorna False.
+        return False
+    except Exception:
+        _emit(0, "Conversione M4B fallita")
+        return False
+
+    if not result:
+        _emit(0, "Conversione M4B fallita")
+        return False
+
+    # Fase 2: validazione ffprobe (98 → 100)
+    _emit(98, "Conversione M4B — validazione finale…")
+    if _validate_m4b_file(m4b_path):
+        _emit(100, "Conversione M4B completata")
+        return True
+
+    # File invalido: tentiamo rimozione (best-effort, come l'originale).
+    if os.path.exists(m4b_path):
+        try:
+            os.remove(m4b_path)
+        except OSError:
+            pass
+    _emit(0, "Conversione M4B — file invalido")
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Podcast RSS
 # ---------------------------------------------------------------------------

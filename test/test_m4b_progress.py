@@ -59,3 +59,93 @@ def test_log_m4b_progress_end_no_throttle(monkeypatch):
 
     assert len(captured) == 1
     assert captured[0][0][2] == "M4B_END"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — _convert_mp3_to_m4b_monitored
+# ---------------------------------------------------------------------------
+
+def _make_fake_job():
+    return {
+        "job_id": "J", "client_id": "c", "ip": "1.1.1.1",
+        "voice": "v", "lang": "it", "original_filename": "book.epub",
+        "m4b_progress_current": 0, "m4b_progress_total": 0,
+        "m4b_progress_message": "",
+    }
+
+
+def test_convert_mp3_to_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
+    """Il wrapper monitored chiama on_phase a 0, 5, 98, 100 in successione monotona."""
+    import audio_utils
+
+    mp3 = tmp_path / "in.mp3"
+    m4b = tmp_path / "out.m4b"
+    mp3.write_bytes(b"x" * 1024)
+    m4b.write_bytes(b"y" * 2048)
+
+    # Mock: simuliamo _convert_mp3_to_m4b come no-op che imposta subito m4b.
+    def fake_convert(*args, **kwargs):
+        return True
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b", fake_convert)
+    # Mock: validazione ok
+    monkeypatch.setattr(audio_utils, "_validate_m4b_file", lambda p: True)
+    # Mock: durata audio fissa
+    monkeypatch.setattr(audio_utils, "_get_audio_bitrate", lambda p: 48)
+    monkeypatch.setattr(audio_utils, "_get_audio_duration_ms", lambda p: 60_000)
+
+    phases = []
+    def on_phase(pct, msg):
+        phases.append((pct, msg))
+
+    ok = audio_utils._convert_mp3_to_m4b_monitored(
+        str(mp3), str(m4b), on_phase=on_phase,
+        title="T", author="A",
+    )
+    assert ok is True
+    # Attesi pct: 0 (preparazione) → 5 (encoding) → 98 (validazione) → 100 (ok)
+    pcts = [p for p, _ in phases]
+    assert 0 in pcts
+    assert 5 in pcts
+    assert 98 in pcts
+    assert 100 in pcts
+    # Monotono non-strict
+    assert pcts == sorted(pcts)
+
+
+def test_convert_mp3_to_m4b_monitored_handles_ffmpeg_fail(monkeypatch, tmp_path):
+    """Se la conversione interna fallisce, on_phase NON emette 100."""
+    import audio_utils
+
+    mp3 = tmp_path / "in.mp3"
+    m4b = tmp_path / "out.m4b"
+    mp3.write_bytes(b"x")
+    m4b.write_bytes(b"y")
+
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b",
+                        lambda *a, **kw: False)
+    monkeypatch.setattr(audio_utils, "_get_audio_bitrate", lambda p: 48)
+
+    phases = []
+    audio_utils._convert_mp3_to_m4b_monitored(
+        str(mp3), str(m4b),
+        on_phase=lambda p, m: phases.append(p),
+    )
+    assert 100 not in phases
+
+
+def test_convert_mp3_to_m4b_monitored_no_callback_when_filenotfound(monkeypatch):
+    """Se il file sorgente non esiste, on_phase non viene chiamato (skip rapido)."""
+    import audio_utils
+
+    # Simuliamo sorgente mancante: _convert_mp3_to_m4b solleva FileNotFoundError
+    # prima di qualsiasi on_phase intermedio.
+    monkeypatch.setattr(audio_utils, "_convert_mp3_to_m4b",
+                        lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError()))
+
+    phases = []
+    ok = audio_utils._convert_mp3_to_m4b_monitored(
+        "/nope/missing.mp3", "/tmp/out.m4b",
+        on_phase=lambda p, m: phases.append(p),
+    )
+    assert ok is False
+    assert phases == []
