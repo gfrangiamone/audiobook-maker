@@ -6940,6 +6940,11 @@ def api_progress(job_id):
                 "processed_chars": job.get("processed_chars", 0),
                 "total_chars": job.get("total_chars", 0),
             }
+            # M4B progress (visibile solo se la fase M4B è attiva)
+            if job.get("m4b_progress_total"):
+                payload["m4b_progress_current"] = job.get("m4b_progress_current", 0)
+                payload["m4b_progress_total"] = job["m4b_progress_total"]
+                payload["m4b_progress_message"] = job.get("m4b_progress_message", "")
             # Espone l'importo pagato (quota refundabile) e il metodo: serve
             # al frontend per reidratare _payState dopo un reload e mostrare
             # "Importo versato" corretto nel modal di cancel. Usa total_eur

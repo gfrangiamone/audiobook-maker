@@ -355,3 +355,57 @@ def test_simulator_resets_when_total_becomes_zero():
     job["m4b_progress_total"] = 0
     t.join(timeout=1.0)
     assert not t.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — SSE payload contiene m4b_progress_*
+# ---------------------------------------------------------------------------
+
+def test_sse_payload_contains_m4b_fields(monkeypatch):
+    """L'endpoint /api/progress/<job_id> espone m4b_progress_current/total/message
+    quando il job è nella fase M4B."""
+    import audiobook_app
+
+    job = {
+        "job_id": "J6", "status": "generating",
+        "progress_current": 12, "progress_total": 102,
+        "progress_message": "Conversione M4B — encoding (45%)",
+        "m4b_progress_current": 45, "m4b_progress_total": 100,
+        "m4b_progress_message": "Encoding AAC in corso…",
+    }
+    # jobs è il global dict in audiobook_app (o attributo del modulo).
+    # Adattati a come è strutturato in produzione.
+    if not hasattr(audiobook_app, "jobs"):
+        pytest.skip("audiobook_app.jobs non trovato come attributo modulo")
+    audiobook_app.jobs = {"J6": job}
+
+    # Facciamo terminare il loop SSE dopo il primo yield
+    # facendo diventare il job "done" al primo poll.
+    # Il loop SSE: while True → yield payload → sleep(1) → next iteration.
+    # Dopo il primo yield mettiamo status=done cosi' al secondo iteration esce.
+    _poll_count = [0]
+    _orig_time_time = time.time
+    def fake_time():
+        _poll_count[0] += 1
+        if _poll_count[0] >= 2:
+            # Simula che il job sia passato a done prima del secondo poll
+            job["status"] = "done"
+            job["output_name"] = "output"
+            job["podcast_ready"] = False
+            job["output_m4b"] = True
+            job["ai_optimized"] = False
+        return _orig_time_time()
+    monkeypatch.setattr(audiobook_app.time, "time", fake_time, raising=False)
+    monkeypatch.setattr(audiobook_app.time, "sleep", lambda s: None, raising=False)
+
+    client = audiobook_app.app.test_client()
+    resp = client.get("/api/progress/J6")
+    # 200 o 200 text/event-stream
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # Il payload deve contenere i 3 campi m4b_progress_*
+    assert "m4b_progress_current" in body
+    assert "45" in body  # il valore del campo
+    assert "m4b_progress_total" in body
+    assert "m4b_progress_message" in body
+    assert "Encoding AAC in corso" in body
