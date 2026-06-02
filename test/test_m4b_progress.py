@@ -412,6 +412,27 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Task 8 — frontend utente mostra sotto-barra M4B
+# ---------------------------------------------------------------------------
+
+def test_user_progress_includes_m4b_subbar():
+    """Il template html_tail.html contiene il rendering per m4b_progress."""
+    import os
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "templates", "_fragments", "html_tail.html",
+    )
+    path = os.path.abspath(path)
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    # Verifica che il template gestisca i 3 campi m4b_progress_*
+    assert "m4b_progress_total" in content, \
+        "html_tail.html non gestisce m4b_progress_total"
+    assert "m4b_progress_current" in content, \
+        "html_tail.html non gestisce m4b_progress_current"
+
+
+# ---------------------------------------------------------------------------
 # Task 7 — admin card mostra sotto-barra M4B
 # ---------------------------------------------------------------------------
 

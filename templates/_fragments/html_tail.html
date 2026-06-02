@@ -1,3 +1,13 @@
+<!-- M4B conversion sub-bar (user-facing progress UI) -->
+<!-- m4b_progress_total: totale chunk M4B (100) -->
+<!-- m4b_progress_current: chunk M4B completati -->
+<div id="m4bProgressWrap" style="display:none; margin-top:6px;"
+     data-m4b-progress-total="m4b_progress_total"
+     data-m4b-progress-current="m4b_progress_current">
+  <label style="font-size:0.85em; color:#666;">Conversione M4B: <span id="m4bPct">0%</span></label>
+  <progress id="m4bProgressBar" value="0" max="100" style="width:100%; height:6px; accent-color:#f97316;"></progress>
+  <div id="m4bMsg" style="font-size:0.75em; color:#999; font-style:italic;"></div>
+</div>
 <script defer src="/static/js/app.js?v=__APP_VERSION__"></script>
 </main>
 </body>

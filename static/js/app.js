@@ -2796,6 +2796,22 @@ function listenProgress(){
       if(msg==="Converting to M4B..."){msg=t('converting_m4b')||msg}
       document.getElementById('pMsg').textContent=msg;
 
+      // M4B sub-bar update
+      const m4bWrap=document.getElementById('m4bProgressWrap');
+      const m4bBar=document.getElementById('m4bProgressBar');
+      const m4bPct=document.getElementById('m4bPct');
+      const m4bMsg=document.getElementById('m4bMsg');
+      if(m4bWrap&&m4bBar&&m4bPct&&m4bMsg){
+        if(d.m4b_progress_total&&d.m4b_progress_total>0){
+          m4bWrap.style.display='block';
+          m4bBar.value=d.m4b_progress_current||0;
+          m4bPct.textContent=(d.m4b_progress_current||0)+'%';
+          m4bMsg.textContent=d.m4b_progress_message||'';
+        }else{
+          m4bWrap.style.display='none';
+        }
+      }
+
       if(d.status==='done'){
         es.close();
         generating=false;jobDone=true;
@@ -2808,6 +2824,7 @@ function listenProgress(){
         const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
         const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
         const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('done_t');
+        const m4bWrap=document.getElementById('m4bProgressWrap');if(m4bWrap)m4bWrap.style.display='none';
 
         if(d.m4b_failed){
           const warn=document.createElement('div');warn.className='al al-warn';warn.style.marginTop='10px';
