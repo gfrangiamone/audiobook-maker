@@ -398,32 +398,28 @@ def _effective_max_text_chars(voice, job=None):
 
 def _retention_for_job(job):
     """Retention sec applicabile al job: GEMINI_FILE_RETENTION_SEC se voce Gemini, altrimenti EMAIL_FILE_RETENTION_SEC.
-    Con cold storage S3 attivo, raddoppia (COLD_RETENTION_MULTIPLIER): la
-    disponibilità totale si estende oltre la finestra calda servendo da cold.
+    La finestra di disponibilità per l'utente NON dipende dal cold storage: il
+    cold determina solo DOVE si serve il file (locale durante la finestra calda,
+    presigned URL dopo), non QUANTO a lungo resta disponibile.
     Fallback su `opt_voice` per il flusso optimize-only/batch dove `voice` non e' ancora settato."""
     if not isinstance(job, dict):
-        base = EMAIL_FILE_RETENTION_SEC
-    else:
-        v = job.get("voice", "") or job.get("opt_voice", "")
-        base = GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
-    return base * COLD_RETENTION_MULTIPLIER if storage_backend.is_enabled() else base
+        return EMAIL_FILE_RETENTION_SEC
+    v = job.get("voice", "") or job.get("opt_voice", "")
+    return GEMINI_FILE_RETENTION_SEC if _is_gemini_voice(v) else EMAIL_FILE_RETENTION_SEC
 
 
 def _retention_for_token_info(info):
     """Retention sec applicabile a un download token: usa is_gemini se salvato sul token.
-    Con cold storage S3 attivo, raddoppia (COLD_RETENTION_MULTIPLIER)."""
-    base = GEMINI_FILE_RETENTION_SEC if (isinstance(info, dict) and info.get("is_gemini")) else EMAIL_FILE_RETENTION_SEC
-    return base * COLD_RETENTION_MULTIPLIER if storage_backend.is_enabled() else base
+    Indipendente dal cold storage (vedi _retention_for_job)."""
+    return GEMINI_FILE_RETENTION_SEC if (isinstance(info, dict) and info.get("is_gemini")) else EMAIL_FILE_RETENTION_SEC
 
 
 # Protezione no-download per voci PREMIUM (costose): se il job/token Gemini
-# non ha mai registrato un download, raddoppiamo la retention prima di
+# non ha mai registrato un download, raddoppiamo la retention base prima di
 # cancellare gli output. Salvaguardia per utenti che ricevono l'email tardi
-# o non aprono subito il link.
-# Con cold storage S3 attivo la disponibilità totale al download raddoppia:
-# i file vivono in locale per la finestra calda, poi sono serviti da cold fino
-# a base*COLD_RETENTION_MULTIPLIER. Con S3 OFF la retention resta invariata.
-COLD_RETENTION_MULTIPLIER = 2
+# o non aprono subito il link. E' l'UNICA eccezione che estende la finestra
+# di disponibilità oltre la retention base; non si applica alle voci standard
+# ne' ai job PREMIUM gia' scaricati. Indipendente dal cold storage.
 GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER = 2
 
 

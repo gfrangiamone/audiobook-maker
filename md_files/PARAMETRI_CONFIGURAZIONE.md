@@ -566,13 +566,17 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 così all'inizio i file vivono in locale esattamente come oggi; nessuna eviction
 anticipata. Si restringe `ABM_HOT_WINDOW_*` man mano per liberare disco prima.
 
-**Retention totale (cold delete):** base `ABM_JOB_RETENTION_SEC` (18h) /
-`ABM_GEMINI_JOB_RETENTION_SEC` (48h), **raddoppiata (`COLD_RETENTION_MULTIPLIER=2`,
-audiobook_app.py) quando il cold storage S3 è attivo** → 36h / 96h di disponibilità
-totale. Con S3 **disattivo** la retention resta invariata (18h/48h): backward-compat.
-La protezione no-download per voci PREMIUM (`GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER`)
-si somma: PREMIUM mai scaricato + S3 attivo = 48h×2×2 = 192h. Il testo email di
-completamento (`retention_h`) raddoppia di conseguenza quando S3 è attivo.
+**Retention totale (disponibilità utente):** base `ABM_JOB_RETENTION_SEC` (18h) /
+`ABM_GEMINI_JOB_RETENTION_SEC` (48h), **indipendente dal cold storage**. Il cold
+S3 decide solo *dove* si serve il file (locale durante la finestra calda, presigned
+URL dopo), non *quanto* resta disponibile: con S3 attivo o disattivo la finestra è
+identica. (Nota storica: fino al 2026-06 esisteva un `COLD_RETENTION_MULTIPLIER=2`
+che raddoppiava la retention con S3 attivo; rimosso per disaccoppiare il tiering
+dalla durata.) **Unica eccezione**: la protezione no-download per voci PREMIUM
+(`GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, audiobook_app.py): un job/token
+PREMIUM mai scaricato vive **48h×2 = 96h**; voci standard e PREMIUM già scaricati
+non vengono mai estesi. Il testo email di completamento (`retention_h`) mostra la
+base (24h/48h prod), non l'estensione no-download (salvaguardia a valle, non promessa).
 
 Con tiering attivo i file vivono in locale solo per la finestra calda; oltre,
 sono serviti via redirect dal cold storage fino alla retention totale. Egress
