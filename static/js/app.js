@@ -2287,6 +2287,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         }
         showPErr(gd.error);unlockUI();return;
       }
+      if(gd.auto_batch_email)_showAutoBatchNotice(gd.auto_batch_email);
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
   }
@@ -2717,8 +2718,29 @@ async function startGen(){
       }
       showPErr(d.error);unlockUI();return
     }
+    if(d.auto_batch_email)_showAutoBatchNotice(d.auto_batch_email);
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
+}
+
+function _showAutoBatchNotice(maskedEmail){
+  // Job PREMIUM pagato portato in modalità batch: rende esplicito all'utente
+  // che riceverà l'audiolibro via email (sull'indirizzo del pagamento) anche
+  // se chiude la pagina. Banner persistente nell'area di generazione.
+  if(!maskedEmail)return;
+  let n=document.getElementById('autoBatchNotice');
+  if(!n){
+    n=document.createElement('div');
+    n.id='autoBatchNotice';
+    n.className='al al-ok';
+    n.style.marginTop='10px';
+    const host=document.getElementById('generationProgress')||document.getElementById('cnA');
+    if(host&&host.parentNode){host.parentNode.insertBefore(n,host);}
+    else if(host){host.appendChild(n);}
+  }
+  const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
+  n.textContent=tmpl.replace('{email}',maskedEmail);
+  n.style.display='block';
 }
 
 function listenProgress(){

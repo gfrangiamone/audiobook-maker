@@ -18,6 +18,16 @@ import json
 import os
 import shutil
 import sys
+
+# Difesa: quando l'app gira come `python audiobook_app.py`, questo modulo e'
+# registrato in sys.modules come '__main__', NON come 'audiobook_app'. Un
+# qualsiasi `import audiobook_app` da un sub-modulo (vietato dalla convenzione
+# #1, ma per sicurezza) lo ri-eseguirebbe da zero come secondo modulo,
+# ri-spawnando cleanup/recover e ri-eseguendo configure(). L'alias fa puntare
+# 'audiobook_app' a questo stesso modulo gia' caricato -> nessuna ri-esecuzione.
+if __name__ == "__main__":
+    sys.modules.setdefault("audiobook_app", sys.modules[__name__])
+
 import threading
 import time
 import uuid
@@ -562,6 +572,21 @@ def _check_job_owner(job_id):
     return job, None, 0
 
 
+def _mask_email(email):
+    """Maschera un'email per display: 'john.doe@x.com' -> 'j***@x.com'.
+
+    Mostra solo la prima lettera della parte locale + il dominio. Best-effort:
+    su input malformato ritorna l'input invariato.
+    """
+    email = (email or "").strip()
+    if "@" not in email:
+        return email
+    local, _, domain = email.partition("@")
+    if not local:
+        return email
+    return f"{local[0]}***@{domain}"
+
+
 def _get_client_ip():
     """Return client IP address, respecting reverse proxy headers."""
     # X-Forwarded-For: client, proxy1, proxy2  →  take the first
@@ -789,6 +814,15 @@ def _recover_orphan_jobs():
     print(f"[recover] {len(orphans)} job batch orfani da recuperare (cap={max_attempts})")
     for rec in orphans:
         job_id = rec.get("id")
+        # Idempotenza: se il job e' gia' vivo in memoria (thread in esecuzione,
+        # o gia' re-enqueued da un pass precedente), NON ri-accodarlo: un
+        # secondo run_generation sullo stesso job_id crea thread duplicati che
+        # corrono sulla stessa entry _jobs e sugli stessi file di output.
+        with _jobs_lock:
+            already_live = job_id in jobs
+        if already_live:
+            print(f"[recover] {job_id}: gia' vivo in memoria — skip (no duplicato)")
+            continue
         try:
             attempts = pending_jobs.mark_running_bump(job_id)  # persiste PRIMA del run
         except Exception as e:
@@ -6783,6 +6817,39 @@ def api_generate():
                 "gemini_est": est_pre,
                 "llm_eur": llm_eur_pre,
             }
+            # Batch implicito per job PAGATO: un job per cui l'utente ha pagato
+            # NON deve morire per heartbeat alla chiusura del browser. Registra
+            # l'email del pagamento come notifica -> email_registered=True esenta
+            # il job dall'heartbeat (generation_engine `_check_cancelled`) e fa
+            # consegnare il risultato via email (o solo il rimborso su errore
+            # reale), indipendentemente dalla sessione del client. Idempotente
+            # se l'utente aveva gia' registrato un'email via /api/register_email.
+            if not job.get("email_registered"):
+                _pay_email = ""
+                try:
+                    _pay_email = payment.email_for_token(payment_token)
+                except Exception as _e:
+                    print(f"[{job_id}] email_for_token failed (non-fatal): {_e}", flush=True)
+                if _pay_email:
+                    job["notify_email"] = _pay_email
+                    job.setdefault("notify_download_type",
+                                   "podcast" if output_format == "zip_rss" else "audio")
+                    job.setdefault("notify_base_url", podcast_base_url)
+                    job["notify_lang"] = (data.get("lang") or "en")
+                    job["email_registered"] = True
+                    # Flag per la UX: la notifica e' stata attivata
+                    # automaticamente sull'email del pagamento (non registrata
+                    # esplicitamente dall'utente). Il frontend lo mostra.
+                    job["_auto_batch_notify"] = True
+                    _write_email_pending_marker(UPLOAD_DIR / job_id)
+                    try:
+                        pending_jobs.register(job_id, "generate",
+                                              _build_job_descriptor(job, "generate"))
+                    except Exception as _e:
+                        print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
+                              f"failed (non-fatal): {_e}", flush=True)
+                    print(f"[{job_id}] Paid Gemini job -> batch mode "
+                          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
         # Stash style for run_generation
         if style_instruction:
             job["gemini_style_instruction"] = style_instruction
@@ -6899,7 +6966,14 @@ def api_generate():
                   client_id, client_ip, voice,
                   browser_lang=job.get("browser_lang", ""))
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
-    return jsonify({"status": "started"})
+    _resp = {"status": "started"}
+    # Job pagato portato in modalita' batch sull'email del pagamento: comunica
+    # al frontend l'email (mascherata) cosi' l'utente sa dove ricevera' il file
+    # anche se chiude la pagina. Solo per l'auto-batch implicito (non quando
+    # l'utente ha gia' registrato manualmente un'email).
+    if job.get("_auto_batch_notify") and job.get("notify_email"):
+        _resp["auto_batch_email"] = _mask_email(job["notify_email"])
+    return jsonify(_resp)
 
 
 @app.route("/api/job_status/<job_id>")

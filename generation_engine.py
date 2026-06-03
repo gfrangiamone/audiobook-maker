@@ -1575,6 +1575,41 @@ def _m4b_progress_simulator(job: dict, duration_audio_sec: float, stop_event: "t
             pass
 
 
+def _log_m4b_progress(job: dict, event: str, **fields) -> None:
+    """Scrive riga in activity_YYYY-MM.log per eventi M4B_* con throttling 10s per PROGRESS.
+
+    Definita QUI (non importata da audiobook_app): importare il modulo entry-point
+    da un sub-modulo lo ri-esegue quando l'app gira come __main__ (sys.modules non
+    contiene 'audiobook_app'), ri-spawnando cleanup/recover. Vedi convenzione #1.
+    Usa la funzione di log iniettata via configure() (`_log_activity`).
+
+    event: "START" | "PROGRESS" | "END"
+    fields: size_mb, pct, msg, status, elapsed_s, duration_s (liberi -> campo `voice`)
+    """
+    if event == "PROGRESS":
+        now = time.time()
+        if now - job.get("_m4b_last_log_ts", 0) < 10:
+            return
+        job["_m4b_last_log_ts"] = now
+
+    payload_parts = [f"{k}={fields[k]}" for k in sorted(fields.keys())]
+    payload = " ".join(payload_parts)[:200]  # cap a 200 char
+
+    try:
+        _log_activity(
+            job.get("job_id", ""),
+            job.get("original_filename", ""),
+            "M4B_" + event,
+            client_id=job.get("client_id", ""),
+            client_ip=job.get("ip", ""),
+            voice=payload,
+            browser_lang=job.get("lang", ""),
+        )
+    except Exception as e:
+        # Logging non deve mai crashare il thread di generazione.
+        print(f"[_log_m4b_progress] errore scrittura log: {e}")
+
+
 def _progress_pct(job: dict) -> int:
     """Percentuale di completamento (0..100) di un job in corso.
 
@@ -2329,7 +2364,15 @@ def _spawn_cloud_offload(job_id, output_dir):
 
 
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
-    job = _jobs[job_id]
+    job = _jobs.get(job_id)
+    if job is None:
+        # La entry e' stata rimossa tra l'avvio del thread e questo lookup
+        # (race col cleanup loop, o thread duplicato il cui gemello ha gia'
+        # finalizzato/rimosso il job). Niente da fare: usciamo puliti invece
+        # di sollevare KeyError e uccidere il job nel wrapper.
+        print(f"[{job_id}] run_generation: job assente da _jobs all'avvio "
+              f"(rimosso da cleanup o thread duplicato) — skip", flush=True)
+        return
     _set_job_status(job, "generating")
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
@@ -2823,7 +2866,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                     _m4b_sim.start()
 
-                    from audiobook_app import _log_m4b_progress
                     _log_m4b_progress(job, "START", size_mb=round(
                         sum(os.path.getsize(p) for p in all_parts if os.path.exists(p)) / 1e6, 2
                     ))
@@ -2905,9 +2947,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 )
                 _m4b_sim.start()
 
-                from audiobook_app import _log_m4b_progress
                 _log_m4b_progress(job, "START", size_mb=round(
-                    os.path.getsize(final_mp3) / 1e6, 2
+                    (os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0) / 1e6, 2
                 ))
 
                 def _m4b_phase_cb(pct, msg):
@@ -3304,9 +3345,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                     _m4b_sim.start()
 
-                    from audiobook_app import _log_m4b_progress
                     _log_m4b_progress(job, "START", size_mb=round(
-                        os.path.getsize(temp_full_mp3) / 1e6, 2
+                        (os.path.getsize(temp_full_mp3) if os.path.exists(temp_full_mp3) else 0) / 1e6, 2
                     ))
 
                     def _m4b_phase_cb(pct, msg):

@@ -724,6 +724,26 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
     raise ValueError("invalid payment_token")
 
 
+def email_for_token(token: str) -> str:
+    """Best-effort: email associata a un payment token (voucher o PayPal order).
+
+    Restituisce stringa vuota se il token non e' noto o non ha email. Funziona
+    anche DOPO il consumo del token (sia il voucher sia l'ordine PayPal restano
+    nei rispettivi store, marcati come usati/scalati). Usata per registrare il
+    job pagato in modalita' batch (notifica + protezione heartbeat).
+    """
+    if not token:
+        return ""
+    v = _vouchers.get(token)
+    if v:
+        return (v.get("email") or "").strip().lower()
+    with _payments_lock:
+        pay = _payments.get(token)
+        if pay:
+            return (pay.get("email") or "").strip().lower()
+    return ""
+
+
 def _paypal_capture_order(order_id):
     """Capture a previously-approved order. Returns captured order dict."""
     import requests
