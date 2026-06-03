@@ -25,7 +25,8 @@ def test_evicts_local_after_hot_window(aa, monkeypatch, tmp_path):
     storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
 
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
-    monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
+    # cold combacia per dimensione col locale (1 byte) → evict consentito
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: audio.stat().st_size)
     audiobook_app.jobs["job1"] = {"voice": "it-IT-IsabellaNeural"}
 
     audiobook_app._evict_hot_local()
@@ -43,7 +44,7 @@ def test_keeps_local_within_hot_window(aa, monkeypatch, tmp_path):
     storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time())
 
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
-    monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: audio.stat().st_size)
     audiobook_app.jobs["job2"] = {"voice": "it-IT-IsabellaNeural"}
 
     audiobook_app._evict_hot_local()
@@ -60,9 +61,9 @@ def test_no_evict_if_object_not_confirmed(aa, monkeypatch, tmp_path):
     storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
 
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
-    monkeypatch.setattr(storage_backend, "object_exists", lambda k: False)
-    # La copia-prima-di-evict viene tentata ma non conferma (object_exists resta
-    # False) → il locale NON va cancellato.
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: None)
+    # La copia-prima-di-evict viene tentata ma non conferma (object_size resta
+    # None) → il locale NON va cancellato.
     monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: None)
     audiobook_app.jobs["job3"] = {"voice": "it-IT-IsabellaNeural"}
 
@@ -84,10 +85,57 @@ def test_uploads_missing_cold_then_evicts(aa, monkeypatch, tmp_path):
     uploaded = []
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: uploaded.append(k))
-    # Mancante prima dell'upload, presente dopo (semantica reale).
-    monkeypatch.setattr(storage_backend, "object_exists", lambda k: k in uploaded)
+    # Mancante (size None) prima dell'upload, dimensione locale dopo.
+    monkeypatch.setattr(storage_backend, "object_size",
+                        lambda k: audio.stat().st_size if k in uploaded else None)
     audiobook_app.jobs["job5"] = {"voice": "it-IT-IsabellaNeural"}
 
     audiobook_app._evict_hot_local()
     assert uploaded, "doveva caricare la copia mancante prima dell'eviction"
     assert not audio.exists()  # rimosso solo dopo copia cold confermata
+
+
+def test_cold_m4b_valid_detects_moov(aa, monkeypatch):
+    """F4: _cold_m4b_valid cammina gli atom del m4b cold e distingue un file
+    finalizzato (moov presente) da uno troncato (solo ftyp+mdat oltre EOF)."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    def box(typ, size): return size.to_bytes(4, "big") + typ
+    valid = box(b"ftyp", 16) + b"\0"*8 + box(b"moov", 16) + b"\0"*8        # moov c'è
+    trunc = box(b"ftyp", 16) + b"\0"*8 + (10**9).to_bytes(4, "big") + b"mdat" + b"\0"*8  # mdat oltre EOF
+    store = {"b": valid}
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_tiering, "key_for_path", lambda p: "k")
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: len(store["b"]))
+    monkeypatch.setattr(storage_backend, "get_range", lambda k, s, e: store["b"][s:e+1])
+
+    assert audiobook_app._cold_m4b_valid("/x/book.m4b") is True
+    store["b"] = trunc
+    assert audiobook_app._cold_m4b_valid("/x/book.m4b") is False
+
+
+def test_reuploads_when_cold_size_mismatch(aa, monkeypatch, tmp_path):
+    """F3: se il cold ESISTE ma è più piccolo del locale (es. m4b troncato
+    caricato mid-write), l'eviction NON si fida: ri-carica il locale completo,
+    verifica che la size combaci, e solo allora cancella."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "job7" / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"complete-audio-bytes")  # 20 byte
+    storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
+
+    uploaded = []
+    cold = {"size": 3}  # cold troncato (3 byte) presente da prima
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    def _upload(p, k):
+        uploaded.append(k)
+        cold["size"] = audio.stat().st_size  # il re-upload porta la size a quella locale
+    monkeypatch.setattr(storage_backend, "upload_file", _upload)
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: cold["size"])
+    audiobook_app.jobs["job7"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert uploaded, "il cold troncato doveva essere ri-caricato dal locale"
+    assert not audio.exists()  # cancellato solo dopo che le size combaciano

@@ -15,6 +15,7 @@ _HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
 
 _OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm")
 _MARKER_NAME = ".cloud_uploaded"
+_GEN_COMPLETE_NAME = ".generation_complete"
 
 
 def _is_gemini_voice(voice):
@@ -55,6 +56,28 @@ def mark_cloud_uploaded(output_dir, when):
 def cloud_uploaded_at(output_dir):
     """Timestamp dal marker, o None se assente/illeggibile."""
     m = Path(output_dir) / _MARKER_NAME
+    if not m.exists():
+        return None
+    try:
+        return float(m.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def mark_generation_complete(output_dir, when):
+    """Marca un output_dir come 'generazione + assemblaggio M4B/MP3 conclusi'.
+    Scritto a COMPLETE, DOPO la conversione: la presenza del marker garantisce
+    che i file (in particolare l'.m4b col suo atom moov finale) sono finalizzati
+    e quindi offloadabili su cold senza rischio di copiare un file mid-write."""
+    try:
+        (Path(output_dir) / _GEN_COMPLETE_NAME).write_text(str(float(when)), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def generation_complete_at(output_dir):
+    """Timestamp dal marker .generation_complete, o None se assente/illeggibile."""
+    m = Path(output_dir) / _GEN_COMPLETE_NAME
     if not m.exists():
         return None
     try:

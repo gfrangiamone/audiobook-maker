@@ -2289,6 +2289,11 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
 
+# F1: finestra di "quiete" sotto cui un output senza marker .generation_complete
+# è considerato ancora in scrittura (conversione in corso) e NON viene offloadato.
+_OFFLOAD_QUIET_SEC = int(os.environ.get("ABM_OFFLOAD_QUIET_SEC", "180"))
+
+
 def _offload_to_cloud(job_id, output_dir, when):
     """Carica i file di output offloadable su cold storage e scrive il marker.
     No-op se il backend S3 non è configurato. Verifica l'esistenza remota
@@ -2311,15 +2316,37 @@ def _offload_to_cloud(job_id, output_dir, when):
     if not offloadable:
         print(f"[{job_id}] cloud offload skip: nessun file offloadable in {output_dir}", flush=True)
         return False
+    # F1 — NON offloadare un output mentre la conversione è ancora in corso.
+    # Causa dell'incidente cold: lo sweep di reconcile copiava un .m4b mid-write
+    # (atom moov non ancora scritto da ffmpeg) e l'idempotenza per-nome bloccava
+    # poi il ricarico della versione completa. Si procede solo se:
+    #   - marker .generation_complete presente (scritto a COMPLETE, dopo la
+    #     conversione: i file sono finalizzati), OPPURE
+    #   - (fallback per output pre-marker) nessun file offloadable è stato scritto
+    #     negli ultimi _OFFLOAD_QUIET_SEC: ffmpeg in scrittura lascia mtime fresco.
+    if storage_tiering.generation_complete_at(od) is None:
+        try:
+            newest = max(f.stat().st_mtime for f in offloadable)
+        except OSError:
+            newest = when
+        quiet = when - newest
+        if quiet < _OFFLOAD_QUIET_SEC:
+            print(f"[{job_id}] cloud offload SKIP (generazione non conclusa): "
+                  f"no marker .generation_complete e ultimo write {quiet:.0f}s fa "
+                  f"< {_OFFLOAD_QUIET_SEC}s — {output_dir}", flush=True)
+            return False
     all_ok = True
     uploaded_any = False
     for f in offloadable:
         key = storage_tiering.key_for_path(str(f))
         if not key:
             continue
-        # Già su cold (es. chiamata da reconcile): non ricaricare.
+        # F2 — idempotenza per CONTENUTO, non per nome: salta l'upload solo se la
+        # copia cold ha la STESSA dimensione del locale. Un cold assente o più
+        # piccolo (es. m4b troncato caricato mid-write da un vecchio offload)
+        # viene RI-caricato, così l'idempotenza non blinda una copia corrotta.
         try:
-            if storage_backend.object_exists(key):
+            if storage_backend.object_size(key) == f.stat().st_size:
                 uploaded_any = True
                 continue
         except Exception:
@@ -3593,8 +3620,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         # Offload asincrono su cold storage (se configurato). I file restano
         # serviti da locale per tutta la finestra calda; l'upload gira intanto.
+        # Prima: marca la generazione come conclusa (file .m4b/.mp3 finalizzati)
+        # così l'offload — sia questo che il reconcile sweep — può procedere
+        # senza rischio di copiare un file ancora in scrittura (vedi F1).
+        _out_dir = job.get("output_dir", "")
+        if _out_dir:
+            try:
+                storage_tiering.mark_generation_complete(_out_dir, time.time())
+            except Exception as e:
+                print(f"[{job_id}] mark_generation_complete failed (non-fatal): {e}", flush=True)
         try:
-            _spawn_cloud_offload(job_id, job.get("output_dir", ""))
+            _spawn_cloud_offload(job_id, _out_dir)
         except Exception as e:
             print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
 

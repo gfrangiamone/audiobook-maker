@@ -41,7 +41,7 @@ from pathlib import Path
 
 from flask import (
     Flask, render_template_string, request, jsonify,
-    send_file, Response, stream_with_context, redirect
+    send_file, Response, stream_with_context, redirect, after_this_request
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 import storage_backend
@@ -1092,6 +1092,49 @@ def _cold_object_available(local_path):
         return False
     try:
         return storage_backend.object_exists(key)
+    except Exception:
+        return False
+
+
+def _cold_m4b_valid(local_path):
+    """True se la copia cold del m4b snapshottato esiste ed è FINALIZZATA (atom
+    'moov' presente). Evita di servire da cold un m4b TRONCATO (legacy, caricato
+    mid-write da un vecchio offload) preferendogli il fallback. Bandwidth minima:
+    pochi range GET da 16 byte camminando i top-level atom MP4."""
+    if not storage_backend.is_enabled() or not local_path:
+        return False
+    key = storage_tiering.key_for_path(local_path)
+    if not key:
+        return False
+    try:
+        size = storage_backend.object_size(key)
+        if not size:
+            return False
+        offset = 0
+        guard = 0
+        while offset < size:
+            guard += 1
+            if guard > 64:
+                return False
+            hdr = storage_backend.get_range(key, offset, offset + 15)
+            if len(hdr) < 8:
+                return False
+            boxsize = int.from_bytes(hdr[0:4], "big")
+            boxtype = hdr[4:8]
+            header = 8
+            if boxsize == 1:
+                if len(hdr) < 16:
+                    return False
+                boxsize = int.from_bytes(hdr[8:16], "big")
+                header = 16
+            elif boxsize == 0:
+                boxsize = size - offset
+            if boxtype == b"moov":
+                return True
+            if boxsize < header:
+                return False
+            offset += boxsize
+        return False
     except Exception:
         return False
 
@@ -8510,6 +8553,20 @@ def token_do_download_m4b(token):
         _mark_token_downloaded(token_info)
         return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
 
+    # F4 — Il M4B locale è evacuato: PRIMA del fallback MP3, prova a servire il
+    # M4B da cold (presigned 302), ma solo se è FINALIZZATO (atom moov presente):
+    # così l'utente riceve il vero M4B invece dell'MP3 quando il locale è stato
+    # solo evictato, senza però servire un eventuale m4b cold troncato (legacy).
+    _m4b_snap = token_info.get("output_m4b", "")
+    if _cold_m4b_valid(_m4b_snap):
+        _cold = _try_cold_serve(_m4b_snap, download_name=f"{safe_name}.m4b")
+        if _cold is not None:
+            if request.method != "HEAD" and not request.headers.get("Range"):
+                _log_activity(job_id, token_info.get("original_filename", ""),
+                              "DOWNLOAD_M4B_TOKEN", "", "", "", "")
+            _mark_token_downloaded(token_info)
+            return _cold
+
     # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
     # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
     print(f"[dl] M4B totally missing for job {job_id}. Falling back to MP3.")
@@ -8699,8 +8756,14 @@ def _serve_audio_download(token_info, job, job_id):
     if job_dir.exists():
         print(f"[dl] Scanning {job_dir} for downloadable files...")
         zips = sorted(job_dir.glob("*.zip")) + sorted(_find_files_in_outputs(job_dir, "*.zip"))
-        # Exclude podcast zips
-        zips = [z for z in zips if "_podcast" not in z.name]
+        # Escludi gli zip NON canonici: podcast e zip transitori di download
+        # (download.zip / dl_*.zip). Questi ultimi sono temporanei e non vanno
+        # mai ri-serviti né lasciati sul disco (in passato un download.zip
+        # orfano da 28GB ha saturato il volume).
+        zips = [z for z in zips
+                if "_podcast" not in z.name
+                and z.name != "download.zip"
+                and not z.name.startswith("dl_")]
         if zips:
             found = str(zips[0])
             print(f"[dl] Fallback: found ZIP {found}")
@@ -8718,12 +8781,34 @@ def _serve_audio_download(token_info, job, job_id):
             return _send_file_throttled(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
         elif len(mp3s) > 1:
-            # Multiple MP3s: create a ZIP on the fly
-            src_dir = str(mp3s[0].parent)
-            zip_file = shutil.make_archive(str(job_dir / "download"), "zip", src_dir)
-            print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {zip_file}")
+            # Multiple MP3s: crea uno ZIP al volo da SOLI i file mp3.
+            # NON usare make_archive sull'intera dir: se gli mp3 sono nella job
+            # root, zipperebbe la cartella in sé stessa (incluso lo zip in
+            # crescita) → esplosione di dimensione. Aggiungiamo i singoli file
+            # con arcname=basename, in un file temporaneo rimosso dopo l'invio.
+            import tempfile, zipfile as _zf
+            _fd, tmp_zip = tempfile.mkstemp(suffix=".zip", prefix="dl_", dir=str(job_dir))
+            os.close(_fd)
+            try:
+                with _zf.ZipFile(tmp_zip, "w", _zf.ZIP_DEFLATED, allowZip64=True) as zf:
+                    for _m in mp3s:
+                        zf.write(str(_m), arcname=os.path.basename(str(_m)))
+            except Exception:
+                try: os.remove(tmp_zip)
+                except OSError: pass
+                raise
+
+            @after_this_request
+            def _cleanup_dl_zip(resp, _p=tmp_zip):
+                # unlink dopo l'invio: su Linux l'FD aperto da send_file resta
+                # valido fino a fine streaming, lo spazio si libera alla chiusura.
+                try: os.remove(_p)
+                except OSError: pass
+                return resp
+
+            print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {tmp_zip}")
             _do_log()
-            return _send_file_throttled(zip_file, as_attachment=True,
+            return _send_file_throttled(tmp_zip, as_attachment=True,
                              download_name=output_name or "audiobook.zip")
 
     # Cold tier: il locale è evacuato (finestra calda scaduta). Se la copia cold
@@ -9650,6 +9735,14 @@ def api_download_podcast(job_id):
     finally:
         shutil.rmtree(str(podcast_dir), ignore_errors=True)
 
+    # work_dir è la root del job (fuori da output*/): lo zip podcast NON viene
+    # gestito dal tiering, quindi rimuovilo dopo l'invio per non lasciarlo orfano.
+    @after_this_request
+    def _cleanup_podcast_zip(resp, _p=podcast_zip):
+        try: os.remove(_p)
+        except OSError: pass
+        return resp
+
     if not _is_resume_or_probe_request():
         _log_activity(job_id, job.get("original_filename", ""), "DOWNLOAD_PODCAST",
                       job.get("client_id", ""), job.get("client_ip", ""),
@@ -9867,22 +9960,30 @@ def _evict_hot_local():
                         if not key:
                             continue
                         try:
-                            # INVARIANTE: non cancellare mai un file HOT senza una
-                            # copia COLD confermata. Verifica su cold; se manca,
-                            # COPIA prima, ri-verifica, e SOLO a copia confermata
-                            # rimuovi il locale. Altrimenti tieni il locale.
-                            on_cold = storage_backend.object_exists(key)
-                            if not on_cold:
-                                print(f"[hot-evict] cold copy MISSING — upload before evict: {f}")
+                            # INVARIANTE (F3): non cancellare mai un file HOT se la
+                            # copia COLD non COMBACIA per dimensione. La sola
+                            # esistenza non basta: un cold TRONCATO (es. m4b senza
+                            # moov caricato mid-write) esiste ma è più piccolo del
+                            # locale completo. Verifica size cold == size local; se
+                            # manca o differisce, ri-CARICA il locale (autoritativo),
+                            # ri-verifica, e SOLO a match confermato rimuovi il locale.
+                            local_size = f.stat().st_size
+                            cold_size = storage_backend.object_size(key)
+                            cold_ok = (cold_size == local_size)
+                            if not cold_ok:
+                                print(f"[hot-evict] cold copy MISSING/MISMATCH "
+                                      f"(cold={cold_size} vs local={local_size}) — "
+                                      f"re-upload before evict: {f}")
                                 try:
                                     storage_backend.upload_file(str(f), key)
-                                    on_cold = storage_backend.object_exists(key)
+                                    cold_size = storage_backend.object_size(key)
+                                    cold_ok = (cold_size == local_size)
                                 except Exception as e:
                                     print(f"[hot-evict] upload-before-evict failed for {f}: {e}")
-                                    on_cold = False
-                            if on_cold:
+                                    cold_ok = False
+                            if cold_ok:
                                 f.unlink()
-                                print(f"[hot-evict] Local removed (cold copy ok): {f}")
+                                print(f"[hot-evict] Local removed (cold copy ok, {local_size}B): {f}")
                             else:
                                 print(f"[hot-evict] KEEP local (cold copy NOT confirmed): {f}")
                         except OSError:
@@ -9905,9 +10006,17 @@ def _reconcile_cold_offload():
     if not storage_backend.is_enabled():
         return
     now = time.time()
+    with _jobs_lock:
+        job_by_id = dict(jobs)
     try:
         for jdir in UPLOAD_DIR.iterdir():
             if not jdir.is_dir() or jdir.name.startswith("_"):
+                continue
+            # Salta i job ANCORA ATTIVI: offloaderanno al proprio COMPLETE.
+            # Toccarli ora rischierebbe di copiare file mid-write (vedi F1);
+            # _offload_to_cloud comunque rifiuta, ma evitiamo il log a ogni giro.
+            _j = job_by_id.get(jdir.name)
+            if _j is not None and _j.get("status") not in ("done", "partial", "error"):
                 continue
             try:
                 for od in jdir.iterdir():

@@ -561,6 +561,7 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 | `ABM_S3_PRESIGN_TTL_SEC` | Validità presigned URL (s) | `21600` (6h) | storage_backend.py |
 | `ABM_HOT_WINDOW_SEC` | Finestra calda locale, voci standard (s) | `64800` (18h) | storage_tiering.py |
 | `ABM_HOT_WINDOW_GEMINI_SEC` | Finestra calda locale, voci PREMIUM (s) | `172800` (48h) | storage_tiering.py |
+| `ABM_OFFLOAD_QUIET_SEC` | Finestra di quiete (s): un output senza marker `.generation_complete` i cui file sono stati scritti da meno di N secondi è considerato in conversione e NON viene offloadato (gate anti race mid-write, vedi F1) | `180` | generation_engine.py |
 
 **Default voluti:** la finestra calda parte uguale alla retention attuale (18h/48h),
 così all'inizio i file vivono in locale esattamente come oggi; nessuna eviction
@@ -585,9 +586,13 @@ addebitato dal provider (con presigned i byte vanno storage→utente).
 **Architettura:** `storage_backend.py` (primitive S3 via boto3, multipart upload
 automatico, presigned URL) è l'unico punto provider-specifico; `storage_tiering.py`
 contiene la logica caldo/freddo (chiave = path relativo a ABM_DATA_DIR, finestra,
-marker `.cloud_uploaded`). Upload async dopo `done`; evacuazione locale a fine
-finestra calda solo se l'oggetto è confermato su S3; delete cold a fine retention
-totale (escluso per job sotto retention forense).
+marker `.cloud_uploaded` e `.generation_complete`). Upload async dopo `done`;
+evacuazione locale a fine finestra calda solo se l'oggetto è confermato su S3;
+delete cold a fine retention totale (escluso per job sotto retention forense).
+
+**Invarianti anti-corruzione cold (post-incidente 2026-06):**
+- **F1 — offload gated sul completamento generazione.** Lo sweep `_reconcile_cold_offload` e `_offload_to_cloud` NON caricano un `output*` mentre la conversione M4B è in corso (un m4b mid-write non ha ancora l'atom `moov` finale). Gate: marker `.generation_complete` (scritto a COMPLETE dopo l'assemblaggio) **oppure**, per output pre-marker, nessuna scrittura sui file da almeno `ABM_OFFLOAD_QUIET_SEC`. Il reconcile salta inoltre i job ancora `generating`.
+- **F3 — eviction copy-verify by size.** `_evict_hot_local` cancella il file locale solo se `storage_backend.object_size(key) == size(locale)`; un cold troncato (size diversa) esiste ma NON autorizza la cancellazione → ri-upload del locale completo, ri-verifica size, poi delete.
 
 ---
 

@@ -83,6 +83,33 @@ def object_exists(key):
         raise
 
 
+def object_size(key):
+    """Dimensione in byte dell'oggetto su cold (head_object), o None se assente.
+    Usato per verificare che la copia cold combaci col locale prima di evictare:
+    un cold troncato (es. m4b senza moov caricato mid-write) ha dimensione
+    diversa dal locale completo e NON deve autorizzare la cancellazione."""
+    try:
+        r = _get_client().head_object(Bucket=_BUCKET, Key=_full_key(key))
+        return int(r["ContentLength"])
+    except ClientError as e:
+        code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+
+
+def get_range(key, start, end):
+    """Legge i byte [start, end] inclusivi dell'oggetto (Range GET). Ritorna i
+    byte letti, o b'' su errore/assenza. Usato per validazioni leggere (es.
+    camminare gli atom MP4 di un m4b cold senza scaricarlo tutto)."""
+    try:
+        r = _get_client().get_object(Bucket=_BUCKET, Key=_full_key(key),
+                                     Range=f"bytes={start}-{end}")
+        return r["Body"].read()
+    except Exception:
+        return b""
+
+
 def presigned_get_url(key, download_name=None, ttl=None):
     """URL GET temporaneo per redirect 302. download_name forza il filename
     via Content-Disposition (preservato attraverso il redirect)."""
