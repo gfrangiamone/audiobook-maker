@@ -8318,7 +8318,10 @@ def token_download_page(token):
     created_at = token_info["created_at"]
     elapsed = time.time() - created_at
     # Retention per-token: PREMIUM (is_gemini) usa GEMINI_FILE_RETENTION_SEC.
-    _ret = _retention_for_token_info(token_info)
+    # Usa la retention EFFETTIVA (×2 no-download per PREMIUM mai scaricato),
+    # allineata al cleanup: altrimenti la pagina dichiara "scaduto" e rimuove
+    # il token tra 48h e 96h mentre i file esistono ancora su disco.
+    _ret = _effective_retention_for_token_info(token_info)
 
     # Check retention expiration
     if elapsed > _ret:
@@ -8415,7 +8418,7 @@ def token_do_download_abm(token):
     token_info = _download_tokens.get(token)
     if not token_info:
         return "Link scaduto", 410
-    _ret = _retention_for_token_info(token_info)
+    _ret = _effective_retention_for_token_info(token_info)
     if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
@@ -8464,7 +8467,7 @@ def token_do_download_m4b(token):
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    _ret = _retention_for_token_info(token_info)
+    _ret = _effective_retention_for_token_info(token_info)
     if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
@@ -8556,7 +8559,7 @@ def token_do_download(token):
         return "Link scaduto", 410
 
     job_id = token_info["job_id"]
-    _ret = _retention_for_token_info(token_info)
+    _ret = _effective_retention_for_token_info(token_info)
     if time.time() - token_info["created_at"] > _ret:
         _download_tokens.pop(token, None)
         _save_tokens()
