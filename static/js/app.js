@@ -1261,6 +1261,15 @@ async function onGenerateClick() {
     if (!est || est.is_free) {
       return startCombinedGeneration();
     }
+    // Voci STANDARD: il costo (solo LLM) si paga col popup dedicato
+    // all'ottimizzazione AI, già ottenuto al toggle (window._couponPaymentToken)
+    // o richiesto lazy dentro startCombinedGeneration. Il modale combinato
+    // (con riga "Voci PREMIUM") è riservato alle voci PREMIUM: aprirlo qui per
+    // le standard duplicherebbe un pagamento già fatto. Vedi guard gemella in
+    // _fetchCostEstimate.
+    if (wizardState.audioTab !== 'premium') {
+      return startCombinedGeneration(window._couponPaymentToken || null);
+    }
     openPaymentModal(est);
   } finally {
     _generatingModal = false;
