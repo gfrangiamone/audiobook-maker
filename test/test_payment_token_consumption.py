@@ -94,9 +94,16 @@ def test_refund_gemini_payment_voucher_path(monkeypatch):
     assert abs((rem_after - rem_before) - 1.50) < 0.01
 
 
-def test_refund_gemini_payment_paypal_emits_refund_voucher(monkeypatch):
-    """For PayPal payments, refund emits a refund voucher to the buyer's email."""
+def test_refund_gemini_payment_paypal_emits_refund_voucher(monkeypatch, tmp_path):
+    """For PayPal payments, refund emits a refund voucher to the buyer's email.
+
+    Stato voucher isolato: senza, il voucher di rimborso creato qui veniva
+    persistito nel _vouchers.json reale del dev e ai run successivi il guard
+    has_refund_for_job (giustamente) saltava il refund facendo fallire il test.
+    """
     import generation_engine
+    monkeypatch.setattr(payment, "_vouchers", {})
+    monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
     payment._payments["REFUND_ORD"] = {
         "order_id": "REFUND_ORD", "amount_eur": 2.00, "email": "buyer@x.it",
         "captured_at": time.time(), "used": True,

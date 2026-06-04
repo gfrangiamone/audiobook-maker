@@ -2728,10 +2728,15 @@ def admin_logs():
             )
             m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
 
+            kill_btn = (
+                f'<button class="kill-btn" data-sid="{sid}" '
+                f'data-title="{html_mod.escape(s["filename"])}" '
+                f'title="Interrompi job (admin)">⛔</button>'
+            ) if is_progress else ""
             cards_html += f"""<div class="{card_cls}" {data_attrs}>
 <div class="card-top">
 <span class="card-title" title="{html_mod.escape(s['filename'])}">{display_title}</span>
-<span class="badge" style="color:{fg};background:{bg}">{op}</span>
+<span class="badge" style="color:{fg};background:{bg}">{op}</span>{kill_btn}
 </div>
 <div class="card-timeline">{timeline}</div>
 <div class="card-meta">
@@ -2870,6 +2875,20 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .cid-count{{font-size:.62rem;opacity:.8}}
 .card-blang{{font-size:.65rem;background:rgba(167,139,250,.12);color:var(--accent2);padding:1px 6px;border-radius:3px;font-weight:600;text-transform:uppercase}}
 .card-pct{{color:var(--orange);font-weight:700;margin-left:4px}}
+.kill-btn{{flex-shrink:0;border:1px solid rgba(220,38,38,.45);background:rgba(220,38,38,.10);color:#dc2626;border-radius:6px;font-size:.72rem;line-height:1;padding:3px 6px;cursor:pointer}}
+.kill-btn:hover{{background:rgba(220,38,38,.22)}}
+.kmodal-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200}}
+.kmodal-overlay.open{{display:flex}}
+.kmodal{{background:var(--card,#1c1c28);border:1px solid rgba(220,38,38,.5);border-radius:12px;max-width:430px;width:92%;padding:18px 20px;font-size:.82rem;color:var(--text)}}
+.kmodal h3{{margin:0 0 10px;font-size:.95rem;color:#dc2626}}
+.kmodal .krow{{margin:4px 0;color:var(--text-dim)}} .kmodal .krow b{{color:var(--text)}}
+.kmodal .keffects{{margin:12px 0;padding:10px 12px;border-radius:8px;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.25);line-height:1.45}}
+.kmodal .kbtns{{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}}
+.kmodal button{{border-radius:8px;padding:7px 14px;font-size:.78rem;cursor:pointer;border:1px solid transparent}}
+.kmodal .kcancel{{background:transparent;border-color:var(--text-dim);color:var(--text)}}
+.kmodal .kconfirm{{background:#dc2626;color:#fff;font-weight:700}}
+.kmodal .kconfirm:disabled{{opacity:.5;cursor:wait}}
+.ktoast{{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#1c1c28;border:1px solid var(--accent);color:var(--text);padding:9px 16px;border-radius:8px;font-size:.78rem;z-index:210;display:none}}
 .empty{{text-align:center;padding:60px 20px;color:var(--text-dim)}} .empty .icon{{font-size:3rem;margin-bottom:12px}}
 @media(max-width:600px){{
 .header{{padding:12px 14px;gap:8px}} .header h1{{font-size:.78rem}} .header .period{{font-size:1.1rem}}
@@ -3203,7 +3222,135 @@ async function toggleSuspend() {{
 }}
 
 checkSuspendStatus();
+
+//  -  -  Admin: interruzione job (kill)  -  -
+const kOverlay = document.getElementById('kmodalOverlay');
+const kToast = document.getElementById('ktoast');
+let kCurrent = null; // {{sid, title, status, gemini}}
+
+function adminHeaders(extra) {{
+    const h = extra || {{}};
+    if (ADMIN_TOKEN) h['X-Admin-Token'] = ADMIN_TOKEN;
+    return h;
+}}
+
+function showToast(msg, ok) {{
+    kToast.textContent = msg;
+    kToast.style.borderColor = ok ? 'var(--green, #16a34a)' : '#dc2626';
+    kToast.style.display = 'block';
+    setTimeout(() => {{ kToast.style.display = 'none'; }}, 5000);
+}}
+
+function refundEffectsText(status, paidEur, paidMethod, isGemini) {{
+    if (!paidEur || paidEur <= 0) {{
+        return 'Job non pagato: <b>nessun rimborso</b> previsto.';
+    }}
+    const amount = paidEur.toFixed(2) + ' EUR';
+    let scope;
+    if (status === 'optimizing') {{
+        scope = 'Rimborso <b>integrale</b> (' + amount + ').';
+    }} else if (isGemini) {{
+        scope = 'Rimborso di ' + amount + ' <b>al netto dei costi già sostenuti</b>, senza bonus.' +
+            '<br>L’<b>audio parziale</b> già generato viene comunque reso scaricabile all’utente.';
+    }} else {{
+        scope = 'Rimborso <b>integrale</b> (' + amount + ').';
+    }}
+    const channel = (paidMethod === 'voucher')
+        ? 'Riaccredito <b>sul voucher originale</b> dell’utente (nessuna email).'
+        : 'Emissione di un <b>voucher di rimborso inviato via email</b> all’utente.';
+    return scope + '<br>' + channel +
+        '<br>Se per questo job esiste già un rimborso, <b>non verrà duplicato</b>.';
+}}
+
+async function openKillModal(sid, title) {{
+    let status = '', pct = 0, paid = 0, method = '', locked = false;
+    try {{
+        const r = await fetch('/api/job_status/' + sid, {{headers: adminHeaders()}});
+        if (r.ok) {{ const d = await r.json(); status = d.status || ''; pct = d.pct || 0; }}
+    }} catch(e) {{}}
+    const activeStates = ['generating', 'optimizing', 'optimized', 'analyzed', 'running'];
+    if (!status || activeStates.indexOf(status) < 0) {{
+        showToast('Job non più attivo (stato: ' + (status || 'non in memoria') + ').', false);
+        return;
+    }}
+    try {{
+        const r = await fetch('/api/cancel_preview/' + sid, {{headers: adminHeaders()}});
+        if (r.ok) {{
+            const d = await r.json();
+            paid = d.paid_eur || 0; method = d.paid_method || '';
+            if (d.progress_pct) pct = d.progress_pct;
+            locked = !!d.locked;
+        }}
+    }} catch(e) {{}}
+    const card = document.querySelector('.kill-btn[data-sid="' + sid + '"]')?.closest('.card');
+    const isGemini = card && card.dataset.gemini === '1';
+    kCurrent = {{sid: sid, status: status}};
+    document.getElementById('kmTitle').textContent = title;
+    document.getElementById('kmSid').textContent = sid;
+    document.getElementById('kmOp').textContent =
+        (status === 'optimizing') ? 'Ottimizzazione AI' : 'Generazione TTS';
+    document.getElementById('kmPct').textContent = pct + '%';
+    document.getElementById('kmEffects').innerHTML =
+        refundEffectsText(status, paid, method, isGemini) +
+        (locked ? '<br><b>Nota:</b> job oltre la soglia di lock utente — l’interruzione admin la bypassa.' : '');
+    document.getElementById('kmConfirm').disabled = false;
+    kOverlay.classList.add('open');
+}}
+
+async function confirmKill() {{
+    if (!kCurrent) return;
+    const btn = document.getElementById('kmConfirm');
+    btn.disabled = true;
+    const url = (kCurrent.status === 'optimizing')
+        ? '/api/cancel_optimize/' + kCurrent.sid
+        : '/api/cancel/' + kCurrent.sid + '?force=1';
+    try {{
+        const r = await fetch(url, {{method: 'POST', headers: adminHeaders()}});
+        const d = await r.json().catch(() => ({{}}));
+        if (r.ok && (d.status === 'cancelling')) {{
+            showToast('Interruzione inviata: il job si fermerà al prossimo chunk. Eventuale rimborso gestito automaticamente.', true);
+        }} else if (d.error === 'cancel_locked_progress') {{
+            showToast('Cancel rifiutato dal lock (' + d.progress_pct + '% > ' + d.lock_pct + '%): sessione admin non riconosciuta?', false);
+        }} else {{
+            showToast('Interruzione fallita: ' + (d.error || d.status || ('HTTP ' + r.status)), false);
+        }}
+    }} catch(e) {{
+        showToast('Errore di rete: ' + e, false);
+    }}
+    kOverlay.classList.remove('open');
+    kCurrent = null;
+}}
+
+document.addEventListener('click', (e) => {{
+    const kb = e.target.closest && e.target.closest('.kill-btn');
+    if (kb) {{
+        e.stopPropagation();
+        openKillModal(kb.dataset.sid, kb.dataset.title || '');
+        return;
+    }}
+    if (e.target.id === 'kmCancel' || e.target.id === 'kmodalOverlay') {{
+        kOverlay.classList.remove('open');
+        kCurrent = null;
+    }}
+    if (e.target.id === 'kmConfirm') confirmKill();
+}});
 </script>
+
+<div class="kmodal-overlay" id="kmodalOverlay">
+  <div class="kmodal">
+    <h3>⛔ Interrompere questo job?</h3>
+    <div class="krow">📄 <b id="kmTitle"></b></div>
+    <div class="krow">🆔 <code id="kmSid"></code></div>
+    <div class="krow">⚙️ <span id="kmOp"></span> · progresso <b id="kmPct"></b></div>
+    <div class="keffects" id="kmEffects"></div>
+    <div class="krow">L'operazione è <b>irreversibile</b>: la generazione non potrà riprendere da dove era arrivata.</div>
+    <div class="kbtns">
+      <button class="kcancel" id="kmCancel">Annulla</button>
+      <button class="kconfirm" id="kmConfirm">Interrompi job</button>
+    </div>
+  </div>
+</div>
+<div class="ktoast" id="ktoast"></div>
 
 </body>
 </html>"""

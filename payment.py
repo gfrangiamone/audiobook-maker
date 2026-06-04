@@ -371,6 +371,51 @@ def _voucher_consume(code: str, amount: float, job_id: str = "") -> float:
         return new_remaining
 
 
+def has_refund_for_job(job_id: str, payment_token: str = "") -> bool:
+    """True se esiste gia' una traccia PERSISTENTE di refund per il job:
+    - un voucher di rimborso emesso con origin_job_id == job_id (path PayPal,
+      filtrato anche su origin_order_id se ``payment_token`` e' noto), o
+    - riaccrediti su voucher (uses con amount_eur negativo e stesso job_id)
+      in numero >= degli addebiti per lo stesso job (un re-pagamento legittimo
+      dello stesso job dopo un refund resta quindi rimborsabile).
+
+    Guard idempotente money-critical: il flag in-memory job["refund_done"] si
+    perde al restart (incidente 2026-06: recovery ri-esegue job gia' rimborsati
+    e un secondo cancel/error duplicherebbe il rimborso).
+    """
+    if not job_id:
+        return False
+    tok = (payment_token or "").strip()
+    with _vouchers_lock:
+        # Path PayPal: voucher di rimborso gia' emesso per questo job/ordine.
+        for v in _vouchers.values():
+            if v.get("kind") != "refund" or v.get("origin_job_id") != job_id:
+                continue
+            if tok and v.get("origin_order_id") and v.get("origin_order_id") != tok:
+                continue
+            return True
+        # Path voucher: confronta addebiti vs riaccrediti per il job.
+        charged = refunded = 0
+        for code, v in _vouchers.items():
+            if tok and code != tok:
+                continue
+            uses = v.get("uses")
+            if not isinstance(uses, list):
+                continue
+            for u in uses:
+                if u.get("job_id") != job_id:
+                    continue
+                try:
+                    amt = float(u.get("amount_eur", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if amt > 0:
+                    charged += 1
+                elif amt < 0:
+                    refunded += 1
+        return refunded > 0 and refunded >= charged
+
+
 def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = "") -> float:
     """Ri-accredita ``amount`` EUR sul voucher ``code`` (operazione inversa a consume).
     Ritorna il nuovo saldo residuo. Se il voucher era marcato used, lo riattiva.
