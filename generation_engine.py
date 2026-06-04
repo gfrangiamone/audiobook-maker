@@ -49,7 +49,7 @@ from audio_utils import (
     pcm_size_to_seconds,
     pcm_to_mp3, pcm_to_aac_m4b,
     pcm_to_aac_m4b_monitored, _convert_mp3_to_m4b_monitored,
-    trim_pcm_trailing_silence,
+    trim_pcm_trailing_silence, build_m4b_rebuild_kit,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
@@ -1092,6 +1092,8 @@ def _send_completion_email(job_id):
         "output_name": job.get("output_name", ""),
         "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
         "output_m4b": job.get("output_m4b", ""),
+        # Kit ZIP di ripiego (MP3 + capitoli) quando la conversione M4B è fallita.
+        "output_m4b_fallback_zip": job.get("output_m4b_fallback_zip", ""),
         "epub_path": job.get("epub_path", ""),
         "podcast_safe_name": job.get("podcast_safe_name", ""),
         "podcast_ready": job.get("podcast_ready", False),
@@ -3030,6 +3032,29 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
                     os.remove(p)
+
+            # M4B fallito in formato 'm4b': invece del solo MP3, prepara un kit ZIP
+            # (MP3 + chapters.json + ffmetadata + cover + script ffmpeg) con cui
+            # l'utente può ricostruire l'M4B da sé. Best-effort: se fallisce, resta
+            # comunque l'MP3 di ripiego già prodotto.
+            if (output_format == 'm4b' and job.get("m4b_failed")
+                    and not job.get("output_m4b") and os.path.exists(final_mp3)):
+                try:
+                    _kit_cover = cover_path if 'cover_path' in locals() else None
+                    fallback_zip = str(output_dir / f"{safe_name}_audiolibro_capitoli.zip")
+                    if build_m4b_rebuild_kit(
+                            final_mp3, fallback_zip, chapters=m4b_chapters,
+                            title=info.title, author=info.author or None,
+                            cover_path=_kit_cover,
+                            date=getattr(info, "date", None),
+                            language=getattr(info, "language", None),
+                            description=getattr(info, "description", None)):
+                        job["output_m4b_fallback_zip"] = fallback_zip
+                        print(f"[{job_id}] M4B rebuild kit ready: {fallback_zip}")
+                    else:
+                        print(f"[{job_id}] M4B rebuild kit build returned False")
+                except Exception as _kit_err:
+                    print(f"[{job_id}] M4B rebuild kit error (non-fatal): {_kit_err}")
 
             if output_format == 'm4b' and job.get("output_m4b"):
                 # When the user requested M4B and conversion succeeded, the intermediate

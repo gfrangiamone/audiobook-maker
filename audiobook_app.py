@@ -1143,7 +1143,8 @@ def _token_cold_available(token_info):
     """True se almeno uno degli output snapshottati nel token esiste su cold."""
     if not isinstance(token_info, dict):
         return False
-    for k in ("output_m4b", "output_file", "output_zip", "optimized_abm_path"):
+    for k in ("output_m4b", "output_file", "output_zip", "optimized_abm_path",
+              "output_m4b_fallback_zip"):
         if _cold_object_available(token_info.get(k, "")):
             return True
     return False
@@ -7161,6 +7162,9 @@ def api_progress(job_id):
                 payload["has_abm"] = bool(job.get("ai_optimized")) or (bool(job.get("optimized_abm_path")) and os.path.exists(job.get("optimized_abm_path", "")))
                 payload["failed_chunks"] = job.get("failed_chunks", 0)
                 payload["m4b_failed"] = bool(job.get("m4b_failed", False))
+                # Kit ZIP di ripiego (MP3 + capitoli + script) quando l'M4B è fallito.
+                _kit_zip = job.get("output_m4b_fallback_zip")
+                payload["m4b_fallback_zip"] = bool(_kit_zip and os.path.exists(_kit_zip))
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             yield f"data: {json.dumps(payload)}\n\n"
@@ -8435,6 +8439,16 @@ def token_download_page(token):
     if not m4b_available and _cold_object_available(m4b_path_snap):
         m4b_available = True
 
+    # Kit di ripiego M4B (ZIP con MP3 + capitoli): disponibile se l'M4B vero manca.
+    kit_snap = token_info.get("output_m4b_fallback_zip", "")
+    m4b_kit_available = bool(kit_snap) and os.path.exists(kit_snap)
+    if not m4b_kit_available and kit_snap:
+        candidate = job_dir / Path(kit_snap).parent.name / Path(kit_snap).name
+        if candidate.exists():
+            m4b_kit_available = True
+    if not m4b_kit_available and kit_snap and _cold_object_available(kit_snap):
+        m4b_kit_available = True
+
     abm_path_snap = token_info.get("optimized_abm_path", "")
     has_abm = bool(abm_path_snap) and os.path.exists(abm_path_snap)
     if not has_abm and abm_path_snap:
@@ -8452,7 +8466,8 @@ def token_download_page(token):
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
                            output_format=output_format,
-                           retention_hours=round(_ret / 3600))
+                           retention_hours=round(_ret / 3600),
+                           m4b_kit_available=m4b_kit_available)
 
 
 @app.route("/dl/<token>/abm")
@@ -8566,6 +8581,28 @@ def token_do_download_m4b(token):
                               "DOWNLOAD_M4B_TOKEN", "", "", "", "")
             _mark_token_downloaded(token_info)
             return _cold
+
+    # M4B fallito ma esiste un kit di ripiego (ZIP con MP3 + capitoli + script):
+    # serviamo quello invece del solo MP3, così l'utente può ricostruire l'M4B.
+    kit_snap = token_info.get("output_m4b_fallback_zip", "")
+    kit_path = ""
+    if kit_snap and os.path.exists(kit_snap):
+        kit_path = kit_snap
+    elif kit_snap:
+        candidate = job_dir / Path(kit_snap).parent.name / Path(kit_snap).name
+        if candidate.exists():
+            kit_path = str(candidate)
+    if not kit_path:
+        _kits = list(job_dir.glob("**/*_audiolibro_capitoli.zip"))
+        if _kits:
+            kit_path = str(_kits[0])
+    if kit_path and os.path.exists(kit_path):
+        if request.method != "HEAD" and not request.headers.get("Range"):
+            _log_activity(job_id, token_info.get("original_filename", ""),
+                          "DOWNLOAD_M4B_KIT_TOKEN", "", "", "", "")
+        _mark_token_downloaded(token_info)
+        return _send_file_throttled(kit_path, as_attachment=True,
+                                    download_name=f"{safe_name}_audiolibro+capitoli.zip")
 
     # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
     # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
@@ -9220,7 +9257,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -9265,6 +9302,16 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "zh": ("&#x2B07;&#xFE0F; <span>下载有声读物 (ZIP)</span>", "Audiobook (ZIP)"),
             "hi": ("&#x2B07;&#xFE0F; <span>ऑडियोबुक डाउनलोड करें (ZIP)</span>", "Audiobook (ZIP)"),
         },
+        # Kit di ripiego (M4B fallito): MP3 + capitoli + script per ricostruire l'M4B.
+        "m4b_kit": {
+            "it": ("&#x2B07;&#xFE0F; <span>Scarica audiolibro + capitoli (ZIP)</span>", "Audiobook (MP3 + capitoli)"),
+            "en": ("&#x2B07;&#xFE0F; <span>Download audiobook + chapters (ZIP)</span>", "Audiobook (MP3 + chapters)"),
+            "fr": ("&#x2B07;&#xFE0F; <span>T&eacute;l&eacute;charger l&rsquo;audiobook + chapitres (ZIP)</span>", "Audiobook (MP3 + chapitres)"),
+            "es": ("&#x2B07;&#xFE0F; <span>Descargar audiolibro + cap&iacute;tulos (ZIP)</span>", "Audiobook (MP3 + cap&iacute;tulos)"),
+            "de": ("&#x2B07;&#xFE0F; <span>H&ouml;rbuch + Kapitel herunterladen (ZIP)</span>", "Audiobook (MP3 + Kapitel)"),
+            "zh": ("&#x2B07;&#xFE0F; <span>下载有声读物 + 章节 (ZIP)</span>", "Audiobook (MP3 + 章节)"),
+            "hi": ("&#x2B07;&#xFE0F; <span>ऑडियोबुक + अध्याय डाउनलोड करें (ZIP)</span>", "Audiobook (MP3 + अध्याय)"),
+        },
     }
 
     if dl_type == "optimized_abm":
@@ -9293,10 +9340,17 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         # degradiamo l'etichetta/route a MP3 anziché esporre un link M4B che il
         # backend dovrà servire via fallback silenzioso.
         if fmt == "m4b" and not m4b_available:
-            fmt = "mp3"
+            # Se l'M4B non c'è ma esiste il kit di ripiego, offri il kit (ZIP);
+            # altrimenti degrada al solo MP3.
+            fmt = "m4b_kit" if m4b_kit_available else "mp3"
 
         if fmt == "m4b":
             label_data = _format_labels["m4b"]
+            btn_url = f"/dl/{token}/m4b"
+        elif fmt == "m4b_kit":
+            # Il kit viene servito dallo stesso endpoint /m4b (che ripiega sul kit
+            # quando l'M4B non esiste).
+            label_data = _format_labels["m4b_kit"]
             btn_url = f"/dl/{token}/m4b"
         elif fmt == "mp3":
             label_data = _format_labels["mp3"]
@@ -9529,6 +9583,8 @@ def api_download(job_id):
     log_type = "DOWNLOAD"
     if download_type == "m4b":
         log_type = "DOWNLOAD_M4B"
+    elif download_type == "m4bkit":
+        log_type = "DOWNLOAD_M4B_KIT"
     elif download_type == "zip":
         log_type = "DOWNLOAD_ZIP"
     elif download_type == "abm":
@@ -9561,6 +9617,44 @@ def api_download(job_id):
             safe_name = _safe_filename(job["info"].title) or "progetto"
             return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True)
         return "Optimized ABM project file not found", 404
+
+    if download_type == "m4bkit":
+        # Kit di ripiego (M4B fallito): ZIP con MP3 + chapters.json + ffmetadata +
+        # cover + script ffmpeg. Se per qualunque motivo il kit non esiste, ripiega
+        # sull'MP3 sciolto (coerente con il vecchio comportamento).
+        kit_path = job.get("output_m4b_fallback_zip", "")
+        if not kit_path or not os.path.exists(kit_path):
+            cur_out = job.get("output_dir")
+            if cur_out and os.path.isdir(cur_out):
+                _kits = list(Path(cur_out).glob("*_audiolibro_capitoli.zip"))
+                if _kits:
+                    kit_path = str(_kits[0])
+                    job["output_m4b_fallback_zip"] = kit_path
+        safe_name = _safe_filename(job["info"].title) or "audiolibro"
+        if kit_path and os.path.exists(kit_path):
+            _do_log()
+            return _send_file_throttled(kit_path, as_attachment=True,
+                                        download_name=f"{safe_name}_audiolibro+capitoli.zip",
+                                        no_cache=True, bypass_throttle=True)
+        # Fallback MP3 se il kit manca
+        _out_files = job.get("output_files") or []
+        mp3_path = _out_files[0] if _out_files else ""
+        if not mp3_path or not os.path.exists(mp3_path):
+            mp3s = list(job_dir.glob("**/*.mp3"))
+            if mp3s:
+                mp3_path = str(mp3s[0])
+        if mp3_path and os.path.exists(mp3_path):
+            resp = _send_file_throttled(mp3_path, as_attachment=True,
+                                        download_name=f"{safe_name}.mp3",
+                                        no_cache=True, bypass_throttle=True)
+            try:
+                resp.headers["X-Fallback"] = "mp3"
+                prev = resp.headers.get("Access-Control-Expose-Headers", "")
+                resp.headers["Access-Control-Expose-Headers"] = (prev + ", X-Fallback").lstrip(", ")
+            except Exception:
+                pass
+            return resp
+        return "File not found", 404
 
     if download_type == "m4b":
         m4b_path = job.get("output_m4b")

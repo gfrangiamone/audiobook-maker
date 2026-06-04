@@ -2890,6 +2890,10 @@ function listenProgress(){
             if(outputFormat==='mp3'){
               btnD.innerHTML='<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>'+t('btn_dl_mp3')+'</span>';
               btnD.onclick=()=>downloadFile('mp3');
+            } else if(d.m4b_failed && d.m4b_fallback_zip){
+              // M4B fallito: offri il kit ZIP (MP3 + capitoli + script ffmpeg)
+              btnD.innerHTML='&#x2B07;&#xFE0F; <span>'+t('btn_dl_m4b_kit')+'</span>';
+              btnD.onclick=()=>downloadFile('m4bkit');
             } else {
               btnD.innerHTML='<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>'+t('btn_dl_m4b')+'</span>';
               btnD.onclick=()=>downloadFile('m4b');
@@ -3270,6 +3274,7 @@ async function downloadFile(type){
   if(type === 'abm') btnId = 'btnA';
   if(type === 'zip') btnId = 'btnD';
   if(type === 'mp3') btnId = 'btnD';
+  if(type === 'm4bkit') btnId = 'btnD';
 
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;
@@ -3333,9 +3338,10 @@ async function downloadFile(type){
       if(effectiveType === 'm4b') defName = 'audiobook.m4b';
       if(effectiveType === 'abm') defName = 'project.abm';
       if(effectiveType === 'mp3') defName = 'audiobook.mp3';
+      if(effectiveType === 'm4bkit') defName = 'audiobook.zip';
       if(!fname) fname=defName;
       // Safety net: enforce the expected extension if the parsed filename is missing it.
-      const extByType={zip:'.zip',m4b:'.m4b',mp3:'.mp3',abm:'.abm'};
+      const extByType={zip:'.zip',m4b:'.m4b',mp3:'.mp3',abm:'.abm',m4bkit:'.zip'};
       const expectedExt=extByType[effectiveType];
       if(expectedExt && !fname.toLowerCase().endsWith(expectedExt)) fname += expectedExt;
 
@@ -3349,6 +3355,7 @@ async function downloadFile(type){
       if(type === 'm4b') successT = t('btn_dl_m4b');
       if(type === 'abm') successT = t('btn_dl_abm');
       if(type === 'mp3') successT = t('btn_dl_mp3');
+      if(type === 'm4bkit') successT = t('btn_dl_m4b_kit');
       _clearBtnLoading(btn,'✅ <span>'+successT+'</span>');
       if(isLastDl)showDlLastWarning();
       return;

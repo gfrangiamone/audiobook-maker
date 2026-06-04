@@ -663,6 +663,56 @@ def _extract_year_from_date(date_str):
 
 
 # ---------------------------------------------------------------------------
+# FFMETADATA1 (capitoli + tag globali) — condiviso fra conversione M4B e kit
+# ---------------------------------------------------------------------------
+
+def _escape_ffmeta(s):
+    """Escape dei caratteri speciali del formato FFMETADATA1 (=, ;, #, \\, newline)."""
+    return (str(s).replace('\\', '\\\\').replace('=', '\\=')
+            .replace(';', '\\;').replace('#', '\\#').replace('\n', ' '))
+
+
+def _build_ffmetadata_text(chapters=None, title=None, author=None,
+                           year=None, genre=None, description=None):
+    """Costruisce il contenuto di un file ;FFMETADATA1 (tag globali + capitoli).
+
+    `chapters` deve essere già filtrato (solo capitoli con end>start) oppure None.
+    `year`/`description` sono i valori già normalizzati/troncati dal chiamante.
+    `language` NON viene scritto qui: nei container MP4/M4B è un tag per-stream,
+    applicato via `-metadata:s:a:0 language=...` nel comando ffmpeg.
+
+    Ritorna la stringa completa del file (sempre almeno l'header ";FFMETADATA1").
+    """
+    esc = _escape_ffmeta
+    lines = [";FFMETADATA1"]
+    if title:
+        lines.append(f"title={esc(title)}")
+        # album = titolo del libro (convenzione standard per audiolibri)
+        lines.append(f"album={esc(title)}")
+    if author:
+        # artist e album_artist: entrambi per massima compatibilità (Apple Books, iTunes)
+        lines.append(f"artist={esc(author)}")
+        lines.append(f"album_artist={esc(author)}")
+    if year:
+        lines.append(f"date={esc(year)}")
+    if genre:
+        lines.append(f"genre={esc(genre)}")
+    if description:
+        # comment e description: massima compatibilità lettori audiobook
+        lines.append(f"comment={esc(description)}")
+        lines.append(f"description={esc(description)}")
+    out = "\n".join(lines) + "\n"
+    if chapters:
+        for ch in chapters:
+            out += "\n[CHAPTER]\n"
+            out += "TIMEBASE=1/1000\n"
+            out += f"START={int(round(ch['start']))}\n"
+            out += f"END={int(round(ch['end']))}\n"
+            out += f"title={esc(ch['title'])}\n"
+    return out
+
+
+# ---------------------------------------------------------------------------
 # M4B conversion
 # ---------------------------------------------------------------------------
 
@@ -707,9 +757,6 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
     try:
         import subprocess
 
-        def escape_meta(s):
-            return str(s).replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#').replace('\n', ' ')
-
         # Rileva bitrate sorgente per mantenere dimensioni M4B ≈ somma MP3 originali
         source_kbps = _get_audio_bitrate(mp3_path)
         aac_bitrate = f"{source_kbps}k"
@@ -730,41 +777,17 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         # Crea il file di metadati FFMETADATA1 se abbiamo qualsiasi metadato globale o capitoli.
         # Nota: il file viene creato SEMPRE quando almeno un metadato è disponibile,
         # anche in assenza di chapter markers (ad es. ffprobe non installato).
+        # Nota: `language` (lang_iso) NON entra nel file FFMETADATA (è un tag
+        # per-stream, applicato via -metadata:s:a:0 nel comando ffmpeg), ma la sua
+        # presenza giustifica comunque la creazione del file di metadati.
         has_global_meta = bool(title or author or year or lang_iso or desc_trunc or genre)
         metadata_file = None
         if has_global_meta or valid_chapters:
             metadata_file = m4b_path + ".metadata.txt"
             with open(metadata_file, "w", encoding="utf-8") as f:
-                f.write(";FFMETADATA1\n")
-                if title:
-                    f.write(f"title={escape_meta(title)}\n")
-                    # album = titolo del libro (convenzione standard per audiolibri)
-                    f.write(f"album={escape_meta(title)}\n")
-                if author:
-                    # artist e album_artist: entrambi necessari per massima compatibilità
-                    # con Apple Books, iTunes, lettori M4B/IPOD
-                    f.write(f"artist={escape_meta(author)}\n")
-                    f.write(f"album_artist={escape_meta(author)}\n")
-                if year:
-                    f.write(f"date={escape_meta(year)}\n")
-                if genre:
-                    f.write(f"genre={escape_meta(genre)}\n")
-                # Nota: `language` va scritto come tag dello stream audio nei container
-                # MP4/M4B (tag per-stream), non come metadato globale. Viene applicato più
-                # avanti tramite -metadata:s:a:0 language=... nel comando ffmpeg.
-                if desc_trunc:
-                    # comment e description: massima compatibilità lettori audiobook
-                    f.write(f"comment={escape_meta(desc_trunc)}\n")
-                    f.write(f"description={escape_meta(desc_trunc)}\n")
-                # Nota: il tag `encoder` viene sempre sovrascritto da ffmpeg con la
-                # propria versione (es. "Lavf62.3.100"), quindi non ha senso scriverlo.
-                if valid_chapters:
-                    for ch in valid_chapters:
-                        f.write("\n[CHAPTER]\n")
-                        f.write("TIMEBASE=1/1000\n")
-                        f.write(f"START={int(round(ch['start']))}\n")
-                        f.write(f"END={int(round(ch['end']))}\n")
-                        f.write(f"title={escape_meta(ch['title'])}\n")
+                f.write(_build_ffmetadata_text(
+                    chapters=valid_chapters, title=title, author=author,
+                    year=year, genre=genre, description=desc_trunc))
 
         def _build_cmd(use_cover):
             """Costruisce il comando ffmpeg con o senza cover art."""
@@ -951,6 +974,193 @@ def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=
     _emit(0, "Conversione M4B — file invalido")
     _finish("invalid", 0, "Conversione M4B — file invalido")
     return False
+
+
+# ---------------------------------------------------------------------------
+# M4B rebuild kit (ripiego quando la conversione M4B server-side fallisce)
+# ---------------------------------------------------------------------------
+
+def _ms_to_hms(ms):
+    """Converte millisecondi in stringa hh:mm:ss.mmm (per il chapters.json leggibile)."""
+    try:
+        ms = int(round(ms))
+    except (TypeError, ValueError):
+        ms = 0
+    if ms < 0:
+        ms = 0
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, msec = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{msec:03d}"
+
+
+def build_m4b_rebuild_kit(mp3_path, output_zip, chapters=None, title=None,
+                          author=None, cover_path=None, date=None,
+                          language=None, description=None, genre="Audiobook"):
+    """Crea uno ZIP con cui l'utente può ricostruire l'M4B in autonomia.
+
+    Usato come ripiego quando la conversione M4B lato server fallisce: invece del
+    solo MP3, all'utente viene consegnato un pacchetto auto-contenuto.
+
+    Contenuto dello ZIP:
+      - audiolibro.mp3        copia del fallback MP3 (audio concatenato)
+      - chapters.json         capitoli leggibili: titolo + start/end ms + hh:mm:ss
+      - chapters.ffmetadata   stesso formato ;FFMETADATA1 usato internamente
+      - cover.jpg             copertina, se disponibile
+      - build_m4b.sh          comando ffmpeg pronto (Linux/macOS)
+      - build_m4b.bat         comando ffmpeg pronto (Windows)
+      - README.txt            istruzioni brevi (IT + EN), richiede ffmpeg
+
+    Lo script riproduce esattamente il comando ffmpeg dell'app (AAC + capitoli +
+    cover + media_type=2 + language per-stream), così l'M4B ricostruito è fedele.
+
+    Ritorna True se lo ZIP è stato creato, False altrimenti.
+    """
+    try:
+        import json
+        import zipfile
+
+        if not mp3_path or not os.path.exists(mp3_path):
+            print(f"[build_m4b_rebuild_kit] MP3 sorgente mancante: {mp3_path}")
+            return False
+
+        valid_chapters = None
+        if chapters:
+            valid_chapters = [ch for ch in chapters if ch.get("end", 0) > ch.get("start", 0)]
+            if not valid_chapters:
+                valid_chapters = None
+
+        year = _extract_year_from_date(date) if date else ""
+        lang_iso = _normalize_language_iso(language) if language else ""
+        desc_trunc = (description or "").strip()[:1000] if description else ""
+
+        source_kbps = _get_audio_bitrate(mp3_path)
+        aac_bitrate = f"{source_kbps}k"
+
+        ffmeta_text = _build_ffmetadata_text(
+            chapters=valid_chapters, title=title, author=author,
+            year=year, genre=genre, description=desc_trunc)
+
+        # Nome file M4B di destinazione suggerito allo script (sanitizzato).
+        out_basename = _safe_filename(title) or "audiolibro"
+
+        # chapters.json leggibile
+        chapters_json = {
+            "title": title or "",
+            "author": author or "",
+            "language": lang_iso or (language or ""),
+            "year": year,
+            "source_mp3": "audiolibro.mp3",
+            "aac_bitrate": aac_bitrate,
+            "chapters": [
+                {
+                    "index": i + 1,
+                    "title": ch.get("title", f"Chapter {i + 1}"),
+                    "start_ms": int(round(ch.get("start", 0))),
+                    "end_ms": int(round(ch.get("end", 0))),
+                    "start": _ms_to_hms(ch.get("start", 0)),
+                    "end": _ms_to_hms(ch.get("end", 0)),
+                }
+                for i, ch in enumerate(valid_chapters or [])
+            ],
+        }
+
+        has_cover = bool(cover_path and os.path.exists(cover_path))
+
+        # Comando ffmpeg (con/senza cover), identico nella sostanza a _convert_mp3_to_m4b.
+        lang_opt = f' -metadata:s:a:0 language={lang_iso}' if lang_iso else ''
+        if has_cover:
+            ffmpeg_args = (
+                '-y -i audiolibro.mp3 -i chapters.ffmetadata -i cover.jpg '
+                '-map 0:a -map 2:v -c:v mjpeg -q:v 2 -disposition:v:0 attached_pic '
+                f'-map_metadata 1 -map_chapters 1 -metadata media_type=2{lang_opt} '
+                f'-c:a aac -b:a {aac_bitrate} -f ipod'
+            )
+        else:
+            ffmpeg_args = (
+                '-y -i audiolibro.mp3 -i chapters.ffmetadata '
+                f'-map 0:a -map_metadata 1 -map_chapters 1 -metadata media_type=2{lang_opt} '
+                f'-vn -c:a aac -b:a {aac_bitrate} -f ipod'
+            )
+
+        sh_script = (
+            "#!/usr/bin/env bash\n"
+            "# Ricostruisce l'audiolibro M4B (con capitoli e copertina) dai file di\n"
+            "# questo pacchetto. Richiede ffmpeg installato e nel PATH.\n"
+            "# Rebuilds the M4B audiobook (chapters + cover) from this package.\n"
+            "# Requires ffmpeg installed and on PATH.\n"
+            "set -e\n"
+            f'cd "$(dirname "$0")"\n'
+            f'ffmpeg {ffmpeg_args} "{out_basename}.m4b"\n'
+            f'echo "OK: {out_basename}.m4b"\n'
+        )
+        bat_script = (
+            "@echo off\r\n"
+            "REM Ricostruisce l'audiolibro M4B (capitoli + copertina). Richiede ffmpeg nel PATH.\r\n"
+            "REM Rebuilds the M4B audiobook (chapters + cover). Requires ffmpeg on PATH.\r\n"
+            'cd /d "%~dp0"\r\n'
+            f'ffmpeg {ffmpeg_args} "{out_basename}.m4b"\r\n'
+            "if %ERRORLEVEL% NEQ 0 ( echo ERRORE: ffmpeg ha fallito & pause & exit /b 1 )\r\n"
+            f'echo OK: {out_basename}.m4b\r\n'
+            "pause\r\n"
+        )
+
+        readme = (
+            "RICOSTRUZIONE AUDIOLIBRO M4B / REBUILD M4B AUDIOBOOK\n"
+            "====================================================\n\n"
+            "[IT]\n"
+            "La conversione automatica in M4B non e' riuscita sul server, quindi ti\n"
+            "consegniamo l'audio in MP3 insieme a tutto il necessario per generare\n"
+            "l'M4B (con capitoli e copertina) sul tuo computer.\n\n"
+            "Requisito: ffmpeg installato (https://ffmpeg.org/download.html).\n\n"
+            "Come fare:\n"
+            "  - Windows: doppio clic su build_m4b.bat\n"
+            "  - macOS / Linux: apri un terminale nella cartella ed esegui:\n"
+            "        bash build_m4b.sh\n\n"
+            "Otterrai il file " + out_basename + ".m4b nella stessa cartella.\n\n"
+            "Contenuto:\n"
+            "  - audiolibro.mp3      l'audio completo\n"
+            "  - chapters.json       elenco capitoli leggibile (titoli + tempi)\n"
+            "  - chapters.ffmetadata metadati capitoli per ffmpeg\n"
+            + ("  - cover.jpg           copertina\n" if has_cover else "")
+            + "  - build_m4b.sh/.bat   script di ricostruzione\n\n"
+            "[EN]\n"
+            "Automatic M4B conversion failed on the server, so we provide the audio as\n"
+            "MP3 plus everything needed to build the M4B (with chapters and cover) on\n"
+            "your own computer.\n\n"
+            "Requirement: ffmpeg installed (https://ffmpeg.org/download.html).\n\n"
+            "How to:\n"
+            "  - Windows: double-click build_m4b.bat\n"
+            "  - macOS / Linux: open a terminal in this folder and run:\n"
+            "        bash build_m4b.sh\n\n"
+            "You will get " + out_basename + ".m4b in the same folder.\n"
+        )
+
+        # Scrittura atomica: prima un .tmp, poi rename sul path finale.
+        tmp_zip = output_zip + ".tmp"
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(mp3_path, "audiolibro.mp3")
+            zf.writestr("chapters.json", json.dumps(chapters_json, ensure_ascii=False, indent=2))
+            zf.writestr("chapters.ffmetadata", ffmeta_text)
+            if has_cover:
+                zf.write(cover_path, "cover.jpg")
+            zf.writestr("build_m4b.sh", sh_script)
+            zf.writestr("build_m4b.bat", bat_script)
+            zf.writestr("README.txt", readme)
+        os.replace(tmp_zip, output_zip)
+
+        print(f"[build_m4b_rebuild_kit] OK -> {os.path.basename(output_zip)} "
+              f"({os.path.getsize(output_zip)//1024} KB, "
+              f"chapters={len(valid_chapters or [])}, cover={has_cover})")
+        return True
+    except Exception as e:
+        print(f"[build_m4b_rebuild_kit] errore: {e}")
+        try:
+            if 'tmp_zip' in dir() and os.path.exists(tmp_zip):
+                os.remove(tmp_zip)
+        except OSError:
+            pass
+        return False
 
 
 # ---------------------------------------------------------------------------
