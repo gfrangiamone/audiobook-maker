@@ -2594,6 +2594,7 @@ def admin_logs():
         "DOWNLOAD_EMAIL_PODCAST": "🎙️📥", "DOWNLOAD_PODCAST": "🎙️📥",
         "EMAIL_REGISTERED": "📧", "EMAIL_SENT": "📨",
         "EMAIL_FAILED": "❌", "CANCEL": "🚫",
+        "ADMIN_CANCEL": "⛔",
         "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
     }
     op_colors = {
@@ -2606,6 +2607,7 @@ def admin_logs():
         "EMAIL_SENT": ("#0d9488", "#f0fdfa"),
         "EMAIL_FAILED": ("#dc2626", "#fef2f2"),
         "CANCEL": ("#dc2626", "#fef2f2"),
+        "ADMIN_CANCEL": ("#b91c1c", "#fee2e2"),
         "RESET_CHAPTERS": ("#f59e0b", "#fffbeb"),
         "EXPORT_ABM": ("#6366f1", "#eef2ff"),
     }
@@ -4265,6 +4267,11 @@ def admin_logs_page():
       const isLive = !!r._live;
       const rowCls = isLive ? "row-live" : "";
       const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      // Job rilanciato dal recovery dopo un esito terminale gia' persistito:
+      // la riga live resta visibile (non piu' soppressa) e viene marcata.
+      const rerunBadge = r._rerun
+        ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery): esiti precedenti dello stesso job_id nelle righe storiche">re-run</span>'
+        : "";
       // Per cancel: mostra prezzo effettivo + tooltip con il pagato originale.
       const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
         ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
@@ -4281,7 +4288,7 @@ def admin_logs_page():
         <td class="${dCls}">${fmtEur(margEur)}</td>
         <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
-        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
       </tr>`;
     }).join("");
   }
@@ -4494,6 +4501,13 @@ def admin_logs_page():
       });
       if (!r.ok) { alert("Errore: " + r.status); await ksRefresh(); return; }
       const s = await r.json();
+      // Write su disco fallita (es. disco pieno): lo stato vale solo in
+      // memoria e un restart ripristinera' quello precedente (incidente
+      // 2026-06). L'admin DEVE saperlo subito.
+      if (s.persisted === false) {
+        alert("ATTENZIONE: stato kill-switch NON salvato su disco (disco pieno?).\n" +
+              "Vale solo fino al prossimo restart: liberare spazio e ripetere l'operazione.");
+      }
       ksApply(s);
       if (!target) $("ksReasonInput").value = "";
     } catch (e) {
@@ -4701,16 +4715,24 @@ def admin_api_gemini_cost_audit():
 
     # Inietta i job in corso: rispetta i filtri model/lang; outcome="running"
     # e' visibile solo quando outcome=all o esattamente "running".
+    # NB: la riga live NON viene piu' soppressa quando esiste gia' un record
+    # persistito per lo stesso job_id (vecchio comportamento): un job
+    # ri-lanciato dal recovery dopo un esito terminale (es.
+    # failed_quality_refunded) era ATTIVO ma invisibile nell'audit
+    # (incidente jgIehwtzU2D6jog1S8f5vw, 2026-06). Ora la riga live viene
+    # mostrata sempre e marcata `_rerun` se il job_id ha gia' storia
+    # persistita, cosi' l'admin vede sia il run corrente sia gli esiti
+    # precedenti.
     live = []
     out_filter = _norm(outcome)
     if out_filter in (None, "running"):
         for r in _synth_running_gemini_audit_records():
-            if r.get("job_id") in persisted_ids:
-                continue
             if _norm(model) and r.get("model_key") != _norm(model):
                 continue
             if _norm(language) and r.get("language") != _norm(language):
                 continue
+            if r.get("job_id") in persisted_ids:
+                r["_rerun"] = True
             live.append(r)
 
     recs = live + persisted
@@ -7194,7 +7216,12 @@ def api_cancel(job_id):
         job = jobs[job_id]
         voice = job.get("voice", "") or job.get("opt_voice", "") or ""
         is_gemini = voice.startswith("gemini:")
-        if is_gemini:
+        force = request.args.get("force") == "1"
+        # Kill amministrativo (force=1 + auth admin): bypassa il lock Gemini
+        # anti-abuso (pensato per i cancel volontari utente) e il guard
+        # email_registered. Usato da scripts/kill_job.sh.
+        is_admin_kill = force and _admin_auth_ok(_admin_auth_from_request())
+        if is_gemini and not is_admin_kill:
             try:
                 lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
             except (TypeError, ValueError):
@@ -7208,7 +7235,6 @@ def api_cancel(job_id):
                         "progress_pct": pct,
                         "lock_pct": lock_pct,
                     }), 409
-        force = request.args.get("force") == "1"
         if job.get("email_registered") and not force:
             print(f"[{job_id}] Cancel ignored  -  email registered for background processing")
             return jsonify({"status": "ignored_email_registered"})
@@ -7219,6 +7245,9 @@ def api_cancel(job_id):
         # farebbe finire run_generation nel ramo STALE del _CancelledError
         # handler, saltando refund + partial-audio email.
         job["status"] = "analyzed"
+    if is_admin_kill:
+        _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
+                      job.get("client_id", ""), "", job.get("voice", "") or "", "")
     return jsonify({"status": "cancelling"})
 
 
@@ -8316,6 +8345,10 @@ def api_cancel_optimize(job_id):
             job = jobs[job_id]
             if job.get("status") == "optimizing":
                 job["opt_cancelled"] = True
+                if _admin_auth_ok(_admin_auth_from_request()):
+                    _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
+                                  job.get("client_id", ""), "",
+                                  job.get("opt_voice", "") or "", "")
                 return jsonify({"status": "cancelling"})
     return jsonify({"status": "not_found"}), 404
 
@@ -10038,6 +10071,14 @@ def _evict_hot_local():
                 continue
             job = job_by_id.get(jdir.name, {})
             hot = storage_tiering.hot_window_sec(job)
+            # B3 guard A (incidente 2026-06): job fallito/rimborsato → l'output
+            # locale NON è autoritativo (es. m4b silente da un run quality-fail).
+            # Niente eviction né re-upload per l'intera job dir: il vecchio
+            # comportamento ha sovrascritto su cold una copia da 15.4MB con il
+            # garbage da 696KB del re-run fallito. Entrambe le copie restano
+            # congelate finché il marker forense è valido / il job è in error.
+            if job.get("status") == "error" or _forensic_marker_protects(jdir, now):
+                continue
             try:
                 for od in jdir.iterdir():
                     if not od.is_dir():
@@ -10065,7 +10106,23 @@ def _evict_hot_local():
                             cold_size = storage_backend.object_size(key)
                             cold_ok = (cold_size == local_size)
                             if not cold_ok:
-                                print(f"[hot-evict] cold copy MISSING/MISMATCH "
+                                # B3 guard B: il re-upload "locale autoritativo"
+                                # vale SOLO nella direzione F3 (cold assente o
+                                # TRONCATO, cioe' piu' piccolo del locale). Un
+                                # cold PIU' GRANDE del locale e' il segnale
+                                # opposto (locale sospetto/garbage): mai
+                                # sovrascriverlo alla cieca — si tengono
+                                # entrambe le copie e si logga per ispezione.
+                                # NB: una re-gen legittima con output diverso
+                                # aggiorna il cold gia' al COMPLETE (offload
+                                # idempotente per size), quindi non passa di qui.
+                                if cold_size is not None and cold_size > local_size:
+                                    print(f"[hot-evict] MISMATCH SOSPETTO "
+                                          f"(cold={cold_size} > local={local_size}): "
+                                          f"NO overwrite, NO evict — ispezione "
+                                          f"manuale richiesta: {f}")
+                                    continue
+                                print(f"[hot-evict] cold copy MISSING/TRUNCATED "
                                       f"(cold={cold_size} vs local={local_size}) — "
                                       f"re-upload before evict: {f}")
                                 try:

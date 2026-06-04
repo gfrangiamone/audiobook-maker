@@ -69,3 +69,39 @@ def test_admin_audit_pagination(client, admin_headers, monkeypatch, tmp_path):
     d = r.get_json()
     assert d["count"] == 5  # total
     assert len(d["records"]) == 2  # page size
+
+
+def test_admin_audit_live_rerun_row_visible(client, admin_headers, monkeypatch, tmp_path):
+    """B2 (incidente jgIehwtzU2D6jog1S8f5vw, 2026-06): un job ri-lanciato dal
+    recovery dopo un esito terminale persistito deve comparire come riga live
+    `running` marcata `_rerun`, NON essere soppresso dalla dedup per job_id."""
+    import audiobook_app
+    monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
+    gemini_cost_audit.append_record({
+        "job_id": "rr1", "model_key": "flash25",
+        "outcome": "failed_quality_refunded", "language": "it",
+        "user_price_eur_charged": 2.0, "google_cost_eur_actual": 0.4,
+    })
+    audiobook_app.jobs["rr1"] = {
+        "status": "generating",
+        "voice": "gemini:flash25:Puck",
+        "rate": "+0%",
+        "gemini_actual": {"chars": 100, "google_cost_eur": 0.01,
+                          "audio_seconds": 5.0},
+        "payment": {"total_eur": 2.0},
+    }
+    try:
+        r = client.get("/admin/api/gemini_cost_audit", headers=admin_headers)
+        assert r.status_code == 200
+        d = r.get_json()
+        by_outcome = {(rec["job_id"], rec["outcome"]) for rec in d["records"]}
+        # Il record storico resta visibile...
+        assert ("rr1", "failed_quality_refunded") in by_outcome
+        # ...e la riga live del re-run e' presente e marcata
+        live = [rec for rec in d["records"]
+                if rec["job_id"] == "rr1" and rec["outcome"] == "running"]
+        assert len(live) == 1
+        assert live[0].get("_rerun") is True
+        assert live[0].get("_live") is True
+    finally:
+        audiobook_app.jobs.pop("rr1", None)

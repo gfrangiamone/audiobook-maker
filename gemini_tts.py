@@ -342,6 +342,16 @@ class GeminiQuotaExhausted(RuntimeError):
         self.retry_after_sec = retry_after_sec
         self.reason = reason
 
+
+class GeminiUnavailable(RuntimeError):
+    """Sollevata da synthesize() quando is_available() è False (kill-switch
+    attivo o capability assente). È un errore locale, istantaneo e permanente
+    per il processo: il chiamante NON deve silenziare il chunk e proseguire
+    (incidente 2026-06: 1905/1905 chunk silenziati in 1s su un job recuperato
+    al boot con kill-switch stantio), deve abortire il job (failed + refund).
+    Sottoclasse di RuntimeError per retro-compatibilità con i caller che
+    intercettavano il vecchio RuntimeError."""
+
 # Direttive di velocita` in linguaggio naturale (Gemini comprende molto meglio
 # linguaggio naturale di tag come [slow]/[fast]). 7 step coprono la corsa del
 # slider UI (-30% .. +30% a passi di 10%).
@@ -978,6 +988,15 @@ def _load_admin_state():
         _admin_disabled = False
         _admin_disabled_reason = ""
         _admin_disabled_at = ""
+    # Log LOUD a boot quando il kill-switch risulta attivo da disco: se lo
+    # stato e' stantio (write fallita in passato, es. disco pieno — incidente
+    # 2026-06) questo e' l'unico segnale visibile del perche' le voci PREMIUM
+    # sono spente e ogni synthesize() fallira' istantaneamente.
+    if _admin_disabled:
+        print(f"[gemini-tts] BOOT: kill-switch ATTIVO da disco — voci PREMIUM "
+              f"DISABILITATE (reason={_admin_disabled_reason!r}, "
+              f"updated_at={_admin_disabled_at}). Se non atteso, riattivare "
+              f"da /admin/audit-tts.", flush=True)
 
 
 def is_admin_disabled():
@@ -1026,22 +1045,47 @@ def set_admin_disabled(disabled, reason=""):
     sopra e viene controllato in cima a is_available().
     """
     global _admin_disabled, _admin_disabled_reason, _admin_disabled_at
+    persisted = False
     with _admin_state_lock:
         _admin_disabled = bool(disabled)
         _admin_disabled_reason = (reason or "")[:200]
         _admin_disabled_at = datetime.now(timezone.utc).isoformat()
         if _admin_state_path is not None:
-            try:
-                _admin_state_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(_admin_state_path, "w", encoding="utf-8") as f:
-                    json.dump({
-                        "disabled": _admin_disabled,
-                        "reason": _admin_disabled_reason,
-                        "updated_at": _admin_disabled_at,
-                    }, f, ensure_ascii=False, indent=2)
-            except OSError as e:
-                print(f"[gemini-tts] WARN: cannot persist admin state: {e}")
-    return admin_disabled_state()
+            # Retry con backoff + verifica: una write fallita (es. disco pieno)
+            # lascia su disco lo stato PRECEDENTE, che un restart ricarica
+            # silenziosamente (incidente 2026-06: 'enabled' non persistito →
+            # boot con kill-switch stantio → job silenziato al 100%).
+            _last_err = None
+            for _attempt in range(3):
+                try:
+                    _admin_state_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(_admin_state_path, "w", encoding="utf-8") as f:
+                        json.dump({
+                            "disabled": _admin_disabled,
+                            "reason": _admin_disabled_reason,
+                            "updated_at": _admin_disabled_at,
+                        }, f, ensure_ascii=False, indent=2)
+                    # Verifica re-leggendo: write su disco pieno puo' troncare.
+                    with open(_admin_state_path, "r", encoding="utf-8") as f:
+                        _check = json.load(f)
+                    if bool(_check.get("disabled")) == _admin_disabled:
+                        persisted = True
+                        break
+                    _last_err = ValueError("re-read mismatch after write")
+                except (OSError, json.JSONDecodeError, ValueError) as e:
+                    _last_err = e
+                if _attempt < 2:
+                    time.sleep(0.2 * (_attempt + 1))
+            if not persisted:
+                print(f"[gemini-tts] ERROR: kill-switch state NOT persisted "
+                      f"after 3 attempts ({_last_err}) — lo stato in memoria "
+                      f"e' {'DISABLED' if _admin_disabled else 'ENABLED'} ma "
+                      f"su disco resta quello precedente: un restart lo "
+                      f"ripristinera'. Liberare spazio disco e ripetere "
+                      f"l'operazione dal pannello admin.", flush=True)
+    state = admin_disabled_state()
+    state["persisted"] = persisted
+    return state
 
 
 def _current_month():
@@ -1917,7 +1961,10 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         RuntimeError se tutti i retry falliscono.
     """
     if not is_available():
-        raise RuntimeError("Gemini TTS not available (check ABM_GEMINI_API_KEY)")
+        raise GeminiUnavailable(
+            "Gemini TTS not available "
+            f"(admin_disabled={bool(_admin_disabled)}, "
+            "check ABM_GEMINI_API_KEY/kill-switch)")
 
     model_key, model_id, voice_name = parse_voice_id(voice_id)
 

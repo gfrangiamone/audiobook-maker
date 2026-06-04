@@ -114,6 +114,86 @@ def test_cold_m4b_valid_detects_moov(aa, monkeypatch):
     assert audiobook_app._cold_m4b_valid("/x/book.m4b") is False
 
 
+def test_no_overwrite_when_cold_larger_than_local(aa, monkeypatch, tmp_path):
+    """B3 guard B (incidente 2026-06): cold PIU' GRANDE del locale = locale
+    sospetto (es. m4b silente da un run fallito). MAI sovrascrivere il cold
+    col locale, MAI evictare: entrambe le copie restano per ispezione."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobB3" / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"x")  # 1 byte (garbage)
+    storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file",
+                        lambda p, k: uploaded.append(k))
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: 15394949)
+    audiobook_app.jobs["jobB3"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert not uploaded, "il cold piu' grande NON va sovrascritto col locale"
+    assert audio.exists(), "il locale NON va evictato su mismatch sospetto"
+
+
+def test_no_evict_for_error_job(aa, monkeypatch, tmp_path):
+    """B3 guard A: job in stato error -> output locale non autoritativo,
+    niente eviction ne' upload per l'intera job dir."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobERR" / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"x")
+    storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file",
+                        lambda p, k: uploaded.append(k))
+    monkeypatch.setattr(storage_backend, "object_size",
+                        lambda k: audio.stat().st_size)
+    audiobook_app.jobs["jobERR"] = {"voice": "gemini:flash25:Puck",
+                                    "status": "error"}
+
+    audiobook_app._evict_hot_local()
+    assert audio.exists()
+    assert not uploaded
+
+
+def test_no_evict_with_forensic_marker(aa, monkeypatch, tmp_path):
+    """B3 guard A: marker forense valido (job rimborsato in attesa di analisi)
+    -> congelate entrambe le copie anche se il job non e' piu' in memoria."""
+    import json as _json
+    import time as _time
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    jdir = tmp_path / "jobFOR"
+    out = jdir / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"x")
+    storage_tiering.mark_cloud_uploaded(out, when=_time.time() - 10800)
+    (jdir / ".forensic_retain.json").write_text(_json.dumps({
+        "retain_until": _time.time() + 3600,
+        "outcome": "failed_quality_refunded",
+    }), encoding="utf-8")
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file",
+                        lambda p, k: uploaded.append(k))
+    monkeypatch.setattr(storage_backend, "object_size",
+                        lambda k: audio.stat().st_size)
+    # job non in memoria (post-restart): protegge solo il marker su disco
+
+    audiobook_app._evict_hot_local()
+    assert audio.exists()
+    assert not uploaded
+
+
 def test_reuploads_when_cold_size_mismatch(aa, monkeypatch, tmp_path):
     """F3: se il cold ESISTE ma è più piccolo del locale (es. m4b troncato
     caricato mid-write), l'eviction NON si fida: ri-carica il locale completo,

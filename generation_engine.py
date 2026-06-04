@@ -1629,6 +1629,24 @@ def _progress_pct(job: dict) -> int:
         return 0
 
 
+def _mark_pending_failed(job_id, reason=""):
+    """Marca il descrittore batch (_pending_jobs.json) come failed.
+
+    Da chiamare in OGNI path terminale che rimborsa il pagamento: il recovery
+    al riavvio (`_recover_orphan_jobs`) rilancia tutti i descrittori non
+    failed/finalized, quindi un job gia' rimborsato verrebbe ri-generato a
+    costo vivo con ricavo zero — o, oltre il cap tentativi, rimborsato una
+    seconda volta dal fallback (incidente jgIehwtzU2D6jog1S8f5vw, 2026-06).
+    Non-fatal: best-effort, log su errore."""
+    try:
+        pending_jobs.mark_failed(job_id)
+        print(f"[{job_id}] pending descriptor marked failed"
+              + (f" ({reason})" if reason else ""), flush=True)
+    except Exception as e:
+        print(f"[{job_id}] pending_jobs.mark_failed failed (non-fatal): {e}",
+              flush=True)
+
+
 def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
     """F3: Refund Gemini payment on cancel/error.
 
@@ -1655,6 +1673,12 @@ def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
     paid = float(payment_meta.get("total_eur", 0) or 0)
     method = payment_meta.get("method", "")
     if not tok or paid <= 0:
+        return None
+    # Guard persistente anti-doppio-refund (vedi _refund_job_payment): se in
+    # _vouchers.json esiste gia' una traccia di refund per questo job, non
+    # duplicare (job recovered dopo restart perde job["refund_done"]).
+    if payment.has_refund_for_job(job_id, tok):
+        print(f"[{job_id}] Gemini refund skipped: persistent refund trace already exists (reason={reason})")
         return None
     refund_amt = round(max(0.0, paid - float(retained_eur or 0.0)), 2)
     apply_bonus = not (reason == "cancelled" or float(retained_eur or 0.0) > 0)
@@ -1773,6 +1797,13 @@ def _refund_job_payment(job_id, job, reason="error"):
     """
     if job.get("refund_done"):
         return  # gia rimborsato
+    # Guard persistente: il flag in-memory si perde al restart (job recovered).
+    # Se _vouchers.json contiene gia' una traccia di refund per questo job,
+    # non duplicare il rimborso.
+    if payment.has_refund_for_job(job_id, job.get("payment_token", "")):
+        job["refund_done"] = True
+        print(f"[{job_id}] Refund skipped: persistent refund trace already exists (reason={reason})")
+        return
     paid_amount = float(job.get("payment_amount_eur", 0) or 0)
     if paid_amount <= 0:
         return
@@ -2565,6 +2596,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     reason_detail=_reason,
                     chunks_total=total_chunks,
                 )
+                _mark_pending_failed(job_id, "preflight_blocked_refunded")
                 return
 
         job["progress_current"] = 1
@@ -3542,6 +3574,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 reason_detail=f"{failed_chunks}/{_tot_chunks_safe} chunk silenziati ({_fail_ratio:.1%})",
                 chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
             )
+            _mark_pending_failed(job_id, "failed_quality_refunded")
             return
 
         # Guardia output: un assembly fallito (es. ENOSPC / disco pieno, errore
@@ -3603,6 +3636,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _refund_job_payment(job_id, job, "no_output")
                 except Exception as _ref_err:
                     print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            _mark_pending_failed(job_id, "failed_no_output_refunded")
             return
 
         _is_partial = _fail_ratio > _max_failed_ratio
@@ -3814,6 +3848,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _google_tts_refund_unused(job_id, job)
 
         if still_current:
+            # Cancel volontario = job concluso per il batch: senza questo mark
+            # il recovery al riavvio rigenererebbe un job gia' rimborsato.
+            # Un eventuale rilancio interattivo passa da /api/generate, che
+            # ri-registra il descrittore (upsert -> state='pending').
+            _mark_pending_failed(job_id, "cancelled")
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
             try:
@@ -3923,11 +3962,30 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                               else "failed_budget_refunded",
                 reason_detail=f"{pause_reason} | retry_after={retry_after}s | {str(e)[:200]}",
             )
+            _mark_pending_failed(job_id, "failed_quota_refunded" if _is_quota
+                                 else "failed_budget_refunded")
             import traceback
             traceback.print_exc()
             return
         _set_job_status(job, "error")
         job["error"] = str(e)
+        # GeminiUnavailable (kill-switch attivo / capability assente al boot):
+        # propagata dal chunk loop invece di silenziare l'intero libro
+        # (incidente 2026-06). Messaggio utente generico (mai nominare il
+        # provider nella UI) + rimborso integrale via path failed_refunded.
+        _is_unavailable = False
+        if use_gemini and gemini_tts is not None:
+            try:
+                _is_unavailable = isinstance(e, gemini_tts.GeminiUnavailable)
+            except Exception:
+                _is_unavailable = False
+        if _is_unavailable:
+            _user_msg = ("Generazione interrotta: il motore voci PREMIUM non "
+                         "e' disponibile al momento. Hai diritto al rimborso "
+                         "integrale, gia' emesso automaticamente. Riprova "
+                         "piu' tardi.")
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
             # F3: Refund the user payment (voucher or paypal) for failed Gemini job
@@ -3943,6 +4001,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 audit_outcome="failed_refunded",
                 reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
             )
+            _mark_pending_failed(job_id, "failed_refunded")
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
             try:

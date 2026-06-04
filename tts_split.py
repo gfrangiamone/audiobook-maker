@@ -441,7 +441,8 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                         aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
                         aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
                         break
-                    except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+                    except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
+                            _gemini.GeminiUnavailable):
                         raise
                     except Exception as e:
                         last_error = e
@@ -528,8 +529,12 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
                 debug_prompt_path=debug_prompt_path,
             )
             return result
-        except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded):
+        except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
+                _gemini.GeminiUnavailable):
             # Non silenziare: il caller decide se sospendere il job.
+            # GeminiUnavailable (kill-switch/capability) e' istantaneo e
+            # permanente per il processo: silenziarlo significherebbe
+            # silenziare l'INTERO libro (incidente 2026-06).
             raise
         except Exception as e:
             last_error = e
