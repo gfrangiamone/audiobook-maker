@@ -1898,6 +1898,9 @@ async function trUpdateEstimate(){
     const det=document.getElementById('costDetailTr');
     if(amt)amt.textContent=est.requires_payment?('€ '+est.due_eur.toFixed(2)):(t('cost_free')||'€ 0.00');
     if(det)det.textContent=(t('tr_cost_detail')||'{0} characters').replace('{0}',(est.chars||0).toLocaleString());
+    const sb=document.getElementById('btnStartTranslate');
+    if(sb)sb.disabled=(est.available===false);
+    if(est.available===false)showErr('trErr',t('tr_unavailable')||'Translation not available on this server');
     return est;
   }catch(e){return null}
 }
@@ -1924,45 +1927,50 @@ async function validateCouponTr(){
 }
 
 async function startTranslation(){
-  if(!jobId||generating)return;
-  const src=document.getElementById('trSrcLang').value;
-  const dst=document.getElementById('trDstLang').value;
-  if(src===dst){showErr('trErr',t('tr_err_same_lang'));return}
-  const est=await trUpdateEstimate();
-  if(!est)return;
-  let payToken=trPaymentToken;
-  if(est.requires_payment&&!payToken){
-    payToken=await _showPaymentModal(est.due_eur,est.chars,{
-      endpoint:'/api/paypal_create_order_translate',
-      body:{job_id:jobId,target_lang:dst,
-            optimize:document.getElementById('aiToggleTr').checked,
-            selected_chapters:_getSelectedChapterIndexes()}
-    });
-    if(!payToken)return;
-    trPaymentToken=payToken;
-  }
-  const payload={
-    job_id:jobId,
-    source_lang:src,target_lang:dst,
-    output_format:document.getElementById('trFormat').value,
-    output_name:(document.getElementById('trOutName').value||'').trim(),
-    optimize:document.getElementById('aiToggleTr').checked,
-    selected_chapters:_getSelectedChapterIndexes(),
-    batch:false,lang:cl
-  };
-  if(payToken)payload.payment_token=payToken;
+  if(!jobId||generating||window._trStarting)return;
+  window._trStarting=true;
   try{
-    const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const d=await r.json();
-    if(d.error){showErr('trErr',d.error);return}
-    document.getElementById('trErr').innerHTML='';
-    generating=true;
-    lockUI();
-    goToStep(4);
-    const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
-    _trAutofillEmailLate();
-    _listenTranslateProgress();
-  }catch(e){showErr('trErr','Error: '+e.message)}
+    const src=document.getElementById('trSrcLang').value;
+    const dst=document.getElementById('trDstLang').value;
+    if(src===dst){showErr('trErr',t('tr_err_same_lang'));return}
+    const est=await trUpdateEstimate();
+    if(!est)return;
+    let payToken=trPaymentToken;
+    if(est.requires_payment&&!payToken){
+      payToken=await _showPaymentModal(est.due_eur,est.chars,{
+        endpoint:'/api/paypal_create_order_translate',
+        body:{job_id:jobId,target_lang:dst,
+              optimize:document.getElementById('aiToggleTr').checked,
+              selected_chapters:_getSelectedChapterIndexes()}
+      });
+      if(!payToken)return;
+      trPaymentToken=payToken;
+    }
+    const payload={
+      job_id:jobId,
+      source_lang:src,target_lang:dst,
+      output_format:document.getElementById('trFormat').value,
+      output_name:(document.getElementById('trOutName').value||'').trim(),
+      optimize:document.getElementById('aiToggleTr').checked,
+      selected_chapters:_getSelectedChapterIndexes(),
+      batch:false,lang:cl
+    };
+    if(payToken)payload.payment_token=payToken;
+    try{
+      const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(d.error){showErr('trErr',d.error);return}
+      document.getElementById('trErr').innerHTML='';
+      const _bcR=document.getElementById('btnCancelTr');
+      if(_bcR){const _spR=_bcR.querySelector('span');if(_spR)_spR.textContent=t('tr_btn_cancel')||'Cancel';_bcR.onclick=cancelTranslation;}
+      generating=true;
+      lockUI();
+      goToStep(4);
+      const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
+      _trAutofillEmailLate();
+      _listenTranslateProgress();
+    }catch(e){showErr('trErr','Error: '+e.message)}
+  }finally{window._trStarting=false}
 }
 
 function _trAutofillEmailLate(){
@@ -1990,8 +1998,19 @@ function _listenTranslateProgress(){
     if(phase)phase.textContent=(t('tr_progress_chapter')||'Chapter {0} of {1}')
       .replace('{0}',d.tr_current_chapter_num||0)
       .replace('{1}',d.tr_progress_total||0);
-    if(d.status==='error'){es.close();generating=false;unlockUI();showErr('trErr4',d.error||'Translation error');return}
-    if(d.status==='cancelled'){es.close();generating=false;unlockUI();showErr('trErr4',t('tr_cancelled'));goToStep(3);return}
+    if(d.status==='error'){
+      es.close();generating=false;unlockUI();
+      showErr('trErr4',d.error||'Translation error');
+      const bc=document.getElementById('btnCancelTr');
+      if(bc){const sp=bc.querySelector('span');if(sp)sp.textContent=t('btn_back')||'Back';bc.onclick=()=>{goToStep(3);};}
+      return;
+    }
+    if(d.status==='cancelled'){
+      es.close();generating=false;unlockUI();
+      trPaymentToken=null;
+      const cr=document.getElementById('couponResultTr');if(cr){cr.textContent='';cr.className='coupon-result'}
+      showErr('trErr4',t('tr_cancelled'));goToStep(3);return;
+    }
     if(d.status==='translated'){es.close();generating=false;unlockUI();_showTranslationDone(d);return}
   };
   es.onerror=()=>{es.close();setTimeout(()=>{if(generating)_listenTranslateProgress()},3000)};
@@ -2049,6 +2068,7 @@ async function adoptTranslation(){
       }));
       bookData.total_chapters=bookData.chapters.length;
       bookData.total_words=bookData.chapters.reduce((s,c)=>s+(c.words||0),0);
+      bookData.estimated_minutes=0;
       bookData.ai_optimized=!!d.ai_optimized;
     }
     optimizedChapters=d.ai_optimized?(d.chapters||[]).map(c=>c.index):[];
@@ -3822,6 +3842,8 @@ function resetAll(){
   const aiToggleTr=document.getElementById('aiToggleTr');if(aiToggleTr)aiToggleTr.checked=false;
   const trErr=document.getElementById('trErr');if(trErr)trErr.innerHTML='';
   const trErr4=document.getElementById('trErr4');if(trErr4)trErr4.innerHTML='';
+  const _bcReset=document.getElementById('btnCancelTr');
+  if(_bcReset){const _spReset=_bcReset.querySelector('span');if(_spReset)_spReset.textContent=t('tr_btn_cancel')||'Cancel';_bcReset.onclick=cancelTranslation;}
   const trProgressFill=document.getElementById('trProgressFill');if(trProgressFill)trProgressFill.style.width='0%';
   const trProgressPct=document.getElementById('trProgressPct');if(trProgressPct)trProgressPct.textContent='0%';
   const trProgressPhase=document.getElementById('trProgressPhase');if(trProgressPhase)trProgressPhase.textContent='—';
