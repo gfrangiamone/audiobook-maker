@@ -289,6 +289,10 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 .lang-option:focus-visible{outline:2px solid var(--ac);outline-offset:-2px;background:var(--srf2)}
 a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px}
 
+/* ── Badge-new overlay on buttons ── */
+.btn-badge-new{position:relative}
+.badge-new{position:absolute;top:-8px;right:-8px;background:var(--ac,#f97316);color:#fff;font-size:.58rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:8px;line-height:1.2;pointer-events:none}
+
 /* ── Preview button ── */
 .btn-preview{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;border-radius:8px;border:1.5px solid var(--brd);background:var(--srf2);color:var(--txd);font-size:.88rem;cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit}
 .btn-preview:hover:not(:disabled){border-color:var(--ac);color:var(--ac);background:var(--srf)}
