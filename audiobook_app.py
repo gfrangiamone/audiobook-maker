@@ -99,6 +99,7 @@ from tts_split import (
 import email_service
 import payment
 import generation_engine
+import translation_core
 import community_store
 import community_translator
 import community_moderator
@@ -847,12 +848,14 @@ def _active_optimizing_for_client(client_id):
 
 
 def _active_optimizing_for_client_unlocked(client_id):
-    """Internal: caller MUST hold _jobs_lock."""
+    """Internal: caller MUST hold _jobs_lock. Conta i job LLM attivi
+    (ottimizzazione O traduzione) del client."""
     if not client_id:
         return 0
     return sum(
         1 for j in jobs.values()
-        if j.get("client_id") == client_id and j.get("status") == "optimizing"
+        if j.get("client_id") == client_id
+        and j.get("status") in ("optimizing", "translating")
     )
 
 
@@ -1505,6 +1508,9 @@ def parse_abm(path):
 
 def run_optimization(job_id, selected_chapters=None):
     return generation_engine.run_optimization(job_id, selected_chapters)
+
+def run_translation(job_id):
+    return generation_engine.run_translation(job_id)
 
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     try:
@@ -8477,6 +8483,261 @@ def api_optimize_progress(job_id):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ════════════════ TRADUZIONE LIBRO ════════════════
+
+_TRANSLATE_FORMATS = ("abm", "epub", "txt")
+
+
+def _translate_selected_chars(job, raw_sel):
+    """(chars_totali, selected_indices) dei capitoli selezionati."""
+    info = job.get("info")
+    selected = _parse_selected_chapters(raw_sel) if raw_sel else \
+        [ch.index for ch in info.chapters]
+    sel = set(selected)
+    chars = sum(ch.char_count for ch in info.chapters if ch.index in sel)
+    return chars, selected
+
+
+@app.route("/api/translate_estimate/<job_id>")
+def api_translate_estimate(job_id):
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    info = job.get("info")
+    if not info or not info.chapters:
+        return jsonify({"error": "No book data"}), 400
+    raw_sel = request.args.getlist("selected_chapters") \
+        + request.args.getlist("selected_chapters[]")
+    optimize = (request.args.get("optimize") or "").strip() in ("1", "true")
+    chars, _ = _translate_selected_chars(job, raw_sel)
+    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    est["available"] = translation_core.is_available()
+    return jsonify(est)
+
+
+@app.route("/api/translate", methods=["POST"])
+def api_translate():
+    data = request.get_json(silent=True) or {}
+    job_id = (data.get("job_id") or "").strip()
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    info = job.get("info")
+    if not info or not info.chapters:
+        return jsonify({"error": "No book data"}), 400
+
+    if not translation_core.is_available():
+        return jsonify({"error": "Translation not configured on this server"}), 503
+
+    source = (data.get("source_lang") or "").strip().lower().split("-")[0]
+    target = (data.get("target_lang") or "").strip().lower().split("-")[0]
+    if not re.fullmatch(r"[a-z]{2,3}", source or "") \
+            or not re.fullmatch(r"[a-z]{2,3}", target or ""):
+        return jsonify({"error": "Invalid language code"}), 400
+    if source == target:
+        return jsonify({"error": "Source and target language are the same",
+                        "error_code": "same_lang"}), 400
+    # Destinazione tra le lingue delle voci standard edge-tts
+    try:
+        edge_langs = set(get_voices().keys())
+    except Exception:
+        edge_langs = set()
+    if not edge_langs:
+        edge_langs = translation_core.EDGE_LANGS_FALLBACK
+    if target not in edge_langs:
+        return jsonify({"error": f"Target language '{target}' not supported",
+                        "error_code": "bad_target_lang"}), 400
+
+    out_format = (data.get("output_format") or "abm").strip().lower()
+    if out_format not in _TRANSLATE_FORMATS:
+        return jsonify({"error": f"Invalid output format '{out_format}'"}), 400
+    out_name = (data.get("output_name") or "").strip() or "translated"
+    optimize = bool(data.get("optimize"))
+    raw_sel = data.get("selected_chapters") or []
+    chars, selected = _translate_selected_chars(
+        job, [str(x) for x in raw_sel])
+    if chars <= 0:
+        return jsonify({"error": "No chapters selected"}), 400
+
+    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    client_id = job.get("client_id", "")
+
+    # Slot LLM per client (stesso slot dell'ottimizzazione) + claim atomico
+    with _jobs_lock:
+        if job["status"] not in ("analyzed", "translated"):
+            return jsonify({"error": "Job busy or not ready"}), 400
+        if client_id and MAX_CONCURRENT_LLM_PER_CLIENT > 0:
+            if _active_optimizing_for_client_unlocked(client_id) >= MAX_CONCURRENT_LLM_PER_CLIENT:
+                return jsonify({
+                    "error": f"Concurrent LLM job limit reached ({MAX_CONCURRENT_LLM_PER_CLIENT}).",
+                    "error_code": "concurrent_optimize_limit",
+                }), 429
+        job["status"] = "translating"
+
+    def _release_claim():
+        with _jobs_lock:
+            if job.get("status") == "translating":
+                job["status"] = "analyzed"
+
+    # Pagamento (stesso flusso di /api/optimize, importo = est["due_eur"])
+    if est["requires_payment"]:
+        payment_token = (data.get("payment_token") or "").strip()
+        if not payment_token:
+            _release_claim()
+            return jsonify({"error": "Payment required",
+                            "error_code": "payment_required",
+                            "due_eur": est["due_eur"]}), 402
+        valid = False
+        if payment_token in payment._payments:
+            _claimed_pay = None
+            with payment._payments_lock:
+                pay = payment._payments.get(payment_token)
+                if pay and not pay.get("used") \
+                        and pay.get("amount_eur", 0) + 0.01 >= est["due_eur"]:
+                    pay["used"] = True
+                    pay["used_at"] = time.time()
+                    pay["used_job_id"] = job_id
+                    _claimed_pay = pay
+            if _claimed_pay is not None:
+                _save_payments()
+                job["payment_token"] = payment_token
+                job["payment_type"] = "paypal"
+                job["payment_email"] = _claimed_pay.get("email", "")
+                job["payment_amount_eur"] = _claimed_pay.get("amount_eur", 0)
+                valid = True
+        elif payment_token in payment._vouchers:
+            v = payment._vouchers[payment_token]
+            remaining = _voucher_remaining(v)
+            if v.get("expires_at", 0) > time.time() \
+                    and remaining >= est["due_eur"] - 0.01:
+                try:
+                    new_remaining = _voucher_consume(
+                        payment_token, est["due_eur"], job_id=job_id)
+                except ValueError as _ve:
+                    _release_claim()
+                    return jsonify({"error": f"Voucher not spendable: {_ve}"}), 402
+                job["payment_token"] = payment_token
+                job["payment_type"] = "voucher"
+                job["payment_email"] = v.get("email", "")
+                job["payment_amount_eur"] = round(float(est["due_eur"]), 2)
+                job["voucher_remaining_after"] = new_remaining
+                valid = True
+        if not valid:
+            _release_claim()
+            return jsonify({"error": "Invalid or insufficient payment",
+                            "error_code": "payment_invalid"}), 402
+
+    # Batch mode (email)
+    batch = bool(data.get("batch"))
+    email = (data.get("email") or "").strip()
+    if batch:
+        if not email or not re.match(
+                r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+            _release_claim()
+            return jsonify({"error": "Valid email required for batch mode"}), 400
+        if not _smtp_available():
+            _release_claim()
+            return jsonify({"error": "Email service not configured"}), 503
+        job["notify_email"] = email
+        job["notify_lang"] = data.get("lang", "en")
+        job["email_registered"] = True
+        job["notify_download_type"] = "translated"
+
+    job["tr_cancelled"] = False
+    job["tr_params"] = {
+        "source_lang": source, "target_lang": target,
+        "output_format": out_format, "output_name": out_name,
+        "optimize": optimize, "selected_chapters": selected,
+    }
+    job["last_poll"] = time.time()
+
+    thread = threading.Thread(target=run_translation, args=(job_id,),
+                              daemon=True)
+    thread.start()
+    _log_activity(job_id, job.get("original_filename", ""), "TRANSLATE",
+                  client_id, job.get("client_ip", ""), "",
+                  browser_lang=job.get("browser_lang", ""))
+    return jsonify({"status": "started", "batch": batch,
+                    "due_eur": est["due_eur"]})
+
+
+@app.route("/api/translate_progress/<job_id>")
+def api_translate_progress(job_id):
+    # Clone di /api/optimize_progress con i campi tr_*
+    _job_pre, _err_pre, _sc_pre = _check_job_owner(job_id)
+    if _err_pre is not None:
+        return _err_pre, _sc_pre
+
+    def stream():
+        while True:
+            if job_id not in jobs:
+                yield f"data: {json.dumps({'status': 'error', 'error': 'Job not found'})}\n\n"
+                break
+            job = jobs[job_id]
+            job["last_poll"] = time.time()
+            status = job.get("status", "unknown")
+            payload = {
+                "status": status,
+                "tr_progress_current": job.get("tr_progress_current", 0),
+                "tr_progress_total": job.get("tr_progress_total", 0),
+                "tr_progress_message": job.get("tr_progress_message", ""),
+                "tr_current_chapter": job.get("tr_current_chapter", ""),
+                "tr_current_chapter_num": job.get("tr_current_chapter_num", 0),
+                "tr_processed_chars": job.get("tr_processed_chars", 0),
+                "tr_streamed_chars": job.get("tr_streamed_chars", 0),
+                "tr_total_chars": job.get("tr_total_chars", 0),
+                "tr_elapsed_seconds": job.get("tr_elapsed_seconds", 0),
+                "translated_name": job.get("translated_name", ""),
+                "error": job.get("error", ""),
+            }
+            if status == "error":
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            if job.get("tr_cancelled"):
+                payload["status"] = "cancelled"
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            if status == "translated":
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
+            yield f"data: {json.dumps(payload)}\n\n"
+            time.sleep(2)
+
+    return Response(
+        stream_with_context(stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/translate_cancel/<job_id>", methods=["POST"])
+def api_translate_cancel(job_id):
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    job["tr_cancelled"] = True
+    return jsonify({"status": "cancelling"})
+
+
+@app.route("/api/download_translation/<job_id>")
+def api_download_translation(job_id):
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    path = job.get("translated_path", "")
+    name = job.get("translated_name", "translated")
+    if not path or not os.path.exists(path):
+        _cold = _try_cold_serve(path, download_name=name)
+        if _cold is not None:
+            return _cold
+        return jsonify({"error": "File not available"}), 404
+    _log_activity(job_id, job.get("original_filename", ""),
+                  "DOWNLOAD_TRANSLATION", job.get("client_id", ""),
+                  job.get("client_ip", ""), "", "")
+    return _send_file_throttled(path, as_attachment=True,
+                                download_name=name, no_cache=True)
 
 
 @app.route("/api/cancel_optimize/<job_id>", methods=["POST"])
