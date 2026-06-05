@@ -9022,6 +9022,11 @@ def token_download_page(token):
             candidate = job_dir / Path(tr_path_snap).parent.name / Path(tr_path_snap).name
             if candidate.exists():
                 translated_available = True
+            else:
+                # Legacy flat layout fallback (mirrors token_do_download_translated)
+                alt = job_dir / os.path.basename(tr_path_snap)
+                if alt.exists():
+                    translated_available = True
         if not translated_available and _cold_object_available(tr_path_snap):
             translated_available = True
 
