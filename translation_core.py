@@ -80,20 +80,35 @@ def vertex_location():
     return _env("ABM_TRANSLATE_VERTEX_LOCATION", default="global")
 
 
+def _env_num(cast, name, default):
+    """Numero da env con fallback robusto: valore malformato -> default
+    (warning su stderr), virgola decimale accettata."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return cast(default)
+    try:
+        return cast(raw.replace(",", "."))
+    except (ValueError, TypeError):
+        import sys
+        print(f"[translation_core] WARNING: {name}={raw!r} non valido, "
+              f"uso default {default}", file=sys.stderr)
+        return cast(default)
+
+
 def chunk_chars():
-    return int(_env("ABM_TRANSLATE_CHUNK_CHARS", default="20000"))
+    return _env_num(int, "ABM_TRANSLATE_CHUNK_CHARS", 20000)
 
 
 def max_retries():
-    return int(_env("ABM_TRANSLATE_MAX_RETRIES", default="4"))
+    return _env_num(int, "ABM_TRANSLATE_MAX_RETRIES", 4)
 
 
 def temperature():
-    return float(_env("ABM_TRANSLATE_TEMPERATURE", default="0.3"))
+    return _env_num(float, "ABM_TRANSLATE_TEMPERATURE", 0.3)
 
 
 def request_timeout():
-    return float(_env("ABM_TRANSLATE_REQUEST_TIMEOUT_SEC", default="300"))
+    return _env_num(float, "ABM_TRANSLATE_REQUEST_TIMEOUT_SEC", 300)
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +405,8 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 if getattr(event, "usage", None):
                     usage_obj = event.usage
             text = _strip_fences("".join(parts))
+            if not text.strip():
+                raise TranslationError("empty completion from provider")
             usage.track(system_prompt, user_content, text, usage_obj)
             return text
         except TranslationCancelled:

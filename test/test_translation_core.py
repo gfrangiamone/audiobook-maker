@@ -244,3 +244,24 @@ def test_writer_for_format():
     assert tc.writer_for_format("txt") is tc.write_txt
     with pytest.raises(ValueError):
         tc.writer_for_format("pdf")
+
+
+def test_call_llm_empty_stream_retries_then_raises(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "2")
+    monkeypatch.setattr(tc.time, "sleep", lambda s: None)
+    provider, comp = _provider_for([_FakeEvent("")])  # stream con solo delta vuoti
+    with pytest.raises(tc.TranslationError):
+        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    assert comp.calls == 2  # ha ritentato, poi errore definitivo
+
+
+def test_env_num_malformed_falls_back(monkeypatch, capsys):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "4x")
+    assert tc.max_retries() == 4
+    monkeypatch.setenv("ABM_TRANSLATE_TEMPERATURE", "abc")
+    assert tc.temperature() == 0.3
+
+
+def test_env_num_comma_decimal(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_TEMPERATURE", "0,7")
+    assert tc.temperature() == 0.7
