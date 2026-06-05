@@ -152,6 +152,57 @@
       "p2": "ऑडियोबुक को फिर से जनरेट करने के लिए, यहाँ जाएँ:"
     }
   },
+  "translated": {
+    "it": {
+      "title": "La tua traduzione è pronta",
+      "h2": "La tua traduzione è pronta",
+      "p1": "Il libro tradotto è pronto per il download.",
+      "btn": "&#x1F4D6; Scarica traduzione",
+      "type_label": "Traduzione"
+    },
+    "en": {
+      "title": "Your translation is ready",
+      "h2": "Your translation is ready",
+      "p1": "Your translated book is ready for download.",
+      "btn": "&#x1F4D6; Download translation",
+      "type_label": "Translation"
+    },
+    "fr": {
+      "title": "Votre traduction est pr&ecirc;te",
+      "h2": "Votre traduction est pr&ecirc;te",
+      "p1": "Votre livre traduit est pr&ecirc;t au t&eacute;l&eacute;chargement.",
+      "btn": "&#x1F4D6; T&eacute;l&eacute;charger la traduction",
+      "type_label": "Traduction"
+    },
+    "es": {
+      "title": "Tu traducci&oacute;n est&aacute; lista",
+      "h2": "Tu traducci&oacute;n est&aacute; lista",
+      "p1": "Tu libro traducido est&aacute; listo para descargar.",
+      "btn": "&#x1F4D6; Descargar traducci&oacute;n",
+      "type_label": "Traducci&oacute;n"
+    },
+    "de": {
+      "title": "Deine &Uuml;bersetzung ist fertig",
+      "h2": "Deine &Uuml;bersetzung ist fertig",
+      "p1": "Dein &uuml;bersetztes Buch ist zum Download bereit.",
+      "btn": "&#x1F4D6; &Uuml;bersetzung herunterladen",
+      "type_label": "&Uuml;bersetzung"
+    },
+    "zh": {
+      "title": "您的翻译已就绪",
+      "h2": "您的翻译已就绪",
+      "p1": "您翻译的图书已准备好下载。",
+      "btn": "&#x1F4D6; 下载翻译",
+      "type_label": "译文"
+    },
+    "hi": {
+      "title": "आपका अनुवाद तैयार है",
+      "h2": "आपका अनुवाद तैयार है",
+      "p1": "आपकी अनुवादित पुस्तक डाउनलोड के लिए तैयार है.",
+      "btn": "&#x1F4D6; अनुवाद डाउनलोड करें",
+      "type_label": "अनुवाद"
+    }
+  },
   "cooldown": {
     "it": {
       "title": "Download in attesa",
