@@ -35,6 +35,7 @@ import pending_jobs
 import cancel_policy
 import storage_backend
 import storage_tiering
+import translation_core
 try:
     import gemini_tts
 except ImportError:
@@ -898,6 +899,22 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
 # .abm snapshot generation
 # ---------------------------------------------------------------------------
 
+def _job_cover_bytes(job_id, job):
+    """Risolve la cover del job e la ritorna come (bytes, filename) oppure None.
+    Stessa logica usata da _generate_optimized_abm: legge il file puntato da
+    job["cover_thumb"] se esiste su disco. Il filename ritornato e' usato dai
+    writer per derivare l'estensione (.png/.jpg)."""
+    cover_path = job.get("cover_thumb") if isinstance(job, dict) else None
+    if cover_path and os.path.exists(cover_path):
+        try:
+            with open(cover_path, "rb") as cf:
+                data = cf.read()
+        except OSError:
+            return None
+        return (data, os.path.basename(cover_path))
+    return None
+
+
 def _generate_optimized_abm(job_id):
     """Generate an .abm file with AI-optimized text for email download."""
     import zipfile
@@ -979,15 +996,15 @@ def _generate_optimized_abm(job_id):
                 entry["prompt_leak"] = True
             chapters_manifest.append(entry)
 
-        # Cover
+        # Cover (logica condivisa con run_translation via _job_cover_bytes)
         has_cover = False
         cover_file = ""
-        cover_path = job.get("cover_thumb")
-        if cover_path and os.path.exists(cover_path):
-            cover_ext = ".png" if cover_path.endswith(".png") else ".jpg"
+        cover = _job_cover_bytes(job_id, job)
+        if cover:
+            cover_data, cover_orig = cover
+            cover_ext = ".png" if cover_orig.lower().endswith(".png") else ".jpg"
             cover_file = f"cover{cover_ext}"
-            with open(cover_path, "rb") as cf:
-                zf.writestr(cover_file, cf.read())
+            zf.writestr(cover_file, cover_data)
             has_cover = True
 
         manifest = {
@@ -2124,6 +2141,298 @@ def run_optimization(job_id, selected_chapters=None):
         import traceback
         traceback.print_exc()
         _refund_job_payment(job_id, job, "error")
+
+
+# ---------------------------------------------------------------------------
+# run_translation — background thread traduzione LLM
+# ---------------------------------------------------------------------------
+# NOTA DESIGN (volutamente NON registrato in pending_jobs): il recovery al boot
+# non puo' riprendere una traduzione a meta' (nessun snapshot per-chunk) e
+# riavviarla rischierebbe di ri-eseguire job gia' rimborsati (classe incidente
+# B1). Quindi la traduzione non e' recuperabile: un crash a meta' la lascia in
+# error/refund e l'utente la rilancia manualmente.
+
+def run_translation(job_id):
+    """Background thread: traduce i capitoli selezionati via LLM e scrive
+    il file di output (abm/epub/txt). Parametri in job["tr_params"].
+    Pattern speculare a run_optimization (heartbeat, refund, batch email).
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        return
+    p = job.get("tr_params") or {}
+    source = p.get("source_lang", "")
+    target = p.get("target_lang", "")
+    optimize = bool(p.get("optimize"))
+    out_format = p.get("output_format", "abm")
+    out_name = p.get("output_name") or "translated"
+    info = job.get("info")
+    start_time = time.time()
+
+    sel = p.get("selected_chapters") or [ch.index for ch in info.chapters]
+    sel = set(sel)
+    chapters = [{"index": ch.index, "title": ch.title, "text": ch.text}
+                for ch in info.chapters if ch.index in sel]
+    total_chars = sum(len(c["text"]) for c in chapters)
+
+    job["tr_progress_current"] = 0
+    job["tr_progress_total"] = len(chapters)
+    job["tr_total_chars"] = total_chars
+    job["tr_processed_chars"] = 0
+    job["tr_streamed_chars"] = 0
+    job["tr_elapsed_seconds"] = 0
+    job["tr_progress_message"] = "Starting translation..."
+
+    def _log(msg):
+        print(f"[{job_id}] {msg}", flush=True)
+
+    def _cancelled():
+        if job.get("tr_cancelled"):
+            return True
+        if not job.get("email_registered"):
+            last_poll = job.get("last_poll", start_time)
+            if time.time() - last_poll > LLM_HEARTBEAT_TIMEOUT_SEC:
+                return True
+        return False
+
+    usage = translation_core.UsageTracker()
+    try:
+        if _cancelled():
+            raise translation_core.TranslationCancelled("cancelled at start")
+        backend = translation_core.resolve_backend()
+        provider, model, base_url = translation_core.make_client_provider(backend)
+        _log(f"translation start {source}->{target} fmt={out_format} "
+             f"opt={optimize} backend={backend} model={model} "
+             f"chapters={len(chapters)} chars={total_chars}")
+        system_prompt = translation_core.build_system_prompt(
+            source, target, optimize)
+
+        out_chapters = []
+        for i, ch in enumerate(chapters):
+            if _cancelled():
+                raise translation_core.TranslationCancelled("cancelled")
+            job["tr_progress_current"] = i
+            job["tr_current_chapter"] = ch["title"]
+            job["tr_current_chapter_num"] = i + 1
+            job["tr_elapsed_seconds"] = round(time.time() - start_time)
+            job["tr_progress_message"] = f"Translating chapter {i + 1}/{len(chapters)}"
+            chunks = translation_core.split_text_into_chunks(
+                ch["text"], translation_core.chunk_chars())
+            parts = []
+            done_in_chapter = 0
+            for chunk in chunks:
+                base = done_in_chapter
+
+                def _pcb(n, _base=base):
+                    job["tr_streamed_chars"] = job["tr_processed_chars"] + _base + n
+
+                parts.append(translation_core.call_llm(
+                    provider, system_prompt, chunk,
+                    model=model, usage=usage,
+                    label=f"[cap {i + 1}]",
+                    progress_cb=_pcb, cancel_cb=_cancelled, log=_log))
+                done_in_chapter += len(chunk)
+            out_chapters.append({
+                "index": ch["index"],
+                "title": ch["title"],
+                "text": "\n\n".join(parts),
+            })
+            job["tr_processed_chars"] += len(ch["text"])
+
+        job["tr_progress_message"] = "Translating chapter titles..."
+        titles = [c["title"] for c in out_chapters]
+        translated_titles = translation_core.translate_titles(
+            provider, titles, source, target,
+            model=model, usage=usage, log=_log)
+        for c, t in zip(out_chapters, translated_titles):
+            c["title"] = (t or "").strip() or c["title"]
+
+        # Scrittura output nella job dir (pattern output_<epoch> esistente)
+        out_dir = Path(_upload_dir) / job_id / f"output_{int(start_time)}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe = translation_core._safe_filename(out_name)[:80] or "translated"
+        filename = f"{safe}.{out_format}"
+        out_path = out_dir / filename
+        manifest_src = {
+            "title": getattr(info, "title", "") or "",
+            "author": getattr(info, "author", "") or "",
+            "original_filename": job.get("original_filename", ""),
+        }
+        cover = _job_cover_bytes(job_id, job)
+        translation_core.writer_for_format(out_format)(
+            out_path, manifest_src, out_chapters, cover,
+            source, target, optimize)
+
+        job["translated_path"] = str(out_path)
+        job["translated_name"] = filename
+        job["translated_chapters"] = out_chapters
+        job["translated_lang"] = target
+        job["translated_optimized"] = optimize
+        job["tr_progress_current"] = len(chapters)
+        job["tr_progress_message"] = "Translation complete"
+        r = usage.report()
+        _log(f"translation done: {filename} | token in={r['prompt_tokens']} "
+             f"out={r['completion_tokens']} est={r['estimated']}")
+
+        if job.get("email_registered"):
+            _send_translation_email(job_id)
+        _set_job_status(job, "translated")
+
+        # Offload cold (best-effort, come per gli output audio)
+        try:
+            _spawn_cloud_offload(job_id, str(out_dir))
+        except Exception as _e:
+            _log(f"translation offload spawn failed (non-fatal): {_e}")
+
+    except translation_core.TranslationCancelled:
+        _set_job_status(job, "analyzed")  # consenti retry
+        job["tr_progress_message"] = "Translation cancelled"
+        job["tr_cancelled"] = True
+        _log_activity(job_id, job.get("original_filename", ""), "TR_CANCEL",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+        _refund_job_payment(job_id, job, "cancel")
+    except Exception as e:
+        _set_job_status(job, "error")
+        job["error"] = f"Translation error: {e}"
+        job["tr_progress_message"] = f"Translation error: {e}"
+        _log(f"translation FAILED: {type(e).__name__}: {e}")
+        _refund_job_payment(job_id, job, "error")
+
+
+# i18n email traduzione completata. Stessa struttura chiavi di _opt_email_i18n
+# (subject/heading/body/btn/warn/footer); i placeholder {book_title}/{retention_h}
+# sono interpolati a runtime in _send_translation_email.
+def _tr_email_texts(book_title, retention_h):
+    return {
+        "it": {
+            "subject": f"\U0001F4D6 La tua traduzione è pronta — {book_title}",
+            "heading": "&#x1F4D6; La tua traduzione &egrave; pronta!",
+            "body": f"La traduzione di <strong>{book_title}</strong> &egrave; completata!",
+            "btn": "&#x2B07;&#xFE0F; Scarica la traduzione",
+            "warn": f"&#x23F0; Il link scade tra {retention_h} ore.",
+            "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
+        },
+        "en": {
+            "subject": f"\U0001F4D6 Your translation is ready — {book_title}",
+            "heading": "&#x1F4D6; Your translation is ready!",
+            "body": f"The translation of <strong>{book_title}</strong> is complete!",
+            "btn": "&#x2B07;&#xFE0F; Download your translation",
+            "warn": f"&#x23F0; The link expires in {retention_h} hours.",
+            "footer": "This email was automatically generated by Audiobook Maker.",
+        },
+        "fr": {
+            "subject": f"\U0001F4D6 Votre traduction est prête — {book_title}",
+            "heading": "&#x1F4D6; Votre traduction est pr&ecirc;te !",
+            "body": f"La traduction de <strong>{book_title}</strong> est termin&eacute;e !",
+            "btn": "&#x2B07;&#xFE0F; T&eacute;l&eacute;charger la traduction",
+            "warn": f"&#x23F0; Le lien expire dans {retention_h} heures.",
+            "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
+        },
+        "es": {
+            "subject": f"\U0001F4D6 Tu traducción está lista — {book_title}",
+            "heading": "&#x1F4D6; &iexcl;Tu traducci&oacute;n est&aacute; lista!",
+            "body": f"&iexcl;La traducci&oacute;n de <strong>{book_title}</strong> se ha completado!",
+            "btn": "&#x2B07;&#xFE0F; Descargar la traducci&oacute;n",
+            "warn": f"&#x23F0; El enlace caduca en {retention_h} horas.",
+            "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
+        },
+        "de": {
+            "subject": f"\U0001F4D6 Deine Übersetzung ist fertig — {book_title}",
+            "heading": "&#x1F4D6; Deine &Uuml;bersetzung ist fertig!",
+            "body": f"Die &Uuml;bersetzung von <strong>{book_title}</strong> ist abgeschlossen!",
+            "btn": "&#x2B07;&#xFE0F; &Uuml;bersetzung herunterladen",
+            "warn": f"&#x23F0; Der Link l&auml;uft in {retention_h} Stunden ab.",
+            "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
+        },
+        "pt": {
+            "subject": f"\U0001F4D6 Sua tradução está pronta — {book_title}",
+            "heading": "&#x1F4D6; Sua tradu&ccedil;&atilde;o est&aacute; pronta!",
+            "body": f"A tradu&ccedil;&atilde;o de <strong>{book_title}</strong> foi conclu&iacute;da!",
+            "btn": "&#x2B07;&#xFE0F; Baixar a tradu&ccedil;&atilde;o",
+            "warn": f"&#x23F0; O link expira em {retention_h} horas.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
+        "zh": {
+            "subject": f"\U0001F4D6 您的翻译已就绪 — {book_title}",
+            "heading": "&#x1F4D6; 您的翻译已就绪！",
+            "body": f"<strong>{book_title}</strong> 的翻译已完成！",
+            "btn": "&#x2B07;&#xFE0F; 下载翻译",
+            "warn": f"&#x23F0; 链接将在{retention_h}小时后过期。",
+            "footer": "此邮件由 Audiobook Maker 自动生成。",
+        },
+    }
+
+
+def _send_translation_email(job_id):
+    """Send email with translated-file download link when translation completes.
+    Clone di _send_optimization_email con token/i18n dedicati alla traduzione."""
+    job = _jobs.get(job_id)
+    if not job or not job.get("notify_email"):
+        return
+    _ret_sec_job = _retention_for_job(job)
+    retention_h = _ret_sec_job // 3600
+    email = job["notify_email"]
+    info = job.get("info")
+    book_title = info.title if info else "Audiobook"
+    lang = job.get("notify_lang", "en")
+
+    token = str(uuid.uuid4())
+    _download_tokens[token] = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "download_type": "translated",
+        "book_title": book_title,
+        "translated_path": job.get("translated_path", ""),
+        "translated_name": job.get("translated_name", ""),
+        "original_filename": job.get("original_filename", ""),
+        "lang": lang,
+        "output_format": job.get("tr_params", {}).get("output_format", ""),
+        "ai_optimized": bool(job.get("translated_optimized")),
+        "is_gemini": False,
+    }
+    _save_tokens()
+    job["email_token"] = token
+    _sent_at = time.time()
+    job["email_sent_at"] = _sent_at
+    if _write_email_marker is not None:
+        try:
+            _write_email_marker(_upload_dir / job_id, _sent_at, is_gemini=False)
+        except Exception as e:
+            print(f"[{job_id}] email-marker write failed: {e}", flush=True)
+
+    dl_url = f"{BASE_URL}/dl/{token}" if BASE_URL else f"/dl/{token}"
+
+    _tr_email_i18n = _tr_email_texts(book_title, retention_h)
+    t = _tr_email_i18n.get(lang, _tr_email_i18n["en"])
+    subject = t["subject"]
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <h2 style="color:#2c3e50">{t['heading']}</h2>
+      <p>{t['body']}</p>
+      <p style="margin:24px 0">
+        <a href="{dl_url}" style="display:inline-block;padding:14px 28px;background:#3b82f6;color:white;
+           text-decoration:none;border-radius:8px;font-weight:600;font-size:16px">
+          {t['btn']}
+        </a>
+      </p>
+      <p style="color:#e74c3c;font-weight:600">{t['warn']}</p>
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="color:#999;font-size:12px">
+        {t['footer']}
+        {('Visita ' + BASE_URL) if BASE_URL else ''}
+      </p>
+    </div>
+    """
+    success = email_service._send_email(email, subject, html_body)
+    if success:
+        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
+    else:
+        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      "", job.get("browser_lang", ""))
 
 
 def _engine_for_voice(voice):

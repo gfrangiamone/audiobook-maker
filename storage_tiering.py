@@ -13,7 +13,12 @@ _DATA_DIR = Path(os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
 _HOT_SEC = int(os.environ.get("ABM_HOT_WINDOW_SEC", "64800"))
 _HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
 
-_OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm")
+_OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm", ".epub", ".txt")
+# File .txt transitori che possono comparire in output_*/ ma NON sono output
+# finali (es. "<output>.mp3.filelist.txt" creato/rimosso da _concatenate_mp3;
+# puo' restare orfano su un fallimento ffmpeg). Esclusi per nome per non
+# offloadarli come se fossero traduzioni .txt.
+_NON_OFFLOADABLE_SUFFIX = (".filelist.txt",)
 _MARKER_NAME = ".cloud_uploaded"
 _GEN_COMPLETE_NAME = ".generation_complete"
 
@@ -41,8 +46,12 @@ def hot_window_sec(job):
 
 
 def is_offloadable(filename):
-    """True se il file è un output da spostare su cold (per estensione)."""
-    return str(filename).lower().endswith(_OFFLOADABLE_EXT)
+    """True se il file è un output da spostare su cold (per estensione).
+    Esclude i .txt transitori (es. *.filelist.txt) che non sono output finali."""
+    name = str(filename).lower()
+    if name.endswith(_NON_OFFLOADABLE_SUFFIX):
+        return False
+    return name.endswith(_OFFLOADABLE_EXT)
 
 
 def mark_cloud_uploaded(output_dir, when):
