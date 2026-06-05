@@ -444,3 +444,140 @@ def translate_titles(client_provider, titles, source, target, *, model,
         log(f"  [titoli] WARNING: risposta non valida ({e}), "
             f"mantengo i titoli originali")
         return list(titles)
+
+
+# ---------------------------------------------------------------------------
+# Output writers (copiati invariati da scripts/translate_abm.py:539-639)
+# ---------------------------------------------------------------------------
+
+def _safe_filename(name):
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    return cleaned or "untitled"
+
+
+def write_abm(out_path, manifest_src, chapters, cover, source, target,
+              optimize):
+    """Scrive il nuovo .abm con capitoli tradotti."""
+    buf = io.BytesIO()
+    now = datetime.now(timezone.utc).isoformat()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        chapters_manifest = []
+        for ch in chapters:
+            ch_safe = _safe_filename(ch["title"])[:50] or f"ch_{ch['index']}"
+            ch_filename = f"{ch['index']:03d}_{ch_safe}.txt"
+            zf.writestr(f"chapters/{ch_filename}", ch["text"])
+            chapters_manifest.append({
+                "index": ch["index"],
+                "filename": ch_filename,
+                "title": ch["title"],
+                "word_count": len(ch["text"].split()),
+            })
+
+        has_cover = False
+        cover_file = ""
+        if cover:
+            data, orig_name = cover
+            ext = ".png" if orig_name.lower().endswith(".png") else ".jpg"
+            cover_file = f"cover{ext}"
+            zf.writestr(cover_file, data)
+            has_cover = True
+
+        manifest = {
+            "format": "audiobook-maker-project",
+            "format_version": "1.0",
+            "title": manifest_src.get("title", ""),
+            "author": manifest_src.get("author", ""),
+            "language": target,
+            "has_cover": has_cover,
+            "cover_file": cover_file,
+            "exported_at": now,
+            "original_filename": manifest_src.get("original_filename", ""),
+            "translated_from": source,
+            "translated_at": now,
+            "ai_optimized": bool(optimize),
+            "chapters": chapters_manifest,
+        }
+        if optimize:
+            manifest["ai_optimized_at"] = now
+        zf.writestr("manifest.json",
+                    json.dumps(manifest, ensure_ascii=False, indent=2))
+
+    with open(out_path, "wb") as f:
+        f.write(buf.getvalue())
+
+
+def write_epub(out_path, manifest_src, chapters, cover, source, target,
+               optimize):
+    """Scrive il libro tradotto come .epub (ebooklib, già dipendenza app)."""
+    import html as _html
+    from ebooklib import epub
+
+    title = manifest_src.get("title", "") or "Untitled"
+    author = manifest_src.get("author", "")
+
+    book = epub.EpubBook()
+    book.set_identifier(f"abm-translate-{_safe_filename(title)}-{target}")
+    book.set_title(title)
+    book.set_language(target)
+    if author:
+        book.add_author(author)
+    book.add_metadata("DC", "contributor", "Audiobook Maker translate_abm")
+    book.add_metadata("DC", "source", f"translated from '{source}'"
+                      + (", AI-optimized for TTS" if optimize else ""))
+
+    if cover:
+        data, orig_name = cover
+        ext = ".png" if orig_name.lower().endswith(".png") else ".jpg"
+        book.set_cover(f"cover{ext}", data)
+
+    items = []
+    for ch in chapters:
+        ch_title = _html.escape(ch["title"])
+        paras = [p.strip() for p in re.split(r'\n\s*\n', ch["text"])
+                 if p.strip()]
+        body = "\n".join(
+            f"<p>{_html.escape(p).replace(chr(10), '<br/>')}</p>"
+            for p in paras)
+        item = epub.EpubHtml(title=ch["title"],
+                             file_name=f"chap_{ch['index']:03d}.xhtml",
+                             lang=target)
+        item.content = (f"<html><head><title>{ch_title}</title></head>"
+                        f"<body><h1>{ch_title}</h1>{body}</body></html>")
+        book.add_item(item)
+        items.append(item)
+
+    book.toc = items
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ["nav"] + items
+    epub.write_epub(str(out_path), book)
+
+
+def write_txt(out_path, manifest_src, chapters, cover, source, target,
+              optimize):
+    """Scrive il libro tradotto come testo piatto UTF-8.
+
+    Intestazione (titolo/autore), poi per ogni capitolo: titolo su riga
+    propria, riga vuota, corpo. La cover è ignorata (formato solo testo).
+    """
+    title = manifest_src.get("title", "") or "Untitled"
+    author = manifest_src.get("author", "")
+    lines = [title]
+    if author:
+        lines.append(author)
+    lines.append("")
+    for ch in chapters:
+        lines.append(ch["title"])
+        lines.append("")
+        lines.append(ch["text"])
+        lines.append("")
+    Path(out_path).write_text("\n".join(lines).rstrip() + "\n",
+                              encoding="utf-8")
+
+
+def writer_for_format(fmt):
+    """Ritorna la funzione writer per il formato. ValueError se sconosciuto."""
+    w = {"abm": write_abm, "epub": write_epub, "txt": write_txt}.get(fmt)
+    if w is None:
+        raise ValueError(f"formato output non supportato: {fmt!r}")
+    return w

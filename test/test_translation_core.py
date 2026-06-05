@@ -195,3 +195,52 @@ def test_is_available(monkeypatch):
     monkeypatch.delenv("ABM_TRANSLATE_API_KEY")
     monkeypatch.delenv("ABM_LLM_API_KEY", raising=False)
     assert tc.is_available() is False
+
+
+# ── Writer ─────────────────────────────────────────────────────────────
+import json as _json
+import zipfile as _zipfile
+
+_CHAPTERS = [
+    {"index": 1, "title": "Uno", "text": "Testo capitolo uno.\n\nSecondo para."},
+    {"index": 2, "title": "Due", "text": "Testo capitolo due."},
+]
+_MANIFEST_SRC = {"title": "Il Libro", "author": "Autore", "original_filename": "libro.epub"}
+
+
+def test_write_abm_roundtrip(tmp_path):
+    out = tmp_path / "out.abm"
+    tc.write_abm(out, _MANIFEST_SRC, _CHAPTERS, None, "it", "en", optimize=True)
+    with _zipfile.ZipFile(out) as zf:
+        m = _json.loads(zf.read("manifest.json"))
+        assert m["format"] == "audiobook-maker-project"
+        assert m["language"] == "en"
+        assert m["translated_from"] == "it"
+        assert m["ai_optimized"] is True
+        assert len(m["chapters"]) == 2
+        ch1 = zf.read("chapters/" + m["chapters"][0]["filename"]).decode("utf-8")
+        assert "capitolo uno" in ch1
+
+
+def test_write_epub_creates_valid_zip(tmp_path):
+    out = tmp_path / "out.epub"
+    tc.write_epub(out, _MANIFEST_SRC, _CHAPTERS, None, "it", "en", optimize=False)
+    assert _zipfile.is_zipfile(out)
+
+
+def test_write_txt(tmp_path):
+    out = tmp_path / "out.txt"
+    tc.write_txt(out, _MANIFEST_SRC, _CHAPTERS, None, "it", "en", optimize=False)
+    body = out.read_text(encoding="utf-8")
+    assert "Il Libro" in body
+    assert "Uno" in body and "Due" in body
+    assert "Testo capitolo uno." in body
+    assert body.index("Uno") < body.index("Testo capitolo uno.")
+
+
+def test_writer_for_format():
+    assert tc.writer_for_format("abm") is tc.write_abm
+    assert tc.writer_for_format("epub") is tc.write_epub
+    assert tc.writer_for_format("txt") is tc.write_txt
+    with pytest.raises(ValueError):
+        tc.writer_for_format("pdf")
