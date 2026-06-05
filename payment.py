@@ -49,6 +49,12 @@ if PAYPAL_CLIENT_ID:
     print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
 LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
 LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
+# Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
+# applicato solo quando si paga). Accettano virgola decimale.
+TRANSLATE_RATE_EUR_PER_MCHAR = float(
+    os.environ.get("ABM_TRANSLATE_COST", "3.0").replace(",", "."))
+TRANSLATE_MIN_COST_EUR = float(
+    os.environ.get("ABM_TRANSLATE_MIN_COST", "1.5").replace(",", "."))
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
 VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
 PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
@@ -64,6 +70,31 @@ def _paypal_available():
 def _estimate_llm_cost_eur(char_count):
     """Stima il costo in EUR per ottimizzare N caratteri."""
     return round((char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+
+
+def _estimate_translation_cost_eur(char_count, optimize=False):
+    """Stima costo traduzione (+ eventuale ottimizzazione AI integrata).
+
+    raw = chars/1M × TRANSLATE_RATE (+ chars/1M × LLM_RATE se optimize).
+    Se raw ≤ LLM_FREE_THRESHOLD_EUR → gratis (due=0).
+    Altrimenti due = max(raw, TRANSLATE_MIN_COST_EUR) — floor sul totale.
+    """
+    raw = (char_count / 1_000_000.0) * TRANSLATE_RATE_EUR_PER_MCHAR
+    if optimize:
+        raw += (char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR
+    raw = round(raw, 2)
+    requires = raw > LLM_FREE_THRESHOLD_EUR
+    due = round(max(raw, TRANSLATE_MIN_COST_EUR), 2) if requires else 0.0
+    return {
+        "chars": char_count,
+        "raw_eur": raw,
+        "due_eur": due,
+        "requires_payment": requires,
+        "rate_eur_per_mchar": TRANSLATE_RATE_EUR_PER_MCHAR,
+        "min_cost_eur": TRANSLATE_MIN_COST_EUR,
+        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "optimize": bool(optimize),
+    }
 
 
 # ---------------------------------------------------------------------------
