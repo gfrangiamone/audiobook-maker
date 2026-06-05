@@ -8204,6 +8204,24 @@ def api_optimize():
                 "chars_selected": selected_chars_total,
                 "chars_limit": max_text_chars,
             }), 413
+    # Batch mode validation (email + SMTP) — eseguita PRIMA di qualsiasi
+    # consumo di pagamento (sia branch LLM standalone che combined-gemini):
+    # un'email invalida o SMTP assente non deve mai lasciare un pagamento
+    # consumato (stranded). L'assegnazione dei campi notify resta piu' sotto,
+    # dopo il pagamento andato a buon fine.
+    if batch:
+        import re as _re
+        if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+            with _jobs_lock:
+                if job.get("status") == "optimizing":
+                    job["status"] = "analyzed"
+            return jsonify({"error": "Valid email required for batch mode"}), 400
+        if not _smtp_available():
+            with _jobs_lock:
+                if job.get("status") == "optimizing":
+                    job["status"] = "analyzed"
+            return jsonify({"error": "Email service not configured on this server"}), 503
+
     estimated_cost = _estimate_llm_cost_eur(total_chars)
     # Flusso combinato (auto_generate + voce Gemini): il payment_token
     # copre sia LLM che Gemini. Il branch standalone LLM sotto NON deve
@@ -8379,13 +8397,9 @@ def api_optimize():
                           f"{_combined_token[:12]}... not consumable "
                           f"(expected_total={_expected_total:.2f}€)")
 
-    # Batch mode requires email
+    # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
+    # eseguita sopra, prima del consumo del pagamento).
     if batch:
-        import re as _re
-        if not email or not _re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
-            return jsonify({"error": "Valid email required for batch mode"}), 400
-        if not _smtp_available():
-            return jsonify({"error": "Email service not configured on this server"}), 503
         job["notify_email"] = email
         job["notify_lang"] = data.get("lang", "en")
         job["email_registered"] = True
@@ -8581,6 +8595,19 @@ def api_translate():
             if job.get("status") == "translating":
                 job["status"] = "analyzed"
 
+    # Batch mode (email) — validazione PRIMA del pagamento: un'email invalida
+    # o SMTP assente non deve mai lasciare un pagamento consumato (stranded).
+    batch = bool(data.get("batch"))
+    email = (data.get("email") or "").strip()
+    if batch:
+        if not email or not re.match(
+                r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+            _release_claim()
+            return jsonify({"error": "Valid email required for batch mode"}), 400
+        if not _smtp_available():
+            _release_claim()
+            return jsonify({"error": "Email service not configured"}), 503
+
     # Pagamento (stesso flusso di /api/optimize, importo = est["due_eur"])
     if est["requires_payment"]:
         payment_token = (data.get("payment_token") or "").strip()
@@ -8629,17 +8656,9 @@ def api_translate():
             return jsonify({"error": "Invalid or insufficient payment",
                             "error_code": "payment_invalid"}), 402
 
-    # Batch mode (email)
-    batch = bool(data.get("batch"))
-    email = (data.get("email") or "").strip()
+    # Batch mode: assegnazione campi notify (validazione gia' eseguita sopra,
+    # prima del pagamento).
     if batch:
-        if not email or not re.match(
-                r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
-            _release_claim()
-            return jsonify({"error": "Valid email required for batch mode"}), 400
-        if not _smtp_available():
-            _release_claim()
-            return jsonify({"error": "Email service not configured"}), 503
         job["notify_email"] = email
         job["notify_lang"] = data.get("lang", "en")
         job["email_registered"] = True

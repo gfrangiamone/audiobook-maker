@@ -138,6 +138,30 @@ def test_translate_cancel_sets_flag(client):
     assert job["tr_cancelled"] is True
 
 
+def test_translate_batch_bad_email_does_not_consume_voucher(client, monkeypatch):
+    _seed()  # 400k chars -> a pagamento
+    # Voucher con saldo sufficiente
+    audiobook_app.payment._vouchers["VTEST1"] = {
+        "code": "VTEST1", "email": "u@x.it", "amount_eur": 10.0,
+        "remaining_eur": 10.0, "expires_at": time.time() + 86400,
+        "used": False, "uses": [],
+    }
+    try:
+        with _own():
+            r = client.post("/api/translate", json={
+                "job_id": "TJ1", "source_lang": "it", "target_lang": "en",
+                "output_format": "abm", "payment_token": "VTEST1",
+                "batch": True, "email": "non-una-email"})
+        assert r.status_code == 400
+        v = audiobook_app.payment._vouchers["VTEST1"]
+        # Il voucher NON deve essere stato scalato
+        assert audiobook_app.payment._voucher_remaining(v) == 10.0
+        # E il claim deve essere stato rilasciato
+        assert audiobook_app.jobs["TJ1"]["status"] == "analyzed"
+    finally:
+        audiobook_app.payment._vouchers.pop("VTEST1", None)
+
+
 def test_download_translation(client, tmp_path):
     f = tmp_path / "libro.txt"
     f.write_text("tradotto", encoding="utf-8")

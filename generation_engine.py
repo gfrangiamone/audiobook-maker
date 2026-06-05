@@ -1821,6 +1821,7 @@ def _refund_job_payment(job_id, job, reason="error"):
         job["refund_done"] = True
         print(f"[{job_id}] Refund skipped: persistent refund trace already exists (reason={reason})")
         return
+    kind_label = "traduzione" if job.get("tr_params") else "ottimizzazione AI"
     paid_amount = float(job.get("payment_amount_eur", 0) or 0)
     if paid_amount <= 0:
         return
@@ -1834,7 +1835,7 @@ def _refund_job_payment(job_id, job, reason="error"):
             # Ri-accredita direttamente sul voucher originale
             payment._voucher_refund(
                 payment_token, paid_amount, job_id=job_id,
-                reason=f"Rimborso automatico ottimizzazione {reason}",
+                reason=f"Rimborso automatico {kind_label} {reason}",
             )
             job["refund_done"] = True
             _log_activity(job_id, job.get("original_filename", ""), "VOUCHER_REFUND",
@@ -1852,7 +1853,7 @@ def _refund_job_payment(job_id, job, reason="error"):
                 origin_job_id=job_id,
                 kind="refund",
                 created_by="auto_refund",
-                note=f"Rimborso automatico ottimizzazione AI ({reason})",
+                note=f"Rimborso automatico {kind_label} ({reason})",
                 apply_bonus=_apply_bonus,
             )
             email_service._send_voucher_email(code, payment_email, bonus_amount, book_title)
