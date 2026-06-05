@@ -173,6 +173,52 @@ Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREV
 | `ABM_ADMIN_TOKEN` | *(vuoto → UI disabilitata)* | Token segreto per accedere a `/admin/vouchers` |
 - **Gitignore**: `_vouchers.json`, `_payments.json`, `voucher_admin.log` esclusi esplicitamente da git per prevenire commit accidentali (in aggiunta a `data/`).
 
+### 3.6.2 Traduzione libro
+
+Parametri per la funzionalità di traduzione del testo del libro in un'altra lingua, gestita da `translation_core.py` (libreria condivisa tra CLI e web app) e `payment.py` (calcolo costo).
+
+**Tariffe (web app + CLI)**
+
+| Parametro | Valore default | File | Riga |
+|-----------|----------------|------|------|
+| `ABM_TRANSLATE_COST` | `3.0` (EUR per 1M caratteri input traduzione; accetta virgola decimale) | `payment.py` | 54–55 |
+| `ABM_TRANSLATE_MIN_COST` | `1.5` (floor EUR sul totale dovuto, applicato solo quando si paga; gratis sotto soglia `ABM_LLM_FREE_THRESHOLD_EUR`) | `payment.py` | 56–57 |
+
+**Formula di pricing** (funzione `_estimate_translation_cost_eur` in `payment.py:75`):
+
+```
+raw = chars / 1M × ABM_TRANSLATE_COST
+      (+ chars / 1M × ABM_LLM_RATE_EUR_PER_MCHAR  se ottimizzazione AI attiva)
+se raw ≤ ABM_LLM_FREE_THRESHOLD_EUR → gratis (due = 0)
+altrimenti due = max(raw, ABM_TRANSLATE_MIN_COST)
+```
+
+**Backend LLM (web app e CLI — `translation_core.py`)**
+
+I parametri `ABM_TRANSLATE_*` hanno fallback sui corrispettivi `ABM_LLM_*`; se non impostati, usano i default sotto.
+
+| Parametro | Valore default | Env var fallback | File | Riga |
+|-----------|----------------|-----------------|------|------|
+| `ABM_TRANSLATE_API_KEY` | *(vuoto)* | `ABM_LLM_API_KEY` | `translation_core.py` | 54–55 |
+| `ABM_TRANSLATE_API_BASE` | `https://api.deepseek.com` | `ABM_LLM_API_BASE` | `translation_core.py` | 58–60 |
+| `ABM_TRANSLATE_MODEL` | `deepseek-chat` | `ABM_LLM_MODEL` | `translation_core.py` | 63–64 |
+| `ABM_TRANSLATE_BACKEND` | `auto` (`auto`\|`openai`\|`vertex`) — `auto` preferisce Vertex se `ABM_GCP_PROJECT_ID` + credentials disponibili, altrimenti OpenAI-compat | — | `translation_core.py` | 67–68 |
+| `ABM_TRANSLATE_VERTEX_LOCATION` | `global` | — | `translation_core.py` | 79–80 |
+| `ABM_TRANSLATE_CHUNK_CHARS` | `20000` (caratteri max per chunk di testo inviato all'LLM) | — | `translation_core.py` | 98–99 |
+| `ABM_TRANSLATE_MAX_RETRIES` | `4` (tentativi per chunk con backoff esponenziale) | — | `translation_core.py` | 102–103 |
+| `ABM_TRANSLATE_TEMPERATURE` | `0.3` | — | `translation_core.py` | 106–107 |
+| `ABM_TRANSLATE_REQUEST_TIMEOUT_SEC` | `300` (secondi per chiamata LLM singola) | — | `translation_core.py` | 110–111 |
+
+**Report costi (solo CLI — `scripts/translate_abm.py`)**
+
+Variabili usate esclusivamente dal report di costo post-esecuzione del CLI (non influenzano il prezzo web app).
+
+| Parametro | Valore default | File | Riga |
+|-----------|----------------|------|------|
+| `ABM_TRANSLATE_INPUT_USD_PER_MTOK` | `0.10` (USD / 1M token input — calibrato su gemini-2.5-flash-lite) | `scripts/translate_abm.py` | 37 |
+| `ABM_TRANSLATE_OUTPUT_USD_PER_MTOK` | `0.40` (USD / 1M token output) | `scripts/translate_abm.py` | 38 |
+| `ABM_TRANSLATE_USD_EUR_RATE` | `0.86` (tasso di conversione USD → EUR per il report) | `scripts/translate_abm.py` | 39 |
+
 ### 3.6 LLM (ottimizzazione testo per TTS) — engine-agnostic
 
 Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (provider attuale) ma sostituibili senza modifiche al codice.
