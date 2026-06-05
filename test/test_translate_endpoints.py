@@ -226,3 +226,41 @@ def test_paypal_create_order_translate_amount(client, monkeypatch):
     assert r.status_code == 200
     assert captured.get("amount") == 1.5
     assert r.get_json()["order_id"] == "OID1"
+
+
+def test_translate_adopt_replaces_chapters(client):
+    job = _seed(status="translated",
+                translated_lang="en", translated_optimized=True,
+                translated_chapters=[
+                    {"index": 1, "title": "One", "text": "Translated one."},
+                    {"index": 2, "title": "Two", "text": "Translated two."},
+                ])
+    with _own():
+        r = client.post("/api/translate_adopt/TJ1")
+    assert r.status_code == 200
+    d = r.get_json()
+    assert job["status"] == "analyzed"
+    assert job["info"].language == "en"
+    assert [c.title for c in job["info"].chapters] == ["One", "Two"]
+    assert job["info"].chapters[0].text == "Translated one."
+    assert job["ai_optimized"] is True
+    assert sorted(job["optimized_chapters"]) == [1, 2]
+    assert d["language"] == "en"
+    assert len(d["chapters"]) == 2
+
+
+def test_translate_adopt_requires_translated_status(client):
+    _seed(status="analyzed")
+    with _own():
+        r = client.post("/api/translate_adopt/TJ1")
+    assert r.status_code == 400
+
+
+def test_paypal_create_order_translate_free_book(client, monkeypatch):
+    job = _seed("TJF")
+    job["info"].chapters = [_Ch(1, "Uno", "x" * 10_000)]  # sotto soglia free
+    monkeypatch.setattr(audiobook_app, "_paypal_available", lambda: True)
+    with _own("TJF"):
+        r = client.post("/api/paypal_create_order_translate", json={
+            "job_id": "TJF", "target_lang": "en", "optimize": False})
+    assert r.status_code == 400

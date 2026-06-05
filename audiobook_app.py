@@ -8784,6 +8784,52 @@ def api_translate_cancel(job_id):
     return jsonify({"status": "cancelling"})
 
 
+@app.route("/api/translate_adopt/<job_id>", methods=["POST"])
+def api_translate_adopt(job_id):
+    """Adotta la traduzione come libro attivo: sostituisce i capitoli del
+    job con quelli tradotti e torna in stato 'analyzed' per il percorso TTS."""
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    if job.get("status") != "translated" or not job.get("translated_chapters"):
+        return jsonify({"error": "No completed translation to adopt"}), 400
+    info = job.get("info")
+    from epub_to_tts import Chapter
+    new_chapters = []
+    for i, ch in enumerate(job["translated_chapters"], 1):
+        text = ch.get("text", "")
+        new_chapters.append(Chapter(
+            index=i,
+            title=ch.get("title", f"Chapter {i}"),
+            text=text,
+            word_count=len(text.split()),
+            char_count=len(text),
+        ))
+    info.chapters = new_chapters
+    info.language = job.get("translated_lang", info.language)
+    # Se la traduzione includeva l'ottimizzazione TTS, i capitoli adottati
+    # risultano già ottimizzati (niente doppio pagamento ottimizzazione).
+    if job.get("translated_optimized"):
+        job["ai_optimized"] = True
+        job["optimized_chapters"] = [c.index for c in new_chapters]
+    else:
+        job["ai_optimized"] = False
+        job["optimized_chapters"] = []
+    job["status"] = "analyzed"
+    job["tr_cancelled"] = False
+    _log_activity(job_id, job.get("original_filename", ""), "TRANSLATE_ADOPT",
+                  job.get("client_id", ""), job.get("client_ip", ""), "", "")
+    return jsonify({
+        "status": "analyzed",
+        "language": info.language,
+        "title": info.title,
+        "ai_optimized": job["ai_optimized"],
+        "chapters": [{"index": c.index, "title": c.title,
+                      "words": c.word_count, "chars": c.char_count}
+                     for c in new_chapters],
+    })
+
+
 @app.route("/api/download_translation/<job_id>")
 def api_download_translation(job_id):
     job, err, sc = _check_job_owner(job_id)
