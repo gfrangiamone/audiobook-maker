@@ -117,13 +117,31 @@ def test_run_translation_cancel_refunds_and_reverts(fake_llm, tmp_path, monkeypa
 
 def test_run_translation_heartbeat_timeout_cancels(fake_llm, tmp_path, monkeypatch):
     job_id, job = _seed_job(tmp_path)
-    job["last_poll"] = time.time() - 9999
+    def _llm_then_stale(provider, sys_p, user, **kw):
+        job["last_poll"] = time.time() - 9999  # heartbeat perso durante la chiamata
+        return user.upper()
+    monkeypatch.setattr(tc, "call_llm", _llm_then_stale)
     refunds = []
     monkeypatch.setattr(ge, "_refund_job_payment",
                         lambda jid, j, reason: refunds.append(reason))
     ge.run_translation(job_id)
     assert job["status"] == "analyzed"
     assert refunds == ["cancel"]
+
+
+def test_run_translation_email_failure_does_not_refund(fake_llm, tmp_path, monkeypatch):
+    job_id, job = _seed_job(tmp_path, email_registered=True,
+                            notify_email="u@x.it",
+                            payment_type="voucher", payment_token="V1")
+    def _mail_boom(jid):
+        raise RuntimeError("SMTP giù")
+    monkeypatch.setattr(ge, "_send_translation_email", _mail_boom)
+    refunds = []
+    monkeypatch.setattr(ge, "_refund_job_payment",
+                        lambda jid, j, reason: refunds.append(reason))
+    ge.run_translation(job_id)
+    assert job["status"] == "translated"  # email fallita NON invalida il lavoro
+    assert refunds == []                   # e NON rimborsa
 
 
 def test_run_translation_batch_skips_heartbeat_and_sends_email(fake_llm, tmp_path, monkeypatch):

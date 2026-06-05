@@ -49,6 +49,12 @@ def test_is_cloud_audio_file(monkeypatch, tmp_path):
     assert st.is_offloadable("cover.jpg") is False
 
 
+def test_metadata_txt_not_offloadable(monkeypatch, tmp_path):
+    st = _reload(monkeypatch, tmp_path)
+    assert st.is_offloadable("book.m4b.metadata.txt") is False
+    assert st.is_offloadable("book.txt") is True
+
+
 def test_hot_window_defaults_match_today(monkeypatch, tmp_path):
     import importlib, os
     monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))

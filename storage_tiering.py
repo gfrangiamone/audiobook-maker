@@ -16,9 +16,9 @@ _HOT_GEMINI_SEC = int(os.environ.get("ABM_HOT_WINDOW_GEMINI_SEC", "172800"))
 _OFFLOADABLE_EXT = (".mp3", ".m4b", ".zip", ".abm", ".epub", ".txt")
 # File .txt transitori che possono comparire in output_*/ ma NON sono output
 # finali (es. "<output>.mp3.filelist.txt" creato/rimosso da _concatenate_mp3;
-# puo' restare orfano su un fallimento ffmpeg). Esclusi per nome per non
-# offloadarli come se fossero traduzioni .txt.
-_NON_OFFLOADABLE_SUFFIX = (".filelist.txt",)
+# "<output>.m4b.metadata.txt" scritto da FFmpeg e orfanato su errore).
+# Esclusi per nome per non offloadarli come se fossero traduzioni .txt.
+_NON_OFFLOADABLE_SUFFIX = (".filelist.txt", ".metadata.txt")
 _MARKER_NAME = ".cloud_uploaded"
 _GEN_COMPLETE_NAME = ".generation_complete"
 

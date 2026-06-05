@@ -2175,6 +2175,7 @@ def run_translation(job_id):
                 for ch in info.chapters if ch.index in sel]
     total_chars = sum(len(c["text"]) for c in chapters)
 
+    job["last_poll"] = time.time()  # reset heartbeat all'avvio del thread
     job["tr_progress_current"] = 0
     job["tr_progress_total"] = len(chapters)
     job["tr_total_chars"] = total_chars
@@ -2275,7 +2276,10 @@ def run_translation(job_id):
              f"out={r['completion_tokens']} est={r['estimated']}")
 
         if job.get("email_registered"):
-            _send_translation_email(job_id)
+            try:
+                _send_translation_email(job_id)
+            except Exception as e:
+                _log(f"translation email error (non-fatal): {e}")
         _set_job_status(job, "translated")
 
         # Offload cold (best-effort, come per gli output audio)
@@ -2426,11 +2430,11 @@ def _send_translation_email(job_id):
     """
     success = email_service._send_email(email, subject, html_body)
     if success:
-        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SENT",
+        _log_activity(job_id, job.get("original_filename", ""), "TR_EMAIL_SENT",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
     else:
-        _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
+        _log_activity(job_id, job.get("original_filename", ""), "TR_EMAIL_FAILED",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
