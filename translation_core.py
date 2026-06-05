@@ -252,3 +252,195 @@ def _strip_fences(text):
     stripped = text.strip()
     m = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", stripped, re.DOTALL)
     return m.group(1).strip() if m else stripped
+
+
+# ---------------------------------------------------------------------------
+# Backend LLM
+# ---------------------------------------------------------------------------
+
+def _vertex_ready():
+    return bool(gcp_project()) and bool(gcp_creds_file()) \
+        and os.path.isfile(gcp_creds_file())
+
+
+def resolve_backend():
+    """Risolve il backend LLM. Ritorna "vertex" | "apikey".
+    Solleva TranslationConfigError se la config richiesta è incompleta."""
+    choice = backend_choice()
+    if choice == "vertex":
+        if not _vertex_ready():
+            raise TranslationConfigError(
+                "backend vertex richiesto ma config incompleta: servono "
+                "ABM_GCP_PROJECT_ID e ABM_GOOGLE_CREDENTIALS_FILE (file leggibile)")
+        return "vertex"
+    if choice == "apikey":
+        if not api_key():
+            raise TranslationConfigError(
+                "backend apikey richiesto ma nessuna API key: imposta "
+                "ABM_TRANSLATE_API_KEY (o ABM_LLM_API_KEY)")
+        return "apikey"
+    if _vertex_ready():
+        return "vertex"
+    if api_key():
+        return "apikey"
+    raise TranslationConfigError(
+        "nessun backend LLM configurato: imposta ABM_GCP_PROJECT_ID + "
+        "ABM_GOOGLE_CREDENTIALS_FILE (Vertex) oppure ABM_TRANSLATE_API_KEY")
+
+
+def is_available():
+    """True se un backend LLM di traduzione è configurato."""
+    try:
+        resolve_backend()
+        return True
+    except TranslationConfigError:
+        return False
+
+
+def _vertex_base_url():
+    loc = vertex_location()
+    host = "aiplatform.googleapis.com" if loc == "global" \
+        else f"{loc}-aiplatform.googleapis.com"
+    return (f"https://{host}/v1/projects/{gcp_project()}/locations/"
+            f"{loc}/endpoints/openapi")
+
+
+def make_client_provider(backend):
+    """Ritorna (provider, model, base_url). provider() restituisce un client
+    OpenAI pronto; per Vertex rinnova il bearer token prima della scadenza."""
+    from openai import OpenAI
+
+    if backend == "apikey":
+        client = OpenAI(api_key=api_key(), base_url=api_base(),
+                        timeout=request_timeout())
+        return (lambda: client), model_name(), api_base()
+
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request as _GAuthRequest
+
+    creds = service_account.Credentials.from_service_account_file(
+        gcp_creds_file(),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+    base_url = _vertex_base_url()
+    mdl = model_name()
+    model = mdl if "/" in mdl else f"google/{mdl}"
+    state = {"client": None}
+
+    def provider():
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expiry = getattr(creds, "expiry", None)
+        near_expiry = (expiry is not None and
+                       (expiry - now).total_seconds() < 300)
+        if not creds.valid or near_expiry or state["client"] is None:
+            creds.refresh(_GAuthRequest())
+            state["client"] = OpenAI(api_key=creds.token, base_url=base_url,
+                                     timeout=request_timeout())
+        return state["client"]
+
+    return provider, model, base_url
+
+
+# ---------------------------------------------------------------------------
+# Chiamate LLM
+# ---------------------------------------------------------------------------
+
+def call_llm(client_provider, system_prompt, user_content, *, model, usage,
+             label="", progress_cb=None, cancel_cb=None, log=print):
+    """Chiamata LLM streaming con retry esponenziale. Ritorna il testo.
+
+    usage: UsageTracker dell'esecuzione (anche stato no_stream_options).
+    progress_cb(received_chars): notificata col cumulativo caratteri ricevuti.
+    cancel_cb() -> bool: se True a inizio chiamata o tra gli eventi dello
+    stream, solleva TranslationCancelled.
+    """
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    retries = max_retries()
+    last_exc = None
+    attempt = 0
+    while attempt < retries:
+        if cancel_cb and cancel_cb():
+            raise TranslationCancelled("cancelled before LLM call")
+        try:
+            client = client_provider()
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature(),
+                "stream": True,
+            }
+            if not usage.no_stream_options:
+                kwargs["stream_options"] = {"include_usage": True}
+            stream = client.chat.completions.create(**kwargs)
+            parts = []
+            received = 0
+            usage_obj = None
+            for event in stream:
+                if cancel_cb and cancel_cb():
+                    raise TranslationCancelled("cancelled mid-stream")
+                if event.choices and event.choices[0].delta.content:
+                    chunk = event.choices[0].delta.content
+                    parts.append(chunk)
+                    received += len(chunk)
+                    if progress_cb:
+                        progress_cb(received)
+                if getattr(event, "usage", None):
+                    usage_obj = event.usage
+            text = _strip_fences("".join(parts))
+            usage.track(system_prompt, user_content, text, usage_obj)
+            return text
+        except TranslationCancelled:
+            raise
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            # Provider senza stream_options: disabilita e riprova subito
+            # senza consumare un tentativo (errore di config, non transient).
+            if not usage.no_stream_options and "stream_options" in str(e).lower():
+                usage.no_stream_options = True
+                log(f"  {label} [LLM] provider senza stream_options: "
+                    f"report costi in modalità stima")
+                continue
+            last_exc = e
+            if attempt >= retries - 1:
+                break
+            wait = 2 ** attempt  # 1, 2, 4, 8 secondi
+            log(f"  {label} [LLM] {type(e).__name__} (tentativo "
+                f"{attempt + 1}/{retries}), riprovo tra {wait}s: {e}")
+            time.sleep(wait)
+            attempt += 1
+    raise TranslationError(
+        f"Chiamata LLM fallita dopo {retries} tentativi: {last_exc}")
+
+
+def translate_titles(client_provider, titles, source, target, *, model,
+                     usage, log=print, dry_run=False):
+    """Traduce i titoli dei capitoli in una singola chiamata batch (JSON).
+    Su risposta invalida ritorna i titoli originali (non fatale)."""
+    if dry_run:
+        return list(titles)
+    system = (
+        f"You translate book chapter titles from the language with ISO 639-1 "
+        f"code '{source}' to the language with ISO 639-1 code '{target}'.\n"
+        "The user sends a JSON array of strings. Reply with ONLY a JSON array "
+        "of the translated strings, same length, same order. No comments, no "
+        "markdown fences."
+    )
+    try:
+        raw = call_llm(client_provider, system,
+                       json.dumps(titles, ensure_ascii=False),
+                       model=model, usage=usage, label="[titoli]", log=log)
+        out = json.loads(_strip_fences(raw))
+        if isinstance(out, list) and len(out) == len(titles) \
+                and all(isinstance(t, str) for t in out):
+            return out
+        raise ValueError("struttura JSON inattesa")
+    except TranslationCancelled:
+        raise
+    except Exception as e:
+        log(f"  [titoli] WARNING: risposta non valida ({e}), "
+            f"mantengo i titoli originali")
+        return list(titles)

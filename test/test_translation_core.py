@@ -60,3 +60,138 @@ def test_build_system_prompt_optimize_appends_tts_rules(tmp_path, monkeypatch):
     (tmp_path / "prompt_tts_en.md").write_text("RULE-X", encoding="utf-8")
     p = tc.build_system_prompt("it", "en", optimize=True)
     assert "TTS OPTIMIZATION RULES" in p and "RULE-X" in p
+
+
+# ── Layer LLM ──────────────────────────────────────────────────────────
+
+class _FakeDelta:
+    def __init__(self, content):
+        self.content = content
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.delta = _FakeDelta(content)
+
+class _FakeEvent:
+    def __init__(self, content=None, usage=None):
+        self.choices = [_FakeChoice(content)] if content is not None else []
+        self.usage = usage
+
+class _FakeStream:
+    def __init__(self, parts):
+        self._parts = parts
+    def __iter__(self):
+        return iter(self._parts)
+
+class _FakeCompletions:
+    def __init__(self, parts, fail_times=0, exc=None):
+        self.parts = parts
+        self.fail_times = fail_times
+        self.exc = exc or RuntimeError("boom")
+        self.calls = 0
+    def create(self, **kwargs):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise self.exc
+        return _FakeStream(self.parts)
+
+class _FakeClient:
+    def __init__(self, completions):
+        self.chat = type("C", (), {"completions": completions})()
+
+
+def _provider_for(parts, fail_times=0, exc=None):
+    comp = _FakeCompletions(parts, fail_times, exc)
+    client = _FakeClient(comp)
+    return (lambda: client), comp
+
+
+def test_call_llm_streams_and_tracks(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "2")
+    provider, comp = _provider_for([_FakeEvent("ciao "), _FakeEvent("mondo")])
+    usage = tc.UsageTracker()
+    received = []
+    out = tc.call_llm(provider, "sys", "user", model="m", usage=usage,
+                      progress_cb=lambda n: received.append(n))
+    assert out == "ciao mondo"
+    assert usage.report()["calls"] == 1
+    assert received == [5, 10]  # cumulativo caratteri ricevuti
+
+
+def test_call_llm_retries_then_succeeds(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "3")
+    monkeypatch.setattr(tc.time, "sleep", lambda s: None)
+    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=2)
+    out = tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    assert out == "ok"
+    assert comp.calls == 3
+
+
+def test_call_llm_raises_after_max_retries(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "2")
+    monkeypatch.setattr(tc.time, "sleep", lambda s: None)
+    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=99)
+    with pytest.raises(tc.TranslationError):
+        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker())
+    assert comp.calls == 2
+
+
+def test_call_llm_cancel_cb_aborts_mid_stream():
+    provider, comp = _provider_for([_FakeEvent("a"), _FakeEvent("b")])
+    with pytest.raises(tc.TranslationCancelled):
+        tc.call_llm(provider, "s", "u", model="m", usage=tc.UsageTracker(),
+                    cancel_cb=lambda: True)
+
+
+def test_call_llm_stream_options_fallback(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    provider, comp = _provider_for([_FakeEvent("ok")],
+                                   fail_times=1,
+                                   exc=RuntimeError("stream_options not supported"))
+    usage = tc.UsageTracker()
+    out = tc.call_llm(provider, "s", "u", model="m", usage=usage)
+    assert out == "ok"
+    assert usage.no_stream_options is True
+    assert comp.calls == 2  # il fallback non consuma un retry
+
+
+def test_translate_titles_valid_json():
+    provider, _ = _provider_for([_FakeEvent('["Uno", "Due"]')])
+    out = tc.translate_titles(provider, ["One", "Two"], "en", "it",
+                              model="m", usage=tc.UsageTracker())
+    assert out == ["Uno", "Due"]
+
+
+def test_translate_titles_invalid_json_keeps_originals():
+    provider, _ = _provider_for([_FakeEvent("non-json")])
+    out = tc.translate_titles(provider, ["One", "Two"], "en", "it",
+                              model="m", usage=tc.UsageTracker())
+    assert out == ["One", "Two"]
+
+
+def test_resolve_backend_no_config_raises(monkeypatch):
+    for k in ("ABM_TRANSLATE_API_KEY", "ABM_LLM_API_KEY",
+              "ABM_GCP_PROJECT_ID", "ABM_GOOGLE_CREDENTIALS_FILE",
+              "ABM_TRANSLATE_BACKEND"):
+        monkeypatch.delenv(k, raising=False)
+    with pytest.raises(tc.TranslationConfigError):
+        tc.resolve_backend()
+
+
+def test_resolve_backend_apikey(monkeypatch):
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("ABM_TRANSLATE_BACKEND", raising=False)
+    monkeypatch.setenv("ABM_TRANSLATE_API_KEY", "k")
+    assert tc.resolve_backend() == "apikey"
+
+
+def test_is_available(monkeypatch):
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
+    monkeypatch.delenv("ABM_TRANSLATE_BACKEND", raising=False)
+    monkeypatch.setenv("ABM_TRANSLATE_API_KEY", "k")
+    assert tc.is_available() is True
+    monkeypatch.delenv("ABM_TRANSLATE_API_KEY")
+    monkeypatch.delenv("ABM_LLM_API_KEY", raising=False)
+    assert tc.is_available() is False
