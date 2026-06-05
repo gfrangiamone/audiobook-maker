@@ -171,3 +171,58 @@ def test_download_translation(client, tmp_path):
         r = client.get("/api/download_translation/TJ1")
     assert r.status_code == 200
     assert b"tradotto" in r.data
+
+
+def test_dl_token_translated(client, tmp_path):
+    f = tmp_path / "libro.epub"
+    f.write_bytes(b"PK fake epub")
+    audiobook_app._download_tokens["tok-tr-1"] = {
+        "job_id": "TJ9", "created_at": time.time(),
+        "download_type": "translated",
+        "translated_path": str(f), "translated_name": "libro.epub",
+        "book_title": "Libro", "lang": "it", "is_gemini": False,
+    }
+    try:
+        r = client.get("/dl/tok-tr-1/translated")
+        assert r.status_code == 200
+        assert b"PK fake epub" in r.data
+    finally:
+        audiobook_app._download_tokens.pop("tok-tr-1", None)
+
+
+def test_dl_token_translated_expired(client, tmp_path):
+    audiobook_app._download_tokens["tok-tr-2"] = {
+        "job_id": "TJ9", "created_at": time.time() - 10 * 365 * 86400,
+        "download_type": "translated",
+        "translated_path": "/nope", "translated_name": "x.txt",
+        "book_title": "Libro", "lang": "it", "is_gemini": False,
+    }
+    try:
+        r = client.get("/dl/tok-tr-2/translated")
+        assert r.status_code == 410
+    finally:
+        audiobook_app._download_tokens.pop("tok-tr-2", None)
+
+
+def test_paypal_create_order_translate_amount(client, monkeypatch):
+    _seed("TJP")
+    captured = {}
+
+    def _fake_create(amount_eur, *a, **kw):
+        captured["amount"] = amount_eur
+        return {"id": "OID1", "status": "CREATED"}
+
+    # Forza la disponibilità PayPal e intercetta il vero helper di creazione
+    # ordine (payment._paypal_create_order, importato in audiobook_app).
+    monkeypatch.setattr(audiobook_app, "_paypal_available",
+                        lambda: True, raising=False)
+    monkeypatch.setattr(audiobook_app, "_paypal_create_order",
+                        _fake_create, raising=False)
+    with _own("TJP"):
+        r = client.post("/api/paypal_create_order_translate", json={
+            "job_id": "TJP", "target_lang": "en", "optimize": False,
+            "selected_chapters": [1, 2]})
+    # 400.000 chars × 3.0/M = 1.20 → floor 1.50
+    assert r.status_code == 200
+    assert captured.get("amount") == 1.5
+    assert r.get_json()["order_id"] == "OID1"

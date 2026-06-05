@@ -1147,7 +1147,7 @@ def _token_cold_available(token_info):
     if not isinstance(token_info, dict):
         return False
     for k in ("output_m4b", "output_file", "output_zip", "optimized_abm_path",
-              "output_m4b_fallback_zip"):
+              "output_m4b_fallback_zip", "translated_path"):
         if _cold_object_available(token_info.get(k, "")):
             return True
     return False
@@ -7533,7 +7533,9 @@ def api_register_email():
     data = request.json or {}
     job_id = data.get("job_id", "")
     email = (data.get("email") or "").strip().lower()
-    download_type = data.get("download_type", "audio")  # "audio" or "podcast"
+    download_type = data.get("download_type", "audio")  # audio | chapters | podcast | translated
+    if download_type not in ("audio", "chapters", "podcast", "translated"):
+        download_type = "audio"
     base_url = (data.get("base_url") or "").strip()
 
     job, err, sc = _check_job_owner(job_id)
@@ -8124,6 +8126,48 @@ def api_paypal_create_order_gemini():
     return jsonify({
         "order_id": order.get("id"),
         "amount": server_total,
+        "status": order.get("status"),
+    })
+
+
+@app.route("/api/paypal_create_order_translate", methods=["POST"])
+def api_paypal_create_order_translate():
+    """Create a PayPal order for a book translation (+ optional AI optimization).
+
+    Identica a /api/paypal_create_order salvo l'importo, calcolato sui caratteri
+    selezionati via payment._estimate_translation_cost_eur. La cattura resta
+    /api/paypal_capture_order.
+    """
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    data = request.json or {}
+    job_id = data.get("job_id", "")
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    job = jobs[job_id]
+    info = job.get("info")
+    if not info:
+        return jsonify({"error": "No book data"}), 400
+
+    raw_sel = [str(x) for x in (data.get("selected_chapters") or [])]
+    optimize = bool(data.get("optimize"))
+    chars, _ = _translate_selected_chars(job, raw_sel)
+    est = payment._estimate_translation_cost_eur(chars, optimize=optimize)
+    amount_eur = est["due_eur"]
+    if not amount_eur or amount_eur <= 0:
+        return jsonify({"error": "No payment required"}), 400
+
+    book_title = getattr(info, "title", "") or "Audiobook"
+    description = f"Book translation  -  {book_title[:60]}"
+    try:
+        order = _paypal_create_order(amount_eur, description, custom_id=job_id)
+    except Exception as e:
+        print(f"[paypal] translate create_order failed: {e}")
+        return jsonify({"error": f"PayPal error: {e}"}), 500
+
+    return jsonify({
+        "order_id": order.get("id"),
+        "amount_eur": amount_eur,
         "status": order.get("status"),
     })
 
@@ -8922,12 +8966,26 @@ def token_download_page(token):
     if not output_format and job_in_memory:
         output_format = jobs[job_id].get("output_format", "")
 
+    # Traduzione: disponibilità del file tradotto (locale per-epoch o cold).
+    translated_available = False
+    if dl_type == "translated":
+        tr_path_snap = token_info.get("translated_path", "")
+        if tr_path_snap and os.path.exists(tr_path_snap):
+            translated_available = True
+        elif tr_path_snap:
+            candidate = job_dir / Path(tr_path_snap).parent.name / Path(tr_path_snap).name
+            if candidate.exists():
+                translated_available = True
+        if not translated_available and _cold_object_available(tr_path_snap):
+            translated_available = True
+
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
                            output_format=output_format,
                            retention_hours=round(_ret / 3600),
-                           m4b_kit_available=m4b_kit_available)
+                           m4b_kit_available=m4b_kit_available,
+                           translated_available=translated_available)
 
 
 @app.route("/dl/<token>/abm")
@@ -8969,6 +9027,44 @@ def token_do_download_abm(token):
                       "DOWNLOAD_OPT_ABM", "", "", "", "")
     _mark_token_downloaded(token_info)
     return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
+
+
+@app.route("/dl/<token>/translated")
+def token_do_download_translated(token):
+    """Serve the translated book file for a token (download_type=translated)."""
+    token_info = _download_tokens.get(token)
+    if not token_info:
+        return "Link scaduto", 410
+    _ret = _effective_retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
+        _download_tokens.pop(token, None)
+        _save_tokens()
+        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
+    job_id = token_info.get("job_id", "")
+    name = token_info.get("translated_name", "translated")
+    # Always serve the file captured in this token's snapshot (per-epoch
+    # isolation, same rationale as /dl/<token>/abm).
+    path = token_info.get("translated_path", "")
+    if path and not os.path.exists(path) and job_id:
+        job_dir = UPLOAD_DIR / job_id
+        # Reconstruct by basename within the snapshot's epoch dir
+        candidate = job_dir / Path(path).parent.name / Path(path).name
+        if candidate.exists():
+            path = str(candidate)
+        else:
+            alt = job_dir / os.path.basename(path)
+            if alt.exists():
+                path = str(alt)
+    if not path or not os.path.exists(path):
+        _cold = _try_cold_serve(token_info.get("translated_path", ""), download_name=name)
+        if _cold is not None:
+            return _cold
+        return "File not available", 404
+    if not _is_resume_or_probe_request():
+        _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
+                      "DOWNLOAD_TRANSLATION_TOKEN", "", "", "", "")
+    _mark_token_downloaded(token_info)
+    return _send_file_throttled(path, as_attachment=True, download_name=name, no_cache=True)
 
 
 @app.route("/dl/<token>/m4b")
@@ -9717,7 +9813,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -9774,7 +9870,32 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         },
     }
 
-    if dl_type == "optimized_abm":
+    if dl_type == "translated":
+        # Pagina a pulsante singolo: scarica il libro tradotto.
+        # Testi dal blocco "translated" (aggiunto in Task 10), con fallback
+        # sul blocco "download" e infine su stringhe IT/EN hardcoded, cosi'
+        # la pagina funziona anche prima che le traduzioni esistano.
+        tr_t = _DL_PAGES_I18N.get("translated", {})
+        tr_block = tr_t.get(lang, tr_t.get("en", {}))
+        _tr_btn_fallback = {
+            "it": "&#x1F4D6; Scarica traduzione",
+            "en": "&#x1F4D6; Download translation",
+            "fr": "&#x1F4D6; T&eacute;l&eacute;charger la traduction",
+            "es": "&#x1F4D6; Descargar traducci&oacute;n",
+            "de": "&#x1F4D6; &Uuml;bersetzung herunterladen",
+            "zh": "&#x1F4D6; 下载译文",
+            "hi": "&#x1F4D6; अनुवाद डाउनलोड करें",
+        }
+        btn_label = tr_block.get("btn") or _tr_btn_fallback.get(lang, _tr_btn_fallback["en"])
+        _tr_type_fallback = {
+            "it": "Traduzione", "en": "Translation", "fr": "Traduction",
+            "es": "Traducción", "de": "Übersetzung", "zh": "译文",
+            "hi": "अनुवाद",
+        }
+        type_label = tr_block.get("type_label") or _tr_type_fallback.get(lang, _tr_type_fallback["en"])
+        if translated_available:
+            audio_btn_html = f'<p><a href="/dl/{token}/translated" class="btn">{btn_label}</a></p>'
+    elif dl_type == "optimized_abm":
         type_label = "Optimized Project (.abm)"
     elif dl_type == "podcast":
         # Podcast: ZIP with chapter MP3s + RSS
