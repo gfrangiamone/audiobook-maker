@@ -234,6 +234,8 @@ let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=
 let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
+let wizMode='audio'; // 'audio' | 'translate'
+let trPaymentToken=null,trEstimate=null,trEmailRegistered=false;
 let lastVoucherEmail='';
 try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
 
@@ -469,12 +471,15 @@ function goToStep(n){
   if(n!==_wizStep){const a=document.getElementById('previewAudioWiz');if(a)a.pause();}
   const panels=document.querySelectorAll('.panel');
   panels.forEach(p=>p.classList.remove('active'));
-  const target=document.getElementById('panel'+n);
+  let panelId='panel'+n;
+  if(wizMode==='translate'&&n===3)panelId='panelT3';
+  if(wizMode==='translate'&&n===4)panelId='panelT4';
+  const target=document.getElementById(panelId);
   if(target)target.classList.add('active');
   _wizStep=n;
   updateWizardSteps(n);
   // Auto-update summary when entering panel 4
-  if(n===4)_updateSummary();
+  if(n===4&&wizMode==='audio')_updateSummary();
   var dc=document.getElementById('donateCard');
   if(dc)dc.style.display=n===1?'':'none';
   // Scroll to top so header + wizard dots are visible; bypass the global
@@ -502,6 +507,14 @@ function updateWizardSteps(n){
     const cn=parseInt(c.dataset.connector);
     c.classList.toggle('done',cn<n);
   });
+  _applyWizModeLabels();
+}
+function _applyWizModeLabels(){
+  const dots=document.querySelectorAll('.wizard-step-dot');
+  if(dots.length<5)return;
+  const l3=dots[2].querySelector('.label'),l4=dots[3].querySelector('.label');
+  if(l3)l3.textContent=t(wizMode==='translate'?'wiz_step3_tr':'wiz_step3');
+  if(l4)l4.textContent=t(wizMode==='translate'?'wiz_step4_tr':'wiz_step4');
 }
 function _unlockStep(n){if(n>_wizMaxStep)_wizMaxStep=n;updateWizardSteps(_wizStep)}
 
@@ -1823,6 +1836,93 @@ function chSelNone(){_getAllCheckboxes().forEach(cb=>{cb.checked=false;const row
 function chSelInvert(){_getAllCheckboxes().forEach(cb=>{cb.checked=!cb.checked;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!cb.checked)});updateSelection()}
 function chMasterToggle(){const v=document.getElementById('chAll').checked;_getAllCheckboxes().forEach(cb=>{cb.checked=v;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!v)});updateSelection()}
 
+// ═══════════════════ TRANSLATE WIZARD ═══════════════════
+function goToTranslate(){
+  if(!jobId||generating)return;
+  if(_getSelectedChapterIndexes().length===0){showErr('p2info',t('sel_err_none')||'Select at least one chapter');return}
+  wizMode='translate';
+  trPaymentToken=null;
+  _trFillLangSelects();
+  _trPrefillOutName();
+  goToStep(3);
+  trUpdateEstimate();
+}
+
+function _trFillLangSelects(){
+  const langs=Object.keys(voices).filter(c=>!c.startsWith('_')).map(c=>{
+    let ln=c;
+    if(L[cl]&&L[cl].langs&&L[cl].langs[c])ln=L[cl].langs[c];
+    else if(L.en&&L.en.langs&&L.en.langs[c])ln=L.en.langs[c];
+    else ln=(voices[c]&&voices[c].name)||c;
+    return {code:c,name:ln};
+  }).sort((a,b)=>a.name.localeCompare(b.name,cl));
+  ['trSrcLang','trDstLang'].forEach(id=>{
+    const sel=document.getElementById(id);if(!sel)return;
+    const old=sel.value;
+    sel.innerHTML='';
+    for(const l of langs){
+      const o=document.createElement('option');
+      o.value=l.code;o.textContent=l.name;
+      sel.appendChild(o);
+    }
+    if(old&&voices[old])sel.value=old;
+    if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',trUpdateEstimate);}
+  });
+  // Origine precompilata dalla lingua del libro se nota
+  const src=document.getElementById('trSrcLang');
+  if(src&&bookData&&bookData.language){
+    const lc=bookData.language.split('-')[0].toLowerCase();
+    if(src.querySelector('option[value="'+lc+'"]'))src.value=lc;
+  }
+}
+
+function _trPrefillOutName(){
+  const el=document.getElementById('trOutName');if(!el)return;
+  let base=(bookData&&(bookData.original_filename||bookData.filename))||'';
+  if(!base)base=(bookData&&bookData.title)||'translated';
+  base=base.replace(/\.[^.]+$/,'');
+  el.value=base;
+}
+
+async function trUpdateEstimate(){
+  if(!jobId)return null;
+  try{
+    const url=new URL('/api/translate_estimate/'+jobId,window.location.origin);
+    url.searchParams.append('target',document.getElementById('trDstLang').value||'');
+    url.searchParams.append('optimize',document.getElementById('aiToggleTr').checked?'1':'0');
+    _getSelectedChapterIndexes().forEach(i=>url.searchParams.append('selected_chapters',i));
+    const est=await fetch(url.toString()).then(r=>r.json());
+    if(est.error)return null;
+    trEstimate=est;
+    const amt=document.getElementById('costAmountTr');
+    const det=document.getElementById('costDetailTr');
+    if(amt)amt.textContent=est.requires_payment?('€ '+est.due_eur.toFixed(2)):(t('cost_free')||'€ 0.00');
+    if(det)det.textContent=(t('tr_cost_detail')||'{0} characters').replace('{0}',(est.chars||0).toLocaleString());
+    return est;
+  }catch(e){return null}
+}
+
+function showCouponTr(){
+  const row=document.getElementById('couponRowTr');
+  if(row)row.classList.toggle('visible');
+}
+
+async function validateCouponTr(){
+  const code=(document.getElementById('couponCodeTr').value||'').trim().toUpperCase();
+  const email=(document.getElementById('couponEmailTr').value||'').trim();
+  if(!code||!email)return;
+  const result=document.getElementById('couponResultTr');
+  if(result){result.innerHTML='<div class="sp"></div>';result.className='coupon-result'}
+  try{
+    const r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
+    const d=await r.json();
+    if(d.error){if(result){result.textContent=d.error;result.className='coupon-result error'}return}
+    lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
+    if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
+    trPaymentToken=d.payment_token;
+  }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
+}
+
 // ═══════════════════ EXPORT ABM ═══════════════════
 function exportAbm(){
   if(!jobId){showErr('s3err','No file analyzed yet');return}
@@ -2046,7 +2146,9 @@ function _loadPaypalSdk(clientId){
   return _paypalSdkPromise;
 }
 
-async function _showPaymentModal(costEur,chars){
+async function _showPaymentModal(costEur,chars,orderOpts){
+  // orderOpts (optional): {endpoint, body} overrides the PayPal order-creation
+  // call for alternate flows (es. translate). Voucher path is unaffected.
   return new Promise(async function(resolve){
     var modal=document.getElementById('payModal');
     var errEl=document.getElementById('payErr');
@@ -2092,7 +2194,9 @@ async function _showPaymentModal(costEur,chars){
         window.paypal.Buttons({
           style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
           createOrder:async function(){
-            var r=await fetch('/api/paypal_create_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId})});
+            var _ep=(orderOpts&&orderOpts.endpoint)||'/api/paypal_create_order';
+            var _bd=(orderOpts&&orderOpts.body)||{job_id:jobId};
+            var r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_bd)});
             var d=await r.json();
             if(d.error)throw new Error(d.error);
             return d.order_id;
