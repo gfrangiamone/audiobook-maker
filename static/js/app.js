@@ -1923,6 +1923,161 @@ async function validateCouponTr(){
   }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
 }
 
+async function startTranslation(){
+  if(!jobId||generating)return;
+  const src=document.getElementById('trSrcLang').value;
+  const dst=document.getElementById('trDstLang').value;
+  if(src===dst){showErr('trErr',t('tr_err_same_lang'));return}
+  const est=await trUpdateEstimate();
+  if(!est)return;
+  let payToken=trPaymentToken;
+  if(est.requires_payment&&!payToken){
+    payToken=await _showPaymentModal(est.due_eur,est.chars,{
+      endpoint:'/api/paypal_create_order_translate',
+      body:{job_id:jobId,target_lang:dst,
+            optimize:document.getElementById('aiToggleTr').checked,
+            selected_chapters:_getSelectedChapterIndexes()}
+    });
+    if(!payToken)return;
+    trPaymentToken=payToken;
+  }
+  const payload={
+    job_id:jobId,
+    source_lang:src,target_lang:dst,
+    output_format:document.getElementById('trFormat').value,
+    output_name:(document.getElementById('trOutName').value||'').trim(),
+    optimize:document.getElementById('aiToggleTr').checked,
+    selected_chapters:_getSelectedChapterIndexes(),
+    batch:false,lang:cl
+  };
+  if(payToken)payload.payment_token=payToken;
+  try{
+    const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(d.error){showErr('trErr',d.error);return}
+    document.getElementById('trErr').innerHTML='';
+    generating=true;
+    lockUI();
+    goToStep(4);
+    const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
+    _trAutofillEmailLate();
+    _listenTranslateProgress();
+  }catch(e){showErr('trErr','Error: '+e.message)}
+}
+
+function _trAutofillEmailLate(){
+  if(trEmailRegistered)return;
+  let stored='';
+  try{stored=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
+  if(!stored||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stored))return;
+  const input=document.getElementById('notifyEmailLateTr');
+  if(input&&!input.value)input.value=stored;
+}
+
+function _listenTranslateProgress(){
+  const myJobId=jobId;
+  const es=new EventSource('/api/translate_progress/'+myJobId);
+  es.onmessage=ev=>{
+    const d=JSON.parse(ev.data);
+    const fill=document.getElementById('trProgressFill');
+    const pct=document.getElementById('trProgressPct');
+    const phase=document.getElementById('trProgressPhase');
+    const total=d.tr_total_chars||1;
+    const done=Math.min(d.tr_streamed_chars||d.tr_processed_chars||0,total);
+    const p=Math.round(done/total*100);
+    if(fill)fill.style.width=p+'%';
+    if(pct)pct.textContent=p+'%';
+    if(phase)phase.textContent=(t('tr_progress_chapter')||'Chapter {0} of {1}')
+      .replace('{0}',d.tr_current_chapter_num||0)
+      .replace('{1}',d.tr_progress_total||0);
+    if(d.status==='error'){es.close();generating=false;unlockUI();showErr('trErr4',d.error||'Translation error');return}
+    if(d.status==='cancelled'){es.close();generating=false;unlockUI();showErr('trErr4',t('tr_cancelled'));goToStep(3);return}
+    if(d.status==='translated'){es.close();generating=false;unlockUI();_showTranslationDone(d);return}
+  };
+  es.onerror=()=>{es.close();setTimeout(()=>{if(generating)_listenTranslateProgress()},3000)};
+}
+
+async function cancelTranslation(){
+  if(!jobId)return;
+  try{await fetch('/api/translate_cancel/'+jobId,{method:'POST'})}catch(e){}
+}
+
+async function submitEmailLateTr(){
+  const email=(document.getElementById('notifyEmailLateTr').value||'').trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return;
+  lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
+  try{
+    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,email:email,download_type:'translated',lang:cl})});
+    const d=await r.json();
+    if(d.error){alert(d.error);return}
+    trEmailRegistered=true;
+    const area=document.getElementById('emailLateAreaTr');
+    _setEmailLateConfirm(area,'✅ '+(t('email_late_ok')||'Email registered!'));
+  }catch(e){alert('Error: '+e.message)}
+}
+
+function _showTranslationDone(d){
+  _unlockStep(5);
+  jobDone=true;
+  ['btnD','btnM','btnA','btnP'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display='none'});
+  const btnD=document.getElementById('btnD');
+  if(btnD){
+    btnD.style.display='';
+    const fmt=(document.getElementById('trFormat').value||'').toUpperCase();
+    btnD.innerHTML='&#x2B07;&#xFE0F; <span>'+esc(t('tr_btn_download')||'Download translation')+' ('+esc(fmt)+')</span>';
+    btnD.onclick=()=>{window.location='/api/download_translation/'+jobId};
+  }
+  const btnAdopt=document.getElementById('btnTrAdopt');
+  if(btnAdopt){btnAdopt.style.display='';btnAdopt.onclick=adoptTranslation;}
+  const h=document.getElementById('panel5Heading');
+  if(h)h.textContent=t('tr_done')||'Translation complete!';
+  goToStep(5);
+}
+
+async function adoptTranslation(){
+  if(!jobId)return;
+  try{
+    const r=await fetch('/api/translate_adopt/'+jobId,{method:'POST'});
+    const d=await r.json();
+    if(d.error){alert(d.error);return}
+    if(bookData){
+      bookData.language=d.language;
+      bookData.title=d.title||bookData.title;
+      bookData.chapters=(d.chapters||[]).map(c=>({
+        index:c.index,title:c.title,words:c.words,chars:c.chars,
+        estimated_minutes:c.estimated_minutes||0
+      }));
+      bookData.total_chapters=bookData.chapters.length;
+      bookData.total_words=bookData.chapters.reduce((s,c)=>s+(c.words||0),0);
+      bookData.ai_optimized=!!d.ai_optimized;
+    }
+    optimizedChapters=d.ai_optimized?(d.chapters||[]).map(c=>c.index):[];
+    wizMode='audio';
+    jobDone=false;
+    const btnAdopt=document.getElementById('btnTrAdopt');
+    if(btnAdopt)btnAdopt.style.display='none';
+    _renderChaptersAfterAdopt(d);
+    // Riallinea la voce alla nuova lingua del libro
+    if(bookData&&bookData.language){
+      const lc=bookData.language.split('-')[0].toLowerCase();
+      const vlSel=document.getElementById('vl');
+      if(vlSel&&vlSel.querySelector('option[value="'+lc+'"]'))vlSel.value=lc;
+    }
+    goToStep(3); // pannello voci (audio)
+    fillLangs(); // ripreseleziona la lingua = nuova lingua del libro
+  }catch(e){alert('Error: '+e.message)}
+}
+
+function _renderChaptersAfterAdopt(d){
+  // bookData già aggiornato con la forma adottata: riusa fillPreview che
+  // ripopola #chapterRows, #bookLang, contatori e stato selezione (tutti
+  // i capitoli selezionati di default).
+  if(bookData)fillPreview(bookData);
+  const bookLangEl=document.getElementById('bookLang');
+  if(bookLangEl&&bookData&&bookData.language)bookLangEl.textContent=bookData.language.toUpperCase();
+  _updateAiOptUI();
+}
+
 // ═══════════════════ EXPORT ABM ═══════════════════
 function exportAbm(){
   if(!jobId){showErr('s3err','No file analyzed yet');return}
@@ -3630,6 +3785,7 @@ function resetAll(){
   if(hbInterval){clearInterval(hbInterval);hbInterval=null}
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
   generating=false;jobDone=false;
+  wizMode='audio';trPaymentToken=null;trEstimate=null;trEmailRegistered=false;
   unlockUI();
   _wizStep=1;_wizMaxStep=1;
   updateWizardSteps(1);
@@ -3657,6 +3813,21 @@ function resetAll(){
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  // Reset translate (panel T3/T4) UI
+  const trOutName=document.getElementById('trOutName');if(trOutName)trOutName.value='';
+  const couponCodeTr=document.getElementById('couponCodeTr');if(couponCodeTr)couponCodeTr.value='';
+  const couponEmailTr=document.getElementById('couponEmailTr');if(couponEmailTr)couponEmailTr.value='';
+  const couponResultTr=document.getElementById('couponResultTr');if(couponResultTr){couponResultTr.innerHTML='';couponResultTr.className='coupon-result';}
+  const couponRowTr=document.getElementById('couponRowTr');if(couponRowTr)couponRowTr.classList.remove('visible');
+  const aiToggleTr=document.getElementById('aiToggleTr');if(aiToggleTr)aiToggleTr.checked=false;
+  const trErr=document.getElementById('trErr');if(trErr)trErr.innerHTML='';
+  const trErr4=document.getElementById('trErr4');if(trErr4)trErr4.innerHTML='';
+  const trProgressFill=document.getElementById('trProgressFill');if(trProgressFill)trProgressFill.style.width='0%';
+  const trProgressPct=document.getElementById('trProgressPct');if(trProgressPct)trProgressPct.textContent='0%';
+  const trProgressPhase=document.getElementById('trProgressPhase');if(trProgressPhase)trProgressPhase.textContent='—';
+  const emailLateAreaTr=document.getElementById('emailLateAreaTr');if(emailLateAreaTr)emailLateAreaTr.classList.remove('visible');
+  const notifyEmailLateTr=document.getElementById('notifyEmailLateTr');if(notifyEmailLateTr)notifyEmailLateTr.value='';
+  const btnTrAdopt=document.getElementById('btnTrAdopt');if(btnTrAdopt)btnTrAdopt.style.display='none';
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
