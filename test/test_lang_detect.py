@@ -84,6 +84,14 @@ def test_sample_fallback_first_1500_chars():
     assert sample == "X" * 1500
 
 
+def test_sample_two_paragraphs_fallback():
+    # Solo 2 paragrafi: nessuna terna possibile -> fallback testo unito
+    sample = ge._pick_language_sample(_paras(LONG_A, LONG_B))
+    assert LONG_A in sample
+    assert LONG_B in sample
+    assert len(sample) <= 1500
+
+
 def test_sample_truncates_each_paragraph_to_600():
     texts = ["P" * 2000, "Q" * 2000, "R" * 2000]
     sample = ge._pick_language_sample(_paras(*texts))
@@ -135,6 +143,11 @@ def test_detect_normalizes_reply(monkeypatch, book):
 def test_detect_strips_region_suffix(monkeypatch, book):
     monkeypatch.setattr(ge, "_llm_client", _FakeLLM(reply="en-US"))
     assert ge.detect_book_language(book) == "en"
+
+
+def test_detect_strips_backticks(monkeypatch, book):
+    monkeypatch.setattr(ge, "_llm_client", _FakeLLM(reply="`it`"))
+    assert ge.detect_book_language(book) == "it"
 
 
 def test_detect_rejects_garbage(monkeypatch, book):

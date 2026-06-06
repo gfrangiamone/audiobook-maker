@@ -306,7 +306,7 @@ def detect_book_language(info):
     except Exception as e:
         print(f"[lang-detect] LLM call failed (non-fatal): {e}")
         return ""
-    code = raw.lower().split()[0].strip("\"'.,;:") if raw else ""
+    code = raw.lower().split()[0].strip("\"'.,;:`") if raw else ""
     code = code.split("-")[0]
     # ISO 639-1 = sempre 2 lettere: una regex piu' lasca ({2,3}) farebbe
     # passare token inglesi tipo "the" da risposte verbose.
