@@ -2996,6 +2996,24 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .chart-x-label {{ flex:1; text-align:center; font-size:0.6rem; color:var(--text-dim); }}
 </style>
 
+<!-- Modale conferma interruzione job (admin). Deve precedere lo <script>:
+     kOverlay/kToast sono risolti con getElementById in parsing sincrono. -->
+<div class="kmodal-overlay" id="kmodalOverlay">
+  <div class="kmodal">
+    <h3>⛔ Interrompere questo job?</h3>
+    <div class="krow">📄 <b id="kmTitle"></b></div>
+    <div class="krow">🆔 <code id="kmSid"></code></div>
+    <div class="krow">⚙️ <span id="kmOp"></span> · progresso <b id="kmPct"></b></div>
+    <div class="keffects" id="kmEffects"></div>
+    <div class="krow">L'operazione è <b>irreversibile</b>: la generazione non potrà riprendere da dove era arrivata.</div>
+    <div class="kbtns">
+      <button class="kcancel" id="kmCancel">Annulla</button>
+      <button class="kconfirm" id="kmConfirm">Interrompi job</button>
+    </div>
+  </div>
+</div>
+<div class="ktoast" id="ktoast"></div>
+
 <script>
 const hourlyData = {hourly_json};
 const langLabels = {lang_labels_json};
@@ -3358,22 +3376,6 @@ document.addEventListener('click', (e) => {{
     if (e.target.id === 'kmConfirm') confirmKill();
 }});
 </script>
-
-<div class="kmodal-overlay" id="kmodalOverlay">
-  <div class="kmodal">
-    <h3>⛔ Interrompere questo job?</h3>
-    <div class="krow">📄 <b id="kmTitle"></b></div>
-    <div class="krow">🆔 <code id="kmSid"></code></div>
-    <div class="krow">⚙️ <span id="kmOp"></span> · progresso <b id="kmPct"></b></div>
-    <div class="keffects" id="kmEffects"></div>
-    <div class="krow">L'operazione è <b>irreversibile</b>: la generazione non potrà riprendere da dove era arrivata.</div>
-    <div class="kbtns">
-      <button class="kcancel" id="kmCancel">Annulla</button>
-      <button class="kconfirm" id="kmConfirm">Interrompi job</button>
-    </div>
-  </div>
-</div>
-<div class="ktoast" id="ktoast"></div>
 
 </body>
 </html>"""

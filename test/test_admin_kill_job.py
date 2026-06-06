@@ -71,3 +71,19 @@ def test_log_activity_page_contains_kill_ui(client):
     assert "kmodalOverlay" in html
     assert "openKillModal" in html
     assert "Interrompere questo job?" in html
+
+
+def test_kill_modal_markup_precedes_script(client):
+    """Il markup di modale/toast deve precedere lo <script> che li risolve.
+
+    Lo script viene eseguito in parsing sincrono: se #kmodalOverlay/#ktoast
+    stanno dopo, getElementById restituisce null e il bottone ⛔ è morto
+    (TypeError al click, nessun modale/toast).
+    """
+    with patch.object(audiobook_app, "ADMIN_TOKEN", "tok-test"), \
+         patch("audiobook_app._admin_auth_ok", return_value=True):
+        r = client.get("/admin/log-activity")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert html.index('id="kmodalOverlay"') < html.index("getElementById('kmodalOverlay')")
+    assert html.index('id="ktoast"') < html.index("getElementById('ktoast')")
