@@ -42,7 +42,7 @@
 - Modify: `generation_engine.py` (inserire dopo `_llm_available()`, riga ~227)
 - Create: `test/test_lang_detect.py`
 
-- [ ] **Step 1.1: Scrivi i test falliti (unit)**
+- [x] **Step 1.1: Scrivi i test falliti (unit)**
 
 ```python
 # test/test_lang_detect.py
@@ -214,12 +214,12 @@ def test_detect_no_text(monkeypatch):
     assert ge.detect_book_language(_Info([])) == ""
 ```
 
-- [ ] **Step 1.2: Esegui i test e verifica che falliscano**
+- [x] **Step 1.2: Esegui i test e verifica che falliscano**
 
 Run: `pytest test/test_lang_detect.py -v --tb=short`
 Expected: FAIL/ERROR con `AttributeError: module 'generation_engine' has no attribute '_pick_language_sample'` (e simili per `detect_book_language`, `LANG_DETECT_TIMEOUT_SEC`)
 
-- [ ] **Step 1.3: Implementa in `generation_engine.py`**
+- [x] **Step 1.3: Implementa in `generation_engine.py`**
 
 Inserire subito dopo la funzione `_llm_available()` (riga ~227, prima del commento di sezione successivo):
 
@@ -317,13 +317,13 @@ def detect_book_language(info):
 
 Nota su `test_sample_fallback_first_1500_chars`: con un solo paragrafo gigante, `_find_run` non trova mai terne (servono 3 paragrafi) → si arriva all'ultima riga `"\n\n".join(paras)[:1500]`. Con `test_sample_fallback_any_three_consecutive` invece `_find_run(mid, 1)` trova la terna corta dal centro.
 
-- [ ] **Step 1.4: Valida sintassi ed esegui i test**
+- [x] **Step 1.4: Valida sintassi ed esegui i test**
 
 Run: `python -m py_compile generation_engine.py`
 Run: `pytest test/test_lang_detect.py -v --tb=short`
-Expected: PASS (tutti i 17 test)
+Expected: PASS (tutti i 16 test)
 
-- [ ] **Step 1.5: Commit**
+- [x] **Step 1.5: Commit**
 
 ```
 git add generation_engine.py test/test_lang_detect.py
@@ -338,7 +338,7 @@ git commit -m "feat(lang-detect): campionamento 3 paragrafi + detect_book_langua
 - Modify: `audiobook_app.py` (api_analyze, righe ~6283, ~6292, ~6254, ~6405)
 - Test: `test/test_lang_detect.py` (append)
 
-- [ ] **Step 2.1: Scrivi i test falliti (integrazione)**
+- [x] **Step 2.1: Scrivi i test falliti (integrazione)**
 
 Append a `test/test_lang_detect.py`:
 
@@ -456,12 +456,12 @@ def test_analyze_reuse_keeps_detected_flag(client, monkeypatch):
 
 Nota: `monkeypatch.setattr(ge, "detect_book_language", ...)` funziona perché `api_analyze` chiamerà `generation_engine.detect_book_language(...)` (lookup sul modulo a runtime, `audiobook_app.py:124` importa il modulo intero).
 
-- [ ] **Step 2.2: Esegui — verifica che i nuovi test falliscano**
+- [x] **Step 2.2: Esegui — verifica che i nuovi test falliscano**
 
 Run: `pytest test/test_lang_detect.py -v --tb=short -k analyze`
 Expected: FAIL — `d["language"]` resta `""` in `test_analyze_txt_detects_language` e `KeyError: 'language_detected'` (campo assente dalla risposta)
 
-- [ ] **Step 2.3: Implementa l'hook in `api_analyze`**
+- [x] **Step 2.3: Implementa l'hook in `api_analyze`**
 
 **(a)** Subito dopo il check contenuto (`audiobook_app.py:6283-6284`):
 
@@ -504,13 +504,13 @@ Expected: FAIL — `d["language"]` resta `""` in `test_analyze_txt_detects_langu
                 "language_detected": existing_job.get("language_detected", False),
 ```
 
-- [ ] **Step 2.4: Valida ed esegui tutto il file di test**
+- [x] **Step 2.4: Valida ed esegui tutto il file di test**
 
 Run: `python -m py_compile audiobook_app.py`
 Run: `pytest test/test_lang_detect.py -v --tb=short`
 Expected: PASS (tutti, unit + integrazione)
 
-- [ ] **Step 2.5: Commit**
+- [x] **Step 2.5: Commit**
 
 ```
 git add audiobook_app.py test/test_lang_detect.py
@@ -524,18 +524,18 @@ git commit -m "feat(lang-detect): hook in /api/analyze + flag language_detected"
 **Files:**
 - Modify: `docs/superpowers/specs/2026-06-06-detect-language-llm-design.md` (stato)
 
-- [ ] **Step 3.1: Suite completa + lint sintassi**
+- [x] **Step 3.1: Suite completa + lint sintassi**
 
 Run: `python -m py_compile audiobook_app.py generation_engine.py`
 Run: `pytest test/ -v --tb=short`
 Expected: nessuna nuova failure rispetto allo stato pre-piano (nota: eventuali failure pre-esistenti `test_paypal_create_gemini` da ordering/reload non sono regressioni di questo piano — confrontare con una run su HEAD precedente in caso di dubbio).
 
-- [ ] **Step 3.2: Verifica manuale rapida (opzionale se LLM non configurato in dev)**
+- [x] **Step 3.2: Verifica manuale rapida (opzionale se LLM non configurato in dev)**
 
 Run: `python audiobook_app.py` — caricare un `.txt` in una lingua riconoscibile.
 Expected con `ABM_LLM_API_KEY` configurata: log `[lang-detect] detected language: <code>` e lingua precompilata in UI (capitoli e wizard). Senza API key: nessun log, lingua vuota come oggi. Fermare il server.
 
-- [ ] **Step 3.3: Aggiorna stato spec e committa**
+- [x] **Step 3.3: Aggiorna stato spec e committa**
 
 Nella spec, cambiare la riga `**Stato:** approvato (brainstorming concluso)` in `**Stato:** implementato (2026-06-06)`.
 
