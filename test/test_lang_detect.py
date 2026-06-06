@@ -1,6 +1,9 @@
 """Test rilevamento lingua via LLM (spec 2026-06-06-detect-language-llm)."""
+import io
+
 import pytest
 
+import audiobook_app
 import generation_engine as ge
 
 
@@ -180,10 +183,6 @@ def test_detect_no_text(monkeypatch):
 
 
 # -- Integrazione /api/analyze ──────────────────────────────────────────
-import io
-
-import audiobook_app
-
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
