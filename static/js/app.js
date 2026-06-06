@@ -2727,7 +2727,14 @@ async function startGen(){
       }
       showPErr(d.error);unlockUI();return
     }
-    if(d.auto_batch_email)_showAutoBatchNotice(d.auto_batch_email);
+    if(d.auto_batch_email){
+      // Batch implicito server-side: l'email del pagamento e' gia' registrata
+      // (email_registered=True sul job). Allinea il flag client cosi'
+      // _updateGenNoticeWarning() nasconde il banner ATTENZIONE (contraddittorio)
+      // e onBeforeUnload non invia il cancel-beacon.
+      emailRegistered=true;
+      _showAutoBatchNotice(d.auto_batch_email);
+    }
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
@@ -3495,7 +3502,7 @@ async function goBackToChapters(){
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
-  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  _resetEmailLateArea();
   const btnGenGoBack=document.getElementById('btnGenerate');if(btnGenGoBack){btnGenGoBack.disabled=false;btnGenGoBack.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   document.getElementById('pMsg').style.color='';
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
@@ -3552,7 +3559,7 @@ function resetAll(){
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
-  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  _resetEmailLateArea();
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
@@ -3678,14 +3685,37 @@ function _updateGenNoticeWarning(){
   }
 }
 
+let _emailLateAreaHTML=null;
 function _setEmailLateConfirm(area,msg){
   if(!area)return;
+  // Salva il markup originale (input+bottone, gia' i18n-izzato) prima di
+  // distruggerlo: serve a _resetEmailLateArea() per ripristinare il campo
+  // alla generazione successiva nella stessa sessione.
+  if(_emailLateAreaHTML===null&&area.querySelector('#notifyEmailLate'))_emailLateAreaHTML=area.innerHTML;
   while(area.firstChild)area.removeChild(area.firstChild);
   const span=document.createElement('span');
   span.style.color='var(--ok)';
   span.style.fontSize='.84rem';
   span.textContent=msg;
   area.appendChild(span);
+}
+
+function _resetEmailLateArea(){
+  // Ripristina lo stato iniziale dell'area email tra una generazione e la
+  // successiva: rimuove la conferma verde stantia ("Email recepita") del job
+  // precedente e ricostruisce input+bottone distrutti da _setEmailLateConfirm.
+  // Nasconde anche il banner auto-batch del job precedente.
+  const area=document.getElementById('emailLateArea');
+  if(area){
+    area.classList.remove('visible');
+    if(!area.querySelector('#notifyEmailLate')&&_emailLateAreaHTML!==null){
+      area.innerHTML=_emailLateAreaHTML;
+      const input=document.getElementById('notifyEmailLate');
+      if(input)input.value='';
+    }
+  }
+  const abn=document.getElementById('autoBatchNotice');
+  if(abn)abn.style.display='none';
 }
 
 async function _autoRegisterEmailFromStorage(myJobId){
