@@ -60,9 +60,10 @@ chiamata da ~2 s).
 - System prompt dedicato (inglese, come gli altri prompt interni): l'utente
   invia un estratto di libro, rispondere SOLO con il codice ISO 639-1 della
   lingua dell'estratto (es. `it`, `en`, `de`), nessun altro testo.
-- Parsing risposta: strip, lowercase, `split('-')[0]`, primo token; valida con
-  regex `[a-z]{2,3}`. Risposta non valida o eccezione → log `[lang-detect]` e
-  ritorno `""`.
+- Parsing risposta: strip, lowercase, primo token, `split('-')[0]`; valida con
+  regex `[a-z]{2}` (ISO 639-1 = sempre 2 lettere; una regex più lasca farebbe
+  passare token inglesi tipo "the" da risposte verbose). Risposta non valida o
+  eccezione → log `[lang-detect]` e ritorno `""`.
 
 ### 3. Integrazione in `audiobook_app.py` — `/api/analyze`
 
