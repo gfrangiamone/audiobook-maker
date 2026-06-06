@@ -549,6 +549,9 @@ function handleFile(file){
   if(generating||jobDone)return;
   const fn=file.name.toLowerCase();
   if(!fn.endsWith('.epub')&&!fn.endsWith('.pdf')&&!fn.endsWith('.txt')&&!fn.endsWith('.abm')){showErr('aerr',t('err_epub'));return}
+  // Pre-check dimensione: evita upload destinati al 413 server-side
+  const maxMb=window.ABM_MAX_UPLOAD_MB||50;
+  if(file.size>maxMb*1024*1024){showErr('aerr',t('err_file_too_large',{size:(file.size/1048576).toFixed(1),mb:maxMb}));return}
   document.getElementById('uz').classList.add('ok');
   document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
@@ -593,7 +596,11 @@ async function analyzeEpub(file){
   const fd=new FormData();fd.append('epub',file);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
-    const d=await r.json();
+    let d;
+    // Risposta non-JSON (es. pagina HTML 413/5xx di nginx o Werkzeug): messaggio
+    // sensato invece di "JSON.parse: unexpected character".
+    try{d=await r.json()}catch(_){d={error:'Error: HTTP '+r.status}}
+    if(d.error==='file_too_large'){d.error=t('err_file_too_large',{size:(file.size/1048576).toFixed(1),mb:d.max_mb||window.ABM_MAX_UPLOAD_MB||50})}
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
     if(d.existing_job_id && d.is_running){
       jobId=d.existing_job_id;
@@ -3006,7 +3013,14 @@ async function startGen(){
       }
       showPErr(d.error);unlockUI();return
     }
-    if(d.auto_batch_email)_showAutoBatchNotice(d.auto_batch_email);
+    if(d.auto_batch_email){
+      // Batch implicito server-side: l'email del pagamento e' gia' registrata
+      // (email_registered=True sul job). Allinea il flag client cosi'
+      // _updateGenNoticeWarning() nasconde il banner ATTENZIONE (contraddittorio)
+      // e onBeforeUnload non invia il cancel-beacon.
+      emailRegistered=true;
+      _showAutoBatchNotice(d.auto_batch_email);
+    }
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
@@ -3774,7 +3788,7 @@ async function goBackToChapters(){
   const btnBackCh=document.getElementById('btnBackCh');if(btnBackCh)btnBackCh.style.display='none';
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
-  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  _resetEmailLateArea();
   const btnGenGoBack=document.getElementById('btnGenerate');if(btnGenGoBack){btnGenGoBack.disabled=false;btnGenGoBack.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   document.getElementById('pMsg').style.color='';
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
@@ -3832,7 +3846,7 @@ function resetAll(){
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
-  const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  _resetEmailLateArea();
   // Reset translate (panel T3/T4) UI
   const trOutName=document.getElementById('trOutName');if(trOutName)trOutName.value='';
   const couponCodeTr=document.getElementById('couponCodeTr');if(couponCodeTr)couponCodeTr.value='';
@@ -3975,14 +3989,37 @@ function _updateGenNoticeWarning(){
   }
 }
 
+let _emailLateAreaHTML=null;
 function _setEmailLateConfirm(area,msg){
   if(!area)return;
+  // Salva il markup originale (input+bottone, gia' i18n-izzato) prima di
+  // distruggerlo: serve a _resetEmailLateArea() per ripristinare il campo
+  // alla generazione successiva nella stessa sessione.
+  if(_emailLateAreaHTML===null&&area.querySelector('#notifyEmailLate'))_emailLateAreaHTML=area.innerHTML;
   while(area.firstChild)area.removeChild(area.firstChild);
   const span=document.createElement('span');
   span.style.color='var(--ok)';
   span.style.fontSize='.84rem';
   span.textContent=msg;
   area.appendChild(span);
+}
+
+function _resetEmailLateArea(){
+  // Ripristina lo stato iniziale dell'area email tra una generazione e la
+  // successiva: rimuove la conferma verde stantia ("Email recepita") del job
+  // precedente e ricostruisce input+bottone distrutti da _setEmailLateConfirm.
+  // Nasconde anche il banner auto-batch del job precedente.
+  const area=document.getElementById('emailLateArea');
+  if(area){
+    area.classList.remove('visible');
+    if(!area.querySelector('#notifyEmailLate')&&_emailLateAreaHTML!==null){
+      area.innerHTML=_emailLateAreaHTML;
+      const input=document.getElementById('notifyEmailLate');
+      if(input)input.value='';
+    }
+  }
+  const abn=document.getElementById('autoBatchNotice');
+  if(abn)abn.style.display='none';
 }
 
 async function _autoRegisterEmailFromStorage(myJobId){

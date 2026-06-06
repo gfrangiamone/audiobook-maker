@@ -19,6 +19,7 @@ Usa configure() per ricevere i riferimenti ai dati condivisi.
 """
 
 import asyncio
+import html as _htmlesc
 import json
 import os
 import re
@@ -1057,6 +1058,169 @@ def _generate_optimized_abm(job_id):
 # Completion emails
 # ---------------------------------------------------------------------------
 
+# ── Email: blocco "dettagli di generazione" ─────────────────────────────────
+# Frasi con placeholder {…} formattate in Python. Entità HTML per gli accenti,
+# come le altre chiavi email. I nomi modello PREMIUM usano le stesse stringhe
+# del selettore UI (lbl_model_flash25/31) — deroga naming confermata 2026-06-06.
+_EMAIL_MODEL_LABELS = {
+    "flash25": "Gemini 2.5 Flash TTS",
+    "flash31": "Gemini 3.1 Flash TTS",
+}
+
+_email_details_i18n = {
+    "it": {
+        "lang_line": "Hai generato questo audiolibro in lingua <strong>{lang}</strong> utilizzando <strong>{voice_type}</strong>.",
+        "voice_type_standard": "Voci Standard",
+        "voice_type_premium": "Voci PREMIUM",
+        "voice_line": "Hai scelto la voce <strong>{voice}</strong> a velocit&agrave; <strong>{speed}</strong>.",
+        "speed_normal": "normale",
+        "model_line": "Hai utilizzato il modello <strong>{model}</strong>.",
+        "style_line": "Istruzioni di stile: &laquo;{style}&raquo;.",
+        "opt_yes": "Il testo &egrave; stato ottimizzato con l'AI prima della generazione audio.",
+        "opt_no": "Il testo non &egrave; stato ottimizzato con l'AI.",
+    },
+    "en": {
+        "lang_line": "You generated this audiobook in <strong>{lang}</strong> using <strong>{voice_type}</strong>.",
+        "voice_type_standard": "Standard Voices",
+        "voice_type_premium": "PREMIUM Voices",
+        "voice_line": "You chose the voice <strong>{voice}</strong> at <strong>{speed}</strong> speed.",
+        "speed_normal": "normal",
+        "model_line": "You used the <strong>{model}</strong> model.",
+        "style_line": "Style instructions: &ldquo;{style}&rdquo;.",
+        "opt_yes": "The text has been optimized with AI before audio generation.",
+        "opt_no": "The text was not optimized with AI.",
+    },
+    "fr": {
+        "lang_line": "Vous avez g&eacute;n&eacute;r&eacute; ce livre audio en langue <strong>{lang}</strong> avec les <strong>{voice_type}</strong>.",
+        "voice_type_standard": "Voix Standard",
+        "voice_type_premium": "Voix PREMIUM",
+        "voice_line": "Vous avez choisi la voix <strong>{voice}</strong> &agrave; vitesse <strong>{speed}</strong>.",
+        "speed_normal": "normale",
+        "model_line": "Vous avez utilis&eacute; le mod&egrave;le <strong>{model}</strong>.",
+        "style_line": "Instructions de style&nbsp;: &laquo;&nbsp;{style}&nbsp;&raquo;.",
+        "opt_yes": "Le texte a &eacute;t&eacute; optimis&eacute; par l'IA avant la g&eacute;n&eacute;ration audio.",
+        "opt_no": "Le texte n'a pas &eacute;t&eacute; optimis&eacute; par l'IA.",
+    },
+    "es": {
+        "lang_line": "Has generado este audiolibro en idioma <strong>{lang}</strong> utilizando <strong>{voice_type}</strong>.",
+        "voice_type_standard": "Voces Est&aacute;ndar",
+        "voice_type_premium": "Voces PREMIUM",
+        "voice_line": "Has elegido la voz <strong>{voice}</strong> a velocidad <strong>{speed}</strong>.",
+        "speed_normal": "normal",
+        "model_line": "Has utilizado el modelo <strong>{model}</strong>.",
+        "style_line": "Instrucciones de estilo: &laquo;{style}&raquo;.",
+        "opt_yes": "El texto ha sido optimizado con IA antes de la generaci&oacute;n de audio.",
+        "opt_no": "El texto no ha sido optimizado con IA.",
+    },
+    "de": {
+        "lang_line": "Sie haben dieses H&ouml;rbuch in der Sprache <strong>{lang}</strong> mit <strong>{voice_type}</strong> erstellt.",
+        "voice_type_standard": "Standard-Stimmen",
+        "voice_type_premium": "PREMIUM-Stimmen",
+        "voice_line": "Sie haben die Stimme <strong>{voice}</strong> mit Geschwindigkeit <strong>{speed}</strong> gew&auml;hlt.",
+        "speed_normal": "normal",
+        "model_line": "Sie haben das Modell <strong>{model}</strong> verwendet.",
+        "style_line": "Stilanweisungen: &bdquo;{style}&ldquo;.",
+        "opt_yes": "Der Text wurde vor der Audioerzeugung mit KI optimiert.",
+        "opt_no": "Der Text wurde nicht mit KI optimiert.",
+    },
+    "pt": {
+        "lang_line": "Voc&ecirc; gerou este audiolivro no idioma <strong>{lang}</strong> usando <strong>{voice_type}</strong>.",
+        "voice_type_standard": "Vozes Padr&atilde;o",
+        "voice_type_premium": "Vozes PREMIUM",
+        "voice_line": "Voc&ecirc; escolheu a voz <strong>{voice}</strong> na velocidade <strong>{speed}</strong>.",
+        "speed_normal": "normal",
+        "model_line": "Voc&ecirc; usou o modelo <strong>{model}</strong>.",
+        "style_line": "Instru&ccedil;&otilde;es de estilo: &laquo;{style}&raquo;.",
+        "opt_yes": "O texto foi otimizado com IA antes da gera&ccedil;&atilde;o do &aacute;udio.",
+        "opt_no": "O texto n&atilde;o foi otimizado com IA.",
+    },
+    "zh": {
+        "lang_line": "您使用<strong>{voice_type}</strong>生成了 <strong>{lang}</strong> 语言的有声书。",
+        "voice_type_standard": "标准语音",
+        "voice_type_premium": "PREMIUM 语音",
+        "voice_line": "您选择了语音 <strong>{voice}</strong>，语速 <strong>{speed}</strong>。",
+        "speed_normal": "正常",
+        "model_line": "您使用了 <strong>{model}</strong> 模型。",
+        "style_line": "风格指令：「{style}」。",
+        "opt_yes": "文本在音频生成前已经过 AI 优化。",
+        "opt_no": "文本未经过 AI 优化。",
+    },
+}
+
+
+def _friendly_voice_name(voice):
+    """Nome amichevole della voce: 'it-IT-IsabellaNeural' -> 'Isabella',
+    'en-US-AndrewMultilingualNeural' -> 'Andrew Multilingual',
+    'gemini:flash25:Zephyr' -> 'Zephyr'."""
+    v = (voice or "").strip()
+    if not v:
+        return ""
+    if v.startswith("gemini:"):
+        return v.split(":")[-1].strip()
+    base = v.split("-")[-1]
+    if base.endswith("Neural"):
+        base = base[: -len("Neural")]
+    # CamelCase -> parole separate
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", base).strip()
+
+
+def _email_generation_details(job, lang):
+    """Blocco HTML con i parametri di generazione per l'email di completamento.
+
+    Difensivo: campo mancante => frase omessa; su qualunque errore ritorna ''
+    (mai un'email rotta). Vedi spec 2026-06-06-email-generation-details.
+    """
+    try:
+        d = _email_details_i18n.get(lang, _email_details_i18n["en"])
+        voice = (job.get("voice") or "").strip()
+        is_premium = _is_gemini_voice(voice)
+        lines = []
+
+        # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
+        #    lingua del job per le PREMIUM).
+        if is_premium:
+            lang_code = (job.get("gen_lang") or job.get("opt_lang") or "").strip()
+            if not lang_code:
+                lang_code = (getattr(job.get("info"), "language", "") or "").strip()
+        else:
+            parts = voice.split("-")
+            lang_code = "-".join(parts[:2]) if len(parts) >= 3 else ""
+        voice_type = d["voice_type_premium"] if is_premium else d["voice_type_standard"]
+        if lang_code:
+            lines.append(d["lang_line"].format(
+                lang=_htmlesc.escape(lang_code), voice_type=voice_type))
+
+        # 2) Voce + velocità ("+0%" -> normale, altrimenti valore raw).
+        vname = _friendly_voice_name(voice)
+        rate = (job.get("rate") or "").strip()
+        speed = d["speed_normal"] if rate in ("", "+0%", "0%", "+0") else rate
+        if vname:
+            lines.append(d["voice_line"].format(
+                voice=_htmlesc.escape(vname), speed=_htmlesc.escape(speed)))
+
+        if is_premium:
+            # 3) Modello TTS reale (stesse label del selettore UI).
+            vparts = voice.split(":")
+            model = _EMAIL_MODEL_LABELS.get(vparts[1]) if len(vparts) >= 3 else None
+            if model:
+                lines.append(d["model_line"].format(model=model))
+            # 4) Istruzioni di stile (input utente: escape obbligatorio).
+            style = (job.get("gemini_style_instruction") or "").strip()
+            if style:
+                lines.append(d["style_line"].format(style=_htmlesc.escape(style)))
+
+        # 5) Ottimizzazione AI del testo (sempre, entrambi gli stati).
+        lines.append(d["opt_yes"] if job.get("ai_optimized") else d["opt_no"])
+
+        if not lines:
+            return ""
+        return ('<p style="color:#555;line-height:1.6">'
+                + "<br>".join(lines) + "</p>")
+    except Exception as e:
+        print(f"[email] generation-details block failed (non-fatal): {e}", flush=True)
+        return ""
+
+
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
     job = _jobs.get(job_id)
@@ -1256,10 +1420,12 @@ def _send_completion_email(job_id):
       </div>"""
 
     subject = t["subject"]
+    details_html = _email_generation_details(job, lang)
     html_body = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
       <h2 style="color:#2c3e50">{t['heading']}</h2>
       <p>{t['body']}</p>
+      {details_html}
       <p style="margin:24px 0">
         <a href="{dl_url}" style="display:inline-block;padding:14px 28px;background:#3b82f6;color:white;
            text-decoration:none;border-radius:8px;font-weight:600;font-size:16px">

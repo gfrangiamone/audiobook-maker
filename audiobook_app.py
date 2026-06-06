@@ -88,6 +88,29 @@ from audio_utils import (
     _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
     _check_audio_dependencies, pcm_to_mp3,
 )
+
+
+def _harden_console_encoding(out, err):
+    """Console Windows cp1252: una print con caratteri non mappabili (es. '→')
+    solleva UnicodeEncodeError e uccide il thread che logga (incidente locale
+    2026-06-06: run di generazione morto in _prepare_m4b_cover_path).
+    Con errors='replace' ogni print diventa innocua. No-op se lo stream non
+    supporta reconfigure (pytest capture, pipe esotiche)."""
+    for _stream in (out, err):
+        try:
+            _stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
+if os.name == "nt":
+    _harden_console_encoding(sys.stdout, sys.stderr)
+
+
+def _preview_ffmpeg_ok():
+    """Preflight ffmpeg per la preview PREMIUM (indirezione testabile)."""
+    _ok, _ = _check_audio_dependencies()
+    return bool(_ok)
 from tts_split import (
     CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
     _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
@@ -242,6 +265,16 @@ def _csrf_protect():
         if not referer.startswith(expected + "/") and referer != expected:
             return jsonify({"error": "CSRF: referer mismatch"}), 403
     return None
+
+
+@app.errorhandler(413)
+def _handle_request_too_large(e):
+    """Upload oltre MAX_CONTENT_LENGTH: risposta JSON invece della pagina HTML
+    standard di Werkzeug. Il frontend fa r.json() sulla risposta di /api/analyze:
+    senza questo handler l'utente vede un criptico "JSON.parse: unexpected
+    character" invece di un messaggio sensato (bug riprodotto in prod)."""
+    max_mb = app.config.get("MAX_CONTENT_LENGTH", 0) // (1024 * 1024)
+    return jsonify({"error": "file_too_large", "max_mb": max_mb}), 413
 
 
 @app.after_request
@@ -2979,6 +3012,24 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .chart-x-label {{ flex:1; text-align:center; font-size:0.6rem; color:var(--text-dim); }}
 </style>
 
+<!-- Modale conferma interruzione job (admin). Deve precedere lo <script>:
+     kOverlay/kToast sono risolti con getElementById in parsing sincrono. -->
+<div class="kmodal-overlay" id="kmodalOverlay">
+  <div class="kmodal">
+    <h3>⛔ Interrompere questo job?</h3>
+    <div class="krow">📄 <b id="kmTitle"></b></div>
+    <div class="krow">🆔 <code id="kmSid"></code></div>
+    <div class="krow">⚙️ <span id="kmOp"></span> · progresso <b id="kmPct"></b></div>
+    <div class="keffects" id="kmEffects"></div>
+    <div class="krow">L'operazione è <b>irreversibile</b>: la generazione non potrà riprendere da dove era arrivata.</div>
+    <div class="kbtns">
+      <button class="kcancel" id="kmCancel">Annulla</button>
+      <button class="kconfirm" id="kmConfirm">Interrompi job</button>
+    </div>
+  </div>
+</div>
+<div class="ktoast" id="ktoast"></div>
+
 <script>
 const hourlyData = {hourly_json};
 const langLabels = {lang_labels_json};
@@ -3341,22 +3392,6 @@ document.addEventListener('click', (e) => {{
     if (e.target.id === 'kmConfirm') confirmKill();
 }});
 </script>
-
-<div class="kmodal-overlay" id="kmodalOverlay">
-  <div class="kmodal">
-    <h3>⛔ Interrompere questo job?</h3>
-    <div class="krow">📄 <b id="kmTitle"></b></div>
-    <div class="krow">🆔 <code id="kmSid"></code></div>
-    <div class="krow">⚙️ <span id="kmOp"></span> · progresso <b id="kmPct"></b></div>
-    <div class="keffects" id="kmEffects"></div>
-    <div class="krow">L'operazione è <b>irreversibile</b>: la generazione non potrà riprendere da dove era arrivata.</div>
-    <div class="kbtns">
-      <button class="kcancel" id="kmCancel">Annulla</button>
-      <button class="kconfirm" id="kmConfirm">Interrompi job</button>
-    </div>
-  </div>
-</div>
-<div class="ktoast" id="ktoast"></div>
 
 </body>
 </html>"""
@@ -6495,6 +6530,15 @@ def api_preview_audio(job_id):
     if use_gemini_preview:
         if not gemini_tts.is_available():
             return jsonify({"error": "gemini_tts_not_configured"}), 503
+        # Preflight ffmpeg: il PCM nativo Gemini va convertito in MP3. Senza
+        # ffmpeg falliremmo DOPO aver consumato token e cap preview (incidente
+        # locale 2026-06-06: 500 "File MP3 non generato" a valle del synth).
+        if not _preview_ffmpeg_ok():
+            return jsonify({
+                "error": ("Anteprima voci PREMIUM non disponibile: ffmpeg "
+                          "non installato sul server."),
+                "code": "ffmpeg_missing",
+            }), 503
         client_id = _get_client_id() or "anon"
         used, remaining, reset_ts = gemini_tts.check_preview_cap(client_id)
         if remaining <= 0:
