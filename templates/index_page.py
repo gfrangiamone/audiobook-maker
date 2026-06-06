@@ -154,6 +154,13 @@ def build_html_template(
     html = html.replace("__SEO_APP_LD__", app_ld)
     html = html.replace("__APP_VERSION__", version or "3.3")
     html = html.replace("__BAIDU_TONGJI__", _BAIDU_TONGJI_SNIPPET)
+    # Limite upload (MB) esposto al JS per il pre-check dimensione file lato client
+    # (stessa env var che governa MAX_CONTENT_LENGTH in audiobook_app.py).
+    try:
+        _max_upload_mb = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50"))
+    except ValueError:
+        _max_upload_mb = 50
+    html = html.replace("__MAX_UPLOAD_MB__", str(_max_upload_mb))
 
     # ── 4. Inject version badge ──
     version_badge = ""

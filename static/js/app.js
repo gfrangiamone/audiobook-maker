@@ -536,6 +536,9 @@ function handleFile(file){
   if(generating||jobDone)return;
   const fn=file.name.toLowerCase();
   if(!fn.endsWith('.epub')&&!fn.endsWith('.pdf')&&!fn.endsWith('.txt')&&!fn.endsWith('.abm')){showErr('aerr',t('err_epub'));return}
+  // Pre-check dimensione: evita upload destinati al 413 server-side
+  const maxMb=window.ABM_MAX_UPLOAD_MB||50;
+  if(file.size>maxMb*1024*1024){showErr('aerr',t('err_file_too_large',{size:(file.size/1048576).toFixed(1),mb:maxMb}));return}
   document.getElementById('uz').classList.add('ok');
   document.getElementById('ufn').textContent='✓ '+file.name;
   document.getElementById('ufn').style.display='block';
@@ -580,7 +583,11 @@ async function analyzeEpub(file){
   const fd=new FormData();fd.append('epub',file);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
-    const d=await r.json();
+    let d;
+    // Risposta non-JSON (es. pagina HTML 413/5xx di nginx o Werkzeug): messaggio
+    // sensato invece di "JSON.parse: unexpected character".
+    try{d=await r.json()}catch(_){d={error:'Error: HTTP '+r.status}}
+    if(d.error==='file_too_large'){d.error=t('err_file_too_large',{size:(file.size/1048576).toFixed(1),mb:d.max_mb||window.ABM_MAX_UPLOAD_MB||50})}
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
     if(d.existing_job_id && d.is_running){
       jobId=d.existing_job_id;

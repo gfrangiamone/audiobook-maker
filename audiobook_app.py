@@ -266,6 +266,16 @@ def _csrf_protect():
     return None
 
 
+@app.errorhandler(413)
+def _handle_request_too_large(e):
+    """Upload oltre MAX_CONTENT_LENGTH: risposta JSON invece della pagina HTML
+    standard di Werkzeug. Il frontend fa r.json() sulla risposta di /api/analyze:
+    senza questo handler l'utente vede un criptico "JSON.parse: unexpected
+    character" invece di un messaggio sensato (bug riprodotto in prod)."""
+    max_mb = app.config.get("MAX_CONTENT_LENGTH", 0) // (1024 * 1024)
+    return jsonify({"error": "file_too_large", "max_mb": max_mb}), 413
+
+
 @app.after_request
 def add_security_headers(response):
     """Aggiunge header di sicurezza alle risposte HTTP."""
