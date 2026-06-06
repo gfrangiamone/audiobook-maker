@@ -21,8 +21,9 @@ Helper `_email_generation_details(job, lang) -> str` (HTML), frasi composte:
    senza suffisso "Neural" (camelCase → spazi, es. "Andrew Multilingual");
    PREMIUM = ultimo token (`gemini:flash25:Zephyr` → "Zephyr"). Rate "+0%" →
    "normale" (localizzato); altrimenti valore raw.
-3. **Solo PREMIUM** — "Hai utilizzato il modello **{Gemini Flash 2.5 TTS |
-   Gemini Flash 3.1 TTS}**." Mappa `flash25`/`flash31`; id modello sconosciuto →
+3. **Solo PREMIUM** — "Hai utilizzato il modello **{Gemini 2.5 Flash TTS |
+   Gemini 3.1 Flash TTS}**." Stesse stringhe del selettore modello della UI
+   (`lbl_model_flash25/31`). Mappa `flash25`/`flash31`; id modello sconosciuto →
    frase omessa.
 4. **Solo PREMIUM e solo se valorizzate** — "Istruzioni di stile: \"{testo}\"."
    Testo utente → `html.escape` obbligatorio.
