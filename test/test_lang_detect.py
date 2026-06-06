@@ -177,3 +177,122 @@ def test_detect_no_client(monkeypatch, book):
 def test_detect_no_text(monkeypatch):
     monkeypatch.setattr(ge, "_llm_client", _FakeLLM(reply="it"))
     assert ge.detect_book_language(_Info([])) == ""
+
+
+# -- Integrazione /api/analyze ──────────────────────────────────────────
+import io
+
+import audiobook_app
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    audiobook_app.app.config["TESTING"] = True
+    # Upload in dir temporanea, niente rate-limit ne' activity log
+    monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(audiobook_app, "_ip_rl_check",
+                        lambda *a, **kw: (True, 0))
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: None)
+    audiobook_app.jobs.clear()
+    yield audiobook_app.app.test_client()
+    audiobook_app.jobs.clear()
+
+
+_TXT = ("Primo paragrafo del libro di prova, con testo sufficiente.\n\n"
+        "Secondo paragrafo con altro testo di prova per il parser.\n\n"
+        "Terzo paragrafo conclusivo del piccolo libro di prova.\n").encode("utf-8")
+
+
+def _upload_txt(client):
+    return client.post("/api/analyze", data={
+        "epub": (io.BytesIO(_TXT), "libro.txt"),
+    }, content_type="multipart/form-data")
+
+
+def test_analyze_txt_detects_language(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
+    monkeypatch.setattr(ge, "detect_book_language", lambda info: "de")
+    r = _upload_txt(client)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["language"] == "de"
+    assert d["language_detected"] is True
+    job = audiobook_app.jobs[d["job_id"]]
+    assert job["language_detected"] is True
+    assert job["info"].language == "de"
+
+
+def test_analyze_detect_failure_is_silent(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
+    monkeypatch.setattr(ge, "detect_book_language", lambda info: "")
+    r = _upload_txt(client)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["language"] == ""
+    assert d["language_detected"] is False
+    assert d["total_chapters"] >= 1  # analisi completata comunque
+
+
+def test_analyze_skips_detect_when_llm_unavailable(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: False)
+    called = []
+    monkeypatch.setattr(ge, "detect_book_language",
+                        lambda info: called.append(1) or "it")
+    r = _upload_txt(client)
+    assert r.status_code == 200
+    assert called == []
+    assert r.get_json()["language"] == ""
+
+
+def test_analyze_skips_detect_when_metadata_present(client, monkeypatch):
+    """File .abm con language nel manifest: nessuna chiamata LLM."""
+    import json as _json
+    import zipfile as _zf
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
+    called = []
+    monkeypatch.setattr(ge, "detect_book_language",
+                        lambda info: called.append(1) or "xx")
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w") as zf:
+        zf.writestr("chapters/001_uno.txt",
+                    "Testo di prova del capitolo uno del libro.")
+        zf.writestr("manifest.json", _json.dumps({
+            "format": "audiobook-maker-project", "format_version": "1.0",
+            "title": "Test", "author": "A", "language": "fr",
+            "has_cover": False, "cover_file": "",
+            "chapters": [{"index": 1, "filename": "001_uno.txt",
+                          "title": "Uno", "word_count": 8}]}))
+    buf.seek(0)
+    r = client.post("/api/analyze", data={
+        "epub": (buf, "libro.abm"),
+    }, content_type="multipart/form-data")
+    assert r.status_code == 200
+    assert called == []
+    d = r.get_json()
+    assert d["language"] == "fr"
+    assert d["language_detected"] is False
+
+
+def test_analyze_reuse_keeps_detected_flag(client, monkeypatch):
+    """Secondo upload identico (riuso job): flag riportato, niente 2a chiamata.
+
+    Il browser reale riceve abm_cid al primo caricamento della pagina e lo
+    invia gia' sul primo /api/analyze. Il test client non ha quel flusso, quindi
+    pre-seminiamo il cookie prima dei due upload per replicare il comportamento.
+    """
+    monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
+    calls = []
+    monkeypatch.setattr(ge, "detect_book_language",
+                        lambda info: calls.append(1) or "de")
+    # Pre-seed cookie: simula il browser che ha gia' ricevuto abm_cid
+    # alla prima navigazione (prima di arrivare a /api/analyze).
+    client.set_cookie("abm_cid", "test-client-reuse-001")
+    r1 = _upload_txt(client)
+    assert r1.get_json()["language_detected"] is True
+    r2 = _upload_txt(client)
+    d2 = r2.get_json()
+    assert d2["job_id"] == r1.get_json()["job_id"]
+    assert d2["language"] == "de"
+    assert d2["language_detected"] is True
+    assert len(calls) == 1

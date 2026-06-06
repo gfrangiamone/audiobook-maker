@@ -6254,6 +6254,7 @@ def api_analyze():
             return jsonify({
                 "job_id": existing_jid, "title": info.title, "author": info.author,
                 "language": info.language,
+                "language_detected": existing_job.get("language_detected", False),
                 "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
                 "has_cover": bool(existing_job.get("cover_thumb")),
                 "total_chapters": len(info.chapters), "total_words": info.total_words,
@@ -6283,6 +6284,17 @@ def api_analyze():
     if not info.chapters:
         return jsonify({"error": "No content found."}), 400
 
+    # Lingua assente nei metadati (txt sempre; pdf/epub/abm a volte):
+    # rilevamento via LLM (stesso client dell'ottimizzazione AI) su 3
+    # paragrafi consecutivi da meta' libro. Fallimento silenzioso: la
+    # lingua resta vuota e l'analisi completa comunque (spec 2026-06-06).
+    language_detected = False
+    if not (getattr(info, "language", "") or "").strip() and _llm_available():
+        _detected = generation_engine.detect_book_language(info)
+        if _detected:
+            info.language = _detected
+            language_detected = True
+
     # NOTE: the ABM_MAX_TEXT_CHARS cap is no longer enforced here. We show the
     # book regardless of its total size so the user can browse chapters and
     # narrow the selection. The actual cap is applied at /api/generate and
@@ -6294,7 +6306,8 @@ def api_analyze():
                          "last_poll": time.time(), "original_filename": file.filename,
                          "client_id": _get_client_id(), "client_ip": _get_client_ip(),
                          "browser_lang": _get_browser_lang(),
-                         "optimized_chapters": [], "file_hash": file_hash}
+                         "optimized_chapters": [], "file_hash": file_hash,
+                         "language_detected": language_detected}
 
     # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
@@ -6405,6 +6418,7 @@ def api_analyze():
     return jsonify({
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
+        "language_detected": language_detected,
         "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
