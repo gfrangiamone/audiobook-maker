@@ -227,6 +227,97 @@ def _llm_available():
 
 
 # ---------------------------------------------------------------------------
+# Rilevamento lingua del libro (stesso client LLM dell'ottimizzazione)
+# ---------------------------------------------------------------------------
+
+LANG_DETECT_MIN_PARA_CHARS = 80    # paragrafo "sostanzioso"
+LANG_DETECT_MAX_PARA_CHARS = 600   # tetto per paragrafo nel campione
+LANG_DETECT_TIMEOUT_SEC = 20.0     # un solo tentativo, niente retry
+
+_LANG_DETECT_PROMPT = (
+    "You are a language identification system. The user sends an excerpt "
+    "from a book. Reply with ONLY the ISO 639-1 two-letter code of the "
+    "language the excerpt is written in (for example: it, en, de, fr). "
+    "No other text, no punctuation, no explanations."
+)
+
+
+def _pick_language_sample(chapters):
+    """Campione di 3 paragrafi consecutivi per il rilevamento lingua.
+
+    Parte da meta' libro e cerca la prima terna di paragrafi consecutivi
+    "sostanziosi" (>= LANG_DETECT_MIN_PARA_CHARS char); se non la trova dal
+    centro in poi riprova dall'inizio. Fallback: 3 paragrafi consecutivi
+    non vuoti dal centro (o dall'inizio), poi primi 1500 caratteri del
+    testo. Ogni paragrafo del campione e' troncato a
+    LANG_DETECT_MAX_PARA_CHARS. Ritorna "" se non c'e' testo.
+    """
+    paras = []
+    for ch in chapters or []:
+        for p in re.split(r"\n\s*\n", getattr(ch, "text", "") or ""):
+            p = p.strip()
+            if p:
+                paras.append(p)
+    if not paras:
+        return ""
+
+    def _find_run(start, min_chars):
+        for i in range(start, len(paras) - 2):
+            run = paras[i:i + 3]
+            if all(len(p) >= min_chars for p in run):
+                return run
+        return None
+
+    mid = len(paras) // 2
+    run = (_find_run(mid, LANG_DETECT_MIN_PARA_CHARS)
+           or _find_run(0, LANG_DETECT_MIN_PARA_CHARS)
+           or _find_run(mid, 1)
+           or _find_run(0, 1))
+    if run:
+        return "\n\n".join(p[:LANG_DETECT_MAX_PARA_CHARS] for p in run)
+    return "\n\n".join(paras)[:1500]
+
+
+def detect_book_language(info):
+    """Rileva la lingua del libro via LLM quando i metadati non la indicano.
+
+    Usa lo stesso client dell'ottimizzazione AI (_llm_client, ABM_LLM_*).
+    Chiamata non-streaming, deterministica, un solo tentativo. Fallimento
+    silenzioso: ritorna il codice ISO 639-1 ("it", "en", ...) oppure ""
+    (LLM non configurato, campione vuoto, errore o risposta non valida).
+    """
+    if _llm_client is None:
+        return ""
+    sample = _pick_language_sample(getattr(info, "chapters", None))
+    if not sample:
+        return ""
+    try:
+        resp = _llm_client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _LANG_DETECT_PROMPT},
+                {"role": "user", "content": sample},
+            ],
+            temperature=0,
+            max_tokens=8,
+            timeout=LANG_DETECT_TIMEOUT_SEC,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        print(f"[lang-detect] LLM call failed (non-fatal): {e}")
+        return ""
+    code = raw.lower().split()[0].strip("\"'.,;:") if raw else ""
+    code = code.split("-")[0]
+    # ISO 639-1 = sempre 2 lettere: una regex piu' lasca ({2,3}) farebbe
+    # passare token inglesi tipo "the" da risposte verbose.
+    if re.fullmatch(r"[a-z]{2}", code):
+        print(f"[lang-detect] detected language: {code}")
+        return code
+    print(f"[lang-detect] invalid LLM reply {raw!r} (non-fatal)")
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Helper classes
 # ---------------------------------------------------------------------------
 
