@@ -1,6 +1,6 @@
 # Nome File e Titolo Tradotti — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Il nome file output del wizard traduzione viene proposto già tradotto nella lingua di destinazione, e il titolo del libro viene tradotto nei metadati dell'output (.abm/.epub/.txt) e nel percorso audio dopo l'adozione.
 
@@ -47,7 +47,7 @@
 - Modify: `generation_engine.py:2501-2529`
 - Test: `test/test_run_translation.py` (append)
 
-- [ ] **Step 1.1: Scrivi i test falliti**
+- [x] **Step 1.1: Scrivi i test falliti**
 
 Append a `test/test_run_translation.py` (gli helper `_seed_job`, `fake_llm`, `_Info` esistono già nel file; il mock `translate_titles` di `fake_llm` ritorna `x + "_EN"` per ogni elemento):
 
@@ -95,12 +95,12 @@ def test_run_translation_blank_translated_title_falls_back(fake_llm, tmp_path, m
     assert job["translated_title"] == "Libro"  # fallback: originale
 ```
 
-- [ ] **Step 1.2: Esegui — verifica fallimento**
+- [x] **Step 1.2: Esegui — verifica fallimento**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_run_translation.py -v --tb=short -k title`
 Expected: FAIL con `KeyError: 'translated_title'`
 
-- [ ] **Step 1.3: Implementa in `run_translation`**
+- [x] **Step 1.3: Implementa in `run_translation`**
 
 Sostituire il blocco di traduzione titoli (`generation_engine.py:2501-2507`):
 
@@ -145,13 +145,13 @@ Nota: `translate_titles` garantisce una lista della stessa lunghezza dell'input
 titolo libro quando `book_title` è presente e il troncamento
 `[:len(out_chapters)]` riallinea i titoli capitolo.
 
-- [ ] **Step 1.4: Valida ed esegui tutto il file**
+- [x] **Step 1.4: Valida ed esegui tutto il file**
 
 Run: `python -m py_compile generation_engine.py`
 Run: `$env:PYTHONPATH='.'; pytest test/test_run_translation.py -v --tb=short`
 Expected: PASS (tutti, vecchi e nuovi — il mock `fake_llm` traduce anche il titolo accodato, e i test esistenti restano validi perché i titoli capitolo vengono riallineati)
 
-- [ ] **Step 1.5: Commit**
+- [x] **Step 1.5: Commit**
 
 ```
 git add generation_engine.py test/test_run_translation.py
@@ -166,7 +166,7 @@ git commit -m "feat(translate): titolo libro tradotto nel batch titoli + transla
 - Modify: `audiobook_app.py` (inserire la nuova route subito dopo la funzione `api_translate_estimate`, riga ~8620)
 - Test: `test/test_translate_endpoints.py` (append)
 
-- [ ] **Step 2.1: Scrivi i test falliti**
+- [x] **Step 2.1: Scrivi i test falliti**
 
 Append a `test/test_translate_endpoints.py` (helper `_seed`/`_own` e fixture `client`/`_bootstrap` esistono già; `_Info.title == "Libro"`, `_Info.language == "it"`):
 
@@ -258,12 +258,12 @@ def test_translate_title_source_fallback_info_language(client, monkeypatch):
     assert len(calls) == 1
 ```
 
-- [ ] **Step 2.2: Esegui — verifica fallimento**
+- [x] **Step 2.2: Esegui — verifica fallimento**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_translate_endpoints.py -v --tb=short -k translate_title`
 Expected: FAIL con 404 (route inesistente)
 
-- [ ] **Step 2.3: Implementa l'endpoint**
+- [x] **Step 2.3: Implementa l'endpoint**
 
 In `audiobook_app.py`, subito dopo la funzione `api_translate_estimate` (route a riga ~8620, inserire dopo il suo `return`):
 
@@ -312,13 +312,13 @@ def api_translate_title(job_id):
 Nota stile: l'`import re as _re_tt` inline segue il pattern già usato negli
 endpoint translate (`_re2`, `_re3` in `api_translate`).
 
-- [ ] **Step 2.4: Valida ed esegui tutto il file**
+- [x] **Step 2.4: Valida ed esegui tutto il file**
 
 Run: `python -m py_compile audiobook_app.py`
 Run: `$env:PYTHONPATH='.'; pytest test/test_translate_endpoints.py -v --tb=short`
 Expected: PASS (tutti, vecchi e nuovi)
 
-- [ ] **Step 2.5: Commit**
+- [x] **Step 2.5: Commit**
 
 ```
 git add audiobook_app.py test/test_translate_endpoints.py
@@ -337,7 +337,7 @@ La risposta dell'endpoint include GIÀ `"title": info.title` (`:8883`) e il
 frontend `adoptTranslation()` aggiorna GIÀ `bookData.title` (`app.js:2071`):
 serve solo impostare `info.title` lato server.
 
-- [ ] **Step 3.1: Scrivi i test falliti**
+- [x] **Step 3.1: Scrivi i test falliti**
 
 Append a `test/test_translate_endpoints.py`:
 
@@ -370,12 +370,12 @@ def test_adopt_without_translated_title_keeps_original(client):
     assert job["info"].title == "Libro"
 ```
 
-- [ ] **Step 3.2: Esegui — verifica fallimento**
+- [x] **Step 3.2: Esegui — verifica fallimento**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_translate_endpoints.py -v --tb=short -k adopt`
 Expected: `test_adopt_sets_translated_title` FAIL (`title` resta "Libro"); `test_adopt_without_translated_title_keeps_original` PASS già ora (comportamento invariato)
 
-- [ ] **Step 3.3: Implementa**
+- [x] **Step 3.3: Implementa**
 
 In `api_translate_adopt`, subito dopo `info.language = job.get("translated_lang", info.language)` (`audiobook_app.py:8867`):
 
@@ -386,13 +386,13 @@ In `api_translate_adopt`, subito dopo `info.language = job.get("translated_lang"
     info.title = job.get("translated_title") or info.title
 ```
 
-- [ ] **Step 3.4: Valida ed esegui**
+- [x] **Step 3.4: Valida ed esegui**
 
 Run: `python -m py_compile audiobook_app.py`
 Run: `$env:PYTHONPATH='.'; pytest test/test_translate_endpoints.py -v --tb=short`
 Expected: PASS (tutti)
 
-- [ ] **Step 3.5: Commit**
+- [x] **Step 3.5: Commit**
 
 ```
 git add audiobook_app.py test/test_translate_endpoints.py
@@ -407,7 +407,7 @@ git commit -m "feat(translate): adopt propaga il titolo tradotto a info.title"
 - Modify: `static/js/app.js` (righe 238, 1853, 1876, 1886-1892, 3851)
 - Test: Create `test/test_app_js_tr_title.py`
 
-- [ ] **Step 4.1: Scrivi i test falliti (statici sul source, pattern `test_app_js_estimate.py`)**
+- [x] **Step 4.1: Scrivi i test falliti (statici sul source, pattern `test_app_js_estimate.py`)**
 
 ```python
 # test/test_app_js_tr_title.py
@@ -450,12 +450,12 @@ def test_timeout_abort_present():
     assert "AbortController" in fn
 ```
 
-- [ ] **Step 4.2: Esegui — verifica fallimento**
+- [x] **Step 4.2: Esegui — verifica fallimento**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_app_js_tr_title.py -v --tb=short`
 Expected: FAIL su tutti (funzione assente)
 
-- [ ] **Step 4.3: Implementa in `app.js`**
+- [x] **Step 4.3: Implementa in `app.js`**
 
 **(a)** Stato (riga 238) — aggiungere `trAutoOutName`:
 
@@ -530,7 +530,7 @@ con:
   trAutoOutName='';
 ```
 
-- [ ] **Step 4.4: Esegui i test**
+- [x] **Step 4.4: Esegui i test**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_app_js_tr_title.py -v --tb=short`
 Expected: PASS (7 test)
@@ -539,7 +539,7 @@ Run anche i test JS esistenti (regressione rapida sul file modificato):
 `$env:PYTHONPATH='.'; pytest test/test_app_js_estimate.py test/test_app_js_payment_modal.py test/test_app_js_tab_logic.py -v --tb=short`
 Expected: PASS
 
-- [ ] **Step 4.5: Commit**
+- [x] **Step 4.5: Commit**
 
 ```
 git add static/js/app.js test/test_app_js_tr_title.py
@@ -553,13 +553,13 @@ git commit -m "feat(translate): proposta nome file tradotto nel pannello (fetch 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-06-06-translated-title-filename-design.md` (stato)
 
-- [ ] **Step 5.1: Lint sintassi + suite completa**
+- [x] **Step 5.1: Lint sintassi + suite completa**
 
 Run: `python -m py_compile audiobook_app.py generation_engine.py`
 Run: `$env:PYTHONPATH='.'; pytest test/ --tb=short -q`
 Expected: nessuna nuova failure rispetto allo stato pre-piano (failure note pre-esistenti: 4 in `test_paypal_create_gemini` da ordering/reload nella suite completa — passano in isolamento).
 
-- [ ] **Step 5.2: Aggiorna stato spec e committa**
+- [x] **Step 5.2: Aggiorna stato spec e committa**
 
 Nella spec, cambiare `**Stato:** approvato (brainstorming concluso)` in `**Stato:** implementato (2026-06-06)`. Marcare i checkbox di questo piano come `[x]`.
 
