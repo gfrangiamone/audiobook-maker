@@ -8908,6 +8908,9 @@ def api_translate_adopt(job_id):
     # Titolo tradotto dal batch titoli del job (se prodotto): cosi' i
     # metadati M4B/MP3, la pagina download e le email del percorso audio
     # usano il titolo nella lingua di destinazione.
+    # Nota: dopo l'adopt info.title E' il titolo nella nuova lingua; una
+    # successiva traduzione (es. EN->DE) lo usera' come titolo sorgente,
+    # coerente coi capitoli adottati che sono gia' nella nuova lingua.
     info.title = job.get("translated_title") or info.title
     # Se la traduzione includeva l'ottimizzazione TTS, i capitoli adottati
     # risultano già ottimizzati (niente doppio pagamento ottimizzazione).
