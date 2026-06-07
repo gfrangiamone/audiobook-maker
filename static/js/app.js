@@ -1844,6 +1844,13 @@ function chSelInvert(){_getAllCheckboxes().forEach(cb=>{cb.checked=!cb.checked;c
 function chMasterToggle(){const v=document.getElementById('chAll').checked;_getAllCheckboxes().forEach(cb=>{cb.checked=v;const row=cb.closest('tr')||cb.closest('.chapter-row');if(row)row.classList.toggle('unchecked',!v)});updateSelection()}
 
 // ═══════════════════ TRANSLATE WIZARD ═══════════════════
+function _rememberLastLang(code){
+  // Memorizza l'ultima lingua usata (avvio generazione audio o traduzione)
+  // per la preselezione del target traduzione (spec 2026-06-07).
+  const c=String(code||'').toLowerCase().split('-')[0];
+  if(!/^[a-z]{2,3}$/.test(c))return;
+  try{localStorage.setItem('abm_last_lang',c)}catch(e){}
+}
 function goToTranslate(){
   if(!jobId||generating)return;
   if(_getSelectedChapterIndexes().length===0){showErr('p2info',t('sel_err_none')||'Select at least one chapter');return}
@@ -1873,7 +1880,7 @@ function _trFillLangSelects(){
       o.value=l.code;o.textContent=l.name;
       sel.appendChild(o);
     }
-    if(old&&voices[old])sel.value=old;
+    if(old&&voices[old]){sel.value=old;sel._trRestored=true;}else{sel._trRestored=false;}
     if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',()=>{trUpdateEstimate();if(sel.id==='trDstLang')_trFetchTranslatedName();});}
   });
   // Origine precompilata dalla lingua del libro se nota
@@ -1881,6 +1888,19 @@ function _trFillLangSelects(){
   if(src&&bookData&&bookData.language){
     const lc=bookData.language.split('-')[0].toLowerCase();
     if(src.querySelector('option[value="'+lc+'"]'))src.value=lc;
+  }
+  // Preselezione destinazione: ultima lingua usata (abm_last_lang) o lingua
+  // UI, solo alla prima apertura (nessun valore di sessione ripristinato) e
+  // mai uguale all'origine (spec 2026-06-07-last-lang-target-preselect).
+  const dstSel=document.getElementById('trDstLang');
+  if(dstSel&&!dstSel._trRestored){
+    let srcLang=(src&&src.value)||'';
+    if(!srcLang&&bookData&&bookData.language)srcLang=bookData.language.split('-')[0].toLowerCase();
+    let saved='';
+    try{saved=(localStorage.getItem('abm_last_lang')||'').toLowerCase()}catch(e){}
+    for(const cand of [saved,cl]){
+      if(cand&&cand!==srcLang&&dstSel.querySelector('option[value="'+cand+'"]')){dstSel.value=cand;break}
+    }
   }
 }
 
@@ -1966,6 +1986,7 @@ async function startTranslation(){
     const src=document.getElementById('trSrcLang').value;
     const dst=document.getElementById('trDstLang').value;
     if(src===dst){showErr('trErr',t('tr_err_same_lang'));return}
+    _rememberLastLang(dst);
     const est=await trUpdateEstimate();
     if(!est)return;
     let payToken=trPaymentToken;
@@ -2523,6 +2544,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         ?document.getElementById('vlPremium')
         :document.getElementById('vl');
       const selLang=(selLangEl&&selLangEl.value)||cl;
+      _rememberLastLang(selLang);
       const vrEl=document.getElementById('vr');
       const voiceId=getCurrentVoiceId();
       var payload={job_id:jobId,batch:false,lang:selLang};
@@ -2570,6 +2592,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       var _genLang=(wizardState.audioTab==='premium')
         ?(document.getElementById('vlPremium')?.value||cl)
         :(document.getElementById('vl')?.value||cl);
+      _rememberLastLang(_genLang);
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
@@ -3005,6 +3028,7 @@ async function startGen(){
     const _genLang2=(wizardState.audioTab==='premium')
       ?(document.getElementById('vlPremium')?.value||cl)
       :(document.getElementById('vl')?.value||cl);
+    _rememberLastLang(_genLang2);
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
