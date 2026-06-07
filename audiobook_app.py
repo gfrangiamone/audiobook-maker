@@ -8649,9 +8649,8 @@ def api_translate_title(job_id):
     source = (request.args.get("source") or "").strip().lower().split("-")[0]
     if not source:
         source = (getattr(info, "language", "") or "").strip().lower().split("-")[0]
-    import re as _re_tt
-    if not title or not _re_tt.fullmatch(r"[a-z]{2,3}", target or "") \
-            or not _re_tt.fullmatch(r"[a-z]{2,3}", source or ""):
+    if not title or not re.fullmatch(r"[a-z]{2,3}", target or "") \
+            or not re.fullmatch(r"[a-z]{2,3}", source or ""):
         return jsonify({"title": ""})
     if source == target:
         return jsonify({"title": title})
