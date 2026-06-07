@@ -2500,9 +2500,19 @@ def run_translation(job_id):
 
         job["tr_progress_message"] = "Translating chapter titles..."
         titles = [c["title"] for c in out_chapters]
+        book_title = (getattr(info, "title", "") or "").strip()
+        if book_title:
+            # Il titolo del libro viaggia nello stesso batch dei titoli
+            # capitoli: un elemento in piu', zero chiamate LLM extra
+            # (spec 2026-06-06-translated-title-filename).
+            titles.append(book_title)
         translated_titles = translation_core.translate_titles(
             provider, titles, source, target,
             model=model, usage=usage, log=_log)
+        translated_title = ""
+        if book_title:
+            translated_title = (translated_titles[-1] or "").strip() or book_title
+            translated_titles = translated_titles[:len(out_chapters)]
         for c, t in zip(out_chapters, translated_titles):
             c["title"] = (t or "").strip() or c["title"]
 
@@ -2513,7 +2523,7 @@ def run_translation(job_id):
         filename = f"{safe}.{out_format}"
         out_path = out_dir / filename
         manifest_src = {
-            "title": getattr(info, "title", "") or "",
+            "title": translated_title or (getattr(info, "title", "") or ""),
             "author": getattr(info, "author", "") or "",
             "original_filename": job.get("original_filename", ""),
         }
@@ -2527,6 +2537,7 @@ def run_translation(job_id):
         job["translated_chapters"] = out_chapters
         job["translated_lang"] = target
         job["translated_optimized"] = optimize
+        job["translated_title"] = translated_title
         job["tr_progress_current"] = len(chapters)
         job["tr_progress_message"] = "Translation complete"
         r = usage.report()

@@ -154,3 +154,46 @@ def test_run_translation_batch_skips_heartbeat_and_sends_email(fake_llm, tmp_pat
     ge.run_translation(job_id)
     assert job["status"] == "translated"
     assert sent == [job_id]
+
+
+# ── Titolo libro tradotto (spec 2026-06-06-translated-title-filename) ──
+
+def test_run_translation_translates_book_title(fake_llm, tmp_path):
+    job_id, job = _seed_job(tmp_path)
+    ge.run_translation(job_id)
+    assert job["translated_title"] == "Libro_EN"
+    # Il writer txt mette il titolo del manifest in intestazione
+    body = Path(job["translated_path"]).read_text(encoding="utf-8")
+    assert "Libro_EN" in body
+    # I titoli capitoli NON includono il titolo libro
+    assert [c["title"] for c in job["translated_chapters"]] == ["Uno_EN", "Due_EN"]
+
+
+def test_run_translation_title_appended_to_batch(fake_llm, tmp_path, monkeypatch):
+    captured = {}
+    def _tt(provider, titles, s, t, **kw):
+        captured["titles"] = list(titles)
+        return [x + "_EN" for x in titles]
+    monkeypatch.setattr(tc, "translate_titles", _tt)
+    job_id, job = _seed_job(tmp_path)
+    ge.run_translation(job_id)
+    assert captured["titles"] == ["Uno", "Due", "Libro"]
+
+
+def test_run_translation_empty_book_title(fake_llm, tmp_path):
+    job_id, job = _seed_job(tmp_path)
+    job["info"].title = ""
+    ge.run_translation(job_id)
+    assert job["translated_title"] == ""
+    assert job["status"] == "translated"
+
+
+def test_run_translation_blank_translated_title_falls_back(fake_llm, tmp_path, monkeypatch):
+    def _tt(provider, titles, s, t, **kw):
+        out = [x + "_EN" for x in titles]
+        out[-1] = "  "  # traduzione del titolo libro vuota
+        return out
+    monkeypatch.setattr(tc, "translate_titles", _tt)
+    job_id, job = _seed_job(tmp_path)
+    ge.run_translation(job_id)
+    assert job["translated_title"] == "Libro"  # fallback: originale
