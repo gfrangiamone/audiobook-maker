@@ -8633,6 +8633,47 @@ def api_translate_estimate(job_id):
     return jsonify(est)
 
 
+@app.route("/api/translate_title/<job_id>")
+def api_translate_title(job_id):
+    """Traduce il solo titolo del libro per la proposta del nome file nel
+    wizard traduzione. Cortesia pre-acquisto: nessun pagamento, cache per
+    lingua nel job, fallimento silenzioso (title vuoto, HTTP 200).
+    Spec: docs/superpowers/specs/2026-06-06-translated-title-filename-design.md
+    """
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    info = job.get("info")
+    title = (getattr(info, "title", "") or "").strip()[:300]
+    target = (request.args.get("target") or "").strip().lower().split("-")[0]
+    source = (request.args.get("source") or "").strip().lower().split("-")[0]
+    if not source:
+        source = (getattr(info, "language", "") or "").strip().lower().split("-")[0]
+    import re as _re_tt
+    if not title or not _re_tt.fullmatch(r"[a-z]{2,3}", target or "") \
+            or not _re_tt.fullmatch(r"[a-z]{2,3}", source or ""):
+        return jsonify({"title": ""})
+    if source == target:
+        return jsonify({"title": title})
+    cache = job.setdefault("tr_title_cache", {})
+    if target in cache:
+        return jsonify({"title": cache[target], "cached": True})
+    if not translation_core.is_available():
+        return jsonify({"title": ""})
+    try:
+        backend = translation_core.resolve_backend()
+        provider, model, _base = translation_core.make_client_provider(backend)
+        out = translation_core.translate_titles(
+            provider, [title], source, target,
+            model=model, usage=translation_core.UsageTracker())
+        translated = (out[0] or "").strip() or title
+    except Exception as e:
+        print(f"[tr-title] {job_id}: traduzione titolo fallita (non-fatal): {e}")
+        return jsonify({"title": ""})
+    cache[target] = translated
+    return jsonify({"title": translated})
+
+
 @app.route("/api/translate", methods=["POST"])
 def api_translate():
     data = request.get_json(silent=True) or {}

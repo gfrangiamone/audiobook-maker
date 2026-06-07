@@ -264,3 +264,90 @@ def test_paypal_create_order_translate_free_book(client, monkeypatch):
         r = client.post("/api/paypal_create_order_translate", json={
             "job_id": "TJF", "target_lang": "en", "optimize": False})
     assert r.status_code == 400
+
+
+# __ /api/translate_title (spec 2026-06-06-translated-title-filename) __
+
+def _mock_title_llm(monkeypatch, replies):
+    """Mocka il layer LLM del titolo; ritorna la lista delle chiamate."""
+    calls = []
+    monkeypatch.setattr(audiobook_app.translation_core, "resolve_backend",
+                        lambda: "apikey")
+    monkeypatch.setattr(audiobook_app.translation_core, "make_client_provider",
+                        lambda b: ((lambda: None), "m", "http://x"))
+    def _tt(provider, titles, s, t, **kw):
+        calls.append(list(titles))
+        return replies
+    monkeypatch.setattr(audiobook_app.translation_core, "translate_titles", _tt)
+    return calls
+
+
+def test_translate_title_returns_translation(client, monkeypatch):
+    _seed()
+    calls = _mock_title_llm(monkeypatch, ["The Book"])
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=en&source=it")
+    assert r.status_code == 200
+    assert r.get_json()["title"] == "The Book"
+    assert calls == [["Libro"]]
+
+
+def test_translate_title_cached_second_call(client, monkeypatch):
+    _seed()
+    calls = _mock_title_llm(monkeypatch, ["The Book"])
+    with _own():
+        client.get("/api/translate_title/TJ1?target=en&source=it")
+        r2 = client.get("/api/translate_title/TJ1?target=en&source=it")
+    assert r2.get_json()["title"] == "The Book"
+    assert len(calls) == 1  # seconda risposta dalla cache
+
+
+def test_translate_title_same_lang_no_llm(client, monkeypatch):
+    _seed()
+    calls = _mock_title_llm(monkeypatch, ["BOOM"])
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=it&source=it")
+    assert r.get_json()["title"] == "Libro"
+    assert calls == []
+
+
+def test_translate_title_unavailable_empty(client, monkeypatch):
+    _seed()
+    monkeypatch.setattr(audiobook_app.translation_core, "is_available",
+                        lambda: False)
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=en&source=it")
+    assert r.status_code == 200
+    assert r.get_json()["title"] == ""
+
+
+def test_translate_title_bad_target_empty(client, monkeypatch):
+    _seed()
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=123&source=it")
+    assert r.get_json()["title"] == ""
+
+
+def test_translate_title_llm_error_silent(client, monkeypatch):
+    _seed()
+    monkeypatch.setattr(audiobook_app.translation_core, "resolve_backend",
+                        lambda: "apikey")
+    monkeypatch.setattr(audiobook_app.translation_core, "make_client_provider",
+                        lambda b: ((lambda: None), "m", "http://x"))
+    def _boom(*a, **kw):
+        raise RuntimeError("LLM down")
+    monkeypatch.setattr(audiobook_app.translation_core, "translate_titles", _boom)
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=en&source=it")
+    assert r.status_code == 200
+    assert r.get_json()["title"] == ""
+
+
+def test_translate_title_source_fallback_info_language(client, monkeypatch):
+    """Senza ?source usa info.language ("it")."""
+    _seed()
+    calls = _mock_title_llm(monkeypatch, ["The Book"])
+    with _own():
+        r = client.get("/api/translate_title/TJ1?target=en")
+    assert r.get_json()["title"] == "The Book"
+    assert len(calls) == 1
