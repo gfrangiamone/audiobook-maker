@@ -36,3 +36,11 @@ def test_timeout_abort_present():
     assert "function _trFetchTranslatedName" in APP
     fn = APP.split("function _trFetchTranslatedName", 1)[1][:900]
     assert "AbortController" in fn
+    assert "signal:ctrl.signal" in fn
+
+
+def test_stale_response_guard():
+    # Una risposta lenta per una lingua non piu' selezionata non deve applicarsi
+    fn = APP.split("function _trFetchTranslatedName", 1)[1][:1200]
+    assert "requestedTarget" in fn
+    assert "cur.value===requestedTarget" in fn

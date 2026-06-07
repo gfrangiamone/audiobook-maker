@@ -1874,7 +1874,7 @@ function _trFillLangSelects(){
       sel.appendChild(o);
     }
     if(old&&voices[old])sel.value=old;
-    if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',()=>{trUpdateEstimate();if(id==='trDstLang')_trFetchTranslatedName();});}
+    if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',()=>{trUpdateEstimate();if(sel.id==='trDstLang')_trFetchTranslatedName();});}
   });
   // Origine precompilata dalla lingua del libro se nota
   const src=document.getElementById('trSrcLang');
@@ -1894,19 +1894,23 @@ function _trPrefillOutName(){
 }
 async function _trFetchTranslatedName(){
   // Propone il titolo tradotto come nome file; non sovrascrive mai un
-  // valore editato a mano (guardia trAutoOutName). Fallimento silenzioso.
+  // valore editato a mano (guardia trAutoOutName) ne' applica risposte
+  // stantie di una lingua non piu' selezionata (snapshot requestedTarget).
+  // Fallimento silenzioso.
   const el=document.getElementById('trOutName');if(!el||!jobId)return;
   const dst=document.getElementById('trDstLang');
   const src=document.getElementById('trSrcLang');
   if(!dst||!dst.value)return;
+  const requestedTarget=dst.value;
   const ctrl=new AbortController();
   const tmr=setTimeout(()=>ctrl.abort(),12000);
   try{
     const url=new URL('/api/translate_title/'+jobId,window.location.origin);
-    url.searchParams.append('target',dst.value);
+    url.searchParams.append('target',requestedTarget);
     if(src&&src.value)url.searchParams.append('source',src.value);
     const d=await fetch(url.toString(),{signal:ctrl.signal}).then(r=>r.json());
-    if(d&&d.title&&el.value===trAutoOutName){
+    const cur=document.getElementById('trDstLang');
+    if(d&&d.title&&el.value===trAutoOutName&&cur&&cur.value===requestedTarget){
       el.value=d.title;
       trAutoOutName=d.title;
     }
