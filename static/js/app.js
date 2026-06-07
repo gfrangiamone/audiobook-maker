@@ -235,7 +235,7 @@ let previewListened=false,_langWarnResolve=null;
 let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
 let wizMode='audio'; // 'audio' | 'translate'
-let trPaymentToken=null,trEstimate=null,trEmailRegistered=false;
+let trPaymentToken=null,trEstimate=null,trEmailRegistered=false,trAutoOutName='';
 let lastVoucherEmail='';
 try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
 
@@ -1851,6 +1851,7 @@ function goToTranslate(){
   trPaymentToken=null;
   _trFillLangSelects();
   _trPrefillOutName();
+  _trFetchTranslatedName();
   goToStep(3);
   trUpdateEstimate();
 }
@@ -1873,7 +1874,7 @@ function _trFillLangSelects(){
       sel.appendChild(o);
     }
     if(old&&voices[old])sel.value=old;
-    if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',trUpdateEstimate);}
+    if(!sel._trBound){sel._trBound=true;sel.addEventListener('change',()=>{trUpdateEstimate();if(id==='trDstLang')_trFetchTranslatedName();});}
   });
   // Origine precompilata dalla lingua del libro se nota
   const src=document.getElementById('trSrcLang');
@@ -1889,8 +1890,29 @@ function _trPrefillOutName(){
   if(!base)base=(bookData&&bookData.title)||'translated';
   base=base.replace(/\.[^.]+$/,'');
   el.value=base;
+  trAutoOutName=base;
 }
-
+async function _trFetchTranslatedName(){
+  // Propone il titolo tradotto come nome file; non sovrascrive mai un
+  // valore editato a mano (guardia trAutoOutName). Fallimento silenzioso.
+  const el=document.getElementById('trOutName');if(!el||!jobId)return;
+  const dst=document.getElementById('trDstLang');
+  const src=document.getElementById('trSrcLang');
+  if(!dst||!dst.value)return;
+  const ctrl=new AbortController();
+  const tmr=setTimeout(()=>ctrl.abort(),12000);
+  try{
+    const url=new URL('/api/translate_title/'+jobId,window.location.origin);
+    url.searchParams.append('target',dst.value);
+    if(src&&src.value)url.searchParams.append('source',src.value);
+    const d=await fetch(url.toString(),{signal:ctrl.signal}).then(r=>r.json());
+    if(d&&d.title&&el.value===trAutoOutName){
+      el.value=d.title;
+      trAutoOutName=d.title;
+    }
+  }catch(e){/* silenzioso: resta il prefill */}
+  finally{clearTimeout(tmr)}
+}
 async function trUpdateEstimate(){
   if(!jobId)return null;
   try{
@@ -3849,6 +3871,7 @@ function resetAll(){
   _resetEmailLateArea();
   // Reset translate (panel T3/T4) UI
   const trOutName=document.getElementById('trOutName');if(trOutName)trOutName.value='';
+  trAutoOutName='';
   const couponCodeTr=document.getElementById('couponCodeTr');if(couponCodeTr)couponCodeTr.value='';
   const couponEmailTr=document.getElementById('couponEmailTr');if(couponEmailTr)couponEmailTr.value='';
   const couponResultTr=document.getElementById('couponResultTr');if(couponResultTr){couponResultTr.innerHTML='';couponResultTr.className='coupon-result';}
