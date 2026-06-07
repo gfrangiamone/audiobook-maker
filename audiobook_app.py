@@ -8905,6 +8905,10 @@ def api_translate_adopt(job_id):
         ))
     info.chapters = new_chapters
     info.language = job.get("translated_lang", info.language)
+    # Titolo tradotto dal batch titoli del job (se prodotto): cosi' i
+    # metadati M4B/MP3, la pagina download e le email del percorso audio
+    # usano il titolo nella lingua di destinazione.
+    info.title = job.get("translated_title") or info.title
     # Se la traduzione includeva l'ottimizzazione TTS, i capitoli adottati
     # risultano già ottimizzati (niente doppio pagamento ottimizzazione).
     if job.get("translated_optimized"):

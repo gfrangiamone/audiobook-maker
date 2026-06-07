@@ -351,3 +351,31 @@ def test_translate_title_source_fallback_info_language(client, monkeypatch):
         r = client.get("/api/translate_title/TJ1?target=en")
     assert r.get_json()["title"] == "The Book"
     assert len(calls) == 1
+
+
+# -- Adopt col titolo tradotto --------------------------------------------------
+
+def _seed_translated(**extra):
+    job = _seed(status="translated")
+    job["translated_chapters"] = [
+        {"index": 1, "title": "One_EN", "text": "Translated text one."}]
+    job["translated_lang"] = "en"
+    job.update(extra)
+    return job
+
+
+def test_adopt_sets_translated_title(client):
+    job = _seed_translated(translated_title="The Book")
+    with _own():
+        r = client.post("/api/translate_adopt/TJ1")
+    assert r.status_code == 200
+    assert r.get_json()["title"] == "The Book"
+    assert job["info"].title == "The Book"
+
+
+def test_adopt_without_translated_title_keeps_original(client):
+    job = _seed_translated()
+    with _own():
+        r = client.post("/api/translate_adopt/TJ1")
+    assert r.get_json()["title"] == "Libro"
+    assert job["info"].title == "Libro"
