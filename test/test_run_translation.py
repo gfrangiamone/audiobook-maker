@@ -186,6 +186,8 @@ def test_run_translation_empty_book_title(fake_llm, tmp_path):
     ge.run_translation(job_id)
     assert job["translated_title"] == ""
     assert job["status"] == "translated"
+    body = Path(job["translated_path"]).read_text(encoding="utf-8")
+    assert body.startswith("Untitled")  # titolo vuoto -> placeholder del writer txt
 
 
 def test_run_translation_blank_translated_title_falls_back(fake_llm, tmp_path, monkeypatch):
@@ -197,3 +199,5 @@ def test_run_translation_blank_translated_title_falls_back(fake_llm, tmp_path, m
     job_id, job = _seed_job(tmp_path)
     ge.run_translation(job_id)
     assert job["translated_title"] == "Libro"  # fallback: originale
+    body = Path(job["translated_path"]).read_text(encoding="utf-8")
+    assert body.startswith("Libro")  # il fallback originale finisce nel manifest/output
