@@ -2,7 +2,7 @@
 
 **Data:** 2026-06-07
 **Branch:** `TRADUZ`
-**Stato:** approvato (brainstorming concluso)
+**Stato:** implementato (2026-06-07)
 
 ## Problema
 

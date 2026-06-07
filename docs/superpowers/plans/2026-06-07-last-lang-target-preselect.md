@@ -1,6 +1,6 @@
 # Preselezione Lingua Target Traduzione — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Alla prima apertura del pannello Traduci, `trDstLang` viene preselezionata con l'ultima lingua usata (avvio generazione audio o traduzione, persistita in `localStorage('abm_last_lang')`) con fallback sulla lingua UI corrente, mai uguale alla lingua di origine.
 
@@ -43,7 +43,7 @@
 - Modify: `static/js/app.js`
 - Create: `test/test_app_js_last_lang.py`
 
-- [ ] **Step 1.1: Crea i test falliti**
+- [x] **Step 1.1: Crea i test falliti**
 
 ```python
 # test/test_app_js_last_lang.py
@@ -99,12 +99,12 @@ def test_preselect_skips_source_lang():
     assert "cand!==srcLang" in fn
 ```
 
-- [ ] **Step 1.2: Esegui — verifica fallimento**
+- [x] **Step 1.2: Esegui — verifica fallimento**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_app_js_last_lang.py -v --tb=short`
 Expected: FAIL su tutti (helper assente)
 
-- [ ] **Step 1.3: Implementa in `app.js` — 5 edit**
+- [x] **Step 1.3: Implementa in `app.js` — 5 edit**
 
 **(a) Helper** — inserire subito prima di `function goToTranslate(){` (sezione TRANSLATE WIZARD, `:1846`):
 
@@ -188,7 +188,7 @@ con (flag che distingue «valore di sessione ripristinato» da «default»):
 
 (`src` è la variabile già dichiarata nel blocco origine, `const src=document.getElementById('trSrcLang');` — riusarla, non ridichiararla.)
 
-- [ ] **Step 1.4: Esegui i test**
+- [x] **Step 1.4: Esegui i test**
 
 Run: `$env:PYTHONPATH='.'; pytest test/test_app_js_last_lang.py -v --tb=short`
 Expected: PASS (7 test)
@@ -197,7 +197,7 @@ Regressione JS:
 Run: `$env:PYTHONPATH='.'; pytest test/test_app_js_tr_title.py test/test_app_js_estimate.py test/test_app_js_payment_modal.py test/test_app_js_tab_logic.py -q`
 Expected: PASS (tutti)
 
-- [ ] **Step 1.5: Commit**
+- [x] **Step 1.5: Commit**
 
 ```
 git add static/js/app.js
@@ -212,19 +212,19 @@ git commit -m "feat(translate): preselezione lingua target da ultima usata (abm_
 **Files:**
 - Modify: `docs/superpowers/specs/2026-06-07-last-lang-target-preselect-design.md` (stato)
 
-- [ ] **Step 2.1: Suite completa**
+- [x] **Step 2.1: Suite completa**
 
 Run: `$env:PYTHONPATH='.'; pytest test/ --tb=short -q`
 Expected: nessuna nuova failure (note pre-esistenti: 4 in `test_paypal_create_gemini` da ordering/reload, passano in isolamento).
 
-- [ ] **Step 2.2: Verifica manuale rapida (opzionale)**
+- [x] **Step 2.2: Verifica manuale rapida (opzionale)**
 
 Run: `python audiobook_app.py` — caricare un txt, avviare una generazione audio in una lingua X, ricaricare la pagina, caricare di nuovo il file, aprire «Traduci».
 Expected: `trDstLang` preselezionata su X (se X ≠ origine). Fermare il server.
 
-- [ ] **Step 2.3: Aggiorna stato spec, marca checkbox piano, committa**
+- [x] **Step 2.3: Aggiorna stato spec, marca checkbox piano, committa**
 
-Nella spec: `**Stato:** approvato (brainstorming concluso)` → `**Stato:** implementato (2026-06-07)`. Nel piano: tutti i `- [ ]` → `- [x]`.
+Nella spec: `**Stato:** approvato (brainstorming concluso)` → `**Stato:** implementato (2026-06-07)`. Nel piano: tutti i `- [x]` → `- [x]`.
 
 ```
 git add -f docs/superpowers/specs/2026-06-07-last-lang-target-preselect-design.md docs/superpowers/plans/2026-06-07-last-lang-target-preselect.md
