@@ -50,3 +50,11 @@ def test_submit_translation_clears_token_on_error():
     assert start >= 0
     snippet = APP[start:start + 1500]
     assert "trPaymentToken=null" in snippet
+
+
+def test_reset_wizard_no_dangling_coupon_refs():
+    """Nessun riferimento residuo agli elementi coupon rimossi nel JS."""
+    assert "couponCodeTr" not in APP
+    assert "couponEmailTr" not in APP
+    assert "couponResultTr" not in APP
+    assert "couponRowTr" not in APP

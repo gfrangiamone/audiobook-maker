@@ -133,3 +133,19 @@ def test_pay_line_labels_have_ids():
     """Le etichette delle pay-line devono avere id per il rendering dal contesto."""
     assert 'id="payLineGeminiLabel"' in HTML
     assert 'id="payLineLlmLabel"' in HTML
+
+
+def test_t3_coupon_inline_removed():
+    """Il pannello T3 non deve più contenere il pagamento ottimizzazione inline."""
+    assert 'id="btnApplyCouponTr"' not in HTML
+    assert 'id="couponRowTr"' not in HTML
+    assert 'id="couponCodeTr"' not in HTML
+    assert 'id="couponEmailTr"' not in HTML
+    assert 'id="btnValidateCouponTr"' not in HTML
+
+
+def test_t3_cost_estimate_in_footer():
+    """La stima costo resta presente (spostata vicino ad Avvia traduzione)."""
+    assert 'id="costAmountTr"' in HTML
+    assert 'id="costDetailTr"' in HTML
+    assert 'id="btnStartTranslate"' in HTML

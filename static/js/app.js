@@ -2109,7 +2109,6 @@ function _listenTranslateProgress(){
     if(d.status==='cancelled'){
       es.close();generating=false;unlockUI();
       trPaymentToken=null;
-      const cr=document.getElementById('couponResultTr');if(cr){cr.textContent='';cr.className='coupon-result'}
       showErr('trErr4',t('tr_cancelled'));goToStep(3);return;
     }
     if(d.status==='translated'){es.close();generating=false;unlockUI();_showTranslationDone(d);return}
@@ -3963,10 +3962,7 @@ function resetAll(){
   // Reset translate (panel T3/T4) UI
   const trOutName=document.getElementById('trOutName');if(trOutName)trOutName.value='';
   trAutoOutName='';
-  const couponCodeTr=document.getElementById('couponCodeTr');if(couponCodeTr)couponCodeTr.value='';
-  const couponEmailTr=document.getElementById('couponEmailTr');if(couponEmailTr)couponEmailTr.value='';
-  const couponResultTr=document.getElementById('couponResultTr');if(couponResultTr){couponResultTr.innerHTML='';couponResultTr.className='coupon-result';}
-  const couponRowTr=document.getElementById('couponRowTr');if(couponRowTr)couponRowTr.classList.remove('visible');
+  trPaymentToken=null;
   const aiToggleTr=document.getElementById('aiToggleTr');if(aiToggleTr)aiToggleTr.checked=false;
   const trErr=document.getElementById('trErr');if(trErr)trErr.innerHTML='';
   const trErr4=document.getElementById('trErr4');if(trErr4)trErr4.innerHTML='';

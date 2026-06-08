@@ -318,25 +318,6 @@ __REVIEWS_LD__
             <span class="toggle-slider"></span>
           </label>
         </div>
-        <div class="cost-estimate visible" id="costEstimateTr">
-          <div style="flex:1">
-            <div class="cost-amount" id="costAmountTr">—</div>
-            <div class="cost-detail" id="costDetailTr"></div>
-          </div>
-          <button class="btn btn-outline btn-sm" id="btnApplyCouponTr" onclick="showCouponTr()">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="11.5" r="1.5"/><circle cx="16" cy="11.5" r="1.5"/></svg>
-            <span data-t="pay_tab_voucher"></span>
-          </button>
-        </div>
-        <div class="coupon-row" id="couponRowTr">
-          <input type="text" id="couponCodeTr" placeholder="XXXX-XXXX-XXXX" aria-label="Codice coupon">
-          <input type="email" id="couponEmailTr" placeholder="Email associata" aria-label="Email buono">
-          <button class="btn btn-p btn-sm" id="btnValidateCouponTr" onclick="validateCouponTr()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            <span data-t="pay_voucher_submit"></span>
-          </button>
-        </div>
-        <div class="coupon-result" id="couponResultTr"></div>
       </div>
 
       <div id="trErr"></div>
@@ -349,6 +330,12 @@ __REVIEWS_LD__
           </button>
         </div>
         <div class="right">
+          <div class="cost-estimate visible" id="costEstimateTr" style="margin:0 12px 0 0">
+            <div style="flex:1">
+              <div class="cost-amount" id="costAmountTr">—</div>
+              <div class="cost-detail" id="costDetailTr"></div>
+            </div>
+          </div>
           <button class="btn btn-p btn-lg" id="btnStartTranslate" onclick="startTranslation()">
             <span data-t="tr_btn_start"></span>
           </button>
