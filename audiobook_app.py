@@ -2942,9 +2942,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat.stat-red.active{{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.25)}}
 .stat.stat-orange.active{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.25)}}
 .stat.stat-gemini.active{{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.25)}}
-.stat.stat-tr.active{{border-color:#0ea5e9;box-shadow:0 0 0 2px rgba(14,165,233,.25)}}
+.stat.stat-tr.active{{border-color:#eab308;box-shadow:0 0 0 2px rgba(234,179,8,.25)}}
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
-.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}} .stat.stat-tr .num{{color:#0ea5e9}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}} .stat.stat-tr .num{{color:#facc15}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
 .stat-eta{{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}}
 .stat-eta .eta-lbl{{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}}

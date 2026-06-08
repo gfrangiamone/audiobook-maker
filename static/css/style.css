@@ -223,8 +223,12 @@ details.faq-item .faq-answer{font-size:.82rem;color:var(--txd);padding:4px 0 8px
 label{display:block;font-size:.85rem;font-weight:500;color:var(--txd);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
 select{width:100%;padding:10px 14px;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem;transition:border-color .2s;appearance:none;-webkit-appearance:none;background-image:var(--sel-arrow);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
 select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
-/* Campo nome file tradotto: spinner di attesa durante la traduzione del titolo */
-.tr-name-field{position:relative;display:inline-block}
+/* Campo nome file tradotto: spinner di attesa durante la traduzione del titolo.
+   display:block + width:100% per riempire la form-group e allinearsi in larghezza
+   alla combo "Lingua di destinazione" (entrambe seconda colonna, flex:1). */
+.tr-name-field{position:relative;display:block;width:100%}
+.tr-name-field input{width:100%;box-sizing:border-box;padding:10px 36px 10px 14px;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem;transition:border-color .2s}
+.tr-name-field input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
 .tr-name-field .tr-name-spinner{position:absolute;top:50%;right:10px;width:15px;height:15px;margin-top:-8px;border:2px solid var(--txm);border-top-color:var(--ac);border-radius:50%;display:none;animation:spin .8s linear infinite;pointer-events:none}
 .tr-name-field.loading .tr-name-spinner{display:block}
 .tg{display:flex;background:var(--srf2);border-radius:var(--rs);border:1px solid var(--brd);overflow:clip}
