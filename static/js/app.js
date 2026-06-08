@@ -2061,7 +2061,7 @@ async function _submitTranslation(payToken,src,dst){
   try{
     const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
-    if(d.error){showErr('trErr',d.error);return}
+    if(d.error){trPaymentToken=null;showErr('trErr',d.error);return}
     document.getElementById('trErr').innerHTML='';
     const _bcR=document.getElementById('btnCancelTr');
     if(_bcR){const _spR=_bcR.querySelector('span');if(_spR)_spR.textContent=t('tr_btn_cancel')||'Cancel';_bcR.onclick=cancelTranslation;}

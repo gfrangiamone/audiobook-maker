@@ -42,3 +42,11 @@ def test_translate_loads_paypal_config():
     start = APP.find("function startTranslation")
     snippet = APP[start:start + 2500]
     assert "_loadLlmPaymentConfig" in snippet
+
+
+def test_submit_translation_clears_token_on_error():
+    """Su errore della POST /api/translate il token va azzerato per riaprire il popup al retry."""
+    start = APP.find("function _submitTranslation")
+    assert start >= 0
+    snippet = APP[start:start + 1500]
+    assert "trPaymentToken=null" in snippet
