@@ -62,6 +62,54 @@ def test_admin_cancel_optimize_logs_admin_cancel(client):
     del audiobook_app.jobs["K3"]
 
 
+def test_admin_translate_cancel_logs_admin_cancel(client):
+    audiobook_app.jobs["KT1"] = {
+        "status": "translating", "client_id": "c1",
+        "original_filename": "libro.epub",
+        "tr_progress_current": 1, "tr_progress_total": 4,
+    }
+    with patch("audiobook_app._check_job_owner",
+               return_value=(audiobook_app.jobs["KT1"], None, None)), \
+         patch("audiobook_app._admin_auth_ok", return_value=True), \
+         patch("audiobook_app._log_activity") as mock_log:
+        r = client.post("/api/translate_cancel/KT1")
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "cancelling"
+    assert audiobook_app.jobs["KT1"]["tr_cancelled"] is True
+    ops = [c.args[2] for c in mock_log.call_args_list]
+    assert "ADMIN_CANCEL" in ops
+    del audiobook_app.jobs["KT1"]
+
+
+def test_user_translate_cancel_does_not_log_admin_cancel(client):
+    audiobook_app.jobs["KT2"] = {
+        "status": "translating", "client_id": "c1",
+        "original_filename": "libro.epub",
+    }
+    with patch("audiobook_app._check_job_owner",
+               return_value=(audiobook_app.jobs["KT2"], None, None)), \
+         patch("audiobook_app._admin_auth_ok", return_value=False), \
+         patch("audiobook_app._log_activity") as mock_log:
+        r = client.post("/api/translate_cancel/KT2")
+    assert r.status_code == 200
+    ops = [c.args[2] for c in mock_log.call_args_list]
+    assert "ADMIN_CANCEL" not in ops
+    del audiobook_app.jobs["KT2"]
+
+
+def test_kill_modal_supports_translating(client):
+    """La modale ⛔ deve riconoscere lo stato 'translating' e instradare il
+    confirm verso /api/translate_cancel (altrimenti il bottone è morto per i
+    job di traduzione)."""
+    with patch.object(audiobook_app, "ADMIN_TOKEN", "tok-test"), \
+         patch("audiobook_app._admin_auth_ok", return_value=True):
+        r = client.get("/admin/log-activity")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "'translating'" in html
+    assert "/api/translate_cancel/" in html
+
+
 def test_log_activity_page_contains_kill_ui(client):
     with patch.object(audiobook_app, "ADMIN_TOKEN", "tok-test"), \
          patch("audiobook_app._admin_auth_ok", return_value=True):

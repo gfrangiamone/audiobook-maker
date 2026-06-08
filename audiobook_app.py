@@ -3367,7 +3367,7 @@ function refundEffectsText(status, paidEur, paidMethod, isGemini) {{
     }}
     const amount = paidEur.toFixed(2) + ' EUR';
     let scope;
-    if (status === 'optimizing') {{
+    if (status === 'optimizing' || status === 'translating') {{
         scope = 'Rimborso <b>integrale</b> (' + amount + ').';
     }} else if (isGemini) {{
         scope = 'Rimborso di ' + amount + ' <b>al netto dei costi già sostenuti</b>, senza bonus.' +
@@ -3388,7 +3388,7 @@ async function openKillModal(sid, title) {{
         const r = await fetch('/api/job_status/' + sid, {{headers: adminHeaders()}});
         if (r.ok) {{ const d = await r.json(); status = d.status || ''; pct = d.pct || 0; }}
     }} catch(e) {{}}
-    const activeStates = ['generating', 'optimizing', 'optimized', 'analyzed', 'running'];
+    const activeStates = ['generating', 'optimizing', 'optimized', 'analyzed', 'running', 'translating'];
     if (!status || activeStates.indexOf(status) < 0) {{
         showToast('Job non più attivo (stato: ' + (status || 'non in memoria') + ').', false);
         return;
@@ -3408,7 +3408,9 @@ async function openKillModal(sid, title) {{
     document.getElementById('kmTitle').textContent = title;
     document.getElementById('kmSid').textContent = sid;
     document.getElementById('kmOp').textContent =
-        (status === 'optimizing') ? 'Ottimizzazione AI' : 'Generazione TTS';
+        (status === 'optimizing') ? 'Ottimizzazione AI'
+        : (status === 'translating') ? 'Traduzione'
+        : 'Generazione TTS';
     document.getElementById('kmPct').textContent = pct + '%';
     document.getElementById('kmEffects').innerHTML =
         refundEffectsText(status, paid, method, isGemini) +
@@ -3423,6 +3425,8 @@ async function confirmKill() {{
     btn.disabled = true;
     const url = (kCurrent.status === 'optimizing')
         ? '/api/cancel_optimize/' + kCurrent.sid
+        : (kCurrent.status === 'translating')
+        ? '/api/translate_cancel/' + kCurrent.sid
         : '/api/cancel/' + kCurrent.sid + '?force=1';
     try {{
         const r = await fetch(url, {{method: 'POST', headers: adminHeaders()}});
@@ -7337,7 +7341,11 @@ def api_job_status(job_id):
         cur = job.get("progress_current", 0)
         tot = job.get("progress_total", 0)
         pct = int(cur / tot * 100) if tot > 0 else 0
-    
+    elif st == "translating":
+        cur = job.get("tr_progress_current", 0)
+        tot = job.get("tr_progress_total", 0)
+        pct = int(cur / tot * 100) if tot > 0 else 0
+
     return {
         "status": st,
         "current": cur,
@@ -7551,21 +7559,42 @@ def api_cancel_preview(job_id):
         except (TypeError, ValueError):
             paid_eur = 0.0
         paid_method = paym.get("method", "") or ""
+        # Fallback ai campi flat: i flussi traduzione/ottimizzazione registrano
+        # il pagamento in payment_amount_eur/payment_type e NON nel dict
+        # job["payment"] (riservato al TTS). Senza questo la modale ⛔ direbbe
+        # "nessun rimborso" pur essendo il job rimborsabile integralmente.
+        if paid_eur <= 0:
+            try:
+                paid_eur = round(float(job.get("payment_amount_eur", 0.0) or 0.0), 2)
+            except (TypeError, ValueError):
+                paid_eur = 0.0
+        if not paid_method:
+            paid_method = job.get("payment_type", "") or ""
         try:
             from generation_engine import _progress_pct
             pct = _progress_pct(job)
         except Exception:
             pct = 0
+        # _progress_pct usa i campi TTS (progress_*); per la traduzione la
+        # progressione vive nei campi tr_progress_*.
+        if pct <= 0 and job.get("status") == "translating":
+            _tt = job.get("tr_progress_total", 0) or 0
+            if _tt > 0:
+                pct = max(0, min(100, int(job.get("tr_progress_current", 0) / _tt * 100)))
         try:
             lock_pct = int(os.environ.get("ABM_GEMINI_CANCEL_LOCK_PCT", "70"))
         except (TypeError, ValueError):
             lock_pct = 70
+        # Il lock anti-abuso è una soglia sul cancel volontario delle voci
+        # PREMIUM (TTS Gemini): non si applica alla traduzione, il cui cancel
+        # non ha alcun lock. Evita la nota fuorviante nella modale admin.
+        _is_translation = job.get("status") == "translating"
     return jsonify({
         "paid_eur": paid_eur,
         "paid_method": paid_method,
         "progress_pct": pct,
         "lock_pct": lock_pct,
-        "locked": (0 < lock_pct < 100 and pct > lock_pct),
+        "locked": (not _is_translation and 0 < lock_pct < 100 and pct > lock_pct),
     })
 
 
@@ -8947,7 +8976,16 @@ def api_translate_cancel(job_id):
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         return err, sc
+    # Imposta il flag: il thread run_translation lo rileva al prossimo chunk,
+    # solleva TranslationCancelled e il suo handler emette il rimborso
+    # (integrale) via _refund_job_payment(..., "cancel"). Vedi
+    # generation_engine.run_translation.
     job["tr_cancelled"] = True
+    # Kill amministrativo dalla pagina /admin/log-activity: traccia ADMIN_CANCEL
+    # per coerenza con /api/cancel e /api/cancel_optimize (visibilità nel log).
+    if _admin_auth_ok(_admin_auth_from_request()):
+        _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
+                      job.get("client_id", ""), "", "", "")
     return jsonify({"status": "cancelling"})
 
 

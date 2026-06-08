@@ -138,6 +138,30 @@ def test_translate_cancel_sets_flag(client):
     assert job["tr_cancelled"] is True
 
 
+def test_cancel_preview_uses_flat_payment_for_translation(client):
+    """I job di traduzione/ottimizzazione registrano il pagamento nei campi
+    flat (payment_amount_eur/payment_type), non nel dict job["payment"]
+    (riservato al TTS). cancel_preview deve leggere il fallback flat, altrimenti
+    la modale ⛔ mostra "nessun rimborso" pur essendo il job rimborsabile."""
+    _seed(status="translating", payment_amount_eur=1.5, payment_type="voucher",
+          tr_progress_current=2, tr_progress_total=4)
+    with _own():
+        r = client.get("/api/cancel_preview/TJ1")
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["paid_eur"] == 1.5
+    assert d["paid_method"] == "voucher"
+    assert d["progress_pct"] == 50
+
+
+def test_job_status_pct_for_translating(client):
+    _seed(status="translating", tr_progress_current=1, tr_progress_total=4)
+    with _own():
+        r = client.get("/api/job_status/TJ1")
+    assert r.status_code == 200
+    assert r.get_json()["pct"] == 25
+
+
 def test_translate_batch_bad_email_does_not_consume_voucher(client, monkeypatch):
     _seed()  # 400k chars -> a pagamento
     # Voucher con saldo sufficiente
