@@ -79,3 +79,15 @@ def test_updVoicesPremium_attaches_onchange_reset():
     assert "onchange" in body, "onchange handler missing in updVoicesPremium"
     assert "_onPreviewParamsChanged" in body or "_resetPreviewState" in body or "previewStop" in body, \
         "preview re-evaluation/reset missing in updVoicesPremium onchange"
+
+
+# ── tryGoToAudioSettings deve riasserire il percorso audio (no leak da translate) ──
+def test_try_go_to_audio_resets_wizmode():
+    """Il bottone "Prosegui" sotto i capitoli deve sempre portare al percorso
+    TTS: tryGoToAudioSettings reimposta wizMode='audio' prima di goToStep(3),
+    altrimenti dopo un giro nel percorso traduzione resterebbe 'translate'."""
+    m = re.search(r"function tryGoToAudioSettings\(\)\{(.+?)^}", APP_JS, re.DOTALL | re.MULTILINE)
+    assert m, "tryGoToAudioSettings function not found"
+    body = m.group(1)
+    assert "wizMode='audio'" in body or 'wizMode = "audio"' in body or 'wizMode="audio"' in body, \
+        "tryGoToAudioSettings deve reimpostare wizMode='audio'"

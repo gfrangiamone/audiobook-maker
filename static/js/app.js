@@ -4351,6 +4351,10 @@ function tryGoToAudioSettings(){
     const chars=_computeSelectedChars();
     if(chars>_capStd){_showSelTooLargeModal(chars,_capStd);return}
   }
+  // "Prosegui" è l'ingresso del percorso TTS (principale): riasserisci sempre
+  // wizMode='audio'. Senza questo, dopo un giro nel percorso traduzione
+  // (goToTranslate imposta 'translate') goToStep(3) mostrerebbe di nuovo panelT3.
+  wizMode='audio';
   goToStep(3);
 }
 
