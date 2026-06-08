@@ -2011,27 +2011,6 @@ async function trUpdateEstimate(){
   }catch(e){return null}
 }
 
-function showCouponTr(){
-  const row=document.getElementById('couponRowTr');
-  if(row)row.classList.toggle('visible');
-}
-
-async function validateCouponTr(){
-  const code=(document.getElementById('couponCodeTr').value||'').trim().toUpperCase();
-  const email=(document.getElementById('couponEmailTr').value||'').trim();
-  if(!code||!email)return;
-  const result=document.getElementById('couponResultTr');
-  if(result){result.innerHTML='<div class="sp"></div>';result.className='coupon-result'}
-  try{
-    const r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
-    const d=await r.json();
-    if(d.error){if(result){result.textContent=d.error;result.className='coupon-result error'}return}
-    lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
-    if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
-    trPaymentToken=d.payment_token;
-  }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
-}
-
 async function startTranslation(){
   if(!jobId||generating||window._trStarting)return;
   window._trStarting=true;
@@ -2042,42 +2021,57 @@ async function startTranslation(){
     _rememberLastLang(dst);
     const est=await trUpdateEstimate();
     if(!est)return;
-    let payToken=trPaymentToken;
-    if(est.requires_payment&&!payToken){
-      payToken=await _showPaymentModal(est.due_eur,est.chars,{
-        endpoint:'/api/paypal_create_order_translate',
-        body:{job_id:jobId,target_lang:dst,
-              optimize:document.getElementById('aiToggleTr').checked,
-              selected_chapters:_getSelectedChapterIndexes()}
+    if(est.requires_payment&&!trPaymentToken){
+      // Pagamento unico (traduzione + eventuale ottimizzazione) col popup
+      // premium parametrico: voucher + PayPal. Caricare prima la config PayPal.
+      await _loadLlmPaymentConfig();
+      _openPayModalCtx({
+        lines:[{labelKey:'tr_pay_label',amount:est.due_eur}],
+        total:est.due_eur,
+        voucherPurpose:'translate',
+        paypal:{
+          endpoint:'/api/paypal_create_order_translate',
+          buildBody:()=>({job_id:jobId,target_lang:dst,
+            optimize:document.getElementById('aiToggleTr').checked,
+            selected_chapters:_getSelectedChapterIndexes(),
+            amount_eur:est.due_eur}),
+        },
+        onConfirm:(token)=>{trPaymentToken=token;_submitTranslation(token,src,dst);},
       });
-      if(!payToken)return;
-      trPaymentToken=payToken;
+      return; // l'invio prosegue in onConfirm dopo la conferma del popup
     }
-    const payload={
-      job_id:jobId,
-      source_lang:src,target_lang:dst,
-      output_format:document.getElementById('trFormat').value,
-      output_name:(document.getElementById('trOutName').value||'').trim(),
-      optimize:document.getElementById('aiToggleTr').checked,
-      selected_chapters:_getSelectedChapterIndexes(),
-      batch:false,lang:cl
-    };
-    if(payToken)payload.payment_token=payToken;
-    try{
-      const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const d=await r.json();
-      if(d.error){showErr('trErr',d.error);return}
-      document.getElementById('trErr').innerHTML='';
-      const _bcR=document.getElementById('btnCancelTr');
-      if(_bcR){const _spR=_bcR.querySelector('span');if(_spR)_spR.textContent=t('tr_btn_cancel')||'Cancel';_bcR.onclick=cancelTranslation;}
-      generating=true;
-      lockUI();
-      goToStep(4);
-      const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
-      _trAutofillEmailLate();
-      _listenTranslateProgress();
-    }catch(e){showErr('trErr','Error: '+e.message)}
+    _submitTranslation(trPaymentToken,src,dst);
   }finally{window._trStarting=false}
+}
+
+// Invia POST /api/translate e avvia l'ascolto del progress. payToken può essere
+// null (traduzione gratis sotto soglia). Guardia anti doppio-avvio su generating.
+async function _submitTranslation(payToken,src,dst){
+  if(generating)return;
+  const payload={
+    job_id:jobId,
+    source_lang:src,target_lang:dst,
+    output_format:document.getElementById('trFormat').value,
+    output_name:(document.getElementById('trOutName').value||'').trim(),
+    optimize:document.getElementById('aiToggleTr').checked,
+    selected_chapters:_getSelectedChapterIndexes(),
+    batch:false,lang:cl
+  };
+  if(payToken)payload.payment_token=payToken;
+  try{
+    const r=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(d.error){showErr('trErr',d.error);return}
+    document.getElementById('trErr').innerHTML='';
+    const _bcR=document.getElementById('btnCancelTr');
+    if(_bcR){const _spR=_bcR.querySelector('span');if(_spR)_spR.textContent=t('tr_btn_cancel')||'Cancel';_bcR.onclick=cancelTranslation;}
+    generating=true;
+    lockUI();
+    goToStep(4);
+    const area=document.getElementById('emailLateAreaTr');if(area)area.classList.add('visible');
+    _trAutofillEmailLate();
+    _listenTranslateProgress();
+  }catch(e){showErr('trErr','Error: '+e.message)}
 }
 
 function _trAutofillEmailLate(){
@@ -2426,6 +2420,22 @@ function _loadPaypalSdk(clientId){
     document.head.appendChild(s);
   });
   return _paypalSdkPromise;
+}
+
+// Carica in llmConfig i parametri di pagamento (rate, soglia, PayPal) da
+// /api/llm_available. Idempotente, best-effort: usato dai flussi che non
+// passano da /api/combined_estimate (es. traduzione). Fallimento silenzioso.
+async function _loadLlmPaymentConfig(){
+  try{
+    const cfg=await fetch('/api/llm_available').then(r=>r.json());
+    llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
+    llmConfig.threshold=cfg.free_threshold_eur||0.5;
+    llmConfig.bonus=cfg.voucher_bonus_percent||10;
+    llmConfig.expiry=cfg.voucher_expiry_days||180;
+    llmConfig.paypalClientId=cfg.paypal_client_id||"";
+    llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
+    llmConfig.paypalAvailable=!!cfg.paypal_available;
+  }catch(e){/* best-effort */}
 }
 
 async function _showPaymentModal(costEur,chars,orderOpts){
