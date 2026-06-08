@@ -782,6 +782,17 @@ def _reenqueue_orphan(job_id, rec):
         "ai_optimized": bool(rec.get("ai_optimized")) or use_abm,
         "recovered": True,
         "gen_epoch": 1,
+        # Parametri opt_* per il ramo optimize: run_optimization legge questi
+        # (non i corrispettivi senza prefisso) per l'auto-generazione TTS dopo
+        # la ri-ottimizzazione. Senza, un recovery in fase optimize si
+        # fermerebbe a .abm+email invece di produrre l'audio atteso.
+        "opt_voice": rec.get("voice", ""),
+        "opt_rate": rec.get("rate", "+0%"),
+        "opt_single_file": rec.get("single_file", True),
+        "opt_output_format": rec.get("output_format", "m4b"),
+        "opt_podcast_base_url": rec.get("podcast_base_url", ""),
+        "opt_auto_generate": bool(rec.get("opt_auto_generate")),
+        "opt_selected_chapters": rec.get("selected_chapters"),
     }
     with _jobs_lock:
         jobs[job_id] = job
@@ -792,6 +803,16 @@ def _reenqueue_orphan(job_id, rec):
             daemon=True,
         )
     else:
+        # Tracking nell'Activity Log: il recovery bypassa /api/generate (dove
+        # l'evento GENERATE viene scritto con voice), quindi senza questo mirror
+        # il job recuperato non verrebbe marcato come PREMIUM/Gemini nella UI
+        # admin (gemini_started + data-gemini richiedono "GENERATE" in events).
+        try:
+            _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          job["voice"], job.get("browser_lang", ""))
+        except Exception:
+            pass
         t = threading.Thread(
             target=run_generation,
             args=(job_id, info, job["voice"], job["rate"], job["single_file"]),
@@ -7716,9 +7737,15 @@ def api_register_email():
     _write_email_pending_marker(UPLOAD_DIR / job_id)
 
     # Registra il descrittore di recupero: da qui il job è batch (email registrata).
-    # phase 'generate' perché register_email avviene durante/prima del TTS.
+    # La fase NON è sempre 'generate': se register_email avviene mentre il job è
+    # ancora in (o in attesa di) ottimizzazione AI, forzare 'generate' farebbe
+    # saltare la ri-ottimizzazione al recovery → audio da testo grezzo e
+    # ottimizzazione pagata non consegnata. Deriviamo quindi la fase dallo stato.
+    _in_opt = (job.get("status") in ("optimizing", "optimized")
+               or (job.get("opt_auto_generate") and not job.get("ai_optimized")))
+    _phase = "optimize" if _in_opt else "generate"
     try:
-        pending_jobs.register(job_id, "generate", _build_job_descriptor(job, "generate"))
+        pending_jobs.register(job_id, _phase, _build_job_descriptor(job, _phase))
     except Exception as _e:
         print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
 
@@ -11510,7 +11537,8 @@ generation_engine.configure(
     retention_sec=EMAIL_FILE_RETENTION_SEC,
     gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
     write_email_marker_fn=_write_email_marker,
-    lookup_client_email_fn=_lookup_client_email
+    lookup_client_email_fn=_lookup_client_email,
+    build_descriptor_fn=_build_job_descriptor
 )
 
 if _paypal_available():

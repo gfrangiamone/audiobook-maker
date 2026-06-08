@@ -136,6 +136,7 @@ _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RET
 _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
 _lookup_client_email = lambda cid: ""  # callable(cid) -> email or ""
+_build_descriptor = None  # callable(job, phase) -> recovery descriptor dict
 
 
 def _is_gemini_voice(voice):
@@ -171,13 +172,14 @@ def _set_job_status(job, status):
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
-              lookup_client_email_fn=None):
+              lookup_client_email_fn=None, build_descriptor_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
+    global _build_descriptor
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -192,7 +194,9 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _write_email_marker = write_email_marker_fn
     if lookup_client_email_fn is not None:
         _lookup_client_email = lookup_client_email_fn
-    
+    if build_descriptor_fn is not None:
+        _build_descriptor = build_descriptor_fn
+
     # Inizializza client LLM (se API key presente)
     _init_llm()
 
@@ -2293,6 +2297,18 @@ def run_optimization(job_id, selected_chapters=None):
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
                 _emit_finalization_progress("Project archive created.", 0.30)
+                # Rinfresca il descrittore di recovery: l'ottimizzazione è
+                # completata e l'.abm esiste su disco. Senza questo upsert il
+                # descrittore (registrato in fase optimize o a register_email)
+                # porterebbe abm_path stantio → un restart in fase TTS
+                # rigenererebbe da testo grezzo invece che dall'.abm ottimizzato.
+                if job.get("email_registered") and _build_descriptor is not None:
+                    try:
+                        pending_jobs.register(job_id, "generate",
+                                              _build_descriptor(job, "generate"))
+                    except Exception as _e_reg:
+                        print(f"[{job_id}] pending re-register (auto-gen) failed "
+                              f"(non-fatal): {_e_reg}", flush=True)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
                 _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
