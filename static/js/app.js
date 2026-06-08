@@ -1965,18 +1965,29 @@ function _trPrefillOutName(){
   el.value=base;
   trAutoOutName=base;
 }
+let _trTitleReqSeq=0;
+function _trNameLoading(on){
+  // Mostra/nasconde lo spinner di attesa sul campo nome file tradotto.
+  const w=document.getElementById('trOutNameWrap');
+  if(w)w.classList.toggle('loading',!!on);
+}
 async function _trFetchTranslatedName(){
-  // Propone il titolo tradotto come nome file; non sovrascrive mai un
-  // valore editato a mano (guardia trAutoOutName) ne' applica risposte
-  // stantie di una lingua non piu' selezionata (snapshot requestedTarget).
-  // Fallimento silenzioso.
+  // Titolo tradotto come nome file. Spinner durante la traduzione; fallimento
+  // silenzioso. Guardie sotto: trAutoOutName (no edit manuali), requestedTarget
+  // + _trTitleReqSeq (no risposte stantie / non piu' recenti).
   const el=document.getElementById('trOutName');if(!el||!jobId)return;
   const dst=document.getElementById('trDstLang');
   const src=document.getElementById('trSrcLang');
   if(!dst||!dst.value)return;
+  if(el.value!==trAutoOutName)return; // utente ha editato: non interferire
   const requestedTarget=dst.value;
+  const myReq=++_trTitleReqSeq;
+  _trNameLoading(true);
+  // Timeout 30s: la prima richiesta (non in cache) traduce via LLM lato server
+  // e puo' durare alcuni secondi; con un timeout troppo basso il client abortiva
+  // mentre il server completava+cacheava, e il titolo compariva solo al ritorno.
   const ctrl=new AbortController();
-  const tmr=setTimeout(()=>ctrl.abort(),12000);
+  const tmr=setTimeout(()=>ctrl.abort(),30000);
   try{
     const url=new URL('/api/translate_title/'+jobId,window.location.origin);
     url.searchParams.append('target',requestedTarget);
@@ -1988,7 +1999,12 @@ async function _trFetchTranslatedName(){
       trAutoOutName=d.title;
     }
   }catch(e){/* silenzioso: resta il prefill */}
-  finally{clearTimeout(tmr)}
+  finally{
+    clearTimeout(tmr);
+    // Solo la richiesta piu' recente controlla lo spinner: una richiesta piu'
+    // nuova (cambio lingua) gestisce il proprio stato.
+    if(myReq===_trTitleReqSeq)_trNameLoading(false);
+  }
 }
 async function trUpdateEstimate(){
   if(!jobId)return null;

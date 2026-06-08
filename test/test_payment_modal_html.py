@@ -164,3 +164,11 @@ def test_t3_cost_estimate_premium_style_beside_ai_card():
     assert 'id="costPreviewBoxTr"' in row
     # Non deve più esistere il vecchio box cost-estimate nel pannello traduzione
     assert 'id="costEstimateTr"' not in HTML
+
+
+def test_tr_name_field_has_spinner_wrapper():
+    """Il campo nome file tradotto è avvolto da un wrapper con spinner per
+    l'animazione di attesa durante la traduzione del titolo."""
+    assert 'id="trOutNameWrap"' in HTML
+    assert 'class="tr-name-field"' in HTML
+    assert 'class="tr-name-spinner"' in HTML
