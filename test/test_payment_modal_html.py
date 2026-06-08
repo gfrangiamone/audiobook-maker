@@ -127,3 +127,9 @@ def test_modal_zindex_distinct():
     assert m, ".modal-backdrop z-index not found"
     z = int(m.group(1))
     assert z != 1000, "z-index 1000 collides with .modal-overlay"
+
+
+def test_pay_line_labels_have_ids():
+    """Le etichette delle pay-line devono avere id per il rendering dal contesto."""
+    assert 'id="payLineGeminiLabel"' in HTML
+    assert 'id="payLineLlmLabel"' in HTML
