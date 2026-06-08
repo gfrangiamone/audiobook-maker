@@ -25,9 +25,12 @@ def test_switch_pay_tab_function():
     assert "function switchPayTab" in APP
 
 
-def test_voucher_validate_called_with_purpose_gemini():
-    # Verify the fetch body includes purpose: 'gemini'
-    assert "purpose: 'gemini'" in APP or 'purpose: "gemini"' in APP
+def test_voucher_validate_uses_context_purpose():
+    """validateVoucherForPayment passa il purpose dal contesto, non hardcoded."""
+    start = APP.find("function validateVoucherForPayment")
+    assert start >= 0
+    snippet = APP[start:start + 2000]
+    assert "_payCtx.voucherPurpose" in snippet
 
 
 def test_voucher_input_ids_match_html():
@@ -53,13 +56,21 @@ def test_has_render_paypal_gemini_buttons():
     assert "function renderPaypalGeminiButtons" in APP or "renderPaypalGeminiButtons = " in APP
 
 
-def test_paypal_gemini_uses_dedicated_endpoint():
-    # createOrder must call the gemini-specific endpoint, not the legacy LLM one
-    func_start = APP.find("renderPaypalGeminiButtons")
-    assert func_start >= 0
-    snippet = APP[func_start:func_start + 4000]
-    assert "/api/paypal_create_order_gemini" in snippet
+def test_paypal_create_order_endpoint_from_context():
+    """renderPaypalGeminiButtons usa l'endpoint dal contesto; la capture resta condivisa."""
+    start = APP.find("function renderPaypalGeminiButtons")
+    assert start >= 0
+    snippet = APP[start:start + 4000]
+    assert "_payCtx.paypal.endpoint" in snippet
+    assert "_payCtx.paypal.buildBody" in snippet
     assert "/api/paypal_capture_order" in snippet
+
+
+def test_gemini_create_endpoint_lives_in_builder():
+    """L'endpoint create-order Gemini resta referenziato in openPaymentModal."""
+    start = APP.find("function openPaymentModal")
+    snippet = APP[start:start + 1500]
+    assert "/api/paypal_create_order_gemini" in snippet
 
 
 def test_paypal_gemini_uses_dedicated_container():

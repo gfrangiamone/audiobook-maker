@@ -1388,12 +1388,12 @@ async function renderPaypalGeminiButtons(){
   _paypalGeminiButtonsInstance=window.paypal.Buttons({
     style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
     createOrder:async function(){
-      // Lingua UI: deve combaciare con quella usata in /api/combined_estimate
-      // altrimenti il server-side amount check rifiuta l'ordine.
-      const _selLangEl=(wizardState.audioTab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
-      const _selLang=(_selLangEl&&_selLangEl.value)||cl||'';
-      const body={job_id:jobId,voice_id:(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'',selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[],ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,rate:document.getElementById('vr')?.value||'+0%',lang:_selLang,amount_eur:_payState.total};
-      const r=await fetch('/api/paypal_create_order_gemini',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      // Endpoint e body dal contesto del flusso corrente (_payCtx). Il server
+      // ricalcola l'importo: il body è autoritativo solo per i parametri, non
+      // per l'importo da addebitare.
+      const _ep=(_payCtx&&_payCtx.paypal&&_payCtx.paypal.endpoint)||'/api/paypal_create_order_gemini';
+      const _body=(_payCtx&&_payCtx.paypal&&typeof _payCtx.paypal.buildBody==='function')?_payCtx.paypal.buildBody():{job_id:jobId};
+      const r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_body)});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },
     onApprove:async function(data){
@@ -1440,7 +1440,7 @@ async function validateVoucherForPayment() {
     const r = await fetch('/api/voucher_validate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ code, email, purpose: 'gemini', amount_eur: _payState.total }),
+      body: JSON.stringify({ code, email, purpose: (_payCtx && _payCtx.voucherPurpose) || 'gemini', amount_eur: _payState.total }),
     });
     const d = await r.json();
     if (!d.valid) {
@@ -1469,8 +1469,10 @@ async function validateVoucherForPayment() {
 
 function onPayConfirm() {
   if (!_payState.token) return;
+  const _cb = _payCtx && _payCtx.onConfirm;
+  const _tok = _payState.token;
   closePaymentModal();
-  startCombinedGeneration(_payState.token);
+  if (typeof _cb === 'function') _cb(_tok);
 }
 
 // ═══════════════════ PREVIEW AUDIO ═══════════════════
