@@ -2550,6 +2550,14 @@ def run_translation(job_id):
             except Exception as e:
                 _log(f"translation email error (non-fatal): {e}")
         _set_job_status(job, "translated")
+        # Marker di completamento durevole per /admin/log-activity: senza
+        # questo evento una traduzione conclusa resta indistinguibile da una
+        # cancellata dopo che il job lascia la memoria (es. restart server).
+        # Nel campo `voice` (libero) viaggiano lingue e flag ottimizzazione AI.
+        _log_activity(job_id, job.get("original_filename", ""), "TR_COMPLETE",
+                      job.get("client_id", ""), job.get("client_ip", ""),
+                      f"{source}>{target}" + (" +AI" if optimize else ""),
+                      job.get("browser_lang", ""))
 
         # Offload cold (best-effort, come per gli output audio)
         try:
@@ -2558,13 +2566,21 @@ def run_translation(job_id):
             _log(f"translation offload spawn failed (non-fatal): {_e}")
 
     except translation_core.TranslationCancelled:
-        _set_job_status(job, "analyzed")  # consenti retry
+        # IMPORTANTE (race riavvio): il gate di /api/translate riapre quando
+        # status torna "analyzed". Se lo impostassimo qui all'inizio, l'utente
+        # potrebbe riavviare la traduzione mentre questo handler ha ancora
+        # scritture pendenti (tr_cancelled=True, refund): il nuovo thread
+        # partirebbe e questa riga `tr_cancelled=True` lo ri-cancellerebbe,
+        # lasciando il pannello bloccato su "annullato" e senza bottone di
+        # download al completamento. Quindi facciamo PRIMA tutto il cleanup e
+        # apriamo il gate (status="analyzed") SOLO come ultima istruzione.
         job["tr_progress_message"] = "Translation cancelled"
         job["tr_cancelled"] = True
         _log_activity(job_id, job.get("original_filename", ""), "TR_CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
+        _set_job_status(job, "analyzed")  # consenti retry (gate riaperto per ultimo)
     except Exception as e:
         _set_job_status(job, "error")
         job["error"] = f"Translation error: {e}"

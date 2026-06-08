@@ -2474,7 +2474,12 @@ def _m4b_subbar_html(job):
 def _session_completed(s):
     """Return True if session reached generation completion (includes download scenarios)."""
     _completed_ops = {"COMPLETE", "DOWNLOAD", "DOWNLOAD_EMAIL",
-                      "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST"}
+                      "DOWNLOAD_EMAIL_PODCAST", "DOWNLOAD_PODCAST",
+                      # Traduzione e ottimizzazione AI come percorsi a sé:
+                      # un job concluso in questi flussi è "completato" anche
+                      # se non sfocia in una generazione TTS.
+                      "TR_COMPLETE", "TRANSLATE_ADOPT", "DOWNLOAD_TRANSLATION",
+                      "OPT_COMPLETE"}
     return bool(set(s["events"]) & _completed_ops)
 
 
@@ -2499,7 +2504,8 @@ def _session_in_progress(s, sid):
         st = job.get("status", "")
         # Unione di _ACTIVE_JOB_STATUSES (Gemini audit, vedi 3838) e degli
         # stati intermedi del flusso ottimizzazione/auto-gen.
-        active_states = set(_ACTIVE_JOB_STATUSES) | {"optimizing", "optimized"}
+        active_states = set(_ACTIVE_JOB_STATUSES) | {"optimizing", "optimized",
+                                                      "translating"}
         return st in active_states
     return False
 
@@ -2635,6 +2641,10 @@ def admin_logs():
         "EMAIL_FAILED": "❌", "CANCEL": "🚫",
         "ADMIN_CANCEL": "⛔",
         "RESET_CHAPTERS": "🔄", "EXPORT_ABM": "📦",
+        "OPTIMIZE": "✨", "OPT_COMPLETE": "✨✅", "OPT_CANCEL": "✨🚫",
+        "TRANSLATE": "🌍", "TR_COMPLETE": "🌍✅", "TR_CANCEL": "🌍🚫",
+        "TRANSLATE_ADOPT": "🌍📖", "DOWNLOAD_TRANSLATION": "🌍📥",
+        "TR_EMAIL_SENT": "🌍📨",
     }
     op_colors = {
         "ANALYZE": ("#6b7280", "#f3f4f6"), "GENERATE": ("#2563eb", "#eff6ff"),
@@ -2649,6 +2659,13 @@ def admin_logs():
         "ADMIN_CANCEL": ("#b91c1c", "#fee2e2"),
         "RESET_CHAPTERS": ("#f59e0b", "#fffbeb"),
         "EXPORT_ABM": ("#6366f1", "#eef2ff"),
+        "OPTIMIZE": ("#d97706", "#fffbeb"), "OPT_COMPLETE": ("#16a34a", "#f0fdf4"),
+        "OPT_CANCEL": ("#dc2626", "#fef2f2"),
+        "TRANSLATE": ("#0ea5e9", "#e0f2fe"), "TR_COMPLETE": ("#0284c7", "#e0f2fe"),
+        "TR_CANCEL": ("#dc2626", "#fef2f2"),
+        "TRANSLATE_ADOPT": ("#0284c7", "#e0f2fe"),
+        "DOWNLOAD_TRANSLATION": ("#0369a1", "#e0f2fe"),
+        "TR_EMAIL_SENT": ("#0d9488", "#f0fdfa"),
     }
 
     cards_html = ""
@@ -2710,6 +2727,12 @@ def admin_logs():
                         if tot > 0:
                             pct = int(cur / tot * 100)
                             pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
+                    elif st == "translating":
+                        cur = job.get("tr_progress_current", 0)
+                        tot = job.get("tr_progress_total", 0)
+                        if tot > 0:
+                            pct = int(cur / tot * 100)
+                            pct_html = f' <span class="card-pct" data-sid="{sid}">({pct}%)</span>'
 
                 delta = now - s["first_dt"]
                 total_sec = int(delta.total_seconds())
@@ -2750,6 +2773,46 @@ def admin_logs():
                 else:
                     voice_short = html_mod.escape(voice_raw)
 
+            # Sessioni di traduzione: il campo `voice` del log porta
+            # "src>dst [+AI]" (vedi _log_activity TRANSLATE/TR_COMPLETE). Per
+            # queste card sostituiamo la riga voce TTS con lingue + evidenza
+            # della scelta ottimizzazione AI.
+            _TR_OPS = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL",
+                       "TRANSLATE_ADOPT", "DOWNLOAD_TRANSLATION",
+                       "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
+            is_translation = bool(set(s["events"]) & _TR_OPS)
+            tr_lang_html = " - "
+            tr_ai_html = ""
+            if is_translation:
+                _vr = voice_raw or ""
+                _ai_chosen = "+AI" in _vr
+                _langs = _vr.replace("+AI", "").strip()
+                if ">" in _langs:
+                    _a, _b = _langs.split(">", 1)
+                    tr_lang_html = (f'{html_mod.escape(_a.strip().upper())} → '
+                                    f'{html_mod.escape(_b.strip().upper())}')
+                if not _vr:
+                    # Log storici (prima del descrittore lingue/AI): scelta ignota.
+                    tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ?</span>'
+                elif _ai_chosen:
+                    tr_ai_html = '<span style="color:#16a34a">✨ AI ✓</span>'
+                else:
+                    tr_ai_html = '<span style="color:var(--text-dim)">✨ AI ✗</span>'
+
+            if is_translation:
+                tr_meta_html = (
+                    f'<div class="meta-row"><span class="meta-label">🌍</span>'
+                    f'<span class="card-voice">{tr_lang_html}</span></div>\n'
+                    f'<div class="meta-row"><span class="meta-label">✨</span>'
+                    f'<span class="card-voice">{tr_ai_html}</span></div>'
+                )
+            else:
+                tr_meta_html = (
+                    f'<div class="meta-row"><span class="meta-label">🎙️</span>'
+                    f'<span class="card-voice" title="{html_mod.escape(voice_raw)}">'
+                    f'{voice_short or " - "}</span></div>'
+                )
+
             blang = html_mod.escape(s.get("browser_lang", "") or "")
             blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
 
@@ -2782,7 +2845,7 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">⌚</span><span>{first}  →  {last} ({elapsed_html})</span></div>
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
-<div class="meta-row"><span class="meta-label">🎙️</span><span class="card-voice" title="{html_mod.escape(voice_raw)}">{voice_short or " - "}</span></div>
+{tr_meta_html}
 <div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
 </div>
 {m4b_subbar}
@@ -8818,7 +8881,8 @@ def api_translate():
                               daemon=True)
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "TRANSLATE",
-                  client_id, job.get("client_ip", ""), "",
+                  client_id, job.get("client_ip", ""),
+                  f"{source}>{target}" + (" +AI" if optimize else ""),
                   browser_lang=job.get("browser_lang", ""))
     return jsonify({"status": "started", "batch": batch,
                     "due_eur": est["due_eur"]})
@@ -8853,14 +8917,19 @@ def api_translate_progress(job_id):
                 "translated_name": job.get("translated_name", ""),
                 "error": job.get("error", ""),
             }
+            # Completamento ed errore (status autorevole) hanno PRECEDENZA su
+            # tr_cancelled: un job arrivato a "translated"/"error" è terminato
+            # e un eventuale flag di cancellazione stantio (lasciato da un
+            # thread precedente in una race di riavvio) non deve mascherarlo,
+            # altrimenti il pannello perde il bottone di download.
+            if status == "translated":
+                yield f"data: {json.dumps(payload)}\n\n"
+                break
             if status == "error":
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             if job.get("tr_cancelled"):
                 payload["status"] = "cancelled"
-                yield f"data: {json.dumps(payload)}\n\n"
-                break
-            if status == "translated":
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             yield f"data: {json.dumps(payload)}\n\n"
