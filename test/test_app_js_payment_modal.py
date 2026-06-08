@@ -97,3 +97,22 @@ def test_paypal_capture_token_no_orderid_fallback():
     assert "_payState.token=d.payment_token||data.orderID" not in snippet
     # But it must still set the token from payment_token
     assert "d.payment_token" in snippet
+
+
+def test_pay_ctx_object_present():
+    assert "_payCtx" in APP
+
+
+def test_open_pay_modal_ctx_function():
+    assert "function _openPayModalCtx" in APP
+
+
+def test_gemini_builder_sets_endpoint_and_purpose():
+    """openPaymentModal costruisce il contesto Gemini con endpoint e purpose."""
+    start = APP.find("function openPaymentModal")
+    assert start >= 0
+    snippet = APP[start:start + 1500]
+    assert "/api/paypal_create_order_gemini" in snippet
+    assert "voucherPurpose:'gemini'" in snippet or 'voucherPurpose: "gemini"' in snippet \
+        or "voucherPurpose: 'gemini'" in snippet
+    assert "_openPayModalCtx" in snippet

@@ -1250,8 +1250,12 @@ function renderEstimate(data){
   updateModelRateHint(data);
 }
 
-// ═══════════════════ PAYMENT MODAL (combined cost) ═══════════════════
-let _payState = { total: 0, gemini: 0, llm: 0, token: null, method: null };
+// ═══════════════════ PAYMENT MODAL (parametrico) ═══════════════════
+// _payState: stato runtime del popup. _payCtx: comportamento del flusso corrente.
+// Il campo `gemini` è letto dal flusso di generazione premium (stima rimborso):
+// va preservato — vale 0 per i flussi non-premium (es. traduzione).
+let _payState = { total: 0, gemini: 0, token: null, method: null };
+let _payCtx = null;
 let _generatingModal = false;
 
 async function onGenerateClick() {
@@ -1296,26 +1300,73 @@ async function onGenerateClick() {
   }
 }
 
-function openPaymentModal(estimate) {
-  _payState = {
-    total: estimate.total_eur, gemini: estimate.gemini_eur,
-    llm: estimate.llm_eur, token: null, method: null,
-  };
-  const lineG = document.getElementById('payLineGemini');
-  if (lineG) lineG.textContent = estimate.gemini_eur > 0 ? `€${estimate.gemini_eur.toFixed(2)}` : '—';
-  const lineL = document.getElementById('payLineLlm');
-  if (lineL) lineL.textContent = estimate.llm_eur > 0 ? `€${estimate.llm_eur.toFixed(2)}` : '—';
+// Apre il popup geminiPayModal parametrizzato da un contesto:
+//   lines: [{labelKey, amount}]  (1 o 2 righe; le righe in eccesso vengono nascoste)
+//   total: number
+//   geminiAmount?: number  (importo premium per la stima rimborso; default 0)
+//   voucherPurpose: string  (passato a /api/voucher_validate, solo audit)
+//   paypal: { endpoint, buildBody:()=>({...}) }
+//   onConfirm: (token)=>void
+function _openPayModalCtx(ctx) {
+  _payCtx = ctx;
+  _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null };
+  // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
+  const rowMap = [
+    { labelId: 'payLineGeminiLabel', amountId: 'payLineGemini' },
+    { labelId: 'payLineLlmLabel', amountId: 'payLineLlm' },
+  ];
+  rowMap.forEach((ids, i) => {
+    const line = ctx.lines[i];
+    const amtEl = document.getElementById(ids.amountId);
+    const labEl = document.getElementById(ids.labelId);
+    const rowEl = amtEl ? amtEl.closest('.pay-line') : null;
+    if (line) {
+      if (labEl) {
+        labEl.setAttribute('data-t', line.labelKey);
+        labEl.textContent = (typeof t === 'function') ? t(line.labelKey) : line.labelKey;
+      }
+      if (amtEl) amtEl.textContent = (line.amount > 0) ? `€${line.amount.toFixed(2)}` : '—';
+      if (rowEl) rowEl.style.display = '';
+    } else {
+      if (rowEl) rowEl.style.display = 'none';
+    }
+  });
   const tot = document.getElementById('payModalTotal');
-  if (tot) tot.textContent = `€${estimate.total_eur.toFixed(2)}`;
+  if (tot) tot.textContent = `€${ctx.total.toFixed(2)}`;
   const vErr = document.getElementById('payVoucherError');
   if (vErr) { vErr.textContent = ''; vErr.style.color = ''; }
   const pErr = document.getElementById('payPaypalError');
   if (pErr) pErr.textContent = '';
   const btn = document.getElementById('btnPayConfirm');
   if (btn) btn.disabled = true;
+  const vc = document.getElementById('geminiPayVoucherCode'); if (vc) vc.value = '';
+  const ve = document.getElementById('geminiPayVoucherEmail');
+  if (ve && typeof lastVoucherEmail === 'string') ve.value = lastVoucherEmail;
   switchPayTab('voucher');
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = false;
+}
+
+// Chiamante Gemini: costruisce il contesto e apre il popup.
+function openPaymentModal(estimate) {
+  _openPayModalCtx({
+    lines: [
+      { labelKey: 'pay_premium_voices', amount: estimate.gemini_eur },
+      { labelKey: 'pay_text_ai_optimization', amount: estimate.llm_eur },
+    ],
+    total: estimate.total_eur,
+    geminiAmount: estimate.gemini_eur,
+    voucherPurpose: 'gemini',
+    paypal: {
+      endpoint: '/api/paypal_create_order_gemini',
+      buildBody: () => {
+        const _selLangEl = (wizardState.audioTab === 'premium') ? document.getElementById('vlPremium') : document.getElementById('vl');
+        const _selLang = (_selLangEl && _selLangEl.value) || cl || '';
+        return { job_id: jobId, voice_id: (typeof getCurrentVoiceId === 'function') ? getCurrentVoiceId() : '', selected_chapters: (typeof _getSelectedChapterIndexes === 'function') ? _getSelectedChapterIndexes() : [], ai_opt_enabled: !!document.getElementById('aiToggle')?.checked, rate: document.getElementById('vr')?.value || '+0%', lang: _selLang, amount_eur: _payState.total };
+      },
+    },
+    onConfirm: (token) => startCombinedGeneration(token),
+  });
 }
 
 function closePaymentModal() {
