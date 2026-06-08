@@ -304,19 +304,26 @@ __REVIEWS_LD__
         </div>
       </div>
 
-      <div class="ai-opt-card" id="aiOptCardTr">
-        <div class="toggle-row">
-          <div>
-            <div class="toggle-label">
-              <svg class="ai-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" opacity="0.3"/></svg>
-              <span data-t="lbl_ai_opt"></span>
+      <div class="preview-cost-row">
+        <div class="ai-opt-card" id="aiOptCardTr">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">
+                <svg class="ai-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" opacity="0.3"/></svg>
+                <span data-t="lbl_ai_opt"></span>
+              </div>
+              <div class="toggle-desc" data-t="ai_opt_desc"></div>
             </div>
-            <div class="toggle-desc" data-t="ai_opt_desc"></div>
+            <label class="toggle-switch" aria-label="Attiva ottimizzazione AI">
+              <input type="checkbox" id="aiToggleTr" onchange="trUpdateEstimate()">
+              <span class="toggle-slider"></span>
+            </label>
           </div>
-          <label class="toggle-switch" aria-label="Attiva ottimizzazione AI">
-            <input type="checkbox" id="aiToggleTr" onchange="trUpdateEstimate()">
-            <span class="toggle-slider"></span>
-          </label>
+        </div>
+        <div class="cost-preview-box" id="costPreviewBoxTr">
+          <div class="cost-label" data-t="tr_cost_estimate_label">Stima costo traduzione</div>
+          <div class="cost-value" id="costAmountTr">—</div>
+          <div class="cost-detail" id="costDetailTr"></div>
         </div>
       </div>
 
@@ -330,12 +337,6 @@ __REVIEWS_LD__
           </button>
         </div>
         <div class="right">
-          <div class="cost-estimate visible" id="costEstimateTr" style="margin:0 12px 0 0">
-            <div style="flex:1">
-              <div class="cost-amount" id="costAmountTr">—</div>
-              <div class="cost-detail" id="costDetailTr"></div>
-            </div>
-          </div>
           <button class="btn btn-p btn-lg" id="btnStartTranslate" onclick="startTranslation()">
             <span data-t="tr_btn_start"></span>
           </button>

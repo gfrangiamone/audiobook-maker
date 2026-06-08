@@ -144,8 +144,23 @@ def test_t3_coupon_inline_removed():
     assert 'id="btnValidateCouponTr"' not in HTML
 
 
-def test_t3_cost_estimate_in_footer():
-    """La stima costo resta presente (spostata vicino ad Avvia traduzione)."""
+def test_t3_cost_estimate_premium_style_beside_ai_card():
+    """La stima costo traduzione usa lo stile premium (cost-preview-box) ed è
+    affiancata alla card AI dentro una preview-cost-row, non più nel footer."""
+    import re
     assert 'id="costAmountTr"' in HTML
     assert 'id="costDetailTr"' in HTML
     assert 'id="btnStartTranslate"' in HTML
+    # Box stima in stile premium con label dedicata
+    assert 'id="costPreviewBoxTr"' in HTML
+    assert 'class="cost-preview-box"' in HTML
+    assert 'data-t="tr_cost_estimate_label"' in HTML
+    # Card AI e box stima dentro la stessa riga flex (preview-cost-row)
+    m = re.search(r'<div class="preview-cost-row">(.*?)</div>\s*</div>\s*<div id="trErr">',
+                  HTML, re.DOTALL)
+    assert m, "preview-cost-row del pannello traduzione non trovata"
+    row = m.group(1)
+    assert 'id="aiOptCardTr"' in row
+    assert 'id="costPreviewBoxTr"' in row
+    # Non deve più esistere il vecchio box cost-estimate nel pannello traduzione
+    assert 'id="costEstimateTr"' not in HTML
