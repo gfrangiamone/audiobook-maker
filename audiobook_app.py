@@ -2523,7 +2523,7 @@ def admin_logs():
             "recurring": "Ricorrenti", "months": "Mesi",
             "collapse": "Aggrega", "expand": "Mostra tutti",
             "no_activity": "Nessuna attività registrata per",
-            "gemini_started": "Gen. Gemini",
+            "gemini_started": "PREMIUM", "translations": "Traduzioni",
             "eta_label": "Stima completamento gen.",
         },
         "en": {
@@ -2533,7 +2533,7 @@ def admin_logs():
             "recurring": "Returning", "months": "Months",
             "collapse": "Collapse", "expand": "Show all",
             "no_activity": "No activity recorded for",
-            "gemini_started": "Gemini runs",
+            "gemini_started": "PREMIUM", "translations": "Translations",
             "eta_label": "ETA",
         },
         "fr": {
@@ -2543,7 +2543,7 @@ def admin_logs():
             "recurring": "Récurrents", "months": "Mois",
             "collapse": "Regrouper", "expand": "Tout afficher",
             "no_activity": "Aucune activité enregistrée pour",
-            "gemini_started": "Gén. Gemini",
+            "gemini_started": "PREMIUM", "translations": "Traductions",
             "eta_label": "ETA",
         },
         "de": {
@@ -2553,7 +2553,7 @@ def admin_logs():
             "recurring": "Wiederkehrend", "months": "Monate",
             "collapse": "Zusammenklappen", "expand": "Alle anzeigen",
             "no_activity": "Keine Aktivitäten aufgezeichnet für",
-            "gemini_started": "Gemini-Läufe",
+            "gemini_started": "PREMIUM", "translations": "Übersetzungen",
             "eta_label": "ETA",
         },
         "es": {
@@ -2563,7 +2563,7 @@ def admin_logs():
             "recurring": "Recurrentes", "months": "Meses",
             "collapse": "Agrupar", "expand": "Mostrar todos",
             "no_activity": "No hay actividad registrada para",
-            "gemini_started": "Gen. Gemini",
+            "gemini_started": "PREMIUM", "translations": "Traducciones",
             "eta_label": "ETA",
         },
         "zh": {
@@ -2573,7 +2573,7 @@ def admin_logs():
             "recurring": "常客", "months": "月份",
             "collapse": "收起", "expand": "全部显示",
             "no_activity": "没有活动记录",
-            "gemini_started": "Gemini 生成",
+            "gemini_started": "PREMIUM", "translations": "翻译",
             "eta_label": "预计剩余",
         },
         "hi": {
@@ -2583,7 +2583,7 @@ def admin_logs():
             "recurring": "नियमित", "months": "महीने",
             "collapse": "संक्षिप्त करें", "expand": "सभी दिखाएं",
             "no_activity": "कोई गतिविधि दर्ज नहीं",
-            "gemini_started": "Gemini जनरेशन",
+            "gemini_started": "PREMIUM", "translations": "अनुवाद",
             "eta_label": "शेष",
         },
     }
@@ -2618,13 +2618,17 @@ def admin_logs():
     gen_completed = sum(1 for s in sessions.values() if _session_completed(s))
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
-    email_sent = sum(1 for s in sessions.values() if "EMAIL_SENT" in s["events"])
     # Sessioni che hanno realmente avviato la generazione del libro con voci Gemini
     # (esclude le anteprime: richiediamo GENERATE in events).
     gemini_started = sum(
         1 for s in sessions.values()
         if "GENERATE" in s["events"] and str(s.get("voice", "")).startswith("gemini:")
     )
+    # Sessioni di traduzione: qualunque evento del flusso traduzione.
+    _TR_OPS_STAT = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL", "TRANSLATE_ADOPT",
+                    "DOWNLOAD_TRANSLATION", "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
+    tr_count = sum(1 for s in sessions.values()
+                   if set(s["events"]) & _TR_OPS_STAT)
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
@@ -2826,7 +2830,8 @@ def admin_logs():
                 f'data-email="{1 if has_email else 0}" '
                 f'data-recurring="{1 if is_recurring else 0}" '
                 f'data-identified="{1 if is_identified else 0}" '
-                f'data-gemini="{1 if is_gemini_run else 0}"'
+                f'data-gemini="{1 if is_gemini_run else 0}" '
+                f'data-translation="{1 if is_translation else 0}"'
             )
             m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
 
@@ -2937,8 +2942,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .stat.stat-red.active{{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.25)}}
 .stat.stat-orange.active{{border-color:var(--orange);box-shadow:0 0 0 2px rgba(249,115,22,.25)}}
 .stat.stat-gemini.active{{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.25)}}
+.stat.stat-tr.active{{border-color:#0ea5e9;box-shadow:0 0 0 2px rgba(14,165,233,.25)}}
 .stat .num{{font-size:1.5rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}}
-.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}}
+.stat.stat-green .num{{color:var(--green)}} .stat.stat-red .num{{color:var(--red)}} .stat.stat-orange .num{{color:var(--orange)}} .stat.stat-gemini .num{{color:#a78bfa}} .stat.stat-tr .num{{color:#0ea5e9}}
 .stat .lbl{{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}}
 .stat-eta{{font-size:.62rem;color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:.4px;min-height:.9rem}}
 .stat-eta .eta-lbl{{color:var(--text-dim);font-weight:600;margin-right:4px;letter-spacing:.2px}}
@@ -3021,10 +3027,10 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="stat stat-green" data-filter="completed" onclick="filterCards('completed',this)"><div class="num">{gen_completed}</div><div class="lbl">{t["gen_completed"]}</div></div>
     <div class="stat stat-orange" data-filter="in_progress" onclick="filterCards('in_progress',this)"><div class="num">{gen_in_progress}</div><div class="lbl">{t["in_progress"]}</div><div class="stat-eta" id="statEta"></div></div>
     <div class="stat stat-red" data-filter="cancelled" onclick="filterCards('cancelled',this)"><div class="num">{gen_cancelled}</div><div class="lbl">{t["cancelled"]}</div></div>
-    <div class="stat" data-filter="email" onclick="filterCards('email',this)"><div class="num">{email_sent}</div><div class="lbl">{t["email_sent"]}</div></div>
     <div class="stat" data-filter="identified" onclick="filterCards('identified',this)"><div class="num">{unique_clients}</div><div class="lbl">{t["unique_clients"]}</div></div>
     <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">{returning_clients}</div><div class="lbl">{t["recurring"]}</div></div>
-    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci Gemini (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
+    <div class="stat stat-tr" data-filter="translation" onclick="filterCards('translation',this)" title="Sessioni con attività di traduzione"><div class="num">{tr_count}</div><div class="lbl">{t["translations"]}</div></div>
+    <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci PREMIUM (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
 </div>
 
 <div class="cards-container">
@@ -3187,10 +3193,10 @@ function filterCards(filter, el) {{
     cards.forEach(card => {{
         let show = false;
         if (filter === 'all') {{ show = true; }} 
-        else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{ show = card.dataset.status === filter; }} 
-        else if (filter === 'email') {{ show = card.dataset.email === '1'; }} 
-        else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }} 
+        else if (filter === 'completed' || filter === 'in_progress' || filter === 'cancelled') {{ show = card.dataset.status === filter; }}
+        else if (filter === 'identified') {{ show = card.dataset.identified === '1'; }}
         else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
+        else if (filter === 'translation') {{ show = card.dataset.translation === '1'; }}
         else if (filter === 'gemini') {{ show = card.dataset.gemini === '1'; }}
         card.classList.toggle('card-hidden', !show);
     }});
