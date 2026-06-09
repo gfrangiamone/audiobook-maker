@@ -1988,7 +1988,7 @@ def seo_content_page(lang):
 
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast"}
+_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts"}
 
 @app.route("/guide/<guide_id>/")
 def guide_page(guide_id):
@@ -4798,6 +4798,14 @@ def admin_logs_page():
     }
   }
   $("ksToggleBtn").addEventListener("click", ksToggle);
+
+  // Default periodo: data inizio = primo giorno del mese corrente (entrambe le tab).
+  (function setDefaultDateFrom(){
+    const now = new Date();
+    const firstDay = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-01";
+    const af = $("auditDateFrom"); if (af && !af.value) af.value = firstDay;
+    const ef = $("evDateFrom");    if (ef && !ef.value) ef.value = firstDay;
+  })();
 
   // Auto-load on page open: prima popola la dropdown lingue, poi carica i record.
   loadLanguageOptions().finally(fetchAudit);

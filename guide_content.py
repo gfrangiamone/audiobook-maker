@@ -158,6 +158,50 @@ _GUIDE_META = {
             "h1": "मुफ़्त टेक्स्ट-टू-स्पीच ऑडियोबुक मेकर: 2026 के सर्वश्रेष्ठ TTS",
         },
     },
+    "gemini-tts": {
+        "en": {
+            "title": "Gemini TTS Voices, Languages & Prompting Guide | Audiobook Maker",
+            "h1": "Gemini TTS: Voices, Languages & Prompting Guide",
+            "kw": "gemini tts, gemini tts voices, gemini text to speech, gemini tts languages, gemini tts prompting, ai audiobook voices",
+            "desc": "Complete guide to Gemini TTS: all 30 voices, 70+ supported languages, and how to control delivery with prompts. The PREMIUM neural voices in Audiobook Maker.",
+        },
+        "it": {
+            "title": "Voci Gemini TTS, Lingue e Guida al Prompting | Audiobook Maker",
+            "h1": "Gemini TTS: voci, lingue e guida al prompting",
+            "kw": "gemini tts, voci gemini tts, gemini text to speech, lingue gemini tts, prompting gemini tts, voci ai audiolibro",
+            "desc": "Guida completa a Gemini TTS: tutte le 30 voci, oltre 70 lingue supportate e come controllare la lettura con i prompt. Le voci neurali PREMIUM di Audiobook Maker.",
+        },
+        "fr": {
+            "title": "Voix Gemini TTS, Langues et Guide de Prompting | Audiobook Maker",
+            "h1": "Gemini TTS : voix, langues et guide de prompting",
+            "kw": "gemini tts, voix gemini tts, gemini text to speech, langues gemini tts, prompting gemini tts, voix ia livre audio",
+            "desc": "Guide complet sur Gemini TTS : les 30 voix disponibles, plus de 70 langues supportées et comment contrôler la narration avec des prompts. Les voix neurales PREMIUM d'Audiobook Maker.",
+        },
+        "es": {
+            "title": "Voces Gemini TTS, Idiomas y Guía de Prompting | Audiobook Maker",
+            "h1": "Gemini TTS: voces, idiomas y guía de prompting",
+            "kw": "gemini tts, voces gemini tts, gemini text to speech, idiomas gemini tts, prompting gemini tts, voces ia audiolibro",
+            "desc": "Guía completa de Gemini TTS: las 30 voces disponibles, más de 70 idiomas compatibles y cómo controlar la narración con prompts. Las voces neurales PREMIUM de Audiobook Maker.",
+        },
+        "de": {
+            "title": "Gemini TTS Stimmen, Sprachen & Prompting-Leitfaden | Audiobook Maker",
+            "h1": "Gemini TTS: Stimmen, Sprachen und Prompting-Leitfaden",
+            "kw": "gemini tts, gemini tts stimmen, gemini text to speech, gemini tts sprachen, gemini tts prompting, ki hörbuch stimmen",
+            "desc": "Vollständiger Leitfaden zu Gemini TTS: alle 30 Stimmen, über 70 unterstützte Sprachen und wie Sie die Wiedergabe mit Prompts steuern. Die neuronalen PREMIUM-Stimmen in Audiobook Maker.",
+        },
+        "zh": {
+            "title": "Gemini TTS 语音、语言与提示词指南 | Audiobook Maker",
+            "h1": "Gemini TTS：语音、语言与提示词指南",
+            "kw": "gemini tts, gemini tts语音, gemini文字转语音, gemini tts语言, gemini tts提示词, ai有声书语音",
+            "desc": "Gemini TTS 完整指南：全部30种语音、70多种支持语言，以及如何通过提示词控制朗读效果。Audiobook Maker 的 PREMIUM 神经语音。",
+        },
+        "hi": {
+            "title": "Gemini TTS Voices, Languages & Prompting Guide | Audiobook Maker",
+            "h1": "Gemini TTS: Voices, Languages & Prompting Guide",
+            "kw": "gemini tts, gemini tts voices, gemini text to speech, gemini tts languages, gemini tts prompting, ai audiobook voices",
+            "desc": "Complete guide to Gemini TTS: all 30 voices, 70+ supported languages, and how to control delivery with prompts. The PREMIUM neural voices in Audiobook Maker.",
+        },
+    },
     "podcast": {
         "en": {
             "title": "How to Publish Your Audiobook as a Private Podcast — Free Guide | Audiobook Maker",
@@ -452,6 +496,74 @@ _GUIDE_BODY_EN = {
 <p>For English, the top Edge TTS voices are <strong>Aria</strong> (warm female), <strong>Davis</strong> (deep male), and <strong>Jenny</strong> (friendly female). For premium quality, Google Chirp3-HD offers the most expressive neural voices. <a href="/">Try the free preview on Audiobook Maker</a> to find your favorite.</p>
 </details>
 </section>
+""",
+
+    "gemini-tts": """
+<p>Gemini TTS is the neural engine behind Audiobook Maker's PREMIUM voices. This guide covers the available voices, supported languages, and how to steer delivery with prompts.</p>
+
+<h2 id="voices">Voice options</h2>
+<p>30 distinct voices, each with its own character. The voice name is fixed; the descriptor summarises its natural tone.</p>
+<table>
+  <thead><tr><th>Voice</th><th>Character</th></tr></thead>
+  <tbody>
+    <tr><td>Zephyr</td><td>Bright</td></tr>
+    <tr><td>Puck</td><td>Upbeat</td></tr>
+    <tr><td>Charon</td><td>Informative</td></tr>
+    <tr><td>Kore</td><td>Firm</td></tr>
+    <tr><td>Fenrir</td><td>Excitable</td></tr>
+    <tr><td>Leda</td><td>Youthful</td></tr>
+    <tr><td>Orus</td><td>Firm</td></tr>
+    <tr><td>Aoede</td><td>Breezy</td></tr>
+    <tr><td>Callirrhoe</td><td>Easy-going</td></tr>
+    <tr><td>Autonoe</td><td>Bright</td></tr>
+    <tr><td>Enceladus</td><td>Breathy</td></tr>
+    <tr><td>Iapetus</td><td>Clear</td></tr>
+    <tr><td>Umbriel</td><td>Easy-going</td></tr>
+    <tr><td>Algieba</td><td>Smooth</td></tr>
+    <tr><td>Despina</td><td>Smooth</td></tr>
+    <tr><td>Erinome</td><td>Clear</td></tr>
+    <tr><td>Algenib</td><td>Gravelly</td></tr>
+    <tr><td>Rasalgethi</td><td>Informative</td></tr>
+    <tr><td>Laomedeia</td><td>Upbeat</td></tr>
+    <tr><td>Achernar</td><td>Soft</td></tr>
+    <tr><td>Alnilam</td><td>Firm</td></tr>
+    <tr><td>Schedar</td><td>Even</td></tr>
+    <tr><td>Gacrux</td><td>Mature</td></tr>
+    <tr><td>Pulcherrima</td><td>Forward</td></tr>
+    <tr><td>Achird</td><td>Friendly</td></tr>
+    <tr><td>Zubenelgenubi</td><td>Casual</td></tr>
+    <tr><td>Vindemiatrix</td><td>Gentle</td></tr>
+    <tr><td>Sadachbia</td><td>Lively</td></tr>
+    <tr><td>Sadaltager</td><td>Knowledgeable</td></tr>
+    <tr><td>Sulafat</td><td>Warm</td></tr>
+  </tbody>
+</table>
+
+<h2 id="languages">Supported languages</h2>
+<p>Gemini TTS supports the following languages (BCP-47 code in parentheses):</p>
+<p>Arabic (ar), Filipino (fil), Bangla (bn), Finnish (fi), Dutch (nl), Galician (gl), English (en), Georgian (ka), French (fr), Greek (el), German (de), Gujarati (gu), Hindi (hi), Haitian Creole (ht), Indonesian (id), Hebrew (he), Italian (it), Hungarian (hu), Japanese (ja), Icelandic (is), Korean (ko), Javanese (jv), Marathi (mr), Kannada (kn), Polish (pl), Konkani (kok), Portuguese (pt), Romanian (ro), Russian (ru), Spanish (es), Tamil (ta), Telugu (te), Thai (th), Turkish (tr), Ukrainian (uk), Vietnamese (vi), Afrikaans (af), Albanian (sq), Amharic (am), Armenian (hy), Azerbaijani (az), Basque (eu), Belarusian (be), Bulgarian (bg), Burmese (my), Catalan (ca), Cebuano (ceb), Chinese Mandarin (cmn), Croatian (hr), Czech (cs), Danish (da), Estonian (et), Latvian (lv), Lithuanian (lt), Luxembourgish (lb), Macedonian (mk), Maithili (mai), Malagasy (mg), Malay (ms), Malayalam (ml), Mongolian (mn), Nepali (ne), Norwegian Bokm&aring;l (nb), Norwegian Nynorsk (nn), Odia (or), Pashto (ps), Persian (fa), Punjabi (pa), Serbian (sr), Sindhi (sd), Sinhala (si), Slovak (sk), Slovenian (sl), Swahili (sw), Swedish (sv), Urdu (ur).</p>
+
+<h2 id="prompting">Prompting guide</h2>
+<p>The model infers delivery from the transcript automatically. You can steer it further with inline tags and structured directions.</p>
+<h3>Inline audio tags</h3>
+<p>Inline modifiers such as <code>[whispers]</code>, <code>[laughs]</code>, <code>[excitedly]</code>, <code>[bored]</code> and <code>[shouting]</code> change tone, pace and emotional quality. Be creative and experiment with delivery variations.</p>
+<h3>Advanced prompting elements</h3>
+<ul>
+  <li><strong>Audio Profile</strong> &mdash; character name and role definition.</li>
+  <li><strong>Scene</strong> &mdash; environmental context that sets mood and physical setting.</li>
+  <li><strong>Director&rsquo;s Notes</strong> &mdash; performance guidance: style, pacing, accent.</li>
+  <li><strong>Sample Context</strong> &mdash; contextual grounding for a natural entry into the performance.</li>
+  <li><strong>Transcript</strong> &mdash; the exact spoken words, paired with audio tags.</li>
+</ul>
+<h3>Key guidance</h3>
+<p>Don't feel you have to describe everything &mdash; giving the model space to fill the gaps often helps naturalness. Balance specificity with creative freedom, and prefer industry terminology and layered characteristics over plain emotional labels.</p>
+<h3>How to use prompts in Audiobook Maker</h3>
+<p>Audiobook Maker narrates the chapter text directly, so you add prompt cues inside the text itself, in one of two ways:</p>
+<ul>
+  <li>Edit the input <strong>TXT</strong> file before uploading, inserting tags/cues directly in the text.</li>
+  <li>Or download the generated <strong>.ABM</strong> file, edit the chapter texts, and re-upload the modified <strong>.ABM</strong> to Audiobook Maker.</li>
+</ul>
+<p style="font-size:.85rem;color:var(--txm)">Source: <a href="https://ai.google.dev/gemini-api/docs/speech-generation" rel="nofollow noopener" target="_blank">Google AI &mdash; Speech generation</a></p>
 """,
 
     "podcast": '''
@@ -2088,6 +2200,7 @@ _GUIDE_PUBLISHED = {
     "m4b-format": "2024-10-01",
     "text-to-speech-audiobook": "2024-11-10",
     "podcast": "2025-01-20",
+    "gemini-tts": "2026-06-09",
 }
 
 _GUIDE_SECTION = {
@@ -2095,6 +2208,7 @@ _GUIDE_SECTION = {
     "m4b-format": "File Formats",
     "text-to-speech-audiobook": "Text-to-Speech",
     "podcast": "Podcast Publishing",
+    "gemini-tts": "Text-to-Speech",
 }
 
 
