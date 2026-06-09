@@ -891,6 +891,74 @@ _GUIDE_BODY_IT = {
 </section>
 """,
 
+    "gemini-tts": """
+<p>Gemini TTS è il motore neurale dietro le Voci PREMIUM di Audiobook Maker. Questa guida illustra le voci disponibili, le lingue supportate e come guidare la lettura con i prompt.</p>
+
+<h2 id="voices">Opzioni voce</h2>
+<p>30 voci distinte, ognuna con un proprio carattere. Il nome della voce è fisso; il descrittore ne riassume il tono naturale.</p>
+<table>
+  <thead><tr><th>Voce</th><th>Carattere</th></tr></thead>
+  <tbody>
+    <tr><td>Zephyr</td><td>Brillante</td></tr>
+    <tr><td>Puck</td><td>Vivace</td></tr>
+    <tr><td>Charon</td><td>Informativo</td></tr>
+    <tr><td>Kore</td><td>Deciso</td></tr>
+    <tr><td>Fenrir</td><td>Entusiasta</td></tr>
+    <tr><td>Leda</td><td>Giovanile</td></tr>
+    <tr><td>Orus</td><td>Deciso</td></tr>
+    <tr><td>Aoede</td><td>Disinvolto</td></tr>
+    <tr><td>Callirrhoe</td><td>Rilassato</td></tr>
+    <tr><td>Autonoe</td><td>Brillante</td></tr>
+    <tr><td>Enceladus</td><td>Sussurrato</td></tr>
+    <tr><td>Iapetus</td><td>Chiaro</td></tr>
+    <tr><td>Umbriel</td><td>Rilassato</td></tr>
+    <tr><td>Algieba</td><td>Morbido</td></tr>
+    <tr><td>Despina</td><td>Morbido</td></tr>
+    <tr><td>Erinome</td><td>Chiaro</td></tr>
+    <tr><td>Algenib</td><td>Roco</td></tr>
+    <tr><td>Rasalgethi</td><td>Informativo</td></tr>
+    <tr><td>Laomedeia</td><td>Vivace</td></tr>
+    <tr><td>Achernar</td><td>Delicato</td></tr>
+    <tr><td>Alnilam</td><td>Deciso</td></tr>
+    <tr><td>Schedar</td><td>Equilibrato</td></tr>
+    <tr><td>Gacrux</td><td>Maturo</td></tr>
+    <tr><td>Pulcherrima</td><td>Diretto</td></tr>
+    <tr><td>Achird</td><td>Amichevole</td></tr>
+    <tr><td>Zubenelgenubi</td><td>Informale</td></tr>
+    <tr><td>Vindemiatrix</td><td>Gentile</td></tr>
+    <tr><td>Sadachbia</td><td>Brioso</td></tr>
+    <tr><td>Sadaltager</td><td>Competente</td></tr>
+    <tr><td>Sulafat</td><td>Caldo</td></tr>
+  </tbody>
+</table>
+
+<h2 id="languages">Lingue supportate</h2>
+<p>Gemini TTS supporta le seguenti lingue (codice BCP-47 fra parentesi):</p>
+<p>Arabic (ar), Filipino (fil), Bangla (bn), Finnish (fi), Dutch (nl), Galician (gl), English (en), Georgian (ka), French (fr), Greek (el), German (de), Gujarati (gu), Hindi (hi), Haitian Creole (ht), Indonesian (id), Hebrew (he), Italian (it), Hungarian (hu), Japanese (ja), Icelandic (is), Korean (ko), Javanese (jv), Marathi (mr), Kannada (kn), Polish (pl), Konkani (kok), Portuguese (pt), Romanian (ro), Russian (ru), Spanish (es), Tamil (ta), Telugu (te), Thai (th), Turkish (tr), Ukrainian (uk), Vietnamese (vi), Afrikaans (af), Albanian (sq), Amharic (am), Armenian (hy), Azerbaijani (az), Basque (eu), Belarusian (be), Bulgarian (bg), Burmese (my), Catalan (ca), Cebuano (ceb), Chinese Mandarin (cmn), Croatian (hr), Czech (cs), Danish (da), Estonian (et), Latvian (lv), Lithuanian (lt), Luxembourgish (lb), Macedonian (mk), Maithili (mai), Malagasy (mg), Malay (ms), Malayalam (ml), Mongolian (mn), Nepali (ne), Norwegian Bokm&aring;l (nb), Norwegian Nynorsk (nn), Odia (or), Pashto (ps), Persian (fa), Punjabi (pa), Serbian (sr), Sindhi (sd), Sinhala (si), Slovak (sk), Slovenian (sl), Swahili (sw), Swedish (sv), Urdu (ur).</p>
+
+<h2 id="prompting">Guida al prompting</h2>
+<p>Il modello deduce la lettura dal testo automaticamente. Puoi guidarla ulteriormente con tag inline e indicazioni strutturate.</p>
+<h3>Tag audio inline</h3>
+<p>Modificatori inline come <code>[whispers]</code>, <code>[laughs]</code>, <code>[excitedly]</code>, <code>[bored]</code> e <code>[shouting]</code> cambiano tono, ritmo e qualità emotiva. Sii creativo e sperimenta variazioni di resa.</p>
+<h3>Elementi di prompting avanzato</h3>
+<ul>
+  <li><strong>Audio Profile</strong> &mdash; nome e ruolo del personaggio.</li>
+  <li><strong>Scene</strong> &mdash; contesto ambientale che definisce atmosfera e ambientazione.</li>
+  <li><strong>Director&rsquo;s Notes</strong> &mdash; indicazioni di resa: stile, ritmo, accento.</li>
+  <li><strong>Sample Context</strong> &mdash; aggancio contestuale per un ingresso naturale nella lettura.</li>
+  <li><strong>Transcript</strong> &mdash; le parole esatte da pronunciare, insieme ai tag audio.</li>
+</ul>
+<h3>Linee guida chiave</h3>
+<p>Non serve descrivere tutto: lasciare spazio al modello favorisce spesso la naturalezza. Bilancia specificità e libertà creativa e preferisci la terminologia di settore e caratteristiche stratificate alle semplici etichette emotive.</p>
+<h3>Come usare i prompt in Audiobook Maker</h3>
+<p>Audiobook Maker legge direttamente il testo dei capitoli, quindi i prompt si inseriscono nel testo stesso, in due modi:</p>
+<ul>
+  <li>Modifica il file <strong>TXT</strong> in input prima del caricamento, inserendo tag/indicazioni direttamente nel testo.</li>
+  <li>Oppure scarica il file <strong>.ABM</strong> generato, modifica i testi dei capitoli e ricarica l'<strong>.ABM</strong> modificato su Audiobook Maker.</li>
+</ul>
+<p style="font-size:.85rem;color:var(--txm)">Fonte: <a href="https://ai.google.dev/gemini-api/docs/speech-generation" rel="nofollow noopener" target="_blank">Google AI &mdash; Speech generation</a></p>
+""",
+
     "podcast": """
 	<section>
 	<h2>Trasforma il Tuo Audiolibro in un Podcast Privato</h2>
