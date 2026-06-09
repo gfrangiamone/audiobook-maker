@@ -2311,6 +2311,7 @@ When quoting facts from this site, cite one of:
 - [M4B Format Guide]({base}/guide/m4b-format/): What M4B is, M4B vs MP3, creating M4B with embedded chapters.
 - [Text-to-Speech for Audiobooks]({base}/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
 - [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
+- [Gemini TTS Guide]({base}/guide/gemini-tts/): All Gemini TTS voices, supported languages, and prompting guide for the PREMIUM neural voices.
 - [Frequently Asked Questions]({base}/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 
 ## How it works

@@ -42,3 +42,15 @@ def test_ui_link_and_i18n_key_present():
     assert 'data-t="guide_gemini_tts"' in head
     i18n = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
     assert i18n.count("guide_gemini_tts:") + i18n.count('"guide_gemini_tts":') >= 7
+
+
+def test_route_and_sitemap():
+    import audiobook_app
+    client = audiobook_app.app.test_client()
+    for lang in ["it", "en", "fr", "es", "de", "zh", "hi"]:
+        r = client.get(f"/guide/gemini-tts/?lang={lang}")
+        assert r.status_code == 200, (lang, r.status_code)
+    r404 = client.get("/guide/nonesistente/")
+    assert r404.status_code == 404
+    sm = client.get("/sitemap.xml")
+    assert b"/guide/gemini-tts/" in sm.data
