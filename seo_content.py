@@ -176,6 +176,8 @@ _CONTENT = {
              "versioni audio con voci diverse senza ripetere l'ottimizzazione."),
                     ("Cosa sono le Voci PREMIUM?",
              "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 2.5 Flash e 3.1 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci."),
+            ("Posso tradurre un libro in un'altra lingua e crearne l'audiolibro?",
+             "Sì. Audiobook Maker include una funzione integrata di traduzione libri: carica il file EPUB, PDF, TXT o ABM, scegli la lingua di origine e di destinazione e l'AI traduce i capitoli selezionati, con ottimizzazione AI opzionale per una narrazione naturale applicata nello stesso passaggio. Puoi scaricare il libro tradotto (EPUB, TXT o ABM) e poi generare l'audiolibro tradotto direttamente dal risultato, usando una qualsiasi delle voci neurali. La traduzione è gratuita sotto una piccola soglia; i libri più lunghi prevedono un piccolo costo, in base al numero di caratteri, pagabile con voucher o PayPal."),
 ],
         "privacy_heading": "Privacy e Sicurezza",
         "privacy": (
@@ -339,6 +341,8 @@ _CONTENT = {
              "the optimization."),
                     ("What are PREMIUM Voices?",
              "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 2.5 Flash and 3.1 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector."),
+            ("Can I translate a book into another language and make an audiobook from it?",
+             "Yes. Audiobook Maker includes an integrated book translation feature: upload your EPUB, PDF, TXT or ABM file, pick the source and target language, and the AI translates the selected chapters — with optional AI optimization for natural narration applied in the same step. You can download the translated book (EPUB, TXT or ABM) and then generate a translated audiobook directly from the result, using any of the neural voices. Translation is free below a small threshold; longer books carry a small fee, based on the number of characters, payable by voucher or PayPal."),
 ],
         "privacy_heading": "Privacy & Security",
         "privacy": (
@@ -503,6 +507,8 @@ _CONTENT = {
              "voix différentes sans relancer l'optimisation."),
                     ("Que sont les Voix PREMIUM ?",
              "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 2.5 Flash et 3.1 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix."),
+            ("Puis-je traduire un livre dans une autre langue et en faire un livre audio ?",
+             "Oui. Audiobook Maker intègre une fonction de traduction de livres : importez votre fichier EPUB, PDF, TXT ou ABM, choisissez la langue source et la langue cible, et l'IA traduit les chapitres sélectionnés — avec une optimisation IA facultative pour une narration naturelle appliquée lors de la même étape. Vous pouvez télécharger le livre traduit (EPUB, TXT ou ABM), puis générer un livre audio traduit directement à partir du résultat, avec n'importe quelle voix neuronale. La traduction est gratuite en dessous d'un petit seuil ; les livres plus longs entraînent un coût modique, calculé selon le nombre de caractères, payable par bon ou PayPal."),
 ],
         "privacy_heading": "Confidentialité et Sécurité",
         "privacy": (
@@ -666,6 +672,8 @@ _CONTENT = {
              "nuevas versiones de audio con voces distintas sin repetir la optimización."),
                     ("¿Qué son las Voces PREMIUM?",
              "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 2.5 Flash y 3.1 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces."),
+            ("¿Puedo traducir un libro a otro idioma y crear un audiolibro a partir de él?",
+             "Sí. Audiobook Maker incluye una función integrada de traducción de libros: sube tu archivo EPUB, PDF, TXT o ABM, elige el idioma de origen y de destino, y la IA traduce los capítulos seleccionados, con optimización de IA opcional para una narración natural aplicada en el mismo paso. Puedes descargar el libro traducido (EPUB, TXT o ABM) y luego generar un audiolibro traducido directamente a partir del resultado, usando cualquiera de las voces neuronales. La traducción es gratuita por debajo de un pequeño umbral; los libros más largos tienen un coste reducido, según el número de caracteres, pagadero con vale o PayPal."),
 ],
         "privacy_heading": "Privacidad y Seguridad",
         "privacy": (
@@ -832,6 +840,8 @@ _CONTENT = {
              "durchlaufen zu müssen."),
                     ("Was sind PREMIUM-Stimmen?",
              "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 2.5 Flash- und 3.1 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet."),
+            ("Kann ich ein Buch in eine andere Sprache übersetzen und daraus ein Hörbuch erstellen?",
+             "Ja. Audiobook Maker enthält eine integrierte Buchübersetzungsfunktion: Laden Sie Ihre EPUB-, PDF-, TXT- oder ABM-Datei hoch, wählen Sie Ausgangs- und Zielsprache, und die KI übersetzt die ausgewählten Kapitel – mit optionaler KI-Optimierung für eine natürliche Erzählung im selben Schritt. Sie können das übersetzte Buch (EPUB, TXT oder ABM) herunterladen und dann direkt aus dem Ergebnis ein übersetztes Hörbuch mit einer beliebigen neuronalen Stimme erzeugen. Die Übersetzung ist unterhalb einer kleinen Schwelle kostenlos; längere Bücher verursachen geringe Kosten, basierend auf der Zeichenzahl, zahlbar per Gutschein oder PayPal."),
 ],
         "privacy_heading": "Datenschutz und Sicherheit",
         "privacy": (
@@ -985,6 +995,8 @@ _CONTENT = {
              "以便复用、编辑或用不同声音生成新的音频版本，无需重新运行优化。"),
                     ("什么是 PREMIUM 语音？",
              "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 2.5 Flash 和 3.1 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。"),
+            ("我可以把一本书翻译成另一种语言并据此制作有声书吗？",
+             "可以。Audiobook Maker 内置图书翻译功能：上传你的 EPUB、PDF、TXT 或 ABM 文件，选择源语言和目标语言，AI 即可翻译所选章节，并在同一步骤中可选地应用 AI 优化以获得自然的朗读效果。你可以下载翻译后的图书（EPUB、TXT 或 ABM），然后直接基于翻译结果生成译文有声书，并使用任意一种神经网络语音。翻译在小额阈值以下免费；篇幅较长的图书会按字符数收取少量费用，可通过抵用券或 PayPal 支付。"),
 ],
         "privacy_heading": "隐私与安全",
         "privacy": (
@@ -1133,6 +1145,8 @@ _CONTENT = {
              "पुन: उपयोग, संपादन या अनुकूलन को फिर से चलाए बिना विभिन्न आवाज़ों के साथ नए ऑडियो संस्करण जनरेट करने के लिए."),
                     ("प्रीमियम आवाज़ें क्या हैं?",
              "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 2.5 Flash और 3.1 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"),
+            ("क्या मैं किसी पुस्तक का दूसरी भाषा में अनुवाद करके उससे ऑडियोबुक बना सकता हूँ?",
+             "हाँ। Audiobook Maker में एकीकृत पुस्तक अनुवाद सुविधा शामिल है: अपनी EPUB, PDF, TXT या ABM फ़ाइल अपलोड करें, स्रोत और लक्ष्य भाषा चुनें, और AI चयनित अध्यायों का अनुवाद करता है — उसी चरण में स्वाभाविक वर्णन के लिए वैकल्पिक AI अनुकूलन के साथ। आप अनुवादित पुस्तक (EPUB, TXT या ABM) डाउनलोड कर सकते हैं और फिर परिणाम से सीधे किसी भी न्यूरल आवाज़ का उपयोग करके अनुवादित ऑडियोबुक बना सकते हैं। अनुवाद एक छोटी सीमा से नीचे मुफ़्त है; लंबी पुस्तकों पर वर्णों की संख्या के आधार पर थोड़ा शुल्क लगता है, जो वाउचर या PayPal से देय है।"),
 ],
         "privacy_heading": "गोपनीयता और सुरक्षा",
         "privacy": (
