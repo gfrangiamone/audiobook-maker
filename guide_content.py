@@ -2011,6 +2011,74 @@ _GUIDE_BODY_DE = {
 </section>
 """,
 
+    "gemini-tts": """
+<p>Gemini TTS ist die neuronale Engine hinter den PREMIUM-Stimmen von Audiobook Maker. Dieser Leitfaden zeigt die verfügbaren Stimmen, die unterstützten Sprachen und wie Sie die Sprechweise mit Prompts steuern.</p>
+
+<h2 id="voices">Stimmoptionen</h2>
+<p>30 unterschiedliche Stimmen, jede mit eigenem Charakter. Der Stimmname ist fest; der Deskriptor fasst den natürlichen Ton zusammen.</p>
+<table>
+  <thead><tr><th>Stimme</th><th>Charakter</th></tr></thead>
+  <tbody>
+    <tr><td>Zephyr</td><td>Hell</td></tr>
+    <tr><td>Puck</td><td>Optimistisch</td></tr>
+    <tr><td>Charon</td><td>Informativ</td></tr>
+    <tr><td>Kore</td><td>Bestimmt</td></tr>
+    <tr><td>Fenrir</td><td>Erregbar</td></tr>
+    <tr><td>Leda</td><td>Jugendlich</td></tr>
+    <tr><td>Orus</td><td>Bestimmt</td></tr>
+    <tr><td>Aoede</td><td>Locker</td></tr>
+    <tr><td>Callirrhoe</td><td>Entspannt</td></tr>
+    <tr><td>Autonoe</td><td>Hell</td></tr>
+    <tr><td>Enceladus</td><td>Hauchig</td></tr>
+    <tr><td>Iapetus</td><td>Klar</td></tr>
+    <tr><td>Umbriel</td><td>Entspannt</td></tr>
+    <tr><td>Algieba</td><td>Geschmeidig</td></tr>
+    <tr><td>Despina</td><td>Geschmeidig</td></tr>
+    <tr><td>Erinome</td><td>Klar</td></tr>
+    <tr><td>Algenib</td><td>Rau</td></tr>
+    <tr><td>Rasalgethi</td><td>Informativ</td></tr>
+    <tr><td>Laomedeia</td><td>Optimistisch</td></tr>
+    <tr><td>Achernar</td><td>Sanft</td></tr>
+    <tr><td>Alnilam</td><td>Bestimmt</td></tr>
+    <tr><td>Schedar</td><td>Gleichmäßig</td></tr>
+    <tr><td>Gacrux</td><td>Reif</td></tr>
+    <tr><td>Pulcherrima</td><td>Direkt</td></tr>
+    <tr><td>Achird</td><td>Freundlich</td></tr>
+    <tr><td>Zubenelgenubi</td><td>Lässig</td></tr>
+    <tr><td>Vindemiatrix</td><td>Zart</td></tr>
+    <tr><td>Sadachbia</td><td>Lebhaft</td></tr>
+    <tr><td>Sadaltager</td><td>Sachkundig</td></tr>
+    <tr><td>Sulafat</td><td>Warm</td></tr>
+  </tbody>
+</table>
+
+<h2 id="languages">Unterstützte Sprachen</h2>
+<p>Gemini TTS unterstützt die folgenden Sprachen (BCP-47-Code in Klammern):</p>
+<p>Arabic (ar), Filipino (fil), Bangla (bn), Finnish (fi), Dutch (nl), Galician (gl), English (en), Georgian (ka), French (fr), Greek (el), German (de), Gujarati (gu), Hindi (hi), Haitian Creole (ht), Indonesian (id), Hebrew (he), Italian (it), Hungarian (hu), Japanese (ja), Icelandic (is), Korean (ko), Javanese (jv), Marathi (mr), Kannada (kn), Polish (pl), Konkani (kok), Portuguese (pt), Romanian (ro), Russian (ru), Spanish (es), Tamil (ta), Telugu (te), Thai (th), Turkish (tr), Ukrainian (uk), Vietnamese (vi), Afrikaans (af), Albanian (sq), Amharic (am), Armenian (hy), Azerbaijani (az), Basque (eu), Belarusian (be), Bulgarian (bg), Burmese (my), Catalan (ca), Cebuano (ceb), Chinese Mandarin (cmn), Croatian (hr), Czech (cs), Danish (da), Estonian (et), Latvian (lv), Lithuanian (lt), Luxembourgish (lb), Macedonian (mk), Maithili (mai), Malagasy (mg), Malay (ms), Malayalam (ml), Mongolian (mn), Nepali (ne), Norwegian Bokm&aring;l (nb), Norwegian Nynorsk (nn), Odia (or), Pashto (ps), Persian (fa), Punjabi (pa), Serbian (sr), Sindhi (sd), Sinhala (si), Slovak (sk), Slovenian (sl), Swahili (sw), Swedish (sv), Urdu (ur).</p>
+
+<h2 id="prompting">Prompting-Leitfaden</h2>
+<p>Das Modell leitet die Sprechweise automatisch aus dem Text ab. Mit Inline-Tags und strukturierten Anweisungen können Sie sie weiter steuern.</p>
+<h3>Inline-Audio-Tags</h3>
+<p>Inline-Modifikatoren wie <code>[whispers]</code>, <code>[laughs]</code>, <code>[excitedly]</code>, <code>[bored]</code> und <code>[shouting]</code> verändern Ton, Tempo und emotionale Qualität. Seien Sie kreativ und experimentieren Sie mit verschiedenen Darbietungen.</p>
+<h3>Erweiterte Prompting-Elemente</h3>
+<ul>
+  <li><strong>Audio Profile</strong> &mdash; Name und Rolle der Figur.</li>
+  <li><strong>Scene</strong> &mdash; Umgebungskontext, der Stimmung und Schauplatz festlegt.</li>
+  <li><strong>Director&rsquo;s Notes</strong> &mdash; Regieanweisungen: Stil, Tempo, Akzent.</li>
+  <li><strong>Sample Context</strong> &mdash; kontextuelle Verankerung für einen natürlichen Einstieg in die Darbietung.</li>
+  <li><strong>Transcript</strong> &mdash; die genau gesprochenen Worte, zusammen mit den Audio-Tags.</li>
+</ul>
+<h3>Wichtige Hinweise</h3>
+<p>Sie müssen nicht alles beschreiben – dem Modell Spielraum zu lassen, fördert oft die Natürlichkeit. Wägen Sie Genauigkeit und kreative Freiheit ab und bevorzugen Sie Fachterminologie und nuancierte Eigenschaften gegenüber einfachen Gefühlsetiketten.</p>
+<h3>So verwenden Sie Prompts in Audiobook Maker</h3>
+<p>Audiobook Maker liest den Kapiteltext direkt vor, daher fügen Sie Prompt-Hinweise direkt in den Text ein – auf zwei Arten:</p>
+<ul>
+  <li>Bearbeiten Sie die <strong>TXT</strong>-Eingabedatei vor dem Hochladen und fügen Sie Tags/Hinweise direkt in den Text ein.</li>
+  <li>Oder laden Sie die erzeugte <strong>.ABM</strong>-Datei herunter, bearbeiten Sie die Kapiteltexte und laden Sie die geänderte <strong>.ABM</strong> erneut in Audiobook Maker hoch.</li>
+</ul>
+<p style="font-size:.85rem;color:var(--txm)">Quelle: <a href="https://ai.google.dev/gemini-api/docs/speech-generation" rel="nofollow noopener" target="_blank">Google AI &mdash; Speech generation</a></p>
+""",
+
     "podcast": """
 <section>
 <h2>Verwandeln Sie Ihr Hörbuch in einen privaten Podcast</h2>
