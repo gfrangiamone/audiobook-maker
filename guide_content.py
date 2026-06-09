@@ -2383,6 +2383,74 @@ _GUIDE_BODY_ZH = {
 </section>
 """,
 
+    "gemini-tts": """
+<p>Gemini TTS 是 Audiobook Maker PREMIUM 语音背后的神经网络引擎。本指南介绍可用的语音、支持的语言，以及如何通过提示来控制朗读效果。</p>
+
+<h2 id="voices">语音选项</h2>
+<p>30 种不同的语音，各具特色。语音名称固定不变；特征描述概括其自然音色。</p>
+<table>
+  <thead><tr><th>语音</th><th>特征</th></tr></thead>
+  <tbody>
+    <tr><td>Zephyr</td><td>明亮</td></tr>
+    <tr><td>Puck</td><td>轻快</td></tr>
+    <tr><td>Charon</td><td>信息丰富</td></tr>
+    <tr><td>Kore</td><td>坚定</td></tr>
+    <tr><td>Fenrir</td><td>易激动</td></tr>
+    <tr><td>Leda</td><td>年轻</td></tr>
+    <tr><td>Orus</td><td>坚定</td></tr>
+    <tr><td>Aoede</td><td>轻松</td></tr>
+    <tr><td>Callirrhoe</td><td>随和</td></tr>
+    <tr><td>Autonoe</td><td>明亮</td></tr>
+    <tr><td>Enceladus</td><td>气声</td></tr>
+    <tr><td>Iapetus</td><td>清晰</td></tr>
+    <tr><td>Umbriel</td><td>随和</td></tr>
+    <tr><td>Algieba</td><td>流畅</td></tr>
+    <tr><td>Despina</td><td>流畅</td></tr>
+    <tr><td>Erinome</td><td>清晰</td></tr>
+    <tr><td>Algenib</td><td>低沉沙哑</td></tr>
+    <tr><td>Rasalgethi</td><td>信息丰富</td></tr>
+    <tr><td>Laomedeia</td><td>轻快</td></tr>
+    <tr><td>Achernar</td><td>柔和</td></tr>
+    <tr><td>Alnilam</td><td>坚定</td></tr>
+    <tr><td>Schedar</td><td>平稳</td></tr>
+    <tr><td>Gacrux</td><td>成熟</td></tr>
+    <tr><td>Pulcherrima</td><td>直接</td></tr>
+    <tr><td>Achird</td><td>友好</td></tr>
+    <tr><td>Zubenelgenubi</td><td>随意</td></tr>
+    <tr><td>Vindemiatrix</td><td>温和</td></tr>
+    <tr><td>Sadachbia</td><td>活泼</td></tr>
+    <tr><td>Sadaltager</td><td>博学</td></tr>
+    <tr><td>Sulafat</td><td>温暖</td></tr>
+  </tbody>
+</table>
+
+<h2 id="languages">支持的语言</h2>
+<p>Gemini TTS 支持以下语言（括号内为 BCP-47 代码）：</p>
+<p>Arabic (ar), Filipino (fil), Bangla (bn), Finnish (fi), Dutch (nl), Galician (gl), English (en), Georgian (ka), French (fr), Greek (el), German (de), Gujarati (gu), Hindi (hi), Haitian Creole (ht), Indonesian (id), Hebrew (he), Italian (it), Hungarian (hu), Japanese (ja), Icelandic (is), Korean (ko), Javanese (jv), Marathi (mr), Kannada (kn), Polish (pl), Konkani (kok), Portuguese (pt), Romanian (ro), Russian (ru), Spanish (es), Tamil (ta), Telugu (te), Thai (th), Turkish (tr), Ukrainian (uk), Vietnamese (vi), Afrikaans (af), Albanian (sq), Amharic (am), Armenian (hy), Azerbaijani (az), Basque (eu), Belarusian (be), Bulgarian (bg), Burmese (my), Catalan (ca), Cebuano (ceb), Chinese Mandarin (cmn), Croatian (hr), Czech (cs), Danish (da), Estonian (et), Latvian (lv), Lithuanian (lt), Luxembourgish (lb), Macedonian (mk), Maithili (mai), Malagasy (mg), Malay (ms), Malayalam (ml), Mongolian (mn), Nepali (ne), Norwegian Bokm&aring;l (nb), Norwegian Nynorsk (nn), Odia (or), Pashto (ps), Persian (fa), Punjabi (pa), Serbian (sr), Sindhi (sd), Sinhala (si), Slovak (sk), Slovenian (sl), Swahili (sw), Swedish (sv), Urdu (ur).</p>
+
+<h2 id="prompting">提示指南</h2>
+<p>模型会自动根据文本推断朗读方式。你可以通过内联标签和结构化指示进一步加以引导。</p>
+<h3>内联音频标签</h3>
+<p>诸如 <code>[whispers]</code>、<code>[laughs]</code>、<code>[excitedly]</code>、<code>[bored]</code> 和 <code>[shouting]</code> 等内联修饰符可改变语气、节奏和情感质感。请发挥创意，尝试不同的演绎方式。</p>
+<h3>高级提示要素</h3>
+<ul>
+  <li><strong>Audio Profile</strong> &mdash; 角色名称与身份设定。</li>
+  <li><strong>Scene</strong> &mdash; 营造氛围和场景的环境背景。</li>
+  <li><strong>Director&rsquo;s Notes</strong> &mdash; 表演指导：风格、节奏、口音。</li>
+  <li><strong>Sample Context</strong> &mdash; 为自然进入表演提供的上下文铺垫。</li>
+  <li><strong>Transcript</strong> &mdash; 需要朗读的确切文字，并配以音频标签。</li>
+</ul>
+<h3>关键建议</h3>
+<p>不必事无巨细地描述——给模型留出发挥空间往往更显自然。在精确性与创作自由之间取得平衡，并优先使用行业术语和层次化的特征描述，而非简单的情绪标签。</p>
+<h3>如何在 Audiobook Maker 中使用提示</h3>
+<p>Audiobook Maker 会直接朗读章节文本，因此提示要写入文本本身，有两种方式：</p>
+<ul>
+  <li>在上传前编辑输入的 <strong>TXT</strong> 文件，直接在文本中插入标签/指示。</li>
+  <li>或下载生成的 <strong>.ABM</strong> 文件，编辑各章节文本，再将修改后的 <strong>.ABM</strong> 重新上传到 Audiobook Maker。</li>
+</ul>
+<p style="font-size:.85rem;color:var(--txm)">来源：<a href="https://ai.google.dev/gemini-api/docs/speech-generation" rel="nofollow noopener" target="_blank">Google AI &mdash; Speech generation</a></p>
+""",
+
     "podcast": """
 <section>
 <h2>将您的有声书转换为私人播客</h2>
