@@ -196,10 +196,10 @@ _GUIDE_META = {
             "desc": "Gemini TTS 完整指南：全部30种语音、70多种支持语言，以及如何通过提示词控制朗读效果。Audiobook Maker 的 PREMIUM 神经语音。",
         },
         "hi": {
-            "title": "Gemini TTS Voices, Languages & Prompting Guide | Audiobook Maker",
-            "h1": "Gemini TTS: Voices, Languages & Prompting Guide",
-            "kw": "gemini tts, gemini tts voices, gemini text to speech, gemini tts languages, gemini tts prompting, ai audiobook voices",
-            "desc": "Complete guide to Gemini TTS: all 30 voices, 70+ supported languages, and how to control delivery with prompts. The PREMIUM neural voices in Audiobook Maker.",
+            "title": "Gemini TTS आवाज़ें, भाषाएँ और प्रॉम्प्टिंग गाइड | Audiobook Maker",
+            "h1": "Gemini TTS: आवाज़ें, भाषाएँ और प्रॉम्प्टिंग गाइड",
+            "kw": "gemini tts, gemini tts आवाज़ें, gemini text to speech, gemini tts भाषाएँ, gemini tts prompting, ai ऑडियोबुक आवाज़ें",
+            "desc": "Gemini TTS की पूरी गाइड: सभी 30 आवाज़ें, 70+ समर्थित भाषाएँ, और प्रॉम्प्ट से पाठ-शैली कैसे नियंत्रित करें. Audiobook Maker की PREMIUM न्यूरल आवाज़ें.",
         },
     },
     "podcast": {
