@@ -33,3 +33,12 @@ def test_it_body_localized():
     assert "Guida al prompting" in html
     assert "Brillante" in html
     assert ".ABM" in html
+
+
+def test_ui_link_and_i18n_key_present():
+    from pathlib import Path
+    head = Path("templates/_fragments/html_head.html").read_text(encoding="utf-8")
+    assert "/guide/gemini-tts/?lang=__LANG_CODE__" in head
+    assert 'data-t="guide_gemini_tts"' in head
+    i18n = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
+    assert i18n.count("guide_gemini_tts:") + i18n.count('"guide_gemini_tts":') >= 7
