@@ -92,18 +92,16 @@ _CONTENT = {
         ],
         "faq_heading": "Domande Frequenti — Convertitore EPUB/PDF Audiolibro",
         "faqs": [
-            ("Come convertire un EPUB in audiolibro gratis?",
-             "Carica il tuo file EPUB su Audiobook Maker, seleziona una voce AI neurale tra le oltre 400 disponibili "
-             "e la lingua desiderata, poi clicca su Converti. Il nostro convertitore text-to-speech gratuito "
-             "estrae il testo dal libro, lo suddivide in capitoli e genera un audiolibro in formato MP3 "
-             "o M4B con capitoli incorporati, pronto per essere scaricato e ascoltato su qualsiasi dispositivo. "
-             "Non è richiesta alcuna registrazione e non ci sono limiti di utilizzo."),
-            ("Come convertire un PDF in audiolibro?",
-             "Audiobook Maker supporta la conversione diretta di file PDF in audiolibri MP3 e M4B. "
-             "Carica il tuo PDF, scegli una voce AI neurale e la lingua di narrazione, "
-             "e il convertitore estrae automaticamente il testo dalle pagine, preservando la struttura del documento. "
-             "Il motore text-to-speech neurale trasforma il contenuto in audio naturale di alta qualità, "
-             "pronto per l'ascolto su smartphone, tablet o lettore MP3. Nessuna registrazione richiesta."),
+            ("Come convertire un EPUB o un PDF in audiolibro gratis?",
+             "Carica il tuo file EPUB o PDF su Audiobook Maker, seleziona una voce AI neurale tra le oltre 400 disponibili "
+             "e la lingua desiderata, poi clicca su Converti. Il convertitore text-to-speech gratuito estrae automaticamente "
+             "il testo dal libro — preservando la struttura del documento e la suddivisione in capitoli — e genera un "
+             "audiolibro in formato MP3 o M4B con capitoli incorporati, pronto per essere scaricato e ascoltato su qualsiasi "
+             "dispositivo (smartphone, tablet o lettore MP3). Non è richiesta alcuna registrazione e non ci sono limiti di utilizzo."),
+            ("Cosa sono le Voci PREMIUM?",
+             "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 2.5 Flash e 3.1 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci."),
+            ("Posso tradurre un libro in un'altra lingua e crearne l'audiolibro?",
+             "Sì. Audiobook Maker include una funzione integrata di traduzione libri: carica il file EPUB, PDF, TXT o ABM, scegli la lingua di origine e di destinazione e l'AI traduce i capitoli selezionati, con ottimizzazione AI opzionale per una narrazione naturale applicata nello stesso passaggio. Puoi scaricare il libro tradotto (EPUB, TXT o ABM) e poi generare l'audiolibro tradotto direttamente dal risultato, usando una qualsiasi delle voci neurali. La traduzione è gratuita sotto una piccola soglia; i libri più lunghi prevedono un piccolo costo, in base al numero di caratteri, pagabile con voucher o PayPal."),
              ("Supportate il formato M4B?",
               "Sì, Audiobook Maker può generare audiolibri professionali in formato M4B universale. "
               "A differenza dei semplici file MP3, il formato M4B permette di incorporare "
@@ -135,12 +133,6 @@ _CONTENT = {
              "Non serve scaricare, installare o configurare alcun software sul tuo computer, smartphone o tablet. "
              "Basta aprire il sito, caricare il libro e avviare la conversione. "
              "Tutto il processo di text-to-speech avviene sui nostri server in modo sicuro e veloce."),
-            ("Posso generare un podcast dai capitoli del libro?",
-             "Sì, Audiobook Maker può generare automaticamente un feed RSS podcast con tutti i capitoli "
-             "del tuo audiolibro. Puoi copiare il link del feed e aggiungerlo a qualsiasi app podcast "
-             "come Apple Podcasts, Spotify, Overcast o Pocket Casts per ascoltare i capitoli in streaming. "
-             "Questa funzione è ideale per chi vuole ascoltare il libro durante la guida o in palestra, "
-             "senza occupare spazio con file scaricati."),
             ("Il servizio è davvero gratuito?",
              "Sì, Audiobook Maker è completamente gratuito e senza limiti di utilizzo. "
              "Non richiede registrazione, non chiede carta di credito e non inserisce pubblicità nei file audio generati. "
@@ -174,10 +166,12 @@ _CONTENT = {
              "paragonabile a una narrazione curata. Puoi scaricare anche la versione ottimizzata "
              "del progetto in formato .abm per riutilizzarla, modificarla o generare nuove "
              "versioni audio con voci diverse senza ripetere l'ottimizzazione."),
-                    ("Cosa sono le Voci PREMIUM?",
-             "Le Voci PREMIUM sono un'opzione a pagamento che utilizza i modelli Gemini 2.5 Flash e 3.1 Flash TTS di ultima generazione per generare audiolibri di qualità superiore, con voci incredibilmente naturali ed espressive. La tecnologia Gemini TTS cattura sfumature, emozioni e intonazioni con una fedeltà nettamente superiore alle voci standard, offrendo un'esperienza di ascolto professionale paragonabile a una narrazione umana di alto livello. La generazione avviene con chunking ottimizzato per preservare l'integrità narrativa, e ogni voce PREMIUM è identificata con il prefisso 'gemini' nel selettore voci."),
-            ("Posso tradurre un libro in un'altra lingua e crearne l'audiolibro?",
-             "Sì. Audiobook Maker include una funzione integrata di traduzione libri: carica il file EPUB, PDF, TXT o ABM, scegli la lingua di origine e di destinazione e l'AI traduce i capitoli selezionati, con ottimizzazione AI opzionale per una narrazione naturale applicata nello stesso passaggio. Puoi scaricare il libro tradotto (EPUB, TXT o ABM) e poi generare l'audiolibro tradotto direttamente dal risultato, usando una qualsiasi delle voci neurali. La traduzione è gratuita sotto una piccola soglia; i libri più lunghi prevedono un piccolo costo, in base al numero di caratteri, pagabile con voucher o PayPal."),
+            ("Posso generare un podcast dai capitoli del libro?",
+             "Sì, Audiobook Maker può generare automaticamente un feed RSS podcast con tutti i capitoli "
+             "del tuo audiolibro. Puoi copiare il link del feed e aggiungerlo a qualsiasi app podcast "
+             "come Apple Podcasts, Spotify, Overcast o Pocket Casts per ascoltare i capitoli in streaming. "
+             "Questa funzione è ideale per chi vuole ascoltare il libro durante la guida o in palestra, "
+             "senza occupare spazio con file scaricati."),
 ],
         "privacy_heading": "Privacy e Sicurezza",
         "privacy": (
@@ -260,17 +254,16 @@ _CONTENT = {
         ],
         "faq_heading": "Frequently Asked Questions — EPUB/PDF to Audiobook Converter",
         "faqs": [
-            ("How to convert an EPUB to audiobook for free?",
-             "Upload your EPUB file to Audiobook Maker, select a neural AI voice from our collection of over 400 options, "
-             "and choose your desired language, then click Convert. The free text-to-speech converter extracts the book text, "
-             "splits it into chapters, and generates an audiobook in MP3 or M4B format with embedded chapters, "
-             "ready to download and listen on any device. No signup or credit card is required, and there are no usage limits."),
-            ("How to convert a PDF to audiobook?",
-             "Audiobook Maker supports direct PDF to audiobook conversion in MP3 and M4B formats. "
-             "Upload your PDF, choose a neural AI voice and narration language, and the converter will automatically "
-             "extract text from the pages while preserving document structure. The neural text-to-speech engine "
-             "transforms the content into high-quality natural audio, ready for listening on smartphones, tablets, or MP3 players. "
-             "No registration is required."),
+            ("How to convert an EPUB or PDF to audiobook for free?",
+             "Upload your EPUB or PDF file to Audiobook Maker, select a neural AI voice from our collection of over 400 options "
+             "and your desired language, then click Convert. The free text-to-speech converter automatically extracts the book "
+             "text — preserving the document structure and chapter divisions — and generates an audiobook in MP3 or M4B format "
+             "with embedded chapters, ready to download and listen on any device (smartphone, tablet, or MP3 player). "
+             "No signup or credit card is required, and there are no usage limits."),
+            ("What are PREMIUM Voices?",
+             "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 2.5 Flash and 3.1 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector."),
+            ("Can I translate a book into another language and make an audiobook from it?",
+             "Yes. Audiobook Maker includes an integrated book translation feature: upload your EPUB, PDF, TXT or ABM file, pick the source and target language, and the AI translates the selected chapters — with optional AI optimization for natural narration applied in the same step. You can download the translated book (EPUB, TXT or ABM) and then generate a translated audiobook directly from the result, using any of the neural voices. Translation is free below a small threshold; longer books carry a small fee, based on the number of characters, payable by voucher or PayPal."),
             ("Do you support the M4B format?",
              "Yes, Audiobook Maker can generate professional audiobooks in universal M4B format. "
              "Unlike standard MP3 files, M4B allows embedding chapters directly into the audio file, "
@@ -301,11 +294,6 @@ _CONTENT = {
              "There is no need to download, install, or configure any software on your computer, smartphone, or tablet. "
              "Simply open the website, upload your book, and start the conversion. "
              "The entire text-to-speech process runs on our servers securely and quickly."),
-            ("Can I generate a podcast from the book chapters?",
-             "Yes, Audiobook Maker can automatically generate a podcast RSS feed containing all your audiobook chapters. "
-             "You can copy the feed link and add it to any podcast app such as Apple Podcasts, Spotify, Overcast, or Pocket Casts "
-             "to stream chapters on demand. This feature is ideal for listening while driving, exercising, or commuting, "
-             "without needing to download files to your device."),
             ("Is the service really free?",
              "Yes, Audiobook Maker is completely free with no usage limits. "
              "No registration is required, no credit card is asked for, and no advertisements are inserted into generated audio files. "
@@ -339,10 +327,11 @@ _CONTENT = {
              "narration. You can also download the optimized project in .abm format to reuse "
              "it, edit it, or generate new audio versions with different voices without re-running "
              "the optimization."),
-                    ("What are PREMIUM Voices?",
-             "PREMIUM Voices are a paid option that leverages cutting-edge Gemini 2.5 Flash and 3.1 Flash TTS models to generate superior-quality audiobooks with incredibly natural and expressive speech. Gemini TTS technology captures nuances, emotions and intonations with fidelity far exceeding standard voices, delivering a professional listening experience comparable to high-end human narration. Generation uses optimized chunking to preserve narrative integrity, and each PREMIUM voice is identified with the 'gemini' prefix in the voice selector."),
-            ("Can I translate a book into another language and make an audiobook from it?",
-             "Yes. Audiobook Maker includes an integrated book translation feature: upload your EPUB, PDF, TXT or ABM file, pick the source and target language, and the AI translates the selected chapters — with optional AI optimization for natural narration applied in the same step. You can download the translated book (EPUB, TXT or ABM) and then generate a translated audiobook directly from the result, using any of the neural voices. Translation is free below a small threshold; longer books carry a small fee, based on the number of characters, payable by voucher or PayPal."),
+            ("Can I generate a podcast from the book chapters?",
+             "Yes, Audiobook Maker can automatically generate a podcast RSS feed containing all your audiobook chapters. "
+             "You can copy the feed link and add it to any podcast app such as Apple Podcasts, Spotify, Overcast, or Pocket Casts "
+             "to stream chapters on demand. This feature is ideal for listening while driving, exercising, or commuting, "
+             "without needing to download files to your device."),
 ],
         "privacy_heading": "Privacy & Security",
         "privacy": (
@@ -423,17 +412,16 @@ _CONTENT = {
         ],
         "faq_heading": "Questions Fréquentes — Convertisseur EPUB/PDF Livre Audio",
         "faqs": [
-            ("Comment convertir un EPUB en livre audio gratuitement ?",
-             "Téléchargez votre fichier EPUB sur Audiobook Maker, sélectionnez une voix IA neuronale parmi plus de 400 options "
-             "et la langue souhaitée, puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit extrait le texte du livre, "
-             "le divise en chapitres et génère un livre audio en format MP3 ou M4B avec chapitres intégrés, "
-             "prêt à être téléchargé et écouté sur n'importe quel appareil. Aucune inscription requise et aucune limite d'utilisation."),
-            ("Comment convertir un PDF en livre audio ?",
-             "Audiobook Maker prend en charge la conversion directe de PDF en livres audio MP3 et M4B. "
-             "Téléchargez votre fichier PDF, choisissez une voix IA neuronale et la langue de narration, "
-             "et le convertisseur extraira automatiquement le texte des pages tout en préservant la structure du document. "
-             "Le moteur text-to-speech neuronal transforme le contenu en audio naturel de haute qualité, "
-             "prêt à être écouté sur smartphone, tablette ou lecteur MP3. Aucune inscription requise."),
+            ("Comment convertir un EPUB ou un PDF en livre audio gratuitement ?",
+             "Téléchargez votre fichier EPUB ou PDF sur Audiobook Maker, sélectionnez une voix IA neuronale parmi plus de 400 options "
+             "et la langue souhaitée, puis cliquez sur Convertir. Le convertisseur text-to-speech gratuit extrait automatiquement "
+             "le texte du livre — en préservant la structure du document et la division en chapitres — et génère un livre audio "
+             "en format MP3 ou M4B avec chapitres intégrés, prêt à être téléchargé et écouté sur n'importe quel appareil "
+             "(smartphone, tablette ou lecteur MP3). Aucune inscription requise et aucune limite d'utilisation."),
+            ("Que sont les Voix PREMIUM ?",
+             "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 2.5 Flash et 3.1 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix."),
+            ("Puis-je traduire un livre dans une autre langue et en faire un livre audio ?",
+             "Oui. Audiobook Maker intègre une fonction de traduction de livres : importez votre fichier EPUB, PDF, TXT ou ABM, choisissez la langue source et la langue cible, et l'IA traduit les chapitres sélectionnés — avec une optimisation IA facultative pour une narration naturelle appliquée lors de la même étape. Vous pouvez télécharger le livre traduit (EPUB, TXT ou ABM), puis générer un livre audio traduit directement à partir du résultat, avec n'importe quelle voix neuronale. La traduction est gratuite en dessous d'un petit seuil ; les livres plus longs entraînent un coût modique, calculé selon le nombre de caractères, payable par bon ou PayPal."),
             ("Prenez-vous en charge le format M4B ?",
              "Oui, Audiobook Maker peut générer des livres audio professionnels au format M4B universel. "
              "Contrairement aux fichiers MP3 classiques, le format M4B permet d'intégrer "
@@ -464,12 +452,6 @@ _CONTENT = {
              "Il n'est pas nécessaire de télécharger, installer ou configurer de logiciel sur votre ordinateur, smartphone ou tablette. "
              "Il suffit d'ouvrir le site, télécharger le livre et lancer la conversion. "
              "Tout le processus text-to-speech s'exécute sur nos serveurs de manière sécurisée et rapide."),
-            ("Puis-je générer un podcast à partir des chapitres du livre ?",
-             "Oui, Audiobook Maker peut générer automatiquement un flux RSS podcast contenant tous les chapitres "
-             "de votre livre audio. Vous pouvez copier le lien du flux et l'ajouter à n'importe quelle application podcast "
-             "comme Apple Podcasts, Spotify, Overcast ou Pocket Casts pour écouter les chapitres en streaming. "
-             "Cette fonction est idéale pour écouter votre livre en conduisant ou à la salle de sport, "
-             "sans occuper d'espace avec des fichiers téléchargés."),
             ("Le service est-il vraiment gratuit ?",
              "Oui, Audiobook Maker est entièrement gratuit et sans limites d'utilisation. "
              "Pas d'inscription requise, pas de carte de crédit demandée et pas de publicité dans les fichiers audio générés. "
@@ -505,10 +487,12 @@ _CONTENT = {
              "narration soignée. Vous pouvez aussi télécharger le projet optimisé au format .abm "
              "pour le réutiliser, le modifier ou générer de nouvelles versions audio avec des "
              "voix différentes sans relancer l'optimisation."),
-                    ("Que sont les Voix PREMIUM ?",
-             "Les Voix PREMIUM sont une option payante qui exploite les modèles de pointe Gemini 2.5 Flash et 3.1 Flash TTS pour générer des livres audio de qualité supérieure, avec des voix incroyablement naturelles et expressives. La technologie Gemini TTS capture les nuances, les émotions et les intonations avec une fidélité nettement supérieure aux voix standard, offrant une expérience d'écoute professionnelle comparable à une narration humaine haut de gamme. La génération utilise un découpage optimisé pour préserver l'intégrité narrative, et chaque voix PREMIUM est identifiée par le préfixe 'gemini' dans le sélecteur de voix."),
-            ("Puis-je traduire un livre dans une autre langue et en faire un livre audio ?",
-             "Oui. Audiobook Maker intègre une fonction de traduction de livres : importez votre fichier EPUB, PDF, TXT ou ABM, choisissez la langue source et la langue cible, et l'IA traduit les chapitres sélectionnés — avec une optimisation IA facultative pour une narration naturelle appliquée lors de la même étape. Vous pouvez télécharger le livre traduit (EPUB, TXT ou ABM), puis générer un livre audio traduit directement à partir du résultat, avec n'importe quelle voix neuronale. La traduction est gratuite en dessous d'un petit seuil ; les livres plus longs entraînent un coût modique, calculé selon le nombre de caractères, payable par bon ou PayPal."),
+            ("Puis-je générer un podcast à partir des chapitres du livre ?",
+             "Oui, Audiobook Maker peut générer automatiquement un flux RSS podcast contenant tous les chapitres "
+             "de votre livre audio. Vous pouvez copier le lien du flux et l'ajouter à n'importe quelle application podcast "
+             "comme Apple Podcasts, Spotify, Overcast ou Pocket Casts pour écouter les chapitres en streaming. "
+             "Cette fonction est idéale pour écouter votre livre en conduisant ou à la salle de sport, "
+             "sans occuper d'espace avec des fichiers téléchargés."),
 ],
         "privacy_heading": "Confidentialité et Sécurité",
         "privacy": (
@@ -589,17 +573,16 @@ _CONTENT = {
         ],
         "faq_heading": "Preguntas Frecuentes — Convertidor EPUB/PDF a Audiolibro",
         "faqs": [
-            ("¿Cómo convertir un EPUB a audiolibro gratis?",
-             "Sube tu archivo EPUB a Audiobook Maker, selecciona una voz IA neuronal de entre más de 400 opciones "
-             "y el idioma deseado, luego haz clic en Convertir. El convertidor text-to-speech gratuito extrae el texto del libro, "
-             "lo divide en capítulos y genera un audiolibro en formato MP3 o M4B con capítulos integrados, "
-             "listo para descargar y escuchar en cualquier dispositivo. No se requiere registro y no hay límites de uso."),
-            ("¿Cómo convertir un PDF a audiolibro?",
-             "Audiobook Maker admite la conversión directa de PDF a audiolibros MP3 y M4B. "
-             "Sube tu archivo PDF, elige una voz IA neuronal y el idioma de narración, "
-             "y el convertidor extraerá automáticamente el texto de las páginas preservando la estructura del documento. "
-             "El motor text-to-speech neuronal transforma el contenido en audio natural de alta calidad, "
-             "listo para escuchar en smartphone, tablet o reproductor MP3. No se requiere registro."),
+            ("¿Cómo convertir un EPUB o un PDF a audiolibro gratis?",
+             "Sube tu archivo EPUB o PDF a Audiobook Maker, selecciona una voz IA neuronal de entre más de 400 opciones "
+             "y el idioma deseado, luego haz clic en Convertir. El convertidor text-to-speech gratuito extrae automáticamente "
+             "el texto del libro — preservando la estructura del documento y la división en capítulos — y genera un audiolibro "
+             "en formato MP3 o M4B con capítulos integrados, listo para descargar y escuchar en cualquier dispositivo "
+             "(smartphone, tablet o reproductor MP3). No se requiere registro y no hay límites de uso."),
+            ("¿Qué son las Voces PREMIUM?",
+             "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 2.5 Flash y 3.1 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces."),
+            ("¿Puedo traducir un libro a otro idioma y crear un audiolibro a partir de él?",
+             "Sí. Audiobook Maker incluye una función integrada de traducción de libros: sube tu archivo EPUB, PDF, TXT o ABM, elige el idioma de origen y de destino, y la IA traduce los capítulos seleccionados, con optimización de IA opcional para una narración natural aplicada en el mismo paso. Puedes descargar el libro traducido (EPUB, TXT o ABM) y luego generar un audiolibro traducido directamente a partir del resultado, usando cualquiera de las voces neuronales. La traducción es gratuita por debajo de un pequeño umbral; los libros más largos tienen un coste reducido, según el número de caracteres, pagadero con vale o PayPal."),
             ("¿Es compatible con el formato M4B?",
              "Sí, Audiobook Maker puede generar audiolibros profesionales en formato M4B universal. "
              "A diferencia de los archivos MP3 estándar, el formato M4B permite incrustar "
@@ -630,12 +613,6 @@ _CONTENT = {
              "No es necesario descargar, instalar ni configurar ningún software en tu ordenador, smartphone o tablet. "
              "Simplemente abre el sitio, sube tu libro y inicia la conversión. "
              "Todo el proceso de text-to-speech se ejecuta en nuestros servidores de forma segura y rápida."),
-            ("¿Puedo generar un podcast con los capítulos del libro?",
-             "Sí, Audiobook Maker puede generar automáticamente un feed RSS podcast con todos los capítulos "
-             "de tu audiolibro. Puedes copiar el enlace del feed y añadirlo a cualquier app de podcast "
-             "como Apple Podcasts, Spotify, Overcast o Pocket Casts para escuchar los capítulos en streaming. "
-             "Esta función es ideal para escuchar el libro mientras conduces o haces ejercicio, "
-             "sin ocupar espacio con archivos descargados."),
             ("¿El servicio es realmente gratuito?",
              "Sí, Audiobook Maker es completamente gratuito y sin límites de uso. "
              "No se requiere registro, no se pide tarjeta de crédito y no hay publicidad en los archivos de audio generados. "
@@ -670,10 +647,12 @@ _CONTENT = {
              "profesional, comparable a una narración cuidada. También puedes descargar el "
              "proyecto optimizado en formato .abm para reutilizarlo, modificarlo o generar "
              "nuevas versiones de audio con voces distintas sin repetir la optimización."),
-                    ("¿Qué son las Voces PREMIUM?",
-             "Las Voces PREMIUM son una opción de pago que utiliza los modelos de vanguardia Gemini 2.5 Flash y 3.1 Flash TTS para generar audiolibros de calidad superior, con voces increíblemente naturales y expresivas. La tecnología Gemini TTS captura matices, emociones y entonaciones con una fidelidad muy superior a las voces estándar, ofreciendo una experiencia de escucha profesional comparable a una narración humana de alto nivel. La generación utiliza fragmentación optimizada para preservar la integridad narrativa, y cada voz PREMIUM se identifica con el prefijo 'gemini' en el selector de voces."),
-            ("¿Puedo traducir un libro a otro idioma y crear un audiolibro a partir de él?",
-             "Sí. Audiobook Maker incluye una función integrada de traducción de libros: sube tu archivo EPUB, PDF, TXT o ABM, elige el idioma de origen y de destino, y la IA traduce los capítulos seleccionados, con optimización de IA opcional para una narración natural aplicada en el mismo paso. Puedes descargar el libro traducido (EPUB, TXT o ABM) y luego generar un audiolibro traducido directamente a partir del resultado, usando cualquiera de las voces neuronales. La traducción es gratuita por debajo de un pequeño umbral; los libros más largos tienen un coste reducido, según el número de caracteres, pagadero con vale o PayPal."),
+            ("¿Puedo generar un podcast con los capítulos del libro?",
+             "Sí, Audiobook Maker puede generar automáticamente un feed RSS podcast con todos los capítulos "
+             "de tu audiolibro. Puedes copiar el enlace del feed y añadirlo a cualquier app de podcast "
+             "como Apple Podcasts, Spotify, Overcast o Pocket Casts para escuchar los capítulos en streaming. "
+             "Esta función es ideal para escuchar el libro mientras conduces o haces ejercicio, "
+             "sin ocupar espacio con archivos descargados."),
 ],
         "privacy_heading": "Privacidad y Seguridad",
         "privacy": (
@@ -754,18 +733,16 @@ _CONTENT = {
         ],
         "faq_heading": "Häufig Gestellte Fragen — EPUB/PDF-zu-Hörbuch-Konverter",
         "faqs": [
-            ("Wie wandelt man ein EPUB kostenlos in ein Hörbuch um?",
-             "Laden Sie Ihre EPUB-Datei auf Audiobook Maker hoch, wählen Sie eine neuronale KI-Stimme aus über 400 Optionen "
+            ("Wie wandelt man ein EPUB oder PDF kostenlos in ein Hörbuch um?",
+             "Laden Sie Ihre EPUB- oder PDF-Datei auf Audiobook Maker hoch, wählen Sie eine neuronale KI-Stimme aus über 400 Optionen "
              "und die gewünschte Sprache, dann klicken Sie auf Konvertieren. Der kostenlose Text-to-Speech-Konverter "
-             "extrahiert den Text aus dem Buch, teilt ihn in Kapitel und erstellt ein Hörbuch im MP3- oder M4B-Format "
-             "mit eingebetteten Kapiteln, bereit zum Herunterladen und Anhören auf jedem Gerät. "
-             "Keine Registrierung nötig und keine Nutzungsbeschränkungen."),
-            ("Wie konvertiert man ein PDF in ein Hörbuch?",
-             "Audiobook Maker unterstützt die direkte Konvertierung von PDF-Dateien in MP3- und M4B-Hörbücher. "
-             "Laden Sie Ihr PDF hoch, wählen Sie eine neuronale KI-Stimme und Erzählsprache, "
-             "und der Konverter extrahiert automatisch den Text aus den Seiten unter Beibehaltung der Dokumentenstruktur. "
-             "Die neuronale Text-to-Speech-Engine verwandelt den Inhalt in hochwertiges, natürliches Audio, "
-             "bereit zum Anhören auf Smartphone, Tablet oder MP3-Player. Keine Registrierung erforderlich."),
+             "extrahiert automatisch den Text aus dem Buch — unter Beibehaltung der Dokumentenstruktur und der Kapitelaufteilung — "
+             "und erstellt ein Hörbuch im MP3- oder M4B-Format mit eingebetteten Kapiteln, bereit zum Herunterladen und Anhören "
+             "auf jedem Gerät (Smartphone, Tablet oder MP3-Player). Keine Registrierung nötig und keine Nutzungsbeschränkungen."),
+            ("Was sind PREMIUM-Stimmen?",
+             "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 2.5 Flash- und 3.1 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet."),
+            ("Kann ich ein Buch in eine andere Sprache übersetzen und daraus ein Hörbuch erstellen?",
+             "Ja. Audiobook Maker enthält eine integrierte Buchübersetzungsfunktion: Laden Sie Ihre EPUB-, PDF-, TXT- oder ABM-Datei hoch, wählen Sie Ausgangs- und Zielsprache, und die KI übersetzt die ausgewählten Kapitel – mit optionaler KI-Optimierung für eine natürliche Erzählung im selben Schritt. Sie können das übersetzte Buch (EPUB, TXT oder ABM) herunterladen und dann direkt aus dem Ergebnis ein übersetztes Hörbuch mit einer beliebigen neuronalen Stimme erzeugen. Die Übersetzung ist unterhalb einer kleinen Schwelle kostenlos; längere Bücher verursachen geringe Kosten, basierend auf der Zeichenzahl, zahlbar per Gutschein oder PayPal."),
             ("Wird das M4B-Format unterstützt?",
              "Ja, Audiobook Maker kann professionelle Hörbücher im universellen M4B-Format erstellen. "
              "Im Gegensatz zu einfachen MP3-Dateien ermöglicht das M4B-Format die Einbettung "
@@ -796,12 +773,6 @@ _CONTENT = {
              "Sie müssen keine Software auf Ihrem Computer, Smartphone oder Tablet herunterladen, installieren oder konfigurieren. "
              "Öffnen Sie einfach die Website, laden Sie Ihr Buch hoch und starten Sie die Konvertierung. "
              "Der gesamte Text-to-Speech-Prozess läuft sicher und schnell auf unseren Servern."),
-            ("Kann ich einen Podcast aus den Buchkapiteln erstellen?",
-             "Ja, Audiobook Maker kann automatisch einen Podcast-RSS-Feed mit allen Kapiteln "
-             "Ihres Hörbuchs erstellen. Sie können den Feed-Link kopieren und in jede Podcast-App "
-             "wie Apple Podcasts, Spotify, Overcast oder Pocket Casts einfügen, um die Kapitel zu streamen. "
-             "Diese Funktion ist ideal zum Hören während der Fahrt oder im Fitnessstudio, "
-             "ohne Speicherplatz mit heruntergeladenen Dateien zu belegen."),
             ("Ist der Dienst wirklich kostenlos?",
              "Ja, Audiobook Maker ist völlig kostenlos und ohne Nutzungsbeschränkungen. "
              "Keine Registrierung erforderlich, keine Kreditkarte nötig und keine Werbung in den erzeugten Audiodateien. "
@@ -838,10 +809,12 @@ _CONTENT = {
              "auch als .abm-Datei herunterladen, um es wiederzuverwenden, zu bearbeiten oder "
              "neue Audiofassungen mit anderen Stimmen zu erstellen, ohne die Optimierung erneut "
              "durchlaufen zu müssen."),
-                    ("Was sind PREMIUM-Stimmen?",
-             "PREMIUM-Stimmen sind eine kostenpflichtige Option, die modernste Gemini 2.5 Flash- und 3.1 Flash-TTS-Modelle nutzt, um Hörbücher höchster Qualität mit unglaublich natürlichen und ausdrucksstarken Stimmen zu erzeugen. Die Gemini-TTS-Technologie erfasst Nuancen, Emotionen und Intonationen mit einer Wiedergabetreue, die Standardstimmen deutlich übertrifft, und bietet ein professionelles Hörerlebnis, das einer hochwertigen menschlichen Erzählung vergleichbar ist. Die Generierung verwendet optimiertes Chunking, um die narrative Integrität zu bewahren, und jede PREMIUM-Stimme ist im Stimmenwähler mit dem Präfix 'gemini' gekennzeichnet."),
-            ("Kann ich ein Buch in eine andere Sprache übersetzen und daraus ein Hörbuch erstellen?",
-             "Ja. Audiobook Maker enthält eine integrierte Buchübersetzungsfunktion: Laden Sie Ihre EPUB-, PDF-, TXT- oder ABM-Datei hoch, wählen Sie Ausgangs- und Zielsprache, und die KI übersetzt die ausgewählten Kapitel – mit optionaler KI-Optimierung für eine natürliche Erzählung im selben Schritt. Sie können das übersetzte Buch (EPUB, TXT oder ABM) herunterladen und dann direkt aus dem Ergebnis ein übersetztes Hörbuch mit einer beliebigen neuronalen Stimme erzeugen. Die Übersetzung ist unterhalb einer kleinen Schwelle kostenlos; längere Bücher verursachen geringe Kosten, basierend auf der Zeichenzahl, zahlbar per Gutschein oder PayPal."),
+            ("Kann ich einen Podcast aus den Buchkapiteln erstellen?",
+             "Ja, Audiobook Maker kann automatisch einen Podcast-RSS-Feed mit allen Kapiteln "
+             "Ihres Hörbuchs erstellen. Sie können den Feed-Link kopieren und in jede Podcast-App "
+             "wie Apple Podcasts, Spotify, Overcast oder Pocket Casts einfügen, um die Kapitel zu streamen. "
+             "Diese Funktion ist ideal zum Hören während der Fahrt oder im Fitnessstudio, "
+             "ohne Speicherplatz mit heruntergeladenen Dateien zu belegen."),
 ],
         "privacy_heading": "Datenschutz und Sicherheit",
         "privacy": (
@@ -921,16 +894,15 @@ _CONTENT = {
         ],
         "faq_heading": "常见问题 — EPUB/PDF转有声书转换器",
         "faqs": [
-            ("如何免费将EPUB转换为有声书？",
-             "将EPUB文件上传到Audiobook Maker，从400多种神经网络AI语音中选择合适的声音和语言，"
-             "然后点击转换。免费文字转语音转换器会提取书中文本并按章节拆分，"
-             "生成带有嵌入式章节的MP3或M4B格式有声书，可随时下载并在任何设备上收听。"
-             "无需注册，也没有使用限制。"),
-            ("如何将PDF转换为有声书？",
-             "Audiobook Maker支持将PDF文件直接转换为MP3和M4B格式有声书。"
-             "上传您的PDF，选择神经网络AI语音和朗读语言，转换器会自动从页面中提取文本并保留文档结构。"
-             "神经网络文字转语音引擎将内容转换为高质量自然音频，可在智能手机、平板电脑或MP3播放器上收听。"
-             "无需注册。"),
+            ("如何免费将EPUB或PDF转换为有声书？",
+             "将EPUB或PDF文件上传到Audiobook Maker，从400多种神经网络AI语音中选择合适的声音和语言，"
+             "然后点击转换。免费文字转语音转换器会自动提取书中文本——保留文档结构和章节划分——"
+             "并生成带有嵌入式章节的MP3或M4B格式有声书，可随时下载并在任何设备"
+             "（智能手机、平板电脑或MP3播放器）上收听。无需注册，也没有使用限制。"),
+            ("什么是 PREMIUM 语音？",
+             "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 2.5 Flash 和 3.1 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。"),
+            ("我可以把一本书翻译成另一种语言并据此制作有声书吗？",
+             "可以。Audiobook Maker 内置图书翻译功能：上传你的 EPUB、PDF、TXT 或 ABM 文件，选择源语言和目标语言，AI 即可翻译所选章节，并在同一步骤中可选地应用 AI 优化以获得自然的朗读效果。你可以下载翻译后的图书（EPUB、TXT 或 ABM），然后直接基于翻译结果生成译文有声书，并使用任意一种神经网络语音。翻译在小额阈值以下免费；篇幅较长的图书会按字符数收取少量费用，可通过抵用券或 PayPal 支付。"),
             ("你们支持 M4B 格式吗？",
              "支持。Audiobook Maker 可以生成专业级通用 M4B 格式有声书。"
              "与普通 MP3 文件不同，M4B 格式允许直接在音频文件中嵌入章节，"
@@ -958,11 +930,6 @@ _CONTENT = {
              "您无需在电脑、智能手机或平板电脑上下载、安装或配置任何软件。"
              "只需打开网站，上传书籍并启动转换即可。"
              "整个文字转语音过程在我们的服务器上安全快速地完成。"),
-            ("可以从书籍章节生成播客吗？",
-             "可以，Audiobook Maker 能自动生成包含所有章节的播客 RSS 订阅源。"
-             "您可以复制订阅源链接并添加到 Apple 播客、Spotify、Overcast 或 Pocket Casts 等任何播客应用，"
-             "以便流媒体收听各章节。此功能非常适合在驾驶或健身时听书，"
-             "无需将文件下载到设备上占用空间。"),
             ("服务真的免费吗？",
              "是的，Audiobook Maker 完全免费，没有使用限制。"
              "无需注册，无需信用卡，生成的音频文件中也没有任何广告。"
@@ -993,10 +960,11 @@ _CONTENT = {
              "最终结果是一个明显更悦耳、更专业的有声书，堪比精心制作的叙述。"
              "您还可以下载.abm格式的优化后项目，"
              "以便复用、编辑或用不同声音生成新的音频版本，无需重新运行优化。"),
-                    ("什么是 PREMIUM 语音？",
-             "PREMIUM 语音是一项付费选项，利用尖端的 Gemini 2.5 Flash 和 3.1 Flash TTS 模型生成超高品质的有声书，语音极其自然且富有表现力。Gemini TTS 技术能够以远超标准语音的保真度捕捉细微差别、情感和语调，提供可与高端人工朗读相媚美的专业聆听体验。生成过程采用优化的分块技术以保持叙事完整性，每款 PREMIUM 语音在语音选择器中均以 'gemini' 前缀标识。"),
-            ("我可以把一本书翻译成另一种语言并据此制作有声书吗？",
-             "可以。Audiobook Maker 内置图书翻译功能：上传你的 EPUB、PDF、TXT 或 ABM 文件，选择源语言和目标语言，AI 即可翻译所选章节，并在同一步骤中可选地应用 AI 优化以获得自然的朗读效果。你可以下载翻译后的图书（EPUB、TXT 或 ABM），然后直接基于翻译结果生成译文有声书，并使用任意一种神经网络语音。翻译在小额阈值以下免费；篇幅较长的图书会按字符数收取少量费用，可通过抵用券或 PayPal 支付。"),
+            ("可以从书籍章节生成播客吗？",
+             "可以，Audiobook Maker 能自动生成包含所有章节的播客 RSS 订阅源。"
+             "您可以复制订阅源链接并添加到 Apple 播客、Spotify、Overcast 或 Pocket Casts 等任何播客应用，"
+             "以便流媒体收听各章节。此功能非常适合在驾驶或健身时听书，"
+             "无需将文件下载到设备上占用空间。"),
 ],
         "privacy_heading": "隐私与安全",
         "privacy": (
@@ -1072,16 +1040,15 @@ _CONTENT = {
         ],
         "faq_heading": "अक्सर पूछे जाने वाले प्रश्न — EPUB/PDF से ऑडियोबुक कनवर्टर",
         "faqs": [
-            ("EPUB को मुफ़्त में ऑडियोबुक में कैसे बदलें?",
-             "Audiobook Maker पर अपनी EPUB फ़ाइल अपलोड करें, 400 से अधिक न्यूरल AI आवाज़ों में से सही आवाज़ और भाषा चुनें, "
-             "और कनवर्ट पर क्लिक करें. मुफ़्त टेक्स्ट-टू-स्पीच कनवर्टर पुस्तक का पाठ निकालता है, "
-             "उसे अध्यायों में विभाजित करता है और एम्बेडेड अध्यायों के साथ MP3 या M4B प्रारूप में ऑडियोबुक जनरेट करता है, "
-             "जो डाउनलोड और किसी भी डिवाइस पर सुनने के लिए तैयार है. कोई पंजीकरण नहीं, कोई उपयोग सीमा नहीं."),
-            ("PDF को ऑडियोबुक में कैसे बदलें?",
-             "Audiobook Maker PDF फ़ाइलों के सीधे MP3 तथा M4B ऑडियोबुक में रूपांतरण का समर्थन करता है. "
-             "अपनी PDF अपलोड करें, न्यूरल AI आवाज़ और कथन भाषा चुनें, और कनवर्टर पृष्ठों से पाठ स्वचालित रूप से निकालता है "
-             "और दस्तावेज़ संरचना को संरक्षित करता है. न्यूरल टेक्स्ट-टू-स्पीच इंजन सामग्री को उच्च-गुणवत्ता वाले प्राकृतिक ऑडियो में बदल देता है, "
-             "जिसे आप स्मार्टफ़ोन, टैबलेट या MP3 प्लेयर पर सुन सकते हैं. कोई पंजीकरण आवश्यक नहीं."),
+            ("EPUB या PDF को मुफ़्त में ऑडियोबुक में कैसे बदलें?",
+             "Audiobook Maker पर अपनी EPUB या PDF फ़ाइल अपलोड करें, 400 से अधिक न्यूरल AI आवाज़ों में से सही आवाज़ और भाषा चुनें, "
+             "और कनवर्ट पर क्लिक करें. मुफ़्त टेक्स्ट-टू-स्पीच कनवर्टर पुस्तक का पाठ स्वचालित रूप से निकालता है "
+             "— दस्तावेज़ संरचना और अध्याय विभाजन को संरक्षित करते हुए — और एम्बेडेड अध्यायों के साथ MP3 या M4B प्रारूप में ऑडियोबुक जनरेट करता है, "
+             "जो डाउनलोड और किसी भी डिवाइस (स्मार्टफ़ोन, टैबलेट या MP3 प्लेयर) पर सुनने के लिए तैयार है. कोई पंजीकरण नहीं, कोई उपयोग सीमा नहीं."),
+            ("प्रीमियम आवाज़ें क्या हैं?",
+             "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 2.5 Flash और 3.1 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"),
+            ("क्या मैं किसी पुस्तक का दूसरी भाषा में अनुवाद करके उससे ऑडियोबुक बना सकता हूँ?",
+             "हाँ। Audiobook Maker में एकीकृत पुस्तक अनुवाद सुविधा शामिल है: अपनी EPUB, PDF, TXT या ABM फ़ाइल अपलोड करें, स्रोत और लक्ष्य भाषा चुनें, और AI चयनित अध्यायों का अनुवाद करता है — उसी चरण में स्वाभाविक वर्णन के लिए वैकल्पिक AI अनुकूलन के साथ। आप अनुवादित पुस्तक (EPUB, TXT या ABM) डाउनलोड कर सकते हैं और फिर परिणाम से सीधे किसी भी न्यूरल आवाज़ का उपयोग करके अनुवादित ऑडियोबुक बना सकते हैं। अनुवाद एक छोटी सीमा से नीचे मुफ़्त है; लंबी पुस्तकों पर वर्णों की संख्या के आधार पर थोड़ा शुल्क लगता है, जो वाउचर या PayPal से देय है।"),
             ("क्या आप M4B प्रारूप का समर्थन करते हैं?",
              "हाँ. Audiobook Maker पेशेवर-गुणवत्ता वाले सार्वभौमिक M4B प्रारूप में ऑडियोबुक जनरेट कर सकता है. "
              "साधारण MP3 फ़ाइलों के विपरीत, M4B प्रारूप ऑडियो फ़ाइल में सीधे अध्यायों को एम्बेड करने की अनुमति देता है, "
@@ -1108,11 +1075,6 @@ _CONTENT = {
              "आपको अपने कंप्यूटर, स्मार्टफ़ोन या टैबलेट पर कुछ भी डाउनलोड, इंस्टॉल या कॉन्फ़िगर करने की आवश्यकता नहीं है. "
              "बस वेबसाइट खोलें, अपनी पुस्तक अपलोड करें और रूपांतरण शुरू करें. "
              "पूरी टेक्स्ट-टू-स्पीच प्रक्रिया हमारे सर्वर पर सुरक्षित और तेज़ी से होती है."),
-            ("क्या मैं पुस्तक के अध्यायों से पॉडकास्ट बना सकता हूँ?",
-             "हाँ, Audiobook Maker स्वचालित रूप से सभी अध्यायों के साथ एक पॉडकास्ट RSS फ़ीड जनरेट कर सकता है. "
-             "आप फ़ीड लिंक कॉपी कर सकते हैं और इसे Apple Podcasts, Spotify, Overcast या Pocket Casts जैसे किसी भी पॉडकास्ट ऐप में जोड़ सकते हैं "
-             "ताकि अध्यायों को स्ट्रीम कर सकें. यह सुविधा ड्राइविंग या व्यायाम के दौरान पुस्तकें सुनने के लिए एकदम सही है, "
-             "बिना डिवाइस पर स्थान घेरने वाली फ़ाइलें डाउनलोड किए."),
             ("क्या सेवा वास्तव में मुफ़्त है?",
              "हाँ, Audiobook Maker पूरी तरह से मुफ़्त है, बिना उपयोग सीमा के. "
              "कोई पंजीकरण आवश्यक नहीं, कोई क्रेडिट कार्ड नहीं, और जनरेट की गई ऑडियो फ़ाइलों में कोई विज्ञापन नहीं. "
@@ -1143,10 +1105,11 @@ _CONTENT = {
              "अंतिम परिणाम एक स्पष्ट रूप से अधिक सुखद और पेशेवर ऑडियोबुक है, जो सावधानीपूर्वक बनाई गई कथा के समतुल्य है. "
              "आप .abm प्रारूप में अनुकूलित परियोजना डाउनलोड भी कर सकते हैं, "
              "पुन: उपयोग, संपादन या अनुकूलन को फिर से चलाए बिना विभिन्न आवाज़ों के साथ नए ऑडियो संस्करण जनरेट करने के लिए."),
-                    ("प्रीमियम आवाज़ें क्या हैं?",
-             "प्रीमियम आवाज़ें एक सशुल्क विकल्प हैं जो अत्याधुनिक Gemini 2.5 Flash और 3.1 Flash TTS मॉडल का उपयोग करके उत्कृष्ट गुणवत्ता वाली ऑडियोबुक उत्पन्न करती हैं। Gemini TTS तकनीक मानक आवाज़ों से कहीं अधिक निष्ठा के साथ बारीकियों, भावनाओं और स्वर-शैली को पकड़ती है, जो उच्च-स्तरीय मानव वर्णन के बराबर एक पेशेवर श्रवण अनुभव प्रदान करती है। उत्पादन में कथानक अखंडता बनाए रखने के लिए अनुकूलित चंकिंग का उपयोग किया जाता है, और प्रत्येक प्रीमियम आवाज़ आवाज़ चयनकर्ता में 'gemini' उपसर्ग से चिह्नित हैं।"),
-            ("क्या मैं किसी पुस्तक का दूसरी भाषा में अनुवाद करके उससे ऑडियोबुक बना सकता हूँ?",
-             "हाँ। Audiobook Maker में एकीकृत पुस्तक अनुवाद सुविधा शामिल है: अपनी EPUB, PDF, TXT या ABM फ़ाइल अपलोड करें, स्रोत और लक्ष्य भाषा चुनें, और AI चयनित अध्यायों का अनुवाद करता है — उसी चरण में स्वाभाविक वर्णन के लिए वैकल्पिक AI अनुकूलन के साथ। आप अनुवादित पुस्तक (EPUB, TXT या ABM) डाउनलोड कर सकते हैं और फिर परिणाम से सीधे किसी भी न्यूरल आवाज़ का उपयोग करके अनुवादित ऑडियोबुक बना सकते हैं। अनुवाद एक छोटी सीमा से नीचे मुफ़्त है; लंबी पुस्तकों पर वर्णों की संख्या के आधार पर थोड़ा शुल्क लगता है, जो वाउचर या PayPal से देय है।"),
+            ("क्या मैं पुस्तक के अध्यायों से पॉडकास्ट बना सकता हूँ?",
+             "हाँ, Audiobook Maker स्वचालित रूप से सभी अध्यायों के साथ एक पॉडकास्ट RSS फ़ीड जनरेट कर सकता है. "
+             "आप फ़ीड लिंक कॉपी कर सकते हैं और इसे Apple Podcasts, Spotify, Overcast या Pocket Casts जैसे किसी भी पॉडकास्ट ऐप में जोड़ सकते हैं "
+             "ताकि अध्यायों को स्ट्रीम कर सकें. यह सुविधा ड्राइविंग या व्यायाम के दौरान पुस्तकें सुनने के लिए एकदम सही है, "
+             "बिना डिवाइस पर स्थान घेरने वाली फ़ाइलें डाउनलोड किए."),
 ],
         "privacy_heading": "गोपनीयता और सुरक्षा",
         "privacy": (
