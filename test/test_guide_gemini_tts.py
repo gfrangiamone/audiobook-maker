@@ -38,7 +38,7 @@ def test_it_body_localized():
 def test_ui_link_and_i18n_key_present():
     from pathlib import Path
     head = Path("templates/_fragments/html_head.html").read_text(encoding="utf-8")
-    assert "/guide/gemini-tts/?lang=__LANG_CODE__" in head
+    assert "/guide/gemini-tts/__GUIDE_SUFFIX__" in head
     assert 'data-t="guide_gemini_tts"' in head
     i18n = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
     assert i18n.count("guide_gemini_tts:") + i18n.count('"guide_gemini_tts":') >= 7
@@ -47,10 +47,22 @@ def test_ui_link_and_i18n_key_present():
 def test_route_and_sitemap():
     import audiobook_app
     client = audiobook_app.app.test_client()
-    for lang in ["it", "en", "fr", "es", "de", "zh", "hi"]:
-        r = client.get(f"/guide/gemini-tts/?lang={lang}")
+    # EN = x-default sull'URL bare
+    assert client.get("/guide/gemini-tts/").status_code == 200
+    # Lingue non-EN servite sul path /<lang>/
+    for lang in ["it", "fr", "es", "de", "zh", "hi"]:
+        r = client.get(f"/guide/gemini-tts/{lang}/")
         assert r.status_code == 200, (lang, r.status_code)
-    r404 = client.get("/guide/nonesistente/")
-    assert r404.status_code == 404
+    # /en/ canonicalizza all'URL bare (301)
+    assert client.get("/guide/gemini-tts/en/").status_code == 301
+    # Back-compat: vecchio schema ?lang= → 301 al nuovo path
+    r_it = client.get("/guide/gemini-tts/?lang=it")
+    assert r_it.status_code == 301
+    assert r_it.headers["Location"].endswith("/guide/gemini-tts/it/")
+    assert client.get("/guide/gemini-tts/?lang=en").status_code == 301
+    # Lingua non valida / guida inesistente → 404
+    assert client.get("/guide/gemini-tts/xx/").status_code == 404
+    assert client.get("/guide/nonesistente/").status_code == 404
     sm = client.get("/sitemap.xml")
-    assert b"/guide/gemini-tts/" in sm.data
+    assert b"/guide/gemini-tts/it/" in sm.data
+    assert b"/guide/gemini-tts/?lang=" not in sm.data

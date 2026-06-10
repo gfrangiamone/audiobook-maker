@@ -195,10 +195,10 @@ _CONTENT = {
         "guides_heading": "Guide Gratuite",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=it">Come Convertire EPUB in Audiolibro — Guida Completa</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=it">Guida al Formato M4B — Crea Audiolibri con Capitoli</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=it">Text-to-Speech per Audiolibri Gratis — Migliori Voci TTS</a></li>'
-            '<li><a href="/guide/podcast/?lang=it">Come Pubblicare il Tuo Audiolibro come Podcast Privato</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/it/">Come Convertire EPUB in Audiolibro — Guida Completa</a></li>'
+            '<li><a href="/guide/m4b-format/it/">Guida al Formato M4B — Crea Audiolibri con Capitoli</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/it/">Text-to-Speech per Audiolibri Gratis — Migliori Voci TTS</a></li>'
+            '<li><a href="/guide/podcast/it/">Come Pubblicare il Tuo Audiolibro come Podcast Privato</a></li>'
             '</ul>'
         ),
         "updated_label": "Ultimo aggiornamento",
@@ -353,10 +353,10 @@ _CONTENT = {
         "guides_heading": "Free Guides",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=en">How to Convert EPUB to Audiobook — Complete Guide</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=en">M4B Format Guide — Create Audiobooks with Chapters</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=en">Free Text-to-Speech Audiobook Maker — Best TTS Voices</a></li>'
-            '<li><a href="/guide/podcast/?lang=en">How to Publish Your Audiobook as a Private Podcast</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/">How to Convert EPUB to Audiobook — Complete Guide</a></li>'
+            '<li><a href="/guide/m4b-format/">M4B Format Guide — Create Audiobooks with Chapters</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/">Free Text-to-Speech Audiobook Maker — Best TTS Voices</a></li>'
+            '<li><a href="/guide/podcast/">How to Publish Your Audiobook as a Private Podcast</a></li>'
             '</ul>'
         ),
         "updated_label": "Last updated",
@@ -514,10 +514,10 @@ _CONTENT = {
         "guides_heading": "Guides Gratuits",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=fr">Comment Convertir EPUB en Livre Audio — Guide Complet</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=fr">Guide du Format M4B — Créer des Livres Audio avec Chapitres</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=fr">Text-to-Speech Livre Audio Gratuit — Meilleures Voix TTS</a></li>'
-            '<li><a href="/guide/podcast/?lang=fr">Comment Publier Votre Livre Audio en Podcast Privé</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/fr/">Comment Convertir EPUB en Livre Audio — Guide Complet</a></li>'
+            '<li><a href="/guide/m4b-format/fr/">Guide du Format M4B — Créer des Livres Audio avec Chapitres</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/fr/">Text-to-Speech Livre Audio Gratuit — Meilleures Voix TTS</a></li>'
+            '<li><a href="/guide/podcast/fr/">Comment Publier Votre Livre Audio en Podcast Privé</a></li>'
             '</ul>'
         ),
         "updated_label": "Dernière mise à jour",
@@ -674,10 +674,10 @@ _CONTENT = {
         "guides_heading": "Guías Gratuitas",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=es">Cómo Convertir EPUB a Audiolibro — Guía Completa</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=es">Guía del Formato M4B — Crear Audiolibros con Capítulos</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=es">Text-to-Speech para Audiolibros Gratis — Mejores Voces TTS</a></li>'
-            '<li><a href="/guide/podcast/?lang=es">Cómo Publicar Tu Audiolibro como Podcast Privado</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/es/">Cómo Convertir EPUB a Audiolibro — Guía Completa</a></li>'
+            '<li><a href="/guide/m4b-format/es/">Guía del Formato M4B — Crear Audiolibros con Capítulos</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/es/">Text-to-Speech para Audiolibros Gratis — Mejores Voces TTS</a></li>'
+            '<li><a href="/guide/podcast/es/">Cómo Publicar Tu Audiolibro como Podcast Privado</a></li>'
             '</ul>'
         ),
         "updated_label": "Última actualización",
@@ -836,10 +836,10 @@ _CONTENT = {
         "guides_heading": "Kostenlose Anleitungen",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=de">EPUB in Hörbuch umwandeln — Vollständige Anleitung</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=de">M4B Format Guide — Hörbücher mit Kapiteln erstellen</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=de">Kostenloser Text-to-Speech Hörbuch Maker — Beste TTS</a></li>'
-            '<li><a href="/guide/podcast/?lang=de">Hörbuch als privaten Podcast veröffentlichen — Kostenlose Anleitung</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/de/">EPUB in Hörbuch umwandeln — Vollständige Anleitung</a></li>'
+            '<li><a href="/guide/m4b-format/de/">M4B Format Guide — Hörbücher mit Kapiteln erstellen</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/de/">Kostenloser Text-to-Speech Hörbuch Maker — Beste TTS</a></li>'
+            '<li><a href="/guide/podcast/de/">Hörbuch als privaten Podcast veröffentlichen — Kostenlose Anleitung</a></li>'
             '</ul>'
         ),
         "updated_label": "Zuletzt aktualisiert",
@@ -982,10 +982,10 @@ _CONTENT = {
         "guides_heading": "免费指南",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=zh">如何将EPUB转换为有声书 — 完整指南</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=zh">M4B格式指南 — 创建带章节的有声书</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=zh">免费文字转语音有声书制作 — 最佳TTS语音</a></li>'
-            '<li><a href="/guide/podcast/?lang=zh">如何将有声书发布为私人播客 — 免费指南</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/zh/">如何将EPUB转换为有声书 — 完整指南</a></li>'
+            '<li><a href="/guide/m4b-format/zh/">M4B格式指南 — 创建带章节的有声书</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/zh/">免费文字转语音有声书制作 — 最佳TTS语音</a></li>'
+            '<li><a href="/guide/podcast/zh/">如何将有声书发布为私人播客 — 免费指南</a></li>'
             '</ul>'
         ),
         "updated_label": "最后更新",
@@ -1128,10 +1128,10 @@ _CONTENT = {
         "guides_heading": "मुफ़्त गाइड",
         "guides_html": (
             '<ul>'
-            '<li><a href="/guide/epub-to-audiobook/?lang=hi">EPUB को ऑडियोबुक में कैसे बदलें — पूरी गाइड</a></li>'
-            '<li><a href="/guide/m4b-format/?lang=hi">M4B प्रारूप गाइड — अध्यायों के साथ ऑडियोबुक बनाएं</a></li>'
-            '<li><a href="/guide/text-to-speech-audiobook/?lang=hi">मुफ़्त टेक्स्ट-टू-स्पीच ऑडियोबुक निर्माण — सर्वश्रेष्ठ TTS आवाज़ें</a></li>'
-            '<li><a href="/guide/podcast/?lang=hi">ऑडियोबुक्स को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें — मुफ़्त गाइड</a></li>'
+            '<li><a href="/guide/epub-to-audiobook/hi/">EPUB को ऑडियोबुक में कैसे बदलें — पूरी गाइड</a></li>'
+            '<li><a href="/guide/m4b-format/hi/">M4B प्रारूप गाइड — अध्यायों के साथ ऑडियोबुक बनाएं</a></li>'
+            '<li><a href="/guide/text-to-speech-audiobook/hi/">मुफ़्त टेक्स्ट-टू-स्पीच ऑडियोबुक निर्माण — सर्वश्रेष्ठ TTS आवाज़ें</a></li>'
+            '<li><a href="/guide/podcast/hi/">ऑडियोबुक्स को निजी पॉडकास्ट के रूप में कैसे प्रकाशित करें — मुफ़्त गाइड</a></li>'
             '</ul>'
         ),
         "updated_label": "अंतिम अद्यतन",

@@ -197,7 +197,7 @@ from payment import (
 #  -  -  Import version and template builder  -  -
 from version import __version__, get_formatted_date
 from templates.index_page import build_html_template
-from guide_content import build_guide_html
+from guide_content import build_guide_html, _guide_path
 import seo_reviews
 import seo_content
 
@@ -232,6 +232,17 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("ABM_MAX_UPLOAD_MB", "50")) * 1024 * 1024
 # Static assets are cache-busted via ?v=__APP_VERSION__ so a 1-year max-age is safe.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 31536000  # 1 year
+
+# Compressione gzip/brotli a livello applicativo. nginx in prod *potrebbe* già
+# comprimere, ma la sua config non è garantita (gzip_proxied/gzip_types vanno
+# impostati esplicitamente): flask-compress assicura la compressione di
+# HTML/JSON/CSS/JS dinamici (~70% di transfer in meno, TTFB/LCP migliori su
+# mobile). Import difensivo: se il pacchetto non è installato l'app parte uguale.
+try:
+    from flask_compress import Compress as _Compress
+    _Compress(app)
+except ImportError:
+    pass
 
 # Endpoint esenti da CSRF check (whitelist esplicita).
 # Da aggiungere SOLO endpoint che ricevono webhook server-to-server (es. PayPal
@@ -324,6 +335,11 @@ def add_security_headers(response):
             response.headers['Last-Modified'] = _STARTUP_TIME.strftime('%a, %d %b %Y %H:%M:%S GMT')
         elif path in ('/sitemap.xml', '/robots.txt', '/llms.txt'):
             response.headers['Cache-Control'] = 'public, max-age=3600'
+    # /dl/<token>: pagine e file di download fuori dall'indice. Difesa in
+    # profondità: sono già in Disallow nel robots.txt, ma alcuni crawler lo
+    # ignorano e potrebbero indicizzare l'URL token (thin/duplicate content).
+    if path.startswith('/dl/'):
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow'
     return response
 
 # Directory di lavoro persistente (sopravvive ai restart del servizio)
@@ -1989,14 +2005,33 @@ def seo_content_page(lang):
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 _VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks"}
+_GUIDE_LANGS = ("it", "en", "fr", "es", "de", "zh", "hi")
 
 @app.route("/guide/<guide_id>/")
 def guide_page(guide_id):
     if guide_id not in _VALID_GUIDES:
         return "Guide not found", 404
-    lang = request.args.get("lang", _detect_lang_from_request()).strip()
-    if lang not in ("it", "en", "fr", "es", "de", "zh", "hi"):
-        lang = "en"
+    # Back-compat: vecchio schema ?lang=xx → 301 al nuovo path /guide/<id>/<lang>/.
+    qlang = request.args.get("lang", "").strip()
+    if qlang:
+        if qlang in _GUIDE_LANGS and qlang != "en":
+            return redirect(f"/guide/{guide_id}/{qlang}/", code=301)
+        return redirect(f"/guide/{guide_id}/", code=301)
+    # Bare URL = x-default (inglese), canonical /guide/<id>/.
+    html = build_guide_html(guide_id, "en", BASE_URL, __version__)
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/guide/<guide_id>/<lang>/")
+def guide_page_lang(guide_id, lang):
+    if guide_id not in _VALID_GUIDES:
+        return "Guide not found", 404
+    lang = (lang or "").strip()
+    if lang == "en":
+        # EN canonico è senza suffisso → 301 alla forma x-default.
+        return redirect(f"/guide/{guide_id}/", code=301)
+    if lang not in _GUIDE_LANGS:
+        return "Guide not found", 404
     html = build_guide_html(guide_id, lang, BASE_URL, __version__)
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
@@ -2116,14 +2151,14 @@ def sitemap():
 {faq_alternates}
   </url>""")
 
-    # Guide pages — 4 guide × 7 lingue = 28 URL
-    # Guide route is /guide/<id>/?lang=xx, canonical URL has ?lang= param
+    # Guide pages — schema path-based: EN su /guide/<id>/ (x-default, lc=="en"),
+    # altre lingue su /guide/<id>/<lang>/. N guide × 7 lingue URL totali.
     for guide_id in sorted(_VALID_GUIDES):
-        # Per-language alternates
+        # Per-language alternates (hreflang) condivise da tutte le varianti.
         guide_alt_lines = []
         for lc, hl in lang_hreflang_map.items():
             guide_alt_lines.append(
-                f'      <xhtml:link rel="alternate" hreflang="{hl}" href="{BASE_URL}/guide/{guide_id}/?lang={lc}"/>'
+                f'      <xhtml:link rel="alternate" hreflang="{hl}" href="{BASE_URL}{_guide_path(guide_id, lc)}"/>'
             )
         guide_alt_lines.append(
             f'      <xhtml:link rel="alternate" hreflang="x-default" href="{BASE_URL}/guide/{guide_id}/"/>'
@@ -2132,16 +2167,7 @@ def sitemap():
 
         for lc in lang_hreflang_map:
             urls.append(f"""  <url>
-    <loc>{BASE_URL}/guide/{guide_id}/?lang={lc}</loc>
-    <lastmod>{guide_lastmod}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-{guide_alternates}
-  </url>""")
-
-        # URL senza lang param (x-default, serve inglese)
-        urls.append(f"""  <url>
-    <loc>{BASE_URL}/guide/{guide_id}/</loc>
+    <loc>{BASE_URL}{_guide_path(guide_id, lc)}</loc>
     <lastmod>{guide_lastmod}</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>

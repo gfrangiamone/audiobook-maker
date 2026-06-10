@@ -23,6 +23,16 @@ _OG_LOCALE_MAP = {
 }
 _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 
+
+def _guide_path(guide_id: str, lang: str) -> str:
+    """URL path di una guida in una lingua (schema path-based).
+
+    EN è la x-default e vive su /guide/<id>/ senza suffisso; le altre lingue
+    su /guide/<id>/<lang>/. Usato per canonical, hreflang e sitemap così che
+    tutte le sorgenti producano la stessa forma di URL.
+    """
+    return f"/guide/{guide_id}/" if lang == "en" else f"/guide/{guide_id}/{lang}/"
+
 # ── Guide metadata per language ──────────────────────────────────────────────
 
 _GUIDE_META = {
@@ -3074,14 +3084,14 @@ def build_guide_html(
 
     meta = guide_meta_all.get(lang, guide_meta_all["en"])
     html_lang = _HREFLANG_MAP.get(lang, "en")
-    # Self-canonical per language: matches the URL form indexed in sitemap.xml
-    # (?lang={lang}) so each language version is treated as a distinct page.
-    canonical = f"{base_url}/guide/{guide_id}/?lang={lang}" if base_url else ""
+    # Self-canonical per language, path-based: EN = x-default su /guide/<id>/,
+    # le altre lingue su /guide/<id>/<lang>/. Coerente con sitemap.xml e link interni.
+    canonical = f"{base_url}{_guide_path(guide_id, lang)}" if base_url else ""
 
     # Hreflang tags
     hreflang_lines = []
     for lc, hl in _HREFLANG_MAP.items():
-        href = f"{base_url}/guide/{guide_id}/?lang={lc}" if base_url else f"?lang={lc}"
+        href = f"{base_url}{_guide_path(guide_id, lc)}" if base_url else _guide_path(guide_id, lc)
         hreflang_lines.append(
             f'<link rel="alternate" hreflang="{hl}" href="{href}">'
         )
