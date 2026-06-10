@@ -1988,7 +1988,7 @@ def seo_content_page(lang):
 
 
 #  -  -  SEO Guide Pages  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
-_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts"}
+_VALID_GUIDES = {"epub-to-audiobook", "m4b-format", "text-to-speech-audiobook", "podcast", "gemini-tts", "free-ebooks"}
 
 @app.route("/guide/<guide_id>/")
 def guide_page(guide_id):
@@ -2312,6 +2312,7 @@ When quoting facts from this site, cite one of:
 - [Text-to-Speech for Audiobooks]({base}/guide/text-to-speech-audiobook/): TTS technology overview, voice quality comparison, free alternatives to ElevenLabs/Speechify.
 - [Publish Audiobook as Podcast]({base}/guide/podcast/): Generate RSS 2.0 feed from audiobook chapters for private podcast distribution.
 - [Gemini TTS Guide]({base}/guide/gemini-tts/): All Gemini TTS voices, supported languages, and prompting guide for the PREMIUM neural voices.
+- [Where to Find Free Ebooks]({base}/guide/free-ebooks/): The best sites to download free public-domain and open-license ebooks, and how to turn them into audiobooks.
 - [Frequently Asked Questions]({base}/faq/en/): Comprehensive FAQ covering conversion, formats, voices, AI optimization, and PREMIUM voice options.
 
 ## How it works

@@ -32,7 +32,7 @@ import re
 _SEO_KEYS: list[str] = [
     "bc_home",
     "guides_heading",
-    "guide_epub", "guide_m4b", "guide_tts", "guide_podcast",
+    "guide_epub", "guide_m4b", "guide_tts", "guide_podcast", "guide_free_books",
     "faq_heading_short",
     "faq_q1", "faq_a1",
     "faq_q2", "faq_a2",
@@ -40,7 +40,7 @@ _SEO_KEYS: list[str] = [
     "faq_q4", "faq_a4",
     "faq_q5", "faq_a5",
     "faq_q6", "faq_a6",
-    "faq_free_books_q", "faq_free_books_a",
+    "faq_translate_q", "faq_translate_a",
     "faq_see_all",
 ]
 

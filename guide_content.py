@@ -26,6 +26,50 @@ _SUPPORTED_LANGS = list(_HREFLANG_MAP.keys())
 # ── Guide metadata per language ──────────────────────────────────────────────
 
 _GUIDE_META = {
+    "free-ebooks": {
+        "en": {
+            "title": "Where to Find Free Ebooks to Download (8 Best Sites) | Audiobook Maker",
+            "desc": "The 8 best sites to download free ebooks legally: Project Gutenberg, Standard Ebooks, Internet Archive and more. Learn what's public domain and how to turn any free EPUB into an audiobook for free.",
+            "kw": "free ebooks, download free ebooks, free epub, public domain books, project gutenberg, standard ebooks, free books online, where to find free ebooks, free audiobooks from ebooks",
+            "h1": "Where to Find Free Ebooks to Download",
+        },
+        "it": {
+            "title": "Dove Trovare Ebook Gratuiti da Scaricare (8 Siti Migliori) | Audiobook Maker",
+            "desc": "I 8 migliori siti per scaricare ebook gratuiti legalmente: Project Gutenberg, Standard Ebooks, Internet Archive e altri. Scopri cosa è di pubblico dominio e come trasformare qualsiasi EPUB gratuito in audiolibro gratis.",
+            "kw": "ebook gratuiti, scaricare ebook gratis, epub gratis, libri pubblico dominio, project gutenberg, standard ebooks, libri gratis online, dove trovare ebook gratuiti, audiolibri gratis da ebook",
+            "h1": "Dove Trovare Ebook Gratuiti da Scaricare",
+        },
+        "fr": {
+            "title": "Où Trouver des Ebooks Gratuits à Télécharger (8 Meilleurs Sites) | Audiobook Maker",
+            "desc": "Les 8 meilleurs sites pour télécharger des ebooks gratuits légalement : Project Gutenberg, Standard Ebooks, Internet Archive et plus. Découvrez le domaine public et comment transformer un EPUB gratuit en livre audio gratuitement.",
+            "kw": "ebooks gratuits, télécharger ebooks gratuits, epub gratuit, livres domaine public, project gutenberg, standard ebooks, livres gratuits en ligne, où trouver des ebooks gratuits",
+            "h1": "Où Trouver des Ebooks Gratuits à Télécharger",
+        },
+        "es": {
+            "title": "Dónde Encontrar Ebooks Gratis para Descargar (8 Mejores Sitios) | Audiobook Maker",
+            "desc": "Los 8 mejores sitios para descargar ebooks gratis legalmente: Project Gutenberg, Standard Ebooks, Internet Archive y más. Descubre el dominio público y cómo convertir cualquier EPUB gratis en audiolibro gratis.",
+            "kw": "ebooks gratis, descargar ebooks gratis, epub gratis, libros dominio público, project gutenberg, standard ebooks, libros gratis online, dónde encontrar ebooks gratis",
+            "h1": "Dónde Encontrar Ebooks Gratis para Descargar",
+        },
+        "de": {
+            "title": "Wo Sie kostenlose E-Books herunterladen (8 beste Seiten) | Audiobook Maker",
+            "desc": "Die 8 besten Seiten zum legalen Download kostenloser E-Books: Project Gutenberg, Standard Ebooks, Internet Archive und mehr. Erfahren Sie, was gemeinfrei ist und wie Sie jedes kostenlose EPUB kostenlos in ein Hörbuch verwandeln.",
+            "kw": "kostenlose ebooks, kostenlose ebooks herunterladen, kostenloses epub, gemeinfreie bücher, project gutenberg, standard ebooks, kostenlose bücher online, wo kostenlose ebooks finden",
+            "h1": "Wo Sie kostenlose E-Books herunterladen",
+        },
+        "zh": {
+            "title": "在哪里下载免费电子书（8个最佳网站）| Audiobook Maker",
+            "desc": "合法下载免费电子书的8个最佳网站：Project Gutenberg、Standard Ebooks、Internet Archive 等。了解什么是公共领域，以及如何将任何免费EPUB免费转换为有声书。",
+            "kw": "免费电子书, 下载免费电子书, 免费epub, 公共领域图书, project gutenberg, standard ebooks, 在线免费图书, 哪里找免费电子书",
+            "h1": "在哪里下载免费电子书",
+        },
+        "hi": {
+            "title": "मुफ़्त ईबुक कहाँ से डाउनलोड करें (8 सर्वश्रेष्ठ साइटें) | Audiobook Maker",
+            "desc": "मुफ़्त ईबुक कानूनी रूप से डाउनलोड करने की 8 सर्वश्रेष्ठ साइटें: Project Gutenberg, Standard Ebooks, Internet Archive और अधिक. जानें कि सार्वजनिक डोमेन क्या है और किसी भी मुफ़्त EPUB को मुफ़्त में ऑडियोबुक में कैसे बदलें.",
+            "kw": "मुफ़्त ईबुक, मुफ़्त ईबुक डाउनलोड, मुफ़्त epub, सार्वजनिक डोमेन पुस्तकें, project gutenberg, standard ebooks, मुफ़्त ऑनलाइन किताबें, मुफ़्त ईबुक कहाँ मिलेंगी",
+            "h1": "मुफ़्त ईबुक कहाँ से डाउनलोड करें",
+        },
+    },
     "epub-to-audiobook": {
         "en": {
             "title": "How to Convert EPUB to Audiobook Free — Complete Guide 2026 | Audiobook Maker",
@@ -251,6 +295,71 @@ _GUIDE_META = {
 # ── Guide body content (English only; other languages use EN as fallback) ─────
 
 _GUIDE_BODY_EN = {
+    "free-ebooks": """
+<section>
+<h2>Where to Find Free Ebooks to Download</h2>
+<p>Thousands of great books are completely free and legal to download — classics in the public domain, modern titles released under open licenses, and community projects. Once you have a free EPUB, you can turn it into an audiobook in minutes with <a href="/">Audiobook Maker</a>. This guide lists the best sources for free ebooks and shows you how to listen to them.</p>
+</section>
+
+<section>
+<h2>The 8 Best Sites for Free Ebooks</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — Over 70,000 free public domain books. The world's largest and oldest collection, with reliable EPUB downloads.</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — Carefully curated, beautifully formatted editions of classics with modern typography and original covers.</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — A massive digital library with millions of texts, audiobooks, and historical periodicals.</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — Over 50,000 free ebooks with a modern interface and personalized reading recommendations.</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — An elegant catalog of public domain ebooks with direct, no-fuss downloads.</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — Millions of digitized books; filter by "Free Google eBooks" to find free titles.</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — The reference for Italian literature classics: Dante, Manzoni, Pirandello and many more.</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — Free digital lending of modern and classic ebooks, run by the Internet Archive.</li>
+</ul>
+</section>
+
+<section>
+<h2>Public Domain vs. Copyrighted Books</h2>
+<p><strong>Public domain</strong> books — typically works whose author died more than 70 years ago — are free to download, share, and convert without restriction. Project Gutenberg, Standard Ebooks, and Liber Liber specialize in these.</p>
+<p><strong>Copyrighted</strong> books are protected even when offered for free. Many authors and publishers release modern titles under <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative Commons</a> licenses or as free promotions — these are perfectly legal to download. Avoid pirate sites that share commercial ebooks without permission: they are illegal and often bundle malware.</p>
+</section>
+
+<section>
+<h2>How to Turn a Free Ebook Into an Audiobook</h2>
+<ol>
+<li><strong>Download the EPUB</strong> from any of the sites above (EPUB is preferred over PDF for cleaner chapter detection).</li>
+<li><strong>Open <a href="/">Audiobook Maker</a></strong> and upload the file — chapters, title, author, and cover are extracted automatically.</li>
+<li><strong>Choose a neural AI voice</strong> from 400+ options across 50+ languages and preview a free sample.</li>
+<li><strong>Pick your format</strong> — MP3 for maximum compatibility, or <a href="/guide/m4b-format/">M4B</a> with embedded chapters and cover art.</li>
+<li><strong>Generate and download</strong> — listen on your phone, tablet, or any audiobook player.</li>
+</ol>
+<p>See the full <a href="/guide/epub-to-audiobook/">EPUB to audiobook guide →</a> for details.</p>
+</section>
+
+<section>
+<h2>Tips for Choosing the Right Free Ebook</h2>
+<ul>
+<li><strong>Prefer EPUB over PDF</strong>: EPUB has a clean chapter structure, while PDFs can include headers, page numbers, and layout artifacts that need cleanup.</li>
+<li><strong>Check the edition</strong>: Standard Ebooks and Liber Liber offer the best-formatted versions of classics — fewer typos and OCR errors.</li>
+<li><strong>Use AI text optimization</strong>: For PDFs or rough scans, Audiobook Maker's optional AI cleanup removes footnotes, hyphenation, and artifacts before narration.</li>
+<li><strong>Mind the language</strong>: Pick a voice that matches the book's language for natural pronunciation.</li>
+</ul>
+</section>
+
+<section>
+<h2>Frequently Asked Questions</h2>
+<details><summary>Is it legal to download free ebooks?</summary>
+<p>Yes, when the book is in the public domain or offered for free by the author or publisher. All sites listed in this guide distribute books legally. Avoid pirate sites that share copyrighted commercial titles without permission.</p>
+</details>
+<details><summary>What's the best format to download for making an audiobook?</summary>
+<p>EPUB is best — it has a clean chapter structure that converts reliably. PDF also works but may need AI text optimization to remove layout artifacts. TXT is fine for plain text without chapters.</p>
+</details>
+<details><summary>Can I convert these free ebooks to audiobooks for free?</summary>
+<p>Yes. Audiobook Maker converts EPUB, PDF, and TXT to MP3 or M4B audiobooks for free using neural TTS voices, with no signup and no usage limits.</p>
+</details>
+<details><summary>Where can I find free ebooks in languages other than English?</summary>
+<p>Project Gutenberg and Internet Archive host books in dozens of languages. Liber Liber specializes in Italian, and Google Books lets you filter free titles by language. Audiobook Maker then narrates them in 50+ languages.</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>Why Convert EPUB to Audiobook?</h2>
@@ -644,6 +753,71 @@ _GUIDE_BODY_EN = {
 }
 
 _GUIDE_BODY_IT = {
+    "free-ebooks": """
+<section>
+<h2>Dove Trovare Ebook Gratuiti da Scaricare</h2>
+<p>Migliaia di ottimi libri sono completamente gratuiti e legali da scaricare — classici di pubblico dominio, titoli moderni rilasciati con licenze aperte e progetti della community. Una volta ottenuto un EPUB gratuito, puoi trasformarlo in audiolibro in pochi minuti con <a href="/">Audiobook Maker</a>. Questa guida elenca le migliori fonti di ebook gratuiti e ti mostra come ascoltarli.</p>
+</section>
+
+<section>
+<h2>I 8 Migliori Siti per Ebook Gratuiti</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — Oltre 70.000 libri gratuiti di pubblico dominio. La più grande e antica raccolta al mondo, con download EPUB affidabili.</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — Edizioni curate e ben formattate di classici, con tipografia moderna e copertine originali.</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — Un'enorme biblioteca digitale con milioni di testi, audiolibri e riviste storiche.</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — Oltre 50.000 ebook gratuiti con interfaccia moderna e consigli di lettura personalizzati.</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — Un catalogo elegante di ebook di pubblico dominio con download diretto e immediato.</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — Milioni di libri digitalizzati; filtra per "Ebook gratuiti" per trovare i titoli gratis.</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — Il riferimento per i classici della letteratura italiana: Dante, Manzoni, Pirandello e molti altri.</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — Prestito digitale gratuito di ebook moderni e classici, gestito da Internet Archive.</li>
+</ul>
+</section>
+
+<section>
+<h2>Pubblico Dominio vs. Libri Sotto Copyright</h2>
+<p>I libri di <strong>pubblico dominio</strong> — tipicamente le opere il cui autore è morto da più di 70 anni — sono liberi da scaricare, condividere e convertire senza restrizioni. Project Gutenberg, Standard Ebooks e Liber Liber sono specializzati in questi.</p>
+<p>I libri <strong>sotto copyright</strong> sono protetti anche quando offerti gratuitamente. Molti autori ed editori rilasciano titoli moderni con licenze <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative Commons</a> o come promozioni gratuite: sono perfettamente legali da scaricare. Evita i siti pirata che condividono ebook commerciali senza autorizzazione: sono illegali e spesso contengono malware.</p>
+</section>
+
+<section>
+<h2>Come Trasformare un Ebook Gratuito in Audiolibro</h2>
+<ol>
+<li><strong>Scarica l'EPUB</strong> da uno dei siti sopra (l'EPUB è preferibile al PDF per un riconoscimento dei capitoli più pulito).</li>
+<li><strong>Apri <a href="/">Audiobook Maker</a></strong> e carica il file — capitoli, titolo, autore e copertina vengono estratti automaticamente.</li>
+<li><strong>Scegli una voce AI neurale</strong> tra oltre 400 opzioni in più di 50 lingue e ascolta un'anteprima gratuita.</li>
+<li><strong>Scegli il formato</strong> — MP3 per la massima compatibilità, oppure <a href="/guide/m4b-format/">M4B</a> con capitoli e copertina incorporati.</li>
+<li><strong>Genera e scarica</strong> — ascolta su smartphone, tablet o qualsiasi lettore di audiolibri.</li>
+</ol>
+<p>Consulta la guida completa <a href="/guide/epub-to-audiobook/">EPUB in audiolibro →</a> per i dettagli.</p>
+</section>
+
+<section>
+<h2>Consigli per Scegliere l'Ebook Gratuito Giusto</h2>
+<ul>
+<li><strong>Preferisci l'EPUB al PDF</strong>: l'EPUB ha una struttura dei capitoli pulita, mentre i PDF possono contenere intestazioni, numeri di pagina e artefatti di impaginazione da ripulire.</li>
+<li><strong>Controlla l'edizione</strong>: Standard Ebooks e Liber Liber offrono le versioni meglio formattate dei classici, con meno refusi ed errori OCR.</li>
+<li><strong>Usa l'ottimizzazione AI del testo</strong>: per PDF o scansioni grezze, la pulizia AI opzionale di Audiobook Maker rimuove note a piè di pagina, sillabazione e artefatti prima della narrazione.</li>
+<li><strong>Attenzione alla lingua</strong>: scegli una voce che corrisponda alla lingua del libro per una pronuncia naturale.</li>
+</ul>
+</section>
+
+<section>
+<h2>Domande Frequenti</h2>
+<details><summary>È legale scaricare ebook gratuiti?</summary>
+<p>Sì, quando il libro è di pubblico dominio o offerto gratuitamente dall'autore o dall'editore. Tutti i siti elencati in questa guida distribuiscono libri legalmente. Evita i siti pirata che condividono titoli commerciali protetti da copyright senza autorizzazione.</p>
+</details>
+<details><summary>Qual è il formato migliore da scaricare per creare un audiolibro?</summary>
+<p>L'EPUB è il migliore: ha una struttura dei capitoli pulita che si converte in modo affidabile. Anche il PDF funziona, ma può richiedere l'ottimizzazione AI del testo per rimuovere gli artefatti di impaginazione. Il TXT va bene per testo semplice senza capitoli.</p>
+</details>
+<details><summary>Posso convertire questi ebook gratuiti in audiolibri gratis?</summary>
+<p>Sì. Audiobook Maker converte EPUB, PDF e TXT in audiolibri MP3 o M4B gratuitamente usando voci TTS neurali, senza registrazione e senza limiti di utilizzo.</p>
+</details>
+<details><summary>Dove trovo ebook gratuiti in lingue diverse dall'inglese?</summary>
+<p>Project Gutenberg e Internet Archive ospitano libri in decine di lingue. Liber Liber è specializzato in italiano e Google Books permette di filtrare i titoli gratuiti per lingua. Audiobook Maker li narra poi in oltre 50 lingue.</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>Perché Convertire EPUB in Audiolibro?</h2>
@@ -1042,6 +1216,71 @@ _GUIDE_BODY_IT = {
 # Each language dict has the same keys as _GUIDE_BODY_EN.
 
 _GUIDE_BODY_FR = {
+    "free-ebooks": """
+<section>
+<h2>Où Trouver des Ebooks Gratuits à Télécharger</h2>
+<p>Des milliers d'excellents livres sont totalement gratuits et légaux à télécharger — classiques du domaine public, titres modernes publiés sous licences ouvertes et projets communautaires. Une fois votre EPUB gratuit obtenu, vous pouvez le transformer en livre audio en quelques minutes avec <a href="/">Audiobook Maker</a>. Ce guide répertorie les meilleures sources d'ebooks gratuits et vous montre comment les écouter.</p>
+</section>
+
+<section>
+<h2>Les 8 Meilleurs Sites d'Ebooks Gratuits</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — Plus de 70 000 livres gratuits du domaine public. La plus grande et la plus ancienne collection au monde, avec des téléchargements EPUB fiables.</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — Des éditions soignées et magnifiquement formatées de classiques, avec une typographie moderne et des couvertures originales.</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — Une immense bibliothèque numérique avec des millions de textes, livres audio et périodiques historiques.</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — Plus de 50 000 ebooks gratuits avec une interface moderne et des recommandations de lecture personnalisées.</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — Un catalogue élégant d'ebooks du domaine public avec téléchargement direct et sans tracas.</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — Des millions de livres numérisés ; filtrez par « Ebooks gratuits » pour trouver les titres gratuits.</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — La référence pour les classiques de la littérature italienne : Dante, Manzoni, Pirandello et bien d'autres.</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — Prêt numérique gratuit d'ebooks modernes et classiques, géré par Internet Archive.</li>
+</ul>
+</section>
+
+<section>
+<h2>Domaine Public vs. Livres sous Copyright</h2>
+<p>Les livres du <strong>domaine public</strong> — généralement les œuvres dont l'auteur est décédé depuis plus de 70 ans — sont libres de télécharger, partager et convertir sans restriction. Project Gutenberg, Standard Ebooks et Liber Liber sont spécialisés dans ces ouvrages.</p>
+<p>Les livres <strong>sous copyright</strong> sont protégés même lorsqu'ils sont offerts gratuitement. De nombreux auteurs et éditeurs publient des titres modernes sous licences <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative Commons</a> ou en promotions gratuites : ils sont parfaitement légaux à télécharger. Évitez les sites pirates qui partagent des ebooks commerciaux sans autorisation : ils sont illégaux et contiennent souvent des logiciels malveillants.</p>
+</section>
+
+<section>
+<h2>Comment Transformer un Ebook Gratuit en Livre Audio</h2>
+<ol>
+<li><strong>Téléchargez l'EPUB</strong> depuis l'un des sites ci-dessus (l'EPUB est préférable au PDF pour une détection des chapitres plus propre).</li>
+<li><strong>Ouvrez <a href="/">Audiobook Maker</a></strong> et importez le fichier — chapitres, titre, auteur et couverture sont extraits automatiquement.</li>
+<li><strong>Choisissez une voix IA neuronale</strong> parmi plus de 400 options dans plus de 50 langues et écoutez un aperçu gratuit.</li>
+<li><strong>Choisissez votre format</strong> — MP3 pour une compatibilité maximale, ou <a href="/guide/m4b-format/">M4B</a> avec chapitres et couverture intégrés.</li>
+<li><strong>Générez et téléchargez</strong> — écoutez sur votre téléphone, tablette ou tout lecteur de livres audio.</li>
+</ol>
+<p>Consultez le guide complet <a href="/guide/epub-to-audiobook/">EPUB en livre audio →</a> pour les détails.</p>
+</section>
+
+<section>
+<h2>Conseils pour Choisir le Bon Ebook Gratuit</h2>
+<ul>
+<li><strong>Préférez l'EPUB au PDF</strong> : l'EPUB possède une structure de chapitres propre, tandis que les PDF peuvent inclure des en-têtes, numéros de page et artefacts de mise en page à nettoyer.</li>
+<li><strong>Vérifiez l'édition</strong> : Standard Ebooks et Liber Liber proposent les versions les mieux formatées des classiques, avec moins de fautes et d'erreurs OCR.</li>
+<li><strong>Utilisez l'optimisation IA du texte</strong> : pour les PDF ou scans bruts, le nettoyage IA optionnel d'Audiobook Maker supprime notes de bas de page, césures et artefacts avant la narration.</li>
+<li><strong>Attention à la langue</strong> : choisissez une voix qui correspond à la langue du livre pour une prononciation naturelle.</li>
+</ul>
+</section>
+
+<section>
+<h2>Questions Fréquentes</h2>
+<details><summary>Est-il légal de télécharger des ebooks gratuits ?</summary>
+<p>Oui, lorsque le livre est dans le domaine public ou offert gratuitement par l'auteur ou l'éditeur. Tous les sites listés dans ce guide distribuent des livres légalement. Évitez les sites pirates qui partagent des titres commerciaux protégés sans autorisation.</p>
+</details>
+<details><summary>Quel est le meilleur format à télécharger pour créer un livre audio ?</summary>
+<p>L'EPUB est le meilleur : il possède une structure de chapitres propre qui se convertit de manière fiable. Le PDF fonctionne aussi, mais peut nécessiter l'optimisation IA du texte pour supprimer les artefacts de mise en page. Le TXT convient au texte brut sans chapitres.</p>
+</details>
+<details><summary>Puis-je convertir ces ebooks gratuits en livres audio gratuitement ?</summary>
+<p>Oui. Audiobook Maker convertit EPUB, PDF et TXT en livres audio MP3 ou M4B gratuitement grâce à des voix TTS neuronales, sans inscription et sans limite d'utilisation.</p>
+</details>
+<details><summary>Où trouver des ebooks gratuits dans d'autres langues que l'anglais ?</summary>
+<p>Project Gutenberg et Internet Archive hébergent des livres dans des dizaines de langues. Liber Liber est spécialisé en italien, et Google Books permet de filtrer les titres gratuits par langue. Audiobook Maker les narre ensuite dans plus de 50 langues.</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>Pourquoi Convertir un EPUB en Livre Audio ?</h2>
@@ -1414,6 +1653,71 @@ _GUIDE_BODY_FR = {
 
 
 _GUIDE_BODY_ES = {
+    "free-ebooks": """
+<section>
+<h2>Dónde Encontrar Ebooks Gratis para Descargar</h2>
+<p>Miles de grandes libros son totalmente gratuitos y legales de descargar — clásicos de dominio público, títulos modernos publicados con licencias abiertas y proyectos comunitarios. Una vez que tengas un EPUB gratuito, puedes convertirlo en audiolibro en minutos con <a href="/">Audiobook Maker</a>. Esta guía enumera las mejores fuentes de ebooks gratuitos y te muestra cómo escucharlos.</p>
+</section>
+
+<section>
+<h2>Los 8 Mejores Sitios de Ebooks Gratis</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — Más de 70.000 libros gratuitos de dominio público. La colección más grande y antigua del mundo, con descargas EPUB fiables.</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — Ediciones cuidadas y bellamente formateadas de clásicos, con tipografía moderna y portadas originales.</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — Una enorme biblioteca digital con millones de textos, audiolibros y publicaciones históricas.</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — Más de 50.000 ebooks gratuitos con una interfaz moderna y recomendaciones de lectura personalizadas.</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — Un catálogo elegante de ebooks de dominio público con descarga directa y sin complicaciones.</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — Millones de libros digitalizados; filtra por "Ebooks gratuitos" para encontrar los títulos gratis.</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — La referencia para los clásicos de la literatura italiana: Dante, Manzoni, Pirandello y muchos más.</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — Préstamo digital gratuito de ebooks modernos y clásicos, gestionado por Internet Archive.</li>
+</ul>
+</section>
+
+<section>
+<h2>Dominio Público vs. Libros con Derechos de Autor</h2>
+<p>Los libros de <strong>dominio público</strong> — normalmente obras cuyo autor falleció hace más de 70 años — son libres de descargar, compartir y convertir sin restricciones. Project Gutenberg, Standard Ebooks y Liber Liber están especializados en estos.</p>
+<p>Los libros <strong>con derechos de autor</strong> están protegidos incluso cuando se ofrecen gratis. Muchos autores y editoriales publican títulos modernos con licencias <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative Commons</a> o como promociones gratuitas: son perfectamente legales de descargar. Evita los sitios piratas que comparten ebooks comerciales sin autorización: son ilegales y a menudo incluyen malware.</p>
+</section>
+
+<section>
+<h2>Cómo Convertir un Ebook Gratis en Audiolibro</h2>
+<ol>
+<li><strong>Descarga el EPUB</strong> desde cualquiera de los sitios anteriores (el EPUB es preferible al PDF para una detección de capítulos más limpia).</li>
+<li><strong>Abre <a href="/">Audiobook Maker</a></strong> y sube el archivo — capítulos, título, autor y portada se extraen automáticamente.</li>
+<li><strong>Elige una voz IA neuronal</strong> entre más de 400 opciones en más de 50 idiomas y escucha una vista previa gratuita.</li>
+<li><strong>Elige tu formato</strong> — MP3 para máxima compatibilidad, o <a href="/guide/m4b-format/">M4B</a> con capítulos y portada integrados.</li>
+<li><strong>Genera y descarga</strong> — escucha en tu móvil, tablet o cualquier reproductor de audiolibros.</li>
+</ol>
+<p>Consulta la guía completa <a href="/guide/epub-to-audiobook/">EPUB a audiolibro →</a> para más detalles.</p>
+</section>
+
+<section>
+<h2>Consejos para Elegir el Ebook Gratis Adecuado</h2>
+<ul>
+<li><strong>Prefiere EPUB antes que PDF</strong>: el EPUB tiene una estructura de capítulos limpia, mientras que los PDF pueden incluir encabezados, números de página y artefactos de maquetación que requieren limpieza.</li>
+<li><strong>Comprueba la edición</strong>: Standard Ebooks y Liber Liber ofrecen las versiones mejor formateadas de los clásicos, con menos erratas y errores de OCR.</li>
+<li><strong>Usa la optimización IA del texto</strong>: para PDF o escaneos en bruto, la limpieza IA opcional de Audiobook Maker elimina notas al pie, guiones de sílaba y artefactos antes de la narración.</li>
+<li><strong>Atención al idioma</strong>: elige una voz que coincida con el idioma del libro para una pronunciación natural.</li>
+</ul>
+</section>
+
+<section>
+<h2>Preguntas Frecuentes</h2>
+<details><summary>¿Es legal descargar ebooks gratis?</summary>
+<p>Sí, cuando el libro es de dominio público o lo ofrece gratis el autor o la editorial. Todos los sitios listados en esta guía distribuyen libros legalmente. Evita los sitios piratas que comparten títulos comerciales con derechos de autor sin autorización.</p>
+</details>
+<details><summary>¿Cuál es el mejor formato para descargar y crear un audiolibro?</summary>
+<p>El EPUB es el mejor: tiene una estructura de capítulos limpia que se convierte de forma fiable. El PDF también funciona, pero puede necesitar la optimización IA del texto para eliminar artefactos de maquetación. El TXT sirve para texto plano sin capítulos.</p>
+</details>
+<details><summary>¿Puedo convertir estos ebooks gratis en audiolibros gratis?</summary>
+<p>Sí. Audiobook Maker convierte EPUB, PDF y TXT en audiolibros MP3 o M4B gratis usando voces TTS neuronales, sin registro y sin límites de uso.</p>
+</details>
+<details><summary>¿Dónde encuentro ebooks gratis en idiomas distintos del inglés?</summary>
+<p>Project Gutenberg e Internet Archive alojan libros en decenas de idiomas. Liber Liber está especializado en italiano, y Google Books permite filtrar los títulos gratis por idioma. Audiobook Maker luego los narra en más de 50 idiomas.</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>¿Por Qué Convertir EPUB a Audiolibro?</h2>
@@ -1786,6 +2090,71 @@ _GUIDE_BODY_ES = {
 
 
 _GUIDE_BODY_DE = {
+    "free-ebooks": """
+<section>
+<h2>Wo Sie kostenlose E-Books zum Herunterladen finden</h2>
+<p>Tausende großartiger Bücher sind völlig kostenlos und legal herunterladbar — gemeinfreie Klassiker, moderne Titel unter offenen Lizenzen und Community-Projekte. Sobald Sie ein kostenloses EPUB haben, können Sie es mit <a href="/">Audiobook Maker</a> in wenigen Minuten in ein Hörbuch verwandeln. Diese Anleitung listet die besten Quellen für kostenlose E-Books auf und zeigt Ihnen, wie Sie sie anhören.</p>
+</section>
+
+<section>
+<h2>Die 8 besten Seiten für kostenlose E-Books</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — Über 70.000 kostenlose gemeinfreie Bücher. Die größte und älteste Sammlung der Welt, mit zuverlässigen EPUB-Downloads.</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — Sorgfältig kuratierte, wunderschön formatierte Ausgaben von Klassikern, mit moderner Typografie und originellen Covern.</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — Eine riesige digitale Bibliothek mit Millionen von Texten, Hörbüchern und historischen Zeitschriften.</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — Über 50.000 kostenlose E-Books mit moderner Oberfläche und personalisierten Leseempfehlungen.</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — Ein eleganter Katalog gemeinfreier E-Books mit direktem, unkompliziertem Download.</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — Millionen digitalisierter Bücher; filtern Sie nach „Kostenlose E-Books", um kostenlose Titel zu finden.</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — Die Referenz für Klassiker der italienischen Literatur: Dante, Manzoni, Pirandello und viele mehr.</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — Kostenlose digitale Ausleihe moderner und klassischer E-Books, betrieben vom Internet Archive.</li>
+</ul>
+</section>
+
+<section>
+<h2>Gemeinfrei vs. urheberrechtlich geschützte Bücher</h2>
+<p><strong>Gemeinfreie</strong> Bücher — in der Regel Werke, deren Autor vor mehr als 70 Jahren verstorben ist — dürfen ohne Einschränkung heruntergeladen, geteilt und konvertiert werden. Project Gutenberg, Standard Ebooks und Liber Liber sind darauf spezialisiert.</p>
+<p><strong>Urheberrechtlich geschützte</strong> Bücher sind auch dann geschützt, wenn sie kostenlos angeboten werden. Viele Autoren und Verlage veröffentlichen moderne Titel unter <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative-Commons</a>-Lizenzen oder als kostenlose Aktionen — diese sind völlig legal herunterladbar. Meiden Sie Piraten-Seiten, die kommerzielle E-Books ohne Erlaubnis teilen: Sie sind illegal und enthalten oft Schadsoftware.</p>
+</section>
+
+<section>
+<h2>So verwandeln Sie ein kostenloses E-Book in ein Hörbuch</h2>
+<ol>
+<li><strong>Laden Sie das EPUB herunter</strong> von einer der oben genannten Seiten (EPUB ist dem PDF für eine saubere Kapitelerkennung vorzuziehen).</li>
+<li><strong>Öffnen Sie <a href="/">Audiobook Maker</a></strong> und laden Sie die Datei hoch — Kapitel, Titel, Autor und Cover werden automatisch extrahiert.</li>
+<li><strong>Wählen Sie eine neuronale KI-Stimme</strong> aus über 400 Optionen in mehr als 50 Sprachen und hören Sie eine kostenlose Vorschau.</li>
+<li><strong>Wählen Sie Ihr Format</strong> — MP3 für maximale Kompatibilität oder <a href="/guide/m4b-format/">M4B</a> mit eingebetteten Kapiteln und Cover.</li>
+<li><strong>Generieren und herunterladen</strong> — hören Sie auf Ihrem Smartphone, Tablet oder jedem Hörbuch-Player.</li>
+</ol>
+<p>Siehe die vollständige Anleitung <a href="/guide/epub-to-audiobook/">EPUB in Hörbuch →</a> für Details.</p>
+</section>
+
+<section>
+<h2>Tipps zur Auswahl des richtigen kostenlosen E-Books</h2>
+<ul>
+<li><strong>EPUB statt PDF bevorzugen</strong>: EPUB hat eine saubere Kapitelstruktur, während PDFs Kopfzeilen, Seitenzahlen und Layout-Artefakte enthalten können, die bereinigt werden müssen.</li>
+<li><strong>Ausgabe prüfen</strong>: Standard Ebooks und Liber Liber bieten die am besten formatierten Versionen der Klassiker — weniger Tippfehler und OCR-Fehler.</li>
+<li><strong>KI-Textoptimierung nutzen</strong>: Bei PDFs oder groben Scans entfernt die optionale KI-Bereinigung von Audiobook Maker Fußnoten, Silbentrennung und Artefakte vor der Narration.</li>
+<li><strong>Auf die Sprache achten</strong>: Wählen Sie eine Stimme, die zur Sprache des Buches passt, für eine natürliche Aussprache.</li>
+</ul>
+</section>
+
+<section>
+<h2>Häufig gestellte Fragen</h2>
+<details><summary>Ist es legal, kostenlose E-Books herunterzuladen?</summary>
+<p>Ja, wenn das Buch gemeinfrei ist oder vom Autor oder Verlag kostenlos angeboten wird. Alle in dieser Anleitung aufgeführten Seiten verbreiten Bücher legal. Meiden Sie Piraten-Seiten, die urheberrechtlich geschützte kommerzielle Titel ohne Erlaubnis teilen.</p>
+</details>
+<details><summary>Welches Format sollte ich für die Hörbuch-Erstellung herunterladen?</summary>
+<p>EPUB ist am besten: Es hat eine saubere Kapitelstruktur, die zuverlässig konvertiert. PDF funktioniert ebenfalls, kann aber KI-Textoptimierung benötigen, um Layout-Artefakte zu entfernen. TXT eignet sich für reinen Text ohne Kapitel.</p>
+</details>
+<details><summary>Kann ich diese kostenlosen E-Books kostenlos in Hörbücher umwandeln?</summary>
+<p>Ja. Audiobook Maker konvertiert EPUB, PDF und TXT kostenlos mit neuronalen TTS-Stimmen in MP3- oder M4B-Hörbücher, ohne Anmeldung und ohne Nutzungsbeschränkungen.</p>
+</details>
+<details><summary>Wo finde ich kostenlose E-Books in anderen Sprachen als Englisch?</summary>
+<p>Project Gutenberg und Internet Archive beherbergen Bücher in Dutzenden von Sprachen. Liber Liber ist auf Italienisch spezialisiert, und Google Books erlaubt das Filtern kostenloser Titel nach Sprache. Audiobook Maker erzählt sie dann in über 50 Sprachen.</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>Warum EPUB in Hörbuch umwandeln?</h2>
@@ -2158,6 +2527,71 @@ _GUIDE_BODY_DE = {
 
 
 _GUIDE_BODY_ZH = {
+    "free-ebooks": """
+<section>
+<h2>在哪里下载免费电子书</h2>
+<p>数千本优秀图书完全免费且可合法下载——公共领域的经典、以开放许可发布的现代作品以及社区项目。获得免费EPUB后，您可以用 <a href="/">Audiobook Maker</a> 在几分钟内将其转换为有声书。本指南列出了最佳的免费电子书来源，并向您展示如何收听它们。</p>
+</section>
+
+<section>
+<h2>8个最佳免费电子书网站</h2>
+<ul>
+<li><a href="https://www.gutenberg.org" target="_blank" rel="noopener">Project Gutenberg</a> — 超过70,000本免费的公共领域图书。世界上最大、最古老的藏书库，提供可靠的EPUB下载。</li>
+<li><a href="https://standardebooks.org" target="_blank" rel="noopener">Standard Ebooks</a> — 精心整理、排版精美的经典版本，配有现代字体和原创封面。</li>
+<li><a href="https://archive.org/details/texts" target="_blank" rel="noopener">Internet Archive</a> — 庞大的数字图书馆，拥有数百万种文本、有声书和历史期刊。</li>
+<li><a href="https://manybooks.net" target="_blank" rel="noopener">ManyBooks</a> — 超过50,000本免费电子书，界面现代并提供个性化阅读推荐。</li>
+<li><a href="https://www.feedbooks.com/publicdomain" target="_blank" rel="noopener">Feedbooks</a> — 优雅的公共领域电子书目录，可直接轻松下载。</li>
+<li><a href="https://books.google.com/books?&as_ebook=on&as_brr=1" target="_blank" rel="noopener">Google Books</a> — 数百万本数字化图书；按"免费电子书"筛选可找到免费书目。</li>
+<li><a href="https://www.liberliber.it/online/opere/libri/" target="_blank" rel="noopener">Liber Liber</a> — 意大利文学经典的参考来源：但丁、曼佐尼、皮兰德娄等众多作家。</li>
+<li><a href="https://openlibrary.org/read" target="_blank" rel="noopener">Open Library</a> — 由Internet Archive运营，免费数字借阅现代和经典电子书。</li>
+</ul>
+</section>
+
+<section>
+<h2>公共领域 vs. 受版权保护的图书</h2>
+<p><strong>公共领域</strong>图书——通常是作者去世超过70年的作品——可以自由下载、分享和转换，不受限制。Project Gutenberg、Standard Ebooks 和 Liber Liber 专门提供此类图书。</p>
+<p><strong>受版权保护的</strong>图书即使免费提供也仍受保护。许多作者和出版商以 <a href="https://creativecommons.org" target="_blank" rel="noopener">Creative Commons</a> 许可或免费促销的形式发布现代作品——这些完全可以合法下载。请避开未经授权分享商业电子书的盗版网站：它们是非法的，且常常捆绑恶意软件。</p>
+</section>
+
+<section>
+<h2>如何将免费电子书转换为有声书</h2>
+<ol>
+<li><strong>下载EPUB</strong>，从上述任一网站获取（EPUB优于PDF，章节识别更干净）。</li>
+<li><strong>打开 <a href="/">Audiobook Maker</a></strong> 并上传文件——章节、标题、作者和封面会自动提取。</li>
+<li><strong>选择神经网络AI语音</strong>，从超过50种语言的400多种选项中挑选，并免费试听预览。</li>
+<li><strong>选择格式</strong>——MP3兼容性最佳，或 <a href="/guide/m4b-format/">M4B</a> 带嵌入式章节和封面。</li>
+<li><strong>生成并下载</strong>——在手机、平板或任何有声书播放器上收听。</li>
+</ol>
+<p>详情请参阅完整指南 <a href="/guide/epub-to-audiobook/">EPUB转有声书 →</a>。</p>
+</section>
+
+<section>
+<h2>选择合适免费电子书的技巧</h2>
+<ul>
+<li><strong>优先选择EPUB而非PDF</strong>：EPUB具有干净的章节结构，而PDF可能包含页眉、页码和需要清理的排版伪影。</li>
+<li><strong>检查版本</strong>：Standard Ebooks 和 Liber Liber 提供格式最好的经典版本，错字和OCR错误更少。</li>
+<li><strong>使用AI文本优化</strong>：对于PDF或粗糙扫描件，Audiobook Maker 可选的AI清理会在朗读前移除脚注、连字符和伪影。</li>
+<li><strong>注意语言</strong>：选择与图书语言匹配的语音以获得自然发音。</li>
+</ul>
+</section>
+
+<section>
+<h2>常见问题</h2>
+<details><summary>下载免费电子书合法吗？</summary>
+<p>合法，前提是图书属于公共领域或由作者或出版商免费提供。本指南列出的所有网站都合法分发图书。请避开未经授权分享受版权保护商业书目的盗版网站。</p>
+</details>
+<details><summary>制作有声书时下载哪种格式最好？</summary>
+<p>EPUB最好：它具有干净的章节结构，转换可靠。PDF也可以，但可能需要AI文本优化来移除排版伪影。TXT适合无章节的纯文本。</p>
+</details>
+<details><summary>我可以免费将这些免费电子书转换为有声书吗？</summary>
+<p>可以。Audiobook Maker 使用神经网络TTS语音免费将EPUB、PDF和TXT转换为MP3或M4B有声书，无需注册，无使用限制。</p>
+</details>
+<details><summary>在哪里可以找到英语以外语言的免费电子书？</summary>
+<p>Project Gutenberg 和 Internet Archive 托管数十种语言的图书。Liber Liber 专注于意大利语，Google Books 允许按语言筛选免费书目。然后 Audiobook Maker 可用超过50种语言进行朗读。</p>
+</details>
+</section>
+""",
+
     "epub-to-audiobook": """
 <section>
 <h2>为什么要将EPUB转换为有声书？</h2>
