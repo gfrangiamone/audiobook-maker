@@ -9677,7 +9677,19 @@ def _serve_audio_download(token_info, job, job_id):
             return _send_file_throttled(job["output_files"][0], as_attachment=True,
                              download_name=job.get("output_name", output_name))
 
-    # 4. Fallback: scan job directory for downloadable files
+    # 4. Cold tier: il file snapshotato vive ancora su cold (locale evacuato a
+    #    fine finestra calda). È la copia AUTORITATIVA e va tentata PRIMA dello
+    #    scan di directory: quest'ultimo è un'euristica di last-resort che può
+    #    raccogliere file non-deliverable lasciati nella job root (es.
+    #    preview_*.mp3), servendo contenuto sbagliato. (Incidente 2026-06-10,
+    #    job K9v-PxIXyUVUKqVkg3vjZg: zip evacuato → servito uno zip di preview.)
+    for _p in (output_zip, output_file):
+        _cold = _try_cold_serve(_p, download_name=output_name)
+        if _cold is not None:
+            _do_log()
+            return _cold
+
+    # 5. Fallback: scan job directory for downloadable files
     if job_dir.exists():
         print(f"[dl] Scanning {job_dir} for downloadable files...")
         zips = sorted(job_dir.glob("*.zip")) + sorted(_find_files_in_outputs(job_dir, "*.zip"))
@@ -9695,10 +9707,14 @@ def _serve_audio_download(token_info, job, job_id):
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
                              download_name=output_name or os.path.basename(found))
-        # Look for MP3s across all output dirs, then root
+        # Look for MP3s across all output dirs, then root.
+        # Escludi i preview_*.mp3 (campioni voce generati da /api/preview_audio,
+        # lasciati nella job root): NON sono parte dell'audiolibro e non vanno
+        # mai serviti (incidente 2026-06-10: zip di preview consegnato).
         mp3s = sorted(_find_files_in_outputs(job_dir, "*.mp3"))
         if not mp3s:
             mp3s = sorted(job_dir.glob("*.mp3"))
+        mp3s = [m for m in mp3s if not m.name.startswith("preview_")]
         if len(mp3s) == 1:
             found = str(mp3s[0])
             print(f"[dl] Fallback: found single MP3 {found}")
