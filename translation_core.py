@@ -61,7 +61,12 @@ def api_base():
 
 
 def model_name():
-    return _env("ABM_TRANSLATE_MODEL", "ABM_LLM_MODEL", "deepseek-chat")
+    # SOLO ABM_TRANSLATE_MODEL: nessun fallback a ABM_LLM_MODEL ne' default.
+    # Il modello dell'ottimizzazione (ABM_LLM_MODEL) e' pensato per il backend
+    # DeepSeek diretto; ereditato qui finirebbe su Vertex come google/<nome> ->
+    # 404 (incidente 2026-06). Vuoto = traduzione NON configurata: is_available()
+    # ritorna False e l'UI disabilita la feature.
+    return _env("ABM_TRANSLATE_MODEL")
 
 
 def backend_choice():
@@ -304,7 +309,14 @@ def resolve_backend():
 
 
 def is_available():
-    """True se un backend LLM di traduzione è configurato."""
+    """True se un backend LLM di traduzione è configurato E un modello di
+    traduzione è esplicitamente impostato (ABM_TRANSLATE_MODEL).
+
+    Senza modello la feature è considerata non configurata: la UI nasconde
+    l'opzione traduzione e gli endpoint la rifiutano (evita che la traduzione
+    erediti silenziosamente un modello di un altro backend → 404)."""
+    if not model_name():
+        return False
     try:
         resolve_backend()
         return True
@@ -325,10 +337,15 @@ def make_client_provider(backend):
     OpenAI pronto; per Vertex rinnova il bearer token prima della scadenza."""
     from openai import OpenAI
 
+    mdl = model_name()
+    if not mdl:
+        raise TranslationConfigError(
+            "modello di traduzione non configurato: imposta ABM_TRANSLATE_MODEL")
+
     if backend == "apikey":
         client = OpenAI(api_key=api_key(), base_url=api_base(),
                         timeout=request_timeout())
-        return (lambda: client), model_name(), api_base()
+        return (lambda: client), mdl, api_base()
 
     from google.oauth2 import service_account
     from google.auth.transport.requests import Request as _GAuthRequest
@@ -338,7 +355,6 @@ def make_client_provider(backend):
         scopes=["https://www.googleapis.com/auth/cloud-platform"],
     )
     base_url = _vertex_base_url()
-    mdl = model_name()
     model = mdl if "/" in mdl else f"google/{mdl}"
     state = {"client": None}
 
@@ -359,6 +375,22 @@ def make_client_provider(backend):
 # ---------------------------------------------------------------------------
 # Chiamate LLM
 # ---------------------------------------------------------------------------
+
+def _thinking_off_kwargs(model):
+    """Per la traduzione il 'thinking' non è mai utile: aggiunge solo latenza e
+    token di reasoning a parità di qualità. Lo disattiviamo in modo hardcoded
+    via OpenAI-compat (reasoning_effort='none', supportato sia da Vertex sia da
+    AI Studio per i modelli Gemini 2.5).
+
+    Gating per nome modello: 'none' è accettato SOLO dalla famiglia Gemini 2.5
+    flash/flash-lite. Gemini 2.5 Pro / 3 non possono disattivare il thinking e
+    altri provider (es. DeepSeek sul backend apikey) non riconoscono il
+    parametro → lo applichiamo solo dove è valido, restando un no-op altrove."""
+    m = (model or "").lower()
+    if "gemini-2.5-flash" in m:  # copre flash, flash-lite e il prefisso google/
+        return {"reasoning_effort": "none"}
+    return {}
+
 
 def call_llm(client_provider, system_prompt, user_content, *, model, usage,
              label="", progress_cb=None, cancel_cb=None, log=print):
@@ -386,6 +418,7 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 "messages": messages,
                 "temperature": temperature(),
                 "stream": True,
+                **_thinking_off_kwargs(model),
             }
             if not usage.no_stream_options:
                 kwargs["stream_options"] = {"include_usage": True}
