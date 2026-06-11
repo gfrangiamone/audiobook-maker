@@ -771,6 +771,19 @@ def _parse_book(path):
 def _reenqueue_orphan(job_id, rec):
     """Ricostruisce il job dal descrittore e rilancia il thread appropriato.
     Riusa l'.abm ottimizzato se presente (salta l'LLM)."""
+    # F2 — Guardia voce vuota: un descrittore non-optimize senza voce produrrebbe
+    # un audiolibro completamente muto (edge-tts solleva "Invalid voice ''" su
+    # ogni chunk -> fallback silenzio). Capita con descrittori 'generate'
+    # mis-registrati (es. job di traduzione orfano) o snapshot salvati prima che
+    # /api/generate impostasse job["voice"]. NON avviare una generazione muta:
+    # tratta il job come non recuperabile (refund secondo policy + email
+    # interrotto + mark failed), come per il superamento del cap tentativi.
+    _voice_rec = (rec.get("voice") or "").strip()
+    if rec.get("phase") != "optimize" and not _voice_rec:
+        print(f"[recover] {job_id}: descrittore '{rec.get('phase')}' SENZA voce "
+              f"-> skip generazione muta, fallback interrotto.")
+        _orphan_fallback(job_id, rec)
+        return
     abm_path = rec.get("abm_path") or ""
     use_abm = bool(abm_path) and os.path.exists(abm_path)
     src = abm_path if use_abm else rec.get("input_path", "")
@@ -5276,6 +5289,13 @@ def api_voices():
                 }
             except Exception:
                 pass
+        # Disponibilita' traduzione libro: backend LLM configurato + modello di
+        # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
+        # bottone "Traduci" invece di farlo fallire dopo la selezione capitoli.
+        try:
+            voices["_translate_available"] = bool(translation_core.is_available())
+        except Exception:
+            voices["_translate_available"] = False
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -7773,17 +7793,29 @@ def api_register_email():
     _write_email_pending_marker(UPLOAD_DIR / job_id)
 
     # Registra il descrittore di recupero: da qui il job è batch (email registrata).
-    # La fase NON è sempre 'generate': se register_email avviene mentre il job è
-    # ancora in (o in attesa di) ottimizzazione AI, forzare 'generate' farebbe
-    # saltare la ri-ottimizzazione al recovery → audio da testo grezzo e
-    # ottimizzazione pagata non consegnata. Deriviamo quindi la fase dallo stato.
-    _in_opt = (job.get("status") in ("optimizing", "optimized")
-               or (job.get("opt_auto_generate") and not job.get("ai_optimized")))
-    _phase = "optimize" if _in_opt else "generate"
-    try:
-        pending_jobs.register(job_id, _phase, _build_job_descriptor(job, _phase))
-    except Exception as _e:
-        print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
+    # ECCEZIONE (F1): i job di traduzione (download_type='translated') NON vanno
+    # registrati. run_translation è per design NON recuperabile (vedi nota in
+    # generation_engine.run_translation: nessuno snapshot per-chunk, riavvio
+    # rischia di ri-eseguire job già rimborsati). Un descrittore qui verrebbe
+    # salvato con phase='generate' e voice='' (job di traduzione, voce mai
+    # impostata) e il recovery lo instraderebbe a run_generation -> audiolibro
+    # completamente muto consegnato per una traduzione (spesso già fallita e
+    # rimborsata). Quindi: non registrare alcun pending per i job translated.
+    if job.get("notify_download_type") == "translated":
+        print(f"[{job_id}] register_email: download_type=translated -> pending "
+              f"NON registrato (traduzione non recuperabile by design).", flush=True)
+    else:
+        # La fase NON è sempre 'generate': se register_email avviene mentre il job è
+        # ancora in (o in attesa di) ottimizzazione AI, forzare 'generate' farebbe
+        # saltare la ri-ottimizzazione al recovery → audio da testo grezzo e
+        # ottimizzazione pagata non consegnata. Deriviamo quindi la fase dallo stato.
+        _in_opt = (job.get("status") in ("optimizing", "optimized")
+                   or (job.get("opt_auto_generate") and not job.get("ai_optimized")))
+        _phase = "optimize" if _in_opt else "generate"
+        try:
+            pending_jobs.register(job_id, _phase, _build_job_descriptor(job, _phase))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register failed (non-fatal): {_e}", flush=True)
 
     print(f"[{job_id}] Email notification registered: {email} (type: {download_type})")
     _log_activity(job_id, job.get("original_filename", ""), "EMAIL_REGISTERED",

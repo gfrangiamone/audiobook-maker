@@ -1,4 +1,5 @@
 import os
+import pytest
 import community_store
 import pending_jobs
 import audiobook_app
@@ -50,6 +51,35 @@ def test_under_cap_reenqueues(tmp_path, monkeypatch):
     pending_jobs.register("Jok", "generate", {"notify_email": "a@x.it"})
     audiobook_app._recover_orphan_jobs()  # attempts: 0→1 ≤ 2 → re-enqueue
     assert reenq == ["Jok"]
+
+
+def test_reenqueue_empty_voice_falls_back_no_generation(tmp_path, monkeypatch):
+    # F2: un descrittore 'generate' senza voce (es. job di traduzione orfano
+    # mis-registrato) NON deve avviare una generazione muta -> fallback.
+    _fresh(tmp_path)
+    fb = []
+    monkeypatch.setattr(audiobook_app, "_orphan_fallback",
+                        lambda jid, rec: fb.append(jid))
+    # Se il guard fallisse, si arriverebbe al parsing del libro: lo rendiamo
+    # esplosivo per provare che NON viene raggiunto.
+    monkeypatch.setattr(audiobook_app, "_parse_book",
+                        lambda src: (_ for _ in ()).throw(AssertionError("must not parse/generate")))
+    rec = {"id": "Jmute", "phase": "generate", "voice": "",
+           "input_path": "/nonexistent.epub"}
+    audiobook_app._reenqueue_orphan("Jmute", rec)
+    assert fb == ["Jmute"]
+
+
+def test_reenqueue_with_voice_passes_guard(tmp_path, monkeypatch):
+    # Voce presente: il guard F2 non scatta; si prosegue e si arriva al parsing
+    # (qui FileNotFoundError per input mancante), prova che il guard è superato.
+    _fresh(tmp_path)
+    monkeypatch.setattr(audiobook_app, "_orphan_fallback",
+                        lambda jid, rec: (_ for _ in ()).throw(AssertionError("must not fallback")))
+    rec = {"id": "Jvoice", "phase": "generate", "voice": "de-DE-KatjaNeural",
+           "input_path": "/nonexistent.epub"}
+    with pytest.raises(FileNotFoundError):
+        audiobook_app._reenqueue_orphan("Jvoice", rec)
 
 
 def test_disabled_does_nothing(tmp_path, monkeypatch):

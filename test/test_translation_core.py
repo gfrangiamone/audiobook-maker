@@ -191,7 +191,15 @@ def test_is_available(monkeypatch):
     monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
     monkeypatch.delenv("ABM_TRANSLATE_BACKEND", raising=False)
     monkeypatch.setenv("ABM_TRANSLATE_API_KEY", "k")
+    # Backend configurato ma SENZA modello di traduzione esplicito -> non
+    # disponibile (niente piu' fallback a ABM_LLM_MODEL / default deepseek-chat).
+    monkeypatch.delenv("ABM_TRANSLATE_MODEL", raising=False)
+    monkeypatch.setenv("ABM_LLM_MODEL", "deepseek-v4-flash")  # non deve bastare
+    assert tc.is_available() is False
+    # Backend + modello esplicito -> disponibile.
+    monkeypatch.setenv("ABM_TRANSLATE_MODEL", "gemini-2.5-flash")
     assert tc.is_available() is True
+    # Tolto il backend -> non disponibile anche con modello impostato.
     monkeypatch.delenv("ABM_TRANSLATE_API_KEY")
     monkeypatch.delenv("ABM_LLM_API_KEY", raising=False)
     assert tc.is_available() is False

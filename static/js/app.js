@@ -687,8 +687,17 @@ async function loadVoices(){
     }else{
         _premiumStatus=null;
     }
+    // Disponibilita' traduzione libro: se il backend non ha un modello di
+    // traduzione configurato (ABM_TRANSLATE_MODEL) la feature e' nascosta.
+    if('_translate_available' in data){
+        _translateAvailable=(data._translate_available!==false);
+        delete data._translate_available;
+    }else{
+        _translateAvailable=true; // retrocompat: server senza il flag
+    }
     voices=data;
     _applyPremiumAvailability();
+    _applyTranslateAvailability();
     fillLangs();
   }catch(e){
     /* swallow: see comment above */
@@ -707,6 +716,14 @@ async function loadVoices(){
 // loadVoices() leggendo la meta `_premium_status` di /api/voices.
 let _premiumMaintenance=false;
 let _premiumStatus=null;
+// Disponibilita' della feature "traduzione libro". Popolata da loadVoices()
+// leggendo la meta `_translate_available` di /api/voices. Se false il bottone
+// "Traduci" e' nascosto (il server non ha ABM_TRANSLATE_MODEL configurato).
+let _translateAvailable=true;
+function _applyTranslateAvailability(){
+  const btn=document.getElementById('btnTranslate');
+  if(btn)btn.hidden=!_translateAvailable;
+}
 function _applyPremiumAvailability(){
   let hasPremium=false;
   try{
@@ -1906,6 +1923,7 @@ function _rememberLastLang(code){
 }
 function goToTranslate(){
   if(!jobId||generating)return;
+  if(!_translateAvailable){showErr('p2info',t('tr_unavailable')||'Translation not available on this server');return}
   if(_getSelectedChapterIndexes().length===0){showErr('p2info',t('sel_err_none')||'Select at least one chapter');return}
   wizMode='translate';
   trPaymentToken=null;

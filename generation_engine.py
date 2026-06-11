@@ -4191,6 +4191,31 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _mark_pending_failed(job_id, "failed_quality_refunded")
             return
 
+        # F3 — Guardia output muto (qualsiasi engine, in particolare edge-tts dove
+        # il blocco quality sopra NON si applica): se TUTTI i chunk sono falliti,
+        # il file prodotto è silenzio puro — non è l'audiolibro richiesto.
+        # Consegnarlo via email (status 'partial') significa spedire all'utente un
+        # m4b completamente muto. Tipico di un job mis-instradato dal recovery
+        # (voce vuota -> "Invalid voice ''" su ogni chunk). Trattare come errore +
+        # rimborso, MAI consegnare.
+        if not use_gemini and failed_chunks >= _tot_chunks_safe:
+            _set_job_status(job, "error")
+            _user_msg = (
+                "Generazione interrotta: nessun segmento audio è stato sintetizzato "
+                "correttamente (voce non valida o servizio TTS non disponibile). "
+                "L'audio sarebbe stato completamente muto: rimborso integrale già emesso."
+            )
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
+                  f"engine=edge -> error + refund, nessuna consegna.")
+            try:
+                _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            _mark_pending_failed(job_id, "failed_all_chunks_refunded")
+            return
+
         # Guardia output: un assembly fallito (es. ENOSPC / disco pieno, errore
         # ffmpeg) puo' lasciare il job SENZA alcun file pur con failed_chunks=0
         # (i chunk TTS sono andati, ma il merge finale PCM->M4B/MP3 no). Senza
