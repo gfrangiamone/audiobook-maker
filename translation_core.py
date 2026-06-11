@@ -378,17 +378,21 @@ def make_client_provider(backend):
 
 def _thinking_off_kwargs(model):
     """Per la traduzione il 'thinking' non è mai utile: aggiunge solo latenza e
-    token di reasoning a parità di qualità. Lo disattiviamo in modo hardcoded
-    via OpenAI-compat (reasoning_effort='none', supportato sia da Vertex sia da
-    AI Studio per i modelli Gemini 2.5).
+    token di reasoning a parità di qualità. Lo minimizziamo in modo hardcoded
+    via OpenAI-compat con reasoning_effort='minimal' (il valore più basso
+    accettato da Vertex per Gemini 2.5 Flash).
 
-    Gating per nome modello: 'none' è accettato SOLO dalla famiglia Gemini 2.5
-    flash/flash-lite. Gemini 2.5 Pro / 3 non possono disattivare il thinking e
+    NB: Vertex accetta SOLO 'high'/'low'/'medium'/'minimal' — 'none' viene
+    rifiutato con 400 INVALID_ARGUMENT (incidente 2026-06). 'minimal' è il
+    livello minimo disponibile e di fatto azzera il reasoning su flash/flash-lite.
+
+    Gating per nome modello: applicato SOLO alla famiglia Gemini 2.5
+    flash/flash-lite. Gemini 2.5 Pro / 3 non possono ridurre il thinking e
     altri provider (es. DeepSeek sul backend apikey) non riconoscono il
     parametro → lo applichiamo solo dove è valido, restando un no-op altrove."""
     m = (model or "").lower()
     if "gemini-2.5-flash" in m:  # copre flash, flash-lite e il prefisso google/
-        return {"reasoning_effort": "none"}
+        return {"reasoning_effort": "minimal"}
     return {}
 
 
