@@ -8460,6 +8460,16 @@ def api_optimize():
                     "active": _active_optimizing_for_client_unlocked(client_id),
                 }), 429
         job["status"] = "optimizing"
+
+    def _release_opt_claim():
+        # Rilascia lo status claim "optimizing" sui return di errore PRIMA
+        # dell'avvio del thread: senza release il job resta brickato (il
+        # check atomico sopra respinge ogni retry con "already running"),
+        # quindi l'utente non potrebbe ritentare dopo aver pagato.
+        with _jobs_lock:
+            if job.get("status") == "optimizing":
+                job["status"] = "analyzed"
+
     raw_selected = data.get("selected_chapters")
     selected_chapters = _parse_selected_chapters(raw_selected)
     already = set(job.get("optimized_chapters", []))
@@ -8528,6 +8538,7 @@ def api_optimize():
     if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
+            _release_opt_claim()
             return jsonify({
                 "error": "Payment required for this optimization.",
                 "error_code": "payment_required",
@@ -8562,6 +8573,7 @@ def api_optimize():
                 try:
                     new_remaining = _voucher_consume(payment_token, estimated_cost, job_id=job_id)
                 except ValueError as _ve:
+                    _release_opt_claim()
                     return jsonify({
                         "error": f"Voucher not spendable: {_ve}",
                         "error_code": "invalid_payment",
@@ -8573,6 +8585,7 @@ def api_optimize():
                 job["voucher_remaining_after"] = new_remaining
                 valid = True
         if not valid:
+            _release_opt_claim()
             return jsonify({
                 "error": "Invalid or already-used payment token.",
                 "error_code": "invalid_payment",
@@ -8586,111 +8599,121 @@ def api_optimize():
     if _is_combined_gemini:
         _combined_token = (data.get("payment_token_combined")
                            or data.get("payment_token") or "").strip()
-        if _combined_token:
-            # Ricalcolo quota Gemini server-side per validare l'importo.
-            _voice_for_est = data.get("voice", "")
-            _rate_for_est = data.get("rate", "+0%")
-            _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
-            _lang_for_est = (_ui_lang_for_est
-                             or (getattr(info, "language", "") or "").split("-")[0].lower()
-                             or "it")
-            # Capitoli selezionati per la generazione (stessa logica frontend
-            # combined_estimate: subset se selected_chapters, altrimenti tutti).
-            _all_chs = list(getattr(info, "chapters", []) or [])
-            _sel_list = _parse_selected_chapters(data.get("selected_chapters"))
-            if _sel_list:
-                _by_idx = {ch.index: ch for ch in _all_chs}
-                _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
-            else:
-                _chs_for_est = _all_chs
-            try:
-                _est_gemini = gemini_tts.estimate_book_cost(
-                    _chs_for_est, _voice_for_est,
-                    language=_lang_for_est, rate_pct=_rate_for_est,
-                )
-                _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
-            except Exception as _e_est:
-                print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
-                _est_gemini = None
-                _gemini_eur_quota = 0.0
-            _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
-            # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
-            # (allineata con /api/generate). Sotto soglia il job e' free.
-            _threshold_combined = float(
-                os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+        # Ricalcolo quota Gemini server-side per validare l'importo.
+        # Eseguito SEMPRE (anche senza token): l'enforcement del pagamento
+        # combinato deve avvenire QUI perche' il flusso auto-gen chiama
+        # run_generation direttamente, bypassando il preflight pagamento
+        # di /api/generate. Storicamente questo blocco era annidato dentro
+        # `if _combined_token:` -> una richiesta senza token partiva gratis.
+        _voice_for_est = data.get("voice", "")
+        _rate_for_est = data.get("rate", "+0%")
+        _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
+        _lang_for_est = (_ui_lang_for_est
+                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or "it")
+        # Capitoli selezionati per la generazione (stessa logica frontend
+        # combined_estimate: subset se selected_chapters, altrimenti tutti).
+        _all_chs = list(getattr(info, "chapters", []) or [])
+        _sel_list = _parse_selected_chapters(data.get("selected_chapters"))
+        if _sel_list:
+            _by_idx = {ch.index: ch for ch in _all_chs}
+            _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
+        else:
+            _chs_for_est = _all_chs
+        try:
+            _est_gemini = gemini_tts.estimate_book_cost(
+                _chs_for_est, _voice_for_est,
+                language=_lang_for_est, rate_pct=_rate_for_est,
             )
-            if _expected_total > _threshold_combined:
-                if not _combined_token:
-                    with _jobs_lock:
-                        if job.get("status") == "optimizing":
-                            job["status"] = "analyzed"
-                    return jsonify({
-                        "error": "Payment required for generation.",
-                        "error_code": "payment_required",
-                        "total_eur": _expected_total,
-                        "gemini_eur": _gemini_eur_quota,
-                        "llm_eur": estimated_cost,
-                        "threshold_eur": _threshold_combined,
-                    }), 402
-                # Validazione + consume del token combinato.
-                _consumed = False
-                if _combined_token in payment._payments:
-                    with payment._payments_lock:
-                        _pay = payment._payments.get(_combined_token)
-                        if (_pay and not _pay.get("used")
-                                and float(_pay.get("amount_eur", 0)) + 0.05
-                                >= _expected_total):
-                            _pay["used"] = True
-                            _pay["used_at"] = time.time()
-                            _pay["used_job_id"] = job_id
-                            _consumed_method = "paypal"
-                            _consumed_email = _pay.get("email", "") or ""
-                            _consumed = True
-                    if _consumed:
-                        _save_payments()
-                elif _combined_token in payment._vouchers:
-                    try:
-                        payment._voucher_consume(_combined_token, _expected_total,
-                                                 job_id=job_id)
-                        _v = payment._vouchers.get(_combined_token, {})
-                        _consumed_method = "voucher"
-                        _consumed_email = _v.get("email", "") or ""
+            _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
+        except Exception as _e_est:
+            print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
+            _est_gemini = None
+            _gemini_eur_quota = 0.0
+        _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
+        # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
+        # (allineata con /api/generate). Sotto soglia il job e' free.
+        _threshold_combined = float(
+            os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+        )
+        if _expected_total > _threshold_combined:
+            if not _combined_token:
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Payment required for generation.",
+                    "error_code": "payment_required",
+                    "total_eur": _expected_total,
+                    "gemini_eur": _gemini_eur_quota,
+                    "llm_eur": estimated_cost,
+                    "threshold_eur": _threshold_combined,
+                }), 402
+            # Validazione + consume del token combinato.
+            _consumed = False
+            if _combined_token in payment._payments:
+                with payment._payments_lock:
+                    _pay = payment._payments.get(_combined_token)
+                    if (_pay and not _pay.get("used")
+                            and float(_pay.get("amount_eur", 0)) + 0.05
+                            >= _expected_total):
+                        _pay["used"] = True
+                        _pay["used_at"] = time.time()
+                        _pay["used_job_id"] = job_id
+                        _consumed_method = "paypal"
+                        _consumed_email = _pay.get("email", "") or ""
                         _consumed = True
-                    except ValueError as _vc_err:
-                        print(f"[{job_id}] combined voucher consume failed: {_vc_err}")
                 if _consumed:
-                    # Stash payment per:
-                    # - audit Gemini (_write_gemini_audit legge job["payment"])
-                    # - refund su cancel/error (_refund_gemini_payment)
-                    # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
-                    # l'audit Gemini legge solo la quota voce, non il combinato.
-                    job["payment"] = {
-                        "token": _combined_token,
-                        "total_eur": _gemini_eur_quota,
-                        "method": _consumed_method,
-                        "ts": time.time(),
-                        "gemini_est": _est_gemini,
-                        "llm_eur": float(estimated_cost),
-                        "source": "combined_optimize_autogen",
-                    }
-                    job["payment_token"] = _combined_token
-                    job["payment_type"] = _consumed_method
-                    job["payment_email"] = _consumed_email
-                    job["payment_amount_eur"] = _expected_total
-                    # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
-                    # all'audit per allineare i campi *_est al prezzo lockato
-                    # in payment["total_eur"]. Senza questo snapshot,
-                    # _finalize_optimization_complete ricalcolerebbe la stima
-                    # su testo post-LLM (potenzialmente piu` lungo/corto),
-                    # distorcendo delta_pct/margin nell'audit JSONL.
-                    job["gemini_estimate"] = _est_gemini
-                    print(f"[{job_id}] combined payment consumed at /api/optimize: "
-                          f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
-                          f"= {_expected_total:.2f}€ ({_consumed_method})")
-                else:
-                    print(f"[{job_id}] WARNING: combined payment token "
-                          f"{_combined_token[:12]}... not consumable "
-                          f"(expected_total={_expected_total:.2f}€)")
+                    _save_payments()
+            elif _combined_token in payment._vouchers:
+                try:
+                    payment._voucher_consume(_combined_token, _expected_total,
+                                             job_id=job_id)
+                    _v = payment._vouchers.get(_combined_token, {})
+                    _consumed_method = "voucher"
+                    _consumed_email = _v.get("email", "") or ""
+                    _consumed = True
+                except ValueError as _vc_err:
+                    print(f"[{job_id}] combined voucher consume failed: {_vc_err}")
+            if not _consumed:
+                # Token presente ma non consumabile (gia' usato, importo
+                # insufficiente, voucher scaduto, token sconosciuto): il job
+                # NON deve partire gratis. Release del claim + 402, allineato
+                # al branch standalone LLM sopra.
+                print(f"[{job_id}] combined payment token "
+                      f"{_combined_token[:12]}... not consumable "
+                      f"(expected_total={_expected_total:.2f}€) -> 402")
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Invalid or already-used payment token.",
+                    "error_code": "invalid_payment",
+                }), 402
+            # Stash payment per:
+            # - audit Gemini (_write_gemini_audit legge job["payment"])
+            # - refund su cancel/error (_refund_gemini_payment)
+            # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
+            # l'audit Gemini legge solo la quota voce, non il combinato.
+            job["payment"] = {
+                "token": _combined_token,
+                "total_eur": _gemini_eur_quota,
+                "method": _consumed_method,
+                "ts": time.time(),
+                "gemini_est": _est_gemini,
+                "llm_eur": float(estimated_cost),
+                "source": "combined_optimize_autogen",
+            }
+            job["payment_token"] = _combined_token
+            job["payment_type"] = _consumed_method
+            job["payment_email"] = _consumed_email
+            job["payment_amount_eur"] = _expected_total
+            # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
+            # all'audit per allineare i campi *_est al prezzo lockato
+            # in payment["total_eur"]. Senza questo snapshot,
+            # _finalize_optimization_complete ricalcolerebbe la stima
+            # su testo post-LLM (potenzialmente piu` lungo/corto),
+            # distorcendo delta_pct/margin nell'audit JSONL.
+            job["gemini_estimate"] = _est_gemini
+            print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                  f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"= {_expected_total:.2f}€ ({_consumed_method})")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).
