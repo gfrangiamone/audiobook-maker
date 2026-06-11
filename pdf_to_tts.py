@@ -53,7 +53,10 @@ except ImportError:
 # Importa strutture dati e funzioni di pulizia dal modulo EPUB
 # (evita duplicazione di logica — stessa interfaccia BookInfo/Chapter)
 try:
-    from epub_to_tts import BookInfo, Chapter, clean_text_for_tts, is_content_chapter
+    from epub_to_tts import (
+        BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
+        _title_is_non_content,
+    )
 except ImportError:
     # Fallback: definisci localmente se epub_to_tts non è disponibile
     from dataclasses import field
@@ -97,6 +100,14 @@ except ImportError:
         if len(text.strip()) < 100 or len(text.split()) < 30:
             return False
         return True
+
+    def _title_is_non_content(title, phrases):
+        """Fallback: match per parola intera (confini \\w Unicode)."""
+        tl = (title or "").lower()
+        for skip in phrases:
+            if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
+                return True
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -465,16 +476,11 @@ def _clean_pdf_text(text: str) -> str:
 
 def _is_non_content_section(title: str, text: str) -> bool:
     """Determina se una sezione PDF è non-contenuto (indice, bibliografia, ecc.)."""
-    title_lower = title.lower().strip()
-
-    # Controlla titolo esatto
-    if title_lower in NON_CONTENT_TITLES:
+    # Match per parola intera (vedi epub_to_tts._title_is_non_content): evita
+    # falsi positivi su token corti ("note" in "notevole", "toc" in
+    # "autocrazia"). NON_CONTENT_TITLES include "目录" (sommario cinese).
+    if _title_is_non_content(title, NON_CONTENT_TITLES):
         return True
-
-    # Controlla titolo per substring
-    for skip_title in NON_CONTENT_TITLES:
-        if skip_title in title_lower:
-            return True
 
     # Euristica content-based
     if not is_content_chapter(text, title):
