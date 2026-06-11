@@ -8489,6 +8489,10 @@ def api_optimize():
     total_chars = sum(ch.char_count for ch in info.chapters if ch.index in chapters_to_optimize)
     print(f"[{job_id}] OPTIMIZE raw selected_chapters: {raw_selected!r} -> parsed: {selected_chapters!r} -> to_optimize: {chapters_to_optimize!r}")
     if not chapters_to_optimize:
+        # Nulla da ottimizzare (tutto gia' fatto): rilascia il claim
+        # "optimizing" altrimenti il job resta brickato e i retry vengono
+        # respinti con "already running" (stessa classe dei 402 sotto).
+        _release_opt_claim()
         return jsonify({"status": "already_optimized", "optimized_chapters": list(already)})
 
     # Hard cap on text size for the final audio output, applied to the full

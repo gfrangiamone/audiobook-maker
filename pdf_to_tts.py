@@ -323,7 +323,6 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
         bbox = block["bbox"]
         block_text_parts = []
         is_small = True  # Assumi piccolo fino a prova contraria
-        is_superscript = False
 
         for line in block.get("lines", []):
             line_parts = []
@@ -334,7 +333,6 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
 
                 # Flag bit 0 = superscript in PyMuPDF
                 if flags & 1:
-                    is_superscript = True
                     continue  # Salta numeri in apice (riferimenti a note)
 
                 if size >= small_threshold:
@@ -554,7 +552,6 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
         for block in text_blocks:
             block_parts = []
             max_size = 0
-            is_bold = False
 
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
@@ -566,8 +563,6 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
                     block_parts.append(text)
                     if size > max_size:
                         max_size = size
-                    if flags & (1 << 4):  # bold
-                        is_bold = True
 
             block_text = " ".join(block_parts).strip()
             if not block_text:
@@ -619,8 +614,6 @@ def _detect_page_number_offset(doc: fitz.Document, body_font_size: float) -> int
 
     Restituisce l'offset: pdf_page_0based = printed_page + offset - 1
     """
-    small_threshold = body_font_size * SMALL_TEXT_RATIO
-
     for page_idx in range(min(30, len(doc))):
         page = doc[page_idx]
         blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]

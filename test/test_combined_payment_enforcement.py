@@ -173,3 +173,16 @@ def test_standalone_invalid_token_releases_claim(client, env):
     assert r.get_json()["error_code"] == "invalid_payment"
     assert job["status"] == "analyzed"
     assert env == []
+
+
+def test_already_optimized_releases_claim(client, env):
+    """Nulla da ottimizzare (gia' tutto fatto): risponde already_optimized
+    MA rilascia il claim 'optimizing', altrimenti il job resta brickato."""
+    job = _mk_job("cpe-allopt", 300_000)
+    job["optimized_chapters"] = [0]  # l'unico capitolo e' gia' ottimizzato
+    r = _post_optimize(client, "cpe-allopt", auto_generate=False,
+                       voice="it-IT-IsabellaNeural")
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "already_optimized"
+    assert job["status"] == "analyzed"
+    assert env == []
