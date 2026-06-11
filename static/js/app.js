@@ -3708,12 +3708,12 @@ async function _streamToBlob(response,onProgress){
 
 async function downloadFile(type){
   if(!jobId)return;
-  let btnId = 'btnD';
-  if(type === 'm4b') btnId = 'btnM';
-  if(type === 'abm') btnId = 'btnA';
-  if(type === 'zip') btnId = 'btnD';
-  if(type === 'mp3') btnId = 'btnD';
-  if(type === 'm4bkit') btnId = 'btnD';
+  // Bottone su cui mostrare spinner/disable durante il download. In modalita'
+  // M4B/MP3/ZIP/kit il bottone primario VISIBILE e' btnD (btnM resta sempre
+  // display:none, vedi panel 5). Mappare 'm4b' a btnM applicava lo spinner a
+  // un bottone nascosto, lasciando btnD cliccabile (doppio download) e senza
+  // feedback. Solo 'abm' usa il bottone supplementare btnA.
+  const btnId = (type === 'abm') ? 'btnA' : 'btnD';
 
   const btn=document.getElementById(btnId);
   const originalHtml = btn.innerHTML;

@@ -416,6 +416,12 @@ GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "
 MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
 MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
 
+# Whitelist charset per gli id voce ricevuti dal client (edge
+# "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
+# "gemini:flash25:Zephyr"). Difesa in profondita' contro stored XSS nelle
+# pagine admin e injection nel formato "#"-separato dell'Activity Log.
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,80}$")
+
 # Tolleranza di crescita del testo dovuta all'ottimizzazione AI. Un libro che
 # era ENTRO il cap prima dell'ottimizzazione (precondizione garantita dal cap
 # enforced in /api/optimize e /api/optimize_estimate sul testo originale) puo'
@@ -2833,8 +2839,13 @@ def admin_logs():
             if voice_raw:
                 parts_v = voice_raw.split("-")
                 if len(parts_v) >= 3:
-                    voice_short = parts_v[-1].replace("Neural", "").replace("Multilingual", "")
-                    voice_lang = "-".join(parts_v[:2])
+                    # Escape OBBLIGATORIO: voice_raw arriva dal parametro
+                    # `voice` della richiesta utente via Activity Log; senza
+                    # escape un id voce forgiato (es. "x-y-<img onerror=...>")
+                    # diventa stored XSS nel browser admin.
+                    voice_short = html_mod.escape(
+                        parts_v[-1].replace("Neural", "").replace("Multilingual", ""))
+                    voice_lang = html_mod.escape("-".join(parts_v[:2]))
                     voice_short = f'{voice_short} <span class="voice-lang">{voice_lang}</span>'
                 else:
                     voice_short = html_mod.escape(voice_raw)
@@ -2961,12 +2972,14 @@ def admin_logs():
     except Exception:
         pass
 
-    from urllib.parse import quote_plus
-    token_qs = f"&token={quote_plus(token)}" if token else ""
+    # Niente token in query string: l'auth admin viaggia via cookie HttpOnly
+    # abm_admin_session (inviato automaticamente sulle navigazioni <a>). Un
+    # `?token=` in chiaro finirebbe in access log nginx / history / Referer
+    # e oltretutto il server lo ignora gia' (vedi _admin_auth_from_request).
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
-        months_nav += f'<a href="/admin/log-activity?{m}{token_qs}"{active_cls}>{m}</a> '
+        months_nav += f'<a href="/admin/log-activity?{m}"{active_cls}>{m}</a> '
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3077,8 +3090,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/admin/audit-tts?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
-        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
+        <a class="btn btn-accent" href="/admin/audit-tts?{ym}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
+        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -4448,7 +4461,12 @@ def admin_logs_page():
 
 <script>
 (function(){
-  const ADMIN_TOKEN = """ + '"' + token + '"' + r""";
+  // Sec: il token NON viene piu' inlinato nel sorgente della pagina (finiva
+  // in chiaro nell'HTML servito). Le fetch API usano header X-Admin-Token
+  // letto da session/localStorage, popolato dal gate /admin/login (stesso
+  // pattern della pagina /admin/log-activity).
+  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
+                      localStorage.getItem('abm_admin_token') || '';
   const $ = (id) => document.getElementById(id);
 
   function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
@@ -7019,6 +7037,9 @@ def api_generate():
     data = request.json
     job_id = data.get("job_id")
     voice = data.get("voice", "it-IT-IsabellaNeural")
+    if not _VOICE_ID_RE.match(voice or ""):
+        return jsonify({"error": "Invalid voice id.",
+                        "error_code": "invalid_voice"}), 400
     rate = data.get("rate", "+0%")
     single_file = data.get("single_file", True)
     output_format = data.get("output_format", "m4b")
@@ -7364,7 +7385,7 @@ def api_generate():
         if not ok:
             with _jobs_lock:
                 if job["status"] == "generating":
-                    job["status"] = "analyzed" if job.get("ai_optimized") else "analyzed"
+                    job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
             return jsonify({
                 "error": f"Google TTS monthly limit: {remaining_after:,} chars remaining, "
                          f"but this book needs {total_chars_needed:,} chars.",
@@ -8428,6 +8449,10 @@ def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
     data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
     lang = data.get("lang")
+    _voice_in = data.get("voice") or ""
+    if _voice_in and not _VOICE_ID_RE.match(_voice_in):
+        return jsonify({"error": "Invalid voice id.",
+                        "error_code": "invalid_voice"}), 400
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         if sc == 404:
