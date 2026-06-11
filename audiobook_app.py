@@ -82,11 +82,9 @@ except ImportError:
     print("[startup] gemini_tts module not available (google-genai not installed)")
 
 from audio_utils import (
-    _zip_safe_read, _extract_cover_from_epub, _generate_fallback_cover,
-    _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
-    _generate_silence_mp3, _concatenate_mp3, _get_audio_duration_ms,
-    _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
-    _check_audio_dependencies, pcm_to_mp3,
+    _extract_cover_from_epub, _generate_fallback_cover,
+    _extract_cover_for_preview, _generate_podcast_rss,
+    _safe_filename, _check_audio_dependencies, pcm_to_mp3,
 )
 
 
@@ -112,11 +110,7 @@ def _preview_ffmpeg_ok():
     _ok, _ = _check_audio_dependencies()
     return bool(_ok)
 from tts_split import (
-    CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
-    _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
-    _edge_tts_call, generate_chunk_mp3, generate_chunk_mp3_google,
-    _strip_parenthetical, _ensure_heading_pause, _plan_chunks,
-    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
 )
 
 import email_service
@@ -137,11 +131,8 @@ except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
-# (Configurati e gestiti in generation_engine.py; lette qui solo per startup log)
-LLM_API_KEY = os.environ.get("ABM_LLM_API_KEY", "")
+# (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
 LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
-LLM_THINKING = os.environ.get("ABM_LLM_THINKING", "false").lower() == "true"
-LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").lower()
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
@@ -183,14 +174,12 @@ from payment import (
     VOUCHER_RL_PER_MIN, VOUCHER_RL_PER_HOUR,
     VOUCHER_EMAIL_FAIL_LIMIT, VOUCHER_EMAIL_LOCKOUT_SEC,
     _paypal_available, _estimate_llm_cost_eur,
-    _paypal_get_access_token, _paypal_create_order, _paypal_capture_order,
+    _paypal_get_access_token, _paypal_create_order,
     _voucher_rl_check, _voucher_rl_record_result,
     _save_payments, _load_payments,
     _save_vouchers, _load_vouchers,
-    _generate_voucher_code, _create_voucher,
+    _create_voucher,
     _voucher_remaining, _voucher_consume, _voucher_refund,
-    _save_paid_opt_done, _load_paid_opt_done,
-    _mark_paid_opt_done, _cleanup_paid_opt_done,
 )
 
 
@@ -400,7 +389,7 @@ if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
 
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
-    _try_send_admin_digest, _send_payment_receipt_email, _send_voucher_email,
+    _try_send_admin_digest, _send_payment_receipt_email,
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, ADMIN_EMAIL,
     BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
 )
@@ -1708,8 +1697,6 @@ def _is_resume_or_probe_request():
         return request.method == "HEAD" or bool(request.headers.get("Range"))
     except Exception:
         return False
-
-CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
 
 # ----------------------------------------------------------------------
@@ -10952,8 +10939,6 @@ HTML_TEMPLATES: dict[str, str] = {
     )
     for lang, seo in _SEO_DATA.items()
 }
-# Fallback generico per URL sconosciuti
-HTML_TEMPLATE = HTML_TEMPLATES["en"]
 
 # Template dedicati per la root (/): canonical punta a BASE_URL/ (se stesso),
 # non a /{lang}/. Risolve l'errore SEO "hreflang URL non usa il proprio canonical".

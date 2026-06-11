@@ -106,10 +106,6 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 
-# Derived (computed, not directly configurable)
-LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
-LLM_MAX_INPUT_TOKENS = LLM_MAX_CONTEXT_TOKENS - LLM_RESERVED_OUTPUT_TOKENS - LLM_RESERVED_PROMPT_TOKENS
-LLM_MAX_INPUT_CHARS = int(LLM_MAX_INPUT_TOKENS * LLM_CHARS_PER_TOKEN)
 # Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
 # Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
 # per ogni chunk → regole sempre rispettate anche su libri lunghi.
@@ -131,6 +127,7 @@ _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
 _google_tts = None      # optional google_tts module
+_jobs_lock = None       # threading.Lock injected by configure(); guard _set_job_status before configure
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
 _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
