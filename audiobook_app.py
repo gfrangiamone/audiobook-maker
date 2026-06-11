@@ -34,13 +34,13 @@ import uuid
 import hmac
 import secrets
 import html as html_mod
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from datetime import datetime, timezone
 from copy import copy
 from pathlib import Path
 
 from flask import (
-    Flask, render_template_string, request, jsonify,
+    Flask, request, jsonify,
     send_file, Response, stream_with_context, redirect, after_this_request
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -168,18 +168,16 @@ def _estimate_chapter_seconds(ch, language):
 # Mutable state dicts (payment._payments, payment._vouchers, payment._paid_opt_done) are accessed via
 # `payment.<name>` because _load_*() rebinds the module globals at startup.
 from payment import (
-    PAYPAL_CLIENT_ID, PAYPAL_SECRET, PAYPAL_MODE, PAYPAL_API_BASE,
+    PAYPAL_CLIENT_ID, PAYPAL_MODE, PAYPAL_API_BASE,
     LLM_RATE_EUR_PER_MCHAR, LLM_FREE_THRESHOLD_EUR,
-    VOUCHER_EXPIRY_DAYS, VOUCHER_BONUS_PERCENT, PAYMENT_RETENTION_DAYS,
-    VOUCHER_RL_PER_MIN, VOUCHER_RL_PER_HOUR,
-    VOUCHER_EMAIL_FAIL_LIMIT, VOUCHER_EMAIL_LOCKOUT_SEC,
+    VOUCHER_EXPIRY_DAYS, VOUCHER_BONUS_PERCENT,
     _paypal_available, _estimate_llm_cost_eur,
     _paypal_get_access_token, _paypal_create_order,
     _voucher_rl_check, _voucher_rl_record_result,
     _save_payments, _load_payments,
     _save_vouchers, _load_vouchers,
     _create_voucher,
-    _voucher_remaining, _voucher_consume, _voucher_refund,
+    _voucher_remaining, _voucher_consume,
 )
 
 
@@ -389,8 +387,7 @@ if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
 
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
-    _try_send_admin_digest, _send_payment_receipt_email,
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, ADMIN_EMAIL,
+    _try_send_admin_digest, _send_payment_receipt_email, ADMIN_EMAIL,
     BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
 )
 
