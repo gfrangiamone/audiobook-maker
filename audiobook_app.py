@@ -1081,7 +1081,7 @@ def _find_files_in_outputs(job_dir, pattern):
     return results
 
 
-def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, **kwargs):
+def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, conditional=False, **kwargs):
     # --- Cold storage tier ---
     # Se il file locale è stato evacuato (finestra calda scaduta) ma esiste su
     # cold storage, applica il throttle sulla chiave e fai redirect 302 al
@@ -1127,7 +1127,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     # token, non per il proprietario del job. Senza bypass, un download via
     # email link 30s prima blocca quello via UI sullo stesso file.
     if is_probe or bypass_throttle:
-        response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+        response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, conditional=conditional, **kwargs)
         if no_cache:
             _apply_no_cache(response)
         return response
@@ -1139,7 +1139,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     if status == "deleted":
         lang = _get_browser_lang() or "en"
         return _render_dl_deleted_page(lang), 410
-    response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+    response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, conditional=conditional, **kwargs)
     try:
         if status == "last":
             response.headers["X-Download-Last"] = "1"
@@ -9591,7 +9591,7 @@ def token_do_download_abm(token):
         _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
                       "DOWNLOAD_OPT_ABM", "", "", "", "")
     _mark_token_downloaded(token_info)
-    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
+    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, conditional=True)
 
 
 @app.route("/dl/<token>/translated")
@@ -9687,7 +9687,7 @@ def token_do_download_m4b(token):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
-        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", conditional=True)
 
     # F4 — Il M4B locale è evacuato: PRIMA del fallback MP3, prova a servire il
     # M4B da cold (presigned 302), ma solo se è FINALIZZATO (atom moov presente):
@@ -9723,7 +9723,7 @@ def token_do_download_m4b(token):
                           "DOWNLOAD_M4B_KIT_TOKEN", "", "", "", "")
         _mark_token_downloaded(token_info)
         return _send_file_throttled(kit_path, as_attachment=True,
-                                    download_name=f"{safe_name}_audiolibro+capitoli.zip")
+                                    download_name=f"{safe_name}_audiolibro+capitoli.zip", conditional=True)
 
     # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
     # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
@@ -9741,7 +9741,7 @@ def token_do_download_m4b(token):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
-        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3")
+        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3", conditional=True)
         try:
             resp.headers["X-Fallback"] = "mp3"
             prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -9822,7 +9822,7 @@ def token_do_download(token):
                 # già la chiave d'accesso) per coerenza con la chokepoint cold.
                 return _send_file_throttled(abm_path, as_attachment=True,
                                             download_name=abm_name, no_cache=True,
-                                            bypass_throttle=True)
+                                            bypass_throttle=True, conditional=True)
             _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
             if _cold is not None:
                 if job:
@@ -9834,7 +9834,7 @@ def token_do_download(token):
                 return _cold
             return "File not found", 404
 
-        #  -  -  PODCAST download  -  - 
+        #  -  -  PODCAST download  -  -
         is_podcast = dl_type == "podcast" and (
             (job and job.get("podcast_ready")) or token_info.get("podcast_ready"))
 
@@ -9880,10 +9880,10 @@ def _serve_audio_download(token_info, job, job_id):
     # 1. Exact paths from token snapshot
     if output_zip and os.path.exists(output_zip):
         _do_log()
-        return _send_file_throttled(output_zip, as_attachment=True, download_name=output_name)
+        return _send_file_throttled(output_zip, as_attachment=True, download_name=output_name, conditional=True)
     if output_file and os.path.exists(output_file):
         _do_log()
-        return _send_file_throttled(output_file, as_attachment=True, download_name=output_name)
+        return _send_file_throttled(output_file, as_attachment=True, download_name=output_name, conditional=True)
 
     # 2. Path reconstruction within the snapshot's epoch dir (data-dir moved)
     for p in (output_zip, output_file):
@@ -9893,7 +9893,7 @@ def _serve_audio_download(token_info, job, job_id):
         if cand.exists():
             print(f"[dl] Path reconstructed: {p} -> {cand}")
             _do_log()
-            return _send_file_throttled(str(cand), as_attachment=True, download_name=output_name)
+            return _send_file_throttled(str(cand), as_attachment=True, download_name=output_name, conditional=True)
 
     # 3. Live job state (only when snapshot path missing — older runs may have
     #    been cleaned up; we still try to serve *something* for this job).
@@ -9903,12 +9903,12 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Snapshot missing; falling back to live job output_zip")
             _do_log()
             return _send_file_throttled(job["output_zip"], as_attachment=True,
-                             download_name=job.get("output_name", output_name))
+                             download_name=job.get("output_name", output_name), conditional=True)
         if job.get("output_files") and os.path.exists(job["output_files"][0]):
             print(f"[dl] Snapshot missing; falling back to live job output_files[0]")
             _do_log()
             return _send_file_throttled(job["output_files"][0], as_attachment=True,
-                             download_name=job.get("output_name", output_name))
+                             download_name=job.get("output_name", output_name), conditional=True)
 
     # 4. Cold tier: il file snapshotato vive ancora su cold (locale evacuato a
     #    fine finestra calda). È la copia AUTORITATIVA e va tentata PRIMA dello
@@ -9939,7 +9939,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: found ZIP {found}")
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
-                             download_name=output_name or os.path.basename(found))
+                             download_name=output_name or os.path.basename(found), conditional=True)
         # Look for MP3s across all output dirs, then root.
         # Escludi i preview_*.mp3 (campioni voce generati da /api/preview_audio,
         # lasciati nella job root): NON sono parte dell'audiolibro e non vanno
@@ -9953,7 +9953,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: found single MP3 {found}")
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
-                             download_name=output_name or os.path.basename(found))
+                             download_name=output_name or os.path.basename(found), conditional=True)
         elif len(mp3s) > 1:
             # Multiple MP3s: crea uno ZIP al volo da SOLI i file mp3.
             # NON usare make_archive sull'intera dir: se gli mp3 sono nella job
@@ -9983,7 +9983,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {tmp_zip}")
             _do_log()
             return _send_file_throttled(tmp_zip, as_attachment=True,
-                             download_name=output_name or "audiobook.zip")
+                             download_name=output_name or "audiobook.zip", conditional=True)
 
     # Cold tier: il locale è evacuato (finestra calda scaduta). Se la copia cold
     # del file snapshotato (zip o single-file) esiste, redirect 302 al presigned.
@@ -10769,7 +10769,7 @@ def api_download(job_id):
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
                 _do_log()
-                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, bypass_throttle=True)
+                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, bypass_throttle=True, conditional=True)
             except Exception as e:
                 print(f"[{job_id}] On-demand ABM generation failed: {e}")
         # Fallback: serve existing file if any (pre-regeneration or non-AI-optimized)
@@ -10777,7 +10777,7 @@ def api_download(job_id):
         if abm_path and os.path.exists(abm_path):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "progetto"
-            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True, conditional=True)
         return "Optimized ABM project file not found", 404
 
     if download_type == "m4bkit":
@@ -10797,7 +10797,7 @@ def api_download(job_id):
             _do_log()
             return _send_file_throttled(kit_path, as_attachment=True,
                                         download_name=f"{safe_name}_audiolibro+capitoli.zip",
-                                        no_cache=True, bypass_throttle=True)
+                                        no_cache=True, bypass_throttle=True, conditional=True)
         # Fallback MP3 se il kit manca
         _out_files = job.get("output_files") or []
         mp3_path = _out_files[0] if _out_files else ""
@@ -10808,7 +10808,7 @@ def api_download(job_id):
         if mp3_path and os.path.exists(mp3_path):
             resp = _send_file_throttled(mp3_path, as_attachment=True,
                                         download_name=f"{safe_name}.mp3",
-                                        no_cache=True, bypass_throttle=True)
+                                        no_cache=True, bypass_throttle=True, conditional=True)
             try:
                 resp.headers["X-Fallback"] = "mp3"
                 prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -10826,7 +10826,7 @@ def api_download(job_id):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
             print(f"[debug] M4B file found! Serving: {m4b_path}")
-            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True, conditional=True)
         else:
             # Physical search fallback: SOLO dentro output_dir della run corrente,
             # mai uno scan globale su tutti gli output_*/ (servirebbe un m4b di
@@ -10842,7 +10842,7 @@ def api_download(job_id):
                 print(f"[debug] M4B found via physical search: {actual_m4b}")
                 _do_log()
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
-                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
+                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True, conditional=True)
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
@@ -10856,7 +10856,7 @@ def api_download(job_id):
             if mp3_path and os.path.exists(mp3_path):
                 resp = _send_file_throttled(mp3_path, as_attachment=True,
                                             download_name=f"{_safe_filename(job['info'].title)}.mp3",
-                                            no_cache=True, bypass_throttle=True)
+                                            no_cache=True, bypass_throttle=True, conditional=True)
                 try:
                     resp.headers["X-Fallback"] = "mp3"
                     prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -10872,22 +10872,22 @@ def api_download(job_id):
             zip_name = job.get("output_name", "audiobook.zip")
             if not zip_name.endswith(".zip"):
                  zip_name = _safe_filename(job["info"].title) + ".zip"
-            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True, bypass_throttle=True, conditional=True)
         return "ZIP file not found", 404
 
     # Default logic (compatibility or auto-detect)
     # Prefer M4B if it seems to be the intended primary output
     if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
         _do_log()
-        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     if "output_zip" in job and os.path.exists(job["output_zip"]):
         _do_log()
-        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     if job.get("output_files") and os.path.exists(job["output_files"][0]):
         _do_log()
-        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     return "File not found", 404
 

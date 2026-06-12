@@ -386,3 +386,26 @@ def test_generation_engine_binds_send_push():
         ge._send_push = original
     assert audiobook_app._push_job_event is not None
     assert ge._send_push is audiobook_app._push_job_event
+
+
+# ---------------------------------------------------------------- Task 7
+
+def test_dl_token_m4b_supports_range(client, tmp_path, monkeypatch):
+    m4b = tmp_path / "book.m4b"
+    m4b.write_bytes(b"0123456789ABCDEF")
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "TOKRANGE": {
+            "job_id": "rj1",
+            "client_id": "mobile-cid-12345",
+            "created_at": time.time(),
+            "book_title": "B",
+            "output_m4b": str(m4b),
+            "output_format": "m4b",
+            "is_gemini": False,
+        }
+    })
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    r = client.get("/dl/TOKRANGE/m4b", headers={"Range": "bytes=4-7"})
+    assert r.status_code == 206
+    assert r.data == b"4567"
+    assert r.headers.get("Content-Range") == "bytes 4-7/16"
