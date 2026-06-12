@@ -1375,6 +1375,43 @@ def _load_tokens():
         print(f"[tokens] Failed to load tokens: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Device tokens (app mobile): cid -> lista device FCM. Persistenza atomica.
+_DEVICE_TOKENS_FILE = UPLOAD_DIR / "_device_tokens.json"
+_MAX_DEVICES_PER_CLIENT = 5
+_device_tokens = {}
+_device_tokens_lock = threading.Lock()
+
+
+def _load_device_tokens():
+    global _device_tokens
+    try:
+        if _DEVICE_TOKENS_FILE.exists():
+            with open(_DEVICE_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _device_tokens = data
+                print(f"[device] Loaded FCM tokens for {len(_device_tokens)} clients")
+    except Exception as e:
+        print(f"[device] Failed to load device tokens: {e}")
+
+
+def _save_device_tokens():
+    """Caller MUST hold _device_tokens_lock."""
+    try:
+        _tmp = _DEVICE_TOKENS_FILE.with_suffix(_DEVICE_TOKENS_FILE.suffix + ".tmp")
+        with open(_tmp, "w", encoding="utf-8") as f:
+            json.dump(_device_tokens, f, ensure_ascii=False, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(str(_tmp), str(_DEVICE_TOKENS_FILE))
+    except Exception as e:
+        print(f"[device] Failed to save device tokens: {e}")
+
+
 # ----------------------------------------------------------------------
 # CLIENT EMAILS — persistenza email di notifica per client_id (fallback UI)
 # ----------------------------------------------------------------------
@@ -7844,6 +7881,34 @@ def api_email_available():
     return jsonify({"available": _smtp_available()})
 
 
+@app.route("/api/device/register", methods=["POST"])
+def api_device_register():
+    """Registra/aggiorna il device FCM del client mobile per le notifiche push."""
+    data = request.json or {}
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "Missing client id", "error_code": "no_cid"}), 400
+    fcm_token = (data.get("fcm_token") or "").strip()
+    platform_name = (data.get("platform") or "").strip().lower()
+    app_version = (data.get("app_version") or "").strip()[:32]
+    if not fcm_token or len(fcm_token) > 4096:
+        return jsonify({"error": "Invalid fcm_token", "error_code": "invalid_token"}), 400
+    if platform_name not in ("android", "ios"):
+        return jsonify({"error": "Invalid platform", "error_code": "invalid_platform"}), 400
+    with _device_tokens_lock:
+        entries = [e for e in _device_tokens.get(cid, [])
+                   if e.get("fcm_token") != fcm_token]
+        entries.append({
+            "fcm_token": fcm_token,
+            "platform": platform_name,
+            "app_version": app_version,
+            "registered_at": time.time(),
+        })
+        _device_tokens[cid] = entries[-_MAX_DEVICES_PER_CLIENT:]
+        _save_device_tokens()
+    return jsonify({"ok": True})
+
+
 # ----------------------------------------------------------------------
 # LLM TEXT OPTIMIZATION API
 # ----------------------------------------------------------------------
@@ -11606,6 +11671,7 @@ def _cleanup_loop():
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
 _load_tokens()
+_load_device_tokens()
 _load_payments()
 _load_vouchers()
 payment._migrate_paid_opt_to_paid_jobs()

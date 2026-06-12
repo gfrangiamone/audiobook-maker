@@ -106,3 +106,54 @@ def test_token_client_id_survives_save_load_roundtrip(monkeypatch, tmp_path):
     assert token_key in data, "token non salvato"
     assert data[token_key].get("client_id") == "mobile-cid-12345", \
         "client_id non persistito da _save_tokens"
+
+
+# ---------------------------------------------------------------- Task 3
+
+HDR = {"X-ABM-Cid": "mobile-cid-12345"}
+
+
+@pytest.fixture
+def device_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(audiobook_app, "_DEVICE_TOKENS_FILE",
+                        tmp_path / "_device_tokens.json")
+    monkeypatch.setattr(audiobook_app, "_device_tokens", {})
+    yield
+
+
+def test_device_register_ok(client, device_env):
+    r = client.post("/api/device/register", headers=HDR,
+                    json={"fcm_token": "tok-abc", "platform": "android",
+                          "app_version": "1.0.0"})
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
+    entries = audiobook_app._device_tokens["mobile-cid-12345"]
+    assert entries[0]["fcm_token"] == "tok-abc"
+    assert entries[0]["platform"] == "android"
+    assert audiobook_app._DEVICE_TOKENS_FILE.exists()
+
+
+def test_device_register_requires_cid(client, device_env):
+    r = client.post("/api/device/register",
+                    json={"fcm_token": "tok-abc", "platform": "android"})
+    assert r.status_code == 400
+    assert r.get_json()["error_code"] == "no_cid"
+
+
+def test_device_register_invalid_platform(client, device_env):
+    r = client.post("/api/device/register", headers=HDR,
+                    json={"fcm_token": "tok-abc", "platform": "windows"})
+    assert r.status_code == 400
+    assert r.get_json()["error_code"] == "invalid_platform"
+
+
+def test_device_register_dedup_and_cap(client, device_env):
+    for i in range(7):
+        client.post("/api/device/register", headers=HDR,
+                    json={"fcm_token": f"tok-{i}", "platform": "ios"})
+    # ri-registrazione stesso token: niente duplicato
+    client.post("/api/device/register", headers=HDR,
+                json={"fcm_token": "tok-6", "platform": "ios"})
+    entries = audiobook_app._device_tokens["mobile-cid-12345"]
+    assert len(entries) == 5  # cap
+    assert sum(1 for e in entries if e["fcm_token"] == "tok-6") == 1
