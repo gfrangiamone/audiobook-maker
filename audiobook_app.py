@@ -1379,6 +1379,7 @@ def _load_tokens():
 # Device tokens (app mobile): cid -> lista device FCM. Persistenza atomica.
 _DEVICE_TOKENS_FILE = UPLOAD_DIR / "_device_tokens.json"
 _MAX_DEVICES_PER_CLIENT = 5
+_FCM_TOKEN_RE = re.compile(r"^[A-Za-z0-9_:\-\.~%]{10,4096}$")
 _device_tokens = {}
 _device_tokens_lock = threading.Lock()
 
@@ -7884,14 +7885,14 @@ def api_email_available():
 @app.route("/api/device/register", methods=["POST"])
 def api_device_register():
     """Registra/aggiorna il device FCM del client mobile per le notifiche push."""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     cid = _get_client_id()
     if not cid:
         return jsonify({"error": "Missing client id", "error_code": "no_cid"}), 400
     fcm_token = (data.get("fcm_token") or "").strip()
     platform_name = (data.get("platform") or "").strip().lower()
     app_version = (data.get("app_version") or "").strip()[:32]
-    if not fcm_token or len(fcm_token) > 4096:
+    if not _FCM_TOKEN_RE.match(fcm_token):
         return jsonify({"error": "Invalid fcm_token", "error_code": "invalid_token"}), 400
     if platform_name not in ("android", "ios"):
         return jsonify({"error": "Invalid platform", "error_code": "invalid_platform"}), 400
