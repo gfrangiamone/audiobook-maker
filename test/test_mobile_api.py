@@ -49,7 +49,9 @@ def test_completion_token_records_client_id(monkeypatch, tmp_path):
     from unittest.mock import patch
 
     job_id = "mobtok1"
-    audiobook_app.jobs[job_id] = {
+    # Usa i riferimenti iniettati in generation_engine (robusto al reload di
+    # audiobook_app da parte di altri test, es. test_cold_*.py).
+    ge._jobs[job_id] = {
         "status": "done",
         "client_id": "mobile-cid-12345",
         "notify_email": "u@x.it",
@@ -68,16 +70,16 @@ def test_completion_token_records_client_id(monkeypatch, tmp_path):
              patch.object(email_service, "_smtp_available", return_value=True), \
              patch.object(ge, "_save_tokens", side_effect=lambda: None):
             ge._send_completion_email(job_id)
-        toks = [t for t, i in audiobook_app._download_tokens.items()
+        toks = [t for t, i in ge._download_tokens.items()
                 if i.get("job_id") == job_id]
         assert toks, "nessun token creato"
-        captured["info"] = audiobook_app._download_tokens[toks[0]]
+        captured["info"] = ge._download_tokens[toks[0]]
         assert captured["info"].get("client_id") == "mobile-cid-12345"
     finally:
-        audiobook_app.jobs.pop(job_id, None)
-        for t in list(audiobook_app._download_tokens):
-            if audiobook_app._download_tokens[t].get("job_id") == job_id:
-                audiobook_app._download_tokens.pop(t, None)
+        ge._jobs.pop(job_id, None)
+        for t in list(ge._download_tokens):
+            if ge._download_tokens[t].get("job_id") == job_id:
+                ge._download_tokens.pop(t, None)
 
 
 # ---------------------------------------------------------------- Task 2 – round-trip persistenza
