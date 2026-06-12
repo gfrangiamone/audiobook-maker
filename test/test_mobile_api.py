@@ -262,3 +262,28 @@ def test_my_jobs_token_without_client_id_hidden(client, my_jobs_env):
     }
     r = client.get("/api/my_jobs", headers=HDR)
     assert r.get_json()["jobs"] == []
+
+
+def test_my_jobs_merges_memory_and_token_for_same_job(client, my_jobs_env):
+    now = time.time()
+    my_jobs_env("mjboth", status="done", client_id="mobile-cid-12345",
+                original_filename="libro.epub", output_format="m4b",
+                start_time=now - 120, info=None, last_poll=now)
+    audiobook_app._download_tokens["TOKBOTH"] = {
+        "job_id": "mjboth",
+        "client_id": "mobile-cid-12345",
+        "created_at": now - 60,
+        "book_title": "Il mio libro",
+        "output_format": "m4b",
+        "output_m4b": "/x/out.m4b",
+        "is_gemini": False,
+    }
+    r = client.get("/api/my_jobs", headers=HDR)
+    data = r.get_json()["jobs"]
+    assert len(data) == 1  # merge, niente duplicati
+    j = data[0]
+    assert j["job_id"] == "mjboth"
+    assert j["status"] == "done"
+    assert j["download_token"] == "TOKBOTH"
+    assert j["formats"]["m4b"] is True
+    assert j["created_at"] == pytest.approx(now - 120)  # vince l'in-memory
