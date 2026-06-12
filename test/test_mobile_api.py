@@ -78,3 +78,31 @@ def test_completion_token_records_client_id(monkeypatch, tmp_path):
         for t in list(audiobook_app._download_tokens):
             if audiobook_app._download_tokens[t].get("job_id") == job_id:
                 audiobook_app._download_tokens.pop(t, None)
+
+
+# ---------------------------------------------------------------- Task 2 – round-trip persistenza
+
+def test_token_client_id_survives_save_load_roundtrip(monkeypatch, tmp_path):
+    import json
+    import pathlib
+
+    tokens_file = tmp_path / "_download_tokens.json"
+    monkeypatch.setattr(audiobook_app, "_TOKENS_FILE", pathlib.Path(tokens_file))
+
+    token_key = "TOKRT"
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        token_key: {
+            "job_id": "rtjob",
+            "client_id": "mobile-cid-12345",
+            "created_at": time.time(),
+            "book_title": "B",
+            "is_gemini": False,
+        }
+    })
+
+    audiobook_app._save_tokens()
+
+    data = json.loads(tokens_file.read_text(encoding="utf-8"))
+    assert token_key in data, "token non salvato"
+    assert data[token_key].get("client_id") == "mobile-cid-12345", \
+        "client_id non persistito da _save_tokens"

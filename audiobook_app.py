@@ -1324,6 +1324,8 @@ def _save_tokens():
                     "output_format": info.get("output_format", ""),
                     "output_m4b": info.get("output_m4b", ""),
                     "ai_optimized": info.get("ai_optimized", False),
+                    # Mobile: client identifier for job reconstruction after restart
+                    "client_id": info.get("client_id", ""),
                 }
             # Atomic write: tmp + fsync + rename per evitare corruzione su crash
             _tmp_tokens = _TOKENS_FILE.with_suffix(_TOKENS_FILE.suffix + ".tmp")
