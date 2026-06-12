@@ -6,3 +6,4 @@ ruff
 boto3
 flask-compress
 google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile)
+requests  # client HTTP per push FCM (push_service)
