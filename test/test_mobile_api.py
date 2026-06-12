@@ -287,3 +287,72 @@ def test_my_jobs_merges_memory_and_token_for_same_job(client, my_jobs_env):
     assert j["download_token"] == "TOKBOTH"
     assert j["formats"]["m4b"] is True
     assert j["created_at"] == pytest.approx(now - 120)  # vince l'in-memory
+
+
+# ---------------------------------------------------------------- Task 6
+
+def test_push_job_event_sends_to_all_devices_and_purges_dead(monkeypatch):
+    import push_service
+    calls = []
+
+    def fake_send(tok, title, body, data=None):
+        calls.append((tok, data.get("event")))
+        return "unregistered" if tok == "dead" else "ok"
+
+    monkeypatch.setattr(push_service, "send_push", fake_send)
+    monkeypatch.setattr(push_service, "is_available", lambda: True)
+    monkeypatch.setattr(audiobook_app, "_device_tokens", {
+        "mobile-cid-12345": [
+            {"fcm_token": "live", "platform": "android"},
+            {"fcm_token": "dead", "platform": "ios"},
+        ]
+    })
+    monkeypatch.setattr(audiobook_app, "_save_device_tokens", lambda: None)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["mjpush"] = {"client_id": "mobile-cid-12345",
+                                        "info": None, "last_poll": time.time()}
+    try:
+        audiobook_app._push_job_event("mjpush", "done", "Il mio libro")
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop("mjpush", None)
+    assert ("live", "done") in calls
+    assert ("dead", "done") in calls
+    # il token morto viene rimosso
+    toks = [e["fcm_token"]
+            for e in audiobook_app._device_tokens["mobile-cid-12345"]]
+    assert toks == ["live"]
+
+
+def test_push_job_event_noop_without_devices(monkeypatch):
+    import push_service
+    monkeypatch.setattr(push_service, "is_available", lambda: True)
+    monkeypatch.setattr(push_service, "send_push",
+                        lambda *a, **k: pytest.fail("non deve inviare"))
+    monkeypatch.setattr(audiobook_app, "_device_tokens", {})
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["mjnop"] = {"client_id": "sconosciuto-cid",
+                                       "info": None, "last_poll": time.time()}
+    try:
+        audiobook_app._push_job_event("mjnop", "done", "X")  # non deve sollevare
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop("mjnop", None)
+
+
+def test_generation_engine_binds_send_push():
+    import generation_engine as ge
+    # verifica che configure accetti e bindi send_push_fn senza toccare
+    # gli altri binding del modulo (riconfigurazione completa = pollution)
+    original = ge._send_push
+    try:
+        pushed = []
+        ge._send_push = lambda jid, event, title: pushed.append((jid, event))
+        ge._send_push("j1", "done", "T")
+        assert pushed == [("j1", "done")]
+        import inspect
+        assert "send_push_fn" in inspect.signature(ge.configure).parameters
+    finally:
+        ge._send_push = original
+    assert audiobook_app._push_job_event is not None
+    assert ge._send_push is audiobook_app._push_job_event

@@ -120,6 +120,7 @@ from tts_split import (
 )
 
 import email_service
+import push_service
 import payment
 import generation_engine
 import translation_core
@@ -1411,6 +1412,46 @@ def _save_device_tokens():
         os.replace(str(_tmp), str(_DEVICE_TOKENS_FILE))
     except Exception as e:
         print(f"[device] Failed to save device tokens: {e}")
+
+
+def _push_job_event(job_id, event, title=""):
+    """Invia push FCM a tutti i device del client proprietario del job.
+
+    event: 'done' | 'error'. Mai bloccante: ogni errore e' solo loggato.
+    """
+    try:
+        if not push_service.is_available():
+            return
+        with _jobs_lock:
+            job = jobs.get(job_id) or {}
+            cid = job.get("client_id", "")
+        if not cid:
+            return
+        with _device_tokens_lock:
+            devices = list(_device_tokens.get(cid, []))
+        if not devices:
+            return
+        if event == "done":
+            subject = title or "Audiolibro pronto"
+            body = "La generazione è completata: scarica il file nella libreria."
+        else:
+            subject = title or "Generazione non riuscita"
+            body = "Il lavoro si è interrotto: apri l'app per i dettagli."
+        dead = []
+        for dev in devices:
+            outcome = push_service.send_push(
+                dev.get("fcm_token", ""), subject, body,
+                data={"job_id": job_id, "event": event})
+            if outcome == "unregistered":
+                dead.append(dev.get("fcm_token"))
+        if dead:
+            with _device_tokens_lock:
+                _device_tokens[cid] = [
+                    e for e in _device_tokens.get(cid, [])
+                    if e.get("fcm_token") not in dead]
+                _save_device_tokens()
+    except Exception as e:
+        print(f"[push] _push_job_event failed (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------
@@ -11783,7 +11824,8 @@ generation_engine.configure(
     gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
     write_email_marker_fn=_write_email_marker,
     lookup_client_email_fn=_lookup_client_email,
-    build_descriptor_fn=_build_job_descriptor
+    build_descriptor_fn=_build_job_descriptor,
+    send_push_fn=_push_job_event
 )
 
 if _paypal_available():

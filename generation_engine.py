@@ -137,6 +137,7 @@ _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEM
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
 _lookup_client_email = lambda cid: ""  # callable(cid) -> email or ""
 _build_descriptor = None  # callable(job, phase) -> recovery descriptor dict
+_send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 
 
 def _is_gemini_voice(voice):
@@ -172,14 +173,14 @@ def _set_job_status(job, status):
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
-              lookup_client_email_fn=None, build_descriptor_fn=None):
+              lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
-    global _build_descriptor
+    global _build_descriptor, _send_push
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -196,6 +197,8 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _lookup_client_email = lookup_client_email_fn
     if build_descriptor_fn is not None:
         _build_descriptor = build_descriptor_fn
+    if send_push_fn is not None:
+        _send_push = send_push_fn
 
     # Inizializza client LLM (se API key presente)
     _init_llm()
@@ -2014,6 +2017,12 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
     Recupera l'email destinataria dal payment metadata (PayPal -> pay.email,
     voucher -> voucher.email). Non-fatal: errori vengono ingoiati.
     """
+    if _send_push:
+        try:
+            _send_push(job_id, "error", "")
+        except Exception as _push_err:
+            print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
+
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     amt = float(payment_meta.get("total_eur", 0) or 0)
@@ -4337,6 +4346,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
+
+        # Send push notification to mobile devices
+        if _send_push:
+            try:
+                _book_title = ""
+                try:
+                    _info = job.get("info")
+                    _book_title = getattr(_info, "title", "") or ""
+                except Exception:
+                    pass
+                _send_push(job_id, "done", _book_title)
+            except Exception as _push_err:
+                print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
 
         # Send email notification if user registered
         notify_email = job.get("notify_email")
