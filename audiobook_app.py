@@ -681,6 +681,16 @@ def _refund_payment_on_orphan(job_id, job, reason):
     if not tok or amt <= 0:
         return None
     try:
+        # Guard persistente anti-doppio-refund (specchio di
+        # generation_engine._refund_gemini_payment): il pop di job["payment"]
+        # sotto previene il doppio refund nello stesso processo, ma non
+        # sopravvive a un restart. Nel recovery (_orphan_fallback) un job_like
+        # viene ricostruito dal descrittore: senza questo controllo un re-run
+        # dopo crash duplicherebbe il rimborso (incidente classe B1).
+        if payment.has_refund_for_job(job_id, tok):
+            print(f"[{job_id}] orphan refund skipped: persistent refund trace "
+                  f"already exists (reason={reason})")
+            return None
         if method == "voucher":
             payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
         elif method == "paypal":
