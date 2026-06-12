@@ -7911,6 +7911,93 @@ def api_device_register():
 
 
 # ----------------------------------------------------------------------
+# MOBILE: JOB LIST
+# ----------------------------------------------------------------------
+
+_MY_JOBS_LIVE_STATUSES = (
+    "analyzed", "optimizing", "optimized", "translating", "generating",
+    "done", "error", "cancelled",
+)
+
+
+@app.route("/api/my_jobs")
+def api_my_jobs():
+    """Job del client chiamante: attivi (in-memory) + completati (token su disco).
+
+    Usato dall'app mobile per ricostruire la tab Attivita' a ogni avvio.
+    """
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"jobs": []})
+    now = time.time()
+    out = {}
+
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for jid, job in snapshot:
+        if job.get("client_id") != cid:
+            continue
+        status = job.get("status", "")
+        if status not in _MY_JOBS_LIVE_STATUSES:
+            continue
+        info = job.get("info")
+        entry = {
+            "job_id": jid,
+            "status": status,
+            "title": (getattr(info, "title", "") or
+                      job.get("original_filename", "")),
+            "output_format": job.get("output_format", ""),
+            "created_at": job.get("start_time") or job.get("last_poll") or 0,
+        }
+        if status == "generating":
+            entry.update({
+                "progress_current": job.get("progress_current", 0),
+                "progress_total": job.get("progress_total", 0),
+                "progress_message": job.get("progress_message", ""),
+            })
+        elif status == "optimizing":
+            entry.update({
+                "opt_processed_chars": job.get("opt_processed_chars", 0),
+                "opt_total_chars": job.get("opt_total_chars", 0),
+            })
+        elif status == "translating":
+            entry.update({
+                "tr_progress_current": job.get("tr_progress_current", 0),
+                "tr_progress_total": job.get("tr_progress_total", 0),
+            })
+        out[jid] = entry
+
+    for token, tinfo in list(_download_tokens.items()):
+        if not isinstance(tinfo, dict) or tinfo.get("client_id") != cid:
+            continue
+        created = tinfo.get("created_at", 0)
+        retention = _effective_retention_for_token_info(tinfo)
+        if (now - created) > retention:
+            continue
+        jid = tinfo.get("job_id", "")
+        entry = out.setdefault(jid, {"job_id": jid, "created_at": created})
+        entry.update({
+            "status": "done",
+            "title": tinfo.get("book_title") or entry.get("title", ""),
+            "output_format": tinfo.get("output_format",
+                                       entry.get("output_format", "")),
+            "download_token": token,
+            "expires_at": created + retention,
+            "downloaded_at": tinfo.get("downloaded_at") or None,
+            "formats": {
+                "m4b": bool(tinfo.get("output_m4b")),
+                "zip": bool(tinfo.get("output_zip")),
+                "mp3": bool(tinfo.get("output_file")),
+                "abm": bool(tinfo.get("optimized_abm_path")),
+            },
+        })
+
+    ordered = sorted(out.values(),
+                     key=lambda e: -(e.get("created_at") or 0))
+    return jsonify({"jobs": ordered})
+
+
+# ----------------------------------------------------------------------
 # LLM TEXT OPTIMIZATION API
 # ----------------------------------------------------------------------
 

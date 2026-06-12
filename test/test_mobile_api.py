@@ -177,3 +177,88 @@ def test_device_tokens_save_load_roundtrip(device_env):
     audiobook_app._load_device_tokens()
     entries = audiobook_app._device_tokens["mobile-cid-12345"]
     assert entries[0]["fcm_token"] == "tok-rt"
+
+
+# ---------------------------------------------------------------- Task 4
+
+@pytest.fixture
+def my_jobs_env(monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    seeded = []
+
+    def seed_job(jid, **fields):
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs[jid] = fields
+        seeded.append(jid)
+
+    yield seed_job
+    with audiobook_app._jobs_lock:
+        for jid in seeded:
+            audiobook_app.jobs.pop(jid, None)
+
+
+def test_my_jobs_requires_cid(client, my_jobs_env):
+    r = client.get("/api/my_jobs")
+    assert r.status_code == 200
+    assert r.get_json()["jobs"] == []
+
+
+def test_my_jobs_active_job_with_progress(client, my_jobs_env):
+    my_jobs_env("mj1", status="generating", client_id="mobile-cid-12345",
+                original_filename="libro.epub", output_format="m4b",
+                progress_current=3, progress_total=10,
+                progress_message="Chapter 3...", start_time=time.time(),
+                info=None, last_poll=time.time())
+    my_jobs_env("mj2", status="generating", client_id="ALTRO-cid-99999",
+                info=None, last_poll=time.time())
+    r = client.get("/api/my_jobs", headers=HDR)
+    data = r.get_json()["jobs"]
+    assert [j["job_id"] for j in data] == ["mj1"]
+    assert data[0]["status"] == "generating"
+    assert data[0]["progress_current"] == 3
+    assert data[0]["progress_total"] == 10
+
+
+def test_my_jobs_completed_from_token(client, my_jobs_env):
+    now = time.time()
+    audiobook_app._download_tokens["TOKMJ"] = {
+        "job_id": "mjdone",
+        "client_id": "mobile-cid-12345",
+        "created_at": now - 60,
+        "book_title": "Il mio libro",
+        "output_format": "m4b",
+        "output_m4b": "/x/out.m4b",
+        "optimized_abm_path": "",
+        "is_gemini": False,
+    }
+    r = client.get("/api/my_jobs", headers=HDR)
+    data = r.get_json()["jobs"]
+    assert len(data) == 1
+    j = data[0]
+    assert j["status"] == "done"
+    assert j["download_token"] == "TOKMJ"
+    assert j["title"] == "Il mio libro"
+    assert j["formats"]["m4b"] is True
+    assert j["formats"]["abm"] is False
+    assert j["expires_at"] > now
+
+
+def test_my_jobs_expired_token_hidden(client, my_jobs_env):
+    audiobook_app._download_tokens["TOKOLD"] = {
+        "job_id": "mjold",
+        "client_id": "mobile-cid-12345",
+        "created_at": time.time() - 10 * 365 * 86400,
+        "is_gemini": False,
+    }
+    r = client.get("/api/my_jobs", headers=HDR)
+    assert r.get_json()["jobs"] == []
+
+
+def test_my_jobs_token_without_client_id_hidden(client, my_jobs_env):
+    audiobook_app._download_tokens["TOKANON"] = {
+        "job_id": "mjanon",
+        "created_at": time.time() - 60,
+        "is_gemini": False,
+    }
+    r = client.get("/api/my_jobs", headers=HDR)
+    assert r.get_json()["jobs"] == []
