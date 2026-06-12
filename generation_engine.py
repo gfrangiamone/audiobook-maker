@@ -1386,6 +1386,7 @@ def _send_completion_email(job_id):
         "optimized_abm_name": job.get("optimized_abm_name", ""),
         # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
         "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "client_id": job.get("client_id", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -1583,6 +1584,7 @@ def _send_optimization_email(job_id):
         # Token .abm di sola ottimizzazione: la retention sarà comunque pilotata
         # dal flag voce se l'utente dopo procede a generazione PREMIUM.
         "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "client_id": job.get("client_id", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -2695,6 +2697,7 @@ def _send_translation_email(job_id):
         "output_format": job.get("tr_params", {}).get("output_format", ""),
         "ai_optimized": bool(job.get("translated_optimized")),
         "is_gemini": False,
+        "client_id": job.get("client_id", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -4426,6 +4429,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 "lang": job.get("browser_lang", "en"),
                                 "is_gemini": True,
                                 "partial_cancel": True,
+                                "client_id": job.get("client_id", ""),
                             }
                             _save_tokens()
                             partial_download_url = (f"{BASE_URL}/dl/{token}/download"
