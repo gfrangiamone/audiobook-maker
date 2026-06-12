@@ -841,7 +841,8 @@ def _reenqueue_orphan(job_id, rec):
         try:
             _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job["voice"], job.get("browser_lang", ""))
+                          job["voice"], job.get("browser_lang", ""),
+                          epoch=job.get("gen_epoch"))
         except Exception:
             pass
         t = threading.Thread(
@@ -1618,7 +1619,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 #  -  -  Activity log  -  -
 _log_lock = threading.Lock()
 _logged_month: str = ""
-_logged_sids_ops: set[tuple[str, str]] = set()
+_logged_sids_ops: set[tuple] = set()  # (job_id, op) o (job_id, op, epoch) per eventi di ciclo
 
 def _init_log_dedup():
     """Popola il set di dedup dal file di log del mese corrente."""
@@ -1636,14 +1637,26 @@ def _init_log_dedup():
                 if len(parts) >= 4:
                     _logged_sids_ops.add((parts[0], parts[3]))
 
-def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang=''):
+def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None):
+    """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
+
+    `epoch` (es. job["gen_epoch"]): se fornito entra nella chiave di dedup,
+    così gli eventi di CICLO (GENERATE/COMPLETE) di una RI-generazione dello
+    stesso job_id — cancel su job done + nuovo /api/generate, stesso mese —
+    non vengono soppressi come duplicati. Gli eventi soggetti a spam (download
+    aperti da prefetch HEAD/Range) restano col dedup secco a 2-tuple, perché
+    chiamati senza `epoch`. NB: _init_log_dedup ricostruisce dal file solo
+    chiavi 2-tuple (l'epoca non è persistita su riga); dopo un restart un job
+    ripreso/ri-eseguito può quindi ri-loggare il proprio evento di ciclo —
+    comportamento corretto (è una nuova esecuzione), non spam di download.
+    """
     global _logged_month
     from datetime import datetime
     now = datetime.now()
     current_month = now.strftime('%Y-%m')
     log_path = SCRIPT_DIR / f"activity_{current_month}.log"
     ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    key = (session_id, operation)
+    key = (session_id, operation) if epoch is None else (session_id, operation, epoch)
     with _log_lock:
         if current_month != _logged_month:
             _logged_month = current_month
@@ -7406,7 +7419,8 @@ def api_generate():
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                   client_id, client_ip, voice,
-                  browser_lang=job.get("browser_lang", ""))
+                  browser_lang=job.get("browser_lang", ""),
+                  epoch=job.get("gen_epoch"))
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica

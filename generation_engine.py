@@ -4201,7 +4201,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _set_job_status(job, "partial" if _is_partial else "done")
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""), job.get("browser_lang", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""),
+                      epoch=job.get("gen_epoch"))
 
         # Offload asincrono su cold storage (se configurato). I file restano
         # serviti da locale per tutta la finestra calda; l'upload gira intanto.
