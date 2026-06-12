@@ -409,3 +409,24 @@ def test_dl_token_m4b_supports_range(client, tmp_path, monkeypatch):
     assert r.status_code == 206
     assert r.data == b"4567"
     assert r.headers.get("Content-Range") == "bytes 4-7/16"
+
+
+def test_send_file_throttled_default_supports_range(client, tmp_path, monkeypatch):
+    # Il default del wrapper deve restare conditional=True (Range su tutti
+    # gli endpoint file, comportamento storico di Flask >= 2).
+    # Verifica tramite un call-site non opt-in (nessun conditional=True esplicito):
+    # _try_cold_serve usa bypass_throttle=True senza conditional → deve comunque 206.
+    import inspect
+    sig = inspect.signature(audiobook_app._send_file_throttled)
+    assert sig.parameters["conditional"].default is True, (
+        "_send_file_throttled deve avere conditional=True come default"
+    )
+    # Test comportamentale: senza passare conditional, un Range request restituisce 206.
+    f = tmp_path / "x.bin"
+    f.write_bytes(b"0123456789")
+    with audiobook_app.app.test_request_context(
+            "/x.bin", headers={"Range": "bytes=2-5"}):
+        r = audiobook_app._send_file_throttled(
+            str(f), as_attachment=True, download_name="x.bin",
+            bypass_throttle=True)
+    assert r.status_code == 206

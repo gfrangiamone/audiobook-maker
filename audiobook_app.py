@@ -1081,7 +1081,7 @@ def _find_files_in_outputs(job_dir, pattern):
     return results
 
 
-def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, conditional=False, **kwargs):
+def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, conditional=True, **kwargs):
     # --- Cold storage tier ---
     # Se il file locale è stato evacuato (finestra calda scaduta) ma esiste su
     # cold storage, applica il throttle sulla chiave e fai redirect 302 al
