@@ -567,10 +567,15 @@ MAX_CONCURRENT_LLM_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_LLM_PER_C
 # Cookie name and max-age for client identification
 _CLIENT_COOKIE_NAME = "abm_cid"
 _CLIENT_COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
+_MOBILE_CID_HEADER = "X-ABM-Cid"
+_MOBILE_CID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
 def _get_client_id():
-    """Return the client_id from cookie, or generate a new one (will be set later)."""
+    """Return the client_id from mobile header or cookie, or empty string."""
+    hdr = (request.headers.get(_MOBILE_CID_HEADER) or "").strip()
+    if hdr and _MOBILE_CID_RE.match(hdr):
+        return hdr
     return request.cookies.get(_CLIENT_COOKIE_NAME, "")
 
 
