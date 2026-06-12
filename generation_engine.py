@@ -2019,7 +2019,10 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
     """
     if _send_push:
         try:
-            _send_push(job_id, "error", "")
+            threading.Thread(
+                target=_send_push, args=(job_id, "error", ""),
+                daemon=True, name=f"push-err-{job_id}",
+            ).start()
         except Exception as _push_err:
             print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
 
@@ -4356,7 +4359,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _book_title = getattr(_info, "title", "") or ""
                 except Exception:
                     pass
-                _send_push(job_id, "done", _book_title)
+                threading.Thread(
+                    target=_send_push, args=(job_id, "done", _book_title),
+                    daemon=True, name=f"push-{job_id}",
+                ).start()
             except Exception as _push_err:
                 print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
 

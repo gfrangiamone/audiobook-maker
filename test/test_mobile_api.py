@@ -340,6 +340,36 @@ def test_push_job_event_noop_without_devices(monkeypatch):
             audiobook_app.jobs.pop("mjnop", None)
 
 
+def test_push_job_event_purge_preserves_device_registered_mid_send(monkeypatch):
+    import push_service
+
+    def fake_send(tok, title, body, data=None):
+        if tok == "dead":
+            # simula una registrazione concorrente durante l'I/O FCM
+            audiobook_app._device_tokens["mobile-cid-12345"].append(
+                {"fcm_token": "fresh-device-tok", "platform": "android"})
+            return "unregistered"
+        return "ok"
+
+    monkeypatch.setattr(push_service, "send_push", fake_send)
+    monkeypatch.setattr(push_service, "is_available", lambda: True)
+    monkeypatch.setattr(audiobook_app, "_device_tokens", {
+        "mobile-cid-12345": [{"fcm_token": "dead", "platform": "ios"}]
+    })
+    monkeypatch.setattr(audiobook_app, "_save_device_tokens", lambda: None)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["mjrace"] = {"client_id": "mobile-cid-12345",
+                                        "info": None, "last_poll": time.time()}
+    try:
+        audiobook_app._push_job_event("mjrace", "done", "X")
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop("mjrace", None)
+    toks = [e["fcm_token"]
+            for e in audiobook_app._device_tokens["mobile-cid-12345"]]
+    assert toks == ["fresh-device-tok"]  # dead rimosso, fresh sopravvive
+
+
 def test_generation_engine_binds_send_push():
     import generation_engine as ge
     # verifica che configure accetti e bindi send_push_fn senza toccare
