@@ -62,6 +62,18 @@ def test_send_push_unregistered(fcm_env):
     assert result == "unregistered"
 
 
+def test_send_push_400_is_error_no_retry(fcm_env):
+    """400 = payload invalido: result 'error', nessun retry, token NON rimosso."""
+    resp = MagicMock(status_code=400, text='{"error":{"status":"INVALID_ARGUMENT"}}')
+    with patch.object(push_service, "_get_credentials",
+                      return_value=_mock_creds()), \
+         patch.object(push_service.requests, "post",
+                      return_value=resp) as mock_post:
+        result = push_service.send_push("tok-400xxxxx", "T", "B")
+    assert result == "error"
+    assert mock_post.call_count == 1
+
+
 def test_send_push_retries_then_error(fcm_env, monkeypatch):
     monkeypatch.setattr(push_service.time, "sleep", lambda s: None)
     resp = MagicMock(status_code=500, text="boom")
