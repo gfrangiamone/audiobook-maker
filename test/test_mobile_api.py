@@ -452,6 +452,62 @@ def test_generation_engine_binds_send_push():
     assert ge._send_push is audiobook_app._push_job_event
 
 
+def test_transfer_claim_reowns_job_and_token(monkeypatch, tmp_path):
+    import audiobook_app
+    jid = "trf-job-1"
+    out = tmp_path / "out.m4b"; out.write_bytes(b"x")
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "generating", "client_id": "web-cid-xyz", "info": None,
+            "output_m4b": str(out), "output_format": "m4b",
+            "start_time": __import__("time").time(),
+        }
+    # un download token del web per lo stesso job
+    audiobook_app._download_tokens["WTOK"] = {
+        "job_id": jid, "client_id": "web-cid-xyz", "created_at": __import__("time").time(),
+        "is_gemini": False, "output_m4b": str(out), "output_format": "m4b",
+    }
+    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    try:
+        ttok = audiobook_app._ensure_transfer_token(jid)
+        assert ttok
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-123"})
+        assert r.status_code == 200
+        assert r.get_json()["job_id"] == jid
+        assert audiobook_app.jobs[jid]["client_id"] == "app-cid-123"  # job re-owned
+        assert audiobook_app._download_tokens["WTOK"]["client_id"] == "app-cid-123"  # token re-owned
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+        audiobook_app._download_tokens.pop("WTOK", None)
+
+
+def test_transfer_claim_invalid_token(monkeypatch):
+    import audiobook_app
+    c = audiobook_app.app.test_client()
+    r = c.post("/api/transfer/claim/NONEXISTENT", headers={"X-ABM-Cid": "app-cid-123"})
+    assert r.status_code == 404
+
+
+def test_transfer_claim_requires_cid(monkeypatch):
+    import audiobook_app
+    jid = "trf-job-2"
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {"status": "generating", "client_id": "w", "info": None,
+                                   "start_time": __import__("time").time()}
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    try:
+        ttok = audiobook_app._ensure_transfer_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{ttok}")  # niente X-ABM-Cid
+        assert r.status_code == 400
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+
+
 # ---------------------------------------------------------------- Task 7
 
 def test_dl_token_m4b_supports_range(client, tmp_path, monkeypatch):

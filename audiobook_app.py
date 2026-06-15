@@ -954,6 +954,80 @@ _download_tokens = {}  # token -> {job_id, created_at, download_type, base_url, 
 _TOKENS_FILE = UPLOAD_DIR / "_download_tokens.json"
 _tokens_lock = threading.Lock()
 
+_transfer_tokens = {}  # transfer_token -> {"job_id":..., "created_at":...}
+_TRANSFER_TOKENS_FILE = UPLOAD_DIR / "_transfer_tokens.json"
+_transfer_lock = threading.Lock()
+
+
+def _load_transfer_tokens():
+    global _transfer_tokens
+    try:
+        if _TRANSFER_TOKENS_FILE.exists():
+            with open(_TRANSFER_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _transfer_tokens = data
+    except Exception as e:
+        print(f"[transfer] load failed: {e}")
+
+
+def _save_transfer_tokens():
+    try:
+        tmp = _TRANSFER_TOKENS_FILE.with_suffix(_TRANSFER_TOKENS_FILE.suffix + ".tmp")
+        with _transfer_lock:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_transfer_tokens, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp), str(_TRANSFER_TOKENS_FILE))
+    except Exception as e:
+        print(f"[transfer] save failed: {e}")
+
+
+def _ensure_transfer_token(job_id):
+    """Ritorna (idempotente) il transfer token per il job, creandolo se assente."""
+    with _transfer_lock:
+        for tok, info in _transfer_tokens.items():
+            if isinstance(info, dict) and info.get("job_id") == job_id:
+                return tok
+        tok = secrets.token_urlsafe(24)
+        _transfer_tokens[tok] = {"job_id": job_id, "created_at": time.time()}
+    _save_transfer_tokens()
+    return tok
+
+
+def _qr_data_uri(text):
+    """PNG data-URI di un QR che codifica `text`. '' se qrcode non disponibile."""
+    try:
+        import qrcode
+        import io as _io
+        import base64 as _b64
+        qr = qrcode.QRCode(box_size=6, border=2)
+        qr.add_data(text)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        print(f"[transfer] qr generation failed: {e}")
+        return ""
+
+
+def _transfer_payload_for(job_id):
+    """Stringa codificata nel QR: URL claim assoluto. L'app ne estrae base+token."""
+    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    tok = _ensure_transfer_token(job_id)
+    return f"{base}/api/transfer/claim/{tok}", tok
+
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
 _DL_THROTTLE_SEC = 30
 _DL_MAX_DOWNLOADS = 5
@@ -8049,6 +8123,46 @@ def api_my_jobs():
     return jsonify({"jobs": ordered})
 
 
+@app.route("/api/transfer/claim/<token>", methods=["POST"])
+def api_transfer_claim(token):
+    """L'app reclama un job via transfer token: lo riassocia al cid chiamante."""
+    info = _transfer_tokens.get(token)
+    if not isinstance(info, dict):
+        return jsonify({"error": "invalid_token"}), 404
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
+    job_id = info.get("job_id", "")
+    moved = False
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        if job is not None:
+            job["client_id"] = cid
+            moved = True
+    # riassocia anche i download token del job (per la sezione "Pronti" di my_jobs)
+    changed = False
+    for tok, tinfo in list(_download_tokens.items()):
+        if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
+            tinfo["client_id"] = cid
+            changed = True
+    if changed:
+        _save_tokens()
+    if not moved and not changed:
+        # job non più in memoria e nessun token (es. scaduto): nulla da agganciare
+        return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/transfer_qr/<job_id>")
+def api_transfer_qr(job_id):
+    """QR di trasferimento per la SPA (avvio/completamento). Ownership via cookie."""
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    payload, tok = _transfer_payload_for(job_id)
+    return jsonify({"qr": _qr_data_uri(payload), "token": tok})
+
+
 # ----------------------------------------------------------------------
 # LLM TEXT OPTIMIZATION API
 # ----------------------------------------------------------------------
@@ -11811,6 +11925,7 @@ def _cleanup_loop():
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
 _load_tokens()
+_load_transfer_tokens()
 _load_device_tokens()
 _load_payments()
 _load_vouchers()
