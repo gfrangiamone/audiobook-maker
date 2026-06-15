@@ -494,3 +494,44 @@ def test_send_file_throttled_default_supports_range(client, tmp_path, monkeypatc
             str(f), as_attachment=True, download_name="x.bin",
             bypass_throttle=True)
     assert r.status_code == 206
+
+
+def test_my_jobs_reports_interrupted_for_admin_kill(monkeypatch):
+    import audiobook_app
+    jid = "intj1"
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "analyzed", "cancelled": True, "server_interrupted": True,
+            "client_id": "mobile-cid-12345", "info": None,
+            "start_time": __import__("time").time(),
+        }
+    try:
+        c = audiobook_app.app.test_client()
+        r = c.get("/api/my_jobs", headers={"X-ABM-Cid": "mobile-cid-12345"})
+        jobs = r.get_json()["jobs"]
+        e = next(j for j in jobs if j["job_id"] == jid)
+        assert e["status"] == "interrupted"
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+
+
+def test_my_jobs_user_cancel_not_interrupted(monkeypatch):
+    import audiobook_app
+    jid = "intj2"
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "analyzed", "cancelled": True,  # niente server_interrupted
+            "client_id": "mobile-cid-12345", "info": None,
+            "start_time": __import__("time").time(),
+        }
+    try:
+        c = audiobook_app.app.test_client()
+        r = c.get("/api/my_jobs", headers={"X-ABM-Cid": "mobile-cid-12345"})
+        jobs = r.get_json()["jobs"]
+        e = next((j for j in jobs if j["job_id"] == jid), None)
+        # user-cancel resta "analyzed" (poi filtrato dall'app), NON interrupted
+        assert e is None or e["status"] == "analyzed"
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)

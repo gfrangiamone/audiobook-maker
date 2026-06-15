@@ -7703,6 +7703,8 @@ def api_cancel(job_id):
         # farebbe finire run_generation nel ramo STALE del _CancelledError
         # handler, saltando refund + partial-audio email.
         job["status"] = "analyzed"
+        if is_admin_kill:
+            job["server_interrupted"] = True
     if is_admin_kill:
         _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
                       job.get("client_id", ""), "", job.get("voice", "") or "", "")
@@ -7964,7 +7966,7 @@ def api_device_register():
 
 _MY_JOBS_LIVE_STATUSES = (
     "analyzed", "optimizing", "optimized", "translating", "generating",
-    "done", "error", "cancelled",
+    "done", "error", "cancelled", "interrupted",
 )
 
 
@@ -7986,6 +7988,8 @@ def api_my_jobs():
         if job.get("client_id") != cid:
             continue
         status = job.get("status", "")
+        if job.get("server_interrupted"):
+            status = "interrupted"
         if status not in _MY_JOBS_LIVE_STATUSES:
             continue
         info = job.get("info")
