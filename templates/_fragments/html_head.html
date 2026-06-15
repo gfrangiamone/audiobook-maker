@@ -621,6 +621,11 @@ __REVIEWS_LD__
           <input type="email" id="notifyEmailLate" placeholder="" aria-label="Email per notifica">
           <button class="btn btn-p btn-sm" id="btnSubmitEmailLate" onclick="submitEmailLate()"><span data-t="email_late_btn"></span></button>
         </div>
+        <div id="transferQrStart" class="transfer-qr" hidden style="text-align:center;margin:18px auto;max-width:260px;">
+          <h3 style="font-size:.95rem;margin:0 0 6px;" data-t="transfer_title"></h3>
+          <img id="transferQrStartImg" alt="QR" width="170" height="170"/>
+          <p class="muted" style="font-size:.78rem;margin-top:6px;" data-t="transfer_hint"></p>
+        </div>
       </div>
 
       <div class="panel-footer" id="panel4Footer">
@@ -667,6 +672,11 @@ __REVIEWS_LD__
             <button class="btn btn-outline btn-lg" id="btnA" style="display:none">&#x1F4DD;&#xFE0F; <span data-t="btn_dl_abm"></span></button>
             <button class="btn btn-outline btn-lg" id="btnP" style="display:none">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
             <button class="btn btn-outline btn-lg" id="btnTrAdopt" style="display:none">&#x1F3A7; <span data-t="tr_btn_adopt"></span></button>
+          </div>
+          <div id="transferQrDone" class="transfer-qr" hidden style="text-align:center;margin:18px auto;max-width:260px;">
+            <h3 style="font-size:.95rem;margin:0 0 6px;" data-t="transfer_title"></h3>
+            <img id="transferQrDoneImg" alt="QR" width="170" height="170"/>
+            <p class="muted" style="font-size:.78rem;margin-top:6px;" data-t="transfer_hint"></p>
           </div>
           <div class="al al-w dl-last-notice" id="dlLastNotice" role="status" aria-live="polite" style="display:none;margin-top:18px;text-align:left">
             <div style="display:flex;align-items:flex-start;gap:10px">

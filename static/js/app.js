@@ -2728,6 +2728,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         showPErr(gd.error);unlockUI();return;
       }
       if(gd.auto_batch_email)_showAutoBatchNotice(gd.auto_batch_email);
+      _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
   }
@@ -2958,6 +2959,7 @@ function _listenOptProgressWiz(){
       es.close();
       _setCancelButtonMode('gen');
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('s4_title')||'Generation';
+      _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
       listenProgress();
       return;
     }
@@ -3167,6 +3169,7 @@ async function startGen(){
       emailRegistered=true;
       _showAutoBatchNotice(d.auto_batch_email);
     }
+    _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
@@ -3189,6 +3192,21 @@ function _showAutoBatchNotice(maskedEmail){
   const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
   n.textContent=tmpl.replace('{email}',maskedEmail);
   n.style.display='block';
+}
+
+async function _showTransferQr(jobId, imgId, boxId){
+  if(!jobId) return;
+  try{
+    const r = await fetch('/api/transfer_qr/' + encodeURIComponent(jobId));
+    if(!r.ok) return;
+    const d = await r.json();
+    if(d && d.qr){
+      const img = document.getElementById(imgId);
+      const box = document.getElementById(boxId);
+      if(img){ img.src = d.qr; }
+      if(box){ box.hidden = false; }
+    }
+  }catch(e){ /* best-effort: nessun QR, nessun errore visibile */ }
 }
 
 function listenProgress(){
@@ -3361,6 +3379,7 @@ function listenProgress(){
         }
         document.getElementById('cnA').style.display='none';
         goToStep(5);
+        _showTransferQr(myJobId, 'transferQrDoneImg', 'transferQrDone');
 
         // Heartbeat
         hbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},10000);
@@ -3926,6 +3945,8 @@ async function goBackToChapters(){
   _updateAiOptCard();
   // Hide generation/download UI
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  ['transferQrStart','transferQrDone'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferQrStartImg','transferQrDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
@@ -4011,6 +4032,8 @@ function resetAll(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  ['transferQrStart','transferQrDone'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferQrStartImg','transferQrDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
