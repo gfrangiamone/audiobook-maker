@@ -10683,12 +10683,24 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     # QR di trasferimento job sull'app mobile (best-effort: vuoto se assente).
     transfer_html = ""
     if transfer_qr:
+        _transfer_t = _DL_PAGES_I18N.get("transfer", {})
+        _transfer_fallback = {
+            "en": ("Transfer to the app", "Scan with the AudioBook Maker app to add the job to the app."),
+            "it": ("Trasferisci sull&rsquo;app", "Inquadra con l&rsquo;app AudioBook Maker per aggiungere il job all&rsquo;app."),
+            "fr": ("Transf&eacute;rer vers l&rsquo;application", "Scannez avec l&rsquo;application AudioBook Maker pour ajouter le job &agrave; l&rsquo;application."),
+            "es": ("Transferir a la app", "Escanea con la app AudioBook Maker para a&ntilde;adir el trabajo a la app."),
+            "de": ("An die App &uuml;bertragen", "Scanne mit der AudioBook-Maker-App, um den Job zur App hinzuzuf&uuml;gen."),
+            "zh": ("传输到应用", "用 AudioBook Maker 应用扫描以将任务添加到应用。"),
+            "hi": ("ऐप में स्थानांतरित करें", "जॉब को ऐप में जोड़ने के लिए AudioBook Maker ऐप से स्कैन करें।"),
+        }
+        _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
+        _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
+        _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
         transfer_html = (
             '<div style="text-align:center;margin:28px auto;max-width:320px;">'
-            '<h3 style="font-size:1rem;margin:0 0 8px;">Trasferisci sull\'app</h3>'
+            f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
             f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
-            '<p style="font-size:.8rem;color:#777;margin-top:8px;">'
-            'Inquadra con l\'app AudioBook Maker per aggiungere il job all\'app.</p>'
+            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint}</p>'
             '</div>'
         )
 
