@@ -7392,6 +7392,13 @@ def api_generate():
         # Save voice in job for logging
         job["voice"] = voice
 
+    # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
+    # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
+    # download token anche senza email (push + my_jobs). Nessun SMTP richiesto.
+    if data.get("batch_mode"):
+        job["email_registered"] = True
+        job.setdefault("notify_download_type", "audio")
+
     # Store format and podcast URL for email/download handlers
     job["output_format"] = output_format
     if output_format == "zip_rss":

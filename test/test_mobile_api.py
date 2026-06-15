@@ -372,6 +372,68 @@ def test_push_job_event_purge_preserves_device_registered_mid_send(monkeypatch):
     assert toks == ["fresh-device-tok"]  # dead rimosso, fresh sopravvive
 
 
+# ---------------------------------------------------------------- Task 3b1: batch_mode
+
+def test_generate_batch_mode_sets_email_registered(monkeypatch, tmp_path):
+    """batch_mode=true marca il job email_registered (no auto-cancel) senza email."""
+    import types
+    import audiobook_app
+    job_id = "bm-job-1"
+    # info stub: chapters vuoti -> selezione 0 char, nessun budget google/gemini.
+    info = types.SimpleNamespace(title="", author="", language="it", chapters=[])
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[job_id] = {
+            "status": "analyzed",
+            "client_id": "mobile-cid-12345",
+            "info": info,
+            "epub_path": str(tmp_path / "x.epub"),
+            "last_poll": time.time(),
+        }
+    # neutralizza l'avvio reale del thread di generazione
+    monkeypatch.setattr(audiobook_app, "run_generation", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "_admin_notify_generation", lambda *a, **k: None)
+    client = audiobook_app.app.test_client()
+    try:
+        r = client.post("/api/generate",
+                        headers={"X-ABM-Cid": "mobile-cid-12345"},
+                        json={"job_id": job_id, "voice": "it-IT-IsabellaNeural",
+                              "output_format": "m4b", "batch_mode": True})
+        assert r.status_code == 200
+        assert audiobook_app.jobs[job_id].get("email_registered") is True
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(job_id, None)
+
+
+def test_create_download_token_without_email(monkeypatch, tmp_path):
+    """_create_download_token crea un record token con client_id senza inviare email."""
+    import generation_engine as ge
+    job_id = "bm-job-2"
+    out = tmp_path / "out.m4b"
+    out.write_bytes(b"x")
+    ge._jobs[job_id] = {
+        "status": "done",
+        "client_id": "mobile-cid-12345",
+        "output_m4b": str(out),
+        "output_format": "m4b",
+        "info": None,
+        "original_filename": "x.epub",
+    }
+    try:
+        token = ge._create_download_token(job_id)
+        assert token is not None
+        rec = ge._download_tokens[token]
+        assert rec["job_id"] == job_id
+        assert rec["client_id"] == "mobile-cid-12345"
+        assert bool(rec.get("output_m4b"))
+    finally:
+        ge._jobs.pop(job_id, None)
+        for t in list(ge._download_tokens):
+            if ge._download_tokens[t].get("job_id") == job_id:
+                ge._download_tokens.pop(t, None)
+
+
 def test_generation_engine_binds_send_push():
     import generation_engine as ge
     # verifica che configure accetti e bindi send_push_fn senza toccare

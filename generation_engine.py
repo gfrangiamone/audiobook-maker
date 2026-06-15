@@ -1319,6 +1319,59 @@ def _email_generation_details(job, lang):
         return ""
 
 
+def _create_download_token(job_id):
+    """Crea (idempotente) un download token per un job completato e lo persiste,
+    SENZA inviare email. Ritorna il token, o None se il job non e' valido.
+    Usato sia da `_send_completion_email` (unico punto di costruzione del record)
+    sia dai job batch mobile (push + my_jobs) che non hanno notify_email."""
+    job = _jobs.get(job_id)
+    if not job:
+        return None
+    # Riusa un token gia' esistente per lo stesso job (idempotenza).
+    for tok, rec in _download_tokens.items():
+        if isinstance(rec, dict) and rec.get("job_id") == job_id:
+            return tok
+    info = job.get("info", None)
+    book_title = (info.title if info else "") or job.get("original_filename", "") or "Audiobook"
+    dl_type = job.get("notify_download_type", "audio")
+    base_url = job.get("notify_base_url", "").rstrip("/")
+    lang = job.get("notify_lang", "en")
+    token = str(uuid.uuid4())
+    _download_tokens[token] = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "download_type": dl_type,
+        "base_url": base_url,
+        # Snapshot: everything needed to serve download after restart
+        "book_title": book_title,
+        "output_zip": job.get("output_zip", ""),
+        "output_name": job.get("output_name", ""),
+        "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
+        "output_m4b": job.get("output_m4b", ""),
+        # Kit ZIP di ripiego (MP3 + capitoli) quando la conversione M4B e' fallita.
+        "output_m4b_fallback_zip": job.get("output_m4b_fallback_zip", ""),
+        "epub_path": job.get("epub_path", ""),
+        "podcast_safe_name": job.get("podcast_safe_name", ""),
+        "podcast_ready": job.get("podcast_ready", False),
+        "podcast_mp3s": job.get("podcast_mp3s", []),
+        "podcast_info_title": info.title if info else "",
+        "podcast_info_author": info.author if info else "",
+        "podcast_info_language": info.language if info else "",
+        "original_filename": job.get("original_filename", ""),
+        "lang": lang,
+        "output_format": job.get("output_format", ""),
+        "ai_optimized": job.get("ai_optimized", False),
+        # Optional: optimized .abm snapshot (when auto_generate flow produced one)
+        "optimized_abm_path": job.get("optimized_abm_path", ""),
+        "optimized_abm_name": job.get("optimized_abm_name", ""),
+        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "client_id": job.get("client_id", ""),
+    }
+    _save_tokens()
+    return token
+
+
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
     job = _jobs.get(job_id)
@@ -1358,40 +1411,9 @@ def _send_completion_email(job_id):
     base_url = job.get("notify_base_url", "").rstrip("/")
     lang = job.get("notify_lang", "en")
 
-    # Generate unique download token with job snapshot for restart survival
-    token = str(uuid.uuid4())
-    _download_tokens[token] = {
-        "job_id": job_id,
-        "created_at": time.time(),
-        "download_type": dl_type,
-        "base_url": base_url,
-        # Snapshot: everything needed to serve download after restart
-        "book_title": book_title,
-        "output_zip": job.get("output_zip", ""),
-        "output_name": job.get("output_name", ""),
-        "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
-        "output_m4b": job.get("output_m4b", ""),
-        # Kit ZIP di ripiego (MP3 + capitoli) quando la conversione M4B è fallita.
-        "output_m4b_fallback_zip": job.get("output_m4b_fallback_zip", ""),
-        "epub_path": job.get("epub_path", ""),
-        "podcast_safe_name": job.get("podcast_safe_name", ""),
-        "podcast_ready": job.get("podcast_ready", False),
-        "podcast_mp3s": job.get("podcast_mp3s", []),
-        "podcast_info_title": info.title if info else "",
-        "podcast_info_author": info.author if info else "",
-        "podcast_info_language": info.language if info else "",
-        "original_filename": job.get("original_filename", ""),
-        "lang": lang,
-        "output_format": job.get("output_format", ""),
-        "ai_optimized": job.get("ai_optimized", False),
-        # Optional: optimized .abm snapshot (when auto_generate flow produced one)
-        "optimized_abm_path": job.get("optimized_abm_path", ""),
-        "optimized_abm_name": job.get("optimized_abm_name", ""),
-        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
-        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
-        "client_id": job.get("client_id", ""),
-    }
-    _save_tokens()
+    # Generate unique download token with job snapshot for restart survival.
+    # Punto unico di costruzione del record: _create_download_token (idempotente).
+    token = _create_download_token(job_id)
     job["email_token"] = token
     _sent_at = time.time()
     job["email_sent_at"] = _sent_at
@@ -4391,6 +4413,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                   job.get("voice", ""), job.get("browser_lang", ""))
                 except Exception:
                     pass
+        elif job.get("email_registered"):
+            # Job batch mobile senza email: crea comunque il download token cosi'
+            # push + my_jobs possono servire il file (la push e' gia' emessa sopra).
+            print(f"[{job_id}] post-COMPLETE: batch job senza email, creo token "
+                  f"(email_registered=True)", flush=True)
+            try:
+                _create_download_token(job_id)
+            except Exception as _tok_err:
+                print(f"[{job_id}] batch token creation failed (non-fatal): {_tok_err}", flush=True)
         else:
             print(f"[{job_id}] post-COMPLETE: no notify_email "
                   f"(email_registered={job.get('email_registered')})", flush=True)
