@@ -2,7 +2,7 @@ name: Deploy to Test
 
 on:
   push:
-    branches: [GEMINI]
+    branches: [abm_mobile]
   workflow_dispatch:
 
 jobs:
@@ -27,9 +27,11 @@ jobs:
           script: |
             set -e
             cd /opt/audiobook-maker-test
-            git fetch origin GEMINI
-            git reset --hard origin/GEMINI
+            git fetch origin abm_mobile
+            git checkout -B abm_mobile origin/abm_mobile
+            git reset --hard origin/abm_mobile
             pip install -r requirements.txt --break-system-packages 2>/dev/null || pip install -r requirements.txt
             systemctl daemon-reload 2>/dev/null || true
+            systemctl enable audiobook-maker-test 2>/dev/null || true
             systemctl restart audiobook-maker-test
             echo "Deploy test completato: $(date)"
