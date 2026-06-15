@@ -9669,13 +9669,21 @@ def token_download_page(token):
         if not translated_available and _cold_object_available(tr_path_snap):
             translated_available = True
 
+    # QR di trasferimento job sull'app mobile (best-effort).
+    try:
+        _qr_payload, _ = _transfer_payload_for(job_id)
+        _transfer_qr = _qr_data_uri(_qr_payload)
+    except Exception:
+        _transfer_qr = ""
+
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
                            output_format=output_format,
                            retention_hours=round(_ret / 3600),
                            m4b_kit_available=m4b_kit_available,
-                           translated_available=translated_available)
+                           translated_available=translated_available,
+                           transfer_qr=_transfer_qr)
 
 
 @app.route("/dl/<token>/abm")
@@ -10519,7 +10527,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr=""):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -10672,6 +10680,18 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     share_url = BASE_URL or "https://audiobook-maker.com"
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
 
+    # QR di trasferimento job sull'app mobile (best-effort: vuoto se assente).
+    transfer_html = ""
+    if transfer_qr:
+        transfer_html = (
+            '<div style="text-align:center;margin:28px auto;max-width:320px;">'
+            '<h3 style="font-size:1rem;margin:0 0 8px;">Trasferisci sull\'app</h3>'
+            f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
+            '<p style="font-size:.8rem;color:#777;margin-top:8px;">'
+            'Inquadra con l\'app AudioBook Maker per aggiungere il job all\'app.</p>'
+            '</div>'
+        )
+
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
@@ -10748,6 +10768,7 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <p class="type">{type_label}</p>
 {audio_btn_html}
 {abm_btn_html}
+{transfer_html}
 <div class="warn">{warn_text}</div>
 <div class="donate-panel">
   <div class="donate-title" id="donTitle"></div>
