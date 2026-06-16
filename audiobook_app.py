@@ -11401,6 +11401,27 @@ def _cleanup_job(job_id, reason=""):
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
+def _cleanup_supervisor():
+    """Mantiene vivo _cleanup_loop a ogni costo.
+
+    Incidente 2026-06-15: il thread _cleanup_loop e' morto con
+    `RuntimeError: dictionary changed size during iteration` (race con un
+    mutatore non-lockato di jobs/_download_tokens). Senza supervisione un
+    `while True` che solleva un'eccezione termina il thread per SEMPRE: niente
+    piu' hot-evict ne' retention-cleanup → il disco si e' riempito al 100% in
+    ~17h. Qui ri-avviamo il loop su qualunque eccezione (la sleep iniziale del
+    loop fa da backoff naturale), loggando lo stacktrace per diagnosi.
+    """
+    import traceback
+    while True:
+        try:
+            _cleanup_loop()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[cleanup] loop crashed, restarting: {type(e).__name__}: {e}")
+            time.sleep(5)
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -11511,7 +11532,7 @@ def _cleanup_loop():
         # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
         # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
         with _tokens_lock:
-            expired_tokens = [(t, info) for t, info in _download_tokens.items()
+            expired_tokens = [(t, info) for t, info in list(_download_tokens.items())
                               if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
         for t, t_info in expired_tokens:
             with _tokens_lock:
@@ -11554,10 +11575,10 @@ def _cleanup_loop():
         # - AND it is not referenced by any active token's output_zip/output_file/output_m4b
         # - AND its mtime is older than the retention window
         with _jobs_lock:
-            current_output_dirs = {jobs[j].get("output_dir", ""): j for j in jobs}
+            current_output_dirs = {jobs[j].get("output_dir", ""): j for j in list(jobs)}
         with _tokens_lock:
             referenced_paths = set()
-            for info in _download_tokens.values():
+            for info in list(_download_tokens.values()):
                 for key in ("output_zip", "output_file", "output_m4b"):
                     p = info.get(key) or ""
                     if p:
@@ -11621,7 +11642,7 @@ def _cleanup_loop():
         with _jobs_lock:
             _known_job_ids = set(jobs.keys())
         with _tokens_lock:
-            _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
+            _known_token_jobs = set(info.get("job_id", "") for info in list(_download_tokens.values()))
         _all_known = _known_job_ids | _known_token_jobs
         try:
             for entry in UPLOAD_DIR.iterdir():
@@ -11721,7 +11742,7 @@ def _ensure_background_threads():
         return
     _cleanup_started = True
     threading.Thread(target=get_voices, daemon=True).start()
-    threading.Thread(target=_cleanup_loop, daemon=True).start()
+    threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
     if google_tts is not None:
