@@ -621,10 +621,12 @@ __REVIEWS_LD__
           <input type="email" id="notifyEmailLate" placeholder="" aria-label="Email per notifica">
           <button class="btn btn-p btn-sm" id="btnSubmitEmailLate" onclick="submitEmailLate()"><span data-t="email_late_btn"></span></button>
         </div>
-        <div id="transferQrStart" class="transfer-qr" hidden style="text-align:center;margin:18px auto;max-width:260px;">
-          <h3 style="font-size:.95rem;margin:0 0 6px;" data-t="transfer_title"></h3>
-          <img id="transferQrStartImg" alt="QR" width="170" height="170"/>
-          <p class="muted" style="font-size:.78rem;margin-top:6px;" data-t="transfer_hint"></p>
+        <div id="transferStartArea" hidden style="text-align:center;margin:16px auto;">
+          <img id="transferStartImg" alt="" style="display:none"/>
+          <button class="btn btn-outline btn-sm" id="btnTransferStart" type="button" onclick="openTransferQrModal('transferStartImg')">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="14" x2="17" y2="14"/><line x1="20" y1="14" x2="21" y2="14"/><line x1="14" y1="17" x2="14" y2="18"/><line x1="17" y1="17" x2="17" y2="21"/><line x1="21" y1="17" x2="21" y2="21"/><line x1="14" y1="21" x2="14" y2="21"/></svg>
+            <span data-t="transfer_title"></span>
+          </button>
         </div>
       </div>
 
@@ -673,10 +675,12 @@ __REVIEWS_LD__
             <button class="btn btn-outline btn-lg" id="btnP" style="display:none">&#x1F399;&#xFE0F; <span data-t="btn_dl_podcast"></span></button>
             <button class="btn btn-outline btn-lg" id="btnTrAdopt" style="display:none">&#x1F3A7; <span data-t="tr_btn_adopt"></span></button>
           </div>
-          <div id="transferQrDone" class="transfer-qr" hidden style="text-align:center;margin:18px auto;max-width:260px;">
-            <h3 style="font-size:.95rem;margin:0 0 6px;" data-t="transfer_title"></h3>
-            <img id="transferQrDoneImg" alt="QR" width="170" height="170"/>
-            <p class="muted" style="font-size:.78rem;margin-top:6px;" data-t="transfer_hint"></p>
+          <div id="transferDoneArea" hidden style="text-align:center;margin:16px auto;">
+            <img id="transferDoneImg" alt="" style="display:none"/>
+            <button class="btn btn-outline btn-sm" id="btnTransferDone" type="button" onclick="openTransferQrModal('transferDoneImg')">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><line x1="14" y1="14" x2="17" y2="14"/><line x1="20" y1="14" x2="21" y2="14"/><line x1="14" y1="17" x2="14" y2="18"/><line x1="17" y1="17" x2="17" y2="21"/><line x1="21" y1="17" x2="21" y2="21"/><line x1="14" y1="21" x2="14" y2="21"/></svg>
+              <span data-t="transfer_title"></span>
+            </button>
           </div>
           <div class="al al-w dl-last-notice" id="dlLastNotice" role="status" aria-live="polite" style="display:none;margin-top:18px;text-align:left">
             <div style="display:flex;align-items:flex-start;gap:10px">

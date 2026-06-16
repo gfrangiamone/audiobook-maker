@@ -2728,7 +2728,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         showPErr(gd.error);unlockUI();return;
       }
       if(gd.auto_batch_email)_showAutoBatchNotice(gd.auto_batch_email);
-      _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
+      _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
   }
@@ -2959,7 +2959,7 @@ function _listenOptProgressWiz(){
       es.close();
       _setCancelButtonMode('gen');
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('s4_title')||'Generation';
-      _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
+      _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
       return;
     }
@@ -3169,7 +3169,7 @@ async function startGen(){
       emailRegistered=true;
       _showAutoBatchNotice(d.auto_batch_email);
     }
-    _showTransferQr(jobId, 'transferQrStartImg', 'transferQrStart');
+    _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
@@ -3207,6 +3207,66 @@ async function _showTransferQr(jobId, imgId, boxId){
       if(box){ box.hidden = false; }
     }
   }catch(e){ /* best-effort: nessun QR, nessun errore visibile */ }
+}
+
+// Popup col QR ingrandito, aperto dal bottone "Trasferisci sull'app". Il QR e`
+// gia` stato scaricato da _showTransferQr in una img nascosta (holderId); qui lo
+// si mostra in grande. Stesso wrapper .modal-overlay/.modal degli altri modali,
+// costruito on-demand e autodistrutto alla chiusura.
+function openTransferQrModal(holderId){
+  const holder=document.getElementById(holderId||'transferStartImg');
+  const src=holder?holder.src:'';
+  if(!src) return;
+  let ttl='Transfer to the app', hint='';
+  try{const x=(typeof t==='function')?t('transfer_title'):null;if(x&&x!=='transfer_title')ttl=x;}catch(_e){}
+  try{const x=(typeof t==='function')?t('transfer_hint'):null;if(x&&x!=='transfer_hint')hint=x;}catch(_e){}
+  const prev=document.getElementById('transferQrModal');
+  if(prev&&prev.parentNode)prev.parentNode.removeChild(prev);
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay open';
+  overlay.id='transferQrModal';
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  const modal=document.createElement('div');
+  modal.className='modal';
+  modal.style.maxWidth='360px';
+  modal.style.textAlign='center';
+  const head=document.createElement('div');
+  head.className='modal-head';
+  const headSpan=document.createElement('span');
+  headSpan.textContent=ttl;
+  head.appendChild(headSpan);
+  const closeBtn=document.createElement('button');
+  closeBtn.className='modal-close';
+  closeBtn.setAttribute('aria-label','Close');
+  closeBtn.textContent='×';
+  head.appendChild(closeBtn);
+  const bodyDiv=document.createElement('div');
+  bodyDiv.className='modal-body';
+  const img=document.createElement('img');
+  img.src=src;
+  img.alt='QR';
+  img.style.width='280px';
+  img.style.height='280px';
+  img.style.maxWidth='100%';
+  img.style.display='block';
+  img.style.margin='0 auto';
+  bodyDiv.appendChild(img);
+  if(hint){
+    const p=document.createElement('p');
+    p.className='muted';
+    p.style.fontSize='.85rem';
+    p.style.marginTop='12px';
+    p.textContent=hint;
+    bodyDiv.appendChild(p);
+  }
+  modal.appendChild(head);
+  modal.appendChild(bodyDiv);
+  overlay.appendChild(modal);
+  const close=()=>{if(overlay.parentNode)overlay.parentNode.removeChild(overlay);};
+  closeBtn.addEventListener('click',close);
+  overlay.addEventListener('click',(e)=>{if(e.target===overlay)close();});
+  document.body.appendChild(overlay);
 }
 
 function listenProgress(){
@@ -3379,7 +3439,7 @@ function listenProgress(){
         }
         document.getElementById('cnA').style.display='none';
         goToStep(5);
-        _showTransferQr(myJobId, 'transferQrDoneImg', 'transferQrDone');
+        _showTransferQr(myJobId, 'transferDoneImg', 'transferDoneArea');
 
         // Heartbeat
         hbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},10000);
@@ -3945,8 +4005,8 @@ async function goBackToChapters(){
   _updateAiOptCard();
   // Hide generation/download UI
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
-  ['transferQrStart','transferQrDone'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
-  ['transferQrStartImg','transferQrDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
+  ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
@@ -4032,8 +4092,8 @@ function resetAll(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
-  ['transferQrStart','transferQrDone'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
-  ['transferQrStartImg','transferQrDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
+  ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
