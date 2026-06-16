@@ -686,9 +686,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .email-late-area input[type=email]{padding:9px 12px;border:1px solid var(--brd);border-radius:var(--rs);font-size:.84rem;font-family:inherit;background:var(--srf);color:var(--tx);min-width:200px}
 .email-late-area input[type=email]:focus{outline:none;border-color:var(--ac)}
 /* Riga: box email-notifica + bottone "Trasferisci sull'app" a destra. */
-.email-transfer-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;margin-top:16px}
+.email-transfer-row{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch;justify-content:center;margin-top:16px}
 .email-transfer-row>.email-late-area{margin-top:0}
 .email-transfer-row>#transferStartArea{margin:0}
+/* Affiancato al box email: il bottone si estende in altezza fino a pari box. */
+.email-transfer-row>#transferStartArea:not([hidden]){display:flex}
 .email-transfer-row>#transferStartArea .btn{white-space:nowrap}
 
 /* ═══ PANEL FOOTER ═══ */
