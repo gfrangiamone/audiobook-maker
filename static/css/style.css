@@ -685,6 +685,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .email-late-area.visible{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .email-late-area input[type=email]{padding:9px 12px;border:1px solid var(--brd);border-radius:var(--rs);font-size:.84rem;font-family:inherit;background:var(--srf);color:var(--tx);min-width:200px}
 .email-late-area input[type=email]:focus{outline:none;border-color:var(--ac)}
+/* Riga: box email-notifica + bottone "Trasferisci sull'app" a destra. */
+.email-transfer-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;margin-top:16px}
+.email-transfer-row>.email-late-area{margin-top:0}
+.email-transfer-row>#transferStartArea{margin:0}
+.email-transfer-row>#transferStartArea .btn{white-space:nowrap}
 
 /* ═══ PANEL FOOTER ═══ */
 .panel-footer{display:flex;justify-content:space-between;align-items:center;margin-top:34px;padding-top:22px;border-top:1px solid var(--brd);gap:14px}
@@ -703,6 +708,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .completion-result .download-buttons{display:flex;flex-direction:column;gap:12px;align-items:center;margin-top:28px}
 .completion-result .download-buttons .btn{width:100%;max-width:360px;justify-content:center;padding:15px 28px;font-size:1rem;font-weight:600;margin-top:0!important}
 .completion-result .download-buttons .btn .btn-icon{width:20px;height:20px;flex-shrink:0}
+/* Bottone "Trasferisci sull'app" nel completamento: stessa larghezza dei bottoni download/azioni. */
+.completion-result #transferDoneArea:not([hidden]){display:flex;flex-direction:column;align-items:center;margin-top:12px}
+.completion-result #transferDoneArea .btn{width:100%;max-width:360px;justify-content:center;padding:15px 28px;font-size:1rem;font-weight:600;margin:0}
 /* Bottom actions (new book, back to chapters, retry) — same sizing as download buttons */
 .completion-result .actions-row{display:flex;flex-direction:column;gap:10px;align-items:center;margin-top:32px}
 .completion-result .actions-row .btn{width:100%;max-width:360px;justify-content:center;padding:15px 28px;font-size:1rem;font-weight:600;margin-top:0!important}
@@ -754,7 +762,12 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .toolbar .lang-current{min-width:78px;padding:5px 8px;font-size:.78rem}
   .toolbar .theme-btn{width:30px;height:26px}
   .completion-result .download-buttons .btn{max-width:none}
+  .completion-result #transferDoneArea .btn{max-width:none}
   .email-late-area.visible{flex-direction:column;align-items:stretch}
+  /* Schermo stretto: il bottone "Trasferisci" va sotto, stessa larghezza del box email. */
+  .email-transfer-row>.email-late-area.visible,
+  .email-transfer-row>#transferStartArea{flex:1 1 100%}
+  .email-transfer-row>#transferStartArea .btn{width:100%}
   .email-late-area input[type=email]{min-width:auto}
 }
 @media(max-width:400px){
