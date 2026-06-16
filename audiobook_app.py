@@ -8134,12 +8134,28 @@ def api_transfer_claim(token):
         return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
     job_id = info.get("job_id", "")
     moved = False
+    job_done = False
     with _jobs_lock:
         job = jobs.get(job_id)
         if job is not None:
             job["client_id"] = cid
+            # Il job è ora dell'app: marcalo email_registered così (a) il cleanup
+            # non lo tratta come download diretto usa-e-getta (rimozione 5 min dopo
+            # il download) e (b) al COMPLETE viene creato un download token anche
+            # se il job NON era né batch né email (job gratuito del sito).
+            job["email_registered"] = True
+            job_done = job.get("status") in ("done", "optimized")
             moved = True
-    # riassocia anche i download token del job (per la sezione "Pronti" di my_jobs)
+    # Job già completato senza download token (caso del sito senza email/batch):
+    # creane uno ORA, altrimenti l'app non vede i formati e non può scaricare, e
+    # il job/file verrebbero ripuliti poco dopo. _create_download_token è
+    # idempotente e usa job["client_id"] (appena impostato) come owner.
+    if job_done:
+        try:
+            generation_engine._create_download_token(job_id)
+        except Exception as e:
+            print(f"[transfer] download token creation failed for {job_id}: {e}")
+    # riassocia tutti i download token del job al cid (per la sezione "Pronti")
     changed = False
     for tok, tinfo in list(_download_tokens.items()):
         if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
@@ -11778,6 +11794,12 @@ def _cleanup_loop():
                     continue
 
                 if status == "done":
+                    # Un download token attivo (job emailato, batch, o trasferito
+                    # all'app via QR) governa la retention dei file: non rimuovere
+                    # il job finché esiste un token valido, altrimenti si cancella
+                    # un audiolibro ancora scaricabile (regressione transfer QR).
+                    if _has_active_download_tokens(jid, now):
+                        continue
                     dl_at = job.get("downloaded_at")
                     email_sent_at = job.get("email_sent_at")
                     last_poll = job.get("last_poll", 0)

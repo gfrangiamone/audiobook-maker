@@ -508,6 +508,58 @@ def test_transfer_claim_requires_cid(monkeypatch):
             audiobook_app.jobs.pop(jid, None)
 
 
+def test_transfer_claim_creates_token_for_tokenless_done_job(monkeypatch, tmp_path):
+    """Regressione: un job completato dal SITO senza email/batch non ha download
+    token. Trasferendolo via QR, il claim deve crearne uno (di proprietà dell'app)
+    e proteggere il job dal cleanup, così l'app lo vede scaricabile."""
+    import time as _time
+    import audiobook_app
+    import generation_engine
+    jid = "trf-done-notoken"
+    out = tmp_path / "out.m4b"
+    out.write_bytes(b"x")
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "done", "client_id": "web-cid", "info": None,
+            "output_m4b": str(out), "output_format": "m4b",
+            "original_filename": "libro.epub", "start_time": _time.time(),
+        }
+    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(generation_engine, "_save_tokens", lambda: None)
+    # In prod configure() lega questi reference agli stessi dict di audiobook_app
+    # una volta sola; nei test l'ordine di esecuzione può averli ribindati →
+    # ri-allineali alle istanze correnti così _create_download_token opera sui
+    # dict che my_jobs e il claim leggono.
+    monkeypatch.setattr(generation_engine, "_jobs", audiobook_app.jobs)
+    monkeypatch.setattr(generation_engine, "_download_tokens", audiobook_app._download_tokens)
+    created = []
+    try:
+        ttok = audiobook_app._ensure_transfer_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{ttok}", headers={"X-ABM-Cid": "app-cid-9"})
+        assert r.status_code == 200
+        # job protetto dal cleanup
+        assert audiobook_app.jobs[jid].get("email_registered") is True
+        # esattamente un download token, di proprietà dell'app, con il path m4b
+        created = [t for t, v in audiobook_app._download_tokens.items()
+                   if isinstance(v, dict) and v.get("job_id") == jid]
+        assert len(created) == 1
+        rec = audiobook_app._download_tokens[created[0]]
+        assert rec["client_id"] == "app-cid-9"
+        assert rec["output_m4b"] == str(out)
+        # my_jobs dell'app: job scaricabile (formats.m4b + download_token)
+        r2 = c.get("/api/my_jobs", headers={"X-ABM-Cid": "app-cid-9"})
+        entry = next(j for j in r2.get_json()["jobs"] if j["job_id"] == jid)
+        assert entry["formats"]["m4b"] is True
+        assert entry.get("download_token")
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+        for t in created:
+            audiobook_app._download_tokens.pop(t, None)
+
+
 # ---------------------------------------------------------------- Task 7
 
 def test_dl_token_m4b_supports_range(client, tmp_path, monkeypatch):
