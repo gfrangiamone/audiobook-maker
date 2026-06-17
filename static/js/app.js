@@ -212,6 +212,9 @@ function applyI18n(){
   if(btnExp)btnExp.title=t('btn_export_abm_tip');
   const btnAbmInfo=document.getElementById('btnAbmInfo');
   if(btnAbmInfo)btnAbmInfo.title=t('btn_export_abm_tip');
+  // Le opzioni del dropdown accento sono costruite dinamicamente (non data-t):
+  // ri-popolale al cambio lingua UI cosi' le etichette si traducono.
+  if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
 }
 function setLang(l){cl=l;applyI18n();buildAbout();applySEO(l);try{localStorage.setItem('abm_l',l)}catch(e){}
   // Sync URL with selected language (SEO: URL ↔ content coherence)
@@ -1059,7 +1062,9 @@ function updVoicesPremium(){
     const target=sel.lastElementChild&&sel.lastElementChild.tagName==='OPTGROUP'?sel.lastElementChild:sel;
     target.appendChild(opt);
   }
-  sel.onchange=()=>{_onPreviewParamsChanged();};
+  sel.onchange=()=>{_updateAccentDropdown();_onPreviewParamsChanged();};
+  // Dropdown accento: dipende da lingua + voce premium correnti.
+  if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
 }
 
@@ -1501,6 +1506,61 @@ const _knownPreviewSigs=new Set();
 
 function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
 
+// Catalogo accenti per lingua (mirror di gemini_tts.ACCENT_VARIANTS lato backend).
+// Ogni voce: [code, i18nKey]. Il primo e' il default. Solo le lingue qui elencate
+// hanno un dropdown; le altre vengono comunque ancorate lato server al loro
+// accento di default. Mantenere allineato col backend.
+const _ACCENT_CATALOG={
+  en:[['us','accent_en_us'],['gb','accent_en_gb'],['au','accent_en_au'],['in','accent_en_in']],
+  es:[['es','accent_es_es'],['419','accent_es_419']],
+  pt:[['br','accent_pt_br'],['pt','accent_pt_pt']],
+  fr:[['fr','accent_fr_fr'],['ca','accent_fr_ca']],
+  zh:[['cn','accent_zh_cn'],['tw','accent_zh_tw']],
+  de:[['de','accent_de_de'],['at','accent_de_at'],['ch','accent_de_ch']],
+  ar:[['eg','accent_ar_eg'],['sa','accent_ar_sa'],['ae','accent_ar_ae']]
+};
+
+// Lingua TTS premium corrente (combo vlPremium), normalizzata a 2 lettere.
+function _premiumLang(){
+  try{
+    const el=document.getElementById('vlPremium');
+    return (el&&el.value?el.value:'').split('-')[0].toLowerCase();
+  }catch(_){return '';}
+}
+
+// Valore accento selezionato (solo se il dropdown e' visibile). '' = default lato server.
+function _getAccentVariant(){
+  const row=document.getElementById('geminiAccentRow');
+  if(!row||row.hidden)return '';
+  const sel=document.getElementById('geminiAccent');
+  return (sel&&sel.value?sel.value:'').trim();
+}
+
+// Popola e mostra/nasconde il dropdown accento. Visibile solo per voci Gemini
+// premium su lingue con >1 variante. Preserva la scelta utente se ancora valida.
+function _updateAccentDropdown(){
+  const row=document.getElementById('geminiAccentRow');
+  const sel=document.getElementById('geminiAccent');
+  if(!row||!sel)return;
+  const isGem=_isGeminiVoiceId((typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'');
+  const opts=isGem?_ACCENT_CATALOG[_premiumLang()]:null;
+  if(!opts||opts.length<2){
+    row.hidden=true;
+    return;
+  }
+  const prev=sel.value;
+  sel.innerHTML='';
+  for(const pair of opts){
+    const o=document.createElement('option');
+    o.value=pair[0];
+    o.textContent=t(pair[1]);
+    sel.appendChild(o);
+  }
+  if(prev&&opts.some(p=>p[0]===prev))sel.value=prev;
+  row.hidden=false;
+  sel.onchange=()=>{_onPreviewParamsChanged();};
+}
+
 function _getSelectedChaptersKey(){
   try{
     const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
@@ -1514,7 +1574,8 @@ function _getPreviewSig(){
   const style=_isGeminiVoiceId(voice)
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
-  return voice+'|'+rate+'|'+style+'|'+_getSelectedChaptersKey();
+  const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
+  return voice+'|'+rate+'|'+style+'|'+accent+'|'+_getSelectedChaptersKey();
 }
 
 function _buildPreviewUrl(){
@@ -1539,6 +1600,8 @@ function _buildPreviewUrl(){
     +'&rate='+encodeURIComponent(rate);
   if(style)u+='&style='+encodeURIComponent(style);
   if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
+  const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
+  if(accent)u+='&accent='+encodeURIComponent(accent);
   const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   sel.forEach(i=>{u+='&selected_chapters='+encodeURIComponent(i);});
   return u;
@@ -2695,6 +2758,8 @@ async function startCombinedGeneration(combinedPaymentToken){
       if(_isGeminiVoiceId(getCurrentVoiceId())){
         var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
         if(_gs)genPayload.gemini_style_instruction=_gs;
+        var _ga=_getAccentVariant();
+        if(_ga)genPayload.gemini_accent=_ga;
       }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
@@ -3132,6 +3197,8 @@ async function startGen(){
     if(_isGeminiVoiceId(getCurrentVoiceId())){
       const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
       if(_gs)payload.gemini_style_instruction=_gs;
+      const _ga=_getAccentVariant();
+      if(_ga)payload.gemini_accent=_ga;
     }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();

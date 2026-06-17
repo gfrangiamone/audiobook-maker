@@ -145,6 +145,79 @@ def test_testo_oltre_soglia_qualita_warning_ma_non_solleva(monkeypatch, tmp_path
     assert captured["contents"] == oversized_text
 
 
+# ── Accent directive ────────────────────────────────────────────────────────
+
+def test_synthesize_has_accent_directive_param():
+    sig = inspect.signature(gemini_tts.synthesize)
+    assert "accent_directive" in sig.parameters
+    assert sig.parameters["accent_directive"].default is None
+
+
+def test_build_accent_directive_variant_and_default():
+    # Lingua del catalogo: variante esplicita.
+    gb = gemini_tts.build_accent_directive("en", "gb")
+    assert "British English" in gb
+    # Default = primo del catalogo (en -> us).
+    us = gemini_tts.build_accent_directive("en", None)
+    assert "American English" in us
+    # Codice non valido -> default.
+    assert gemini_tts.build_accent_directive("en", "zz") == us
+    # Locale lungo normalizzato (es-ES -> es), default castigliano.
+    assert "Castilian" in gemini_tts.build_accent_directive("es-ES", None)
+
+
+def test_build_accent_directive_mono_variant_anchors_language():
+    # Lingua senza varianti multiple: ancora comunque al nome lingua.
+    it = gemini_tts.build_accent_directive("it", None)
+    assert "Italian" in it and "consistent accent" in it
+    # Lingua sconosciuta: nessun ancoraggio.
+    assert gemini_tts.build_accent_directive("xx", None) == ""
+    assert gemini_tts.build_accent_directive("", None) == ""
+
+
+def test_accent_options_and_default_code():
+    assert gemini_tts.default_accent_code("en") == "us"
+    assert gemini_tts.default_accent_code("es") == "es"
+    assert gemini_tts.default_accent_code("pt") == "br"
+    # de e ar inclusi nel selettore.
+    assert len(gemini_tts.accent_options("de")) >= 2
+    assert len(gemini_tts.accent_options("ar")) >= 2
+    # Mono-variante: nessuna opzione (nessun dropdown UI).
+    assert gemini_tts.accent_options("it") == []
+    assert gemini_tts.default_accent_code("it") is None
+
+
+def test_accent_directive_leads_style_block(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
+    out = tmp_path / "x.pcm"
+    gemini_tts.synthesize(
+        "Hello world",
+        "gemini:flash25:Zephyr",
+        style_instruction="calm tone",
+        accent_directive=gemini_tts.build_accent_directive("en", "gb"),
+        output_path=str(out),
+    )
+    c = captured["contents"]
+    assert c.startswith("[style:")
+    assert "British English" in c
+    assert "calm tone" in c
+    assert "Hello world" in c
+    # L'accento precede lo stile utente dentro il blocco [style: ...].
+    assert c.index("British English") < c.index("calm tone")
+
+
+def test_accent_directive_none_keeps_legacy_behavior(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(gemini_tts, "_get_client", lambda model_key=None: _make_fake_client(captured))
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
+    out = tmp_path / "x.pcm"
+    gemini_tts.synthesize("Solo testo", "gemini:flash25:Zephyr",
+                          accent_directive=None, output_path=str(out))
+    assert captured["contents"] == "Solo testo"
+
+
 def test_payload_oltre_api_hard_cap_solleva(monkeypatch, tmp_path):
     """Payload totale oltre API_HARD_BYTES_CAP: ValueError (vero hard cap API)."""
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)

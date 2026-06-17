@@ -471,6 +471,104 @@ _LANG_LOCALE = {
     "id": "id-ID", "vi": "vi-VN",
 }
 
+# Nome lingua leggibile (in inglese) per la direttiva di accento. Gemini TTS
+# comprende meglio direttive in linguaggio naturale: indicare la lingua per nome
+# ancora l'accento ed evita che chunk diversi (ogni chiamata e' stateless) vengano
+# letti con varianti regionali differenti.
+LANG_DISPLAY_NAME = {
+    "it": "Italian", "en": "English", "fr": "French", "es": "Spanish",
+    "de": "German", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
+    "ro": "Romanian", "tr": "Turkish", "ru": "Russian", "uk": "Ukrainian",
+    "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "hi": "Hindi",
+    "ar": "Arabic", "bn": "Bengali", "mr": "Marathi", "ta": "Tamil",
+    "te": "Telugu", "th": "Thai", "id": "Indonesian", "vi": "Vietnamese",
+}
+
+# Catalogo varianti di accento per lingua. Solo le lingue con varianti regionali
+# rilevanti hanno piu` di una voce qui (e quindi il selettore UI). Tutte le altre
+# vengono comunque ancorate al loro nome lingua (vedi build_accent_directive) per
+# eliminare la deriva di accento tra chunk. Ogni entry: (code, descrizione naturale
+# inglese per il prompt). Il PRIMO elemento e' il default della lingua.
+#
+# NB: il frontend (static/js/app.js, _ACCENT_CATALOG) replica le coppie
+# lingua->codici per popolare il dropdown. Mantenere i due elenchi allineati.
+ACCENT_VARIANTS = {
+    "en": [
+        ("us", "American English (United States accent)"),
+        ("gb", "British English (United Kingdom accent)"),
+        ("au", "Australian English"),
+        ("in", "Indian English"),
+    ],
+    "es": [
+        ("es", "European Spanish (Castilian, from Spain)"),
+        ("419", "Latin American Spanish"),
+    ],
+    "pt": [
+        ("br", "Brazilian Portuguese"),
+        ("pt", "European Portuguese (from Portugal)"),
+    ],
+    "fr": [
+        ("fr", "French from France (Metropolitan French)"),
+        ("ca", "Canadian French"),
+    ],
+    "zh": [
+        ("cn", "Mandarin Chinese with a Mainland China accent"),
+        ("tw", "Mandarin Chinese with a Taiwan accent"),
+    ],
+    "de": [
+        ("de", "Standard German (Hochdeutsch, from Germany)"),
+        ("at", "Austrian German"),
+        ("ch", "Swiss German accent"),
+    ],
+    "ar": [
+        ("eg", "Egyptian Arabic"),
+        ("sa", "Modern Standard Arabic"),
+        ("ae", "Gulf Arabic"),
+    ],
+}
+
+
+def accent_options(language):
+    """Lista [(code, descrizione)] delle varianti di accento per la lingua.
+
+    Restituisce [] per lingue mono-variante (nessun selettore UI). Usato dal
+    frontend/diagnostica per sapere se mostrare il dropdown accento.
+    """
+    lang = (language or "").split("-")[0].lower()
+    return list(ACCENT_VARIANTS.get(lang, []))
+
+
+def default_accent_code(language):
+    """Codice accento di default per la lingua (primo del catalogo), o None."""
+    opts = accent_options(language)
+    return opts[0][0] if opts else None
+
+
+def build_accent_directive(language, accent_code=None):
+    """Direttiva naturale che ancora l'accento di lettura per la lingua data.
+
+    Prefissata (in synthesize) dentro il blocco [style: ...] a OGNI chunk, cosi`
+    tutti i chunk condividono lo stesso accento (senza, ogni chiamata stateless
+    sceglie una variante regionale diversa -> deriva udibile tra i chunk).
+
+    Per le lingue del catalogo ACCENT_VARIANTS usa la variante richiesta (o il
+    default se `accent_code` e' assente/non valido). Per le lingue mono-variante
+    note ancora al nome lingua. Restituisce '' per lingue sconosciute (nessun
+    ancoraggio possibile).
+    """
+    lang = (language or "").split("-")[0].lower()
+    opts = ACCENT_VARIANTS.get(lang)
+    if opts:
+        valid = {c: d for c, d in opts}
+        code = (accent_code or "").strip().lower()
+        if code not in valid:
+            code = opts[0][0]  # default lingua
+        return f"Read in {valid[code]}, keeping one consistent accent throughout."
+    name = LANG_DISPLAY_NAME.get(lang)
+    if name:
+        return f"Read in {name}, keeping one consistent accent throughout."
+    return ""
+
 
 def get_voices():
     """Catalogo voci Gemini per lingua.
@@ -1927,7 +2025,7 @@ def _extract_audio_pcm(response, model_key):
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
-               debug_prompt_path=None, max_attempts=None):
+               debug_prompt_path=None, max_attempts=None, accent_directive=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
@@ -1950,6 +2048,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             path preview si passa 1 per fallire velocemente su EMPTY-RESPONSE
             finish_reason=OTHER (retry di stesso payload di solito non aiuta)
             ed evitare il timeout 30s lato client.
+        accent_directive: opzionale, direttiva di accento (system-generated da
+            build_accent_directive) prefissata PER PRIMA dentro lo stesso blocco
+            [style: ...], prima dello stile utente e della directive rate. Ancora
+            l'accento a tutti i chunk (vedi build_accent_directive). Capata a 160
+            char: e' un prompt costante e bounded, non concorre al target qualita`.
 
     Returns:
         dict con success, bytes_written, input_tokens, output_tokens, model_key,
@@ -1991,6 +2094,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     # Lo style utente viene capato a 300 char (qualita` UI); la directive rate
     # e` costante e si appende dopo senza re-cap (max ~110 char system-added).
     style_parts = []
+    # Accento per primo: e' l'ancora piu` importante per la coerenza tra chunk.
+    if accent_directive:
+        ad = str(accent_directive).strip()[:160]
+        if ad:
+            style_parts.append(ad)
     if style_instruction:
         # Cap a 200 char (non 300): la directive rate piu` lunga e` ~95 char e
         # va a sommarsi nello stesso blocco [style: ...]. 200 + 95 + 1 (sep) =

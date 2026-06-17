@@ -847,7 +847,8 @@ def _reenqueue_orphan(job_id, rec):
         try:
             _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job["voice"], job.get("browser_lang", ""))
+                          job["voice"], job.get("browser_lang", ""),
+                          epoch=job.get("gen_epoch"))
         except Exception:
             pass
         t = threading.Thread(
@@ -1778,7 +1779,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 #  -  -  Activity log  -  -
 _log_lock = threading.Lock()
 _logged_month: str = ""
-_logged_sids_ops: set[tuple[str, str]] = set()
+_logged_sids_ops: set[tuple] = set()  # (job_id, op) o (job_id, op, epoch) per eventi di ciclo
 
 def _init_log_dedup():
     """Popola il set di dedup dal file di log del mese corrente."""
@@ -1796,14 +1797,26 @@ def _init_log_dedup():
                 if len(parts) >= 4:
                     _logged_sids_ops.add((parts[0], parts[3]))
 
-def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang=''):
+def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None):
+    """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
+
+    `epoch` (es. job["gen_epoch"]): se fornito entra nella chiave di dedup,
+    così gli eventi di CICLO (GENERATE/COMPLETE) di una RI-generazione dello
+    stesso job_id — cancel su job done + nuovo /api/generate, stesso mese —
+    non vengono soppressi come duplicati. Gli eventi soggetti a spam (download
+    aperti da prefetch HEAD/Range) restano col dedup secco a 2-tuple, perché
+    chiamati senza `epoch`. NB: _init_log_dedup ricostruisce dal file solo
+    chiavi 2-tuple (l'epoca non è persistita su riga); dopo un restart un job
+    ripreso/ri-eseguito può quindi ri-loggare il proprio evento di ciclo —
+    comportamento corretto (è una nuova esecuzione), non spam di download.
+    """
     global _logged_month
     from datetime import datetime
     now = datetime.now()
     current_month = now.strftime('%Y-%m')
     log_path = SCRIPT_DIR / f"activity_{current_month}.log"
     ts = now.strftime('%Y-%m-%d %H:%M:%S')
-    key = (session_id, operation)
+    key = (session_id, operation) if epoch is None else (session_id, operation, epoch)
     with _log_lock:
         if current_month != _logged_month:
             _logged_month = current_month
@@ -6779,6 +6792,7 @@ def api_preview_audio(job_id):
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
+    accent = (request.args.get("accent") or "").strip()[:8]
 
     # Se il client passa selected_chapters, l'anteprima deve essere un estratto
     # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
@@ -6846,7 +6860,7 @@ def api_preview_audio(job_id):
     # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
     # La selezione capitoli entra nella chiave perché il testo varia con essa.
     sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
-    cache_key = f"{voice}|{rate}|{style}|{sel_key}"
+    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -6861,6 +6875,27 @@ def api_preview_audio(job_id):
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and voice.startswith("gemini:")
     client_id = "anon"
+
+    # Direttiva di accento per la preview (solo Gemini): deve allinearsi al job
+    # finale, dove l'accento ancora tutti i chunk. Lingua per priorita`: query
+    # `lang` -> opt_lang/gen_lang del job -> info.language (stessa logica del
+    # sample empirico post-synth piu` sotto).
+    accent_directive_pre = None
+    if use_gemini_preview:
+        _jp_acc = jobs.get(job_id) or {}
+        _jinfo_acc = _jp_acc.get("info")
+        _preview_lang_pre = (
+            (request.args.get("lang") or "").strip().split("-")[0].lower()
+            or (_jp_acc.get("opt_lang") or "").strip().split("-")[0].lower()
+            or (_jp_acc.get("gen_lang") or "").strip().split("-")[0].lower()
+            or (getattr(_jinfo_acc, "language", None) or "it").split("-")[0].lower()
+        )[:2]
+        try:
+            accent_directive_pre = gemini_tts.build_accent_directive(
+                _preview_lang_pre, accent) or None
+        except Exception as _e_acc_pv:
+            print(f"[preview] accent directive build failed (non-fatal): {_e_acc_pv}")
+            accent_directive_pre = None
 
     # Preview cap per Gemini (rolling 24h per cookie)
     if use_gemini_preview:
@@ -6925,6 +6960,7 @@ def api_preview_audio(job_id):
                 result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
                                                 style_instruction=style or None,
                                                 rate=rate,
+                                                accent_directive=accent_directive_pre,
                                                 max_attempts=1)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
                 # Costo Google REALE della preview (token reali x rate per MTok).
@@ -7231,6 +7267,7 @@ def api_generate():
     # ----- F3: Gemini payment preflight -----
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
+    accent_variant = (data.get("gemini_accent") or "").strip()[:8]
     if voice and voice.startswith("gemini:"):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")
@@ -7455,6 +7492,10 @@ def api_generate():
         # Stash style for run_generation
         if style_instruction:
             job["gemini_style_instruction"] = style_instruction
+        # Stash accent variant (e.g. 'gb', '419'); run_generation lo risolve in
+        # direttiva. Se assente, la direttiva usa il default lingua del catalogo.
+        if accent_variant:
+            job["gemini_accent"] = accent_variant
 
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
@@ -7573,7 +7614,8 @@ def api_generate():
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                   client_id, client_ip, voice,
-                  browser_lang=job.get("browser_lang", ""))
+                  browser_lang=job.get("browser_lang", ""),
+                  epoch=job.get("gen_epoch"))
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
@@ -11762,6 +11804,27 @@ def _cleanup_job(job_id, reason=""):
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
+def _cleanup_supervisor():
+    """Mantiene vivo _cleanup_loop a ogni costo.
+
+    Incidente 2026-06-15: il thread _cleanup_loop e' morto con
+    `RuntimeError: dictionary changed size during iteration` (race con un
+    mutatore non-lockato di jobs/_download_tokens). Senza supervisione un
+    `while True` che solleva un'eccezione termina il thread per SEMPRE: niente
+    piu' hot-evict ne' retention-cleanup → il disco si e' riempito al 100% in
+    ~17h. Qui ri-avviamo il loop su qualunque eccezione (la sleep iniziale del
+    loop fa da backoff naturale), loggando lo stacktrace per diagnosi.
+    """
+    import traceback
+    while True:
+        try:
+            _cleanup_loop()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[cleanup] loop crashed, restarting: {type(e).__name__}: {e}")
+            time.sleep(5)
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -11878,7 +11941,7 @@ def _cleanup_loop():
         # vale GEMINI_FILE_RETENTION_SEC, altrimenti EMAIL_FILE_RETENTION_SEC.
         # _effective_* raddoppia per voci PREMIUM mai scaricate (protezione costo).
         with _tokens_lock:
-            expired_tokens = [(t, info) for t, info in _download_tokens.items()
+            expired_tokens = [(t, info) for t, info in list(_download_tokens.items())
                               if (now - info["created_at"]) > _effective_retention_for_token_info(info) + 300]
         for t, t_info in expired_tokens:
             with _tokens_lock:
@@ -11921,10 +11984,10 @@ def _cleanup_loop():
         # - AND it is not referenced by any active token's output_zip/output_file/output_m4b
         # - AND its mtime is older than the retention window
         with _jobs_lock:
-            current_output_dirs = {jobs[j].get("output_dir", ""): j for j in jobs}
+            current_output_dirs = {jobs[j].get("output_dir", ""): j for j in list(jobs)}
         with _tokens_lock:
             referenced_paths = set()
-            for info in _download_tokens.values():
+            for info in list(_download_tokens.values()):
                 for key in ("output_zip", "output_file", "output_m4b"):
                     p = info.get(key) or ""
                     if p:
@@ -11988,7 +12051,7 @@ def _cleanup_loop():
         with _jobs_lock:
             _known_job_ids = set(jobs.keys())
         with _tokens_lock:
-            _known_token_jobs = set(info.get("job_id", "") for info in _download_tokens.values())
+            _known_token_jobs = set(info.get("job_id", "") for info in list(_download_tokens.values()))
         _all_known = _known_job_ids | _known_token_jobs
         try:
             for entry in UPLOAD_DIR.iterdir():
@@ -12091,7 +12154,7 @@ def _ensure_background_threads():
         return
     _cleanup_started = True
     threading.Thread(target=get_voices, daemon=True).start()
-    threading.Thread(target=_cleanup_loop, daemon=True).start()
+    threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
     if google_tts is not None:

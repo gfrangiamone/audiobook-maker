@@ -3116,6 +3116,22 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_google = (engine == "google")
     use_gemini = (engine == "gemini")
 
+    # Direttiva di accento (solo Gemini): ancora TUTTI i chunk allo stesso accento.
+    # Senza, ogni chiamata stateless puo` scegliere una variante regionale diversa
+    # (es. inglese US su un chunk, UK sul successivo). La lingua di riferimento e'
+    # quella TTS effettiva (_audit_language), l'accento scelto e' job["gemini_accent"]
+    # (None -> default lingua dal catalogo). Costruita una volta, riusata per chunk.
+    gemini_accent_directive = ""
+    if use_gemini and gemini_tts is not None:
+        try:
+            _acc_lang = _audit_language(job, info)
+            gemini_accent_directive = gemini_tts.build_accent_directive(
+                _acc_lang, job.get("gemini_accent")) or ""
+        except Exception as _e_acc:
+            print(f"[{job_id}] accent directive build failed (non-fatal): {_e_acc}",
+                  flush=True)
+            gemini_accent_directive = ""
+
     try:
         job["progress_message"] = "Preparing..."
         print(f"[{job_id}] Generation started: voice={voice}, rate={rate}, "
@@ -3334,7 +3350,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
                                                        style_instruction=style_for_chunk,
                                                        rate=rate,
-                                                       debug_prompt_path=debug_prompt_path)
+                                                       debug_prompt_path=debug_prompt_path,
+                                                       accent_directive=gemini_accent_directive or None)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.
@@ -4238,7 +4255,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _set_job_status(job, "partial" if _is_partial else "done")
         _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
                       job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""), job.get("browser_lang", ""))
+                      job.get("voice", ""), job.get("browser_lang", ""),
+                      epoch=job.get("gen_epoch"))
 
         # Offload asincrono su cold storage (se configurato). I file restano
         # serviti da locale per tutta la finestra calda; l'upload gira intanto.
