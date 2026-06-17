@@ -1545,7 +1545,12 @@ function _updateAccentDropdown(){
   const isGem=_isGeminiVoiceId((typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'');
   const opts=isGem?_ACCENT_CATALOG[_premiumLang()]:null;
   if(!opts||opts.length<2){
+    // Lingua senza varianti d'accento (es. Italiano): nascondi E svuota il
+    // select, così non resta l'accento della lingua precedente nel DOM e
+    // _getAccentVariant non puo' restituire un valore stantio.
     row.hidden=true;
+    sel.innerHTML='';
+    sel.value='';
     return;
   }
   const prev=sel.value;
