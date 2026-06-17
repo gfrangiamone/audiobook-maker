@@ -6632,6 +6632,7 @@ def api_preview_audio(job_id):
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
+    accent = (request.args.get("accent") or "").strip()[:8]
 
     # Se il client passa selected_chapters, l'anteprima deve essere un estratto
     # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
@@ -6699,7 +6700,7 @@ def api_preview_audio(job_id):
     # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
     # La selezione capitoli entra nella chiave perché il testo varia con essa.
     sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
-    cache_key = f"{voice}|{rate}|{style}|{sel_key}"
+    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -6714,6 +6715,27 @@ def api_preview_audio(job_id):
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and voice.startswith("gemini:")
     client_id = "anon"
+
+    # Direttiva di accento per la preview (solo Gemini): deve allinearsi al job
+    # finale, dove l'accento ancora tutti i chunk. Lingua per priorita`: query
+    # `lang` -> opt_lang/gen_lang del job -> info.language (stessa logica del
+    # sample empirico post-synth piu` sotto).
+    accent_directive_pre = None
+    if use_gemini_preview:
+        _jp_acc = jobs.get(job_id) or {}
+        _jinfo_acc = _jp_acc.get("info")
+        _preview_lang_pre = (
+            (request.args.get("lang") or "").strip().split("-")[0].lower()
+            or (_jp_acc.get("opt_lang") or "").strip().split("-")[0].lower()
+            or (_jp_acc.get("gen_lang") or "").strip().split("-")[0].lower()
+            or (getattr(_jinfo_acc, "language", None) or "it").split("-")[0].lower()
+        )[:2]
+        try:
+            accent_directive_pre = gemini_tts.build_accent_directive(
+                _preview_lang_pre, accent) or None
+        except Exception as _e_acc_pv:
+            print(f"[preview] accent directive build failed (non-fatal): {_e_acc_pv}")
+            accent_directive_pre = None
 
     # Preview cap per Gemini (rolling 24h per cookie)
     if use_gemini_preview:
@@ -6778,6 +6800,7 @@ def api_preview_audio(job_id):
                 result = gemini_tts.synthesize(preview_text, voice, output_path=pcm_tmp,
                                                 style_instruction=style or None,
                                                 rate=rate,
+                                                accent_directive=accent_directive_pre,
                                                 max_attempts=1)
                 pcm_to_mp3([pcm_tmp], str(preview_path))
                 # Costo Google REALE della preview (token reali x rate per MTok).
@@ -7084,6 +7107,7 @@ def api_generate():
     # ----- F3: Gemini payment preflight -----
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
+    accent_variant = (data.get("gemini_accent") or "").strip()[:8]
     if voice and voice.startswith("gemini:"):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")
@@ -7308,6 +7332,10 @@ def api_generate():
         # Stash style for run_generation
         if style_instruction:
             job["gemini_style_instruction"] = style_instruction
+        # Stash accent variant (e.g. 'gb', '419'); run_generation lo risolve in
+        # direttiva. Se assente, la direttiva usa il default lingua del catalogo.
+        if accent_variant:
+            job["gemini_accent"] = accent_variant
 
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")

@@ -394,7 +394,7 @@ def _generate_silence_pcm(output_path, duration_sec=1):
 
 
 def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries,
-                                      debug_prompt_path=None, rate="+0%"):
+                                      debug_prompt_path=None, rate="+0%", accent_directive=None):
     """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
     raw nel file output_path. Aggrega i risultati metrici sommando token/byte.
 
@@ -440,6 +440,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                             style_instruction=style_instruction,
                             rate=rate,
                             debug_prompt_path=piece_debug_path,
+                            accent_directive=accent_directive,
                         )
                         piece_ok = True
                         aggregate["bytes_written"] += int(result.get("bytes_written", 0))
@@ -474,7 +475,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
 
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
-                              debug_prompt_path=None, rate="+0%"):
+                              debug_prompt_path=None, rate="+0%", accent_directive=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -521,6 +522,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             agg = _synthesize_pcm_pieces_and_concat(
                 pieces, voice_id, output_path, style_instruction, max_retries,
                 debug_prompt_path=debug_prompt_path, rate=rate,
+                accent_directive=accent_directive,
             )
             if agg is not False:
                 return agg
@@ -536,6 +538,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
                 style_instruction=style_instruction,
                 rate=rate,
                 debug_prompt_path=debug_prompt_path,
+                accent_directive=accent_directive,
             )
             return result
         except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
