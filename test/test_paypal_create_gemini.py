@@ -2,14 +2,20 @@
 import pytest
 from unittest.mock import patch
 
-from audiobook_app import app, jobs, _jobs_lock
+import audiobook_app
 from epub_to_tts import BookInfo, Chapter
+
+# NB: accesso a app/jobs/_jobs_lock via attributo a runtime, mai from-import:
+# i test test_cold_*.py (alfabeticamente precedenti) fanno
+# importlib.reload(audiobook_app) e test_m4b_progress.py ri-binda
+# audiobook_app.jobs; un from-import a collection time resterebbe legato
+# agli oggetti pre-reload -> fallimenti solo nella suite completa.
 
 
 @pytest.fixture
 def client():
-    app.config['TESTING'] = True
-    with app.test_client() as c:
+    audiobook_app.app.config['TESTING'] = True
+    with audiobook_app.app.test_client() as c:
         yield c
 
 
@@ -31,11 +37,11 @@ def jb():
         total_chars=ch.char_count,
         estimated_duration_minutes=1.0,
     )
-    with _jobs_lock:
-        jobs["pj1"] = {"info": info, "status": "analyzed"}
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["pj1"] = {"info": info, "status": "analyzed"}
     yield "pj1"
-    with _jobs_lock:
-        jobs.pop("pj1", None)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs.pop("pj1", None)
 
 
 def _server_total(client, job_id, voice_id, selected, ai_opt):

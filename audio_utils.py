@@ -1525,9 +1525,6 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
                    channels=channels, sample_width=sample_width)
 
-        def escape_meta(s):
-            return str(s).replace('\\', '\\\\').replace('=', '\\=').replace(';', '\\;').replace('#', '\\#').replace('\n', ' ')
-
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
         desc_trunc = (description or "").strip()[:1000] if description else ""
@@ -1538,31 +1535,18 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
             if not valid_chapters:
                 valid_chapters = None
 
+        # FFMETADATA1 condiviso con _convert_mp3_to_m4b/build_m4b_rebuild_kit:
+        # un solo builder evita che un fix ai tag debba essere replicato qui.
+        # Il file viene creato solo se c'e' almeno un tag globale o capitoli
+        # (altrimenti -map_metadata punterebbe a un input senza contenuto).
         has_global_meta = bool(title or author or year or lang_iso or desc_trunc or genre)
         if has_global_meta or valid_chapters:
             metadata_file = output_path + ".metadata.txt"
             with open(metadata_file, "w", encoding="utf-8") as f:
-                f.write(";FFMETADATA1\n")
-                if title:
-                    f.write(f"title={escape_meta(title)}\n")
-                    f.write(f"album={escape_meta(title)}\n")
-                if author:
-                    f.write(f"artist={escape_meta(author)}\n")
-                    f.write(f"album_artist={escape_meta(author)}\n")
-                if year:
-                    f.write(f"date={escape_meta(year)}\n")
-                if genre:
-                    f.write(f"genre={escape_meta(genre)}\n")
-                if desc_trunc:
-                    f.write(f"comment={escape_meta(desc_trunc)}\n")
-                    f.write(f"description={escape_meta(desc_trunc)}\n")
-                if valid_chapters:
-                    for ch in valid_chapters:
-                        f.write("\n[CHAPTER]\n")
-                        f.write("TIMEBASE=1/1000\n")
-                        f.write(f"START={int(round(ch['start']))}\n")
-                        f.write(f"END={int(round(ch['end']))}\n")
-                        f.write(f"title={escape_meta(ch['title'])}\n")
+                f.write(_build_ffmetadata_text(
+                    chapters=valid_chapters, title=title, author=author,
+                    year=year, genre=genre, description=desc_trunc or None,
+                ))
 
         cmd = [
             "ffmpeg", "-y",

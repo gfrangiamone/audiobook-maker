@@ -253,7 +253,8 @@ Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `CHUNK_MAX_CHARS` | `2000` (caratteri max per chunk TTS) | `tts_split.py` | 37 |
+| `CHUNK_MAX_CHARS` | `2000` (caratteri max per chunk TTS) | `tts_split.py` | 38 |
+| `ABM_EDGE_TTS_TIMEOUT` | `120` (secondi, timeout per singola chiamata edge-tts via `asyncio.wait_for` su `communicate.save()`. Necessario perché edge-tts non applica `receive_timeout` alla websocket — `ws_connect` aiohttp senza timeout: una connessione half-open lascerebbe il job sospeso per sempre senza errori, incidente 2026-06-11. Allo scadere: `TimeoutError` → retry/backoff esistente → fallback silenzio) | `tts_split.py` | 45 |
 | `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `generation_engine.py` | 78 |
 | `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual) | `tts_split.py` | 41 |
 | `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `tts_split.py` | 43 |

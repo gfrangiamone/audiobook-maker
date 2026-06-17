@@ -34,13 +34,13 @@ import uuid
 import hmac
 import secrets
 import html as html_mod
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from datetime import datetime, timezone
 from copy import copy
 from pathlib import Path
 
 from flask import (
-    Flask, render_template_string, request, jsonify,
+    Flask, request, jsonify,
     send_file, Response, stream_with_context, redirect, after_this_request
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -82,11 +82,9 @@ except ImportError:
     print("[startup] gemini_tts module not available (google-genai not installed)")
 
 from audio_utils import (
-    _zip_safe_read, _extract_cover_from_epub, _generate_fallback_cover,
-    _extract_cover_for_preview, _include_cover_in_dir, _generate_podcast_rss,
-    _generate_silence_mp3, _concatenate_mp3, _get_audio_duration_ms,
-    _convert_mp3_to_m4b, _prepare_m4b_cover_path, _safe_filename,
-    _check_audio_dependencies, pcm_to_mp3,
+    _extract_cover_from_epub, _generate_fallback_cover,
+    _extract_cover_for_preview, _generate_podcast_rss,
+    _safe_filename, _check_audio_dependencies, pcm_to_mp3,
 )
 
 
@@ -112,11 +110,7 @@ def _preview_ffmpeg_ok():
     _ok, _ = _check_audio_dependencies()
     return bool(_ok)
 from tts_split import (
-    CHUNK_MAX_CHARS, split_text_into_chunks, _is_multilingual_voice,
-    _TTS_MIN_SENT_CHARS, _TTS_MAX_SENT_CHARS, _split_sentences_for_tts,
-    _edge_tts_call, generate_chunk_mp3, generate_chunk_mp3_google,
-    _strip_parenthetical, _ensure_heading_pause, _plan_chunks,
-    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
 )
 
 import email_service
@@ -138,11 +132,8 @@ except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
-# (Configurati e gestiti in generation_engine.py; lette qui solo per startup log)
-LLM_API_KEY = os.environ.get("ABM_LLM_API_KEY", "")
+# (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
 LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
-LLM_THINKING = os.environ.get("ABM_LLM_THINKING", "false").lower() == "true"
-LLM_REASONING_EFFORT = os.environ.get("ABM_LLM_REASONING_EFFORT", "none").lower()
 
 def _llm_available():
     """True se l'ottimizzazione LLM è disponibile."""
@@ -178,20 +169,16 @@ def _estimate_chapter_seconds(ch, language):
 # Mutable state dicts (payment._payments, payment._vouchers, payment._paid_opt_done) are accessed via
 # `payment.<name>` because _load_*() rebinds the module globals at startup.
 from payment import (
-    PAYPAL_CLIENT_ID, PAYPAL_SECRET, PAYPAL_MODE, PAYPAL_API_BASE,
+    PAYPAL_CLIENT_ID, PAYPAL_MODE, PAYPAL_API_BASE,
     LLM_RATE_EUR_PER_MCHAR, LLM_FREE_THRESHOLD_EUR,
-    VOUCHER_EXPIRY_DAYS, VOUCHER_BONUS_PERCENT, PAYMENT_RETENTION_DAYS,
-    VOUCHER_RL_PER_MIN, VOUCHER_RL_PER_HOUR,
-    VOUCHER_EMAIL_FAIL_LIMIT, VOUCHER_EMAIL_LOCKOUT_SEC,
+    VOUCHER_EXPIRY_DAYS, VOUCHER_BONUS_PERCENT,
     _paypal_available, _estimate_llm_cost_eur,
-    _paypal_get_access_token, _paypal_create_order, _paypal_capture_order,
+    _paypal_get_access_token, _paypal_create_order,
     _voucher_rl_check, _voucher_rl_record_result,
     _save_payments, _load_payments,
     _save_vouchers, _load_vouchers,
-    _generate_voucher_code, _create_voucher,
-    _voucher_remaining, _voucher_consume, _voucher_refund,
-    _save_paid_opt_done, _load_paid_opt_done,
-    _mark_paid_opt_done, _cleanup_paid_opt_done,
+    _create_voucher,
+    _voucher_remaining, _voucher_consume,
 )
 
 
@@ -401,8 +388,7 @@ if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
 
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
-    _try_send_admin_digest, _send_payment_receipt_email, _send_voucher_email,
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, ADMIN_EMAIL,
+    _try_send_admin_digest, _send_payment_receipt_email, ADMIN_EMAIL,
     BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
 )
 
@@ -416,6 +402,12 @@ GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "
 #   le voci Gemini hanno cost-per-char piu' alto e RPM/RPD piu' restrittive.
 MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
 MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
+
+# Whitelist charset per gli id voce ricevuti dal client (edge
+# "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
+# "gemini:flash25:Zephyr"). Difesa in profondita' contro stored XSS nelle
+# pagine admin e injection nel formato "#"-separato dell'Activity Log.
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,80}$")
 
 # Tolleranza di crescita del testo dovuta all'ottimizzazione AI. Un libro che
 # era ENTRO il cap prima dell'ottimizzazione (precondizione garantita dal cap
@@ -695,6 +687,16 @@ def _refund_payment_on_orphan(job_id, job, reason):
     if not tok or amt <= 0:
         return None
     try:
+        # Guard persistente anti-doppio-refund (specchio di
+        # generation_engine._refund_gemini_payment): il pop di job["payment"]
+        # sotto previene il doppio refund nello stesso processo, ma non
+        # sopravvive a un restart. Nel recovery (_orphan_fallback) un job_like
+        # viene ricostruito dal descrittore: senza questo controllo un re-run
+        # dopo crash duplicherebbe il rimborso (incidente classe B1).
+        if payment.has_refund_for_job(job_id, tok):
+            print(f"[{job_id}] orphan refund skipped: persistent refund trace "
+                  f"already exists (reason={reason})")
+            return None
         if method == "voucher":
             payment._voucher_refund(tok, amt, job_id=job_id, reason=reason)
         elif method == "paypal":
@@ -1863,8 +1865,6 @@ def _is_resume_or_probe_request():
     except Exception:
         return False
 
-CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
-
 
 # ----------------------------------------------------------------------
 # COMMUNITY STATS — derivate dai log activity_YYYY-MM.log esistenti
@@ -2993,8 +2993,13 @@ def admin_logs():
             if voice_raw:
                 parts_v = voice_raw.split("-")
                 if len(parts_v) >= 3:
-                    voice_short = parts_v[-1].replace("Neural", "").replace("Multilingual", "")
-                    voice_lang = "-".join(parts_v[:2])
+                    # Escape OBBLIGATORIO: voice_raw arriva dal parametro
+                    # `voice` della richiesta utente via Activity Log; senza
+                    # escape un id voce forgiato (es. "x-y-<img onerror=...>")
+                    # diventa stored XSS nel browser admin.
+                    voice_short = html_mod.escape(
+                        parts_v[-1].replace("Neural", "").replace("Multilingual", ""))
+                    voice_lang = html_mod.escape("-".join(parts_v[:2]))
                     voice_short = f'{voice_short} <span class="voice-lang">{voice_lang}</span>'
                 else:
                     voice_short = html_mod.escape(voice_raw)
@@ -3121,12 +3126,14 @@ def admin_logs():
     except Exception:
         pass
 
-    from urllib.parse import quote_plus
-    token_qs = f"&token={quote_plus(token)}" if token else ""
+    # Niente token in query string: l'auth admin viaggia via cookie HttpOnly
+    # abm_admin_session (inviato automaticamente sulle navigazioni <a>). Un
+    # `?token=` in chiaro finirebbe in access log nginx / history / Referer
+    # e oltretutto il server lo ignora gia' (vedi _admin_auth_from_request).
     months_nav = ""
     for m in available_months:
         active_cls = ' class="active"' if m == ym else ""
-        months_nav += f'<a href="/admin/log-activity?{m}{token_qs}"{active_cls}>{m}</a> '
+        months_nav += f'<a href="/admin/log-activity?{m}"{active_cls}>{m}</a> '
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3237,8 +3244,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/admin/audit-tts?{ym}{token_qs}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
-        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}{token_qs}" title="Export Excel">📁 Excel</a>
+        <a class="btn btn-accent" href="/admin/audit-tts?{ym}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
+        <a class="btn btn-accent" href="/admin/log-activity/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
 
@@ -4608,7 +4615,12 @@ def admin_logs_page():
 
 <script>
 (function(){
-  const ADMIN_TOKEN = """ + '"' + token + '"' + r""";
+  // Sec: il token NON viene piu' inlinato nel sorgente della pagina (finiva
+  // in chiaro nell'HTML servito). Le fetch API usano header X-Admin-Token
+  // letto da session/localStorage, popolato dal gate /admin/login (stesso
+  // pattern della pagina /admin/log-activity).
+  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
+                      localStorage.getItem('abm_admin_token') || '';
   const $ = (id) => document.getElementById(id);
 
   function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
@@ -7179,6 +7191,9 @@ def api_generate():
     data = request.json
     job_id = data.get("job_id")
     voice = data.get("voice", "it-IT-IsabellaNeural")
+    if not _VOICE_ID_RE.match(voice or ""):
+        return jsonify({"error": "Invalid voice id.",
+                        "error_code": "invalid_voice"}), 400
     rate = data.get("rate", "+0%")
     single_file = data.get("single_file", True)
     output_format = data.get("output_format", "m4b")
@@ -7531,7 +7546,7 @@ def api_generate():
         if not ok:
             with _jobs_lock:
                 if job["status"] == "generating":
-                    job["status"] = "analyzed" if job.get("ai_optimized") else "analyzed"
+                    job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
             return jsonify({
                 "error": f"Google TTS monthly limit: {remaining_after:,} chars remaining, "
                          f"but this book needs {total_chars_needed:,} chars.",
@@ -8770,6 +8785,10 @@ def api_optimize():
     if not _llm_available(): return jsonify({"error": "LLM optimization not available"}), 503
     data = request.json or {}; job_id = data.get("job_id"); batch = data.get("batch", False); auto_generate = data.get("auto_generate", False); email = (data.get("email") or "").strip().lower()
     lang = data.get("lang")
+    _voice_in = data.get("voice") or ""
+    if _voice_in and not _VOICE_ID_RE.match(_voice_in):
+        return jsonify({"error": "Invalid voice id.",
+                        "error_code": "invalid_voice"}), 400
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         if sc == 404:
@@ -8802,6 +8821,16 @@ def api_optimize():
                     "active": _active_optimizing_for_client_unlocked(client_id),
                 }), 429
         job["status"] = "optimizing"
+
+    def _release_opt_claim():
+        # Rilascia lo status claim "optimizing" sui return di errore PRIMA
+        # dell'avvio del thread: senza release il job resta brickato (il
+        # check atomico sopra respinge ogni retry con "already running"),
+        # quindi l'utente non potrebbe ritentare dopo aver pagato.
+        with _jobs_lock:
+            if job.get("status") == "optimizing":
+                job["status"] = "analyzed"
+
     raw_selected = data.get("selected_chapters")
     selected_chapters = _parse_selected_chapters(raw_selected)
     already = set(job.get("optimized_chapters", []))
@@ -8812,6 +8841,10 @@ def api_optimize():
     total_chars = sum(ch.char_count for ch in info.chapters if ch.index in chapters_to_optimize)
     print(f"[{job_id}] OPTIMIZE raw selected_chapters: {raw_selected!r} -> parsed: {selected_chapters!r} -> to_optimize: {chapters_to_optimize!r}")
     if not chapters_to_optimize:
+        # Nulla da ottimizzare (tutto gia' fatto): rilascia il claim
+        # "optimizing" altrimenti il job resta brickato e i retry vengono
+        # respinti con "already running" (stessa classe dei 402 sotto).
+        _release_opt_claim()
         return jsonify({"status": "already_optimized", "optimized_chapters": list(already)})
 
     # Hard cap on text size for the final audio output, applied to the full
@@ -8870,6 +8903,7 @@ def api_optimize():
     if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
+            _release_opt_claim()
             return jsonify({
                 "error": "Payment required for this optimization.",
                 "error_code": "payment_required",
@@ -8904,6 +8938,7 @@ def api_optimize():
                 try:
                     new_remaining = _voucher_consume(payment_token, estimated_cost, job_id=job_id)
                 except ValueError as _ve:
+                    _release_opt_claim()
                     return jsonify({
                         "error": f"Voucher not spendable: {_ve}",
                         "error_code": "invalid_payment",
@@ -8915,6 +8950,7 @@ def api_optimize():
                 job["voucher_remaining_after"] = new_remaining
                 valid = True
         if not valid:
+            _release_opt_claim()
             return jsonify({
                 "error": "Invalid or already-used payment token.",
                 "error_code": "invalid_payment",
@@ -8928,111 +8964,121 @@ def api_optimize():
     if _is_combined_gemini:
         _combined_token = (data.get("payment_token_combined")
                            or data.get("payment_token") or "").strip()
-        if _combined_token:
-            # Ricalcolo quota Gemini server-side per validare l'importo.
-            _voice_for_est = data.get("voice", "")
-            _rate_for_est = data.get("rate", "+0%")
-            _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
-            _lang_for_est = (_ui_lang_for_est
-                             or (getattr(info, "language", "") or "").split("-")[0].lower()
-                             or "it")
-            # Capitoli selezionati per la generazione (stessa logica frontend
-            # combined_estimate: subset se selected_chapters, altrimenti tutti).
-            _all_chs = list(getattr(info, "chapters", []) or [])
-            _sel_list = _parse_selected_chapters(data.get("selected_chapters"))
-            if _sel_list:
-                _by_idx = {ch.index: ch for ch in _all_chs}
-                _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
-            else:
-                _chs_for_est = _all_chs
-            try:
-                _est_gemini = gemini_tts.estimate_book_cost(
-                    _chs_for_est, _voice_for_est,
-                    language=_lang_for_est, rate_pct=_rate_for_est,
-                )
-                _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
-            except Exception as _e_est:
-                print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
-                _est_gemini = None
-                _gemini_eur_quota = 0.0
-            _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
-            # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
-            # (allineata con /api/generate). Sotto soglia il job e' free.
-            _threshold_combined = float(
-                os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+        # Ricalcolo quota Gemini server-side per validare l'importo.
+        # Eseguito SEMPRE (anche senza token): l'enforcement del pagamento
+        # combinato deve avvenire QUI perche' il flusso auto-gen chiama
+        # run_generation direttamente, bypassando il preflight pagamento
+        # di /api/generate. Storicamente questo blocco era annidato dentro
+        # `if _combined_token:` -> una richiesta senza token partiva gratis.
+        _voice_for_est = data.get("voice", "")
+        _rate_for_est = data.get("rate", "+0%")
+        _ui_lang_for_est = (lang or "").split("-")[0].lower() if lang else ""
+        _lang_for_est = (_ui_lang_for_est
+                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or "it")
+        # Capitoli selezionati per la generazione (stessa logica frontend
+        # combined_estimate: subset se selected_chapters, altrimenti tutti).
+        _all_chs = list(getattr(info, "chapters", []) or [])
+        _sel_list = _parse_selected_chapters(data.get("selected_chapters"))
+        if _sel_list:
+            _by_idx = {ch.index: ch for ch in _all_chs}
+            _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
+        else:
+            _chs_for_est = _all_chs
+        try:
+            _est_gemini = gemini_tts.estimate_book_cost(
+                _chs_for_est, _voice_for_est,
+                language=_lang_for_est, rate_pct=_rate_for_est,
             )
-            if _expected_total > _threshold_combined:
-                if not _combined_token:
-                    with _jobs_lock:
-                        if job.get("status") == "optimizing":
-                            job["status"] = "analyzed"
-                    return jsonify({
-                        "error": "Payment required for generation.",
-                        "error_code": "payment_required",
-                        "total_eur": _expected_total,
-                        "gemini_eur": _gemini_eur_quota,
-                        "llm_eur": estimated_cost,
-                        "threshold_eur": _threshold_combined,
-                    }), 402
-                # Validazione + consume del token combinato.
-                _consumed = False
-                if _combined_token in payment._payments:
-                    with payment._payments_lock:
-                        _pay = payment._payments.get(_combined_token)
-                        if (_pay and not _pay.get("used")
-                                and float(_pay.get("amount_eur", 0)) + 0.05
-                                >= _expected_total):
-                            _pay["used"] = True
-                            _pay["used_at"] = time.time()
-                            _pay["used_job_id"] = job_id
-                            _consumed_method = "paypal"
-                            _consumed_email = _pay.get("email", "") or ""
-                            _consumed = True
-                    if _consumed:
-                        _save_payments()
-                elif _combined_token in payment._vouchers:
-                    try:
-                        payment._voucher_consume(_combined_token, _expected_total,
-                                                 job_id=job_id)
-                        _v = payment._vouchers.get(_combined_token, {})
-                        _consumed_method = "voucher"
-                        _consumed_email = _v.get("email", "") or ""
+            _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
+        except Exception as _e_est:
+            print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
+            _est_gemini = None
+            _gemini_eur_quota = 0.0
+        _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
+        # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
+        # (allineata con /api/generate). Sotto soglia il job e' free.
+        _threshold_combined = float(
+            os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+        )
+        if _expected_total > _threshold_combined:
+            if not _combined_token:
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Payment required for generation.",
+                    "error_code": "payment_required",
+                    "total_eur": _expected_total,
+                    "gemini_eur": _gemini_eur_quota,
+                    "llm_eur": estimated_cost,
+                    "threshold_eur": _threshold_combined,
+                }), 402
+            # Validazione + consume del token combinato.
+            _consumed = False
+            if _combined_token in payment._payments:
+                with payment._payments_lock:
+                    _pay = payment._payments.get(_combined_token)
+                    if (_pay and not _pay.get("used")
+                            and float(_pay.get("amount_eur", 0)) + 0.05
+                            >= _expected_total):
+                        _pay["used"] = True
+                        _pay["used_at"] = time.time()
+                        _pay["used_job_id"] = job_id
+                        _consumed_method = "paypal"
+                        _consumed_email = _pay.get("email", "") or ""
                         _consumed = True
-                    except ValueError as _vc_err:
-                        print(f"[{job_id}] combined voucher consume failed: {_vc_err}")
                 if _consumed:
-                    # Stash payment per:
-                    # - audit Gemini (_write_gemini_audit legge job["payment"])
-                    # - refund su cancel/error (_refund_gemini_payment)
-                    # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
-                    # l'audit Gemini legge solo la quota voce, non il combinato.
-                    job["payment"] = {
-                        "token": _combined_token,
-                        "total_eur": _gemini_eur_quota,
-                        "method": _consumed_method,
-                        "ts": time.time(),
-                        "gemini_est": _est_gemini,
-                        "llm_eur": float(estimated_cost),
-                        "source": "combined_optimize_autogen",
-                    }
-                    job["payment_token"] = _combined_token
-                    job["payment_type"] = _consumed_method
-                    job["payment_email"] = _consumed_email
-                    job["payment_amount_eur"] = _expected_total
-                    # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
-                    # all'audit per allineare i campi *_est al prezzo lockato
-                    # in payment["total_eur"]. Senza questo snapshot,
-                    # _finalize_optimization_complete ricalcolerebbe la stima
-                    # su testo post-LLM (potenzialmente piu` lungo/corto),
-                    # distorcendo delta_pct/margin nell'audit JSONL.
-                    job["gemini_estimate"] = _est_gemini
-                    print(f"[{job_id}] combined payment consumed at /api/optimize: "
-                          f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
-                          f"= {_expected_total:.2f}€ ({_consumed_method})")
-                else:
-                    print(f"[{job_id}] WARNING: combined payment token "
-                          f"{_combined_token[:12]}... not consumable "
-                          f"(expected_total={_expected_total:.2f}€)")
+                    _save_payments()
+            elif _combined_token in payment._vouchers:
+                try:
+                    payment._voucher_consume(_combined_token, _expected_total,
+                                             job_id=job_id)
+                    _v = payment._vouchers.get(_combined_token, {})
+                    _consumed_method = "voucher"
+                    _consumed_email = _v.get("email", "") or ""
+                    _consumed = True
+                except ValueError as _vc_err:
+                    print(f"[{job_id}] combined voucher consume failed: {_vc_err}")
+            if not _consumed:
+                # Token presente ma non consumabile (gia' usato, importo
+                # insufficiente, voucher scaduto, token sconosciuto): il job
+                # NON deve partire gratis. Release del claim + 402, allineato
+                # al branch standalone LLM sopra.
+                print(f"[{job_id}] combined payment token "
+                      f"{_combined_token[:12]}... not consumable "
+                      f"(expected_total={_expected_total:.2f}€) -> 402")
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Invalid or already-used payment token.",
+                    "error_code": "invalid_payment",
+                }), 402
+            # Stash payment per:
+            # - audit Gemini (_write_gemini_audit legge job["payment"])
+            # - refund su cancel/error (_refund_gemini_payment)
+            # total_eur = quota Gemini. La quota LLM e` in payment["llm_eur"];
+            # l'audit Gemini legge solo la quota voce, non il combinato.
+            job["payment"] = {
+                "token": _combined_token,
+                "total_eur": _gemini_eur_quota,
+                "method": _consumed_method,
+                "ts": time.time(),
+                "gemini_est": _est_gemini,
+                "llm_eur": float(estimated_cost),
+                "source": "combined_optimize_autogen",
+            }
+            job["payment_token"] = _combined_token
+            job["payment_type"] = _consumed_method
+            job["payment_email"] = _consumed_email
+            job["payment_amount_eur"] = _expected_total
+            # Snapshot stima pre-LLM su job["gemini_estimate"]: serve
+            # all'audit per allineare i campi *_est al prezzo lockato
+            # in payment["total_eur"]. Senza questo snapshot,
+            # _finalize_optimization_complete ricalcolerebbe la stima
+            # su testo post-LLM (potenzialmente piu` lungo/corto),
+            # distorcendo delta_pct/margin nell'audit JSONL.
+            job["gemini_estimate"] = _est_gemini
+            print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                  f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"= {_expected_total:.2f}€ ({_consumed_method})")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).
@@ -11279,8 +11325,6 @@ HTML_TEMPLATES: dict[str, str] = {
     )
     for lang, seo in _SEO_DATA.items()
 }
-# Fallback generico per URL sconosciuti
-HTML_TEMPLATE = HTML_TEMPLATES["en"]
 
 # Template dedicati per la root (/): canonical punta a BASE_URL/ (se stesso),
 # non a /{lang}/. Risolve l'errore SEO "hreflang URL non usa il proprio canonical".

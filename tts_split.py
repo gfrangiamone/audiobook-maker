@@ -37,6 +37,13 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
+# Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
+# receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
+# connessione half-open save() resterebbe sospeso per sempre, bloccando il
+# thread del job senza errori (incidente 2026-06-11). Il timeout trasforma
+# l'hang in TimeoutError, gestito dal retry/fallback di _edge_tts_call.
+EDGE_TTS_CHUNK_TIMEOUT = int(os.environ.get("ABM_EDGE_TTS_TIMEOUT", "120"))
+
 
 def _pick_chunk_max_chars(voice_id, language):
     """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
@@ -303,7 +310,9 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     for attempt in range(max_retries):
         try:
             communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-            await communicate.save(output_path)
+            await asyncio.wait_for(
+                communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
+            )
             return True
         except Exception as e:
             last_error = e

@@ -94,8 +94,6 @@ LLM_MAX_TOKENS       = _env_int("ABM_LLM_MAX_TOKENS", 65536)
 
 # Token-economy helpers
 LLM_CHARS_PER_TOKEN        = _env_float("ABM_LLM_CHARS_PER_TOKEN", 3.5)
-LLM_MAX_CONTEXT_TOKENS     = _env_int("ABM_LLM_MAX_CONTEXT_TOKENS", 1000000)
-LLM_RESERVED_PROMPT_TOKENS = _env_int("ABM_LLM_RESERVED_PROMPT_TOKENS", 4000)
 LLM_OUTPUT_SAFETY_MARGIN   = _env_float("ABM_LLM_OUTPUT_SAFETY_MARGIN", 0.85)
 
 # Reliability / pacing
@@ -106,10 +104,6 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 
-# Derived (computed, not directly configurable)
-LLM_RESERVED_OUTPUT_TOKENS = LLM_MAX_TOKENS  # output cap reserves itself in context
-LLM_MAX_INPUT_TOKENS = LLM_MAX_CONTEXT_TOKENS - LLM_RESERVED_OUTPUT_TOKENS - LLM_RESERVED_PROMPT_TOKENS
-LLM_MAX_INPUT_CHARS = int(LLM_MAX_INPUT_TOKENS * LLM_CHARS_PER_TOKEN)
 # Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
 # Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
 # per ogni chunk → regole sempre rispettate anche su libri lunghi.
@@ -131,6 +125,7 @@ _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
 _google_tts = None      # optional google_tts module
+_jobs_lock = None       # threading.Lock injected by configure(); guard _set_job_status before configure
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
 _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEMINI_JOB_RETENTION_SEC)
@@ -3311,6 +3306,137 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         gap_ms_inter = (gemini_tts.inter_chunk_gap_ms()
                         if (use_gemini and gemini_tts is not None) else 0)
 
+        def _synthesize_chunk(i, block):
+            """Sintetizza il chunk `i`. Ritorna (result, part_path).
+
+            Per voci Gemini: accumula gemini_usage e job['gemini_actual'],
+            registra usage + rate-sample e applica il trim del silenzio finale.
+            Per edge/google: sola sintesi. result is False = chunk fallito (il
+            chiamante incrementa failed_chunks; il file part_path contiene gia'
+            il segnaposto di silenzio di 1s).
+
+            Estratto dai due rami (single-file / multi-file) di run_generation
+            che duplicavano questo blocco: un fix alla contabilita' costi Gemini
+            doveva essere replicato in due punti (classe di rischio B1-B4).
+            L'ordine osservabile e' preservato: per Gemini, record_usage usa lo
+            stesso google_cost del chunk; per il single-file il record avveniva
+            dopo il gap-timing ma e' indipendente da esso (scrive lo usage store,
+            non tocca all_parts/m4b_chapters), quindi spostarlo qui e' equivalente.
+            """
+            if use_gemini:
+                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
+                # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo chunk
+                # del capitolo faceva percepire stile diverso tra preview (1
+                # chunk) e job finale. Costo token aggiuntivo trascurabile.
+                style_for_chunk = gemini_style_instruction
+                try:
+                    result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
+                                                       style_instruction=style_for_chunk,
+                                                       rate=rate,
+                                                       debug_prompt_path=debug_prompt_path)
+                except Exception as _quota_or_budget_err:
+                    # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
+                    # il job paused/error che silenziare il resto del libro.
+                    if gemini_tts is not None and isinstance(_quota_or_budget_err,
+                                                             (gemini_tts.GeminiQuotaExhausted,
+                                                              gemini_tts.GeminiBudgetExceeded)):
+                        retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
+                        reason = getattr(_quota_or_budget_err, "reason",
+                                         getattr(_quota_or_budget_err, "scope", "quota"))
+                        job["gemini_paused"] = True
+                        job["gemini_pause_reason"] = reason
+                        job["gemini_pause_retry_after_sec"] = retry_after
+                        job["gemini_pause_message"] = str(_quota_or_budget_err)
+                        print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
+                              f"reason={reason} retry_after={retry_after}s. "
+                              f"Err: {str(_quota_or_budget_err)[:200]}")
+                        raise
+                    # Errore generico non quota-related: rilancia
+                    raise
+                if result is False:
+                    return result, part_path
+                gemini_usage["input_tokens"] += result.get("input_tokens", 0)
+                gemini_usage["output_tokens"] += result.get("output_tokens", 0)
+                if not gemini_usage["model_key"]:
+                    gemini_usage["model_key"] = result.get("model_key")
+                ga = job["gemini_actual"]
+                ga["input_tokens"] += result.get("input_tokens", 0)
+                ga["output_tokens"] += result.get("output_tokens", 0)
+                ga["chars"] += len(block["text"])
+                bw = result.get("bytes_written", 0)
+                ga["audio_seconds"] += bw / (24000.0 * 2)
+                model_key_local = result.get("model_key", "flash25")
+                if not ga["model_key"]:
+                    ga["model_key"] = model_key_local
+                # Costo Google REALE del chunk (token reali x rate per MTok),
+                # calcolato una volta e riusato per l'aggregato job e record_usage.
+                chunk_google_cost_eur = 0.0
+                if gemini_tts is not None:
+                    try:
+                        bd = gemini_tts.google_cost_breakdown(
+                            result.get("input_tokens", 0),
+                            result.get("output_tokens", 0),
+                            model_key_local,
+                        )
+                        chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
+                        ga["google_cost_eur"] += chunk_google_cost_eur
+                    except Exception as e:
+                        print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
+                    # Record usage per chunk (partial completions on cancel restano contabilizzate)
+                    try:
+                        gemini_tts.record_usage(
+                            result.get("model_key", "flash25"),
+                            len(block["text"]),
+                            result.get("input_tokens", 0),
+                            result.get("output_tokens", 0),
+                            chunk_google_cost_eur,
+                            0.0,
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
+                    # Empirical rate sample: lingua = TTS scelta (non metadata libro),
+                    # cosi' i campioni sono raggruppati per lingua REALE della voce.
+                    try:
+                        _lang = (_audit_language(job, info) or "it")[:2]
+                        _norm_chars = len(gemini_tts._normalize_text(block["text"]))
+                        _audio_secs = result.get("audio_seconds_real")
+                        if _audio_secs is None:
+                            _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
+                        gemini_tts.record_rate_sample(
+                            _norm_chars, _audio_secs, _lang,
+                            result.get("model_key", "flash25"),
+                            rate_pct=rate,
+                        )
+                    except Exception as e:
+                        print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
+                    # Trim trailing silence dal PCM Gemini per ridurre le pause
+                    # percepibili tra chunk consecutivi (cap a trim_tail_ms()).
+                    try:
+                        _trim_cap = gemini_tts.trim_tail_ms()
+                        _trim_thr = gemini_tts.trim_tail_threshold()
+                        if _trim_cap > 0:
+                            trim_pcm_trailing_silence(
+                                part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
+                            )
+                    except Exception as _e_trim:
+                        print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
+                return result, part_path
+            else:
+                part_path = str(work_dir / f"chunk_{i:06d}.mp3")
+                if use_google:
+                    result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
+                else:
+                    try:
+                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                    except Exception as _edge_err:
+                        print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
+                        import traceback
+                        traceback.print_exc()
+                        _generate_silence_mp3(part_path, duration_sec=1)
+                        result = False
+                return result, part_path
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -3375,88 +3501,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             pass
                     prev_chapter_idx = ch_idx
 
-                if use_gemini:
-                    part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
-                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
-                    # chunk del capitolo (vecchio design cost-saving) faceva
-                    # percepire all'utente uno stile diverso tra preview (1 chunk,
-                    # sempre con stile) e job finale (1 chunk su N con stile).
-                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
-                    # prefix x N chunk: pochi millicent per libro tipico).
-                    style_for_chunk = gemini_style_instruction
-                    try:
-                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                           style_instruction=style_for_chunk,
-                                                           rate=rate,
-                                                           debug_prompt_path=debug_prompt_path)
-                    except Exception as _quota_or_budget_err:
-                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
-                        # marcare il job come paused/error che silenziare il resto
-                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
-                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
-                                                                  (gemini_tts.GeminiQuotaExhausted,
-                                                                   gemini_tts.GeminiBudgetExceeded)):
-                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
-                            reason = getattr(_quota_or_budget_err, "reason",
-                                             getattr(_quota_or_budget_err, "scope", "quota"))
-                            job["gemini_paused"] = True
-                            job["gemini_pause_reason"] = reason
-                            job["gemini_pause_retry_after_sec"] = retry_after
-                            job["gemini_pause_message"] = str(_quota_or_budget_err)
-                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
-                                  f"reason={reason} retry_after={retry_after}s. "
-                                  f"Err: {str(_quota_or_budget_err)[:200]}")
-                            raise
-                        # Errore generico non quota-related: rilancia
-                        raise
-                    if result is False:
-                        failed_chunks += 1
-                    else:
-                        gemini_usage["input_tokens"] += result.get("input_tokens", 0)
-                        gemini_usage["output_tokens"] += result.get("output_tokens", 0)
-                        if not gemini_usage["model_key"]:
-                            gemini_usage["model_key"] = result.get("model_key")
-                        ga = job["gemini_actual"]
-                        ga["input_tokens"] += result.get("input_tokens", 0)
-                        ga["output_tokens"] += result.get("output_tokens", 0)
-                        ga["chars"] += len(block["text"])
-                        bw = result.get("bytes_written", 0)
-                        ga["audio_seconds"] += bw / (24000.0 * 2)
-                        model_key = result.get("model_key", "flash25")
-                        if not ga["model_key"]:
-                            ga["model_key"] = model_key
-                        # Costo Google REALE del chunk (token reali da usage_metadata
-                        # x rate per MTok). Calcolato una sola volta, riusato sia per
-                        # l'aggregato job (gemini_actual) sia per record_usage().
-                        chunk_google_cost_eur = 0.0
-                        if gemini_tts is not None:
-                            try:
-                                bd = gemini_tts.google_cost_breakdown(
-                                    result.get("input_tokens", 0),
-                                    result.get("output_tokens", 0),
-                                    model_key,
-                                )
-                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
-                                ga["google_cost_eur"] += chunk_google_cost_eur
-                            except Exception as e:
-                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
-                        result["_google_cost_eur"] = chunk_google_cost_eur
-                else:
-                    part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                    if use_google:
-                        result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
-                    else:
-                        try:
-                            result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                        except Exception as _edge_err:
-                            print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
-                            import traceback
-                            traceback.print_exc()
-                            _generate_silence_mp3(part_path, duration_sec=1)
-                            result = False
-                    if result is False:
-                        failed_chunks += 1
+                result, part_path = _synthesize_chunk(i, block)
+                if result is False:
+                    failed_chunks += 1
                 # Bump per il gap che verra` inserito PRIMA di questo part_path
                 # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
                 if gap_ms_inter and all_parts:
@@ -3464,52 +3511,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if m4b_chapters:
                         m4b_chapters[-1]["end"] += gap_ms_inter
                 all_parts.append(part_path)
-                # Record Gemini usage per chunk (so partial completions on cancel still book it)
-                if use_gemini and result is not False and gemini_tts is not None:
-                    try:
-                        gemini_tts.record_usage(
-                            result.get("model_key", "flash25"),
-                            len(block["text"]),
-                            result.get("input_tokens", 0),
-                            result.get("output_tokens", 0),
-                            float(result.get("_google_cost_eur", 0.0) or 0.0),
-                            0.0,
-                        )
-                    except Exception as e:
-                        print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
-                    # Empirical rate sample (chars normalizzati -> audio_seconds reali).
-                    # Lingua = TTS scelta (opt_lang/gen_lang), NON metadata libro:
-                    # cosi' i campioni rate sono raggruppati per lingua REALE della
-                    # voce, non per lingua dell'input (es. libro arabo -> voce IT
-                    # registra sample "it", utili per calibrazione voce italiana).
-                    try:
-                        _lang = (_audit_language(job, info) or "it")[:2]
-                        _norm_chars = len(gemini_tts._normalize_text(block["text"]))
-                        _audio_secs = result.get("audio_seconds_real")
-                        if _audio_secs is None:
-                            _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
-                        gemini_tts.record_rate_sample(
-                            _norm_chars, _audio_secs, _lang,
-                            result.get("model_key", "flash25"),
-                            rate_pct=rate,
-                        )
-                    except Exception as e:
-                        print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
-
-                    # Trim trailing silence dal PCM chunk Gemini per ridurre le
-                    # pause percepibili tra chunk consecutivi. Cap a trim_tail_ms()
-                    # per evitare di tagliare l'attacco/coda di parola. NON applicato
-                    # se result is False (sotto e` silenzio puro segnaposto).
-                    if gemini_tts is not None:
-                        try:
-                            _trim_cap = gemini_tts.trim_tail_ms()
-                            _trim_thr = gemini_tts.trim_tail_threshold()
-                            if _trim_cap > 0:
-                                trim_pcm_trailing_silence(
-                                    part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
-                                )
-                        except Exception as _e_trim:
-                            print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
                 if i == 0:
@@ -3829,123 +3830,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if os.path.exists(silence_path):
                         current_chapter_parts.append(silence_path)
 
-                if use_gemini:
-                    part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                    debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
-                    # Applichiamo lo stile a TUTTI i chunk: limitarlo al primo
-                    # chunk del capitolo (vecchio design cost-saving) faceva
-                    # percepire all'utente uno stile diverso tra preview (1 chunk,
-                    # sempre con stile) e job finale (1 chunk su N con stile).
-                    # Il costo dei token aggiuntivi e` trascurabile (~315 char di
-                    # prefix x N chunk: pochi millicent per libro tipico).
-                    style_for_chunk = gemini_style_instruction
-                    try:
-                        result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
-                                                           style_instruction=style_for_chunk,
-                                                           rate=rate,
-                                                           debug_prompt_path=debug_prompt_path)
-                    except Exception as _quota_or_budget_err:
-                        # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio
-                        # marcare il job come paused/error che silenziare il resto
-                        # del libro. Salviamo lo stato e usciamo dal loop chunk.
-                        if gemini_tts is not None and isinstance(_quota_or_budget_err,
-                                                                  (gemini_tts.GeminiQuotaExhausted,
-                                                                   gemini_tts.GeminiBudgetExceeded)):
-                            retry_after = getattr(_quota_or_budget_err, "retry_after_sec", None)
-                            reason = getattr(_quota_or_budget_err, "reason",
-                                             getattr(_quota_or_budget_err, "scope", "quota"))
-                            job["gemini_paused"] = True
-                            job["gemini_pause_reason"] = reason
-                            job["gemini_pause_retry_after_sec"] = retry_after
-                            job["gemini_pause_message"] = str(_quota_or_budget_err)
-                            print(f"[{job_id}] Gemini paused at chunk {i}/{total_chunks}: "
-                                  f"reason={reason} retry_after={retry_after}s. "
-                                  f"Err: {str(_quota_or_budget_err)[:200]}")
-                            raise
-                        # Errore generico non quota-related: rilancia
-                        raise
-                    if result is False:
-                        failed_chunks += 1
-                    else:
-                        gemini_usage["input_tokens"] += result.get("input_tokens", 0)
-                        gemini_usage["output_tokens"] += result.get("output_tokens", 0)
-                        if not gemini_usage["model_key"]:
-                            gemini_usage["model_key"] = result.get("model_key")
-                        ga = job["gemini_actual"]
-                        ga["input_tokens"] += result.get("input_tokens", 0)
-                        ga["output_tokens"] += result.get("output_tokens", 0)
-                        ga["chars"] += len(block["text"])
-                        bw = result.get("bytes_written", 0)
-                        ga["audio_seconds"] += bw / (24000.0 * 2)
-                        model_key_local = result.get("model_key", "flash25")
-                        if not ga["model_key"]:
-                            ga["model_key"] = model_key_local
-                        chunk_google_cost_eur = 0.0
-                        if gemini_tts is not None:
-                            try:
-                                bd = gemini_tts.google_cost_breakdown(
-                                    result.get("input_tokens", 0),
-                                    result.get("output_tokens", 0),
-                                    model_key_local,
-                                )
-                                chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
-                                ga["google_cost_eur"] += chunk_google_cost_eur
-                            except Exception as e:
-                                print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
-                        if gemini_tts is not None:
-                            try:
-                                gemini_tts.record_usage(
-                                    result.get("model_key", "flash25"),
-                                    len(block["text"]),
-                                    result.get("input_tokens", 0),
-                                    result.get("output_tokens", 0),
-                                    chunk_google_cost_eur,
-                                    0.0,
-                                )
-                            except Exception as e:
-                                print(f"[{job_id}] gemini_tts.record_usage failed (non-fatal): {e}")
-                            # Empirical rate sample — vedi commento branch single-file
-                            # sopra per la motivazione del fallback _audit_language.
-                            try:
-                                _lang = (_audit_language(job, info) or "it")[:2]
-                                _norm_chars = len(gemini_tts._normalize_text(block["text"]))
-                                _audio_secs = result.get("audio_seconds_real")
-                                if _audio_secs is None:
-                                    _audio_secs = result.get("bytes_written", 0) / (24000.0 * 2)
-                                gemini_tts.record_rate_sample(
-                                    _norm_chars, _audio_secs, _lang,
-                                    result.get("model_key", "flash25"),
-                                    rate_pct=rate,
-                                )
-                            except Exception as e:
-                                print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")
-
-                        # Trim trailing silence dal PCM Gemini (idem single-file branch).
-                        if gemini_tts is not None:
-                            try:
-                                _trim_cap = gemini_tts.trim_tail_ms()
-                                _trim_thr = gemini_tts.trim_tail_threshold()
-                                if _trim_cap > 0:
-                                    trim_pcm_trailing_silence(
-                                        part_path, threshold=_trim_thr, max_trim_ms=_trim_cap,
-                                    )
-                            except Exception as _e_trim:
-                                print(f"[{job_id}] trim_pcm_trailing_silence failed (non-fatal): {_e_trim}")
-                else:
-                    part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                    if use_google:
-                        result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
-                    else:
-                        try:
-                            result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                        except Exception as _edge_err:
-                            print(f"[{job_id}] edge-tts chunk {i} crashed (multi-file): {_edge_err}")
-                            import traceback
-                            traceback.print_exc()
-                            _generate_silence_mp3(part_path, duration_sec=1)
-                            result = False
-                    if result is False:
-                        failed_chunks += 1
+                result, part_path = _synthesize_chunk(i, block)
+                if result is False:
+                    failed_chunks += 1
                 current_chapter_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo

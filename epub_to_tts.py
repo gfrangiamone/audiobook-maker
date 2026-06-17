@@ -122,6 +122,79 @@ NON_CONTENT_FILENAMES_SUBSTR = {
     "colophon", "frontmatter", "backmatter", "tableofcontents",
 }
 
+# Frasi che identificano sezioni di apparato critico (non narrative). Lista
+# canonica condivisa da is_content_chapter e _is_title_content (e importata
+# da pdf_to_tts) per evitare divergenze. Il match e' per PAROLA INTERA (vedi
+# _title_is_non_content): un token corto come "note"/"toc"/"cover"/"index"
+# NON deve scartare titoli legittimi ("Notevole...", "Autocrazia",
+# "Discovering...", "Indexed...").
+NON_CONTENT_TITLE_PHRASES = [
+    # ── Indice / TOC ──
+    "indice", "indice generale", "indice dei contenuti", "indice analitico",
+    "sommario", "table of contents", "contents", "toc",
+    "table des matières", "sommaire", "índice", "índice general",
+    "inhaltsverzeichnis", "inhalt",
+    # ── Copyright / Colophon ──
+    "copyright", "colophon", "note legali", "informazioni legali",
+    "avviso legale", "legal notice", "all rights reserved",
+    "copyright notice", "mentions légales", "aviso legal",
+    "impressum",
+    # ── Copertina / Frontespizio ──
+    "frontespizio", "title page", "cover", "copertina",
+    "half title", "halftitle", "page de titre",
+    # ── Dedica / Epigrafe ──
+    "dedica", "dedication", "dédicace", "dedicatoria",
+    "epigrafe", "epigraph", "épigraphe",
+    # ── Bibliografia / Riferimenti ──
+    "bibliografia", "bibliography", "bibliographie", "bibliografía",
+    "riferimenti bibliografici", "riferimenti", "references",
+    "opere citate", "works cited", "fonti", "sources",
+    "letture consigliate", "further reading", "suggested reading",
+    "per approfondire", "lectures complémentaires",
+    # ── Note ──
+    "note", "notes", "note al testo", "note a piè di pagina",
+    "note finali", "endnotes", "footnotes", "anmerkungen",
+    "note dell'autore", "note del traduttore", "note del curatore",
+    "note bibliografiche", "note critiche",
+    # ── Glossario ──
+    "glossario", "glossary", "glossaire", "glosario", "glossar",
+    # ── Indice analitico ──
+    "indice analitico", "indice dei nomi", "indice dei luoghi",
+    "indice delle opere", "indice tematico",
+    "index", "name index", "subject index", "word index",
+    # ── Appendice (se puro riferimento) ──
+    "appendice", "appendix", "annexe", "apéndice", "anhang",
+    # ── Informazioni autore ──
+    "about the author", "sull'autore", "l'autore", "l'autrice",
+    "biography", "biografia", "biographie",
+    "about the translator", "nota del traduttore",
+    "dello stesso autore", "also by", "du même auteur",
+    "altre opere", "other books",
+    # ── Ringraziamenti ──
+    "ringraziamenti", "acknowledgements", "acknowledgments",
+    "remerciements", "agradecimientos", "danksagung",
+    # ── Errata / Crediti ──
+    "errata", "errata corrige", "credits", "crediti",
+    "photo credits", "image credits", "illustration credits",
+    # ── Indice riferimenti (testi religiosi/critici) ──
+    "indice dei riferimenti",
+]
+
+
+def _title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
+    """True se il titolo corrisponde a una frase di apparato critico.
+
+    Match per PAROLA INTERA usando confini \\w Unicode (i caratteri accentati
+    sono word-char in Python 3): "note" matcha "Note" / "Note al testo" ma NON
+    "Notevole"; "toc" non matcha "Autocrazia"; "cover" non matcha "Discovering".
+    Per frasi multi-parola i confini si applicano agli estremi della frase.
+    """
+    tl = (title or "").lower()
+    for skip in phrases:
+        if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
+            return True
+    return False
+
 # Pattern di testo da rimuovere
 # ── Pattern che causano SKIP dell'intera riga (righe che sono solo rumore) ──
 LINE_SKIP_PATTERNS = [
@@ -517,20 +590,24 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
     text = re.sub(r"(?<![a-zA-ZÀ-ÿ])\s*\?+\s*", " ", text)  # ? senza parola prima
 
     # 3. Rimuovi pattern di rumore
+    #  - LINE_SKIP_PATTERNS: la riga e' SOLO rumore (numero di pagina, riga
+    #    di separatori, processing instruction editoriale) -> scartata intera.
+    #  - NOISE_PATTERNS: rimuovono SOLO la porzione di testo che matcha (via
+    #    re.sub su tutta la riga), mai l'intera riga. Tutti i pattern vengono
+    #    applicati in sequenza (niente break): una riga puo' contenere piu'
+    #    rumori (es. "[1] ... §").
+    # NB storico: prima questo loop usava re.match()+break e, quando un
+    # pattern di rumore cadeva a inizio riga, scartava o sostituiva l'INTERA
+    # riga -> un paragrafo narrativo che iniziava con "[1]", un URL o
+    # "(vedi ...)" spariva. LINE_SKIP_PATTERNS era definito ma mai usato.
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
-        skip = False
+        if any(re.match(p, line) for p in LINE_SKIP_PATTERNS):
+            continue
         for pattern, replacement in NOISE_PATTERNS:
-            if re.match(pattern, line):
-                if replacement:
-                    line = replacement
-                else:
-                    skip = True
-                break
             line = re.sub(pattern, replacement, line)
-        if not skip:
-            cleaned_lines.append(line)
+        cleaned_lines.append(line)
     text = "\n".join(cleaned_lines)
 
     # 4. Espandi abbreviazioni
@@ -678,60 +755,10 @@ def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> boo
     if word_count < 30:
         return False
 
-    # Filtra pagine tipicamente non-contenuto (multilingua)
-    title_lower = title.lower()
-    skip_titles = [
-        # ── Indice / TOC ──
-        "indice", "indice generale", "indice dei contenuti", "indice analitico",
-        "sommario", "table of contents", "contents", "toc",
-        "table des matières", "sommaire", "índice", "índice general",
-        "inhaltsverzeichnis", "inhalt",
-        # ── Copyright / Colophon ──
-        "copyright", "colophon", "note legali", "informazioni legali",
-        "avviso legale", "legal notice", "all rights reserved",
-        "copyright notice", "mentions légales", "aviso legal",
-        "impressum",
-        # ── Copertina / Frontespizio ──
-        "frontespizio", "title page", "cover", "copertina",
-        "half title", "halftitle", "page de titre",
-        # ── Dedica / Epigrafe ──
-        "dedica", "dedication", "dédicace", "dedicatoria",
-        "epigrafe", "epigraph", "épigraphe",
-        # ── Bibliografia / Riferimenti ──
-        "bibliografia", "bibliography", "bibliographie", "bibliografía",
-        "riferimenti bibliografici", "riferimenti", "references",
-        "opere citate", "works cited", "fonti", "sources",
-        "letture consigliate", "further reading", "suggested reading",
-        "per approfondire", "lectures complémentaires",
-        # ── Note ──
-        "note", "notes", "note al testo", "note a piè di pagina",
-        "note finali", "endnotes", "footnotes", "anmerkungen",
-        "note dell'autore", "note del traduttore", "note del curatore",
-        "note bibliografiche", "note critiche",
-        # ── Glossario ──
-        "glossario", "glossary", "glossaire", "glosario", "glossar",
-        # ── Indice analitico ──
-        "indice analitico", "indice dei nomi", "indice dei luoghi",
-        "indice delle opere", "indice tematico",
-        "index", "name index", "subject index", "word index",
-        # ── Appendice (se puro riferimento) ──
-        "appendice", "appendix", "annexe", "apéndice", "anhang",
-        # ── Informazioni autore ──
-        "about the author", "sull'autore", "l'autore", "l'autrice",
-        "biography", "biografia", "biographie",
-        "about the translator", "nota del traduttore",
-        "dello stesso autore", "also by", "du même auteur",
-        "altre opere", "other books",
-        # ── Ringraziamenti ──
-        "ringraziamenti", "acknowledgements", "acknowledgments",
-        "remerciements", "agradecimientos", "danksagung",
-        # ── Errata / Crediti ──
-        "errata", "errata corrige", "credits", "crediti",
-        "photo credits", "image credits", "illustration credits",
-        # ── Prefazione / Postfazione editoriale (opzionale — includi se vuoi) ──
-        # "prefazione", "preface", "foreword", "postfazione", "afterword",
-    ]
-    if any(skip in title_lower for skip in skip_titles):
+    # Filtra pagine tipicamente non-contenuto (multilingua). Match per parola
+    # intera (lista canonica NON_CONTENT_TITLE_PHRASES) per non scartare
+    # titoli legittimi che contengono un token corto come substring.
+    if _title_is_non_content(title):
         return False
 
     # Euristica content-based: rileva sezioni non-narrative dal contenuto
@@ -802,59 +829,7 @@ def _is_title_content(title: str) -> bool:
     senza requisiti di lunghezza del testo. Usata per sezioni da TOC
     dove l'intro può essere breve ma il marcatore strutturale è utile.
     """
-    title_lower = title.lower()
-    skip_titles = [
-        # ── Indice / TOC ──
-        "indice", "indice generale", "indice dei contenuti", "indice analitico",
-        "sommario", "table of contents", "contents", "toc",
-        "table des matières", "sommaire", "índice", "índice general",
-        "inhaltsverzeichnis", "inhalt",
-        # ── Copyright / Colophon ──
-        "copyright", "colophon", "note legali", "informazioni legali",
-        "avviso legale", "legal notice", "all rights reserved",
-        "copyright notice", "mentions légales", "aviso legal",
-        "impressum",
-        # ── Copertina / Frontespizio ──
-        "frontespizio", "title page", "cover", "copertina",
-        "half title", "halftitle", "page de titre",
-        # ── Dedica / Epigrafe ──
-        "dedica", "dedication", "dédicace", "dedicatoria",
-        "epigrafe", "epigraph", "épigraphe",
-        # ── Bibliografia / Riferimenti ──
-        "bibliografia", "bibliography", "bibliographie", "bibliografía",
-        "riferimenti bibliografici", "riferimenti", "references",
-        "opere citate", "works cited", "fonti", "sources",
-        "letture consigliate", "further reading", "suggested reading",
-        "per approfondire", "lectures complémentaires",
-        # ── Note ──
-        "note", "notes", "note al testo", "note a piè di pagina",
-        "note finali", "endnotes", "footnotes", "anmerkungen",
-        "note dell'autore", "note del traduttore", "note del curatore",
-        "note bibliografiche", "note critiche",
-        # ── Glossario ──
-        "glossario", "glossary", "glossaire", "glosario", "glossar",
-        # ── Indice analitico ──
-        "indice analitico", "indice dei nomi", "indice dei luoghi",
-        "indice delle opere", "indice tematico",
-        "index", "name index", "subject index", "word index",
-        # ── Appendice ──
-        "appendice", "appendix", "annexe", "apéndice", "anhang",
-        # ── Informazioni autore ──
-        "about the author", "sull'autore", "l'autore", "l'autrice",
-        "biography", "biografia", "biographie",
-        "about the translator", "nota del traduttore",
-        "dello stesso autore", "also by", "du même auteur",
-        "altre opere", "other books",
-        # ── Ringraziamenti ──
-        "ringraziamenti", "acknowledgements", "acknowledgments",
-        "remerciements", "agradecimientos", "danksagung",
-        # ── Errata / Crediti ──
-        "errata", "errata corrige", "credits", "crediti",
-        "photo credits", "image credits", "illustration credits",
-        # ── Indice riferimenti biblici (specifico per testi religiosi) ──
-        "indice dei riferimenti",
-    ]
-    return not any(skip in title_lower for skip in skip_titles)
+    return not _title_is_non_content(title)
 
 
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:

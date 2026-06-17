@@ -53,7 +53,10 @@ except ImportError:
 # Importa strutture dati e funzioni di pulizia dal modulo EPUB
 # (evita duplicazione di logica — stessa interfaccia BookInfo/Chapter)
 try:
-    from epub_to_tts import BookInfo, Chapter, clean_text_for_tts, is_content_chapter
+    from epub_to_tts import (
+        BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
+        _title_is_non_content,
+    )
 except ImportError:
     # Fallback: definisci localmente se epub_to_tts non è disponibile
     from dataclasses import field
@@ -97,6 +100,14 @@ except ImportError:
         if len(text.strip()) < 100 or len(text.split()) < 30:
             return False
         return True
+
+    def _title_is_non_content(title, phrases):
+        """Fallback: match per parola intera (confini \\w Unicode)."""
+        tl = (title or "").lower()
+        for skip in phrases:
+            if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
+                return True
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -312,7 +323,6 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
         bbox = block["bbox"]
         block_text_parts = []
         is_small = True  # Assumi piccolo fino a prova contraria
-        is_superscript = False
 
         for line in block.get("lines", []):
             line_parts = []
@@ -323,7 +333,6 @@ def _extract_page_text_filtered(page: fitz.Page, body_font_size: float,
 
                 # Flag bit 0 = superscript in PyMuPDF
                 if flags & 1:
-                    is_superscript = True
                     continue  # Salta numeri in apice (riferimenti a note)
 
                 if size >= small_threshold:
@@ -465,16 +474,11 @@ def _clean_pdf_text(text: str) -> str:
 
 def _is_non_content_section(title: str, text: str) -> bool:
     """Determina se una sezione PDF è non-contenuto (indice, bibliografia, ecc.)."""
-    title_lower = title.lower().strip()
-
-    # Controlla titolo esatto
-    if title_lower in NON_CONTENT_TITLES:
+    # Match per parola intera (vedi epub_to_tts._title_is_non_content): evita
+    # falsi positivi su token corti ("note" in "notevole", "toc" in
+    # "autocrazia"). NON_CONTENT_TITLES include "目录" (sommario cinese).
+    if _title_is_non_content(title, NON_CONTENT_TITLES):
         return True
-
-    # Controlla titolo per substring
-    for skip_title in NON_CONTENT_TITLES:
-        if skip_title in title_lower:
-            return True
 
     # Euristica content-based
     if not is_content_chapter(text, title):
@@ -548,7 +552,6 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
         for block in text_blocks:
             block_parts = []
             max_size = 0
-            is_bold = False
 
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
@@ -560,8 +563,6 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
                     block_parts.append(text)
                     if size > max_size:
                         max_size = size
-                    if flags & (1 << 4):  # bold
-                        is_bold = True
 
             block_text = " ".join(block_parts).strip()
             if not block_text:
@@ -613,8 +614,6 @@ def _detect_page_number_offset(doc: fitz.Document, body_font_size: float) -> int
 
     Restituisce l'offset: pdf_page_0based = printed_page + offset - 1
     """
-    small_threshold = body_font_size * SMALL_TEXT_RATIO
-
     for page_idx in range(min(30, len(doc))):
         page = doc[page_idx]
         blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
