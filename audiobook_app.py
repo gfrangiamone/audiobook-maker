@@ -1491,6 +1491,32 @@ def _save_device_tokens():
         print(f"[device] Failed to save device tokens: {e}")
 
 
+# Testi notifica push localizzati per lingua del job (`notify_lang`), fallback
+# inglese. Coerente con la localizzazione delle email; chiavi: event -> lang ->
+# (subject, body). Per l'evento 'done' il titolo del libro, se noto, prevale
+# come subject (vedi _push_job_event).
+_PUSH_TEXTS = {
+    "done": {
+        "en": ("Audiobook ready", "Generation complete: download the file from your library."),
+        "it": ("Audiolibro pronto", "La generazione è completata: scarica il file nella libreria."),
+        "fr": ("Livre audio prêt", "La génération est terminée : téléchargez le fichier dans votre bibliothèque."),
+        "es": ("Audiolibro listo", "La generación ha finalizado: descarga el archivo en tu biblioteca."),
+        "de": ("Hörbuch fertig", "Die Erstellung ist abgeschlossen: Lade die Datei in deiner Bibliothek herunter."),
+        "zh": ("有声书已就绪", "生成完成：在你的图书馆中下载文件。"),
+        "hi": ("ऑडियोबुक तैयार", "जनरेशन पूरा हुआ: अपनी लाइब्रेरी से फ़ाइल डाउनलोड करें।"),
+    },
+    "error": {
+        "en": ("Generation failed", "The job stopped: open the app for details."),
+        "it": ("Generazione non riuscita", "Il lavoro si è interrotto: apri l'app per i dettagli."),
+        "fr": ("Échec de la génération", "La tâche s'est interrompue : ouvrez l'application pour les détails."),
+        "es": ("Generación fallida", "El trabajo se detuvo: abre la app para ver los detalles."),
+        "de": ("Erstellung fehlgeschlagen", "Der Vorgang wurde unterbrochen: Öffne die App für Details."),
+        "zh": ("生成失败", "任务已中断：打开应用查看详情。"),
+        "hi": ("जनरेशन विफल", "कार्य रुक गया: विवरण के लिए ऐप खोलें।"),
+    },
+}
+
+
 def _push_job_event(job_id, event, title=""):
     """Invia push FCM a tutti i device del client proprietario del job.
 
@@ -1502,18 +1528,18 @@ def _push_job_event(job_id, event, title=""):
         with _jobs_lock:
             job = jobs.get(job_id) or {}
             cid = job.get("client_id", "")
+            lang = (job.get("notify_lang") or "en").split("-")[0].lower()
         if not cid:
             return
         with _device_tokens_lock:
             devices = list(_device_tokens.get(cid, []))
         if not devices:
             return
-        if event == "done":
-            subject = title or "Audiolibro pronto"
-            body = "La generazione è completata: scarica il file nella libreria."
-        else:
-            subject = title or "Generazione non riuscita"
-            body = "Il lavoro si è interrotto: apri l'app per i dettagli."
+        # Localizza in base alla lingua del job (fallback inglese). Per 'done' il
+        # titolo del libro, se noto, resta il subject più informativo.
+        _texts = _PUSH_TEXTS.get(event, _PUSH_TEXTS["error"])
+        loc_subject, body = _texts.get(lang) or _texts["en"]
+        subject = title or loc_subject
         dead = []
         for dev in devices:
             outcome = push_service.send_push(
