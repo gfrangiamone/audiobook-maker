@@ -4523,9 +4523,27 @@ function autoFixVoice(langCode){
   if(!sel||!sel.querySelector('option[value="'+langCode+'"]'))return;
   sel.value=langCode;
   updVoices();
+  // Propaga la lingua anche al tab PREMIUM: i selettori Premium
+  // (vlPremium/vvPremium) sono distinti da quelli Standard, quindi senza questa
+  // propagazione il click sul warning cambiava solo le voci Standard e la voce
+  // Premium restava nella lingua sbagliata (il fix sembrava non funzionare).
+  const prem=document.getElementById('vlPremium');
+  if(prem&&Array.from(prem.options).some(o=>o.value===langCode)){
+    prem.value=langCode;
+    if(typeof updVoicesPremium==='function')updVoicesPremium();
+  }else if(wizardState&&wizardState.audioTab==='premium'){
+    // La lingua del libro non ha voci Premium: ripiega sul tab Standard, dove la
+    // voce è già stata impostata nella lingua corretta, così la selezione resta
+    // coerente con il warning.
+    if(typeof switchAudioTab==='function')switchAudioTab('standard');
+  }
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   goToAudioSettings();
-  // Brief highlight on both selectors to confirm the change
-  [document.getElementById('vl'),document.getElementById('vv')].forEach(el=>{
+  // Brief highlight sui selettori del tab attivo per confermare il cambio.
+  const isPrem=wizardState&&wizardState.audioTab==='premium';
+  const langEl=isPrem?document.getElementById('vlPremium'):document.getElementById('vl');
+  const voiceEl=isPrem?document.getElementById('vvPremium'):document.getElementById('vv');
+  [langEl,voiceEl].forEach(el=>{
     if(!el)return;
     el.style.transition='box-shadow .25s';
     el.style.boxShadow='0 0 0 3px var(--ac)';
