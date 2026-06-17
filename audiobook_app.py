@@ -7463,6 +7463,10 @@ def api_generate():
             # consegnare il risultato via email (o solo il rimborso su errore
             # reale), indipendentemente dalla sessione del client. Idempotente
             # se l'utente aveva gia' registrato un'email via /api/register_email.
+            # Vale sia per PayPal (email del pagatore) sia per VOUCHER (email
+            # associata al buono): in entrambi i casi la consegna e' garantita e
+            # il frontend mostra il box di notifica precompilato e disabilitato,
+            # senza l'avviso "se chiudi la pagina viene annullato" (non veritiero).
             if not job.get("email_registered"):
                 _pay_email = ""
                 try:

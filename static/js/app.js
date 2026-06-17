@@ -1479,6 +1479,10 @@ async function validateVoucherForPayment() {
     }
     _payState.token = code;
     _payState.method = 'voucher';
+    // Memorizza l'email del voucher per precompilare (senza registrarla) il box
+    // di notifica durante la generazione: l'utente la conferma esplicitamente.
+    lastVoucherEmail = email;
+    try { localStorage.setItem('abm_v_email', email); } catch (e) {}
     const btn = document.getElementById('btnPayConfirm');
     if (btn) btn.disabled = false;
     errEl.style.color = '#27ae60';
@@ -2797,7 +2801,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         }
         showPErr(gd.error);unlockUI();return;
       }
-      if(gd.auto_batch_email)_showAutoBatchNotice(gd.auto_batch_email);
+      if(gd.auto_batch_email){emailRegistered=true;_showAutoBatchNotice(gd.auto_batch_email);_updateGenNoticeWarning();}
       _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
@@ -3240,6 +3244,7 @@ async function startGen(){
       // e onBeforeUnload non invia il cancel-beacon.
       emailRegistered=true;
       _showAutoBatchNotice(d.auto_batch_email);
+      _updateGenNoticeWarning();
     }
     _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     listenProgress();
@@ -3264,6 +3269,25 @@ function _showAutoBatchNotice(maskedEmail){
   const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
   n.textContent=tmpl.replace('{email}',maskedEmail);
   n.style.display='block';
+  _lockEmailLateBoxAutoBatch(maskedEmail);
+}
+
+function _lockEmailLateBoxAutoBatch(maskedEmail){
+  // Job pagato con email gia' registrata (auto-batch su voucher o PayPal): la
+  // notifica e' garantita, l'utente non deve inserire nulla. Mostriamo il box
+  // di notifica precompilato e DISABILITATO (sola lettura) per coerenza, senza
+  // il bottone d'invio. L'email reale (digitata per il voucher) e' in
+  // localStorage; per PayPal usiamo l'indirizzo mascherato del pagamento.
+  const input=document.getElementById('notifyEmailLate');
+  if(input){
+    let real='';
+    try{real=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
+    input.value=(real&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(real))?real:(maskedEmail||'');
+    input.disabled=true;
+    input.readOnly=true;
+  }
+  const btn=document.getElementById('btnSubmitEmailLate');
+  if(btn)btn.disabled=true;
 }
 
 async function _showTransferQr(jobId, imgId, boxId){
@@ -4317,6 +4341,13 @@ function _resetEmailLateArea(){
       if(input)input.value='';
     }
   }
+  // Riattiva input e bottone eventualmente disabilitati dall'auto-batch del job
+  // precedente (_lockEmailLateBoxAutoBatch), cosi' il job successivo riparte con
+  // il box modificabile.
+  const inp=document.getElementById('notifyEmailLate');
+  if(inp){inp.disabled=false;inp.readOnly=false;inp.value='';}
+  const sb=document.getElementById('btnSubmitEmailLate');
+  if(sb)sb.disabled=false;
   const abn=document.getElementById('autoBatchNotice');
   if(abn)abn.style.display='none';
 }
