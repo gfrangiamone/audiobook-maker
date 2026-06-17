@@ -588,6 +588,10 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* ═══ FORM ROW / GROUP (wizard) ═══ */
 .form-row{display:flex;gap:18px;margin-bottom:16px;flex-wrap:wrap}
+/* L'attributo [hidden] su .form-row va onorato: .form-row{display:flex} altrimenti
+   vince sulla regola UA [hidden]{display:none} (stessa specificità, autore dopo UA),
+   lasciando visibile #geminiAccentRow anche quando _updateAccentDropdown lo nasconde. */
+.form-row[hidden]{display:none}
 .form-group{flex:1;min-width:180px}
 
 /* ═══ SPEED SLIDER (mockup-inspired) ═══ */
