@@ -2744,6 +2744,13 @@ async function startCombinedGeneration(combinedPaymentToken){
         unlockUI();return;
       }
       _listenOptProgressWiz();
+      // QR di trasferimento gia' in fase di ottimizzazione: il wizard imposta
+      // sempre auto_generate=true, quindi il job produrra' l'audio in autonomia
+      // e il claim (email_registered=True) garantisce il download token al
+      // COMPLETE. Mostrarlo subito permette all'utente di trasferire su app e
+      // abbandonare la pagina durante l'ottimizzazione (anche lunga), senza
+      // dover attendere il passaggio alla generazione.
+      _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     }catch(e){
       console.error('[startCombinedGeneration] exception during /api/optimize', e);
       showPErr('Error: '+e.message);
@@ -3071,49 +3078,6 @@ function _listenOptProgressWiz(){
 function showS3Err(msg){
   var s3err=document.getElementById('s3err');
   if(s3err){s3err.textContent=msg;s3err.style.color='var(--err)'}
-}
-
-// Old startOptimization kept for backward compat (called from batch flow, etc.)
-async function startOptimization(){
-  if(!jobId)return;
-  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){alert('System under maintenance. Please try again in a few minutes.');return}}}catch(e){}
-  if(!(await _validateLanguage()))return;
-  document.getElementById('s3err').innerHTML='';
-  let selectedChapters=_getSelectedChapterIndexes();
-  if(selectedChapters.length===0){showS3Err(t('sel_err_none')||'Select at least one chapter');return}
-  var paymentToken=null;
-  try{
-    let url=new URL('/api/optimize_estimate/'+jobId,window.location.origin);
-    const selLang=document.getElementById('vl').value||cl;url.searchParams.append('lang',selLang);
-    if(selectedChapters&&selectedChapters.length>0)selectedChapters.forEach(idx=>url.searchParams.append('selected_chapters',idx));
-    var est=await fetch(url.toString()).then(r=>r.json());
-    if(est.error){showS3Err(est.error);return}
-    if(est.requires_payment){
-      try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
-        llmConfig.rate=cfg.rate_eur_per_mchar||1.1;llmConfig.threshold=cfg.free_threshold_eur||0.5;
-        llmConfig.bonus=cfg.voucher_bonus_percent||10;llmConfig.expiry=cfg.voucher_expiry_days||180;
-        llmConfig.paypalClientId=cfg.paypal_client_id||"";llmConfig.paypalMode=cfg.paypal_mode||"sandbox";llmConfig.paypalAvailable=!!cfg.paypal_available;
-      }catch(e){}
-      paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
-      if(!paymentToken)return;
-    }
-  }catch(e){showS3Err('Estimate error: '+e.message);return}
-  _showWizProgress();
-  _setCancelButtonMode('opt');
-  lockUI();
-  try{
-    const selLang=document.getElementById('vl').value||cl;
-    var payload={job_id:jobId,batch:false,lang:selLang};
-    if(paymentToken)payload.payment_token=paymentToken;
-    if(selectedChapters)payload.selected_chapters=selectedChapters;
-    var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    var d=await r.json();
-    if(d.error){
-      if(d.error_code==='llm_concurrent_limit'){document.getElementById('pMsg').textContent=t('llm_concurrent_limit')||d.error;document.getElementById('pMsg').style.color='var(--err)';}
-      else{showPErr(d.error)}unlockUI();return;
-    }
-    _listenOptProgressWiz();
-  }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
 
 // ═══════════════════ GENERATION ═══════════════════
