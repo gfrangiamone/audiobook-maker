@@ -2363,7 +2363,8 @@ def run_optimization(job_id, selected_chapters=None):
             try:
                 _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                               job.get("client_id", ""), job.get("client_ip", ""),
-                              voice, job.get("browser_lang", ""))
+                              voice, job.get("browser_lang", ""),
+                              epoch=job.get("gen_epoch"))
             except Exception:
                 pass
 
