@@ -596,6 +596,10 @@ function hideUploadProgress(){
 
 async function analyzeEpub(file){
   const lo=document.getElementById('alo');lo.classList.add('vis');
+  // Sospensione admin: blocca gia` al caricamento, evitando di uploadare il file
+  // (fino a 50MB) per poi essere bloccati. Il backend ricontrolla comunque
+  // (guardia autoritativa in /api/analyze).
+  try{const sr=await fetch('/api/admin/suspend');if(sr.ok){const sd=await sr.json();if(sd.suspended){showErr('aerr','System under maintenance. Please try again in a few minutes.');lo.classList.remove('vis');return}}}catch(_){}
   const fd=new FormData();fd.append('epub',file);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});

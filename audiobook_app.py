@@ -6491,6 +6491,11 @@ def api_analyze():
     )
     if not _allowed:
         return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
+    # Sospensione nuovi processi (admin toggle): blocca gia` al caricamento, non
+    # solo a generate/optimize, cosi` l'utente non spreca upload + analisi per
+    # poi trovarsi bloccato all'ultimo step. Guardia prima di salvare il file.
+    if _suspend_new_jobs:
+        return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
     if "epub" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     file = request.files["epub"]
