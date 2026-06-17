@@ -9808,12 +9808,16 @@ def token_download_page(token):
         if not translated_available and _cold_object_available(tr_path_snap):
             translated_available = True
 
-    # QR di trasferimento job sull'app mobile (best-effort).
-    try:
-        _qr_payload, _ = _transfer_payload_for(job_id)
-        _transfer_qr = _qr_data_uri(_qr_payload)
-    except Exception:
-        _transfer_qr = ""
+    # QR di trasferimento job sull'app mobile (best-effort). Escluso per i
+    # download di sola traduzione: l'app gestisce solo audiolibri, non i file
+    # di testo tradotto, quindi il QR "trasferisci sull'app" non ha senso lì.
+    _transfer_qr = ""
+    if dl_type != "translated":
+        try:
+            _qr_payload, _ = _transfer_payload_for(job_id)
+            _transfer_qr = _qr_data_uri(_qr_payload)
+        except Exception:
+            _transfer_qr = ""
 
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
