@@ -1479,6 +1479,10 @@ async function validateVoucherForPayment() {
     }
     _payState.token = code;
     _payState.method = 'voucher';
+    // Memorizza l'email del voucher per precompilare (senza registrarla) il box
+    // di notifica durante la generazione: l'utente la conferma esplicitamente.
+    lastVoucherEmail = email;
+    try { localStorage.setItem('abm_v_email', email); } catch (e) {}
     const btn = document.getElementById('btnPayConfirm');
     if (btn) btn.disabled = false;
     errEl.style.color = '#27ae60';
@@ -2797,7 +2801,8 @@ async function startCombinedGeneration(combinedPaymentToken){
         }
         showPErr(gd.error);unlockUI();return;
       }
-      if(gd.auto_batch_email)_showAutoBatchNotice(gd.auto_batch_email);
+      if(gd.auto_batch_email){emailRegistered=true;_showAutoBatchNotice(gd.auto_batch_email);_updateGenNoticeWarning();}
+      _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
     }catch(e){showPErr('Error: '+e.message);unlockUI()}
   }
@@ -3028,6 +3033,7 @@ function _listenOptProgressWiz(){
       es.close();
       _setCancelButtonMode('gen');
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('s4_title')||'Generation';
+      _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
       listenProgress();
       return;
     }
@@ -3238,7 +3244,9 @@ async function startGen(){
       // e onBeforeUnload non invia il cancel-beacon.
       emailRegistered=true;
       _showAutoBatchNotice(d.auto_batch_email);
+      _updateGenNoticeWarning();
     }
+    _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
     listenProgress();
   }catch(e){showPErr('Error: '+e.message);unlockUI()}
 }
@@ -3261,6 +3269,100 @@ function _showAutoBatchNotice(maskedEmail){
   const tmpl=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
   n.textContent=tmpl.replace('{email}',maskedEmail);
   n.style.display='block';
+  _lockEmailLateBoxAutoBatch(maskedEmail);
+}
+
+function _lockEmailLateBoxAutoBatch(maskedEmail){
+  // Job pagato con email gia' registrata (auto-batch su voucher o PayPal): la
+  // notifica e' garantita, l'utente non deve inserire nulla. Mostriamo il box
+  // di notifica precompilato e DISABILITATO (sola lettura) per coerenza, senza
+  // il bottone d'invio. L'email reale (digitata per il voucher) e' in
+  // localStorage; per PayPal usiamo l'indirizzo mascherato del pagamento.
+  const input=document.getElementById('notifyEmailLate');
+  if(input){
+    let real='';
+    try{real=(localStorage.getItem('abm_v_email')||'').trim();}catch(e){}
+    input.value=(real&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(real))?real:(maskedEmail||'');
+    input.disabled=true;
+    input.readOnly=true;
+  }
+  const btn=document.getElementById('btnSubmitEmailLate');
+  if(btn)btn.disabled=true;
+}
+
+async function _showTransferQr(jobId, imgId, boxId){
+  if(!jobId) return;
+  try{
+    const r = await fetch('/api/transfer_qr/' + encodeURIComponent(jobId));
+    if(!r.ok) return;
+    const d = await r.json();
+    if(d && d.qr){
+      const img = document.getElementById(imgId);
+      const box = document.getElementById(boxId);
+      if(img){ img.src = d.qr; }
+      if(box){ box.hidden = false; }
+    }
+  }catch(e){ /* best-effort: nessun QR, nessun errore visibile */ }
+}
+
+// Popup col QR ingrandito, aperto dal bottone "Trasferisci sull'app". Il QR e`
+// gia` stato scaricato da _showTransferQr in una img nascosta (holderId); qui lo
+// si mostra in grande. Stesso wrapper .modal-overlay/.modal degli altri modali,
+// costruito on-demand e autodistrutto alla chiusura.
+function openTransferQrModal(holderId){
+  const holder=document.getElementById(holderId||'transferStartImg');
+  const src=holder?holder.src:'';
+  if(!src) return;
+  let ttl='Transfer to the app', hint='';
+  try{const x=(typeof t==='function')?t('transfer_title'):null;if(x&&x!=='transfer_title')ttl=x;}catch(_e){}
+  try{const x=(typeof t==='function')?t('transfer_hint'):null;if(x&&x!=='transfer_hint')hint=x;}catch(_e){}
+  const prev=document.getElementById('transferQrModal');
+  if(prev&&prev.parentNode)prev.parentNode.removeChild(prev);
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay open';
+  overlay.id='transferQrModal';
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  const modal=document.createElement('div');
+  modal.className='modal';
+  modal.style.maxWidth='360px';
+  modal.style.textAlign='center';
+  const head=document.createElement('div');
+  head.className='modal-head';
+  const headSpan=document.createElement('span');
+  headSpan.textContent=ttl;
+  head.appendChild(headSpan);
+  const closeBtn=document.createElement('button');
+  closeBtn.className='modal-close';
+  closeBtn.setAttribute('aria-label','Close');
+  closeBtn.textContent='×';
+  head.appendChild(closeBtn);
+  const bodyDiv=document.createElement('div');
+  bodyDiv.className='modal-body';
+  const img=document.createElement('img');
+  img.src=src;
+  img.alt='QR';
+  img.style.width='280px';
+  img.style.height='280px';
+  img.style.maxWidth='100%';
+  img.style.display='block';
+  img.style.margin='0 auto';
+  bodyDiv.appendChild(img);
+  if(hint){
+    const p=document.createElement('p');
+    p.className='muted';
+    p.style.fontSize='.85rem';
+    p.style.marginTop='12px';
+    p.textContent=hint;
+    bodyDiv.appendChild(p);
+  }
+  modal.appendChild(head);
+  modal.appendChild(bodyDiv);
+  overlay.appendChild(modal);
+  const close=()=>{if(overlay.parentNode)overlay.parentNode.removeChild(overlay);};
+  closeBtn.addEventListener('click',close);
+  overlay.addEventListener('click',(e)=>{if(e.target===overlay)close();});
+  document.body.appendChild(overlay);
 }
 
 function listenProgress(){
@@ -3433,6 +3535,7 @@ function listenProgress(){
         }
         document.getElementById('cnA').style.display='none';
         goToStep(5);
+        _showTransferQr(myJobId, 'transferDoneImg', 'transferDoneArea');
 
         // Heartbeat
         hbInterval=setInterval(()=>{if(jobId)navigator.sendBeacon('/api/heartbeat/'+jobId)},10000);
@@ -3998,6 +4101,8 @@ async function goBackToChapters(){
   _updateAiOptCard();
   // Hide generation/download UI
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
@@ -4083,6 +4188,8 @@ function resetAll(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
   const btnA=document.getElementById('btnA');if(btnA)btnA.style.display='none';
@@ -4234,6 +4341,13 @@ function _resetEmailLateArea(){
       if(input)input.value='';
     }
   }
+  // Riattiva input e bottone eventualmente disabilitati dall'auto-batch del job
+  // precedente (_lockEmailLateBoxAutoBatch), cosi' il job successivo riparte con
+  // il box modificabile.
+  const inp=document.getElementById('notifyEmailLate');
+  if(inp){inp.disabled=false;inp.readOnly=false;inp.value='';}
+  const sb=document.getElementById('btnSubmitEmailLate');
+  if(sb)sb.disabled=false;
   const abn=document.getElementById('autoBatchNotice');
   if(abn)abn.style.display='none';
 }
@@ -4409,9 +4523,27 @@ function autoFixVoice(langCode){
   if(!sel||!sel.querySelector('option[value="'+langCode+'"]'))return;
   sel.value=langCode;
   updVoices();
+  // Propaga la lingua anche al tab PREMIUM: i selettori Premium
+  // (vlPremium/vvPremium) sono distinti da quelli Standard, quindi senza questa
+  // propagazione il click sul warning cambiava solo le voci Standard e la voce
+  // Premium restava nella lingua sbagliata (il fix sembrava non funzionare).
+  const prem=document.getElementById('vlPremium');
+  if(prem&&Array.from(prem.options).some(o=>o.value===langCode)){
+    prem.value=langCode;
+    if(typeof updVoicesPremium==='function')updVoicesPremium();
+  }else if(wizardState&&wizardState.audioTab==='premium'){
+    // La lingua del libro non ha voci Premium: ripiega sul tab Standard, dove la
+    // voce è già stata impostata nella lingua corretta, così la selezione resta
+    // coerente con il warning.
+    if(typeof switchAudioTab==='function')switchAudioTab('standard');
+  }
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   goToAudioSettings();
-  // Brief highlight on both selectors to confirm the change
-  [document.getElementById('vl'),document.getElementById('vv')].forEach(el=>{
+  // Brief highlight sui selettori del tab attivo per confermare il cambio.
+  const isPrem=wizardState&&wizardState.audioTab==='premium';
+  const langEl=isPrem?document.getElementById('vlPremium'):document.getElementById('vl');
+  const voiceEl=isPrem?document.getElementById('vvPremium'):document.getElementById('vv');
+  [langEl,voiceEl].forEach(el=>{
     if(!el)return;
     el.style.transition='box-shadow .25s';
     el.style.boxShadow='0 0 0 3px var(--ac)';

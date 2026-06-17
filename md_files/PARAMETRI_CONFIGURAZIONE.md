@@ -711,11 +711,46 @@ Ciclo di vita del descrittore: **scritto** quando il job diventa batch (`/api/re
 
 ---
 
+## 14. Push FCM (app mobile) (`push_service.py`)
+
+Modulo `push_service.py` — notifiche push Firebase Cloud Messaging (HTTP v1) per l'app mobile.
+Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non sono mai bloccanti.
+
+### 14.1 Variabile d'ambiente
+
+| Variabile | Default | Descrizione | File | Riga |
+|-----------|---------|-------------|------|------|
+| `ABM_FCM_CREDENTIALS_FILE` | *(vuoto)* | Path del service-account JSON Firebase per le notifiche push FCM HTTP v1. Push disabilitate se vuota o file assente (`is_available()` ritorna `False`). | `push_service.py` | 14 |
+
+### 14.2 Costanti interne (`push_service.py`)
+
+| Parametro | Valore | File | Riga | Note |
+|-----------|--------|------|------|------|
+| `_SEND_RETRIES` | `3` | `push_service.py` | 16 | Tentativi invio push per token; backoff esponenziale `2**attempt` secondi tra tentativi (sleep solo tra retry, non prima del primo). |
+
+### 14.3 Costanti interne (`audiobook_app.py`)
+
+| Parametro | Valore | File | Riga | Note |
+|-----------|--------|------|------|------|
+| `_MAX_DEVICES_PER_CLIENT` | `5` | `audiobook_app.py` | 1382 | Device FCM massimi per client_id. I token registrati vengono mantenuti ordinati per recency: oltre `_MAX_DEVICES_PER_CLIENT` il più vecchio viene silenziosamente scartato. |
+| `_FCM_TOKEN_RE` | `r"^[A-Za-z0-9_:\-\.~%]{10,4096}$"` | `audiobook_app.py` | 1383 | Regex di validazione formato token FCM. Richiesta fallisce con `400` se il token non corrisponde. |
+| `_DEVICE_TOKENS_FILE` | `UPLOAD_DIR / "_device_tokens.json"` | `audiobook_app.py` | 1381 | File di persistenza dei token FCM registrati per client. Write atomico (tmp + rename). |
+| `_MOBILE_CID_RE` | `r"^[A-Za-z0-9_-]{8,64}$"` | `audiobook_app.py` | 572 | Regex di validazione del `client_id` letto dall'header `X-ABM-Cid`. Il CID mobile è preferito rispetto al cookie `abm_cid` se presente e valido. |
+
+### 14.4 Flusso operativo
+
+- **Registrazione device**: `POST /api/device/register` — il client mobile invia `{fcm_token, job_ids[]}`. Il server valida il token (regex `_FCM_TOKEN_RE`), deduplica per `(token, cid)`, mantiene al massimo `_MAX_DEVICES_PER_CLIENT` entry per client, persiste su `_device_tokens.json`.
+- **Identificazione client mobile**: header `X-ABM-Cid` (validato da `_MOBILE_CID_RE` a `audiobook_app.py:572`). Se presente e valido viene preferito al cookie `abm_cid`, così l'app mobile non dipende dalla gestione cookie del browser.
+- **Invio notifiche**: `_push_job_event(job_id, event, title)` (`audiobook_app.py:1417`) — chiamata al completamento (`COMPLETE`) o all'errore (`ERROR`) di un job; chiama `push_service.send_push()` per ogni device del client. Token che restituiscono `unregistered` (HTTP 404 FCM) vengono rimossi automaticamente da `_device_tokens.json`.
+- **Job del client**: `GET /api/my_jobs` — restituisce la lista dei job correnti associati al client_id (via header `X-ABM-Cid` o cookie), con stato e progresso. Usato dall'app mobile per aggiornare la UI al resume.
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |
 |-----------|:---:|
-| Variabili d'ambiente (`ABM_*`) | 23 |
+| Variabili d'ambiente (`ABM_*`) | 24 |
 | Configurazione Flask | 1 |
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
@@ -725,4 +760,5 @@ Ciclo di vita del descrittore: **scritto** quando il job diventa batch (`/api/re
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
-| **Totale** | **102** |
+| Push FCM app mobile (`push_service.py`) | 5 |
+| **Totale** | **108** |

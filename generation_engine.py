@@ -132,6 +132,7 @@ _gemini_retention_sec = 172800  # job retention per voci PREMIUM/Gemini (ABM_GEM
 _write_email_marker = None  # callable(work_dir, when): mark job dir as email-sent
 _lookup_client_email = lambda cid: ""  # callable(cid) -> email or ""
 _build_descriptor = None  # callable(job, phase) -> recovery descriptor dict
+_send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 
 
 def _is_gemini_voice(voice):
@@ -167,14 +168,14 @@ def _set_job_status(job, status):
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
-              lookup_client_email_fn=None, build_descriptor_fn=None):
+              lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
-    global _build_descriptor
+    global _build_descriptor, _send_push
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -191,6 +192,8 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _lookup_client_email = lookup_client_email_fn
     if build_descriptor_fn is not None:
         _build_descriptor = build_descriptor_fn
+    if send_push_fn is not None:
+        _send_push = send_push_fn
 
     # Inizializza client LLM (se API key presente)
     _init_llm()
@@ -1311,6 +1314,59 @@ def _email_generation_details(job, lang):
         return ""
 
 
+def _create_download_token(job_id):
+    """Crea (idempotente) un download token per un job completato e lo persiste,
+    SENZA inviare email. Ritorna il token, o None se il job non e' valido.
+    Usato sia da `_send_completion_email` (unico punto di costruzione del record)
+    sia dai job batch mobile (push + my_jobs) che non hanno notify_email."""
+    job = _jobs.get(job_id)
+    if not job:
+        return None
+    # Riusa un token gia' esistente per lo stesso job (idempotenza).
+    for tok, rec in _download_tokens.items():
+        if isinstance(rec, dict) and rec.get("job_id") == job_id:
+            return tok
+    info = job.get("info", None)
+    book_title = (info.title if info else "") or job.get("original_filename", "") or "Audiobook"
+    dl_type = job.get("notify_download_type", "audio")
+    base_url = job.get("notify_base_url", "").rstrip("/")
+    lang = job.get("notify_lang", "en")
+    token = str(uuid.uuid4())
+    _download_tokens[token] = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "download_type": dl_type,
+        "base_url": base_url,
+        # Snapshot: everything needed to serve download after restart
+        "book_title": book_title,
+        "output_zip": job.get("output_zip", ""),
+        "output_name": job.get("output_name", ""),
+        "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
+        "output_m4b": job.get("output_m4b", ""),
+        # Kit ZIP di ripiego (MP3 + capitoli) quando la conversione M4B e' fallita.
+        "output_m4b_fallback_zip": job.get("output_m4b_fallback_zip", ""),
+        "epub_path": job.get("epub_path", ""),
+        "podcast_safe_name": job.get("podcast_safe_name", ""),
+        "podcast_ready": job.get("podcast_ready", False),
+        "podcast_mp3s": job.get("podcast_mp3s", []),
+        "podcast_info_title": info.title if info else "",
+        "podcast_info_author": info.author if info else "",
+        "podcast_info_language": info.language if info else "",
+        "original_filename": job.get("original_filename", ""),
+        "lang": lang,
+        "output_format": job.get("output_format", ""),
+        "ai_optimized": job.get("ai_optimized", False),
+        # Optional: optimized .abm snapshot (when auto_generate flow produced one)
+        "optimized_abm_path": job.get("optimized_abm_path", ""),
+        "optimized_abm_name": job.get("optimized_abm_name", ""),
+        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
+        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "client_id": job.get("client_id", ""),
+    }
+    _save_tokens()
+    return token
+
+
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
     job = _jobs.get(job_id)
@@ -1350,39 +1406,9 @@ def _send_completion_email(job_id):
     base_url = job.get("notify_base_url", "").rstrip("/")
     lang = job.get("notify_lang", "en")
 
-    # Generate unique download token with job snapshot for restart survival
-    token = str(uuid.uuid4())
-    _download_tokens[token] = {
-        "job_id": job_id,
-        "created_at": time.time(),
-        "download_type": dl_type,
-        "base_url": base_url,
-        # Snapshot: everything needed to serve download after restart
-        "book_title": book_title,
-        "output_zip": job.get("output_zip", ""),
-        "output_name": job.get("output_name", ""),
-        "output_file": job.get("output_files", [""])[0] if job.get("output_files") else "",
-        "output_m4b": job.get("output_m4b", ""),
-        # Kit ZIP di ripiego (MP3 + capitoli) quando la conversione M4B è fallita.
-        "output_m4b_fallback_zip": job.get("output_m4b_fallback_zip", ""),
-        "epub_path": job.get("epub_path", ""),
-        "podcast_safe_name": job.get("podcast_safe_name", ""),
-        "podcast_ready": job.get("podcast_ready", False),
-        "podcast_mp3s": job.get("podcast_mp3s", []),
-        "podcast_info_title": info.title if info else "",
-        "podcast_info_author": info.author if info else "",
-        "podcast_info_language": info.language if info else "",
-        "original_filename": job.get("original_filename", ""),
-        "lang": lang,
-        "output_format": job.get("output_format", ""),
-        "ai_optimized": job.get("ai_optimized", False),
-        # Optional: optimized .abm snapshot (when auto_generate flow produced one)
-        "optimized_abm_path": job.get("optimized_abm_path", ""),
-        "optimized_abm_name": job.get("optimized_abm_name", ""),
-        # Flag PREMIUM/Gemini: pilota retention 48h vs 18h nei /dl/* e nel cleanup.
-        "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
-    }
-    _save_tokens()
+    # Generate unique download token with job snapshot for restart survival.
+    # Punto unico di costruzione del record: _create_download_token (idempotente).
+    token = _create_download_token(job_id)
     job["email_token"] = token
     _sent_at = time.time()
     job["email_sent_at"] = _sent_at
@@ -1578,6 +1604,7 @@ def _send_optimization_email(job_id):
         # Token .abm di sola ottimizzazione: la retention sarà comunque pilotata
         # dal flag voce se l'utente dopo procede a generazione PREMIUM.
         "is_gemini": _is_gemini_voice(job.get("voice", "") or job.get("opt_voice", "")),
+        "client_id": job.get("client_id", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -2007,6 +2034,15 @@ def _notify_user_gemini_job_failed(job_id, job, pause_reason, is_quota=True,
     Recupera l'email destinataria dal payment metadata (PayPal -> pay.email,
     voucher -> voucher.email). Non-fatal: errori vengono ingoiati.
     """
+    if _send_push:
+        try:
+            threading.Thread(
+                target=_send_push, args=(job_id, "error", ""),
+                daemon=True, name=f"push-err-{job_id}",
+            ).start()
+        except Exception as _push_err:
+            print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
+
     payment_meta = job.get("payment") or {}
     tok = payment_meta.get("token")
     amt = float(payment_meta.get("total_eur", 0) or 0)
@@ -2691,6 +2727,7 @@ def _send_translation_email(job_id):
         "output_format": job.get("tr_params", {}).get("output_format", ""),
         "ai_optimized": bool(job.get("translated_optimized")),
         "is_gemini": False,
+        "client_id": job.get("client_id", ""),
     }
     _save_tokens()
     job["email_token"] = token
@@ -4241,6 +4278,22 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
+        # Send push notification to mobile devices
+        if _send_push:
+            try:
+                _book_title = ""
+                try:
+                    _info = job.get("info")
+                    _book_title = getattr(_info, "title", "") or ""
+                except Exception:
+                    pass
+                threading.Thread(
+                    target=_send_push, args=(job_id, "done", _book_title),
+                    daemon=True, name=f"push-{job_id}",
+                ).start()
+            except Exception as _push_err:
+                print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
+
         # Send email notification if user registered
         notify_email = job.get("notify_email")
         if not notify_email:
@@ -4266,6 +4319,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                   job.get("voice", ""), job.get("browser_lang", ""))
                 except Exception:
                     pass
+        elif job.get("email_registered"):
+            # Job batch mobile senza email: crea comunque il download token cosi'
+            # push + my_jobs possono servire il file (la push e' gia' emessa sopra).
+            print(f"[{job_id}] post-COMPLETE: batch job senza email, creo token "
+                  f"(email_registered=True)", flush=True)
+            try:
+                _create_download_token(job_id)
+            except Exception as _tok_err:
+                print(f"[{job_id}] batch token creation failed (non-fatal): {_tok_err}", flush=True)
         else:
             print(f"[{job_id}] post-COMPLETE: no notify_email "
                   f"(email_registered={job.get('email_registered')})", flush=True)
@@ -4332,6 +4394,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 "lang": job.get("browser_lang", "en"),
                                 "is_gemini": True,
                                 "partial_cancel": True,
+                                "client_id": job.get("client_id", ""),
                             }
                             _save_tokens()
                             partial_download_url = (f"{BASE_URL}/dl/{token}/download"

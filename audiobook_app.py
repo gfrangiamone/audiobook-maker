@@ -114,6 +114,7 @@ from tts_split import (
 )
 
 import email_service
+import push_service
 import payment
 import generation_engine
 import translation_core
@@ -559,10 +560,15 @@ MAX_CONCURRENT_LLM_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_LLM_PER_C
 # Cookie name and max-age for client identification
 _CLIENT_COOKIE_NAME = "abm_cid"
 _CLIENT_COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
+_MOBILE_CID_HEADER = "X-ABM-Cid"
+_MOBILE_CID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
 def _get_client_id():
-    """Return the client_id from cookie, or generate a new one (will be set later)."""
+    """Return the client_id from mobile header or cookie, or empty string."""
+    hdr = (request.headers.get(_MOBILE_CID_HEADER) or "").strip()
+    if hdr and _MOBILE_CID_RE.match(hdr):
+        return hdr
     return request.cookies.get(_CLIENT_COOKIE_NAME, "")
 
 
@@ -951,6 +957,80 @@ _download_tokens = {}  # token -> {job_id, created_at, download_type, base_url, 
 _TOKENS_FILE = UPLOAD_DIR / "_download_tokens.json"
 _tokens_lock = threading.Lock()
 
+_transfer_tokens = {}  # transfer_token -> {"job_id":..., "created_at":...}
+_TRANSFER_TOKENS_FILE = UPLOAD_DIR / "_transfer_tokens.json"
+_transfer_lock = threading.Lock()
+
+
+def _load_transfer_tokens():
+    global _transfer_tokens
+    try:
+        if _TRANSFER_TOKENS_FILE.exists():
+            with open(_TRANSFER_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _transfer_tokens = data
+    except Exception as e:
+        print(f"[transfer] load failed: {e}")
+
+
+def _save_transfer_tokens():
+    try:
+        tmp = _TRANSFER_TOKENS_FILE.with_suffix(_TRANSFER_TOKENS_FILE.suffix + ".tmp")
+        with _transfer_lock:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_transfer_tokens, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp), str(_TRANSFER_TOKENS_FILE))
+    except Exception as e:
+        print(f"[transfer] save failed: {e}")
+
+
+def _ensure_transfer_token(job_id):
+    """Ritorna (idempotente) il transfer token per il job, creandolo se assente."""
+    with _transfer_lock:
+        for tok, info in _transfer_tokens.items():
+            if isinstance(info, dict) and info.get("job_id") == job_id:
+                return tok
+        tok = secrets.token_urlsafe(24)
+        _transfer_tokens[tok] = {"job_id": job_id, "created_at": time.time()}
+    _save_transfer_tokens()
+    return tok
+
+
+def _qr_data_uri(text):
+    """PNG data-URI di un QR che codifica `text`. '' se qrcode non disponibile."""
+    try:
+        import qrcode
+        import io as _io
+        import base64 as _b64
+        qr = qrcode.QRCode(box_size=6, border=2)
+        qr.add_data(text)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        print(f"[transfer] qr generation failed: {e}")
+        return ""
+
+
+def _transfer_payload_for(job_id):
+    """Stringa codificata nel QR: URL claim assoluto. L'app ne estrae base+token."""
+    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    tok = _ensure_transfer_token(job_id)
+    return f"{base}/api/transfer/claim/{tok}", tok
+
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
 _DL_THROTTLE_SEC = 30
 _DL_MAX_DOWNLOADS = 5
@@ -1078,7 +1158,7 @@ def _find_files_in_outputs(job_dir, pattern):
     return results
 
 
-def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, **kwargs):
+def _send_file_throttled(file_path, as_attachment=True, download_name=None, mimetype=None, no_cache=False, bypass_throttle=False, conditional=True, **kwargs):
     # --- Cold storage tier ---
     # Se il file locale è stato evacuato (finestra calda scaduta) ma esiste su
     # cold storage, applica il throttle sulla chiave e fai redirect 302 al
@@ -1124,7 +1204,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     # token, non per il proprietario del job. Senza bypass, un download via
     # email link 30s prima blocca quello via UI sullo stesso file.
     if is_probe or bypass_throttle:
-        response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+        response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, conditional=conditional, **kwargs)
         if no_cache:
             _apply_no_cache(response)
         return response
@@ -1136,7 +1216,7 @@ def _send_file_throttled(file_path, as_attachment=True, download_name=None, mime
     if status == "deleted":
         lang = _get_browser_lang() or "en"
         return _render_dl_deleted_page(lang), 410
-    response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, **kwargs)
+    response = send_file(file_path, as_attachment=as_attachment, download_name=download_name, mimetype=mimetype, conditional=conditional, **kwargs)
     try:
         if status == "last":
             response.headers["X-Download-Last"] = "1"
@@ -1322,6 +1402,8 @@ def _save_tokens():
                     "output_format": info.get("output_format", ""),
                     "output_m4b": info.get("output_m4b", ""),
                     "ai_optimized": info.get("ai_optimized", False),
+                    # Mobile: client identifier for job reconstruction after restart
+                    "client_id": info.get("client_id", ""),
                 }
             # Atomic write: tmp + fsync + rename per evitare corruzione su crash
             _tmp_tokens = _TOKENS_FILE.with_suffix(_TOKENS_FILE.suffix + ".tmp")
@@ -1369,6 +1451,84 @@ def _load_tokens():
             print(f"[tokens] Loaded {loaded} tokens from disk ({expired} expired/invalid)")
     except Exception as e:
         print(f"[tokens] Failed to load tokens: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Device tokens (app mobile): cid -> lista device FCM. Persistenza atomica.
+_DEVICE_TOKENS_FILE = UPLOAD_DIR / "_device_tokens.json"
+_MAX_DEVICES_PER_CLIENT = 5
+_FCM_TOKEN_RE = re.compile(r"^[A-Za-z0-9_:\-\.~%]{10,4096}$")
+_device_tokens = {}
+_device_tokens_lock = threading.Lock()
+
+
+def _load_device_tokens():
+    global _device_tokens
+    try:
+        if _DEVICE_TOKENS_FILE.exists():
+            with open(_DEVICE_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _device_tokens = data
+                print(f"[device] Loaded FCM tokens for {len(_device_tokens)} clients")
+    except Exception as e:
+        print(f"[device] Failed to load device tokens: {e}")
+
+
+def _save_device_tokens():
+    """Caller MUST hold _device_tokens_lock."""
+    try:
+        _tmp = _DEVICE_TOKENS_FILE.with_suffix(_DEVICE_TOKENS_FILE.suffix + ".tmp")
+        with open(_tmp, "w", encoding="utf-8") as f:
+            json.dump(_device_tokens, f, ensure_ascii=False, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(str(_tmp), str(_DEVICE_TOKENS_FILE))
+    except Exception as e:
+        print(f"[device] Failed to save device tokens: {e}")
+
+
+def _push_job_event(job_id, event, title=""):
+    """Invia push FCM a tutti i device del client proprietario del job.
+
+    event: 'done' | 'error'. Mai bloccante: ogni errore e' solo loggato.
+    """
+    try:
+        if not push_service.is_available():
+            return
+        with _jobs_lock:
+            job = jobs.get(job_id) or {}
+            cid = job.get("client_id", "")
+        if not cid:
+            return
+        with _device_tokens_lock:
+            devices = list(_device_tokens.get(cid, []))
+        if not devices:
+            return
+        if event == "done":
+            subject = title or "Audiolibro pronto"
+            body = "La generazione è completata: scarica il file nella libreria."
+        else:
+            subject = title or "Generazione non riuscita"
+            body = "Il lavoro si è interrotto: apri l'app per i dettagli."
+        dead = []
+        for dev in devices:
+            outcome = push_service.send_push(
+                dev.get("fcm_token", ""), subject, body,
+                data={"job_id": job_id, "event": event})
+            if outcome == "unregistered":
+                dead.append(dev.get("fcm_token"))
+        if dead:
+            with _device_tokens_lock:
+                _device_tokens[cid] = [
+                    e for e in _device_tokens.get(cid, [])
+                    if e.get("fcm_token") not in dead]
+                _save_device_tokens()
+    except Exception as e:
+        print(f"[push] _push_job_event failed (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------
@@ -7303,6 +7463,10 @@ def api_generate():
             # consegnare il risultato via email (o solo il rimborso su errore
             # reale), indipendentemente dalla sessione del client. Idempotente
             # se l'utente aveva gia' registrato un'email via /api/register_email.
+            # Vale sia per PayPal (email del pagatore) sia per VOUCHER (email
+            # associata al buono): in entrambi i casi la consegna e' garantita e
+            # il frontend mostra il box di notifica precompilato e disabilitato,
+            # senza l'avviso "se chiudi la pagina viene annullato" (non veritiero).
             if not job.get("email_registered"):
                 _pay_email = ""
                 try:
@@ -7361,6 +7525,13 @@ def api_generate():
         job["status"] = "generating"
         # Save voice in job for logging
         job["voice"] = voice
+
+    # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
+    # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
+    # download token anche senza email (push + my_jobs). Nessun SMTP richiesto.
+    if data.get("batch_mode"):
+        job["email_registered"] = True
+        job.setdefault("notify_download_type", "audio")
 
     # Store format and podcast URL for email/download handlers
     job["output_format"] = output_format
@@ -7667,6 +7838,8 @@ def api_cancel(job_id):
         # farebbe finire run_generation nel ramo STALE del _CancelledError
         # handler, saltando refund + partial-audio email.
         job["status"] = "analyzed"
+        if is_admin_kill:
+            job["server_interrupted"] = True
     if is_admin_kill:
         _log_activity(job_id, job.get("original_filename", ""), "ADMIN_CANCEL",
                       job.get("client_id", ""), "", job.get("voice", "") or "", "")
@@ -7892,6 +8065,179 @@ def api_register_email():
 def api_email_available():
     """Check if email notification is available (SMTP configured)."""
     return jsonify({"available": _smtp_available()})
+
+
+@app.route("/api/device/register", methods=["POST"])
+def api_device_register():
+    """Registra/aggiorna il device FCM del client mobile per le notifiche push."""
+    data = request.get_json(silent=True) or {}
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "Missing client id", "error_code": "no_cid"}), 400
+    fcm_token = (data.get("fcm_token") or "").strip()
+    platform_name = (data.get("platform") or "").strip().lower()
+    app_version = (data.get("app_version") or "").strip()[:32]
+    if not _FCM_TOKEN_RE.match(fcm_token):
+        return jsonify({"error": "Invalid fcm_token", "error_code": "invalid_token"}), 400
+    if platform_name not in ("android", "ios"):
+        return jsonify({"error": "Invalid platform", "error_code": "invalid_platform"}), 400
+    with _device_tokens_lock:
+        entries = [e for e in _device_tokens.get(cid, [])
+                   if e.get("fcm_token") != fcm_token]
+        entries.append({
+            "fcm_token": fcm_token,
+            "platform": platform_name,
+            "app_version": app_version,
+            "registered_at": time.time(),
+        })
+        _device_tokens[cid] = entries[-_MAX_DEVICES_PER_CLIENT:]
+        _save_device_tokens()
+    return jsonify({"ok": True})
+
+
+# ----------------------------------------------------------------------
+# MOBILE: JOB LIST
+# ----------------------------------------------------------------------
+
+_MY_JOBS_LIVE_STATUSES = (
+    "analyzed", "optimizing", "optimized", "translating", "generating",
+    "done", "error", "cancelled", "interrupted",
+)
+
+
+@app.route("/api/my_jobs")
+def api_my_jobs():
+    """Job del client chiamante: attivi (in-memory) + completati (token su disco).
+
+    Usato dall'app mobile per ricostruire la tab Attivita' a ogni avvio.
+    """
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"jobs": []})
+    now = time.time()
+    out = {}
+
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for jid, job in snapshot:
+        if job.get("client_id") != cid:
+            continue
+        status = job.get("status", "")
+        if job.get("server_interrupted"):
+            status = "interrupted"
+        if status not in _MY_JOBS_LIVE_STATUSES:
+            continue
+        info = job.get("info")
+        entry = {
+            "job_id": jid,
+            "status": status,
+            "title": (getattr(info, "title", "") or
+                      job.get("original_filename", "")),
+            "output_format": job.get("output_format", ""),
+            "created_at": job.get("start_time") or job.get("last_poll") or 0,
+        }
+        if status == "generating":
+            entry.update({
+                "progress_current": job.get("progress_current", 0),
+                "progress_total": job.get("progress_total", 0),
+                "progress_message": job.get("progress_message", ""),
+            })
+        elif status == "optimizing":
+            entry.update({
+                "opt_processed_chars": job.get("opt_processed_chars", 0),
+                "opt_total_chars": job.get("opt_total_chars", 0),
+            })
+        elif status == "translating":
+            entry.update({
+                "tr_progress_current": job.get("tr_progress_current", 0),
+                "tr_progress_total": job.get("tr_progress_total", 0),
+            })
+        out[jid] = entry
+
+    for token, tinfo in list(_download_tokens.items()):
+        if not isinstance(tinfo, dict) or tinfo.get("client_id") != cid:
+            continue
+        created = tinfo.get("created_at", 0)
+        retention = _effective_retention_for_token_info(tinfo)
+        if (now - created) > retention:
+            continue
+        jid = tinfo.get("job_id", "")
+        entry = out.setdefault(jid, {"job_id": jid, "created_at": created})
+        entry.update({
+            "status": "done",
+            "title": tinfo.get("book_title") or entry.get("title", ""),
+            "output_format": tinfo.get("output_format",
+                                       entry.get("output_format", "")),
+            "download_token": token,
+            "expires_at": created + retention,
+            "downloaded_at": tinfo.get("downloaded_at") or None,
+            "formats": {
+                "m4b": bool(tinfo.get("output_m4b")),
+                "zip": bool(tinfo.get("output_zip")),
+                "mp3": bool(tinfo.get("output_file")),
+                "abm": bool(tinfo.get("optimized_abm_path")),
+            },
+        })
+
+    ordered = sorted(out.values(),
+                     key=lambda e: -(e.get("created_at") or 0))
+    return jsonify({"jobs": ordered})
+
+
+@app.route("/api/transfer/claim/<token>", methods=["POST"])
+def api_transfer_claim(token):
+    """L'app reclama un job via transfer token: lo riassocia al cid chiamante."""
+    info = _transfer_tokens.get(token)
+    if not isinstance(info, dict):
+        return jsonify({"error": "invalid_token"}), 404
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
+    job_id = info.get("job_id", "")
+    moved = False
+    job_done = False
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        if job is not None:
+            job["client_id"] = cid
+            # Il job è ora dell'app: marcalo email_registered così (a) il cleanup
+            # non lo tratta come download diretto usa-e-getta (rimozione 5 min dopo
+            # il download) e (b) al COMPLETE viene creato un download token anche
+            # se il job NON era né batch né email (job gratuito del sito).
+            job["email_registered"] = True
+            job_done = job.get("status") in ("done", "optimized")
+            moved = True
+    # Job già completato senza download token (caso del sito senza email/batch):
+    # creane uno ORA, altrimenti l'app non vede i formati e non può scaricare, e
+    # il job/file verrebbero ripuliti poco dopo. _create_download_token è
+    # idempotente e usa job["client_id"] (appena impostato) come owner.
+    if job_done:
+        try:
+            generation_engine._create_download_token(job_id)
+        except Exception as e:
+            print(f"[transfer] download token creation failed for {job_id}: {e}")
+    # riassocia tutti i download token del job al cid (per la sezione "Pronti")
+    changed = False
+    for tok, tinfo in list(_download_tokens.items()):
+        if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
+            tinfo["client_id"] = cid
+            changed = True
+    if changed:
+        _save_tokens()
+    if not moved and not changed:
+        # job non più in memoria e nessun token (es. scaduto): nulla da agganciare
+        return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/transfer_qr/<job_id>")
+def api_transfer_qr(job_id):
+    """QR di trasferimento per la SPA (avvio/completamento). Ownership via cookie."""
+    job, err, sc = _check_job_owner(job_id)
+    if err is not None:
+        return err, sc
+    payload, tok = _transfer_payload_for(job_id)
+    return jsonify({"qr": _qr_data_uri(payload), "token": tok})
 
 
 # ----------------------------------------------------------------------
@@ -9431,13 +9777,21 @@ def token_download_page(token):
         if not translated_available and _cold_object_available(tr_path_snap):
             translated_available = True
 
+    # QR di trasferimento job sull'app mobile (best-effort).
+    try:
+        _qr_payload, _ = _transfer_payload_for(job_id)
+        _transfer_qr = _qr_data_uri(_qr_payload)
+    except Exception:
+        _transfer_qr = ""
+
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
                            m4b_available=m4b_available, has_abm=has_abm,
                            output_format=output_format,
                            retention_hours=round(_ret / 3600),
                            m4b_kit_available=m4b_kit_available,
-                           translated_available=translated_available)
+                           translated_available=translated_available,
+                           transfer_qr=_transfer_qr)
 
 
 @app.route("/dl/<token>/abm")
@@ -9478,7 +9832,7 @@ def token_do_download_abm(token):
         _log_activity(token_info.get("job_id", ""), token_info.get("original_filename", ""),
                       "DOWNLOAD_OPT_ABM", "", "", "", "")
     _mark_token_downloaded(token_info)
-    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True)
+    return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, conditional=True)
 
 
 @app.route("/dl/<token>/translated")
@@ -9574,7 +9928,7 @@ def token_do_download_m4b(token):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
-        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b")
+        return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", conditional=True)
 
     # F4 — Il M4B locale è evacuato: PRIMA del fallback MP3, prova a servire il
     # M4B da cold (presigned 302), ma solo se è FINALIZZATO (atom moov presente):
@@ -9610,7 +9964,7 @@ def token_do_download_m4b(token):
                           "DOWNLOAD_M4B_KIT_TOKEN", "", "", "", "")
         _mark_token_downloaded(token_info)
         return _send_file_throttled(kit_path, as_attachment=True,
-                                    download_name=f"{safe_name}_audiolibro+capitoli.zip")
+                                    download_name=f"{safe_name}_audiolibro+capitoli.zip", conditional=True)
 
     # Fallback MP3 (coerente con /api/download): l'M4B non c'è (conversione fallita
     # o non ancora pronta), serviamo l'MP3 segnalandolo al client via X-Fallback.
@@ -9628,7 +9982,7 @@ def token_do_download_m4b(token):
             _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN_FALLBACK_MP3",
                           "", "", "", "")
         _mark_token_downloaded(token_info)
-        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3")
+        resp = _send_file_throttled(mp3_path, as_attachment=True, download_name=f"{safe_name}.mp3", conditional=True)
         try:
             resp.headers["X-Fallback"] = "mp3"
             prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -9709,7 +10063,7 @@ def token_do_download(token):
                 # già la chiave d'accesso) per coerenza con la chokepoint cold.
                 return _send_file_throttled(abm_path, as_attachment=True,
                                             download_name=abm_name, no_cache=True,
-                                            bypass_throttle=True)
+                                            bypass_throttle=True, conditional=True)
             _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
             if _cold is not None:
                 if job:
@@ -9721,7 +10075,7 @@ def token_do_download(token):
                 return _cold
             return "File not found", 404
 
-        #  -  -  PODCAST download  -  - 
+        #  -  -  PODCAST download  -  -
         is_podcast = dl_type == "podcast" and (
             (job and job.get("podcast_ready")) or token_info.get("podcast_ready"))
 
@@ -9767,10 +10121,10 @@ def _serve_audio_download(token_info, job, job_id):
     # 1. Exact paths from token snapshot
     if output_zip and os.path.exists(output_zip):
         _do_log()
-        return _send_file_throttled(output_zip, as_attachment=True, download_name=output_name)
+        return _send_file_throttled(output_zip, as_attachment=True, download_name=output_name, conditional=True)
     if output_file and os.path.exists(output_file):
         _do_log()
-        return _send_file_throttled(output_file, as_attachment=True, download_name=output_name)
+        return _send_file_throttled(output_file, as_attachment=True, download_name=output_name, conditional=True)
 
     # 2. Path reconstruction within the snapshot's epoch dir (data-dir moved)
     for p in (output_zip, output_file):
@@ -9780,7 +10134,7 @@ def _serve_audio_download(token_info, job, job_id):
         if cand.exists():
             print(f"[dl] Path reconstructed: {p} -> {cand}")
             _do_log()
-            return _send_file_throttled(str(cand), as_attachment=True, download_name=output_name)
+            return _send_file_throttled(str(cand), as_attachment=True, download_name=output_name, conditional=True)
 
     # 3. Live job state (only when snapshot path missing — older runs may have
     #    been cleaned up; we still try to serve *something* for this job).
@@ -9790,12 +10144,12 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Snapshot missing; falling back to live job output_zip")
             _do_log()
             return _send_file_throttled(job["output_zip"], as_attachment=True,
-                             download_name=job.get("output_name", output_name))
+                             download_name=job.get("output_name", output_name), conditional=True)
         if job.get("output_files") and os.path.exists(job["output_files"][0]):
             print(f"[dl] Snapshot missing; falling back to live job output_files[0]")
             _do_log()
             return _send_file_throttled(job["output_files"][0], as_attachment=True,
-                             download_name=job.get("output_name", output_name))
+                             download_name=job.get("output_name", output_name), conditional=True)
 
     # 4. Cold tier: il file snapshotato vive ancora su cold (locale evacuato a
     #    fine finestra calda). È la copia AUTORITATIVA e va tentata PRIMA dello
@@ -9826,7 +10180,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: found ZIP {found}")
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
-                             download_name=output_name or os.path.basename(found))
+                             download_name=output_name or os.path.basename(found), conditional=True)
         # Look for MP3s across all output dirs, then root.
         # Escludi i preview_*.mp3 (campioni voce generati da /api/preview_audio,
         # lasciati nella job root): NON sono parte dell'audiolibro e non vanno
@@ -9840,7 +10194,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: found single MP3 {found}")
             _do_log()
             return _send_file_throttled(found, as_attachment=True,
-                             download_name=output_name or os.path.basename(found))
+                             download_name=output_name or os.path.basename(found), conditional=True)
         elif len(mp3s) > 1:
             # Multiple MP3s: crea uno ZIP al volo da SOLI i file mp3.
             # NON usare make_archive sull'intera dir: se gli mp3 sono nella job
@@ -9870,7 +10224,7 @@ def _serve_audio_download(token_info, job, job_id):
             print(f"[dl] Fallback: created ZIP from {len(mp3s)} MP3s -> {tmp_zip}")
             _do_log()
             return _send_file_throttled(tmp_zip, as_attachment=True,
-                             download_name=output_name or "audiobook.zip")
+                             download_name=output_name or "audiobook.zip", conditional=True)
 
     # Cold tier: il locale è evacuato (finestra calda scaduta). Se la copia cold
     # del file snapshotato (zip o single-file) esiste, redirect 302 al presigned.
@@ -10281,9 +10635,15 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr=""):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
+
+    # Whitelist della lingua prima di interpolarla in contesti JS/HTML della pagina
+    # (difesa XSS): `lang` arriva dal token e dovrebbe essere un codice a 2 lettere,
+    # ma non vogliamo dipendere da quella garanzia in un literal JavaScript.
+    _SUPPORTED_DL_LANGS = ("en", "it", "fr", "es", "de", "zh", "hi")
+    safe_lang = lang if lang in _SUPPORTED_DL_LANGS else "en"
 
     # Sec (XSS): book_title proviene dai metadati EPUB/PDF (controllati dall'autore del file).
     # Tutte le interpolazioni nel template devono passare per html.escape, altrimenti un
@@ -10434,6 +10794,32 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     share_url = BASE_URL or "https://audiobook-maker.com"
     share_text_js = t.get("share_text", "").replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
 
+    # QR di trasferimento job sull'app mobile (best-effort: vuoto se assente).
+    transfer_html = ""
+    if transfer_qr:
+        _transfer_t = _DL_PAGES_I18N.get("transfer", {})
+        # Hint allineato al messaggio dell'interfaccia online (chiave i18n
+        # `transfer_hint`): stesso testo sotto il QR su web e nella pagina email.
+        _transfer_fallback = {
+            "en": ("Transfer to the app", "Scan the QR with the AudioBook Maker &amp; Player app"),
+            "it": ("Trasferisci sull&rsquo;app", "Inquadra il QR con l&rsquo;app AudioBook Maker &amp; Player"),
+            "fr": ("Transf&eacute;rer vers l&rsquo;application", "Scannez le QR avec l&rsquo;application AudioBook Maker &amp; Player"),
+            "es": ("Transferir a la app", "Escanea el QR con la app AudioBook Maker &amp; Player"),
+            "de": ("An die App &uuml;bertragen", "Scanne den QR mit der App AudioBook Maker &amp; Player"),
+            "zh": ("传输到应用", "用 AudioBook Maker &amp; Player 应用扫描二维码"),
+            "hi": ("ऐप में स्थानांतरित करें", "AudioBook Maker &amp; Player ऐप से QR स्कैन करें"),
+        }
+        _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
+        _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
+        _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
+        transfer_html = (
+            '<div style="text-align:center;margin:28px auto;max-width:320px;">'
+            f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
+            f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
+            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint}</p>'
+            '</div>'
+        )
+
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{FAVICON_B64}">
@@ -10510,6 +10896,7 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
 <p class="type">{type_label}</p>
 {audio_btn_html}
 {abm_btn_html}
+{transfer_html}
 <div class="warn">{warn_text}</div>
 <div class="donate-panel">
   <div class="donate-title" id="donTitle"></div>
@@ -10547,7 +10934,11 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
     en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'Audiobook Maker is open source, free, no registration required and ad-free. A donation helps cover operating costs and the development of new features.',bodyBold:'For donations of \u20ac5 or more, you\u2019ll receive a coupon of equal value to use for PREMIUM services.',coffee:'Buy me a coffee',paypal:'PayPal donation'}},
     hi:{{title:'\u2764\ufe0f \u0915\u094d\u092f\u093e \u092f\u0939 \u091f\u0942\u0932 \u0906\u092a\u0915\u0947 \u0932\u093f\u090f \u0909\u092a\u092f\u094b\u0917\u0940 \u0930\u0939\u093e?',body:'Audiobook Maker \u090f\u0915 \u0913\u092a\u0928 \u0938\u094b\u0930\u094d\u0938 \u0910\u092a \u0939\u0948, \u092e\u0941\u092b\u094d\u0924, \u092c\u093f\u0928\u093e \u092a\u0902\u091c\u0940\u0915\u0930\u0923 \u0914\u0930 \u092c\u093f\u0928\u093e \u0935\u093f\u091c\u094d\u091e\u093e\u092a\u0928. \u0910\u0915 \u0926\u093e\u0928 \u0938\u0902\u091a\u093e\u0932\u0928 \u0932\u093e\u0917\u0924 \u0914\u0930 \u0928\u0908 \u0938\u0941\u0935\u093f\u0927\u093e\u0913\u0902 \u0915\u0947 \u0935\u093f\u0915\u093e\u0938 \u092e\u0947\u0902 \u092e\u0926\u0926 \u0915\u0930\u0924\u093e \u0939\u0948.',bodyBold:'\u20ac5 \u092f\u093e \u0905\u0927\u093f\u0915 \u0915\u0947 \u0926\u093e\u0928 \u092a\u0930, \u0906\u092a\u0915\u094b PREMIUM \u0938\u0947\u0935\u093e\u0913\u0902 \u0915\u0947 \u0932\u093f\u090f \u0938\u092e\u093e\u0928 \u092e\u0942\u0932\u094d\u092f \u0915\u093e \u0915\u0942\u092a\u0928 \u092e\u093f\u0932\u0947\u0917\u093e.',coffee:'\u092e\u0941\u091d\u0947 \u0915\u0949\u092b\u093c\u0940 \u092a\u093f\u0932\u093e\u090f\u0902',paypal:'PayPal \u0926\u093e\u0928'}}
   }};
-  var bl=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
+  /* Lingua del box donazione = lingua della PAGINA (server-side `lang`), come
+     tutto il resto della pagina. Prima usava navigator.language del browser,
+     producendo incoerenze (pagina EN con box donazione IT) quando la lingua del
+     browser differiva da quella del job/notifica. */
+  var bl=('{safe_lang}'||'en').toLowerCase().split('-')[0];
   var d=DL[bl]||DL['en'];
   document.getElementById('donTitle').textContent=d.title;
   document.getElementById('donBody').textContent=d.body;
@@ -10656,7 +11047,7 @@ def api_download(job_id):
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
                 _do_log()
-                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, bypass_throttle=True)
+                return _send_file_throttled(abm_path, as_attachment=True, download_name=abm_name, no_cache=True, bypass_throttle=True, conditional=True)
             except Exception as e:
                 print(f"[{job_id}] On-demand ABM generation failed: {e}")
         # Fallback: serve existing file if any (pre-regeneration or non-AI-optimized)
@@ -10664,7 +11055,7 @@ def api_download(job_id):
         if abm_path and os.path.exists(abm_path):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "progetto"
-            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(abm_path, as_attachment=True, download_name=f"{safe_name}.abm", no_cache=True, bypass_throttle=True, conditional=True)
         return "Optimized ABM project file not found", 404
 
     if download_type == "m4bkit":
@@ -10684,7 +11075,7 @@ def api_download(job_id):
             _do_log()
             return _send_file_throttled(kit_path, as_attachment=True,
                                         download_name=f"{safe_name}_audiolibro+capitoli.zip",
-                                        no_cache=True, bypass_throttle=True)
+                                        no_cache=True, bypass_throttle=True, conditional=True)
         # Fallback MP3 se il kit manca
         _out_files = job.get("output_files") or []
         mp3_path = _out_files[0] if _out_files else ""
@@ -10695,7 +11086,7 @@ def api_download(job_id):
         if mp3_path and os.path.exists(mp3_path):
             resp = _send_file_throttled(mp3_path, as_attachment=True,
                                         download_name=f"{safe_name}.mp3",
-                                        no_cache=True, bypass_throttle=True)
+                                        no_cache=True, bypass_throttle=True, conditional=True)
             try:
                 resp.headers["X-Fallback"] = "mp3"
                 prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -10713,7 +11104,7 @@ def api_download(job_id):
             _do_log()
             safe_name = _safe_filename(job["info"].title) or "audiolibro"
             print(f"[debug] M4B file found! Serving: {m4b_path}")
-            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(m4b_path, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True, conditional=True)
         else:
             # Physical search fallback: SOLO dentro output_dir della run corrente,
             # mai uno scan globale su tutti gli output_*/ (servirebbe un m4b di
@@ -10729,7 +11120,7 @@ def api_download(job_id):
                 print(f"[debug] M4B found via physical search: {actual_m4b}")
                 _do_log()
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
-                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True)
+                return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True, conditional=True)
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
@@ -10743,7 +11134,7 @@ def api_download(job_id):
             if mp3_path and os.path.exists(mp3_path):
                 resp = _send_file_throttled(mp3_path, as_attachment=True,
                                             download_name=f"{_safe_filename(job['info'].title)}.mp3",
-                                            no_cache=True, bypass_throttle=True)
+                                            no_cache=True, bypass_throttle=True, conditional=True)
                 try:
                     resp.headers["X-Fallback"] = "mp3"
                     prev = resp.headers.get("Access-Control-Expose-Headers", "")
@@ -10759,22 +11150,22 @@ def api_download(job_id):
             zip_name = job.get("output_name", "audiobook.zip")
             if not zip_name.endswith(".zip"):
                  zip_name = _safe_filename(job["info"].title) + ".zip"
-            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True, bypass_throttle=True)
+            return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=zip_name, no_cache=True, bypass_throttle=True, conditional=True)
         return "ZIP file not found", 404
 
     # Default logic (compatibility or auto-detect)
     # Prefer M4B if it seems to be the intended primary output
     if job.get("output_name", "").endswith(".m4b") and job.get("output_m4b") and os.path.exists(job["output_m4b"]):
         _do_log()
-        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_m4b"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     if "output_zip" in job and os.path.exists(job["output_zip"]):
         _do_log()
-        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_zip"], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     if job.get("output_files") and os.path.exists(job["output_files"][0]):
         _do_log()
-        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True)
+        return _send_file_throttled(job["output_files"][0], as_attachment=True, download_name=job["output_name"], no_cache=True, bypass_throttle=True, conditional=True)
 
     return "File not found", 404
 
@@ -11526,6 +11917,12 @@ def _cleanup_loop():
                     continue
 
                 if status == "done":
+                    # Un download token attivo (job emailato, batch, o trasferito
+                    # all'app via QR) governa la retention dei file: non rimuovere
+                    # il job finché esiste un token valido, altrimenti si cancella
+                    # un audiolibro ancora scaricabile (regressione transfer QR).
+                    if _has_active_download_tokens(jid, now):
+                        continue
                     dl_at = job.get("downloaded_at")
                     email_sent_at = job.get("email_sent_at")
                     last_poll = job.get("last_poll", 0)
@@ -11706,6 +12103,8 @@ def _cleanup_loop():
 # Startup: load persisted download tokens, init DeepSeek, start background threads
 # (works both under __main__ and Gunicorn)
 _load_tokens()
+_load_transfer_tokens()
+_load_device_tokens()
 _load_payments()
 _load_vouchers()
 payment._migrate_paid_opt_to_paid_jobs()
@@ -11729,7 +12128,8 @@ generation_engine.configure(
     gemini_retention_sec=GEMINI_FILE_RETENTION_SEC,
     write_email_marker_fn=_write_email_marker,
     lookup_client_email_fn=_lookup_client_email,
-    build_descriptor_fn=_build_job_descriptor
+    build_descriptor_fn=_build_job_descriptor,
+    send_push_fn=_push_job_event
 )
 
 if _paypal_available():

@@ -1,3 +1,6 @@
 ruff
 boto3
 flask-compress
+google-auth>=2.23  # FCM HTTP v1 push notifications (app mobile)
+requests  # client HTTP per push FCM (push_service)
+qrcode[pil]>=7.4  # QR di trasferimento job sull'app mobile
