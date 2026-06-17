@@ -10639,6 +10639,12 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
+    # Whitelist della lingua prima di interpolarla in contesti JS/HTML della pagina
+    # (difesa XSS): `lang` arriva dal token e dovrebbe essere un codice a 2 lettere,
+    # ma non vogliamo dipendere da quella garanzia in un literal JavaScript.
+    _SUPPORTED_DL_LANGS = ("en", "it", "fr", "es", "de", "zh", "hi")
+    safe_lang = lang if lang in _SUPPORTED_DL_LANGS else "en"
+
     # Sec (XSS): book_title proviene dai metadati EPUB/PDF (controllati dall'autore del file).
     # Tutte le interpolazioni nel template devono passare per html.escape, altrimenti un
     # `<dc:title>` malevolo iniettato lato uploader produce XSS sulla pagina /dl/<token>.
@@ -10792,14 +10798,16 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
     transfer_html = ""
     if transfer_qr:
         _transfer_t = _DL_PAGES_I18N.get("transfer", {})
+        # Hint allineato al messaggio dell'interfaccia online (chiave i18n
+        # `transfer_hint`): stesso testo sotto il QR su web e nella pagina email.
         _transfer_fallback = {
-            "en": ("Transfer to the app", "Scan with the AudioBook Maker app to add the job to the app."),
-            "it": ("Trasferisci sull&rsquo;app", "Inquadra con l&rsquo;app AudioBook Maker per aggiungere il job all&rsquo;app."),
-            "fr": ("Transf&eacute;rer vers l&rsquo;application", "Scannez avec l&rsquo;application AudioBook Maker pour ajouter le job &agrave; l&rsquo;application."),
-            "es": ("Transferir a la app", "Escanea con la app AudioBook Maker para a&ntilde;adir el trabajo a la app."),
-            "de": ("An die App &uuml;bertragen", "Scanne mit der AudioBook-Maker-App, um den Job zur App hinzuzuf&uuml;gen."),
-            "zh": ("传输到应用", "用 AudioBook Maker 应用扫描以将任务添加到应用。"),
-            "hi": ("ऐप में स्थानांतरित करें", "जॉब को ऐप में जोड़ने के लिए AudioBook Maker ऐप से स्कैन करें।"),
+            "en": ("Transfer to the app", "Scan the QR with the AudioBook Maker &amp; Player app"),
+            "it": ("Trasferisci sull&rsquo;app", "Inquadra il QR con l&rsquo;app AudioBook Maker &amp; Player"),
+            "fr": ("Transf&eacute;rer vers l&rsquo;application", "Scannez le QR avec l&rsquo;application AudioBook Maker &amp; Player"),
+            "es": ("Transferir a la app", "Escanea el QR con la app AudioBook Maker &amp; Player"),
+            "de": ("An die App &uuml;bertragen", "Scanne den QR mit der App AudioBook Maker &amp; Player"),
+            "zh": ("传输到应用", "用 AudioBook Maker &amp; Player 应用扫描二维码"),
+            "hi": ("ऐप में स्थानांतरित करें", "AudioBook Maker &amp; Player ऐप से QR स्कैन करें"),
         }
         _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
         _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
@@ -10926,7 +10934,11 @@ font-size:.85rem;font-weight:600;text-decoration:none;transition:all .2s;border:
     en:{{title:'\u2764\ufe0f Did you find this tool useful?',body:'Audiobook Maker is open source, free, no registration required and ad-free. A donation helps cover operating costs and the development of new features.',bodyBold:'For donations of \u20ac5 or more, you\u2019ll receive a coupon of equal value to use for PREMIUM services.',coffee:'Buy me a coffee',paypal:'PayPal donation'}},
     hi:{{title:'\u2764\ufe0f \u0915\u094d\u092f\u093e \u092f\u0939 \u091f\u0942\u0932 \u0906\u092a\u0915\u0947 \u0932\u093f\u090f \u0909\u092a\u092f\u094b\u0917\u0940 \u0930\u0939\u093e?',body:'Audiobook Maker \u090f\u0915 \u0913\u092a\u0928 \u0938\u094b\u0930\u094d\u0938 \u0910\u092a \u0939\u0948, \u092e\u0941\u092b\u094d\u0924, \u092c\u093f\u0928\u093e \u092a\u0902\u091c\u0940\u0915\u0930\u0923 \u0914\u0930 \u092c\u093f\u0928\u093e \u0935\u093f\u091c\u094d\u091e\u093e\u092a\u0928. \u0910\u0915 \u0926\u093e\u0928 \u0938\u0902\u091a\u093e\u0932\u0928 \u0932\u093e\u0917\u0924 \u0914\u0930 \u0928\u0908 \u0938\u0941\u0935\u093f\u0927\u093e\u0913\u0902 \u0915\u0947 \u0935\u093f\u0915\u093e\u0938 \u092e\u0947\u0902 \u092e\u0926\u0926 \u0915\u0930\u0924\u093e \u0939\u0948.',bodyBold:'\u20ac5 \u092f\u093e \u0905\u0927\u093f\u0915 \u0915\u0947 \u0926\u093e\u0928 \u092a\u0930, \u0906\u092a\u0915\u094b PREMIUM \u0938\u0947\u0935\u093e\u0913\u0902 \u0915\u0947 \u0932\u093f\u090f \u0938\u092e\u093e\u0928 \u092e\u0942\u0932\u094d\u092f \u0915\u093e \u0915\u0942\u092a\u0928 \u092e\u093f\u0932\u0947\u0917\u093e.',coffee:'\u092e\u0941\u091d\u0947 \u0915\u0949\u092b\u093c\u0940 \u092a\u093f\u0932\u093e\u090f\u0902',paypal:'PayPal \u0926\u093e\u0928'}}
   }};
-  var bl=(navigator.language||navigator.userLanguage||'en').toLowerCase().split('-')[0];
+  /* Lingua del box donazione = lingua della PAGINA (server-side `lang`), come
+     tutto il resto della pagina. Prima usava navigator.language del browser,
+     producendo incoerenze (pagina EN con box donazione IT) quando la lingua del
+     browser differiva da quella del job/notifica. */
+  var bl=('{safe_lang}'||'en').toLowerCase().split('-')[0];
   var d=DL[bl]||DL['en'];
   document.getElementById('donTitle').textContent=d.title;
   document.getElementById('donBody').textContent=d.body;
