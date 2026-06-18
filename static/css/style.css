@@ -965,6 +965,34 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
                                         text-shadow:0 1px 0 rgba(255,255,255,.35); }
 .tab-panel { padding-top:16px; }
 .tab-panel[hidden] { display:none; }
+/* ── Premium hint: badge pulsante sulla tab + coachmark a fumetto ── */
+.prem-badge { display:inline-block; width:8px; height:8px; margin-left:6px;
+              border-radius:50%; background:#d4a83a; vertical-align:middle;
+              animation:premPulse 2s infinite; }
+@keyframes premPulse {
+  0%   { box-shadow:0 0 0 0 rgba(212,168,58,.55); }
+  70%  { box-shadow:0 0 0 7px rgba(212,168,58,0); }
+  100% { box-shadow:0 0 0 0 rgba(212,168,58,0); }
+}
+.prem-coach { position:absolute; top:calc(100% + 10px); z-index:50; max-width:280px;
+              background:var(--srf,#1d1b17); color:var(--tx,#ece7dd);
+              border:1px solid #b8862e; border-radius:10px;
+              padding:10px 30px 10px 12px; font-size:13px; font-weight:600;
+              line-height:1.35; box-shadow:0 6px 22px rgba(0,0,0,.35);
+              animation:premCoachIn .22s ease; }
+.prem-coach::before { content:""; position:absolute; top:-7px; left:24px;
+                      width:12px; height:12px; background:inherit;
+                      border-left:1px solid #b8862e; border-top:1px solid #b8862e;
+                      transform:rotate(45deg); }
+.prem-coach-x { position:absolute; top:4px; right:6px; background:none; border:0;
+                color:var(--txm,#9e9890); font-size:18px; line-height:1;
+                cursor:pointer; padding:2px; }
+@keyframes premCoachIn { from { opacity:0; transform:translateY(-4px); }
+                         to   { opacity:1; transform:none; } }
+@media (max-width:720px) {
+  .prem-coach { left:0 !important; right:0; max-width:none; }
+  .prem-coach::before { left:auto; right:60px; }
+}
 .cost-preview-box { background:var(--bgm,#f5f1e8); border-radius:8px; padding:12px 14px; margin:12px 0; }
 .cost-preview-box .cost-label { font-size:12px; color:var(--txm,#9e9890); text-transform:uppercase; }
 .cost-preview-box .cost-value { font-size:22px; font-weight:600; color:var(--accent,#a07d3a); }
