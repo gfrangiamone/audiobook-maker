@@ -1129,12 +1129,13 @@ function _premiumTabAvailable(){
 function _showPremiumCoach(){
   const coach=document.getElementById('premiumCoach');
   const btn=document.getElementById('tabPremiumBtn');
-  if(!coach||!btn)return;
+  if(!coach||!btn)return false;
   // Allinea la bolla all'inizio del tab Premium così la freccia lo indica.
   coach.style.left=(btn.offsetLeft)+'px';
   coach.hidden=false;
   if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
   _premiumCoachTimer=setTimeout(_dismissPremiumHint,6000);
+  return true;
 }
 function _dismissPremiumHint(){
   const coach=document.getElementById('premiumCoach');
@@ -1160,7 +1161,7 @@ function maybeShowPremiumHint(){
   // Coachmark: gate cap totale + 1/giorno.
   if(st.shows>=_PREMIUM_HINT_MAX)return;
   if(st.lastDay===_premiumHintToday())return;
-  _showPremiumCoach();
+  if(!_showPremiumCoach())return;
   st.shows++; st.lastDay=_premiumHintToday(); _premiumHintSave(st);
 }
 
@@ -1184,6 +1185,7 @@ function switchAudioTab(tab){
     if(cap>0){
       const chars=_computeSelectedChars();
       if(chars>cap){
+        _dismissPremiumHint();
         _showSelTooLargeModal(chars,cap);
         return; // niente switch: il tab resta su Standard
       }
