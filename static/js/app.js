@@ -1086,6 +1086,75 @@ function updateModelRateHint(data){
   hint.textContent=tmpl.replace('{r}',ratePerMin.toFixed(4));
 }
 
+// ═══════════════ Premium hint (coachmark + badge) ═══════════════
+// Stato persistente client-side: una sola chiave JSON in localStorage.
+//   { shows:<int>, lastDay:"YYYY-MM-DD", discovered:<bool> }
+// - coachmark: max _PREMIUM_HINT_MAX apparizioni totali, 1/giorno, mai dopo discovery.
+// - badge: visibile finché !discovered e tab Premium disponibile.
+const _PREMIUM_HINT_KEY='abm_premium_hint';
+const _PREMIUM_HINT_MAX=3;
+let _premiumCoachTimer=null;
+
+function _premiumHintLoad(){
+  try{
+    const raw=localStorage.getItem(_PREMIUM_HINT_KEY);
+    if(!raw)return{shows:0,lastDay:'',discovered:false};
+    const o=JSON.parse(raw);
+    return{shows:(o.shows|0),lastDay:String(o.lastDay||''),discovered:!!o.discovered};
+  }catch(e){return{shows:0,lastDay:'',discovered:false};}
+}
+function _premiumHintSave(s){
+  try{localStorage.setItem(_PREMIUM_HINT_KEY,JSON.stringify(s));}catch(e){}
+}
+function _premiumHintToday(){
+  const d=new Date();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return d.getFullYear()+'-'+m+'-'+day;
+}
+// La tab Premium è "utilizzabile" solo se visibile e non in manutenzione.
+function _premiumTabAvailable(){
+  const btn=document.getElementById('tabPremiumBtn');
+  return !!btn && !btn.hidden && !_premiumMaintenance;
+}
+function _showPremiumCoach(){
+  const coach=document.getElementById('premiumCoach');
+  const btn=document.getElementById('tabPremiumBtn');
+  if(!coach||!btn)return;
+  // Allinea la bolla all'inizio del tab Premium così la freccia lo indica.
+  coach.style.left=(btn.offsetLeft)+'px';
+  coach.hidden=false;
+  if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
+  _premiumCoachTimer=setTimeout(_dismissPremiumHint,6000);
+}
+function _dismissPremiumHint(){
+  const coach=document.getElementById('premiumCoach');
+  if(coach)coach.hidden=true;
+  if(_premiumCoachTimer){clearTimeout(_premiumCoachTimer);_premiumCoachTimer=null;}
+}
+function _markPremiumDiscovered(){
+  const st=_premiumHintLoad();
+  if(!st.discovered){st.discovered=true;_premiumHintSave(st);}
+  _dismissPremiumHint();
+  const badge=document.getElementById('premiumTabBadge');
+  if(badge)badge.hidden=true;
+}
+// Valuta e (se del caso) mostra badge + coachmark. Idempotente.
+function maybeShowPremiumHint(){
+  if(!_premiumTabAvailable())return;
+  if(wizardState && wizardState.audioTab==='premium')return;
+  const st=_premiumHintLoad();
+  if(st.discovered)return;
+  // Badge: sempre quando non scoperto e tab disponibile.
+  const badge=document.getElementById('premiumTabBadge');
+  if(badge)badge.hidden=false;
+  // Coachmark: gate cap totale + 1/giorno.
+  if(st.shows>=_PREMIUM_HINT_MAX)return;
+  if(st.lastDay===_premiumHintToday())return;
+  _showPremiumCoach();
+  st.shows++; st.lastDay=_premiumHintToday(); _premiumHintSave(st);
+}
+
 function switchAudioTab(tab){
   const prev=wizardState.audioTab;
   // Guard Premium #1: kill-switch admin (manutenzione). Se le voci PREMIUM
