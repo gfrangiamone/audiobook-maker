@@ -1130,9 +1130,27 @@ function _showPremiumCoach(){
   const coach=document.getElementById('premiumCoach');
   const btn=document.getElementById('tabPremiumBtn');
   if(!coach||!btn)return false;
-  // Allinea la bolla all'inizio del tab Premium così la freccia lo indica.
+  // Allinea la bolla all'inizio del tab Premium.
   coach.style.left=(btn.offsetLeft)+'px';
   coach.hidden=false;
+  // Punta la freccia al centro della parola "PREMIUM" nella tab (fallback: centro tab).
+  try{
+    const tn=btn.firstChild;
+    const txt=(tn&&tn.textContent)||'';
+    const i=txt.toUpperCase().indexOf('PREMIUM');
+    const coachX=coach.getBoundingClientRect().left;
+    let targetX;
+    if(tn&&i>=0&&document.createRange){
+      const rng=document.createRange();
+      rng.setStart(tn,i); rng.setEnd(tn,i+7);
+      const rr=rng.getBoundingClientRect();
+      targetX=rr.left+rr.width/2;
+    }else{
+      const br=btn.getBoundingClientRect();
+      targetX=br.left+br.width/2;
+    }
+    coach.style.setProperty('--arrow-left',(targetX-coachX-6)+'px'); // -6 = metà larghezza freccia
+  }catch(e){}
   if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
   _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
   return true;

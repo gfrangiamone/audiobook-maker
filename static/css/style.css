@@ -980,7 +980,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
               padding:10px 30px 10px 12px; font-size:13px; font-weight:600;
               line-height:1.35; box-shadow:0 6px 22px rgba(0,0,0,.35);
               animation:premCoachIn .22s ease; }
-.prem-coach::before { content:""; position:absolute; bottom:-7px; left:24px;
+.prem-coach::before { content:""; position:absolute; bottom:-7px; left:var(--arrow-left,24px);
                       width:12px; height:12px; background:inherit;
                       border-right:1px solid #b8862e; border-bottom:1px solid #b8862e;
                       transform:rotate(45deg); }
