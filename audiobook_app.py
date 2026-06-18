@@ -2404,7 +2404,7 @@ def privacy_page():
     if lang not in ("it", "en"):
         al = (request.headers.get("Accept-Language") or "").strip().lower()
         lang = "en" if al.startswith("en") else "it"
-    return privacy_content.render_privacy_page(lang)
+    return privacy_content.render_privacy_page(lang, BASE_URL)
 
 
 @app.route("/robots.txt")

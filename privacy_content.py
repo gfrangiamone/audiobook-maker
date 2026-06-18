@@ -14,6 +14,8 @@ _TXT = {
         "updated_label": "Ultimo aggiornamento",
         "switch_label": "English",
         "switch_href": "/privacy?lang=en",
+        "crumb": "Privacy",
+        "footer": "Audiobook Maker — convertitore gratuito e open source da EPUB/PDF ad audiolibri.",
         "body": """
 <h1>Informativa sulla privacy — Audiobook Maker &amp; Player</h1>
 
@@ -87,6 +89,8 @@ con l'indicazione della data di aggiornamento.</p>
         "updated_label": "Last updated",
         "switch_label": "Italiano",
         "switch_href": "/privacy?lang=it",
+        "crumb": "Privacy",
+        "footer": "Audiobook Maker — free &amp; open-source EPUB/PDF to audiobook converter.",
         "body": """
 <h1>Privacy Policy — Audiobook Maker &amp; Player</h1>
 
@@ -152,29 +156,41 @@ update date.</p>
 }
 
 
-def render_privacy_page(lang="it"):
+def render_privacy_page(lang="it", base_url=""):
     """Ritorna l'HTML completo della pagina /privacy nella lingua richiesta.
 
-    Lingue supportate: it (default), en. Qualsiasi altro valore -> it.
+    Stile coerente con le guide del sito (font DM Sans/DM Serif Display,
+    variabili tema, breadcrumb + footer). Lingue: it (default), en.
     """
     t = _TXT.get(lang, _TXT["it"])
     updated = _LAST_UPDATED.get(t["lang"], _LAST_UPDATED["it"])
+    home = base_url or "/"
     return f"""<!DOCTYPE html><html lang="{t['lang']}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="index,follow">
 <title>{t['title']}</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&amp;family=DM+Serif+Display&amp;display=swap" rel="stylesheet">
 <style>
-body{{font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin:0 auto;
-padding:40px 20px 80px;color:#222;line-height:1.6;background:#fff}}
-h1{{font-size:1.7rem;margin:0 0 4px}}
-h2{{font-size:1.15rem;margin:28px 0 8px;color:#1a1a1a}}
-a{{color:#2563eb}}
-.updated{{color:#777;font-size:.9rem;margin-bottom:24px}}
-.switch{{font-size:.9rem;margin-bottom:24px}}
-ul{{padding-left:20px}}
-li{{margin:6px 0}}
+:root{{--bg:#f5f3ef;--srf:#fff;--brd:#d5d0c8;--tx:#2c2a26;--txd:#6b6760;--txm:#9e9890;--ac:#c47a2a;--ach:#d4903e;--r:12px}}
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'DM Sans','PingFang SC','Microsoft YaHei','Noto Sans SC',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.7;padding:20px;max-width:720px;margin:0 auto}}
+h1{{font-family:'DM Serif Display',Georgia,serif;font-size:2rem;color:var(--ac);margin:18px 0 4px;line-height:1.25}}
+h2{{font-family:'DM Serif Display',Georgia,serif;font-size:1.4rem;margin:32px 0 12px;color:var(--tx)}}
+p,li{{margin-bottom:10px;color:var(--txd)}}
+ul{{padding-left:22px;margin-bottom:10px}}
+strong{{color:var(--tx)}}
+a{{color:var(--ac);text-decoration:none}}
+a:hover{{color:var(--ach);text-decoration:underline}}
+.breadcrumb{{font-size:.85rem;color:var(--txm);margin-bottom:16px}}
+.langswitch{{font-size:.85rem;margin-bottom:18px}}
+.updated{{font-size:.85rem;color:var(--txm);margin:6px 0 24px}}
+footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-size:.85rem;color:var(--txm)}}
 </style></head><body>
-<div class="switch"><a href="{t['switch_href']}">{t['switch_label']}</a></div>
+<nav class="breadcrumb"><a href="{home}">Audiobook Maker</a> &rsaquo; {t['crumb']}</nav>
+<div class="langswitch"><a href="{t['switch_href']}">{t['switch_label']}</a></div>
 <p class="updated">{t['updated_label']}: {updated}</p>
+<article>
 {t['body']}
+</article>
+<footer><p>{t['footer']}</p></footer>
 </body></html>"""
