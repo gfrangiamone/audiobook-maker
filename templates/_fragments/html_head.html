@@ -384,11 +384,17 @@ __REVIEWS_LD__
 
       <div id="voiceMismatch" class="al al-w" style="display:none"></div>
 
-      <div class="tab-bar" role="tablist" style="margin-bottom:12px">
-        <button type="button" id="tabStandardBtn" class="tab active" data-tab="standard" role="tab"
-                aria-selected="true" data-t="tab_voices_standard">Voci Standard (gratis)</button>
-        <button type="button" id="tabPremiumBtn" class="tab" data-tab="premium" role="tab"
-                aria-selected="false" data-t="tab_voices_premium">★ Voci PREMIUM</button>
+      <div class="tab-bar-wrap" style="position:relative">
+        <div class="tab-bar" role="tablist" style="margin-bottom:12px">
+          <button type="button" id="tabStandardBtn" class="tab active" data-tab="standard" role="tab"
+                  aria-selected="true" data-t="tab_voices_standard">Voci Standard (gratis)</button>
+          <button type="button" id="tabPremiumBtn" class="tab" data-tab="premium" role="tab"
+                  aria-selected="false" data-t="tab_voices_premium">★ Voci PREMIUM<span id="premiumTabBadge" class="prem-badge" hidden aria-hidden="true"></span></button>
+        </div>
+        <div id="premiumCoach" class="prem-coach" hidden role="status" aria-live="polite">
+          <span class="prem-coach-text" data-t="premium_hint_text"></span>
+          <button type="button" class="prem-coach-x" aria-label="Close" onclick="_dismissPremiumHint()">&times;</button>
+        </div>
       </div>
 
       <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
