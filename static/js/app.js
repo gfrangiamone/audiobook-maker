@@ -1134,7 +1134,7 @@ function _showPremiumCoach(){
   coach.style.left=(btn.offsetLeft)+'px';
   coach.hidden=false;
   if(_premiumCoachTimer)clearTimeout(_premiumCoachTimer);
-  _premiumCoachTimer=setTimeout(_dismissPremiumHint,6000);
+  _premiumCoachTimer=setTimeout(_dismissPremiumHint,12000);
   return true;
 }
 function _dismissPremiumHint(){

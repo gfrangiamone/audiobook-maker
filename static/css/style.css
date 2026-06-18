@@ -974,20 +974,20 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   70%  { box-shadow:0 0 0 7px rgba(212,168,58,0); }
   100% { box-shadow:0 0 0 0 rgba(212,168,58,0); }
 }
-.prem-coach { position:absolute; top:calc(100% + 10px); z-index:50; max-width:280px;
+.prem-coach { position:absolute; bottom:calc(100% + 10px); z-index:50; max-width:280px;
               background:var(--srf,#1d1b17); color:var(--tx,#ece7dd);
               border:1px solid #b8862e; border-radius:10px;
               padding:10px 30px 10px 12px; font-size:13px; font-weight:600;
               line-height:1.35; box-shadow:0 6px 22px rgba(0,0,0,.35);
               animation:premCoachIn .22s ease; }
-.prem-coach::before { content:""; position:absolute; top:-7px; left:24px;
+.prem-coach::before { content:""; position:absolute; bottom:-7px; left:24px;
                       width:12px; height:12px; background:inherit;
-                      border-left:1px solid #b8862e; border-top:1px solid #b8862e;
+                      border-right:1px solid #b8862e; border-bottom:1px solid #b8862e;
                       transform:rotate(45deg); }
 .prem-coach-x { position:absolute; top:4px; right:6px; background:none; border:0;
                 color:var(--txm,#9e9890); font-size:18px; line-height:1;
                 cursor:pointer; padding:2px; }
-@keyframes premCoachIn { from { opacity:0; transform:translateY(-4px); }
+@keyframes premCoachIn { from { opacity:0; transform:translateY(4px); }
                          to   { opacity:1; transform:none; } }
 @media (max-width:720px) {
   .prem-coach { left:0 !important; right:0; max-width:none; }
