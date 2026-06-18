@@ -763,6 +763,15 @@ function _applyPremiumAvailability(){
     if(panel)panel.hidden=true;
     if(typeof switchAudioTab==='function')switchAudioTab('standard');
   }
+  // Premium hint: se la tab è diventata indisponibile (nessuna voce / manutenzione)
+  // rimuovi badge e coachmark; se è disponibile e siamo nello step Audio, rivaluta.
+  if(!_premiumTabAvailable()){
+    _dismissPremiumHint();
+    const _b=document.getElementById('premiumTabBadge');
+    if(_b)_b.hidden=true;
+  }else if(_wizStep===3 && wizMode==='audio'){
+    maybeShowPremiumHint();
+  }
 }
 
 // Modal dedicato per la manutenzione del tab Premium. Costruito on-demand via
@@ -1181,6 +1190,10 @@ function switchAudioTab(tab){
     }
   }
   wizardState.audioTab=tab;
+  // Premium hint: qualsiasi switch riuscito chiude il coachmark; aprire la tab
+  // Premium = "scoperta" → soppressione definitiva di coachmark e badge.
+  _dismissPremiumHint();
+  if(tab==='premium')_markPremiumDiscovered();
   document.querySelectorAll('.tab-bar .tab').forEach(t=>{
     const active=t.dataset.tab===tab;
     t.classList.toggle('active',active);
@@ -4631,6 +4644,9 @@ function tryGoToAudioSettings(){
   // (goToTranslate imposta 'translate') goToStep(3) mostrerebbe di nuovo panelT3.
   wizMode='audio';
   goToStep(3);
+  // Mostra (se del caso) badge + coachmark Voci PREMIUM. Deferred: a questo punto
+  // la tab Premium potrebbe non essere ancora popolata da loadVoices/_applyPremiumAvailability.
+  setTimeout(maybeShowPremiumHint,0);
 }
 
 // ═══════════════════ COOKIE CONSENT BANNER (Consent Mode v2) ═══════════════════
