@@ -115,6 +115,7 @@ from tts_split import (
 
 import email_service
 import push_service
+import privacy_content
 import payment
 import generation_engine
 import translation_core
@@ -2395,6 +2396,17 @@ def sitemap():
 
 
 #  -  -  -  robots.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
+@app.route("/privacy")
+def privacy_page():
+    # Informativa privacy (richiesta da Play Store e GDPR). IT default, EN via
+    # ?lang=en o Accept-Language. Pagina statica self-contained.
+    lang = (request.args.get("lang") or "").strip().lower()[:2]
+    if lang not in ("it", "en"):
+        al = (request.headers.get("Accept-Language") or "").strip().lower()
+        lang = "en" if al.startswith("en") else "it"
+    return privacy_content.render_privacy_page(lang)
+
+
 @app.route("/robots.txt")
 def robots():
     sitemap_line = f"Sitemap: {BASE_URL}/sitemap.xml" if BASE_URL else ""
