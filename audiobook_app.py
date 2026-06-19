@@ -115,6 +115,7 @@ from tts_split import (
 
 import email_service
 import push_service
+import metrics_store
 import privacy_content
 import payment
 import generation_engine
@@ -571,6 +572,22 @@ def _get_client_id():
     if hdr and _MOBILE_CID_RE.match(hdr):
         return hdr
     return request.cookies.get(_CLIENT_COOKIE_NAME, "")
+
+
+_PLATFORM_HEADER = "X-ABM-Platform"
+_PLATFORM_RE = re.compile(r"^(android|ios)$")
+
+
+def _client_platform():
+    """Provenienza della richiesta: 'android'/'ios' se app (header X-ABM-Platform
+    valido + X-ABM-Cid valido), 'web' se solo cookie abm_cid, '' altrimenti."""
+    plat = (request.headers.get(_PLATFORM_HEADER) or "").strip().lower()
+    hdr_cid = (request.headers.get(_MOBILE_CID_HEADER) or "").strip()
+    if _PLATFORM_RE.match(plat) and hdr_cid and _MOBILE_CID_RE.match(hdr_cid):
+        return plat
+    if request.cookies.get(_CLIENT_COOKIE_NAME, ""):
+        return "web"
+    return ""
 
 
 def _new_job_id():
@@ -8362,6 +8379,17 @@ def api_transfer_qr(job_id):
         return err, sc
     payload, tok = _transfer_payload_for(job_id)
     return jsonify({"qr": _qr_data_uri(payload), "token": tok})
+
+
+@app.route("/api/metrics/app_open", methods=["POST"])
+def api_metrics_app_open():
+    data = request.get_json(silent=True) or {}
+    platform = data.get("platform")
+    try:
+        metrics_store.incr("app_open", platform)
+    except Exception:
+        pass  # best-effort, mai bloccante
+    return jsonify({"ok": True})
 
 
 # ----------------------------------------------------------------------
