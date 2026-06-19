@@ -2935,6 +2935,14 @@ def _funnel_data(days):
     return out
 
 
+# Register funnel provider with email_service (injection — avoids circular import)
+try:
+    import email_service as _email_service
+    _email_service.set_funnel_provider(lambda: _funnel_data(_last_n_days(30)))
+except Exception:
+    pass
+
+
 @app.route("/admin/log-activity")
 def admin_logs():
     if not ADMIN_TOKEN: return "Logs UI disabled.", 404

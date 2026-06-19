@@ -43,8 +43,7 @@ prevenzione abusi. Base giuridica: legittimo interesse.</li>
 gestiti direttamente da <strong>PayPal</strong>; non trattiamo né conserviamo i
 dati della tua carta.</li>
 </ul>
-<p>L'app mobile <strong>non</strong> utilizza strumenti di analisi statistica
-(analytics) né pubblicità.</p>
+<p>L'app raccoglie solo statistiche d'uso <strong>anonime e aggregate</strong> (un segnale di avvio, la piattaforma e la provenienza verso il sito), senza identificare l'utente né usare strumenti di terze parti; nessuna pubblicità.</p>
 
 <h2>3. Fornitori che trattano i dati per nostro conto (sub-responsabili)</h2>
 <p>Per erogare il servizio ci avvaliamo dei seguenti fornitori:</p>
@@ -121,7 +120,7 @@ legitimate interest.</li>
 directly by <strong>PayPal</strong>; we do not process or store your card
 details.</li>
 </ul>
-<p>The mobile app does <strong>not</strong> use analytics tools or advertising.</p>
+<p>The app collects only <strong>anonymous, aggregate</strong> usage statistics (an app-open signal, the platform, and referral to the website), without identifying the user or using third-party tools; no advertising.</p>
 
 <h2>3. Providers processing data on our behalf (sub-processors)</h2>
 <p>To deliver the service we rely on the following providers:</p>

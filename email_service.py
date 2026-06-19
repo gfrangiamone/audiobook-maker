@@ -44,6 +44,40 @@ _admin_failure_last = {}
 _admin_failure_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
+# Funnel provider hook (iniettato da audiobook_app — nessun import circolare)
+# ---------------------------------------------------------------------------
+
+_funnel_provider = None  # callable() -> dict | None, iniettato da audiobook_app
+
+
+def set_funnel_provider(fn):
+    global _funnel_provider
+    _funnel_provider = fn
+
+
+def _funnel_block_html():
+    """Blocco HTML col funnel app->web->premium (ultimi 30gg). '' se non disponibile."""
+    fn = _funnel_provider
+    if not fn:
+        return ""
+    try:
+        f = fn() or {}
+    except Exception:
+        return ""
+    if not f:
+        return ""
+    ao = f.get("app_open", {}).get("total", 0)
+    wv = f.get("web_visit_from_app", {}).get("total", 0)
+    pay = f.get("payment_from_app", {}).get("total", 0)
+    conv = round(f.get("conversion_rate", 0.0) * 100, 1)
+    return (
+        "<h3 style='margin:18px 0 6px'>Funnel app &rarr; web &rarr; premium (30gg)</h3>"
+        f"<p style='margin:0'>App attive: <b>{ao}</b> &middot; Arrivi dall'app: <b>{wv}</b> "
+        f"&middot; Pagamenti dall'app: <b>{pay}</b> &middot; Conversione: <b>{conv}%</b></p>"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Payment email config — imported from payment.py (single source of truth)
 # ---------------------------------------------------------------------------
 
@@ -198,6 +232,7 @@ def _try_send_admin_digest():
 <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888">{e['voice']}</td>
 </tr>"""
 
+    funnel_block = _funnel_block_html()
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
@@ -215,6 +250,7 @@ def _try_send_admin_digest():
 </tr></thead>
 <tbody>{rows}</tbody>
 </table>
+{funnel_block}
 <p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio \u00e8 generato automaticamente da Audiobook Maker.
 Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
 </body></html>"""
