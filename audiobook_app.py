@@ -2916,6 +2916,25 @@ def _session_in_progress(s, sid):
     return False
 
 
+def _last_n_days(n):
+    from datetime import datetime, timedelta
+    today = datetime.now().date()
+    return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
+
+
+def _funnel_data(days):
+    raw = metrics_store.read_range(days)
+    out = {}
+    for event in ("app_open", "web_visit_from_app", "payment_from_app"):
+        ev = raw.get(event, {})
+        a, i, u = int(ev.get("android", 0)), int(ev.get("ios", 0)), int(ev.get("unknown", 0))
+        out[event] = {"android": a, "ios": i, "unknown": u, "total": a + i + u}
+    web_total = out["web_visit_from_app"]["total"]
+    pay_total = out["payment_from_app"]["total"]
+    out["conversion_rate"] = (pay_total / web_total) if web_total else 0.0
+    return out
+
+
 @app.route("/admin/log-activity")
 def admin_logs():
     if not ADMIN_TOKEN: return "Logs UI disabled.", 404
@@ -3330,6 +3349,18 @@ def admin_logs():
         active_cls = ' class="active"' if m == ym else ""
         months_nav += f'<a href="/admin/log-activity?{m}"{active_cls}>{m}</a> '
 
+    _funnel = _funnel_data(_last_n_days(30))
+    _f_open = _funnel["app_open"]["total"]
+    _f_open_a = _funnel["app_open"]["android"]
+    _f_open_i = _funnel["app_open"]["ios"]
+    _f_web = _funnel["web_visit_from_app"]["total"]
+    _f_web_a = _funnel["web_visit_from_app"]["android"]
+    _f_web_i = _funnel["web_visit_from_app"]["ios"]
+    _f_pay = _funnel["payment_from_app"]["total"]
+    _f_pay_a = _funnel["payment_from_app"]["android"]
+    _f_pay_i = _funnel["payment_from_app"]["ios"]
+    _f_conv = f"{_funnel['conversion_rate'] * 100:.1f}%"
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3457,6 +3488,16 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci PREMIUM (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
     <div class="stat" data-filter="mobile" onclick="filterCards('mobile',this)" title="Sessioni originate da app mobile (android/ios)"><div class="num">{mobile_count}</div><div class="lbl">Da mobile</div></div>
     <div class="stat" data-filter="transferred" onclick="filterCards('transferred',this)" title="Sessioni web trasferite alla app mobile"><div class="num">{transferred_count}</div><div class="lbl">Spostati su mobile</div></div>
+</div>
+
+<div style="margin:0 12px 8px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;display:flex;gap:24px;flex-wrap:wrap;align-items:center">
+  <span style="font-size:.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;font-weight:600">Funnel App 30d</span>
+  <span style="font-size:.82rem"><span style="color:var(--text-dim)">App aperte</span> <b style="color:var(--accent)">{_f_open}</b> <small style="color:var(--text-dim)">({_f_open_a}A/{_f_open_i}iOS)</small></span>
+  <span style="color:var(--border)">→</span>
+  <span style="font-size:.82rem"><span style="color:var(--text-dim)">Arrivi web</span> <b style="color:var(--accent)">{_f_web}</b> <small style="color:var(--text-dim)">({_f_web_a}A/{_f_web_i}iOS)</small></span>
+  <span style="color:var(--border)">→</span>
+  <span style="font-size:.82rem"><span style="color:var(--text-dim)">Pagamenti</span> <b style="color:var(--green)">{_f_pay}</b> <small style="color:var(--text-dim)">({_f_pay_a}A/{_f_pay_i}iOS)</small></span>
+  <span style="font-size:.82rem;margin-left:auto"><span style="color:var(--text-dim)">Conv.</span> <b style="color:var(--orange)">{_f_conv}</b></span>
 </div>
 
 <div class="cards-container">
@@ -4151,6 +4192,14 @@ def _admin_auth_from_request():
     if not tok:
         tok = request.cookies.get(_ADMIN_COOKIE_NAME, "")
     return tok
+
+
+@app.route("/api/admin/funnel")
+def api_admin_funnel():
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "forbidden"}), 403
+    days = max(1, min(365, int(request.args.get("days", 30))))
+    return jsonify(_funnel_data(_last_n_days(days)))
 
 
 @app.route("/admin/login", methods=["POST"])
