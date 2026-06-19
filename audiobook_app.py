@@ -590,6 +590,24 @@ def _client_platform():
     return ""
 
 
+def _apply_app_attribution(resp):
+    """Se la home è aperta con utm_source=app, conta l'arrivo e imposta il cookie
+    di attribuzione abm_acq (30gg, first-touch). resp deve essere una Response."""
+    if (request.args.get("utm_source") or "").strip().lower() != "app":
+        return resp
+    plat = (request.args.get("app_platform") or "").strip().lower()
+    plat = plat if plat in ("android", "ios") else "app"
+    try:
+        metrics_store.incr("web_visit_from_app", plat)
+    except Exception:
+        pass
+    existing = request.cookies.get("abm_acq")
+    value = existing if existing else plat  # first-touch: non sovrascrive
+    resp.set_cookie("abm_acq", value, max_age=2592000, samesite="Lax",
+                    secure=bool((BASE_URL or "").startswith("https")), httponly=False)
+    return resp
+
+
 def _new_job_id():
     """Generate a high-entropy job identifier (128 bit, URL-safe).
     Never starts with ``_`` — the ``_`` prefix is the protected system
@@ -2040,7 +2058,7 @@ def index():
     resp = app.make_response(_inject_reviews(base, lang))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Vary"] = "Accept-Language"
-    return resp
+    return _apply_app_attribution(resp)
 
 def _serve_lang(lang: str):
     return (
