@@ -4735,11 +4735,12 @@ function tryGoToAudioSettings(){
     let saved=null;
     try{saved=localStorage.getItem(STORAGE_KEY);}catch(e){}
     if(saved!=='granted'&&saved!=='denied')show();
-    const link=document.getElementById('cookieSettingsBtn');
-    if(link){
-      link.textContent=tr().title;
-      link.addEventListener('click',function(e){e.preventDefault();show();});
-    }
+    // Riapertura del banner su richiesta dalla pagina Privacy (link ?cookies=1).
+    try{if(/[?&]cookies=1(?:&|$)/.test(location.search))show();}catch(e){}
+    // Link footer unificato "Cookie e privacy": testo localizzato (tr().title),
+    // naviga a /privacy. La gestione del consenso vive nella pagina Privacy.
+    const link=document.getElementById('privacyLink');
+    if(link)link.textContent=tr().title;
   }
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded',init);

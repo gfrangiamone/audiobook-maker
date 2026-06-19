@@ -16,6 +16,9 @@ _TXT = {
         "switch_href": "/privacy?lang=en",
         "crumb": "Privacy",
         "footer": "Audiobook Maker — convertitore gratuito e open source da EPUB/PDF ad audiolibri.",
+        "cookie_h": "8. Cookie e consenso",
+        "cookie_p": "Il sito web usa cookie analitici (Google Analytics) solo previo tuo consenso, per misurare il traffico in forma aggregata; nessun cookie analitico viene impostato senza il tuo consenso. L'app mobile non usa cookie analitici. Puoi rivedere o modificare la tua scelta in qualsiasi momento.",
+        "cookie_btn": "Gestisci preferenze cookie",
         "body": """
 <h1>Informativa sulla privacy — Audiobook Maker &amp; Player</h1>
 
@@ -91,6 +94,9 @@ con l'indicazione della data di aggiornamento.</p>
         "switch_href": "/privacy?lang=it",
         "crumb": "Privacy",
         "footer": "Audiobook Maker — free &amp; open-source EPUB/PDF to audiobook converter.",
+        "cookie_h": "8. Cookies and consent",
+        "cookie_p": "The website uses analytics cookies (Google Analytics) only with your consent, to measure aggregate traffic; no analytics cookie is set without your consent. The mobile app uses no analytics cookies. You can review or change your choice at any time.",
+        "cookie_btn": "Manage cookie preferences",
         "body": """
 <h1>Privacy Policy — Audiobook Maker &amp; Player</h1>
 
@@ -185,12 +191,17 @@ a:hover{{color:var(--ach);text-decoration:underline}}
 .langswitch{{font-size:.85rem;margin-bottom:18px}}
 .updated{{font-size:.85rem;color:var(--txm);margin:6px 0 24px}}
 footer{{margin-top:48px;padding-top:24px;border-top:1px solid var(--brd);font-size:.85rem;color:var(--txm)}}
+.cookiebtn{{display:inline-block;margin-top:6px;padding:10px 22px;background:var(--ac);color:#fff;border-radius:8px;text-decoration:none;font-weight:600}}
+.cookiebtn:hover{{background:var(--ach);color:#fff;text-decoration:none}}
 </style></head><body>
 <nav class="breadcrumb"><a href="{home}">Audiobook Maker</a> &rsaquo; {t['crumb']}</nav>
 <div class="langswitch"><a href="{t['switch_href']}">{t['switch_label']}</a></div>
 <p class="updated">{t['updated_label']}: {updated}</p>
 <article>
 {t['body']}
+<h2>{t['cookie_h']}</h2>
+<p>{t['cookie_p']}</p>
+<p><a class="cookiebtn" href="{home}?cookies=1">{t['cookie_btn']}</a></p>
 </article>
 <footer><p>{t['footer']}</p></footer>
 </body></html>"""
