@@ -1030,7 +1030,11 @@ def _transfer_payload_for(job_id):
         except Exception:
             base = ""
     tok = _ensure_transfer_token(job_id)
-    return f"{base}/api/transfer/claim/{tok}", tok
+    # Path /t/<token>: deep link "App Link" verso l'app mobile. Con l'app
+    # installata e il dominio verificato (assetlinks.json), la fotocamera di
+    # sistema apre direttamente l'app; altrimenti la pagina /t/<token> fa da
+    # fallback (apri/scarica l'app). Il claim vero resta su POST /api/transfer/claim.
+    return f"{base}/t/{tok}", tok
 
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
 _DL_THROTTLE_SEC = 30
@@ -2396,6 +2400,83 @@ def sitemap():
 
 
 #  -  -  -  robots.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
+# ── Deep link app mobile: QR /t/<token> + Android App Links ──
+_APP_PACKAGE = "it.nextsw.audiobook_maker_mobile"
+_APP_CERT_FINGERPRINTS = [
+    # Upload key (APK di test / chiave di upload Play)
+    "50:09:2D:2F:DD:99:FF:A7:F9:7E:40:39:04:C6:C3:DC:A1:3F:54:AE:0E:17:E1:6E:13:AD:07:20:83:8A:C4:BB",
+    # TODO prod: aggiungere il SHA-256 della "App signing key" di Google (Play Console)
+]
+_PLAY_URL = "https://play.google.com/store/apps/details?id=" + _APP_PACKAGE
+
+
+@app.route("/.well-known/assetlinks.json")
+def assetlinks_json():
+    # Digital Asset Links: verifica il dominio per gli App Links dell'app, così la
+    # fotocamera di sistema apre l'app sui link https://<dominio>/t/<token>.
+    data = [{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": _APP_PACKAGE,
+            "sha256_cert_fingerprints": _APP_CERT_FINGERPRINTS,
+        },
+    }]
+    return app.response_class(json.dumps(data), mimetype="application/json")
+
+
+def _render_transfer_landing(token):
+    # Fallback per il deep link /t/<token>: mostrato nel browser quando l'app NON
+    # e' installata (con app installata + dominio verificato, Android apre l'app
+    # prima di questa pagina). Offre il download dell'app.
+    import html as _html
+    _html.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
+    try:
+        al = (request.headers.get("Accept-Language") or "").strip().lower()
+        lang = "it" if al.startswith("it") else "en"
+    except Exception:
+        lang = "en"
+    T = {
+        "it": ("Apri in Audiobook Maker &amp; Player",
+               "Se hai l'app installata, questo link si apre automaticamente per importare il processo. Altrimenti installa l'app dal Play Store.",
+               "Scarica l'app", "Torna al sito"),
+        "en": ("Open in Audiobook Maker &amp; Player",
+               "If you have the app installed, this link opens it automatically to import the job. Otherwise install the app from the Play Store.",
+               "Get the app", "Back to website"),
+    }
+    title, body, btn, back = T[lang]
+    home = BASE_URL or "/"
+    return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@0,400;0,600;0,700&amp;family=DM+Serif+Display&amp;display=swap" rel="stylesheet">
+<style>
+:root{{--bg:#f5f3ef;--brd:#d5d0c8;--tx:#2c2a26;--txd:#6b6760;--ac:#c47a2a;--ach:#d4903e}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}}
+.box{{max-width:420px}}
+h1{{font-family:'DM Serif Display',Georgia,serif;color:var(--ac);font-size:1.7rem;margin-bottom:14px}}
+p{{color:var(--txd);line-height:1.6;margin-bottom:24px}}
+.btn{{display:inline-block;padding:13px 28px;background:var(--ac);color:#fff;border-radius:10px;text-decoration:none;font-weight:600}}
+.btn:hover{{background:var(--ach)}}
+.back{{display:block;margin-top:18px;color:var(--txd);font-size:.9rem;text-decoration:none}}
+.back:hover{{color:var(--ac)}}
+</style></head><body>
+<div class="box">
+<h1>{title}</h1>
+<p>{body}</p>
+<a class="btn" href="{_PLAY_URL}">{btn}</a>
+<a class="back" href="{home}">{back}</a>
+</div>
+</body></html>"""
+
+
+@app.route("/t/<token>")
+def transfer_landing(token):
+    return (_render_transfer_landing(token), 200,
+            {"Content-Type": "text/html; charset=utf-8"})
+
+
 @app.route("/privacy")
 def privacy_page():
     # Informativa privacy (richiesta da Play Store e GDPR). IT default, EN via
