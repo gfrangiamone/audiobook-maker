@@ -876,9 +876,22 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
 
     # Estrazione capitoli
     chapter_index = 0
+    # ── Stato per la riconciliazione spine↔TOC ──
+    # seen_toc_anchor: superata la prima voce TOC nello spine? (prima di essa
+    #   i file sono front-matter e restano entry separate).
+    # pending_toc_title: titolo di un file TOC con corpo vuoto/non-narrativo
+    #   (tipica pagina-immagine di apertura capitolo) in attesa che il
+    #   contenuto reale arrivi dal file orfano successivo dello spine.
+    seen_toc_anchor = False
+    pending_toc_title = None
     for item in spine_items:
         html_content = item.get_content().decode("utf-8", errors="replace")
         file_name = item.get_name()
+
+        # File con una propria voce nel TOC (autorità sull'ordinamento capitoli)
+        is_toc_anchored = file_name in toc_map
+        if is_toc_anchored:
+            seen_toc_anchor = True
 
         # ── Filtro spine-level: salta file non-contenuto per nome ──
         fn_lower = Path(file_name).stem.lower().replace("-", "").replace("_", "")
@@ -964,7 +977,51 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     )
                     info.chapters.append(chapter)
 
+                pending_toc_title = None
                 continue  # Non processare il file come capitolo singolo
+
+        # ── Riconciliazione spine↔TOC: file ORFANO (nessuna voce TOC) ──
+        # Light novel & EPUB auto-generati listano nel TOC solo il primo file
+        # di un capitolo; i file successivi dello stesso capitolo restano nello
+        # spine ma senza voce TOC. Vanno uniti al capitolo precedente (o al
+        # titolo TOC rimasto senza corpo), non trasformati in capitoli
+        # "Sezione N" che spezzano e mutilano il capitolo reale. Si applica
+        # solo DOPO la prima voce TOC: i file orfani prima di essa sono
+        # front-matter e restano entry separate (ramo single-chapter sotto).
+        if not is_toc_anchored and seen_toc_anchor:
+            raw_text = html_to_text(html_content)
+            clean = clean_text_for_tts(raw_text).strip()
+            if clean:
+                if pending_toc_title is not None:
+                    # Il file TOC precedente aveva titolo ma corpo vuoto
+                    # (pagina-immagine di apertura capitolo): crea ORA il
+                    # capitolo col titolo TOC corretto e questo corpo orfano.
+                    clean = _remove_duplicate_heading(clean, pending_toc_title)
+                    chapter_index += 1
+                    info.chapters.append(Chapter(
+                        index=chapter_index,
+                        title=pending_toc_title,
+                        text=clean.strip(),
+                        source_file=file_name,
+                    ))
+                    pending_toc_title = None
+                elif info.chapters:
+                    # Continuazione del capitolo precedente: append in coda.
+                    prev = info.chapters[-1]
+                    prev.text = (prev.text.rstrip() + "\n\n" + clean).strip()
+                    prev.word_count = len(prev.text.split())
+                    prev.char_count = len(prev.text)
+                else:
+                    # Orfano dopo la prima voce TOC ma senza capitolo a cui
+                    # agganciarsi: tienilo come entry separata (no perdita).
+                    chapter_index += 1
+                    info.chapters.append(Chapter(
+                        index=chapter_index,
+                        title=detect_chapter_title(html_content) or f"Sezione {chapter_index}",
+                        text=clean.strip(),
+                        source_file=file_name,
+                    ))
+            continue
 
         # ── File singolo capitolo (comportamento originale) ──
         # Titolo: prima dal TOC, poi dall'HTML
@@ -985,6 +1042,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             # possono fallire come blocco unico ma contenere sezioni valide.
             # Principio: meglio preservare in eccesso che perdere contenuto.
             salvaged_sections = _split_html_by_headings_auto(html_content)
+            salvaged_any = False
             if salvaged_sections:
                 for section_title, section_html in salvaged_sections:
                     sec_raw = html_to_text(section_html)
@@ -1003,6 +1061,19 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                         source_file=file_name,
                     )
                     info.chapters.append(chapter)
+                    salvaged_any = True
+
+            # Riconciliazione spine↔TOC: un file CON voce TOC e titolo valido
+            # ma corpo non-narrativo (tipica pagina-immagine di apertura
+            # capitolo) non va scartato silenziosamente: ricorda il titolo TOC
+            # così il contenuto reale, che arriva nel file orfano successivo
+            # dello spine, viene agganciato a un capitolo col titolo corretto.
+            if salvaged_any:
+                pending_toc_title = None
+            elif is_toc_anchored and _is_title_content(title):
+                pending_toc_title = title
+            else:
+                pending_toc_title = None
 
             continue
 
@@ -1018,6 +1089,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             source_file=file_name,
         )
         info.chapters.append(chapter)
+        pending_toc_title = None
 
     # Totali
     info.total_words = sum(c.word_count for c in info.chapters)
