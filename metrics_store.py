@@ -9,7 +9,7 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _METRICS_FILE = _SCRIPT_DIR / "_metrics.json"
 _lock = threading.Lock()
-_VALID_EVENTS = ("app_open", "web_visit_from_app")
+_VALID_EVENTS = ("app_open", "web_visit_from_app", "payment_from_app")
 
 
 def _norm_platform(p):

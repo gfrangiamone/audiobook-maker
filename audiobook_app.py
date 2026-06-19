@@ -590,6 +590,15 @@ def _client_platform():
     return ""
 
 
+def _acquisition_from_request():
+    """(acquisition_source, acquisition_platform) dal cookie abm_acq."""
+    v = (request.cookies.get("abm_acq") or "").strip().lower()
+    if not v:
+        return "", ""
+    plat = v if v in ("android", "ios") else ""
+    return "app", plat
+
+
 def _apply_app_attribution(resp):
     """Se la home è aperta con utm_source=app, conta l'arrivo e imposta il cookie
     di attribuzione abm_acq (30gg, first-touch). resp deve essere una Response."""
@@ -7615,6 +7624,14 @@ def api_generate():
                 "gemini_est": est_pre,
                 "llm_eur": llm_eur_pre,
             }
+            _acq_src, _acq_plat = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src
+            job["payment"]["acquisition_platform"] = _acq_plat
+            if _acq_src == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat)
+                except Exception:
+                    pass
             # Batch implicito per job PAGATO: un job per cui l'utente ha pagato
             # NON deve morire per heartbeat alla chiusura del browser. Registra
             # l'email del pagamento come notifica -> email_registered=True esenta
@@ -9281,6 +9298,14 @@ def api_optimize():
                 "llm_eur": float(estimated_cost),
                 "source": "combined_optimize_autogen",
             }
+            _acq_src, _acq_plat = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src
+            job["payment"]["acquisition_platform"] = _acq_plat
+            if _acq_src == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat)
+                except Exception:
+                    pass
             job["payment_token"] = _combined_token
             job["payment_type"] = _consumed_method
             job["payment_email"] = _consumed_email
