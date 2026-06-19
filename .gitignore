@@ -51,6 +51,7 @@ Thumbs.db
 # but guard against accidental commits if ever present in the working tree)
 _vouchers.json
 _payments.json
+_metrics.json
 voucher_admin.log
 **/ABM_DATA_DIR/
 
