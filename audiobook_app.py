@@ -893,7 +893,8 @@ def _reenqueue_orphan(job_id, rec):
             _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                           job.get("client_id", ""), job.get("client_ip", ""),
                           job["voice"], job.get("browser_lang", ""),
-                          epoch=job.get("gen_epoch"))
+                          epoch=job.get("gen_epoch"),
+                          platform=job.get("platform", ""))
         except Exception:
             pass
         t = threading.Thread(
@@ -1872,7 +1873,7 @@ def _init_log_dedup():
                 if len(parts) >= 4:
                     _logged_sids_ops.add((parts[0], parts[3]))
 
-def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None):
+def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
     """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
 
     `epoch` (es. job["gen_epoch"]): se fornito entra nella chiave di dedup,
@@ -1898,7 +1899,7 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
             _logged_sids_ops.clear()
         if key in _logged_sids_ops:
             return
-        line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang}\n'
+        line = f'{session_id} # {ts} # "{filename}" # {operation} # {client_id} # {client_ip} # {voice} # {browser_lang} # {platform}\n'
         try:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(line)
@@ -7701,6 +7702,7 @@ def api_generate():
         job["status"] = "generating"
         # Save voice in job for logging
         job["voice"] = voice
+        job["platform"] = _client_platform()
 
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
@@ -7795,7 +7797,8 @@ def api_generate():
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                   client_id, client_ip, voice,
                   browser_lang=job.get("browser_lang", ""),
-                  epoch=job.get("gen_epoch"))
+                  epoch=job.get("gen_epoch"),
+                  platform=job.get("platform", ""))
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
@@ -8381,6 +8384,7 @@ def api_transfer_claim(token):
             # il download) e (b) al COMPLETE viene creato un download token anche
             # se il job NON era né batch né email (job gratuito del sito).
             job["email_registered"] = True
+            job["transferred_to_mobile"] = True
             job_done = job.get("status") in ("done", "optimized")
             moved = True
     # Job già completato senza download token (caso del sito senza email/batch):
@@ -8403,6 +8407,9 @@ def api_transfer_claim(token):
     if not moved and not changed:
         # job non più in memoria e nessun token (es. scaduto): nulla da agganciare
         return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
+    if moved or changed:
+        _log_activity(job_id, "", "TRANSFER", client_id=cid,
+                      client_ip=_get_client_ip(), platform=_client_platform())
     return jsonify({"ok": True, "job_id": job_id})
 
 
