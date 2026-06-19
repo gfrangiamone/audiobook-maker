@@ -2814,6 +2814,7 @@ def _parse_log_sessions(ym):
             client_ip = parts[5].strip() if len(parts) > 5 else ""
             voice = parts[6].strip() if len(parts) > 6 else ""
             browser_lang = parts[7].strip() if len(parts) > 7 else ""
+            platform = parts[8].strip() if len(parts) > 8 else ""
 
             try:
                 dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
@@ -2827,6 +2828,8 @@ def _parse_log_sessions(ym):
                     "events": [operation],
                     "client_id": client_id, "client_ip": client_ip,
                     "voice": voice, "browser_lang": browser_lang,
+                    "platform": platform,
+                    "transferred": operation == "TRANSFER",
                 }
             else:
                 s = sessions[sid]
@@ -2845,6 +2848,10 @@ def _parse_log_sessions(ym):
                     s["voice"] = voice
                 if browser_lang:
                     s["browser_lang"] = browser_lang
+                if platform and not s["platform"]:
+                    s["platform"] = platform
+                if operation == "TRANSFER":
+                    s["transferred"] = True
 
     client_session_count = {}
     for s in sessions.values():
@@ -3028,6 +3035,13 @@ def admin_logs():
                     "DOWNLOAD_TRANSLATION", "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
     tr_count = sum(1 for s in sessions.values()
                    if set(s["events"]) & _TR_OPS_STAT)
+    # Sessioni originatesi da piattaforma mobile (android/ios).
+    mobile_count = sum(
+        1 for s in sessions.values()
+        if s.get("platform", "") in ("android", "ios")
+    )
+    # Sessioni web trasferite alla mobile app (evento TRANSFER).
+    transferred_count = sum(1 for s in sessions.values() if s.get("transferred", False))
     unique_clients = len(set(s.get("client_id", "") for s in sessions.values() if s.get("client_id")))
     returning_clients = sum(1 for c in client_session_count.values() if c >= 2)
 
@@ -3229,13 +3243,17 @@ def admin_logs():
                 "GENERATE" in s["events"]
                 and str(voice_raw).startswith("gemini:")
             )
+            session_platform = html_mod.escape(s.get("platform", "") or "")
+            session_transferred = s.get("transferred", False)
             data_attrs = (
                 f'data-status="{card_status}" '
                 f'data-email="{1 if has_email else 0}" '
                 f'data-recurring="{1 if is_recurring else 0}" '
                 f'data-identified="{1 if is_identified else 0}" '
                 f'data-gemini="{1 if is_gemini_run else 0}" '
-                f'data-translation="{1 if is_translation else 0}"'
+                f'data-translation="{1 if is_translation else 0}" '
+                f'data-platform="{session_platform}" '
+                f'data-transferred="{1 if session_transferred else 0}"'
             )
             m4b_subbar = _m4b_subbar_html(job) if is_progress and job and job.get("m4b_progress_total", 0) > 0 else ""
 
@@ -3437,6 +3455,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="stat" data-filter="recurring" onclick="filterCards('recurring',this)"><div class="num">{returning_clients}</div><div class="lbl">{t["recurring"]}</div></div>
     <div class="stat stat-tr" data-filter="translation" onclick="filterCards('translation',this)" title="Sessioni con attività di traduzione"><div class="num">{tr_count}</div><div class="lbl">{t["translations"]}</div></div>
     <div class="stat stat-gemini" data-filter="gemini" onclick="filterCards('gemini',this)" title="Sessioni che hanno avviato la generazione del libro con voci PREMIUM (esclude anteprime)"><div class="num">{gemini_started}</div><div class="lbl">{t["gemini_started"]}</div></div>
+    <div class="stat" data-filter="mobile" onclick="filterCards('mobile',this)" title="Sessioni originate da app mobile (android/ios)"><div class="num">{mobile_count}</div><div class="lbl">Da mobile</div></div>
+    <div class="stat" data-filter="transferred" onclick="filterCards('transferred',this)" title="Sessioni web trasferite alla app mobile"><div class="num">{transferred_count}</div><div class="lbl">Spostati su mobile</div></div>
 </div>
 
 <div class="cards-container">
@@ -3604,6 +3624,8 @@ function filterCards(filter, el) {{
         else if (filter === 'recurring') {{ show = card.dataset.recurring === '1'; }}
         else if (filter === 'translation') {{ show = card.dataset.translation === '1'; }}
         else if (filter === 'gemini') {{ show = card.dataset.gemini === '1'; }}
+        else if (filter === 'mobile') {{ show = (card.dataset.platform === 'android' || card.dataset.platform === 'ios'); }}
+        else if (filter === 'transferred') {{ show = card.dataset.transferred === '1'; }}
         card.classList.toggle('card-hidden', !show);
     }});
     document.querySelectorAll('.day-group').forEach(group => {{
