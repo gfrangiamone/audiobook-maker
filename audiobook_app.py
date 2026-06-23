@@ -11410,13 +11410,17 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
         _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
         _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
+        # Solo "AudioBook Maker & Player" e' cliccabile (verso /get-app), non
+        # tutta la riga della didascalia.
+        _app_name = "AudioBook Maker &amp; Player"
+        _app_link = (f'<a href="{BASE_URL}/get-app" '
+                     f'style="color:inherit;text-decoration:underline;">{_app_name}</a>')
+        _hint_html = _hint.replace(_app_name, _app_link)
         transfer_html = (
             '<div style="text-align:center;margin:28px auto;max-width:320px;">'
             f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
             f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
-            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">'
-            f'<a href="{BASE_URL}/get-app" style="color:inherit;text-decoration:underline;">{_hint}</a>'
-            f'</p>'
+            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint_html}</p>'
             '</div>'
         )
 

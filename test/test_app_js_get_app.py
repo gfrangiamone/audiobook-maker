@@ -11,3 +11,7 @@ def test_transfer_qr_popup_links_to_get_app():
     # l'hint del popup è dentro un anchor verso /get-app
     assert "createElement('a')" in body
     assert "/get-app" in body
+    # SOLO "AudioBook Maker & Player" è cliccabile: il popup splitta l'hint
+    # sull'app-name e usa createTextNode per le parti non cliccabili.
+    assert "AudioBook Maker & Player" in body
+    assert "createTextNode" in body

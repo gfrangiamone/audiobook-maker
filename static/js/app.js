@@ -3423,14 +3423,24 @@ function openTransferQrModal(holderId){
     p.className='muted';
     p.style.fontSize='.85rem';
     p.style.marginTop='12px';
+    // Solo "AudioBook Maker & Player" e` cliccabile (verso /get-app).
+    const APP='AudioBook Maker & Player';
     const a=document.createElement('a');
     a.href='/get-app';
     a.target='_blank';
     a.rel='noopener';
-    a.textContent=hint;
+    a.textContent=APP;
     a.style.color='inherit';
     a.style.textDecoration='underline';
-    p.appendChild(a);
+    const i=hint.indexOf(APP);
+    if(i>=0){
+      p.appendChild(document.createTextNode(hint.slice(0,i)));
+      p.appendChild(a);
+      p.appendChild(document.createTextNode(hint.slice(i+APP.length)));
+    }else{
+      a.textContent=hint; // fallback: tutta la riga
+      p.appendChild(a);
+    }
     bodyDiv.appendChild(p);
   }
   modal.appendChild(head);

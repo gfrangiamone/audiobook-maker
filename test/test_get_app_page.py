@@ -67,10 +67,14 @@ def test_transfer_landing_renders_store_buttons(client, monkeypatch):
     assert "btn-disabled" in body               # apple disabilitato
 
 
-def test_dl_page_caption_links_to_get_app():
+def test_dl_page_caption_links_only_app_name():
     html = audiobook_app._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
     )
-    expected = f'{audiobook_app.BASE_URL}/get-app'
-    assert f'href="{expected}"' in html
+    base = audiobook_app.BASE_URL
+    # SOLO "AudioBook Maker & Player" e' il testo del link
+    assert (f'href="{base}/get-app" style="color:inherit;text-decoration:underline;">'
+            f'AudioBook Maker &amp; Player</a>') in html
+    # il testo iniziale della didascalia e' testo piano PRIMA dell'anchor
+    assert "Inquadra il QR con l&rsquo;app <a href=" in html
