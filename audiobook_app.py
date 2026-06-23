@@ -398,6 +398,11 @@ EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))
 # Override per job con voce PREMIUM (Gemini): retention piu' lunga perche'
 # i pagamenti Premium meritano una finestra di download/email piu' ampia.
 GEMINI_FILE_RETENTION_SEC = int(os.environ.get("ABM_GEMINI_JOB_RETENTION_SEC", "172800"))  # 48h default
+# Condivisione audiolibro app->app: la risorsa share scade dopo questo TTL
+# (default 120 min). Il file upload (caso senza job) ha un tetto di dimensione.
+ABM_SHARE_TTL_SEC = int(os.environ.get("ABM_SHARE_TTL_SEC", "7200"))
+ABM_SHARE_MAX_BYTES = int(os.environ.get("ABM_SHARE_MAX_BYTES", str(500 * 1024 * 1024)))
+ABM_SHARE_UPLOAD_TTL_SEC = int(os.environ.get("ABM_SHARE_UPLOAD_TTL_SEC", "3600"))
 # Hard cap caratteri per audiolibro completo (taglia output audio):
 # - standard (edge-tts/Google): ABM_MAX_TEXT_CHARS
 # - PREMIUM (gemini:): ABM_MAX_GEMINI_TEXT_CHARS, tipicamente piu' basso perche'

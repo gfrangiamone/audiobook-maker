@@ -125,6 +125,16 @@ def presigned_get_url(key, download_name=None, ttl=None):
     )
 
 
+def presigned_put_url(key, ttl=None):
+    """URL PUT temporaneo per upload diretto del client su S3/R2. Nessun
+    vincolo di Content-Type (il client carica i byte così come sono)."""
+    return _get_client().generate_presigned_url(
+        "put_object",
+        Params={"Bucket": _BUCKET, "Key": _full_key(key)},
+        ExpiresIn=int(ttl or _PRESIGN_TTL),
+    )
+
+
 def delete_object(key):
     """Cancella un singolo oggetto. Idempotente lato S3."""
     _get_client().delete_object(Bucket=_BUCKET, Key=_full_key(key))
