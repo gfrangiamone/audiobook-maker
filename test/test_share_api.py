@@ -107,6 +107,8 @@ def test_share_create_ready_for_available_job(client, monkeypatch):
 
 def test_share_create_upload_when_no_job(client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "presigned_put_url",
                         lambda key, ttl=None: f"https://r2/PUT/{key}")
@@ -119,6 +121,10 @@ def test_share_create_upload_when_no_job(client, monkeypatch):
     assert data["filename"] == "Il_mio_libro.m4b"
     assert "shares/" in data["upload_url"] and "Il_mio_libro.m4b" in data["upload_url"]
     assert data["max_bytes"] == 524288000
+    # pending record must be persisted
+    share_id = data["share_id"]
+    assert audiobook_app._share_tokens[share_id]["kind"] == "pending"
+    assert audiobook_app._share_tokens[share_id]["client_id"] == "mobile-cid-12345"
 
 
 def test_share_create_requires_cid(client):
@@ -136,21 +142,26 @@ def test_share_create_upload_unavailable_without_s3(client, monkeypatch):
 
 
 def test_share_finalize_ok(client, monkeypatch):
-    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SID1": {"kind": "pending", "s3_key": "shares/SID1/x.m4b", "filename": "x.m4b",
+                 "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
     monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda key: 1234)
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
-    r = client.post("/api/share/finalize", headers=HDR,
-                    json={"share_id": "SID1", "filename": "x.m4b"})
+    r = client.post("/api/share/finalize", headers=HDR, json={"share_id": "SID1", "filename": "x.m4b"})
     assert r.status_code == 200
     data = r.get_json()
     assert data["link"].startswith("https://audiobook-maker.com/s/")
     rec = audiobook_app._share_tokens[data["share_token"]]
-    assert rec["kind"] == "upload"
-    assert rec["s3_key"] == "shares/SID1/x.m4b"
+    assert rec["kind"] == "upload" and rec["s3_key"] == "shares/SID1/x.m4b"
+    assert "SID1" not in audiobook_app._share_tokens   # pending consumed
 
 
 def test_share_finalize_not_uploaded(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SID2": {"kind": "pending", "s3_key": "shares/SID2/x.m4b", "filename": "x.m4b",
+                 "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size", lambda key: None)
     r = client.post("/api/share/finalize", headers=HDR,
                     json={"share_id": "SID2", "filename": "x.m4b"})
@@ -160,6 +171,10 @@ def test_share_finalize_not_uploaded(client, monkeypatch):
 
 def test_share_finalize_too_large_deletes(client, monkeypatch):
     deleted = []
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SID3": {"kind": "pending", "s3_key": "shares/SID3/big.m4b", "filename": "big.m4b",
+                 "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
     monkeypatch.setattr(storage_backend, "object_size",
                         lambda key: 600 * 1024 * 1024)
     monkeypatch.setattr(storage_backend, "delete_object", lambda key: deleted.append(key))
@@ -168,6 +183,41 @@ def test_share_finalize_too_large_deletes(client, monkeypatch):
     assert r.status_code == 413
     assert r.get_json()["error_code"] == "too_large"
     assert deleted == ["shares/SID3/big.m4b"]
+    assert "SID3" not in audiobook_app._share_tokens
+
+
+def test_share_finalize_storage_error_returns_502(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SIDX": {"kind": "pending", "s3_key": "shares/SIDX/x.m4b", "filename": "x.m4b",
+                 "client_id": "mobile-cid-12345", "created_at": time.time(), "ttl_sec": 3600}})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    def _boom(key):
+        raise RuntimeError("r2 down")
+    monkeypatch.setattr(storage_backend, "object_size", _boom)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SIDX", "filename": "x.m4b"})
+    assert r.status_code == 502
+    assert r.get_json()["error_code"] == "storage_error"
+
+
+def test_share_finalize_forbidden_other_cid(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SID_OTHER": {"kind": "pending", "s3_key": "shares/SID_OTHER/x.m4b", "filename": "x.m4b",
+                      "client_id": "other-cid-99999", "created_at": time.time(), "ttl_sec": 3600}})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SID_OTHER", "filename": "x.m4b"})
+    assert r.status_code == 403
+    assert r.get_json()["error_code"] == "forbidden"
+
+
+def test_share_finalize_unknown_share_id(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "NONEXISTENT", "filename": "x.m4b"})
+    assert r.status_code == 404
+    assert r.get_json()["error_code"] == "not_found"
 
 
 def test_share_claim_expired_returns_410(client, monkeypatch):
@@ -264,16 +314,6 @@ def test_cleanup_expired_shares(monkeypatch):
     assert n == 2
     assert deleted == ["shares/a/x.m4b"]  # solo l'upload scaduto cancella su R2
     assert set(audiobook_app._share_tokens.keys()) == {"FRESH"}
-
-
-def test_share_finalize_storage_error_returns_502(client, monkeypatch):
-    def _boom(key):
-        raise RuntimeError("r2 down")
-    monkeypatch.setattr(storage_backend, "object_size", _boom)
-    r = client.post("/api/share/finalize", headers=HDR,
-                    json={"share_id": "SIDX", "filename": "x.m4b"})
-    assert r.status_code == 502
-    assert r.get_json()["error_code"] == "storage_error"
 
 
 def test_share_dl_storage_error_returns_502(client, monkeypatch):

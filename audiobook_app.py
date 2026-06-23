@@ -8665,6 +8665,12 @@ def api_share_create():
         print(f"[share] presign put failed: {e}")
         return jsonify({"error": "presign_failed",
                         "error_code": "presign_failed"}), 502
+    with _share_lock:
+        _share_tokens[share_id] = {
+            "kind": "pending", "s3_key": key, "filename": filename,
+            "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_UPLOAD_TTL_SEC,
+        }
+    _save_share_tokens()
     return jsonify({"mode": "upload", "share_id": share_id, "filename": filename,
                     "upload_url": url, "max_bytes": ABM_SHARE_MAX_BYTES,
                     "ttl_sec": ABM_SHARE_TTL_SEC})
@@ -8673,16 +8679,22 @@ def api_share_create():
 @app.route("/api/share/finalize", methods=["POST"])
 def api_share_finalize():
     """Conferma che l'upload presigned è completo: verifica esistenza e
-    dimensione su R2, poi registra la share. Oltre il limite → cancella + 413."""
+    dimensione su R2, poi registra la share. Oltre il limite → cancella + 413.
+    Solo il cid che ha creato il pending record può finalizzare."""
     cid = _get_client_id()
     if not cid:
         return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
     body = request.get_json(silent=True) or {}
     share_id = (body.get("share_id") or "").strip()
-    filename = _safe_share_filename(body.get("filename") or "")
     if not share_id:
         return jsonify({"error": "bad_request", "error_code": "bad_request"}), 400
-    key = f"shares/{share_id}/{filename}"
+    pending = _share_tokens.get(share_id)
+    if not isinstance(pending, dict) or pending.get("kind") != "pending":
+        return jsonify({"error": "not_found", "error_code": "not_found"}), 404
+    if pending.get("client_id") != cid:
+        return jsonify({"error": "forbidden", "error_code": "forbidden"}), 403
+    key = pending["s3_key"]
+    filename = pending.get("filename")
     try:
         size = storage_backend.object_size(key)
     except Exception as e:
@@ -8695,11 +8707,15 @@ def api_share_finalize():
             storage_backend.delete_object(key)
         except Exception as e:
             print(f"[share] delete oversize failed: {e}")
+        with _share_lock:
+            _share_tokens.pop(share_id, None)
+        _save_share_tokens()
         return jsonify({"error": "too_large", "error_code": "too_large",
                         "max_bytes": ABM_SHARE_MAX_BYTES}), 413
     stok = secrets.token_urlsafe(24)
     now = time.time()
     with _share_lock:
+        _share_tokens.pop(share_id, None)
         _share_tokens[stok] = {
             "kind": "upload", "s3_key": key, "filename": filename,
             "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_TTL_SEC,
@@ -12414,7 +12430,7 @@ def _cleanup_expired_shares(now=None):
                 _share_tokens.pop(stok, None); removed += 1; continue
             if (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC):
                 continue
-            if info.get("kind") == "upload" and info.get("s3_key"):
+            if info.get("kind") in ("upload", "pending") and info.get("s3_key"):
                 try:
                     storage_backend.delete_object(info["s3_key"])
                 except Exception as e:
