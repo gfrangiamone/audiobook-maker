@@ -81,3 +81,55 @@ def test_safe_share_filename():
 def test_share_link_for(monkeypatch):
     monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
     assert audiobook_app._share_link_for("ABC") == "https://audiobook-maker.com/s/ABC"
+
+
+def test_share_create_ready_for_available_job(client, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
+                "created_at": now - 30, "is_gemini": False,
+                "output_m4b": "/x/out.m4b"},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
+    r = client.post("/api/share/create", headers=HDR, json={"job_id": "JOBA"})
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["mode"] == "ready"
+    assert data["link"].startswith("https://audiobook-maker.com/s/")
+    assert data["ttl_sec"] == 7200
+    rec = audiobook_app._share_tokens[data["share_token"]]
+    assert rec["kind"] == "ready"
+    assert rec["download_token"] == "DLT"
+    assert rec["client_id"] == "mobile-cid-12345"
+
+
+def test_share_create_upload_when_no_job(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: f"https://r2/PUT/{key}")
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
+    r = client.post("/api/share/create", headers=HDR,
+                    json={"filename": "Il mio libro.m4b"})
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["mode"] == "upload"
+    assert data["filename"] == "Il_mio_libro.m4b"
+    assert "shares/" in data["upload_url"] and "Il_mio_libro.m4b" in data["upload_url"]
+    assert data["max_bytes"] == 524288000
+
+
+def test_share_create_requires_cid(client):
+    r = client.post("/api/share/create", json={"job_id": "X"})
+    assert r.status_code == 400
+    assert r.get_json()["error_code"] == "no_cid"
+
+
+def test_share_create_upload_unavailable_without_s3(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {})
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
+    r = client.post("/api/share/create", headers=HDR, json={"filename": "x.m4b"})
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "upload_unavailable"

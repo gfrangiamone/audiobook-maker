@@ -8618,6 +8618,50 @@ def api_transfer_claim(token):
     return jsonify({"ok": True, "job_id": job_id})
 
 
+@app.route("/api/share/create", methods=["POST"])
+def api_share_create():
+    """Crea una condivisione. Se il job indicato è ancora scaricabile e di
+    proprietà del cid → share "ready" (nessun upload). Altrimenti → presigned
+    PUT per l'upload del file ("upload")."""
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
+    body = request.get_json(silent=True) or {}
+    job_id = (body.get("job_id") or "").strip()
+    filename = _safe_share_filename(body.get("filename") or "audiolibro.m4b")
+    now = time.time()
+
+    if job_id:
+        dltok = _find_available_download_token(job_id, cid, now)
+        if dltok:
+            stok = secrets.token_urlsafe(24)
+            with _share_lock:
+                _share_tokens[stok] = {
+                    "kind": "ready", "download_token": dltok,
+                    "client_id": cid, "created_at": now,
+                    "ttl_sec": ABM_SHARE_TTL_SEC,
+                }
+            _save_share_tokens()
+            return jsonify({"mode": "ready", "share_token": stok,
+                            "link": _share_link_for(stok),
+                            "ttl_sec": ABM_SHARE_TTL_SEC})
+
+    if not storage_backend.is_enabled():
+        return jsonify({"error": "upload_unavailable",
+                        "error_code": "upload_unavailable"}), 503
+    share_id = secrets.token_urlsafe(16)
+    key = f"shares/{share_id}/{filename}"
+    try:
+        url = storage_backend.presigned_put_url(key, ttl=ABM_SHARE_UPLOAD_TTL_SEC)
+    except Exception as e:
+        print(f"[share] presign put failed: {e}")
+        return jsonify({"error": "presign_failed",
+                        "error_code": "presign_failed"}), 502
+    return jsonify({"mode": "upload", "share_id": share_id, "filename": filename,
+                    "upload_url": url, "max_bytes": ABM_SHARE_MAX_BYTES,
+                    "ttl_sec": ABM_SHARE_TTL_SEC})
+
+
 @app.route("/api/transfer_qr/<job_id>")
 def api_transfer_qr(job_id):
     """QR di trasferimento per la SPA (avvio/completamento). Ownership via cookie."""
