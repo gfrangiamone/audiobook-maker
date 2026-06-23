@@ -168,3 +168,74 @@ def test_share_finalize_too_large_deletes(client, monkeypatch):
     assert r.status_code == 413
     assert r.get_json()["error_code"] == "too_large"
     assert deleted == ["shares/SID3/big.m4b"]
+
+
+def test_share_claim_expired_returns_410(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+              "client_id": "c", "created_at": time.time() - 9999, "ttl_sec": 7200}
+    })
+    r = client.get("/api/share/claim/S")
+    assert r.status_code == 410
+    assert r.get_json()["error_code"] == "expired"
+
+
+def test_share_claim_unknown_returns_404(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    r = client.get("/api/share/claim/NOPE")
+    assert r.status_code == 404
+
+
+def test_share_claim_ok_returns_dl_url(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+              "client_id": "c", "created_at": time.time(), "ttl_sec": 7200}
+    })
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
+    r = client.get("/api/share/claim/S")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["download_url"] == "https://audiobook-maker.com/s/S/dl"
+    assert data["filename"] == "x.m4b"
+    assert data["ttl_sec_remaining"] > 0
+
+
+def test_share_dl_upload_redirects_presigned(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+              "client_id": "c", "created_at": time.time(), "ttl_sec": 7200}
+    })
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "object_exists", lambda key: True)
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: f"https://r2/GET/{key}")
+    r = client.get("/s/S/dl")
+    assert r.status_code in (302, 303)
+    assert r.headers["Location"] == "https://r2/GET/shares/a/x.m4b"
+
+
+def test_share_dl_ready_serves_file(client, tmp_path, monkeypatch):
+    f = tmp_path / "out.m4b"
+    f.write_bytes(b"0123456789")
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "J", "client_id": "c", "created_at": time.time(),
+                "book_title": "Libro", "output_m4b": str(f), "output_format": "m4b",
+                "is_gemini": False},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "ready", "download_token": "DLT", "client_id": "c",
+              "created_at": time.time(), "ttl_sec": 7200}
+    })
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    r = client.get("/s/S/dl")
+    assert r.status_code == 200
+    assert r.data == b"0123456789"
+
+
+def test_share_dl_expired_410(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+              "client_id": "c", "created_at": time.time() - 9999, "ttl_sec": 7200}
+    })
+    r = client.get("/s/S/dl")
+    assert r.status_code == 410

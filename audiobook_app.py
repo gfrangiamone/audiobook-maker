@@ -8697,6 +8697,75 @@ def api_share_finalize():
                     "ttl_sec": ABM_SHARE_TTL_SEC})
 
 
+def _share_alive(info, now=None):
+    now = now or time.time()
+    return (isinstance(info, dict) and
+            (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC))
+
+
+def _resolve_ready_file(dltok):
+    """Path locale del file da servire per una share 'ready' + nome download.
+    Preferenza: m4b > mp3 > abm > zip. (None, None) se token assente."""
+    info = _download_tokens.get(dltok)
+    if not isinstance(info, dict):
+        return None, None
+    title = info.get("book_title") or "audiolibro"
+    for field, ext in (("output_m4b", "m4b"), ("output_file", "mp3"),
+                       ("optimized_abm_path", "abm"), ("output_zip", "zip")):
+        path = info.get(field)
+        if path and os.path.exists(path):
+            return path, f"{_safe_share_filename(title)}.{ext}"
+    return None, None
+
+
+@app.route("/api/share/claim/<token>")
+def api_share_claim(token):
+    """Valida la share e ritorna l'URL di download share-scoped (/s/<token>/dl)
+    che impone il TTL. 404 sconosciuta, 410 scaduta."""
+    info = _share_tokens.get(token)
+    if not isinstance(info, dict):
+        return jsonify({"error": "invalid", "error_code": "invalid"}), 404
+    now = time.time()
+    if not _share_alive(info, now):
+        return jsonify({"error": "expired", "error_code": "expired"}), 410
+    remaining = int(info.get("ttl_sec", ABM_SHARE_TTL_SEC) - (now - info.get("created_at", 0)))
+    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    return jsonify({"download_url": f"{base}/s/{token}/dl",
+                    "filename": info.get("filename"),
+                    "ttl_sec_remaining": max(0, remaining)})
+
+
+@app.route("/s/<token>/dl")
+def share_download(token):
+    """Consegna il file della share validando il TTL. ready → file locale via
+    _send_file_throttled; upload → redirect alla presigned GET su R2."""
+    info = _share_tokens.get(token)
+    if not isinstance(info, dict) or not _share_alive(info):
+        return ("Condivisione scaduta o inesistente", 410,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    if info.get("kind") == "ready":
+        path, dl_name = _resolve_ready_file(info.get("download_token", ""))
+        if not path:
+            return ("File non più disponibile", 410,
+                    {"Content-Type": "text/plain; charset=utf-8"})
+        return _send_file_throttled(path, as_attachment=True,
+                                    download_name=dl_name, bypass_throttle=True)
+    key = info.get("s3_key", "")
+    if not storage_backend.is_enabled() or not storage_backend.object_exists(key):
+        return ("File non più disponibile", 410,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    now = time.time()
+    remaining = int(info.get("ttl_sec", ABM_SHARE_TTL_SEC) - (now - info.get("created_at", 0)))
+    url = storage_backend.presigned_get_url(
+        key, download_name=info.get("filename"), ttl=max(60, remaining))
+    return redirect(url, code=302)
+
+
 @app.route("/api/transfer_qr/<job_id>")
 def api_transfer_qr(job_id):
     """QR di trasferimento per la SPA (avvio/completamento). Ownership via cookie."""
