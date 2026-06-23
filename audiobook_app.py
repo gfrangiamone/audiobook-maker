@@ -8662,6 +8662,41 @@ def api_share_create():
                     "ttl_sec": ABM_SHARE_TTL_SEC})
 
 
+@app.route("/api/share/finalize", methods=["POST"])
+def api_share_finalize():
+    """Conferma che l'upload presigned è completo: verifica esistenza e
+    dimensione su R2, poi registra la share. Oltre il limite → cancella + 413."""
+    cid = _get_client_id()
+    if not cid:
+        return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
+    body = request.get_json(silent=True) or {}
+    share_id = (body.get("share_id") or "").strip()
+    filename = _safe_share_filename(body.get("filename") or "")
+    if not share_id:
+        return jsonify({"error": "bad_request", "error_code": "bad_request"}), 400
+    key = f"shares/{share_id}/{filename}"
+    size = storage_backend.object_size(key)
+    if size is None:
+        return jsonify({"error": "not_uploaded", "error_code": "not_uploaded"}), 400
+    if size > ABM_SHARE_MAX_BYTES:
+        try:
+            storage_backend.delete_object(key)
+        except Exception as e:
+            print(f"[share] delete oversize failed: {e}")
+        return jsonify({"error": "too_large", "error_code": "too_large",
+                        "max_bytes": ABM_SHARE_MAX_BYTES}), 413
+    stok = secrets.token_urlsafe(24)
+    now = time.time()
+    with _share_lock:
+        _share_tokens[stok] = {
+            "kind": "upload", "s3_key": key, "filename": filename,
+            "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_TTL_SEC,
+        }
+    _save_share_tokens()
+    return jsonify({"share_token": stok, "link": _share_link_for(stok),
+                    "ttl_sec": ABM_SHARE_TTL_SEC})
+
+
 @app.route("/api/transfer_qr/<job_id>")
 def api_transfer_qr(job_id):
     """QR di trasferimento per la SPA (avvio/completamento). Ownership via cookie."""

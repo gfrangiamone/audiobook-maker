@@ -133,3 +133,38 @@ def test_share_create_upload_unavailable_without_s3(client, monkeypatch):
     r = client.post("/api/share/create", headers=HDR, json={"filename": "x.m4b"})
     assert r.status_code == 503
     assert r.get_json()["error_code"] == "upload_unavailable"
+
+
+def test_share_finalize_ok(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(storage_backend, "object_size", lambda key: 1234)
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SID1", "filename": "x.m4b"})
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["link"].startswith("https://audiobook-maker.com/s/")
+    rec = audiobook_app._share_tokens[data["share_token"]]
+    assert rec["kind"] == "upload"
+    assert rec["s3_key"] == "shares/SID1/x.m4b"
+
+
+def test_share_finalize_not_uploaded(client, monkeypatch):
+    monkeypatch.setattr(storage_backend, "object_size", lambda key: None)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SID2", "filename": "x.m4b"})
+    assert r.status_code == 400
+    assert r.get_json()["error_code"] == "not_uploaded"
+
+
+def test_share_finalize_too_large_deletes(client, monkeypatch):
+    deleted = []
+    monkeypatch.setattr(storage_backend, "object_size",
+                        lambda key: 600 * 1024 * 1024)
+    monkeypatch.setattr(storage_backend, "delete_object", lambda key: deleted.append(key))
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SID3", "filename": "big.m4b"})
+    assert r.status_code == 413
+    assert r.get_json()["error_code"] == "too_large"
+    assert deleted == ["shares/SID3/big.m4b"]
