@@ -65,3 +65,12 @@ def test_transfer_landing_renders_store_buttons(client, monkeypatch):
     body = client.get("/t/sometoken").get_data(as_text=True)
     assert 'href="https://play/abm"' in body   # play attivo
     assert "btn-disabled" in body               # apple disabilitato
+
+
+def test_dl_page_caption_links_to_get_app():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+    )
+    expected = f'{audiobook_app.BASE_URL}/get-app'
+    assert f'href="{expected}"' in html

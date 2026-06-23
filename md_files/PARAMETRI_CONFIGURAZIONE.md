@@ -746,6 +746,15 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 
 ---
 
+## Link store app mobile (pagina /get-app)
+- `ABM_PLAY_STORE_URL`: URL Play Store dell'app. Se vuoto, il bottone Play è
+  mostrato ma disabilitato. Valore al rilascio:
+  `https://play.google.com/store/apps/details?id=it.nextsw.audiobook_maker_mobile`.
+- `ABM_APP_STORE_URL`: URL App Store (iOS). Se vuoto, il bottone Apple è mostrato
+  ma disabilitato.
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |

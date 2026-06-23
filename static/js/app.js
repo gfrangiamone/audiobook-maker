@@ -3423,7 +3423,14 @@ function openTransferQrModal(holderId){
     p.className='muted';
     p.style.fontSize='.85rem';
     p.style.marginTop='12px';
-    p.textContent=hint;
+    const a=document.createElement('a');
+    a.href='/get-app';
+    a.target='_blank';
+    a.rel='noopener';
+    a.textContent=hint;
+    a.style.color='inherit';
+    a.style.textDecoration='underline';
+    p.appendChild(a);
     bodyDiv.appendChild(p);
   }
   modal.appendChild(head);

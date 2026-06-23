@@ -11154,7 +11154,9 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             '<div style="text-align:center;margin:28px auto;max-width:320px;">'
             f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
             f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
-            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint}</p>'
+            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">'
+            f'<a href="{BASE_URL}/get-app" style="color:inherit;text-decoration:underline;">{_hint}</a>'
+            f'</p>'
             '</div>'
         )
 
