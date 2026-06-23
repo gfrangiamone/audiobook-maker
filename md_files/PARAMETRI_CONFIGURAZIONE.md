@@ -755,6 +755,13 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 
 ---
 
+## Condivisione audiolibro (share app→app)
+- `ABM_SHARE_TTL_SEC` (default 7200): durata della disponibilità di una share (120 min).
+- `ABM_SHARE_MAX_BYTES` (default 524288000 = 500 MB): tetto dimensione file condivisibile (caso upload).
+- `ABM_SHARE_UPLOAD_TTL_SEC` (default 3600): validità della presigned PUT URL.
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |

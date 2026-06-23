@@ -239,3 +239,28 @@ def test_share_dl_expired_410(client, monkeypatch):
     })
     r = client.get("/s/S/dl")
     assert r.status_code == 410
+
+
+def test_share_landing_served(client):
+    r = client.get("/s/ANYTOKEN")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("Content-Type", "")
+
+
+def test_cleanup_expired_shares(monkeypatch):
+    now = time.time()
+    deleted = []
+    monkeypatch.setattr(storage_backend, "delete_object", lambda key: deleted.append(key))
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "OLD_UP": {"kind": "upload", "s3_key": "shares/a/x.m4b",
+                   "created_at": now - 9999, "ttl_sec": 7200},
+        "OLD_RD": {"kind": "ready", "download_token": "DLT",
+                   "created_at": now - 9999, "ttl_sec": 7200},
+        "FRESH": {"kind": "upload", "s3_key": "shares/b/y.m4b",
+                  "created_at": now, "ttl_sec": 7200},
+    })
+    n = audiobook_app._cleanup_expired_shares(now)
+    assert n == 2
+    assert deleted == ["shares/a/x.m4b"]  # solo l'upload scaduto cancella su R2
+    assert set(audiobook_app._share_tokens.keys()) == {"FRESH"}

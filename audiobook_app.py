@@ -2648,6 +2648,14 @@ def transfer_landing(token):
             {"Content-Type": "text/html; charset=utf-8"})
 
 
+@app.route("/s/<token>")
+def share_landing(token):
+    # Fallback browser per il deep link /s/<token> quando l'app NON è installata
+    # (con app installata + dominio verificato, l'App Link apre l'app prima).
+    return (_render_transfer_landing(token), 200,
+            {"Content-Type": "text/html; charset=utf-8"})
+
+
 @app.route("/privacy")
 def privacy_page():
     # Informativa privacy (richiesta da Play Store e GDPR). IT default, EN via
@@ -12381,6 +12389,29 @@ def _cleanup_job(job_id, reason=""):
     print(f"[cleanup] {job_id} removed ({reason})")
 
 
+def _cleanup_expired_shares(now=None):
+    """Rimuove le share scadute (oltre ttl_sec); per le upload cancella anche il
+    file su R2. Ritorna il numero di share rimosse."""
+    now = now or time.time()
+    removed = 0
+    with _share_lock:
+        for stok in list(_share_tokens.keys()):
+            info = _share_tokens.get(stok)
+            if not isinstance(info, dict):
+                _share_tokens.pop(stok, None); removed += 1; continue
+            if (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC):
+                continue
+            if info.get("kind") == "upload" and info.get("s3_key"):
+                try:
+                    storage_backend.delete_object(info["s3_key"])
+                except Exception as e:
+                    print(f"[share] cleanup delete failed {info.get('s3_key')}: {e}")
+            _share_tokens.pop(stok, None); removed += 1
+    if removed:
+        _save_share_tokens()
+    return removed
+
+
 def _cleanup_supervisor():
     """Mantiene vivo _cleanup_loop a ogni costo.
 
@@ -12407,6 +12438,7 @@ def _cleanup_loop():
     while True:
         time.sleep(CLEANUP_INTERVAL_SEC)
         now = time.time()
+        _cleanup_expired_shares(now)
 
         # Multi-worker: absorb tokens created by other workers before deciding
         # what to delete. Without this, this worker's view of _download_tokens
