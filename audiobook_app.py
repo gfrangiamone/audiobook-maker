@@ -2452,10 +2452,8 @@ _APP_CERT_FINGERPRINTS = [
     "50:09:2D:2F:DD:99:FF:A7:F9:7E:40:39:04:C6:C3:DC:A1:3F:54:AE:0E:17:E1:6E:13:AD:07:20:83:8A:C4:BB",
     # TODO prod: aggiungere il SHA-256 della "App signing key" di Google (Play Console)
 ]
-_PLAY_URL = "https://play.google.com/store/apps/details?id=" + _APP_PACKAGE
-
 # URL store da env (omogenei): se assenti, il bottone è mostrato ma disabilitato.
-# Valore Play da impostare al rilascio = _PLAY_URL.
+# Valore Play da impostare in ABM_PLAY_STORE_URL al rilascio: https://play.google.com/store/apps/details?id=it.nextsw.audiobook_maker_mobile
 _PLAY_STORE_URL = (os.environ.get("ABM_PLAY_STORE_URL", "") or "").strip()
 _APP_STORE_URL = (os.environ.get("ABM_APP_STORE_URL", "") or "").strip()
 
@@ -2471,7 +2469,8 @@ def _install_buttons_html(lang):
 
     def _btn(url, label):
         if url:
-            return f'<a class="btn" href="{url}">{label}</a>'
+            safe = html_mod.escape(url, quote=True)
+            return f'<a class="btn" href="{safe}">{label}</a>'
         return f'<span class="btn btn-disabled" aria-disabled="true">{label}</span>'
 
     return (
