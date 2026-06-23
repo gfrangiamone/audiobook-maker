@@ -2531,26 +2531,78 @@ _APP_CERT_FINGERPRINTS = [
 _PLAY_STORE_URL = (os.environ.get("ABM_PLAY_STORE_URL", "") or "").strip()
 _APP_STORE_URL = (os.environ.get("ABM_APP_STORE_URL", "") or "").strip()
 
+# ---------------------------------------------------------------------------
+# Inline-SVG store badges (viewBox 0 0 135 40)
+# ---------------------------------------------------------------------------
+_PLAY_BADGE_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 135 40" role="img">'
+    # black rounded background
+    '<rect width="135" height="40" rx="6" fill="#000"/>'
+    # thin light border
+    '<rect width="135" height="40" rx="6" fill="none" stroke="#a0a0a0" stroke-width="0.8"/>'
+    # 4-color Google Play triangle
+    # bottom-left shard (green)
+    '<polygon points="12,28 12,12 22,20" fill="#34a853"/>'
+    # top-left shard (blue)
+    '<polygon points="12,12 22,20 27,15" fill="#4285f4"/>'
+    # bottom right shard (yellow)
+    '<polygon points="12,28 22,20 27,25" fill="#fbbc05"/>'
+    # center-right tip (red)
+    '<polygon points="22,20 27,15 30,20 27,25" fill="#ea4335"/>'
+    # small lead-in text "GET IT ON"
+    '<text x="37" y="16" font-family="sans-serif" font-size="7" fill="#fff" letter-spacing="0.3">GET IT ON</text>'
+    # bold store name
+    '<text x="37" y="30" font-family="sans-serif" font-size="13" font-weight="bold" fill="#fff">Google Play</text>'
+    '</svg>'
+)
+
+_APPLE_BADGE_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 135 40" role="img">'
+    # black rounded background
+    '<rect width="135" height="40" rx="6" fill="#000"/>'
+    # thin light border
+    '<rect width="135" height="40" rx="6" fill="none" stroke="#a0a0a0" stroke-width="0.8"/>'
+    # Apple logo glyph (white) — stylised apple with leaf
+    '<path d="M18.5 10.2c1-.1 2.1.5 2.8 1.3-.7.6-1.8 1.1-2.7 1-1.1-.1-2.1-.7-2.7-1.5.7-.5 1.6-.8 2.6-.8z" fill="#fff"/>'
+    '<path d="M21.6 13c1.5.8 2.5 2.3 2.5 4 0 1.4-.6 2.7-1.5 3.7-.6.7-1.2 1.5-2.1 1.5s-1.7-.5-2.5-.5-1.7.5-2.6.5c-.9 0-1.6-.8-2.2-1.6-1-1.1-1.7-2.7-1.7-4.2 0-2.9 2-4.4 3.8-4.4.9 0 1.8.5 2.5.5.6 0 1.7-.6 2.8-.5z" fill="#fff"/>'
+    # small lead-in text
+    '<text x="30" y="16" font-family="sans-serif" font-size="7" fill="#fff" letter-spacing="0.2">Download on the</text>'
+    # bold store name
+    '<text x="30" y="30" font-family="sans-serif" font-size="13" font-weight="bold" fill="#fff">App Store</text>'
+    '</svg>'
+)
+
 
 def _install_buttons_html(lang):
-    """HTML dei due bottoni store (Play + Apple), sempre presenti. Attivo (link)
-    se l'env del rispettivo store è impostato, altrimenti disabilitato."""
+    """HTML dei due badge store inline-SVG (Play + Apple), sempre presenti.
+    Attivo (link <a>) se l'env del rispettivo store è impostato, altrimenti
+    disabilitato (<span aria-disabled>). Le etichette localizzate compaiono in
+    aria-label e title per accessibilità e retrocompatibilità test."""
     labels = {
         "it": ("Scarica su Google Play", "Scarica su App Store"),
         "en": ("Get it on Google Play", "Download on the App Store"),
     }
     play_label, apple_label = labels.get(lang, labels["en"])
 
-    def _btn(url, label):
+    def _badge(url, label, svg):
+        safe_label = html_mod.escape(label, quote=True)
         if url:
-            safe = html_mod.escape(url, quote=True)
-            return f'<a class="btn" href="{safe}">{label}</a>'
-        return f'<span class="btn btn-disabled" aria-disabled="true">{label}</span>'
+            safe_url = html_mod.escape(url, quote=True)
+            return (
+                f'<a class="store-badge" href="{safe_url}"'
+                f' aria-label="{safe_label}" title="{safe_label}">'
+                f'{svg}</a>'
+            )
+        return (
+            f'<span class="store-badge btn-disabled" aria-disabled="true"'
+            f' aria-label="{safe_label}" title="{safe_label}">'
+            f'{svg}</span>'
+        )
 
     return (
         '<div class="stores">'
-        + _btn(_PLAY_STORE_URL, play_label)
-        + _btn(_APP_STORE_URL, apple_label)
+        + _badge(_PLAY_STORE_URL, play_label, _PLAY_BADGE_SVG)
+        + _badge(_APP_STORE_URL, apple_label, _APPLE_BADGE_SVG)
         + '</div>'
     )
 
@@ -2589,7 +2641,9 @@ p{{color:var(--txd);line-height:1.6;margin-bottom:24px}}
 .stores{{display:flex;flex-direction:column;gap:10px;align-items:center}}
 .btn{{display:inline-block;padding:13px 28px;background:var(--ac);color:#fff;border-radius:10px;text-decoration:none;font-weight:600}}
 .btn:hover{{background:var(--ach)}}
-.btn-disabled{{background:#9ca3af;color:#fff;opacity:.6;cursor:not-allowed;pointer-events:none}}
+.btn-disabled{{filter:grayscale(1);opacity:.45;cursor:not-allowed;pointer-events:none}}
+.store-badge{{display:inline-block;line-height:0}}
+.store-badge svg{{display:block;height:48px;width:auto}}
 .back{{display:block;margin-top:18px;color:var(--txd);font-size:.9rem;text-decoration:none}}
 .back:hover{{color:var(--ac)}}
 </style></head><body>

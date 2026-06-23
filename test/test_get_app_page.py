@@ -67,6 +67,14 @@ def test_transfer_landing_renders_store_buttons(client, monkeypatch):
     assert "btn-disabled" in body               # apple disabilitato
 
 
+def test_install_buttons_render_svg_badges(monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/x")
+    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "https://apple/x")
+    html = audiobook_app._install_buttons_html("en")
+    assert html.count("<svg") == 2
+    assert "store-badge" in html
+
+
 def test_dl_page_caption_links_only_app_name():
     html = audiobook_app._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
