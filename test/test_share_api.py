@@ -264,3 +264,26 @@ def test_cleanup_expired_shares(monkeypatch):
     assert n == 2
     assert deleted == ["shares/a/x.m4b"]  # solo l'upload scaduto cancella su R2
     assert set(audiobook_app._share_tokens.keys()) == {"FRESH"}
+
+
+def test_share_finalize_storage_error_returns_502(client, monkeypatch):
+    def _boom(key):
+        raise RuntimeError("r2 down")
+    monkeypatch.setattr(storage_backend, "object_size", _boom)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SIDX", "filename": "x.m4b"})
+    assert r.status_code == 502
+    assert r.get_json()["error_code"] == "storage_error"
+
+
+def test_share_dl_storage_error_returns_502(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+              "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 7200}
+    })
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    def _boom(key):
+        raise RuntimeError("r2 down")
+    monkeypatch.setattr(storage_backend, "object_exists", _boom)
+    r = client.get("/s/S/dl")
+    assert r.status_code == 502

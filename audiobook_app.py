@@ -8683,7 +8683,11 @@ def api_share_finalize():
     if not share_id:
         return jsonify({"error": "bad_request", "error_code": "bad_request"}), 400
     key = f"shares/{share_id}/{filename}"
-    size = storage_backend.object_size(key)
+    try:
+        size = storage_backend.object_size(key)
+    except Exception as e:
+        print(f"[share] object_size failed for {key}: {e}")
+        return jsonify({"error": "storage_error", "error_code": "storage_error"}), 502
     if size is None:
         return jsonify({"error": "not_uploaded", "error_code": "not_uploaded"}), 400
     if size > ABM_SHARE_MAX_BYTES:
@@ -8764,7 +8768,16 @@ def share_download(token):
         return _send_file_throttled(path, as_attachment=True,
                                     download_name=dl_name, bypass_throttle=True)
     key = info.get("s3_key", "")
-    if not storage_backend.is_enabled() or not storage_backend.object_exists(key):
+    if not storage_backend.is_enabled():
+        return ("File non più disponibile", 410,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    try:
+        exists = storage_backend.object_exists(key)
+    except Exception as e:
+        print(f"[share] object_exists failed for {key}: {e}")
+        return ("Errore temporaneo, riprova", 502,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    if not exists:
         return ("File non più disponibile", 410,
                 {"Content-Type": "text/plain; charset=utf-8"})
     now = time.time()
