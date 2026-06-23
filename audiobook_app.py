@@ -2497,26 +2497,10 @@ def assetlinks_json():
     return app.response_class(json.dumps(data), mimetype="application/json")
 
 
-def _render_transfer_landing(token):
-    # Fallback per il deep link /t/<token>: mostrato nel browser quando l'app NON
-    # e' installata (con app installata + dominio verificato, Android apre l'app
-    # prima di questa pagina). Offre il download dell'app.
-    import html as _html
-    _html.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
-    try:
-        al = (request.headers.get("Accept-Language") or "").strip().lower()
-        lang = "it" if al.startswith("it") else "en"
-    except Exception:
-        lang = "en"
-    T = {
-        "it": ("Apri in Audiobook Maker &amp; Player",
-               "Se hai l'app installata, questo link si apre automaticamente per importare il processo. Altrimenti installa l'app dal Play Store.",
-               "Scarica l'app", "Torna al sito"),
-        "en": ("Open in Audiobook Maker &amp; Player",
-               "If you have the app installed, this link opens it automatically to import the job. Otherwise install the app from the Play Store.",
-               "Get the app", "Back to website"),
-    }
-    title, body, btn, back = T[lang]
+def _render_install_page(lang, title, body):
+    """Pagina install: stile della landing + bottoni store (Task 1) + ritorno al
+    sito. Usata da /get-app e da _render_transfer_landing."""
+    back = {"it": "Torna al sito", "en": "Back to website"}.get(lang, "Back to website")
     home = BASE_URL or "/"
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2529,18 +2513,60 @@ body{{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(
 .box{{max-width:420px}}
 h1{{font-family:'DM Serif Display',Georgia,serif;color:var(--ac);font-size:1.7rem;margin-bottom:14px}}
 p{{color:var(--txd);line-height:1.6;margin-bottom:24px}}
+.stores{{display:flex;flex-direction:column;gap:10px;align-items:center}}
 .btn{{display:inline-block;padding:13px 28px;background:var(--ac);color:#fff;border-radius:10px;text-decoration:none;font-weight:600}}
 .btn:hover{{background:var(--ach)}}
+.btn-disabled{{background:#9ca3af;color:#fff;opacity:.6;cursor:not-allowed;pointer-events:none}}
 .back{{display:block;margin-top:18px;color:var(--txd);font-size:.9rem;text-decoration:none}}
 .back:hover{{color:var(--ac)}}
 </style></head><body>
 <div class="box">
 <h1>{title}</h1>
 <p>{body}</p>
-<a class="btn" href="{_PLAY_URL}">{btn}</a>
+{_install_buttons_html(lang)}
 <a class="back" href="{home}">{back}</a>
 </div>
 </body></html>"""
+
+
+@app.route("/get-app")
+def get_app_page():
+    """Pagina canonica 'scarica l'app' (link store). Stesso contenuto della
+    landing no-app dei deep link."""
+    try:
+        al = (request.headers.get("Accept-Language") or "").strip().lower()
+        lang = "it" if al.startswith("it") else "en"
+    except Exception:
+        lang = "en"
+    T = {
+        "it": ("Scarica l'app",
+               "Installa AudioBook Maker &amp; Player per ascoltare i tuoi audiolibri sul telefono."),
+        "en": ("Get the app",
+               "Install AudioBook Maker &amp; Player to listen to your audiobooks on your phone."),
+    }
+    title, body = T.get(lang, T["en"])
+    return (_render_install_page(lang, title, body), 200,
+            {"Content-Type": "text/html; charset=utf-8"})
+
+
+def _render_transfer_landing(token):
+    # Fallback per il deep link /t/<token>: mostrato nel browser quando l'app NON
+    # è installata. Riusa la pagina install (bottoni store).
+    import html as _html
+    _html.escape(str(token or ""), quote=True)  # token non riflesso, ma validato
+    try:
+        al = (request.headers.get("Accept-Language") or "").strip().lower()
+        lang = "it" if al.startswith("it") else "en"
+    except Exception:
+        lang = "en"
+    T = {
+        "it": ("Apri in Audiobook Maker &amp; Player",
+               "Se hai l'app installata, questo link la apre per importare il processo. Altrimenti scaricala:"),
+        "en": ("Open in Audiobook Maker &amp; Player",
+               "If you have the app installed, this link opens it to import the job. Otherwise get the app:"),
+    }
+    title, body = T.get(lang, T["en"])
+    return _render_install_page(lang, title, body)
 
 
 @app.route("/t/<token>")

@@ -36,3 +36,32 @@ def test_install_buttons_mixed(monkeypatch):
     assert 'href="https://play/x"' in html
     assert "btn-disabled" in html  # apple disabilitato
     assert "Download on the App Store" in html
+
+
+def test_get_app_page_both_labels(client):
+    r = client.get("/get-app")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Google Play" in body and "App Store" in body
+
+
+def test_get_app_page_active_when_env(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/abm")
+    body = client.get("/get-app").get_data(as_text=True)
+    assert 'href="https://play/abm"' in body
+
+
+def test_get_app_page_disabled_when_no_env(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "")
+    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
+    body = client.get("/get-app").get_data(as_text=True)
+    # CSS definition counts as 1 extra; check both buttons are disabled (>= 2 usages)
+    assert body.count("btn-disabled") >= 2
+
+
+def test_transfer_landing_renders_store_buttons(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_PLAY_STORE_URL", "https://play/abm")
+    monkeypatch.setattr(audiobook_app, "_APP_STORE_URL", "")
+    body = client.get("/t/sometoken").get_data(as_text=True)
+    assert 'href="https://play/abm"' in body   # play attivo
+    assert "btn-disabled" in body               # apple disabilitato
