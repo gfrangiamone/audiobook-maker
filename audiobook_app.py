@@ -1041,6 +1041,39 @@ def _save_transfer_tokens():
         print(f"[transfer] save failed: {e}")
 
 
+_share_tokens = {}  # share_token -> {"kind":"ready"|"upload", ...}
+_SHARE_TOKENS_FILE = UPLOAD_DIR / "_share_tokens.json"
+_share_lock = threading.Lock()
+
+
+def _load_share_tokens():
+    global _share_tokens
+    try:
+        if _SHARE_TOKENS_FILE.exists():
+            with open(_SHARE_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _share_tokens = data
+    except Exception as e:
+        print(f"[share] load failed: {e}")
+
+
+def _save_share_tokens():
+    try:
+        tmp = _SHARE_TOKENS_FILE.with_suffix(_SHARE_TOKENS_FILE.suffix + ".tmp")
+        with _share_lock:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_share_tokens, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(str(tmp), str(_SHARE_TOKENS_FILE))
+    except Exception as e:
+        print(f"[share] save failed: {e}")
+
+
 def _ensure_transfer_token(job_id):
     """Ritorna (idempotente) il transfer token per il job, creandolo se assente."""
     with _transfer_lock:
@@ -12448,6 +12481,7 @@ def _cleanup_loop():
 # (works both under __main__ and Gunicorn)
 _load_tokens()
 _load_transfer_tokens()
+_load_share_tokens()
 _load_device_tokens()
 _load_payments()
 _load_vouchers()

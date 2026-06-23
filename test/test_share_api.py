@@ -34,3 +34,23 @@ def test_share_config_defaults():
     assert audiobook_app.ABM_SHARE_TTL_SEC == 7200
     assert audiobook_app.ABM_SHARE_MAX_BYTES == 524288000
     assert audiobook_app.ABM_SHARE_UPLOAD_TTL_SEC == 3600
+
+
+def test_share_tokens_save_load_roundtrip(monkeypatch, tmp_path):
+    import json
+    import pathlib
+    f = tmp_path / "_share_tokens.json"
+    monkeypatch.setattr(audiobook_app, "_SHARE_TOKENS_FILE", pathlib.Path(f))
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "STOK": {"kind": "upload", "s3_key": "shares/a/x.m4b",
+                 "filename": "x.m4b", "client_id": "mobile-cid-12345",
+                 "created_at": time.time(), "ttl_sec": 7200}
+    })
+    audiobook_app._save_share_tokens()
+    data = json.loads(f.read_text(encoding="utf-8"))
+    assert "STOK" in data
+    assert data["STOK"]["s3_key"] == "shares/a/x.m4b"
+    # reload
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    audiobook_app._load_share_tokens()
+    assert audiobook_app._share_tokens["STOK"]["kind"] == "upload"
