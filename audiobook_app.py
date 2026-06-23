@@ -2454,6 +2454,33 @@ _APP_CERT_FINGERPRINTS = [
 ]
 _PLAY_URL = "https://play.google.com/store/apps/details?id=" + _APP_PACKAGE
 
+# URL store da env (omogenei): se assenti, il bottone è mostrato ma disabilitato.
+# Valore Play da impostare al rilascio = _PLAY_URL.
+_PLAY_STORE_URL = (os.environ.get("ABM_PLAY_STORE_URL", "") or "").strip()
+_APP_STORE_URL = (os.environ.get("ABM_APP_STORE_URL", "") or "").strip()
+
+
+def _install_buttons_html(lang):
+    """HTML dei due bottoni store (Play + Apple), sempre presenti. Attivo (link)
+    se l'env del rispettivo store è impostato, altrimenti disabilitato."""
+    labels = {
+        "it": ("Scarica su Google Play", "Scarica su App Store"),
+        "en": ("Get it on Google Play", "Download on the App Store"),
+    }
+    play_label, apple_label = labels.get(lang, labels["en"])
+
+    def _btn(url, label):
+        if url:
+            return f'<a class="btn" href="{url}">{label}</a>'
+        return f'<span class="btn btn-disabled" aria-disabled="true">{label}</span>'
+
+    return (
+        '<div class="stores">'
+        + _btn(_PLAY_STORE_URL, play_label)
+        + _btn(_APP_STORE_URL, apple_label)
+        + '</div>'
+    )
+
 
 @app.route("/.well-known/assetlinks.json")
 def assetlinks_json():
