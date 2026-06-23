@@ -54,3 +54,30 @@ def test_share_tokens_save_load_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setattr(audiobook_app, "_share_tokens", {})
     audiobook_app._load_share_tokens()
     assert audiobook_app._share_tokens["STOK"]["kind"] == "upload"
+
+
+def test_find_available_download_token(monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "T1": {"job_id": "J1", "client_id": "mobile-cid-12345",
+               "created_at": now - 60, "is_gemini": False},
+        "T2": {"job_id": "J1", "client_id": "ALTRO",
+               "created_at": now - 60, "is_gemini": False},
+        "T3": {"job_id": "J2", "client_id": "mobile-cid-12345",
+               "created_at": now - 10 * 365 * 86400, "is_gemini": False},
+    })
+    assert audiobook_app._find_available_download_token("J1", "mobile-cid-12345", now) == "T1"
+    # job di altri / scaduto -> None
+    assert audiobook_app._find_available_download_token("J1", "x", now) is None
+    assert audiobook_app._find_available_download_token("J2", "mobile-cid-12345", now) is None
+
+
+def test_safe_share_filename():
+    assert audiobook_app._safe_share_filename("../../etc/passwd") == "passwd"
+    assert audiobook_app._safe_share_filename("Il mio libro.m4b") == "Il_mio_libro.m4b"
+    assert audiobook_app._safe_share_filename("") == "audiolibro.m4b"
+
+
+def test_share_link_for(monkeypatch):
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.com")
+    assert audiobook_app._share_link_for("ABC") == "https://audiobook-maker.com/s/ABC"

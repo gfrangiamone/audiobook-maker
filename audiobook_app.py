@@ -1119,6 +1119,42 @@ def _transfer_payload_for(job_id):
     # fallback (apri/scarica l'app). Il claim vero resta su POST /api/transfer/claim.
     return f"{base}/t/{tok}", tok
 
+
+def _find_available_download_token(job_id, cid, now=None):
+    """Download token del job ancora valido e di proprietà di [cid], o None.
+    Stessa logica di retention di /api/my_jobs (riusa _effective_retention_for_token_info)."""
+    now = now or time.time()
+    for tok, tinfo in list(_download_tokens.items()):
+        if not isinstance(tinfo, dict):
+            continue
+        if tinfo.get("job_id") != job_id or tinfo.get("client_id") != cid:
+            continue
+        created = tinfo.get("created_at", 0)
+        if (now - created) <= _effective_retention_for_token_info(tinfo):
+            return tok
+    return None
+
+
+def _safe_share_filename(name):
+    """Nome file sicuro per la key S3 e il Content-Disposition: solo basename,
+    caratteri non sicuri -> '_', max 120 char, default se vuoto."""
+    base = os.path.basename(str(name or "")).strip()
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base)
+    base = base[:120].strip("_.")
+    return base or "audiolibro.m4b"
+
+
+def _share_link_for(token):
+    """URL pubblico della share: {base}/s/{token} (App Link verso l'app)."""
+    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    return f"{base}/s/{token}"
+
+
 _download_tracking = {}  # file_path -> {"count": int, "last_download": float}
 _DL_THROTTLE_SEC = 30
 _DL_MAX_DOWNLOADS = 5
