@@ -8751,7 +8751,7 @@ def api_share_claim(token):
     """Valida la share e ritorna l'URL di download share-scoped (/s/<token>/dl)
     che impone il TTL. 404 sconosciuta, 410 scaduta."""
     info = _share_tokens.get(token)
-    if not isinstance(info, dict):
+    if not isinstance(info, dict) or info.get("kind") not in ("ready", "upload"):
         return jsonify({"error": "invalid", "error_code": "invalid"}), 404
     now = time.time()
     if not _share_alive(info, now):
@@ -8773,7 +8773,9 @@ def share_download(token):
     """Consegna il file della share validando il TTL. ready → file locale via
     _send_file_throttled; upload → redirect alla presigned GET su R2."""
     info = _share_tokens.get(token)
-    if not isinstance(info, dict) or not _share_alive(info):
+    if (not isinstance(info, dict)
+            or info.get("kind") not in ("ready", "upload")
+            or not _share_alive(info)):
         return ("Condivisione scaduta o inesistente", 410,
                 {"Content-Type": "text/plain; charset=utf-8"})
     if info.get("kind") == "ready":

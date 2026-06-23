@@ -327,3 +327,22 @@ def test_share_dl_storage_error_returns_502(client, monkeypatch):
     monkeypatch.setattr(storage_backend, "object_exists", _boom)
     r = client.get("/s/S/dl")
     assert r.status_code == 502
+
+
+def test_share_claim_pending_not_claimable(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SIDP": {"kind": "pending", "s3_key": "shares/SIDP/x.m4b", "filename": "x.m4b",
+                 "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 3600}
+    })
+    r = client.get("/api/share/claim/SIDP")
+    assert r.status_code == 404
+    assert r.get_json()["error_code"] == "invalid"
+
+
+def test_share_dl_pending_not_served(client, monkeypatch):
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SIDP": {"kind": "pending", "s3_key": "shares/SIDP/x.m4b", "filename": "x.m4b",
+                 "client_id": "c", "created_at": __import__("time").time(), "ttl_sec": 3600}
+    })
+    r = client.get("/s/SIDP/dl")
+    assert r.status_code == 410
