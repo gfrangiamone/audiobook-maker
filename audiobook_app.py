@@ -8697,11 +8697,15 @@ def api_share_create():
         dltok = _find_available_download_token(job_id, cid, now)
         if dltok:
             stok = secrets.token_urlsafe(24)
+            # Nome download col titolo del libro (se risolvibile), così il
+            # destinatario salva con un nome sensato invece di "audiolibro.m4b".
+            _, ready_name = _resolve_ready_file(dltok)
             with _share_lock:
                 _share_tokens[stok] = {
                     "kind": "ready", "download_token": dltok,
                     "client_id": cid, "created_at": now,
                     "ttl_sec": ABM_SHARE_TTL_SEC,
+                    "filename": ready_name or filename,
                 }
             _save_share_tokens()
             return jsonify({"mode": "ready", "share_token": stok,
@@ -8785,9 +8789,26 @@ def _share_alive(info, now=None):
             (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC))
 
 
+def _file_available(path):
+    """True se il file e' servibile da _send_file_throttled: presente in locale
+    OPPURE evacuato su cold storage (R2). Senza questo controllo una share 'ready'
+    di un job ancora scaricabile online (ma con file in cold tier) darebbe 410."""
+    try:
+        if os.path.exists(path):
+            return True
+        if storage_backend.is_enabled():
+            key = storage_tiering.key_for_path(path)
+            return bool(key and storage_backend.object_exists(key))
+    except Exception:
+        pass
+    return False
+
+
 def _resolve_ready_file(dltok):
-    """Path locale del file da servire per una share 'ready' + nome download.
-    Preferenza: m4b > mp3 > abm > zip. (None, None) se token assente."""
+    """Path del file da servire per una share 'ready' + nome download.
+    Preferenza: m4b > mp3 > abm > zip. Considera disponibili anche i file
+    evacuati su cold storage (_send_file_throttled fa il redirect a R2).
+    (None, None) se token assente o nessun file disponibile."""
     info = _download_tokens.get(dltok)
     if not isinstance(info, dict):
         return None, None
@@ -8795,7 +8816,7 @@ def _resolve_ready_file(dltok):
     for field, ext in (("output_m4b", "m4b"), ("output_file", "mp3"),
                        ("optimized_abm_path", "abm"), ("output_zip", "zip")):
         path = info.get(field)
-        if path and os.path.exists(path):
+        if path and _file_available(path):
             return path, f"{_safe_share_filename(title)}.{ext}"
     return None, None
 

@@ -282,6 +282,48 @@ def test_share_dl_ready_serves_file(client, tmp_path, monkeypatch):
     assert r.data == b"0123456789"
 
 
+def test_share_dl_ready_cold_storage_redirects(client, monkeypatch):
+    # File NON in locale ma su cold storage (R2): deve fare 302 al presigned,
+    # NON 410. Regressione: share "ready" di job ancora scaricabile online.
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "J", "client_id": "c", "created_at": time.time(),
+                "book_title": "Libro", "output_m4b": "/evacuated/out.m4b",
+                "is_gemini": False},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "S": {"kind": "ready", "download_token": "DLT", "client_id": "c",
+              "created_at": time.time(), "ttl_sec": 7200}
+    })
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
+    monkeypatch.setattr(audiobook_app.storage_tiering, "key_for_path",
+                        lambda p: "cold/out.m4b")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, **kw: "https://r2/presigned")
+    r = client.get("/s/S/dl")
+    assert r.status_code == 302
+    assert r.headers["Location"] == "https://r2/presigned"
+
+
+def test_share_create_ready_stores_filename(client, monkeypatch, tmp_path):
+    now = time.time()
+    f = tmp_path / "out.m4b"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
+                "created_at": now - 30, "is_gemini": False,
+                "book_title": "Cime Tempestose", "output_m4b": str(f)},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    r = client.post("/api/share/create", headers=HDR, json={"job_id": "JOBA"})
+    assert r.status_code == 200
+    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    # nome download col titolo del libro, non il fallback generico
+    assert rec["filename"] == "Cime_Tempestose.m4b"
+
+
 def test_share_dl_expired_410(client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
