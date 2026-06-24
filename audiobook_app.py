@@ -2520,7 +2520,7 @@ def sitemap():
 
 #  -  -  -  robots.txt  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  - 
 # ── Deep link app mobile: QR /t/<token> + Android App Links ──
-_APP_PACKAGE = "it.nextsw.audiobook_maker_mobile"
+_APP_PACKAGE = "it.abm.audiobook_maker_mobile"
 _APP_CERT_FINGERPRINTS = [
     # Upload key (APK di test / chiave di upload Play)
     "50:09:2D:2F:DD:99:FF:A7:F9:7E:40:39:04:C6:C3:DC:A1:3F:54:AE:0E:17:E1:6E:13:AD:07:20:83:8A:C4:BB",
