@@ -8691,7 +8691,21 @@ def api_share_create():
     body = request.get_json(silent=True) or {}
     job_id = (body.get("job_id") or "").strip()
     filename = _safe_share_filename(body.get("filename") or "audiolibro.m4b")
+    fingerprint = (body.get("fingerprint") or "").strip()
     now = time.time()
+
+    # Riuso: se esiste già una share viva dello stesso file (cid+fingerprint) e
+    # il file è ancora recuperabile, resetta il TTL e ritorna lo stesso link —
+    # niente nuovo upload né nuovo token.
+    reuse_tok, reuse_info = _find_reusable_share(cid, fingerprint, now)
+    if reuse_tok:
+        with _share_lock:
+            reuse_info["created_at"] = now
+            reuse_info["ttl_sec"] = ABM_SHARE_TTL_SEC
+        _save_share_tokens()
+        return jsonify({"mode": "ready", "share_token": reuse_tok,
+                        "link": _share_link_for(reuse_tok),
+                        "ttl_sec": ABM_SHARE_TTL_SEC})
 
     if job_id:
         dltok = _find_available_download_token(job_id, cid, now)
@@ -8706,6 +8720,7 @@ def api_share_create():
                     "client_id": cid, "created_at": now,
                     "ttl_sec": ABM_SHARE_TTL_SEC,
                     "filename": ready_name or filename,
+                    "fingerprint": fingerprint,
                 }
             _save_share_tokens()
             return jsonify({"mode": "ready", "share_token": stok,
@@ -8727,6 +8742,7 @@ def api_share_create():
         _share_tokens[share_id] = {
             "kind": "pending", "s3_key": key, "filename": filename,
             "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_UPLOAD_TTL_SEC,
+            "fingerprint": fingerprint,
         }
     _save_share_tokens()
     return jsonify({"mode": "upload", "share_id": share_id, "filename": filename,
@@ -8777,6 +8793,7 @@ def api_share_finalize():
         _share_tokens[stok] = {
             "kind": "upload", "s3_key": key, "filename": filename,
             "client_id": cid, "created_at": now, "ttl_sec": ABM_SHARE_TTL_SEC,
+            "fingerprint": pending.get("fingerprint"),
         }
     _save_share_tokens()
     return jsonify({"share_token": stok, "link": _share_link_for(stok),
@@ -8787,6 +8804,40 @@ def _share_alive(info, now=None):
     now = now or time.time()
     return (isinstance(info, dict) and
             (now - info.get("created_at", 0)) <= info.get("ttl_sec", ABM_SHARE_TTL_SEC))
+
+
+def _share_file_recoverable(info):
+    """True se il file dietro una share è ancora recuperabile (per decidere il
+    riuso): ready → file locale/cold risolvibile; upload → oggetto R2 esistente."""
+    try:
+        kind = info.get("kind")
+        if kind == "ready":
+            path, _ = _resolve_ready_file(info.get("download_token", ""))
+            return path is not None
+        if kind == "upload":
+            return (storage_backend.is_enabled()
+                    and storage_backend.object_exists(info.get("s3_key", "")))
+    except Exception:
+        pass
+    return False
+
+
+def _find_reusable_share(cid, fingerprint, now=None):
+    """Token di una share viva dello stesso file (cid+fingerprint) con file
+    ancora recuperabile, o (None, None). Permette di riusare la condivisione
+    invece di ri-caricare/ri-generare. fingerprint vuoto → nessun riuso."""
+    if not fingerprint:
+        return None, None
+    now = now or time.time()
+    for stok, info in list(_share_tokens.items()):
+        if (isinstance(info, dict)
+                and info.get("client_id") == cid
+                and info.get("fingerprint") == fingerprint
+                and info.get("kind") in ("ready", "upload")
+                and _share_alive(info, now)
+                and _share_file_recoverable(info)):
+            return stok, info
+    return None, None
 
 
 def _file_available(path):

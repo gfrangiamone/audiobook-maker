@@ -324,6 +324,102 @@ def test_share_create_ready_stores_filename(client, monkeypatch, tmp_path):
     assert rec["filename"] == "Cime_Tempestose.m4b"
 
 
+def test_share_create_stores_fingerprint(client, monkeypatch, tmp_path):
+    f = tmp_path / "out.m4b"
+    f.write_bytes(b"x")
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
+                "created_at": now - 30, "is_gemini": False,
+                "book_title": "Libro", "output_m4b": str(f)},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {})
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    r = client.post("/api/share/create", headers=HDR,
+                    json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FPX"})
+    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    assert rec["fingerprint"] == "FPX"
+
+
+def test_share_create_reuses_alive_ready_resets_ttl(client, monkeypatch, tmp_path):
+    f = tmp_path / "out.m4b"
+    f.write_bytes(b"data")
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
+                "created_at": now - 30, "is_gemini": False,
+                "book_title": "Libro", "output_m4b": str(f)},
+    })
+    # share già viva ma vecchia, stesso fingerprint
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "EXIST": {"kind": "ready", "download_token": "DLT",
+                  "client_id": "mobile-cid-12345", "created_at": now - 3000,
+                  "ttl_sec": 7200, "filename": "Libro.m4b", "fingerprint": "FP1"},
+    })
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    r = client.post("/api/share/create", headers=HDR,
+                    json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FP1"})
+    data = r.get_json()
+    assert data["mode"] == "ready"
+    assert data["share_token"] == "EXIST"  # stesso token/link, niente nuovo
+    # TTL resettato: created_at aggiornato a ~now
+    assert audiobook_app._share_tokens["EXIST"]["created_at"] >= now - 5
+
+
+def test_share_create_reuses_alive_upload(client, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "EXIST": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
+                  "client_id": "mobile-cid-12345", "created_at": now - 3000,
+                  "ttl_sec": 7200, "fingerprint": "FPU"},
+    })
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "object_exists", lambda k: True)
+    r = client.post("/api/share/create", headers=HDR,
+                    json={"filename": "x.m4b", "fingerprint": "FPU"})
+    data = r.get_json()
+    assert data["mode"] == "ready"
+    assert data["share_token"] == "EXIST"  # riuso dell'oggetto già su R2
+
+
+def test_share_create_no_reuse_when_file_gone(client, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_download_tokens", {
+        "DLT": {"job_id": "JOBA", "client_id": "mobile-cid-12345",
+                "created_at": now - 30, "is_gemini": False,
+                "output_m4b": "/gone/out.m4b"},
+    })
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "EXIST": {"kind": "ready", "download_token": "DLT",
+                  "client_id": "mobile-cid-12345", "created_at": now - 100,
+                  "ttl_sec": 7200, "fingerprint": "FP1"},
+    })
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
+    r = client.post("/api/share/create", headers=HDR,
+                    json={"job_id": "JOBA", "filename": "x.m4b", "fingerprint": "FP1"})
+    data = r.get_json()
+    assert data["mode"] == "ready"
+    assert data["share_token"] != "EXIST"  # file non recuperabile → token nuovo
+
+
+def test_share_finalize_carries_fingerprint(client, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(audiobook_app, "_share_tokens", {
+        "SID": {"kind": "pending", "s3_key": "shares/SID/x.m4b", "filename": "x.m4b",
+                "client_id": "mobile-cid-12345", "created_at": now, "ttl_sec": 3600,
+                "fingerprint": "FPF"},
+    })
+    monkeypatch.setattr(audiobook_app, "_save_share_tokens", lambda: None)
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: 1000)
+    r = client.post("/api/share/finalize", headers=HDR,
+                    json={"share_id": "SID", "filename": "x.m4b"})
+    assert r.status_code == 200
+    rec = audiobook_app._share_tokens[r.get_json()["share_token"]]
+    assert rec["fingerprint"] == "FPF"
+
+
 def test_share_dl_expired_410(client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "_share_tokens", {
         "S": {"kind": "upload", "s3_key": "shares/a/x.m4b", "filename": "x.m4b",
