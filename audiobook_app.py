@@ -12511,6 +12511,72 @@ def _forensic_marker_protects(work_dir, now):
     return now < retain_until
 
 
+def _reconcile_unused_capture_for_job(job_id, reason=""):
+    """Rimborsa i capture PayPal incassati ma mai consumati legati al job e
+    avvisa l'admin. Invocata dalla cleanup PRIMA di distruggere il job.
+
+    Per ogni capture orfano: payment.refund_unused_captures_for_job emette il
+    voucher di rimborso (o segna `needs_manual_refund` se manca l'email / auto
+    refund off); qui logghiamo l'evento e notifichiamo l'admin via email in un
+    thread daemon (l'SMTP non deve bloccare il loop di cleanup).
+    """
+    results = payment.refund_unused_captures_for_job(job_id, reason=reason)
+    if not results:
+        return
+    for r in results:
+        kind = "voucher" if r.get("voucher_code") else "MANUALE"
+        print(f"[cleanup] {job_id} unused PayPal capture refunded "
+              f"({kind}): order={r.get('order_id')} amount={r.get('amount_eur'):.2f} "
+              f"email={r.get('email') or '-'} reason={reason}")
+        try:
+            _log_activity(job_id, "", "REFUND_UNUSED_CAPTURE", "", "",
+                          f"order={r.get('order_id')} amount={r.get('amount_eur'):.2f} "
+                          f"{kind} voucher={r.get('voucher_code') or '-'}", "")
+        except Exception:
+            pass
+
+    def _notify():
+        try:
+            if not ADMIN_EMAIL or not _smtp_available():
+                return
+            import html as _html
+            def _e(v):
+                return _html.escape(str(v if v is not None else ""))
+            rows = ""
+            for r in results:
+                vc = r.get("voucher_code")
+                # vc/order_id/email sono potenzialmente attacker-influenced
+                # (email = payer PayPal): escape di ogni valore interpolato.
+                refund_txt = (f"voucher <code>{_e(vc)}</code>" if vc
+                              else "<strong>RIMBORSO MANUALE PayPal richiesto</strong>")
+                rows += (
+                    f"<tr><td><code>{_e(r.get('order_id'))}</code></td>"
+                    f"<td>{r.get('amount_eur', 0):.2f} EUR</td>"
+                    f"<td>{_e(r.get('email') or '—')}</td>"
+                    f"<td>{refund_txt}</td></tr>"
+                )
+            body = (
+                f"<h2>Capture PayPal non consumato — job smaltito</h2>"
+                f"<p>Il job <code>{_e(job_id)}</code> è stato rimosso (<em>{_e(reason)}</em>) "
+                f"ma aveva pagamenti PayPal incassati e mai consumati "
+                f"(servizio mai erogato).</p>"
+                f"<table border='1' cellpadding='6' cellspacing='0'>"
+                f"<tr><th>Order</th><th>Importo</th><th>Email</th><th>Rimborso</th></tr>"
+                f"{rows}</table>"
+                f"<p style='color:#888;font-size:12px'>Audiobook Maker — auto-reconcile "
+                f"capture non consumati.</p>"
+            )
+            _send_email(ADMIN_EMAIL, f"[ABM] Refund capture PayPal non consumato — {_e(job_id)}", body)
+        except Exception as e:
+            print(f"[cleanup] {job_id} admin notify (unused capture) failed: {e}")
+
+    try:
+        threading.Thread(target=_notify, daemon=True,
+                         name=f"unused-capture-notify-{job_id}").start()
+    except Exception:
+        _notify()
+
+
 def _cleanup_job(job_id, reason=""):
     """Remove all files for a job and delete the job entry.
     NOTA: nessun gate marker qui — questo path viene invocato solo dal branch
@@ -12521,6 +12587,16 @@ def _cleanup_job(job_id, reason=""):
     (refund Gemini in attesa di analisi admin), rimuoviamo l'entry in memoria
     ma preserviamo la dir su disco finché il marker è valido.
     """
+    # Riconciliazione pagamenti: se questo job ha capture PayPal incassati ma MAI
+    # consumati (la traduzione/ottimizzazione non è mai partita), rimborsa prima
+    # di distruggere il job — altrimenti il capture resta orfano in _payments.json
+    # (cliente addebitato, zero servizio, zero rimborso). Best-effort, non-fatale:
+    # NON deve mai impedire la pulizia.
+    try:
+        _reconcile_unused_capture_for_job(job_id, reason)
+    except Exception as e:
+        print(f"[cleanup] {job_id} unused-capture reconcile failed (non-fatal): {e}")
+
     with _jobs_lock:
         jobs.pop(job_id, None)
     work_dir = UPLOAD_DIR / job_id

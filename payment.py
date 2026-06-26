@@ -58,6 +58,19 @@ TRANSLATE_MIN_COST_EUR = float(
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
 VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
 PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
+# Auto-refund di capture PayPal incassati ma MAI consumati (used=False): quando il
+# job pagato viene smaltito senza che la traduzione/ottimizzazione sia mai partita
+# (es. capture-senza-avvio per redirect mobile interrotto), emette un voucher di
+# rimborso all'email del pagante. Se False, marca solo `needs_manual_refund` e
+# lascia all'admin il rimborso PayPal manuale.
+AUTO_REFUND_UNUSED_CAPTURES = (
+    os.environ.get("ABM_AUTO_REFUND_UNUSED_CAPTURES", "true").strip().lower()
+    in ("1", "true", "yes", "on"))
+# Età minima di un capture non consumato prima di considerarlo "abbandonato"
+# (per detection/alert/auto-refund). Un capture appena fatto può essere ancora
+# in attesa che parta /api/translate: non va toccato subito.
+UNUSED_CAPTURE_MIN_AGE_SEC = int(
+    os.environ.get("ABM_UNUSED_CAPTURE_MIN_AGE_SEC", "1800"))  # 30 min
 
 _paypal_token_cache = {"access_token": None, "expires_at": 0}
 
@@ -941,3 +954,163 @@ def capture_and_store_order(order_id: str, job_id: str = "",
             "captured_at": _payments[order_id]["captured_at"],
             "already_captured": False,
         }
+
+
+# ---------------------------------------------------------------------------
+# Capture PayPal incassati ma mai consumati (used=False) — detection & refund
+# ---------------------------------------------------------------------------
+# Difetto storico: un ordine PayPal viene catturato (PAYMENT_CAPTURED, used=False)
+# ma la chiamata che lo consuma (/api/translate, /api/optimize, /api/generate)
+# non parte mai — tipicamente per un redirect mobile interrotto. Il job resta in
+# `analyzed`, viene poi smaltito dalla cleanup "stale analyzed" e il capture
+# rimane orfano in _payments.json: cliente addebitato, nessun servizio, nessun
+# rimborso. Le funzioni sotto rilevano e rimborsano questi capture.
+
+def iter_unused_captures(min_age_sec=0, now=None):
+    """Elenca i capture PayPal incassati ma NON consumati (`used` falsy).
+
+    Un record è incluso se ha `captured_at` valorizzato, `used` falsy e (se
+    `min_age_sec` > 0) un'età >= min_age_sec. Salta i record già marcati per
+    rimborso manuale che non vogliamo ri-segnalare? No: vengono inclusi finché
+    `used` è falsy, così l'admin continua a vederli finché non agisce.
+
+    Ritorna lista di dict: order_id, amount_eur, email, job_id, captured_at,
+    age_sec, capture_id, needs_manual_refund.
+    """
+    if now is None:
+        now = time.time()
+    out = []
+    with _payments_lock:
+        items = list(_payments.items())
+    for oid, pay in items:
+        if not isinstance(pay, dict):
+            continue
+        if pay.get("used"):
+            continue
+        cap_at = pay.get("captured_at")
+        if not cap_at:
+            continue
+        age = now - float(cap_at)
+        if min_age_sec and age < min_age_sec:
+            continue
+        out.append({
+            "order_id": oid,
+            "amount_eur": float(pay.get("amount_eur", 0) or 0),
+            "email": (pay.get("email") or "").strip(),
+            "job_id": pay.get("job_id", "") or "",
+            "captured_at": float(cap_at),
+            "age_sec": age,
+            "capture_id": pay.get("capture_id", "") or "",
+            "needs_manual_refund": bool(pay.get("needs_manual_refund")),
+        })
+    out.sort(key=lambda r: r["captured_at"])
+    return out
+
+
+def refund_unused_capture(order_id, reason="", force=False):
+    """Rimborsa un singolo capture PayPal incassato ma non consumato.
+
+    Comportamento (money-critical, idempotente):
+      - Se l'ordine non esiste o è già `used` → no-op (ritorna None).
+      - Se `AUTO_REFUND_UNUSED_CAPTURES` (o `force=True`) ed esiste l'email del
+        pagante → emette un voucher di rimborso (kind="refund", bonus standard),
+        marca l'ordine `used=True` con causale, salva. Idempotente: un secondo
+        giro trova `used=True` e non fa nulla.
+      - Se manca l'email (impossibile emettere voucher) → marca
+        `needs_manual_refund=True` SENZA consumare l'ordine, così resta visibile
+        ai report finché l'admin non emette il rimborso PayPal manuale.
+      - Se auto-refund disattivo e non `force` → marca `needs_manual_refund=True`
+        e lascia all'admin.
+
+    Ritorna dict {order_id, amount_eur, email, job_id, voucher_code, manual} o None.
+    """
+    with _payments_lock:
+        pay = _payments.get(order_id)
+        if not pay or not isinstance(pay, dict):
+            return None
+        if pay.get("used"):
+            return None
+        amount = float(pay.get("amount_eur", 0) or 0)
+        email = (pay.get("email") or "").strip().lower()
+        job_id = pay.get("job_id", "") or ""
+
+    do_voucher = (AUTO_REFUND_UNUSED_CAPTURES or force) and bool(email) and amount > 0
+    voucher_code = None
+
+    if do_voucher:
+        # _create_voucher prende il proprio lock (_vouchers_lock): chiamata fuori
+        # da _payments_lock per evitare lock-ordering inconsistente.
+        voucher_code, _ = _create_voucher(
+            email, amount, origin_order_id=order_id, origin_job_id=job_id,
+            kind="refund",
+            note=f"auto-refund capture non consumato ({reason})"[:500],
+            created_by="auto_refund",
+        )
+
+    with _payments_lock:
+        pay = _payments.get(order_id)
+        if not pay:
+            return None
+        if pay.get("used"):
+            # Race: consumato/rimborsato nel frattempo. Se avevamo appena emesso
+            # un voucher è un caso patologico (consume + refund concorrenti); lo
+            # logghiamo ma non ritocchiamo lo stato.
+            if voucher_code:
+                print(f"[payment] WARN refund_unused_capture race: order {order_id} "
+                      f"diventato used dopo emissione voucher {voucher_code}")
+            return None
+        now = time.time()
+        if voucher_code:
+            pay["used"] = True
+            pay["used_at"] = now
+            pay["used_for"] = "auto_refund_unused"
+            pay["refund_reason"] = (reason or "")[:200]
+            pay["refund_voucher"] = voucher_code
+            pay.pop("needs_manual_refund", None)
+            manual = False
+        else:
+            # Nessun voucher emesso (no email / auto-refund off): segnala manuale.
+            pay["needs_manual_refund"] = True
+            pay["refund_reason"] = (reason or "")[:200]
+            manual = True
+        try:
+            _save_payments()
+        except Exception as e:
+            print(f"[payment] save_payments failed (refund_unused_capture): {e}")
+
+    return {
+        "order_id": order_id,
+        "amount_eur": amount,
+        "email": email,
+        "job_id": job_id,
+        "voucher_code": voucher_code,
+        "manual": manual,
+    }
+
+
+def refund_unused_captures_for_job(job_id, reason=""):
+    """Rimborsa tutti i capture non consumati legati a `job_id`.
+
+    Usato dalla cleanup del job: quando un job pagato viene smaltito senza che il
+    servizio sia partito, ogni capture orfano viene rimborsato (o segnalato per
+    rimborso manuale). Ritorna la lista dei risultati (dict di
+    `refund_unused_capture`, esclusi i no-op).
+    """
+    if not job_id:
+        return []
+    with _payments_lock:
+        order_ids = [
+            oid for oid, pay in _payments.items()
+            if isinstance(pay, dict) and not pay.get("used")
+            and (pay.get("job_id", "") or "") == job_id
+            and pay.get("captured_at")
+        ]
+    results = []
+    for oid in order_ids:
+        try:
+            res = refund_unused_capture(oid, reason=reason)
+            if res:
+                results.append(res)
+        except Exception as e:
+            print(f"[payment] refund_unused_captures_for_job error order={oid}: {e}")
+    return results
