@@ -2353,6 +2353,16 @@ def run_optimization(job_id, selected_chapters=None):
             podcast_base_url = job.get("opt_podcast_base_url", "")
             print(f"[{job_id}] Auto-generating after optimization (voice: {voice})")
 
+            # Allinea job["voice"] alla voce realmente usata da questo auto-gen
+            # (= opt_voice). /api/generate lo fa esplicitamente; questo path lo
+            # bypassava, lasciando l'eventuale voce di un run manuale precedente
+            # (es. annullato). Senza questo allineamento ogni lettura successiva
+            # di job["voice"] — log COMPLETE/EMAIL_SENT/DOWNLOAD, classificazione
+            # is_gemini del token, retention/marker email — riflette la voce
+            # vecchia: un job PREMIUM (Gemini) può così risultare "standard" e
+            # ricevere la finestra di retention ridotta.
+            job["voice"] = voice
+
             # Bump generation epoch so output lands in its own output_{epoch}/.
             # /api/generate normally does this; the auto-gen path bypasses it.
             job["gen_epoch"] = job.get("gen_epoch", 0) + 1
