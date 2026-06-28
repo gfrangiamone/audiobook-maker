@@ -93,40 +93,106 @@ _TTS_MAX_SENT_CHARS = 1500
 # Text splitting
 # ---------------------------------------------------------------------------
 
+# Terminatori di frase. Latino: . ! ? … seguiti da whitespace (consumato).
+# CJK (giapponese/cinese): 。！？｡ NON seguiti da spazio (split a larghezza zero
+# subito dopo il terminatore, che resta nella frase precedente via lookbehind).
+# Senza il ramo CJK il testo giapponese/cinese non ha alcun punto di taglio
+# (niente spazi) e diventa un'unica "frase" gigante che sfora il cap byte dell'API.
+_SENT_SPLIT_RE = re.compile(
+    r'(?<=[.!?…])\s+'                       # latino: terminatore + whitespace
+    r'|(?<=[。！？｡])'          # CJK: 。 ！ ？ ｡  (zero-width)
+)
+# Breakpoint "deboli" per spezzare una frase troppo lunga senza terminatori:
+# virgole/segni latini e CJK.
+_SOFT_BREAK_RE = re.compile(
+    r'(?<=[,;:])\s+'                             # latino
+    r'|(?<=[、，；：・])'    # CJK: 、 ， ； ： ・
+)
+
+
+def _within(s, max_chars, max_bytes):
+    """True se `s` rispetta sia il cap caratteri sia (se dato) il cap byte UTF-8."""
+    return (len(s) <= max_chars and
+            (max_bytes is None or len(s.encode("utf-8")) <= max_bytes))
+
+
+def _hard_split_oversized(s, max_chars, max_bytes):
+    """Spezza una singola frase oltre i limiti in pezzi <= (max_chars, max_bytes).
+
+    1) prova i breakpoint deboli (virgole CJK/latine);
+    2) per i residui ancora oversize (es. lunghe sequenze CJK senza punteggiatura)
+       taglio duro carattere-per-carattere rispettando SEMPRE il cap byte —
+       garantisce che nessun pezzo superi mai il limite dell'API.
+    """
+    parts = [p for p in _SOFT_BREAK_RE.split(s) if p]
+    merged = []
+    cur = ""
+    for p in parts:
+        cand = (cur + p) if cur else p
+        if _within(cand, max_chars, max_bytes):
+            cur = cand
+        else:
+            if cur:
+                merged.append(cur)
+            cur = p
+    if cur:
+        merged.append(cur)
+    out = []
+    for p in merged:
+        if _within(p, max_chars, max_bytes):
+            out.append(p)
+            continue
+        buf = ""
+        for ch in p:
+            cand = buf + ch
+            if _within(cand, max_chars, max_bytes):
+                buf = cand
+            else:
+                if buf:
+                    out.append(buf)
+                buf = ch
+        if buf:
+            out.append(buf)
+    return out
+
+
 def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
-    """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8) senza mai
-    tagliare a meta' frase.
+    """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8).
 
-    Strategia: tokenizza il testo in frasi (terminatori . ! ? ... + spazio/newline),
-    poi accumula frasi nel chunk corrente finche' uno dei due limiti non viene
-    raggiunto.
+    Strategia: tokenizza in frasi (terminatori latini E CJK), pre-spezza ogni
+    frase che da sola supera i limiti (caso tipico CJK: testo senza spazi ->
+    frasi enormi), poi accumula le frasi adiacenti finche' uno dei due cap viene
+    raggiunto. Invariante: nessun chunk supera mai max_bytes — elimina i rifiuti
+    "Payload exceeds API hard cap" su giapponese/cinese.
 
-    max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita
-        a byte e non a caratteri). Se None, viene applicato solo il cap chars.
+    max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita a
+        byte; per il giapponese ogni carattere pesa ~3 byte). Se None, solo chars.
     """
     if not text or not text.strip():
         return [text] if text else [""]
-    # Tokenizza in frasi: split su terminatori seguiti da spazio o newline,
-    # preservando il terminatore nella frase precedente (lookbehind).
-    raw_sentences = re.split(r'(?<=[.!?\u2026])\s+', text.strip())
-    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    raw_sentences = _SENT_SPLIT_RE.split(text.strip())
+    sentences = [s.strip() for s in raw_sentences if s and s.strip()]
     if not sentences:
-        return [text.strip()]
+        sentences = [text.strip()]
+    # Pre-bound: ogni frase oversize viene spezzata sotto i cap.
+    bounded = []
+    for s in sentences:
+        if _within(s, max_chars, max_bytes):
+            bounded.append(s)
+        else:
+            bounded.extend(_hard_split_oversized(s, max_chars, max_bytes))
     chunks = []
     current = ""
-    for sent in sentences:
+    for sent in bounded:
         if not current:
             current = sent
             continue
         candidate = current + " " + sent
-        chars_ok = len(candidate) <= max_chars
-        bytes_ok = (max_bytes is None) or (len(candidate.encode("utf-8")) <= max_bytes)
-        if chars_ok and bytes_ok:
+        if _within(candidate, max_chars, max_bytes):
             current = candidate
         else:
             chunks.append(current)
             current = sent
-        # Se una singola frase supera max_chars non la spezziamo — il TTS gestisce.
     if current:
         chunks.append(current)
     return chunks if chunks else [text.strip()]
