@@ -3080,6 +3080,112 @@ def _spawn_cloud_offload(job_id, output_dir):
     ).start()
 
 
+class _GeminiQualityAbort(Exception):
+    """Sollevata dal loop di generazione Gemini per abortire PRECOCEMENTE un job
+    palesemente compromesso (troppi chunk silenziati su un campione iniziale),
+    senza macinare l'intero libro prima del refund. Vedi early-abort."""
+    def __init__(self, failed, processed):
+        super().__init__(f"gemini quality abort: {failed}/{processed}")
+        self.failed = failed
+        self.processed = processed
+
+
+def _early_abort_params():
+    """(ratio, min_chunks) per l'early-abort Gemini. ratio>1 disabilita."""
+    try:
+        ratio = float(os.environ.get("ABM_GEMINI_EARLY_ABORT_RATIO", "0.30").replace(",", "."))
+    except (TypeError, ValueError):
+        ratio = 0.30
+    try:
+        min_chunks = int(os.environ.get("ABM_GEMINI_EARLY_ABORT_MIN_CHUNKS", "15"))
+    except (TypeError, ValueError):
+        min_chunks = 15
+    return ratio, max(1, min_chunks)
+
+
+def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks, early=False):
+    """Path unico di fallimento-qualita' Gemini: status error + refund integrale +
+    notifica utente + alert admin (con marker forense) + mark pending failed.
+
+    Usato sia a fine generazione (valutazione su tutti i chunk) sia dall'early-abort
+    (valutazione sul campione processato). `total_chunks` è il denominatore del
+    ratio: totale del piano a fine loop, chunk processati in early-abort."""
+    _tot = max(1, int(total_chunks))
+    _ratio = failed_chunks / _tot
+    _tag = " [early-abort]" if early else ""
+    _set_job_status(job, "error")
+    _user_msg = (
+        f"Generazione interrotta: {failed_chunks}/{_tot} segmenti "
+        f"({_ratio:.1%}) non sintetizzati correttamente. L'audio risultante "
+        f"sarebbe stato incompleto: rimborso integrale gia' emesso."
+    )
+    job["error"] = _user_msg
+    job["user_facing_error"] = _user_msg
+    job["failed_chunks_ratio"] = round(_ratio, 4)
+    job["total_chunks"] = _tot
+    print(f"[{job_id}] Gemini job FAILED for quality "
+          f"({failed_chunks}/{_tot}={_ratio:.1%}){_tag} -> full refund triggered.")
+    try:
+        _write_gemini_audit(job_id, job, voice, _audit_language(job, info),
+                            "failed_quality_refunded")
+    except Exception:
+        pass
+    try:
+        _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot}")
+    except Exception as _ref_err:
+        print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+    try:
+        _notify_user_gemini_job_failed(job_id, job, "quality_failed",
+                                       failure_kind="quality")
+    except Exception as _notif_err:
+        print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+    _admin_alert_gemini_failure(
+        job_id, job, kind="quality",
+        audit_outcome="failed_quality_refunded",
+        reason_detail=f"{failed_chunks}/{_tot} chunk silenziati ({_ratio:.1%}){_tag}",
+        chunks_total=_tot, chunks_failed=failed_chunks,
+    )
+    _mark_pending_failed(job_id, "failed_quality_refunded")
+
+
+def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info):
+    """Logga (con job_id) e PERSISTE il motivo del silenziamento di un chunk Gemini.
+
+    Senza questo, il fallback a silenzio era muto anche nei log: le righe
+    `[gemini-tts] WARNING ...` non portano il job_id, quindi sparivano dai
+    forensi job-scoped (e dal bundle forense). Scrive una riga in
+    `<work_dir>/gemini_failures.jsonl` — incluso automaticamente nello zip
+    forense (os.walk della work_dir) — e accumula in job["failed_chunk_details"].
+    """
+    fi = failure_info if isinstance(failure_info, dict) else {}
+    reason = fi.get("reason", "unknown")
+    detail = fi.get("detail", "")
+    text = (block or {}).get("text", "") or ""
+    preview = text[:80].replace("\n", " ")
+    rec = {
+        "ts": time.time(),
+        "chunk_index": idx,
+        "chapter_index": (block or {}).get("chapter_index"),
+        "chars": len(text),
+        "reason": reason,
+        "detail": detail,
+        "preview": preview,
+    }
+    print(f"[{job_id}] Gemini chunk {idx} SILENCED: reason={reason} "
+          f"chars={len(text)} detail={detail[:120]} preview=\"{preview}\"", flush=True)
+    try:
+        job.setdefault("failed_chunk_details", []).append(rec)
+    except Exception:
+        pass
+    try:
+        import json as _json
+        with open(os.path.join(str(work_dir), "gemini_failures.jsonl"), "a",
+                  encoding="utf-8") as _f:
+            _f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as _e:
+        print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
+
+
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
     job = _jobs.get(job_id)
     if job is None:
@@ -3357,12 +3463,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # del capitolo faceva percepire stile diverso tra preview (1
                 # chunk) e job finale. Costo token aggiuntivo trascurabile.
                 style_for_chunk = gemini_style_instruction
+                _chunk_fi = {}
                 try:
                     result = generate_chunk_pcm_gemini(block["text"], voice, part_path,
                                                        style_instruction=style_for_chunk,
                                                        rate=rate,
                                                        debug_prompt_path=debug_prompt_path,
-                                                       accent_directive=gemini_accent_directive or None)
+                                                       accent_directive=gemini_accent_directive or None,
+                                                       failure_info=_chunk_fi)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.
@@ -3383,6 +3491,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     # Errore generico non quota-related: rilancia
                     raise
                 if result is False:
+                    _record_gemini_chunk_failure(job, job_id, work_dir, i, block, _chunk_fi)
                     return result, part_path
                 gemini_usage["input_tokens"] += result.get("input_tokens", 0)
                 gemini_usage["output_tokens"] += result.get("output_tokens", 0)
@@ -3465,6 +3574,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         result = False
                 return result, part_path
 
+        # Early-abort Gemini: soglia/campione minimo letti una volta per entrambi
+        # i rami (single-file / multi-file).
+        _ea_ratio, _ea_min = _early_abort_params()
+
         if single_file:
             all_parts = []
             m4b_chapters = []
@@ -3532,6 +3645,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 result, part_path = _synthesize_chunk(i, block)
                 if result is False:
                     failed_chunks += 1
+                    if use_gemini and _ea_ratio <= 1.0:
+                        _proc = i + 1
+                        if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
+                            print(f"[{job_id}] Gemini EARLY-ABORT: {failed_chunks}/{_proc} "
+                                  f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
+                                  f">= {_ea_min} -> stop generazione e refund.")
+                            raise _GeminiQualityAbort(failed_chunks, _proc)
                 # Bump per il gap che verra` inserito PRIMA di questo part_path
                 # (Premium Gemini): aggiorna i timing M4B per il capitolo corrente.
                 if gap_ms_inter and all_parts:
@@ -3861,6 +3981,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 result, part_path = _synthesize_chunk(i, block)
                 if result is False:
                     failed_chunks += 1
+                    if use_gemini and _ea_ratio <= 1.0:
+                        _proc = i + 1
+                        if _proc >= _ea_min and (failed_chunks / _proc) > _ea_ratio:
+                            print(f"[{job_id}] Gemini EARLY-ABORT: {failed_chunks}/{_proc} "
+                                  f"({failed_chunks/_proc:.1%}) > {_ea_ratio:.0%} su campione "
+                                  f">= {_ea_min} -> stop generazione e refund.")
+                            raise _GeminiQualityAbort(failed_chunks, _proc)
                 current_chapter_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -4107,40 +4234,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Applicato solo su engine Gemini, dove il fallback a silenzio non
         # rappresenta l'output che l'utente ha pagato.
         if use_gemini and failed_chunks > 0 and _fail_ratio > _refund_failed_ratio:
-            _set_job_status(job, "error")
-            _user_msg = (
-                f"Generazione interrotta: {failed_chunks}/{_tot_chunks_safe} segmenti "
-                f"({_fail_ratio:.1%}) non sintetizzati correttamente. L'audio risultante "
-                f"sarebbe stato incompleto: rimborso integrale gia' emesso."
-            )
-            job["error"] = _user_msg
-            job["user_facing_error"] = _user_msg
-            job["failed_chunks_ratio"] = round(_fail_ratio, 4)
-            print(f"[{job_id}] Gemini job FAILED for quality "
-                  f"({failed_chunks}/{_tot_chunks_safe}={_fail_ratio:.1%}) "
-                  f"-> full refund triggered.")
-            try:
-                _write_gemini_audit(job_id, job, voice,
-                                    _audit_language(job, info),
-                                    "failed_quality_refunded")
-            except Exception:
-                pass
-            try:
-                _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot_chunks_safe}")
-            except Exception as _ref_err:
-                print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-            try:
-                _notify_user_gemini_job_failed(job_id, job, "quality_failed",
-                                               failure_kind="quality")
-            except Exception as _notif_err:
-                print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
-            _admin_alert_gemini_failure(
-                job_id, job, kind="quality",
-                audit_outcome="failed_quality_refunded",
-                reason_detail=f"{failed_chunks}/{_tot_chunks_safe} chunk silenziati ({_fail_ratio:.1%})",
-                chunks_total=_tot_chunks_safe, chunks_failed=failed_chunks,
-            )
-            _mark_pending_failed(job_id, "failed_quality_refunded")
+            _gemini_quality_refund(job_id, job, voice, info,
+                                   failed_chunks, _tot_chunks_safe)
             return
 
         # F3 — Guardia output muto (qualsiasi engine, in particolare edge-tts dove
@@ -4348,6 +4443,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             except Exception:
                 pass
 
+    except _GeminiQualityAbort as _qa:
+        # Early-abort: troppi chunk silenziati sul campione iniziale. Stesso path
+        # di fallimento-qualita' del controllo a fine loop, ma valutato sui chunk
+        # processati (denominatore = _qa.processed), senza completare il libro.
+        _gemini_quality_refund(job_id, job, voice, info,
+                               _qa.failed, _qa.processed, early=True)
+        return
     except _CancelledError:
         still_current = job.get("gen_epoch", 0) == my_epoch
         partial_audio_delivered = False

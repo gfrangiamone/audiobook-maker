@@ -475,7 +475,8 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
 
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
-                              debug_prompt_path=None, rate="+0%", accent_directive=None):
+                              debug_prompt_path=None, rate="+0%", accent_directive=None,
+                              failure_info=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -502,10 +503,16 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     """
     import gemini_tts as _gemini  # late import: keeps module optional
 
+    def _fail(reason, detail=""):
+        if isinstance(failure_info, dict):
+            failure_info["reason"] = reason
+            failure_info["detail"] = str(detail)[:300]
+        return False
+
     clean = _sanitize_tts_text(text)
     if clean is None:
         _generate_silence_pcm(output_path, duration_sec=1)
-        return False
+        return _fail("empty_after_sanitize")
 
     # Emergency byte-split: se il chunk supera il byte-cap effettivo (cap API
     # meno margine per i prefissi style/rate), invece di farlo silenziare
@@ -528,7 +535,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
                 return agg
             # Fall-through: se lo split fallisce, scriviamo silenzio sotto.
             _generate_silence_pcm(output_path, duration_sec=1)
-            return False
+            return _fail("byte_split_failed", f"{len(pieces)} sub-chunk")
 
     last_error = None
     for attempt in range(max_retries):
@@ -559,7 +566,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
     _generate_silence_pcm(output_path, duration_sec=1)
-    return False
+    return _fail("synthesize_failed", str(last_error) if last_error else "")
 
 
 # ---------------------------------------------------------------------------
