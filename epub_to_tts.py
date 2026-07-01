@@ -1113,14 +1113,49 @@ def _get_metadata(book: epub.EpubBook, field: str) -> Optional[str]:
 
 
 def _body_has_skip_type(html_content: str) -> bool:
-    """Controlla se il <body> o <section> principale ha epub:type non-audio."""
-    # Fast check senza parsing completo — cerca nell'header del documento
-    head = html_content[:2000].lower()
-    for etype in EPUB_TYPES_TO_SKIP:
-        if f'epub:type="{etype}"' in head or f"epub:type='{etype}'" in head:
-            return True
-        if f'epub:type="{etype} ' in head or f"epub:type='{etype} " in head:
-            return True
+    """True se l'INTERO documento è apparato critico non-audio, cioè il <body>
+    (o l'unica <section> radice che avvolge il contenuto) ha un epub:type da
+    scartare (toc, colophon, index, appendix, bibliography…).
+
+    IMPORTANTE: controlla SOLO l'epub:type del contenitore radice, mai dei
+    discendenti inline. Marcatori inline come <a epub:type="noteref">,
+    <span epub:type="pagebreak"> sono locali (già gestiti in should_skip_element
+    durante l'estrazione) e NON qualificano la natura del file.
+
+    NB storico: la versione precedente faceva uno scan a substring sui primi
+    2000 char dell'HTML, così un capitolo narrativo che conteneva un rimando a
+    nota nell'intestazione (`epub:type="noteref"`, comunissimo nei saggi con
+    note) veniva classificato come non-audio e l'INTERO capitolo scartato →
+    perdita massiva di contenuto (un libro di centinaia di pagine ridotto a
+    pochi capitoli).
+    """
+    try:
+        soup = BeautifulSoup(html_content, "lxml")
+    except Exception:
+        return False
+    body = soup.find("body")
+    if body is None or not isinstance(body, Tag):
+        return False
+
+    candidates = [body]
+    # <body> che avvolge una singola <section> (wrapper di apparato): considera
+    # anche il suo epub:type come rappresentativo dell'intero documento.
+    try:
+        direct_sections = body.find_all("section", recursive=False)
+        if len(direct_sections) == 1:
+            candidates.append(direct_sections[0])
+    except Exception:
+        pass
+
+    for el in candidates:
+        etype = (el.get("epub:type") or "").lower()
+        if not etype:
+            continue
+        for et in etype.split():
+            if et in EPUB_TYPES_TO_SKIP:
+                return True
+            if ":" in et and et.split(":", 1)[1] in EPUB_TYPES_TO_SKIP:
+                return True
     return False
 
 
