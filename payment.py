@@ -1114,3 +1114,70 @@ def refund_unused_captures_for_job(job_id, reason=""):
         except Exception as e:
             print(f"[payment] refund_unused_captures_for_job error order={oid}: {e}")
     return results
+
+
+def settle_capture_consumed(order_id, job_id="", reason=""):
+    """Marca `used=True` un capture PayPal incassato ma non consumato, SENZA
+    rimborso: il servizio è stato erogato (o sta per esserlo), quindi il denaro
+    è dovuto.
+
+    Usato per correggere il falso positivo del rilevatore di capture orfani su
+    job realmente consegnati (traduzione/ottimizzazione andata a buon fine ma
+    il mark-consume non è mai avvenuto — es. divergenza di stima frontend/backend).
+    Idempotente: un ordine già `used` è no-op. Ritorna dict
+    {order_id, amount_eur, email} o None.
+    """
+    if not order_id:
+        return None
+    with _payments_lock:
+        pay = _payments.get(order_id)
+        if not isinstance(pay, dict):
+            return None
+        if pay.get("used"):
+            return None
+        if not pay.get("captured_at"):
+            return None
+        pay["used"] = True
+        pay["used_at"] = time.time()
+        pay["used_for"] = "delivered_settle"
+        if job_id:
+            pay["used_for_job"] = job_id
+        pay["settle_reason"] = (reason or "")[:200]
+        pay.pop("needs_manual_refund", None)
+        res = {
+            "order_id": order_id,
+            "amount_eur": float(pay.get("amount_eur", 0) or 0),
+            "email": (pay.get("email") or "").strip().lower(),
+        }
+        try:
+            _save_payments()
+        except Exception as e:
+            print(f"[payment] save_payments failed (settle_capture_consumed): {e}")
+    return res
+
+
+def settle_delivered_captures_for_job(job_id, reason=""):
+    """Marca consumati (senza rimborso) tutti i capture non usati legati a un job
+    il cui servizio risulta EROGATO. Contraltare di
+    `refund_unused_captures_for_job`: lì il job è stato smaltito senza consegna
+    (orfano reale → rimborso), qui il servizio è stato consegnato (falso
+    positivo → il denaro è dovuto). Ritorna la lista dei settle (esclusi no-op).
+    """
+    if not job_id:
+        return []
+    with _payments_lock:
+        order_ids = [
+            oid for oid, pay in _payments.items()
+            if isinstance(pay, dict) and not pay.get("used")
+            and (pay.get("job_id", "") or "") == job_id
+            and pay.get("captured_at")
+        ]
+    out = []
+    for oid in order_ids:
+        try:
+            r = settle_capture_consumed(oid, job_id=job_id, reason=reason)
+            if r:
+                out.append(r)
+        except Exception as e:
+            print(f"[payment] settle_delivered_captures_for_job error order={oid}: {e}")
+    return out

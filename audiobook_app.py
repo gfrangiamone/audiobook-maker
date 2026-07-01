@@ -10145,6 +10145,30 @@ def api_translate():
             _release_claim()
             return jsonify({"error": "Invalid or insufficient payment",
                             "error_code": "payment_invalid"}), 402
+    else:
+        # Divergenza di stima: il frontend può aver ritenuto necessario il
+        # pagamento e catturato l'ordine PayPal, mentre qui il backend stima
+        # sotto soglia (nessun pagamento richiesto). In quel caso l'ordine resta
+        # incassato ma `used=false` → a scadenza retention verrebbe visto come
+        # capture orfano (falso positivo → alert/rimborso). Se il client ha
+        # comunque passato un capture PayPal, lo marchiamo consumato ORA legandolo
+        # al job: il servizio sta per essere erogato, il denaro è dovuto. I
+        # voucher non richiedono azione (nulla è stato scalato). Vedi incidente
+        # JM9_Vyd3UmB_J9GTfLNT7w.
+        _tok = (data.get("payment_token") or "").strip()
+        if _tok and _tok in payment._payments:
+            try:
+                _settled = payment.settle_capture_consumed(
+                    _tok, job_id=job_id, reason="translate_free_settle")
+                if _settled:
+                    job["payment_token"] = _tok
+                    job["payment_type"] = "paypal"
+                    job["payment_email"] = _settled.get("email", "")
+                    job["payment_amount_eur"] = _settled.get("amount_eur", 0)
+                    print(f"[{job_id}] translate: capture PayPal {_tok} marcato "
+                          f"consumato (stima backend sotto soglia, servizio erogato)")
+            except Exception as _e:
+                print(f"[{job_id}] translate settle capture non-fatal: {_e}")
 
     # Batch mode: assegnazione campi notify (validazione gia' eseguita sopra,
     # prima del pagamento).
@@ -11853,6 +11877,18 @@ def api_download(job_id):
                 safe_name = _safe_filename(job["info"].title) or "audiolibro"
                 return _send_file_throttled(actual_m4b, as_attachment=True, download_name=f"{safe_name}.m4b", no_cache=True, bypass_throttle=True, conditional=True)
 
+            # Cold tier: locale evacuato da hot-evict ma copia cold del M4B
+            # snapshotato valida (moov presente) → redirect 302 al presigned URL
+            # PRIMA del fallback MP3/404 (allinea /api/download a /dl, cold-aware).
+            _m4b_snap = job.get("output_m4b", "")
+            if _cold_m4b_valid(_m4b_snap):
+                safe_name = _safe_filename(job["info"].title) or "audiolibro"
+                _cold = _try_cold_serve(_m4b_snap, download_name=f"{safe_name}.m4b")
+                if _cold is not None:
+                    print(f"[debug] M4B served from cold storage: {_m4b_snap}")
+                    _do_log()
+                    return _cold
+
             print(f"[debug] M4B totally missing. Falling back to MP3.")
             # Fallback to single MP3 if M4B is missing
             # output_files puo' essere [] (assembly fallito): evita IndexError.
@@ -12511,15 +12547,80 @@ def _forensic_marker_protects(work_dir, now):
     return now < retain_until
 
 
-def _reconcile_unused_capture_for_job(job_id, reason=""):
-    """Rimborsa i capture PayPal incassati ma mai consumati legati al job e
-    avvisa l'admin. Invocata dalla cleanup PRIMA di distruggere il job.
+def _job_service_was_delivered(job_id):
+    """True se il servizio pagato risulta EROGATO per questo job.
 
-    Per ogni capture orfano: payment.refund_unused_captures_for_job emette il
-    voucher di rimborso (o segna `needs_manual_refund` se manca l'email / auto
-    refund off); qui logghiamo l'evento e notifichiamo l'admin via email in un
-    thread daemon (l'SMTP non deve bloccare il loop di cleanup).
+    Serve a distinguere un capture PayPal davvero orfano (denaro incassato, zero
+    servizio → rimborso) da un capture rimasto `used=false` solo perché il
+    mark-consume non è mai avvenuto su un job in realtà consegnato (falso
+    positivo → nessun rimborso). Vedi incidente JM9_Vyd3UmB_J9GTfLNT7w.
+
+    Segnali di consegna (uno basta):
+      - status del job in done/translated/optimized
+      - email di completamento inviata (`email_sent_at`)
+      - traduzione prodotta (`translated_chapters`/`translated_lang`)
+      - ottimizzazione AA completata (`ai_optimized`/`opt_completed_at`)
+      - marker `.email_sent` finalizzato su disco (cross-restart, job già fuori memoria)
     """
+    try:
+        with _jobs_lock:
+            job = jobs.get(job_id)
+            snap = dict(job) if isinstance(job, dict) else None
+    except Exception:
+        snap = None
+    if snap:
+        if snap.get("status") in ("done", "translated", "optimized"):
+            return True
+        if snap.get("email_sent_at"):
+            return True
+        if snap.get("translated_chapters") or snap.get("translated_lang"):
+            return True
+        if snap.get("ai_optimized") or snap.get("opt_completed_at"):
+            return True
+    # Cross-restart / job già rimosso dalla memoria: marker email finalizzato.
+    try:
+        marker = UPLOAD_DIR / job_id / EMAIL_MARKER_FILENAME
+        if marker.exists():
+            content = marker.read_text(encoding="utf-8").strip()
+            if content and content != _EMAIL_MARKER_PENDING:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _reconcile_unused_capture_for_job(job_id, reason=""):
+    """Riconcilia i capture PayPal incassati ma mai consumati legati al job.
+    Invocata dalla cleanup PRIMA di distruggere il job.
+
+    Due esiti distinti:
+      - Servizio EROGATO (falso positivo): il capture è rimasto `used=false` solo
+        perché il mark-consume non è avvenuto (es. divergenza di stima
+        frontend/backend). Il denaro è dovuto → lo marchiamo consumato in
+        silenzio, niente rimborso né alert.
+      - Servizio NON erogato (orfano reale): payment.refund_unused_captures_for_job
+        emette il voucher di rimborso (o segna `needs_manual_refund`); logghiamo
+        e notifichiamo l'admin via email in un thread daemon (l'SMTP non deve
+        bloccare il loop di cleanup).
+    """
+    # Guard falso-positivo: servizio già consegnato → settle silenzioso.
+    if _job_service_was_delivered(job_id):
+        try:
+            settled = payment.settle_delivered_captures_for_job(job_id, reason=reason)
+        except Exception as e:
+            settled = []
+            print(f"[cleanup] {job_id} settle delivered captures failed: {e}")
+        for s in settled:
+            print(f"[cleanup] {job_id} delivered — capture settled (no refund): "
+                  f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f} "
+                  f"email={s.get('email') or '-'} reason={reason}")
+            try:
+                _log_activity(job_id, "", "CAPTURE_SETTLED_DELIVERED", "", "",
+                              f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f}", "")
+            except Exception:
+                pass
+        return
+
     results = payment.refund_unused_captures_for_job(job_id, reason=reason)
     if not results:
         return
@@ -12559,7 +12660,8 @@ def _reconcile_unused_capture_for_job(job_id, reason=""):
                 f"<h2>Capture PayPal non consumato — job smaltito</h2>"
                 f"<p>Il job <code>{_e(job_id)}</code> è stato rimosso (<em>{_e(reason)}</em>) "
                 f"ma aveva pagamenti PayPal incassati e mai consumati "
-                f"(servizio mai erogato).</p>"
+                f"(il servizio <strong>non risulta erogato</strong>: nessun segnale di "
+                f"consegna — completamento/email/download — è stato rilevato per il job).</p>"
                 f"<table border='1' cellpadding='6' cellspacing='0'>"
                 f"<tr><th>Order</th><th>Importo</th><th>Email</th><th>Rimborso</th></tr>"
                 f"{rows}</table>"
