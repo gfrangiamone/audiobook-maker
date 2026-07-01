@@ -446,6 +446,17 @@ function onOutputChange(){
   _updateSummary&&_updateSummary();
   updateSelection();
 }
+// TXT input: only single-file formats make sense (no per-chapter split).
+// Show m4b + single mp3, hide zip/podcast. Non-TXT restores all options.
+function _applyOutputOptionsForType(isTxt){
+  const sel=document.getElementById('vOut');
+  if(!sel)return;
+  ['zip','zip_rss'].forEach(v=>{
+    const opt=sel.querySelector('option[value="'+v+'"]');
+    if(opt){opt.hidden=isTxt;opt.disabled=isTxt;opt.style.display=isTxt?'none':'';}
+  });
+  if(isTxt&&(sel.value==='zip'||sel.value==='zip_rss'))sel.value='m4b';
+}
 // Backward-compat shim for old toggle button refs
 function toggleOut(el){
   if(!el)return;
@@ -644,13 +655,9 @@ async function analyzeEpub(file){
     updVoices();
     if(typeof syncLanguageOptions==='function')syncLanguageOptions();
     const _vOut=document.getElementById('vOut');
-    if(isTxtFile){
-      if(_vOut){_vOut.value='m4b';onOutputChange();}
-      document.getElementById('fgOut').style.display='none';
-    }else{
-      document.getElementById('fgOut').style.display='';
-      if(_vOut){_vOut.value='m4b';onOutputChange();}
-    }
+    _applyOutputOptionsForType(isTxtFile);
+    document.getElementById('fgOut').style.display='';
+    if(_vOut){_vOut.value='m4b';onOutputChange();}
     const btnExp=document.getElementById('btnExport');
     if(btnExp)btnExp.disabled=false;
     fillPreview(d);
@@ -4244,6 +4251,7 @@ function resetAll(){
   document.getElementById('s3err').innerHTML='';
   const selBar=document.getElementById('selBar');if(selBar)selBar.classList.remove('vis');
   singleFile=true;isTxtFile=false;outputFormat='m4b';podcastBaseUrl='';
+  _applyOutputOptionsForType(false);
   document.getElementById('fgOut').style.display='';
   const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
   previewStop();
