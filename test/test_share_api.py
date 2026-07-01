@@ -31,7 +31,7 @@ def test_presigned_put_url_builds_put(monkeypatch):
 
 
 def test_share_config_defaults():
-    assert audiobook_app.ABM_SHARE_TTL_SEC == 7200
+    assert audiobook_app.ABM_SHARE_TTL_SEC == 86400
     assert audiobook_app.ABM_SHARE_MAX_BYTES == 524288000
     assert audiobook_app.ABM_SHARE_UPLOAD_TTL_SEC == 3600
 
