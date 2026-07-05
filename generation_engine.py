@@ -3113,39 +3113,53 @@ def _gemini_quality_refund(job_id, job, voice, info, failed_chunks, total_chunks
     _tot = max(1, int(total_chunks))
     _ratio = failed_chunks / _tot
     _tag = " [early-abort]" if early else ""
+    # Job gratuito (sotto soglia free: nessun token/addebito): non esiste alcun
+    # rimborso da emettere, quindi l'esito NON va etichettato `*_refunded` — sarebbe
+    # una menzogna ad audit/alert/forense e verrebbe contato come rimborso nei ricavi
+    # admin. In tal caso saltiamo i path di refund/notifica-utente (comunque no-op
+    # per paid<=0) e usiamo un outcome distinto `failed_quality_free`. L'alert admin
+    # resta (un falso positivo del quality-gate va comunque segnalato).
+    # Vedi incidente J60AttINoOwjJZyIpBX3IA (2026-07).
+    _pay = job.get("payment") or {}
+    _is_free = (not _pay.get("token")) or float(_pay.get("total_eur", 0) or 0) <= 0
+    _outcome = "failed_quality_free" if _is_free else "failed_quality_refunded"
     _set_job_status(job, "error")
+    _tail = (" L'audio risultante sarebbe stato incompleto: nessun addebito effettuato."
+             if _is_free else
+             " L'audio risultante sarebbe stato incompleto: rimborso integrale gia' emesso.")
     _user_msg = (
         f"Generazione interrotta: {failed_chunks}/{_tot} segmenti "
-        f"({_ratio:.1%}) non sintetizzati correttamente. L'audio risultante "
-        f"sarebbe stato incompleto: rimborso integrale gia' emesso."
+        f"({_ratio:.1%}) non sintetizzati correttamente.{_tail}"
     )
     job["error"] = _user_msg
     job["user_facing_error"] = _user_msg
     job["failed_chunks_ratio"] = round(_ratio, 4)
     job["total_chunks"] = _tot
     print(f"[{job_id}] Gemini job FAILED for quality "
-          f"({failed_chunks}/{_tot}={_ratio:.1%}){_tag} -> full refund triggered.")
+          f"({failed_chunks}/{_tot}={_ratio:.1%}){_tag} -> "
+          f"{'no charge (free job)' if _is_free else 'full refund triggered'}.")
     try:
         _write_gemini_audit(job_id, job, voice, _audit_language(job, info),
-                            "failed_quality_refunded")
+                            _outcome)
     except Exception:
         pass
-    try:
-        _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot}")
-    except Exception as _ref_err:
-        print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
-    try:
-        _notify_user_gemini_job_failed(job_id, job, "quality_failed",
-                                       failure_kind="quality")
-    except Exception as _notif_err:
-        print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
+    if not _is_free:
+        try:
+            _refund_gemini_payment(job_id, job, f"quality_failed: {failed_chunks}/{_tot}")
+        except Exception as _ref_err:
+            print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+        try:
+            _notify_user_gemini_job_failed(job_id, job, "quality_failed",
+                                           failure_kind="quality")
+        except Exception as _notif_err:
+            print(f"[{job_id}] User notification failed (non-fatal): {_notif_err}")
     _admin_alert_gemini_failure(
         job_id, job, kind="quality",
-        audit_outcome="failed_quality_refunded",
+        audit_outcome=_outcome,
         reason_detail=f"{failed_chunks}/{_tot} chunk silenziati ({_ratio:.1%}){_tag}",
         chunks_total=_tot, chunks_failed=failed_chunks,
     )
-    _mark_pending_failed(job_id, "failed_quality_refunded")
+    _mark_pending_failed(job_id, _outcome)
 
 
 def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info):

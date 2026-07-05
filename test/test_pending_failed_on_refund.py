@@ -158,12 +158,14 @@ def test_generate_chunk_pcm_reraises_unavailable(monkeypatch, tmp_path):
 @pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg not in PATH")
 def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
                                               monkeypatch):
-    """Tutti i chunk silenziati da errori generici/transient per chunk ->
+    """Chunk silenziati da errori generici/transient su un job PAGATO ->
     failed_quality_refunded -> descrittore failed. (L'unavailability ha ora
-    un percorso dedicato che aborta al primo chunk: vedi test sopra.)"""
+    un percorso dedicato che aborta al primo chunk: vedi test sopra. Il job
+    gratuito ha invece esito `failed_quality_free`: vedi test dedicato.)"""
     upload_dir, jobs = setup_engine
     job_id = "quafail"
-    jobs[job_id] = {"gen_epoch": 0, "last_poll": 0, "email_registered": True}
+    jobs[job_id] = {"gen_epoch": 0, "last_poll": 0, "email_registered": True,
+                    "payment": {"token": "tokq", "total_eur": 2.0, "method": "paypal"}}
 
     def boom(text, voice_id, output_path=None, **kw):
         raise RuntimeError("transient synth error")

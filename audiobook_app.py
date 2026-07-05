@@ -4950,6 +4950,7 @@ def admin_logs_page():
           <option value="failed_quota_refunded">Fallito quota (rimborsato)</option>
           <option value="failed_budget_refunded">Fallito budget (rimborsato)</option>
           <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
+          <option value="failed_quality_free">Fallito qualit&agrave; (gratuito, nessun rimborso)</option>
           <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
           <option value="cancelled_refunded">Annullato (rimborsato)</option>
           <option value="cancelled_partial">Annullato (parziale)</option>
@@ -5295,6 +5296,7 @@ def admin_logs_page():
     "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
     "failed_budget_refunded":     ["badge-err",  "Budget superato"],
     "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
+    "failed_quality_free":        ["badge-warn", "Qualità ins. (free)"],
     "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
     "cancelled_refunded":         ["badge-muted","Annullato"],
     "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
