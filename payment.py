@@ -852,6 +852,14 @@ class CaptureAmountMismatchError(ValueError):
     """Capture amount non corrisponde a quanto creato (price tampering)."""
 
 
+class DuplicateJobCaptureError(ValueError):
+    """Il job ha gia' un capture PayPal incassato E consumato: catturare un
+    secondo ordine sarebbe un doppio addebito. Sollevata PRIMA di chiamare
+    l'API di capture, cosi' l'ordine approvato-ma-non-catturato si auto-annulla
+    in PayPal (nessun secondo addebito). Vedi incidente doppio pagamento
+    K1Rpn-x0fmaylsjKYGdftg (2026-07)."""
+
+
 def capture_and_store_order(order_id: str, job_id: str = "",
                             amount_tolerance: float = 0.01):
     """Cattura un ordine PayPal in modo atomico con amount reconciliation.
@@ -876,12 +884,52 @@ def capture_and_store_order(order_id: str, job_id: str = "",
             pay = _payments.get(order_id)
         if pay:
             return {
+                "order_id": order_id,
                 "amount_eur": pay.get("amount_eur", 0),
                 "email": pay.get("email", ""),
                 "capture_id": pay.get("capture_id", ""),
                 "captured_at": pay.get("captured_at", 0),
                 "already_captured": True,
             }
+
+        # Idempotency a livello JOB (anti doppio-pagamento). Se il job ha gia'
+        # un capture incassato con order_id DIVERSO, questo e' un secondo ordine
+        # nato da un ri-click del bottone PayPal prima della conferma: NON lo
+        # catturiamo. L'ordine approvato-ma-non-catturato si auto-annulla in
+        # PayPal (nessun secondo addebito).
+        #   - capture esistente NON consumato -> riusa quel token (il flusso
+        #     prosegue col pagamento gia' incassato).
+        #   - capture esistente gia' consumato -> job pagato/in corso ->
+        #     DuplicateJobCaptureError (il frontend mostra "gia' pagato").
+        # Serializzato da _capture_lock: due capture concorrenti sullo stesso
+        # job (order_id diversi) non possono superare entrambi il guard.
+        if job_id:
+            with _payments_lock:
+                existing = None
+                for oid, p in _payments.items():
+                    if (isinstance(p, dict) and oid != order_id
+                            and (p.get("job_id", "") or "") == job_id
+                            and p.get("captured_at")):
+                        existing = (oid, p)
+                        if not p.get("used"):
+                            break  # preferisci un capture ancora consumabile
+            if existing is not None:
+                eoid, ep = existing
+                if ep.get("used"):
+                    raise DuplicateJobCaptureError(
+                        f"job {job_id} already has a consumed capture ({eoid}); "
+                        f"refusing duplicate capture of order {order_id}")
+                print(f"[paypal] duplicate capture for job {job_id}: reusing "
+                      f"already-captured order {eoid}, skipping capture of {order_id}")
+                return {
+                    "order_id": eoid,
+                    "amount_eur": ep.get("amount_eur", 0),
+                    "email": ep.get("email", ""),
+                    "capture_id": ep.get("capture_id", ""),
+                    "captured_at": ep.get("captured_at", 0),
+                    "already_captured": True,
+                    "duplicate_skipped_order_id": order_id,
+                }
 
         # Capture via PayPal API
         captured = _paypal_capture_order(order_id)
@@ -948,6 +996,7 @@ def capture_and_store_order(order_id: str, job_id: str = "",
         _consume_pending_order(order_id)
 
         return {
+            "order_id": order_id,
             "amount_eur": amount_eur,
             "email": email,
             "capture_id": cap.get("id", ""),
@@ -1157,27 +1206,51 @@ def settle_capture_consumed(order_id, job_id="", reason=""):
 
 
 def settle_delivered_captures_for_job(job_id, reason=""):
-    """Marca consumati (senza rimborso) tutti i capture non usati legati a un job
-    il cui servizio risulta EROGATO. Contraltare di
-    `refund_unused_captures_for_job`: lì il job è stato smaltito senza consegna
-    (orfano reale → rimborso), qui il servizio è stato consegnato (falso
-    positivo → il denaro è dovuto). Ritorna la lista dei settle (esclusi no-op).
+    """Riconcilia i capture non consumati di un job il cui servizio risulta
+    EROGATO. Contraltare di `refund_unused_captures_for_job` (lì il job è stato
+    smaltito senza consegna → rimborso).
+
+    Distingue due sotto-casi, perché un job consegnato può avere piu' di un
+    capture (doppio pagamento da ri-click PayPal, incidente K1Rpn 2026-07):
+
+      - Il job ha GIA' un capture consumato (`used=True`): il servizio è coperto
+        da quello. Ogni ULTERIORE capture non consumato è un DOPPIO ADDEBITO
+        reale → `refund_unused_capture(force=True)` (voucher o manual refund),
+        NON incasso.
+      - Nessun capture consumato ma servizio erogato: vero falso positivo (il
+        mark-consume non è mai avvenuto) → `settle_capture_consumed` (denaro
+        dovuto, nessun rimborso).
+
+    Ritorna la lista dei risultati (esclusi no-op). Gli esiti di rimborso
+    duplicato portano `refunded_duplicate=True`.
     """
     if not job_id:
         return []
     with _payments_lock:
-        order_ids = [
-            oid for oid, pay in _payments.items()
-            if isinstance(pay, dict) and not pay.get("used")
+        job_orders = [
+            (oid, pay) for oid, pay in _payments.items()
+            if isinstance(pay, dict)
             and (pay.get("job_id", "") or "") == job_id
             and pay.get("captured_at")
         ]
+    has_consumed = any(pay.get("used") for _, pay in job_orders)
+    unused = [oid for oid, pay in job_orders if not pay.get("used")]
     out = []
-    for oid in order_ids:
+    for oid in unused:
         try:
-            r = settle_capture_consumed(oid, job_id=job_id, reason=reason)
-            if r:
-                out.append(r)
+            if has_consumed:
+                # Un pagamento del job è gia' stato consumato per erogare il
+                # servizio: questo capture è un duplicato reale → rimborso.
+                r = refund_unused_capture(
+                    oid, reason=(f"{reason} [duplicate-of-delivered]").strip(),
+                    force=True)
+                if r:
+                    r["refunded_duplicate"] = True
+                    out.append(r)
+            else:
+                r = settle_capture_consumed(oid, job_id=job_id, reason=reason)
+                if r:
+                    out.append(r)
         except Exception as e:
             print(f"[payment] settle_delivered_captures_for_job error order={oid}: {e}")
     return out

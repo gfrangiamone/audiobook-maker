@@ -9123,6 +9123,15 @@ def api_paypal_capture_order():
         _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
                       "PAYMENT_AMOUNT_MISMATCH", "", "", "", str(e))
         return jsonify({"error": "Payment amount mismatch (refused)"}), 400
+    except payment.DuplicateJobCaptureError as e:
+        # Il job ha gia' un capture incassato E consumato: il secondo ordine
+        # (ri-click PayPal) non viene catturato -> si auto-annulla, nessun
+        # doppio addebito. Il frontend mostra "gia' pagato".
+        print(f"[paypal] DUPLICATE capture refused order={order_id} job={job_id}: {e}")
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_DUPLICATE_REFUSED", "", "", "", str(e))
+        return jsonify({"error": "already_paid_for_job",
+                        "detail": "This audiobook has already been paid."}), 409
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
@@ -9131,6 +9140,9 @@ def api_paypal_capture_order():
 
     amount_eur = result["amount_eur"]
     email = result["email"]
+    # Token effettivo: in caso di doppio ordine riusato (Layer A) è il capture
+    # gia' incassato, non l'order_id appena approvato (mai catturato).
+    effective_order_id = result.get("order_id") or order_id
 
     if not result.get("already_captured"):
         _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
@@ -9138,12 +9150,12 @@ def api_paypal_capture_order():
         # Send receipt email (non-blocking best-effort)
         if email and _smtp_available():
             try:
-                _send_payment_receipt_email(order_id, email, amount_eur, jobs.get(job_id, {}))
+                _send_payment_receipt_email(effective_order_id, email, amount_eur, jobs.get(job_id, {}))
             except Exception as e:
                 print(f"[paypal] receipt email failed: {e}")
 
     return jsonify({
-        "payment_token": order_id,
+        "payment_token": effective_order_id,
         "amount_eur": amount_eur,
         "email": email,
         "already_captured": result.get("already_captured", False),
@@ -12591,6 +12603,53 @@ def _job_service_was_delivered(job_id):
     return False
 
 
+def _notify_duplicate_capture_refund(job_id, dup_refunds, reason=""):
+    """Notifica l'admin che un job CONSEGNATO aveva capture PayPal duplicati
+    (doppio addebito) ora rimborsati. Best-effort in thread daemon: l'SMTP non
+    deve bloccare il chiamante (cleanup loop). Vedi incidente K1Rpn 2026-07."""
+    def _notify():
+        try:
+            if not ADMIN_EMAIL or not _smtp_available():
+                return
+            import html as _html
+            def _e(v):
+                return _html.escape(str(v if v is not None else ""))
+            rows = ""
+            for r in dup_refunds:
+                vc = r.get("voucher_code")
+                refund_txt = (f"voucher <code>{_e(vc)}</code>" if vc
+                              else "<strong>RIMBORSO MANUALE PayPal richiesto</strong>")
+                rows += (
+                    f"<tr><td><code>{_e(r.get('order_id'))}</code></td>"
+                    f"<td>{r.get('amount_eur', 0):.2f} EUR</td>"
+                    f"<td>{_e(r.get('email') or '—')}</td>"
+                    f"<td>{refund_txt}</td></tr>"
+                )
+            body = (
+                f"<h2>Doppio pagamento PayPal su job consegnato — rimborso duplicato</h2>"
+                f"<p>Il job <code>{_e(job_id)}</code> (<em>{_e(reason)}</em>) risulta "
+                f"<strong>erogato</strong> ma aveva piu' di un capture PayPal incassato. "
+                f"Il servizio è coperto da un solo pagamento; i capture in eccesso "
+                f"elencati sotto sono <strong>doppi addebiti</strong> e sono stati "
+                f"rimborsati automaticamente.</p>"
+                f"<table border='1' cellpadding='6' cellspacing='0'>"
+                f"<tr><th>Order</th><th>Importo</th><th>Email</th><th>Rimborso</th></tr>"
+                f"{rows}</table>"
+                f"<p style='color:#888;font-size:12px'>Audiobook Maker — auto-refund "
+                f"capture duplicato su job consegnato.</p>"
+            )
+            _send_email(ADMIN_EMAIL,
+                        f"[ABM] Rimborso doppio pagamento PayPal — {_e(job_id)}", body)
+        except Exception as e:
+            print(f"[cleanup] {job_id} admin notify (duplicate capture) failed: {e}")
+
+    try:
+        threading.Thread(target=_notify, daemon=True,
+                         name=f"dup-capture-notify-{job_id}").start()
+    except Exception:
+        _notify()
+
+
 def _reconcile_unused_capture_for_job(job_id, reason=""):
     """Riconcilia i capture PayPal incassati ma mai consumati legati al job.
     Invocata dalla cleanup PRIMA di distruggere il job.
@@ -12612,15 +12671,32 @@ def _reconcile_unused_capture_for_job(job_id, reason=""):
         except Exception as e:
             settled = []
             print(f"[cleanup] {job_id} settle delivered captures failed: {e}")
+        dup_refunds = []
         for s in settled:
-            print(f"[cleanup] {job_id} delivered — capture settled (no refund): "
-                  f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f} "
-                  f"email={s.get('email') or '-'} reason={reason}")
-            try:
-                _log_activity(job_id, "", "CAPTURE_SETTLED_DELIVERED", "", "",
-                              f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f}", "")
-            except Exception:
-                pass
+            if s.get("refunded_duplicate"):
+                # Doppio addebito reale su job consegnato: rimborsato, non incassato.
+                kind = "voucher" if s.get("voucher_code") else "MANUALE"
+                dup_refunds.append(s)
+                print(f"[cleanup] {job_id} delivered — DUPLICATE capture refunded "
+                      f"({kind}): order={s.get('order_id')} amount={s.get('amount_eur'):.2f} "
+                      f"email={s.get('email') or '-'} reason={reason}")
+                try:
+                    _log_activity(job_id, "", "REFUND_DUPLICATE_CAPTURE", "", "",
+                                  f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f} "
+                                  f"{kind} voucher={s.get('voucher_code') or '-'}", "")
+                except Exception:
+                    pass
+            else:
+                print(f"[cleanup] {job_id} delivered — capture settled (no refund): "
+                      f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f} "
+                      f"email={s.get('email') or '-'} reason={reason}")
+                try:
+                    _log_activity(job_id, "", "CAPTURE_SETTLED_DELIVERED", "", "",
+                                  f"order={s.get('order_id')} amount={s.get('amount_eur'):.2f}", "")
+                except Exception:
+                    pass
+        if dup_refunds:
+            _notify_duplicate_capture_refund(job_id, dup_refunds, reason)
         return
 
     results = payment.refund_unused_captures_for_job(job_id, reason=reason)

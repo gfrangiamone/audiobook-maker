@@ -1474,6 +1474,7 @@ function _openPayModalCtx(ctx) {
   if (pErr) pErr.textContent = '';
   const btn = document.getElementById('btnPayConfirm');
   if (btn) btn.disabled = true;
+  _geminiPayCaptured = false;  // nuova sessione modal: nessun capture ancora
   const vc = document.getElementById('geminiPayVoucherCode'); if (vc) vc.value = '';
   const ve = document.getElementById('geminiPayVoucherEmail');
   if (ve && typeof lastVoucherEmail === 'string') ve.value = lastVoucherEmail;
@@ -1511,6 +1512,11 @@ function closePaymentModal() {
 
 // ─────────── PayPal buttons in combined payment modal ───────────
 let _paypalGeminiButtonsInstance = null;
+// Anti doppio-addebito: true dopo un capture PayPal andato a buon fine nella
+// sessione modal corrente. Blocca la creazione di un secondo ordine se l'utente
+// ri-clicca il bottone PayPal invece di premere Conferma. Reset all'apertura del
+// modal. Vedi incidente doppio pagamento K1Rpn (2026-07).
+let _geminiPayCaptured = false;
 function _payPaypalErr(msg){const e=document.getElementById('payPaypalError');if(e){e.style.color='';e.textContent=msg||''}}
 async function renderPaypalGeminiButtons(){
   const container=document.getElementById('paypalGeminiContainer');
@@ -1523,6 +1529,12 @@ async function renderPaypalGeminiButtons(){
   _paypalGeminiButtonsInstance=window.paypal.Buttons({
     style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
     createOrder:async function(){
+      // Anti doppio-addebito: se un capture è gia' andato a buon fine in questa
+      // sessione, NON creare un secondo ordine. L'utente deve premere Conferma.
+      if(_geminiPayCaptured){
+        _payPaypalErr((typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma');
+        throw new Error('payment already captured');
+      }
       // Endpoint e body dal contesto del flusso corrente (_payCtx). Il server
       // ricalcola l'importo: il body è autoritativo solo per i parametri, non
       // per l'importo da addebitare.
@@ -1536,6 +1548,7 @@ async function renderPaypalGeminiButtons(){
         const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
         const d=await r.json();
         if(d.error||!d.payment_token){_payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
+        _geminiPayCaptured=true;  // capture ok: blocca ulteriori creazioni ordine
         _payState.token=d.payment_token;_payState.method='paypal';
         const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
