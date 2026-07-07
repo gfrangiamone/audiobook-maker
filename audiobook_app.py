@@ -3506,15 +3506,9 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">🆔</span><code class="sid">{sid}</code></div>
 <div class="meta-row"><span class="meta-label">👤</span><code style="{cid_style}">{cid_short}</code>{cid_badge}<span class="card-ip">{cip or ""}</span></div>
 {tr_meta_html}
-<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
+<div class="meta-row"><span class="meta-label">🌐</span>{blang_display}<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>QR</button></div>
 </div>
 {m4b_subbar}
-<div class="card-footer">
-<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente">
-<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>
-QR
-</button>
-</div>
 </div>
 """
         cards_html += "</div></div>\n"
@@ -3660,8 +3654,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .card-pct{{color:var(--orange);font-weight:700;margin-left:4px}}
 .kill-btn{{flex-shrink:0;border:1px solid rgba(220,38,38,.45);background:rgba(220,38,38,.10);color:#dc2626;border-radius:6px;font-size:.72rem;line-height:1;padding:3px 6px;cursor:pointer}}
 .kill-btn:hover{{background:rgba(220,38,38,.22)}}
-.card-footer{{margin-top:10px;display:flex;align-items:center}}
-.qr-btn{{border:1px solid rgba(167,139,250,.45);background:rgba(167,139,250,.10);color:var(--accent2,#a78bfa);border-radius:6px;font-size:.7rem;line-height:1;padding:4px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}}
+.qr-btn{{margin-left:auto;flex-shrink:0;border:1px solid rgba(167,139,250,.45);background:rgba(167,139,250,.10);color:var(--accent2,#a78bfa);border-radius:6px;font-size:.7rem;line-height:1;padding:4px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}}
 .qr-btn:hover{{background:rgba(167,139,250,.22)}}
 .qr-btn svg{{display:block}}
 #qrmImg{{width:220px;height:220px;background:#fff;border-radius:8px;padding:8px;display:none}}
