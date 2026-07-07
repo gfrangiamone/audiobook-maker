@@ -111,6 +111,7 @@ def _preview_ffmpeg_ok():
     return bool(_ok)
 from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    _strip_parenthetical,
 )
 
 import email_service
@@ -7403,6 +7404,11 @@ def api_preview_audio(job_id):
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
     accent = (request.args.get("accent") or "").strip()[:8]
+    # Lettura opzionale del testo tra parentesi (default: rimosso). L'anteprima
+    # applica lo stesso preprocessing della generazione finale, cosi` l'utente
+    # sente esattamente cosa verra` letto.
+    read_round_parens = request.args.get("read_round_parens") in ("1", "true", "True")
+    read_square_brackets = request.args.get("read_square_brackets") in ("1", "true", "True")
 
     # Se il client passa selected_chapters, l'anteprima deve essere un estratto
     # dei capitoli selezionati (coerente con il pannello "Voci PREMIUM"). Altrimenti
@@ -7448,6 +7454,14 @@ def api_preview_audio(job_id):
     if not preview_text:
         return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
 
+    # Applica lo stesso stripping parentesi della generazione finale, secondo i
+    # flag scelti dall'utente (default: rimuove tonde e quadre).
+    preview_text = _strip_parenthetical(
+        preview_text,
+        strip_round=not read_round_parens,
+        strip_square=not read_square_brackets,
+    ) or preview_text
+
     # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
     # contenere il costo per-token (input + output sono fatturati).
     if voice.startswith("gemini:"):
@@ -7470,7 +7484,8 @@ def api_preview_audio(job_id):
     # file cached invece di rigenerare (e per Gemini non consuma il preview cap).
     # La selezione capitoli entra nella chiave perché il testo varia con essa.
     sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
-    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}"
+    paren_key = f"{int(read_round_parens)}{int(read_square_brackets)}"
+    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}|{paren_key}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -7845,6 +7860,9 @@ def api_generate():
     output_format = data.get("output_format", "m4b")
     podcast_base_url = (data.get("podcast_base_url") or "").strip()
     selected_chapters = data.get("selected_chapters")  # list of chapter indices, or None
+    # Lettura opzionale del testo tra parentesi (default: rimosso).
+    read_round_parens = bool(data.get("read_round_parens", False))
+    read_square_brackets = bool(data.get("read_square_brackets", False))
 
     # Refuse Gemini voices when the module is missing or the API key is not configured.
     if voice and voice.startswith("gemini:"):
@@ -7863,6 +7881,8 @@ def api_generate():
     # (ricostruzione del descrittore in _build_job_descriptor) dopo un restart.
     job["rate"] = rate
     job["single_file"] = single_file
+    job["read_round_parens"] = read_round_parens
+    job["read_square_brackets"] = read_square_brackets
     if podcast_base_url:
         job["podcast_base_url"] = podcast_base_url
     if output_format == "zip_rss":
@@ -7981,7 +8001,9 @@ def api_generate():
                 pass
             _plan_info = _PlanInfo()
             _plan_info.chapters = _info_chs_for_plan
-            _plan_for_pf = _plan_chunks(_plan_info, max_chars=_max_chars_pf, max_bytes=_max_bytes_pf)
+            _plan_for_pf = _plan_chunks(_plan_info, max_chars=_max_chars_pf, max_bytes=_max_bytes_pf,
+                                        strip_round=not read_round_parens,
+                                        strip_square=not read_square_brackets)
             _total_chunks_pf = len(_plan_for_pf)
             _parts_v_pf = (voice or "").split(":")
             _model_key_pf = _parts_v_pf[1] if len(_parts_v_pf) >= 3 else "flash25"
@@ -9528,6 +9550,10 @@ def api_combined_estimate():
     ai_opt = bool(data.get("ai_opt_enabled", False))
     rate = data.get("rate", "+0%")
     ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+    # Lettura opzionale del testo tra parentesi (default: rimosso): influenza il
+    # conteggio chunk/caratteri e quindi la stima costo e il preflight PREMIUM.
+    read_round_parens = bool(data.get("read_round_parens", False))
+    read_square_brackets = bool(data.get("read_square_brackets", False))
 
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -9592,7 +9618,9 @@ def api_combined_estimate():
                 pass
             _pi = _PlanInfoCB()
             _pi.chapters = chs
-            _plan_cb = _plan_chunks(_pi, max_chars=_max_chars_cb, max_bytes=_max_bytes_cb)
+            _plan_cb = _plan_chunks(_pi, max_chars=_max_chars_cb, max_bytes=_max_bytes_cb,
+                                    strip_round=not read_round_parens,
+                                    strip_square=not read_square_brackets)
             _total_chunks_cb = len(_plan_cb)
             _parts_cb = voice_id.split(":")
             _model_key_cb = _parts_cb[1] if len(_parts_cb) >= 3 else "flash25"

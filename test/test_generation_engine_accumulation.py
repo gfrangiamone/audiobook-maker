@@ -32,7 +32,7 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
                 "text": "Hello world",  # 11 chars each
                 "chars": 11,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
@@ -103,7 +103,7 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
                 "text": "Hello world",
                 "chars": 11,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
@@ -152,7 +152,7 @@ def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
         "chapter_index": 1, "chapter_title": "C", "chunk_index": 0, "chunks_in_chapter": 1,
         "text": "x", "chars": 1,
     }]
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "google")
     monkeypatch.setattr(generation_engine, "_generate_silence_mp3", lambda p, s=1: True)

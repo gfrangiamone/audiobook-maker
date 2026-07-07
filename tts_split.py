@@ -239,13 +239,26 @@ def _is_multilingual_voice(voice: str) -> bool:
 # Text preprocessing
 # ---------------------------------------------------------------------------
 
-def _strip_parenthetical(text):
-    """Rimuove il contenuto tra parentesi tonde e quadre (anche annidate)."""
-    prev = None
-    while prev != text:
-        prev = text
-        text = re.sub(r'\([^()]*\)', '', text)
-        text = re.sub(r'\[[^\[\]]*\]', '', text)
+def _strip_parenthetical(text, strip_round=True, strip_square=True):
+    """Rimuove il contenuto tra parentesi tonde e/o quadre (anche annidate).
+
+    strip_round:  se True rimuove il contenuto tra parentesi tonde ().
+    strip_square: se True rimuove il contenuto tra parentesi quadre [].
+
+    Se entrambi False la funzione non rimuove alcun contenuto: applica comunque
+    la sola normalizzazione whitespace/punteggiatura finale, cosi` l'unica
+    differenza tra le modalita` e` la presenza/assenza del testo tra parentesi
+    (nessun altro effetto collaterale sul testo). Default: rimuove entrambe
+    (comportamento storico).
+    """
+    if strip_round or strip_square:
+        prev = None
+        while prev != text:
+            prev = text
+            if strip_round:
+                text = re.sub(r'\([^()]*\)', '', text)
+            if strip_square:
+                text = re.sub(r'\[[^\[\]]*\]', '', text)
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\s+([,;:.!?])', r'\1', text)
     return text.strip()
@@ -331,17 +344,21 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
-def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
+def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
+                 strip_round=True, strip_square=True):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
                Per voci Gemini su lingue CJK/Hindi/Arabo passare 1500.
     max_bytes: cap byte UTF-8 opzionale (None per Edge/Google, MAX_BYTES_PER_CALL
                meno margine di sicurezza per Gemini).
+    strip_round/strip_square: se False, il testo tra parentesi tonde/quadre viene
+               letto dal TTS invece di essere rimosso (default: rimuove entrambe).
     """
     plan = []
     for ch in info.chapters:
-        clean_text = _strip_parenthetical(ch.text)
+        clean_text = _strip_parenthetical(ch.text, strip_round=strip_round,
+                                          strip_square=strip_square)
         clean_text = _ensure_heading_pause(clean_text)
         # Dedup heading: se il titolo del capitolo compare gia` in testa al testo
         # (a meno di diacritici/punteggiatura/quote/prefissi numerici), evita

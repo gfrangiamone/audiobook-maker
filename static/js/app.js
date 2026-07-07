@@ -421,6 +421,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
   // Cost estimate triggers (no re-estimate on voice change)
   document.getElementById('aiToggle')?.addEventListener('change',requestCombinedEstimate);
+  // Toggle lettura parentesi: cambia il conteggio caratteri -> ristima costo.
+  document.getElementById('readRoundParens')?.addEventListener('change',requestCombinedEstimate);
+  document.getElementById('readSquareBrackets')?.addEventListener('change',requestCombinedEstimate);
   // Initialize wizard
   updateWizardSteps(1);
 });
@@ -1270,6 +1273,13 @@ function getCurrentVoiceId(){
 // no re-estimate on voice change (cost is per-model, not per-voice)
 let estimateDebounceTimer=null;
 const _estimateCache={key:null,value:null};
+// Lettura opzionale del testo tra parentesi (default: rimosso).
+function getParenFlags(){
+  return {
+    read_round_parens:!!document.getElementById('readRoundParens')?.checked,
+    read_square_brackets:!!document.getElementById('readSquareBrackets')?.checked,
+  };
+}
 function getEstimateCacheKey(){
   const tab=wizardState.audioTab||'standard';
   const model=(tab==='premium')?(document.getElementById('vmPremium')?.value||'flash25'):'none';
@@ -1278,7 +1288,9 @@ function getEstimateCacheKey(){
   const rate=document.getElementById('vr')?.value||'+0%';
   const langEl=(tab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
   const lang=(langEl&&langEl.value)||cl||'';
-  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+lang+'|'+chapters;
+  const pf=getParenFlags();
+  const paren=(pf.read_round_parens?'1':'0')+(pf.read_square_brackets?'1':'0');
+  return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+lang+'|'+chapters+'|'+paren;
 }
 function requestCombinedEstimate(){
   if(estimateDebounceTimer)clearTimeout(estimateDebounceTimer);
@@ -1304,6 +1316,7 @@ async function _doCombinedEstimate(){
     ai_opt_enabled:!!document.getElementById('aiToggle')?.checked,
     rate:document.getElementById('vr')?.value||'+0%',
     lang:selLang,
+    ...getParenFlags(),
   };
   try{
     const r=await fetch('/api/combined_estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1737,6 +1750,9 @@ function _buildPreviewUrl(){
   if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
   const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
   if(accent)u+='&accent='+encodeURIComponent(accent);
+  const _pf=getParenFlags();
+  if(_pf.read_round_parens)u+='&read_round_parens=1';
+  if(_pf.read_square_brackets)u+='&read_square_brackets=1';
   const sel=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   sel.forEach(i=>{u+='&selected_chapters='+encodeURIComponent(i);});
   return u;
@@ -2894,7 +2910,7 @@ async function startCombinedGeneration(combinedPaymentToken){
         ?(document.getElementById('vlPremium')?.value||cl)
         :(document.getElementById('vl')?.value||cl);
       _rememberLastLang(_genLang);
-      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang};
+      var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang,...getParenFlags()};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       if(_isGeminiVoiceId(getCurrentVoiceId())){
@@ -3291,7 +3307,7 @@ async function startGen(){
       ?(document.getElementById('vlPremium')?.value||cl)
       :(document.getElementById('vl')?.value||cl);
     _rememberLastLang(_genLang2);
-    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2};
+    const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2,...getParenFlags()};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
       const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);

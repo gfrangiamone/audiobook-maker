@@ -3270,7 +3270,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
               f"output_format={output_format}, engine={engine}")
         max_chars = _pick_chunk_max_chars(voice, getattr(info, "language", None) or "")
         max_bytes = _pick_chunk_max_bytes(voice)
-        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes)
+        # Lettura opzionale del testo tra parentesi: di default (flag assenti o
+        # False) il contenuto tra parentesi tonde/quadre viene rimosso dal TTS.
+        # L'utente puo` scegliere di includerlo (read_* True -> strip_* False).
+        _strip_round = not bool(job.get("read_round_parens", False))
+        _strip_square = not bool(job.get("read_square_brackets", False))
+        plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
+                            strip_round=_strip_round, strip_square=_strip_square)
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         job["gemini_actual"] = {
             "input_tokens": 0,

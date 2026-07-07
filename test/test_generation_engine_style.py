@@ -86,7 +86,7 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
                 "text": f"Cap{ch_idx+1}-Chunk{c_idx}",
                 "chars": 20,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
@@ -153,7 +153,7 @@ def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monk
                 "text": f"Cap{ch_idx+1}-Chunk{c_idx}",
                 "chars": 20,
             })
-    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None: plan)
+    monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
     monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
