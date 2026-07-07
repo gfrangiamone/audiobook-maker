@@ -1086,6 +1086,23 @@ def _ensure_transfer_token(job_id):
     return tok
 
 
+def _ensure_admin_copy_token(job_id):
+    """Ritorna (idempotente) un transfer token dedicato alla COPIA AMMINISTRATIVA
+    del job verso l'app (indagine). Distinto dal transfer token utente: reca il
+    flag `admin_copy` così il claim non riassegna il job all'app chiamante e non
+    tocca lo stato dell'utente originale (vedi api_transfer_claim)."""
+    with _transfer_lock:
+        for tok, info in _transfer_tokens.items():
+            if (isinstance(info, dict) and info.get("job_id") == job_id
+                    and info.get("admin_copy")):
+                return tok
+        tok = secrets.token_urlsafe(24)
+        _transfer_tokens[tok] = {"job_id": job_id, "created_at": time.time(),
+                                 "admin_copy": True}
+    _save_transfer_tokens()
+    return tok
+
+
 def _qr_data_uri(text):
     """PNG data-URI di un QR che codifica `text`. '' se qrcode non disponibile."""
     try:
@@ -3492,6 +3509,12 @@ def admin_logs():
 <div class="meta-row"><span class="meta-label">🌐</span>{blang_display}</div>
 </div>
 {m4b_subbar}
+<div class="card-footer">
+<button class="qr-btn" data-sid="{sid}" title="Copia il job sull'app (QR) a scopo di indagine — non altera il flusso dell'utente">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h2v2h-2v-2zm4 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-6 2h2v2h-2v-2zm2 2h2v2h-2v-2zm2 0h2v2h-2v-2zm2 0h2v2h-2v-2z"/></svg>
+QR
+</button>
+</div>
 </div>
 """
         cards_html += "</div></div>\n"
@@ -3637,6 +3660,11 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .card-pct{{color:var(--orange);font-weight:700;margin-left:4px}}
 .kill-btn{{flex-shrink:0;border:1px solid rgba(220,38,38,.45);background:rgba(220,38,38,.10);color:#dc2626;border-radius:6px;font-size:.72rem;line-height:1;padding:3px 6px;cursor:pointer}}
 .kill-btn:hover{{background:rgba(220,38,38,.22)}}
+.card-footer{{margin-top:10px;display:flex;align-items:center}}
+.qr-btn{{border:1px solid rgba(167,139,250,.45);background:rgba(167,139,250,.10);color:var(--accent2,#a78bfa);border-radius:6px;font-size:.7rem;line-height:1;padding:4px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}}
+.qr-btn:hover{{background:rgba(167,139,250,.22)}}
+.qr-btn svg{{display:block}}
+#qrmImg{{width:220px;height:220px;background:#fff;border-radius:8px;padding:8px;display:none}}
 .kmodal-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200}}
 .kmodal-overlay.open{{display:flex}}
 .kmodal{{background:var(--card,#1c1c28);border:1px solid rgba(220,38,38,.5);border-radius:12px;max-width:430px;width:92%;padding:18px 20px;font-size:.82rem;color:var(--text)}}
@@ -3758,6 +3786,27 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="kbtns">
       <button class="kcancel" id="kmCancel">Annulla</button>
       <button class="kconfirm" id="kmConfirm">Interrompi job</button>
+    </div>
+  </div>
+</div>
+<!-- Modale copia job sull'app via QR (indagine admin). Non altera il flusso utente. -->
+<div class="kmodal-overlay" id="qrmodalOverlay">
+  <div class="kmodal" style="border-color:rgba(167,139,250,.5)">
+    <h3 style="color:var(--accent2,#a78bfa)">&#x1F532; Copia job sull'app (indagine)</h3>
+    <div class="krow">📄 <b id="qrmTitle"></b></div>
+    <div class="krow">🆔 <code id="qrmSid"></code></div>
+    <div style="text-align:center;margin:14px 0">
+      <img id="qrmImg" alt="QR code">
+      <div id="qrmLoading" style="color:var(--text-dim)">Generazione QR…</div>
+    </div>
+    <div class="krow" style="word-break:break-all;font-size:.68rem;color:var(--text-dim)"><span id="qrmUrl"></span></div>
+    <div class="keffects" style="background:rgba(167,139,250,.08);border-color:rgba(167,139,250,.25)">
+      Scansiona con l'app <b>Audiobook Maker &amp; Player</b> per importare una <b>copia</b> del job a scopo di indagine.
+      Il flusso dell'utente che ha avviato il job <b>non viene modificato</b>.
+    </div>
+    <div class="kbtns">
+      <button class="kcancel" id="qrmCopy">Copia link</button>
+      <button class="kcancel" id="qrmClose">Chiudi</button>
     </div>
   </div>
 </div>
@@ -4117,6 +4166,42 @@ async function confirmKill() {{
     kCurrent = null;
 }}
 
+//  -  -  Admin: copia job sull'app via QR (indagine)  -  -
+const qrOverlay = document.getElementById('qrmodalOverlay');
+
+async function openCopyQr(sid, title) {{
+    document.getElementById('qrmTitle').textContent = title || '';
+    document.getElementById('qrmSid').textContent = sid;
+    const img = document.getElementById('qrmImg');
+    const loading = document.getElementById('qrmLoading');
+    img.style.display = 'none';
+    loading.style.display = 'block';
+    loading.textContent = 'Generazione QR…';
+    document.getElementById('qrmUrl').textContent = '';
+    qrOverlay.dataset.url = '';
+    qrOverlay.classList.add('open');
+    try {{
+        const r = await fetch('/admin/api/job/' + encodeURIComponent(sid) + '/copy-qr',
+                              {{headers: adminHeaders()}});
+        const d = await r.json().catch(() => ({{}}));
+        if (r.ok && d.qr) {{
+            img.src = d.qr;
+            img.style.display = 'inline-block';
+            loading.style.display = 'none';
+            document.getElementById('qrmUrl').textContent = d.url || '';
+            qrOverlay.dataset.url = d.url || '';
+        }} else if (r.ok && d.url) {{
+            loading.textContent = 'QR non disponibile (modulo qrcode assente sul server). Usa il link:';
+            document.getElementById('qrmUrl').textContent = d.url;
+            qrOverlay.dataset.url = d.url;
+        }} else {{
+            loading.textContent = 'Errore: ' + (d.error || ('HTTP ' + r.status));
+        }}
+    }} catch(e) {{
+        loading.textContent = 'Errore di rete: ' + e;
+    }}
+}}
+
 document.addEventListener('click', (e) => {{
     const kb = e.target.closest && e.target.closest('.kill-btn');
     if (kb) {{
@@ -4124,11 +4209,30 @@ document.addEventListener('click', (e) => {{
         openKillModal(kb.dataset.sid, kb.dataset.title || '');
         return;
     }}
+    const qb = e.target.closest && e.target.closest('.qr-btn');
+    if (qb) {{
+        e.stopPropagation();
+        const card = qb.closest('.card');
+        const tt = card ? (card.querySelector('.card-title')?.getAttribute('title') || '') : '';
+        openCopyQr(qb.dataset.sid, tt);
+        return;
+    }}
     if (e.target.id === 'kmCancel' || e.target.id === 'kmodalOverlay') {{
         kOverlay.classList.remove('open');
         kCurrent = null;
     }}
     if (e.target.id === 'kmConfirm') confirmKill();
+    if (e.target.id === 'qrmClose' || e.target.id === 'qrmodalOverlay') {{
+        qrOverlay.classList.remove('open');
+    }}
+    if (e.target.id === 'qrmCopy') {{
+        const u = qrOverlay.dataset.url || '';
+        if (u && navigator.clipboard) {{
+            navigator.clipboard.writeText(u)
+                .then(() => showToast('Link copiato negli appunti', true))
+                .catch(() => showToast('Copia non riuscita', false));
+        }}
+    }}
 }});
 </script>
 
@@ -4628,7 +4732,9 @@ function renderList(){
     var tot=v.amount_eur||0;
     var balCell='<strong>'+rem.toFixed(2)+'</strong> / '+tot.toFixed(2);
     if(v.uses&&v.uses.length){balCell+=' <span style="color:var(--muted);font-size:.8em">('+v.uses.length+' us'+(v.uses.length===1?'o':'i')+')</span>';}
-    var btn=(rem<0.01)?'':('<button class="danger btn-sm" onclick="revokeVoucher(\''+v.code+'\')">Revoca</button>');
+    var revBtn=(rem<0.01)?'':('<button class="danger btn-sm" onclick="revokeVoucher(\''+v.code+'\')">Revoca</button>');
+    var mailBtn=(v.email)?('<button class="secondary btn-sm" style="margin-right:6px" onclick="notifyVoucher(\''+v.code+'\')" title="Invia email al destinatario">&#x2709; Email</button>'):'';
+    var btn=mailBtn+revBtn;
     return '<tr>'+
       '<td><code>'+escapeHtml(v.code)+'</code></td>'+
       '<td><span class="badge '+k+'">'+k+'</span></td>'+
@@ -4650,12 +4756,24 @@ async function createVoucher(){
   var kind=document.getElementById('cKind').value;
   var note=document.getElementById('cNote').value.trim();
   if(!email||!amount||amount<=0){msg('createMsg','Email e importo > 0 obbligatori','err');return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){msg('createMsg','Indirizzo email non valido','err');return}
   try{
     var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note}});
     msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)','ok');
     document.getElementById('cEmail').value='';document.getElementById('cAmount').value='';document.getElementById('cNote').value='';
     await loadList();
   }catch(e){msg('createMsg','Errore: '+e.message,'err')}
+}
+
+async function notifyVoucher(code){
+  var v=VOUCHERS.filter(function(x){return x.code===code})[0];
+  var em=v?v.email:'';
+  if(!em){msg('listMsg','Voucher senza email destinatario','err');return}
+  if(!confirm('Inviare email di notifica a '+em+' per il voucher '+code+' ?'))return;
+  try{
+    var j=await api('/admin/api/vouchers/'+encodeURIComponent(code)+'/notify',{method:'POST',body:{}});
+    msg('listMsg','Email inviata a '+escapeHtml(j.email||em),'ok');
+  }catch(e){msg('listMsg','Errore invio email: '+e.message,'err')}
 }
 
 async function revokeVoucher(code){
@@ -4725,8 +4843,8 @@ def admin_api_vouchers():
         days = 180
     kind = (data.get("kind") or "promo").strip().lower()
     note = (data.get("note") or "").strip()
-    if not email or "@" not in email:
-        return jsonify({"error": "email required"}), 400
+    if not email or not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$', email):
+        return jsonify({"error": "invalid email"}), 400
     if amount <= 0:
         return jsonify({"error": "amount must be > 0"}), 400
     if days <= 0 or days > 3650:
@@ -4792,6 +4910,66 @@ def admin_api_voucher_revoke(code):
     _log_activity("", "", "ADMIN_VOUCHER_REVOKE", "", _get_client_ip(), code[:8] + "...", reason[:40])
     print(f"[admin] voucher revoked via UI: {code} reason={reason!r}")
     return jsonify({"ok": True, "code": code})
+
+
+@app.route("/admin/api/vouchers/<code>/notify", methods=["POST"])
+def admin_api_voucher_notify(code):
+    """Invia al destinatario un'email (in inglese) con i dati del voucher."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if not _smtp_available():
+        return jsonify({"error": "SMTP not configured"}), 503
+    code = (code or "").strip().upper()
+    with payment._vouchers_lock:
+        v = payment._vouchers.get(code)
+        if not v:
+            return jsonify({"error": "Not found"}), 404
+        email = (v.get("email") or "").strip()
+        amount_eur = float(v.get("amount_eur") or 0)
+        created_at = v.get("created_at") or time.time()
+        expires_at = v.get("expires_at")
+    if not email or "@" not in email:
+        return jsonify({"error": "voucher has no recipient email"}), 400
+    if expires_at:
+        valid_days = max(1, round((float(expires_at) - float(created_at)) / 86400))
+    else:
+        valid_days = VOUCHER_EXPIRY_DAYS
+    ok = email_service._send_voucher_notification_email(
+        code, email, amount_eur, valid_days, created_at
+    )
+    if not ok:
+        return jsonify({"error": "send failed"}), 502
+    _log_activity("", "", "ADMIN_VOUCHER_NOTIFY", "", _get_client_ip(), code[:8] + "...", email)
+    print(f"[admin] voucher notification email sent: {code} -> {email}")
+    return jsonify({"ok": True, "code": code, "email": email})
+
+
+@app.route("/admin/api/job/<path:job_id>/copy-qr", methods=["GET"])
+def admin_api_job_copy_qr(job_id):
+    """Restituisce un QR (data-URI PNG) + deep link per copiare il job sull'app
+    'Audiobook Maker & Player' a scopo di indagine admin. Il claim del token
+    NON altera il job dell'utente originale (vedi api_transfer_claim, ramo
+    admin_copy)."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
+        return jsonify({"error": "invalid job_id"}), 400
+    base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        try:
+            base = request.url_root.rstrip("/")
+        except Exception:
+            base = ""
+    tok = _ensure_admin_copy_token(job_id)
+    url = f"{base}/t/{tok}"
+    qr = _qr_data_uri(url)
+    return jsonify({"url": url, "qr": qr, "job_id": job_id})
 
 
 @app.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
@@ -8643,6 +8821,56 @@ def api_transfer_claim(token):
     if not cid:
         return jsonify({"error": "no_cid", "error_code": "no_cid"}), 400
     job_id = info.get("job_id", "")
+
+    # ── Copia AMMINISTRATIVA (indagine) ────────────────────────────────────
+    # Token con flag admin_copy: l'admin vuole una COPIA del job sull'app senza
+    # alterare il flusso dell'utente originale. NON riassegnamo job["client_id"],
+    # NON impostiamo transferred_to_mobile/email_registered, NON riassegnamo i
+    # download token esistenti. Cloniamo lo snapshot di un download token del job
+    # sotto un nuovo token di proprietà del cid chiamante (l'app admin), così il
+    # job compare in /api/my_jobs dell'admin ed è scaricabile per l'indagine.
+    if info.get("admin_copy"):
+        base_rec = None
+        non_admin_rec = None
+        any_rec = None
+        for _tok, _rec in list(_download_tokens.items()):
+            if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
+                any_rec = any_rec or _rec
+                if not _rec.get("admin_copy"):
+                    non_admin_rec = non_admin_rec or _rec
+        base_rec = non_admin_rec or any_rec
+        created_temp = None
+        if base_rec is None:
+            with _jobs_lock:
+                _job = jobs.get(job_id)
+                _job_done = _job is not None and _job.get("status") in ("done", "optimized")
+            if _job_done:
+                # Nessun token per il job: creane uno snapshot dal job. È idempotente,
+                # ma qui sappiamo che non esisteva → newtok è nuovo e verrà rimosso
+                # dopo il clone per non rendere il job visibile all'utente originale.
+                newtok = generation_engine._create_download_token(job_id)
+                if newtok:
+                    base_rec = _download_tokens.get(newtok)
+                    created_temp = newtok
+        if not base_rec:
+            return jsonify({"error": "job_unavailable",
+                            "error_code": "job_unavailable"}), 410
+        clone = dict(base_rec)
+        clone["client_id"] = cid
+        clone["admin_copy"] = True
+        clone["created_at"] = time.time()
+        clone_tok = str(uuid.uuid4())
+        _download_tokens[clone_tok] = clone
+        if created_temp:
+            # Rimuovi il token base creato solo per estrarre lo snapshot: lasciarlo
+            # esporrebbe il job nell'app dell'utente originale (flusso invariato).
+            _download_tokens.pop(created_temp, None)
+        _save_tokens()
+        _log_activity(job_id, "", "ADMIN_COPY", client_id=cid,
+                      client_ip=_get_client_ip(), platform=_client_platform())
+        print(f"[transfer] admin copy claimed for job {job_id} by cid {cid}")
+        return jsonify({"ok": True, "job_id": job_id, "admin_copy": True})
+
     moved = False
     job_done = False
     with _jobs_lock:

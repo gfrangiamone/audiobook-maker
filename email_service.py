@@ -348,6 +348,43 @@ def _send_voucher_email(code, email, amount_eur, book_title):
     _send_email(email, subject, html_body)
 
 
+def _send_voucher_notification_email(code, email, amount_eur, valid_days, created_at):
+    """Notifica al destinatario un voucher creato dall'admin.
+
+    Testo sempre in inglese (destinatari internazionali). Include codice,
+    valore, giorni di validita' e data di generazione. Ritorna True su invio ok.
+
+    created_at: epoch seconds della creazione voucher.
+    valid_days: numero di giorni di validita' dalla data di generazione.
+    """
+    if not (email and _smtp_available()):
+        return False
+    from datetime import datetime
+    try:
+        gen_date = datetime.fromtimestamp(float(created_at)).strftime("%d %B %Y")
+    except (TypeError, ValueError, OSError):
+        gen_date = datetime.now().strftime("%d %B %Y")
+    try:
+        days_int = int(valid_days)
+    except (TypeError, ValueError):
+        days_int = VOUCHER_EXPIRY_DAYS
+    code_safe = _sanitize_header(code, max_len=64)
+    subject = f"Your Audiobook Maker voucher — EUR {amount_eur:.2f}"
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
+  <h2 style="color:#2c3e50">&#x1F381; Your voucher</h2>
+  <p>Here is your voucher worth <strong>EUR {amount_eur:.2f}</strong>, which you can use for premium services on audiobook-maker.com (premium voices, AI text optimisation or AI translations):</p>
+  <div style="padding:20px;background:#f0f5ff;border:2px dashed #8b5cf6;border-radius:8px;margin:20px 0;text-align:center">
+    <div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:2px;color:#8b5cf6">{code_safe}</div>
+    <div style="margin-top:12px">Value: <strong>EUR {amount_eur:.2f}</strong></div>
+  </div>
+  <p>Please use it within <strong>{days_int} days</strong> from <strong>{gen_date}</strong>.</p>
+  <p>Thank you for your support!</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
+</div>"""
+    return _send_email(email, subject, html_body)
+
+
 def _send_gemini_overload_email(email, amount_eur, book_title, voucher_code=None,
                                  retry_after_sec=0):
     """Notifica all'utente che il job non e' stato avviato perche' il motore
