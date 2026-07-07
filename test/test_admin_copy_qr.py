@@ -125,23 +125,143 @@ def test_copy_qr_endpoint_requires_admin(monkeypatch):
 
 
 def test_copy_qr_endpoint_returns_url(monkeypatch):
+    """Job recuperabile (in RAM): l'endpoint emette url+qr e crea il token."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
     monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "qr-job-1"
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {"status": "generating", "client_id": "web-x",
+                                   "info": None, "start_time": time.time()}
     tok_ref = {}
     try:
         c = audiobook_app.app.test_client()
-        r = c.get("/admin/api/job/qr-job-1/copy-qr",
+        r = c.get(f"/admin/api/job/{jid}/copy-qr",
                   headers={"X-Admin-Token": "test-admin-token"})
         assert r.status_code == 200
         d = r.get_json()
-        assert d["job_id"] == "qr-job-1"
+        assert d["job_id"] == jid
+        assert d.get("available") is True
         assert "/t/" in d["url"]
         assert isinstance(d["qr"], str)  # data-URI PNG o '' se qrcode assente
-        # token admin_copy creato
         tok_ref["t"] = [t for t, v in audiobook_app._transfer_tokens.items()
-                        if isinstance(v, dict) and v.get("job_id") == "qr-job-1"
+                        if isinstance(v, dict) and v.get("job_id") == jid
                         and v.get("admin_copy")]
         assert len(tok_ref["t"]) == 1
     finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
         for t in tok_ref.get("t", []):
             audiobook_app._transfer_tokens.pop(t, None)
+
+
+def test_copy_qr_endpoint_unavailable_when_gone(monkeypatch):
+    """Job definitivamente sparito (non in RAM, nessun token, nessun file): il QR
+    non deve essere proposto → available:false, nessun url/token."""
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "qr-gone-1"
+    c = audiobook_app.app.test_client()
+    r = c.get(f"/admin/api/job/{jid}/copy-qr",
+              headers={"X-Admin-Token": "test-admin-token"})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d.get("available") is False
+    assert "url" not in d
+    residui = [t for t, v in audiobook_app._transfer_tokens.items()
+               if isinstance(v, dict) and v.get("job_id") == jid]
+    assert residui == []
+
+
+def test_admin_copy_claim_gone_job_returns_410(monkeypatch):
+    """Claim su job sparito (né RAM, né token, né file) → 410 job_unavailable."""
+    _align_ge(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "acp-gone"
+    tok = None
+    try:
+        tok = audiobook_app._ensure_admin_copy_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-gone"})
+        assert r.status_code == 410
+        assert r.get_json().get("error_code") == "job_unavailable"
+    finally:
+        audiobook_app._transfer_tokens.pop(tok, None)
+
+
+def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
+    """Job IN CORSO: il claim aggancia (pending) senza toccare l'utente; al COMPLETE
+    la copia admin è materializzata come token admin-owned scaricabile."""
+    _align_ge(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "acp-inprog"
+    out = tmp_path / "out.m4b"; out.write_bytes(b"x")
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "generating", "client_id": "web-ip", "info": None,
+            "output_m4b": str(out), "output_files": [str(out)],
+            "output_format": "m4b", "start_time": time.time(),
+        }
+    created = []
+    tok = None
+    try:
+        tok = audiobook_app._ensure_admin_copy_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-ip"})
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body.get("pending") is True and body.get("admin_copy") is True
+        # cid agganciato al job, nessun token ancora creato, utente invariato
+        assert "admin-ip" in audiobook_app.jobs[jid]["admin_copy_cids"]
+        assert audiobook_app.jobs[jid]["client_id"] == "web-ip"
+        assert [v for v in audiobook_app._download_tokens.values()
+                if isinstance(v, dict) and v.get("job_id") == jid] == []
+
+        # Simula il COMPLETE: materializza le copie admin
+        audiobook_app.jobs[jid]["status"] = "done"
+        generation_engine._materialize_admin_copies(jid)
+
+        created = [t for t, v in audiobook_app._download_tokens.items()
+                   if isinstance(v, dict) and v.get("job_id") == jid]
+        assert len(created) == 1
+        clone = audiobook_app._download_tokens[created[0]]
+        assert clone["client_id"] == "admin-ip" and clone.get("admin_copy") is True
+        # lista svuotata (idempotenza) e nessun token utente residuo
+        assert not audiobook_app.jobs[jid].get("admin_copy_cids")
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+        for t in created:
+            audiobook_app._download_tokens.pop(t, None)
+        audiobook_app._transfer_tokens.pop(tok, None)
+
+
+def test_admin_copy_finalized_not_in_ram_reconstructs_from_disk(monkeypatch, tmp_path):
+    """Job finalizzato NON più in RAM ma con output ancora su disco: il claim
+    ricostruisce lo snapshot e consegna la copia admin (nessun 410)."""
+    _align_ge(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
+    jid = "acp-cold"
+    outdir = tmp_path / jid / "output_1"
+    outdir.mkdir(parents=True)
+    m4b = outdir / "Libro.m4b"; m4b.write_bytes(b"x")
+    created = []
+    tok = None
+    try:
+        tok = audiobook_app._ensure_admin_copy_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-cold"})
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body.get("admin_copy") is True and body.get("job_id") == jid
+        created = [t for t, v in audiobook_app._download_tokens.items()
+                   if isinstance(v, dict) and v.get("job_id") == jid]
+        assert len(created) == 1
+        clone = audiobook_app._download_tokens[created[0]]
+        assert clone["client_id"] == "admin-cold" and clone.get("admin_copy") is True
+        assert clone["output_m4b"] == str(m4b)
+        assert clone["book_title"] == "Libro"
+    finally:
+        for t in created:
+            audiobook_app._download_tokens.pop(t, None)
+        audiobook_app._transfer_tokens.pop(tok, None)

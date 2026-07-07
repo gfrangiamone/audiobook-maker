@@ -1367,6 +1367,59 @@ def _create_download_token(job_id):
     return token
 
 
+def _materialize_admin_copies(job_id):
+    """Al COMPLETE di un job con copie amministrative agganciate mentre era in
+    corso (job['admin_copy_cids'], vedi api_transfer_claim ramo admin_copy),
+    materializza un download token admin-owned per ciascun cid registrato — così
+    il job compare pronto al download nell'app dell'admin (indagine).
+
+    NON altera job/ownership/flusso dell'utente originale: clona lo snapshot di un
+    download token non-admin del job (creandone uno temporaneo e rimuovendolo se
+    l'utente non ne aveva). Idempotente-safe: svuota admin_copy_cids a fine lavoro."""
+    job = _jobs.get(job_id) if _jobs is not None else None
+    if not job:
+        return
+    cids = list(job.get("admin_copy_cids") or [])
+    if not cids:
+        return
+    base_rec = None
+    created_temp = None
+    for tok, rec in list(_download_tokens.items()):
+        if isinstance(rec, dict) and rec.get("job_id") == job_id and not rec.get("admin_copy"):
+            base_rec = rec
+            break
+    if base_rec is None:
+        newtok = _create_download_token(job_id)
+        _cand = _download_tokens.get(newtok) if newtok else None
+        # Solo se è un token NON-admin appena creato per l'utente: lo useremo come
+        # base e poi lo rimuoveremo per lasciare invariato il flusso utente.
+        if isinstance(_cand, dict) and not _cand.get("admin_copy"):
+            base_rec = _cand
+            created_temp = newtok
+    if base_rec is None:
+        print(f"[{job_id}] admin-copy materialize: nessun output da clonare", flush=True)
+        return
+    made = 0
+    for cid in cids:
+        if not cid:
+            continue
+        clone = dict(base_rec)
+        clone["client_id"] = cid
+        clone["admin_copy"] = True
+        clone["created_at"] = time.time()
+        _download_tokens[str(uuid.uuid4())] = clone
+        made += 1
+    if created_temp:
+        _download_tokens.pop(created_temp, None)
+    if made:
+        _save_tokens()
+    try:
+        job.pop("admin_copy_cids", None)
+    except Exception:
+        pass
+    print(f"[{job_id}] admin-copy materialize: {made} copie admin consegnate", flush=True)
+
+
 def _send_completion_email(job_id):
     """Send download link email when a job completes with email registered."""
     job = _jobs.get(job_id)
@@ -4462,6 +4515,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                               job.get("voice", ""), job.get("browser_lang", ""))
             except Exception:
                 pass
+
+        # Copie amministrative agganciate mentre il job era in corso: ora che è
+        # completato, materializza i download token admin-owned (indagine).
+        try:
+            _materialize_admin_copies(job_id)
+        except Exception as _amc_err:
+            print(f"[{job_id}] admin-copy materialization failed (non-fatal): {_amc_err}", flush=True)
 
     except _GeminiQualityAbort as _qa:
         # Early-abort: troppi chunk silenziati sul campione iniziale. Stesso path

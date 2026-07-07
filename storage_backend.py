@@ -140,6 +140,32 @@ def delete_object(key):
     _get_client().delete_object(Bucket=_BUCKET, Key=_full_key(key))
 
 
+def list_prefix(prefix):
+    """Elenca le chiavi degli oggetti cold sotto `prefix`, ritornate nello stesso
+    namespace di `storage_tiering.key_for_path` (relative a DATA_DIR, senza
+    l'eventuale ABM_S3_KEY_PREFIX di bucket). Usato per ricostruire i download di
+    un job finalizzato non più in RAM localizzando gli output su cold. [] se il
+    backend non è configurato o su errore."""
+    if not is_enabled():
+        return []
+    client = _get_client()
+    full = _full_key(prefix)
+    strip = f"{_KEY_PREFIX}/" if _KEY_PREFIX else ""
+    out = []
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=_BUCKET, Prefix=full):
+            for obj in page.get("Contents", []):
+                k = obj["Key"]
+                if strip and k.startswith(strip):
+                    k = k[len(strip):]
+                out.append(k)
+    except Exception as e:
+        print(f"[storage] list_prefix failed for {prefix}: {e}")
+        return []
+    return out
+
+
 def delete_prefix(prefix):
     """Cancella tutti gli oggetti sotto `prefix` (cold cleanup di un job dir).
     Pagina e cancella a batch di 1000."""

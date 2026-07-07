@@ -802,6 +802,9 @@ def _build_job_descriptor(job, phase):
         # un restart (altrimenti il recovery batch rigenererebbe col default rimozione).
         "read_round_parens": bool(job.get("read_round_parens", False)),
         "read_square_brackets": bool(job.get("read_square_brackets", False)),
+        # Copie amministrative (indagine) agganciate a un job ancora in corso:
+        # sopravvivono a un restart così il COMPLETE post-recovery le materializza.
+        "admin_copy_cids": list(job.get("admin_copy_cids", []) or []),
         "notify_email": job.get("notify_email", ""),
         "notify_download_type": job.get("notify_download_type", "audio"),
         "notify_base_url": job.get("notify_base_url", ""),
@@ -888,6 +891,8 @@ def _reenqueue_orphan(job_id, rec):
         # Ripristina la scelta lettura parentesi: run_generation la legge da job.
         "read_round_parens": bool(rec.get("read_round_parens", False)),
         "read_square_brackets": bool(rec.get("read_square_brackets", False)),
+        # Copie admin agganciate prima del restart: da materializzare al COMPLETE.
+        "admin_copy_cids": list(rec.get("admin_copy_cids", []) or []),
     }
     with _jobs_lock:
         jobs[job_id] = job
@@ -4185,7 +4190,11 @@ async function openCopyQr(sid, title) {{
         const r = await fetch('/admin/api/job/' + encodeURIComponent(sid) + '/copy-qr',
                               {{headers: adminHeaders()}});
         const d = await r.json().catch(() => ({{}}));
-        if (r.ok && d.qr) {{
+        if (r.ok && d.available === false) {{
+            loading.textContent = 'File non più disponibili (né hot né cold): nulla da trasferire sull\\'app.';
+            document.getElementById('qrmUrl').textContent = '';
+            qrOverlay.dataset.url = '';
+        }} else if (r.ok && d.qr) {{
             img.src = d.qr;
             img.style.display = 'inline-block';
             loading.style.display = 'none';
@@ -4961,6 +4970,11 @@ def admin_api_job_copy_qr(job_id):
         return jsonify({"error": "Unauthorized"}), 401
     if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
         return jsonify({"error": "invalid job_id"}), 400
+    # Il QR ha senso solo se la copia è effettivamente consegnabile all'app: job
+    # in RAM (in corso/done), token esistente, o output ancora presente hot/cold.
+    # Per job definitivamente spariti non proponiamo un QR che darebbe 410.
+    if not _admin_copy_recoverable(job_id):
+        return jsonify({"available": False, "job_id": job_id}), 200
     base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
     if not base:
         try:
@@ -4970,7 +4984,7 @@ def admin_api_job_copy_qr(job_id):
     tok = _ensure_admin_copy_token(job_id)
     url = f"{base}/t/{tok}"
     qr = _qr_data_uri(url)
-    return jsonify({"url": url, "qr": qr, "job_id": job_id})
+    return jsonify({"available": True, "url": url, "qr": qr, "job_id": job_id})
 
 
 @app.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
@@ -8865,15 +8879,36 @@ def api_transfer_claim(token):
         if base_rec is None:
             with _jobs_lock:
                 _job = jobs.get(job_id)
-                _job_done = _job is not None and _job.get("status") in ("done", "optimized")
-            if _job_done:
-                # Nessun token per il job: creane uno snapshot dal job. È idempotente,
-                # ma qui sappiamo che non esisteva → newtok è nuovo e verrà rimosso
-                # dopo il clone per non rendere il job visibile all'utente originale.
+                _status = _job.get("status") if _job else None
+            if _status in ("done", "optimized"):
+                # Job completato in RAM ma senza token: creane uno snapshot dal job.
+                # newtok verrà rimosso dopo il clone per non rendere il job visibile
+                # all'utente originale (flusso invariato).
                 newtok = generation_engine._create_download_token(job_id)
                 if newtok:
                     base_rec = _download_tokens.get(newtok)
                     created_temp = newtok
+            elif _job is not None:
+                # Job ANCORA IN CORSO: aggancia la copia admin e consegna a fine job.
+                # Registra il cid chiamante; al COMPLETE il download token admin-owned
+                # viene materializzato (generation_engine._materialize_admin_copies),
+                # SENZA alterare job/ownership/flusso dell'utente originale.
+                with _jobs_lock:
+                    _job2 = jobs.get(job_id)
+                    if _job2 is not None:
+                        _lst = _job2.setdefault("admin_copy_cids", [])
+                        if cid not in _lst:
+                            _lst.append(cid)
+                _log_activity(job_id, "", "ADMIN_COPY_PENDING", client_id=cid,
+                              client_ip=_get_client_ip(), platform=_client_platform())
+                print(f"[transfer] admin copy PENDING (job in corso) {job_id} cid {cid}")
+                return jsonify({"ok": True, "job_id": job_id, "admin_copy": True,
+                                "pending": True})
+            else:
+                # Job finalizzato ma non più in RAM (deploy/restart) e senza token:
+                # ricostruisci lo snapshot dagli output ancora presenti su disco
+                # (hot) o cold (R2). None solo se i file sono davvero spariti.
+                base_rec = _reconstruct_admin_download_record(job_id)
         if not base_rec:
             return jsonify({"error": "job_unavailable",
                             "error_code": "job_unavailable"}), 410
@@ -9106,6 +9141,69 @@ def _file_available(path):
     except Exception:
         pass
     return False
+
+
+def _reconstruct_admin_download_record(job_id):
+    """Ricostruisce uno snapshot 'download token' per un job FINALIZZATO non più
+    in RAM, localizzando l'output primario (m4b>mp3>abm>zip) su disco locale (hot)
+    o su cold storage (R2). Ritorna un dict record (NON ancora inserito in
+    _download_tokens) oppure None se nessun output è disponibile.
+
+    Serve alla copia amministrativa (indagine): dopo un deploy/restart la RAM è
+    azzerata e i job gratuiti/diretti non hanno un download token, ma i file
+    possono essere ancora presenti (hot o cold). Senza questa ricostruzione il
+    claim admin restituirebbe 410 anche per job appena completati con file
+    ancora scaricabili."""
+    job_dir = UPLOAD_DIR / job_id
+    fields = (("output_m4b", "m4b"), ("output_file", "mp3"),
+              ("optimized_abm_path", "abm"), ("output_zip", "zip"))
+    found = {}
+    title = ""
+    # HOT: scan delle output dir locali (newest-first via _iter_output_dirs).
+    for field, ext in fields:
+        hits = _find_files_in_outputs(job_dir, f"*.{ext}")
+        if hits:
+            found[field] = str(hits[0])
+            if not title:
+                title = hits[0].stem
+    # COLD: se nulla in locale, elenca il prefisso del job su R2 e mappa le chiavi
+    # sui path canonici locali (key_for_path li ritradurrà in chiavi cold e
+    # _send_file_throttled farà il redirect 302 al presigned URL).
+    if not found and storage_backend.is_enabled():
+        keys = storage_backend.list_prefix(f"{job_id}/")
+        for field, ext in fields:
+            for k in keys:
+                if k.lower().endswith("." + ext):
+                    found[field] = str(UPLOAD_DIR / k)
+                    if not title:
+                        title = Path(k).stem
+                    break
+    if not found:
+        return None
+    rec = {
+        "job_id": job_id,
+        "created_at": time.time(),
+        "download_type": "audio",
+        "book_title": title or "audiolibro",
+        "is_gemini": False,
+    }
+    rec.update(found)
+    return rec
+
+
+def _admin_copy_recoverable(job_id):
+    """True se una copia amministrativa del job è consegnabile all'app: job ancora
+    in RAM (in corso → aggancio e consegna a fine job; done → clone immediato),
+    OPPURE un download token esiste già, OPPURE l'output è ancora presente su
+    disco/cold (job finalizzato ricostruibile). False → il job è definitivamente
+    sparito e il QR non deve nemmeno essere proposto."""
+    with _jobs_lock:
+        if jobs.get(job_id) is not None:
+            return True
+    for _tok, _rec in list(_download_tokens.items()):
+        if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
+            return True
+    return _reconstruct_admin_download_record(job_id) is not None
 
 
 def _resolve_ready_file(dltok):
