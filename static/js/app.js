@@ -2867,6 +2867,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       payload.single_file=singleFile;
       payload.output_format=outputFormat;
       payload.podcast_base_url=podcastBaseUrl;
+      Object.assign(payload,getParenFlags());
       console.log('[startCombinedGeneration] POST /api/optimize', payload);
       var r=await fetch('/api/optimize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       console.log('[startCombinedGeneration] /api/optimize response', r.status);

@@ -798,6 +798,10 @@ def _build_job_descriptor(job, phase):
         "gemini_style_instruction": job.get("gemini_style_instruction"),
         "selected_chapters": job.get("opt_selected_chapters") or job.get("selected_chapters"),
         "opt_auto_generate": bool(job.get("opt_auto_generate")),
+        # Lettura opzionale testo tra parentesi: preserva la scelta utente attraverso
+        # un restart (altrimenti il recovery batch rigenererebbe col default rimozione).
+        "read_round_parens": bool(job.get("read_round_parens", False)),
+        "read_square_brackets": bool(job.get("read_square_brackets", False)),
         "notify_email": job.get("notify_email", ""),
         "notify_download_type": job.get("notify_download_type", "audio"),
         "notify_base_url": job.get("notify_base_url", ""),
@@ -881,6 +885,9 @@ def _reenqueue_orphan(job_id, rec):
         "opt_podcast_base_url": rec.get("podcast_base_url", ""),
         "opt_auto_generate": bool(rec.get("opt_auto_generate")),
         "opt_selected_chapters": rec.get("selected_chapters"),
+        # Ripristina la scelta lettura parentesi: run_generation la legge da job.
+        "read_round_parens": bool(rec.get("read_round_parens", False)),
+        "read_square_brackets": bool(rec.get("read_square_brackets", False)),
     }
     with _jobs_lock:
         jobs[job_id] = job
@@ -10126,6 +10133,12 @@ def api_optimize():
         job["opt_single_file"] = data.get("single_file", True)
         job["opt_output_format"] = data.get("output_format", "m4b")
         job["opt_podcast_base_url"] = (data.get("podcast_base_url") or "").strip()
+        # Lettura opzionale del testo tra parentesi: l'auto-generazione post-LLM
+        # legge questi flag direttamente da job (run_generation), non tramite
+        # prefisso opt_*. Senza catturarli qui il ramo wizard (optimize+auto-gen)
+        # userebbe sempre il default (rimozione), ignorando la scelta utente.
+        job["read_round_parens"] = bool(data.get("read_round_parens", False))
+        job["read_square_brackets"] = bool(data.get("read_square_brackets", False))
         if job["opt_output_format"] == "zip_rss":
             job["notify_download_type"] = "podcast"
             job["notify_base_url"] = job["opt_podcast_base_url"]
