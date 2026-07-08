@@ -98,7 +98,7 @@ def test_share_create_ready_for_available_job(client, monkeypatch):
     data = r.get_json()
     assert data["mode"] == "ready"
     assert data["link"].startswith("https://audiobook-maker.com/s/")
-    assert data["ttl_sec"] == 7200
+    assert data["ttl_sec"] == 86400
     rec = audiobook_app._share_tokens[data["share_token"]]
     assert rec["kind"] == "ready"
     assert rec["download_token"] == "DLT"
