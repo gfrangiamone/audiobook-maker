@@ -16,6 +16,9 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
+from voice_utils import is_gemini_voice as _is_gemini_voice
+
 # Audio output constants
 CHARS_PER_AUDIO_SECOND = 15
 
@@ -431,7 +434,7 @@ def parse_voice_id(voice_id):
 
     Raises ValueError se formato non valido, modello sconosciuto o voce sconosciuta.
     """
-    if not isinstance(voice_id, str) or not voice_id.startswith("gemini:"):
+    if not _is_gemini_voice(voice_id):
         raise ValueError(f"Invalid Gemini voice ID format: {voice_id!r}")
     parts = voice_id.split(":")
     if len(parts) != 3:

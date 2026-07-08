@@ -139,9 +139,8 @@ _build_descriptor = None  # callable(job, phase) -> recovery descriptor dict
 _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 
 
-def _is_gemini_voice(voice):
-    """True per voice id Gemini (`gemini:<model>:<voice>`)."""
-    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+# Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
+from voice_utils import is_gemini_voice as _is_gemini_voice
 
 
 def _retention_for_job(job):
@@ -751,7 +750,7 @@ def _call_llm(user_content, job=None, max_retries=None):
             lang = opt_lang.split("-")[0].lower()
         else:
             voice = job.get("voice") or job.get("opt_voice", "")
-            if isinstance(voice, str) and voice and not voice.startswith("gemini:"):
+            if isinstance(voice, str) and voice and not _is_gemini_voice(voice):
                 lang = voice.split("-")[0].lower()
 
     prompt = _get_llm_prompt(lang)
@@ -1252,7 +1251,7 @@ def _friendly_voice_name(voice):
     v = (voice or "").strip()
     if not v:
         return ""
-    if v.startswith("gemini:"):
+    if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
     if base.endswith("Neural"):
@@ -2443,8 +2442,7 @@ def run_optimization(job_id, selected_chapters=None):
             # lockato in payment["total_eur"] e` stato calcolato su quella
             # stima, e ricalcolarla qui su testo post-LLM disallinea cost_est
             # da charged nell'audit JSONL (artefatto delta_pct/margin).
-            if (gemini_tts is not None and voice
-                    and voice.startswith("gemini:")
+            if (gemini_tts is not None and _is_gemini_voice(voice)
                     and not job.get("gemini_estimate")):
                 try:
                     _ui_lang_autogen = (job.get("opt_lang") or "").lower()
@@ -2850,7 +2848,7 @@ def _engine_for_voice(voice):
     """
     if not voice:
         return "edge"
-    if voice.startswith("gemini:"):
+    if _is_gemini_voice(voice):
         return "gemini"
     if _google_tts is not None and _google_tts.is_google_voice(voice):
         return "google"
@@ -2893,7 +2891,7 @@ def _audit_language(job, info):
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
-        if not voice_id or not voice_id.startswith("gemini:"):
+        if not _is_gemini_voice(voice_id):
             return
         actual = job.get("gemini_actual") or {}
         parts = voice_id.split(":")
@@ -4553,7 +4551,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # marginalita' commerciale del job completato.
                 margin_pct = 0.0
                 try:
-                    if voice and gemini_tts is not None and voice.startswith("gemini:"):
+                    if gemini_tts is not None and _is_gemini_voice(voice):
                         _mk, _, _ = gemini_tts.parse_voice_id(voice)
                         margin_pct = float(gemini_tts.get_margin_percent(_mk) or 0.0)
                 except Exception as _mp_err:

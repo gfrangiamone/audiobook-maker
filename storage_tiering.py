@@ -23,8 +23,9 @@ _MARKER_NAME = ".cloud_uploaded"
 _GEN_COMPLETE_NAME = ".generation_complete"
 
 
-def _is_gemini_voice(voice):
-    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+# Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia,
+# puro come questo: la regola "no Flask, no boto3" resta rispettata).
+from voice_utils import is_gemini_voice as _is_gemini_voice
 
 
 def key_for_path(local_path):

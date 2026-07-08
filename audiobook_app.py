@@ -431,9 +431,8 @@ except (TypeError, ValueError):
 LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
 
 
-def _is_gemini_voice(voice):
-    """True se la voce e' una voce PREMIUM Gemini (formato gemini:<model>:<voice>)."""
-    return bool(voice) and isinstance(voice, str) and voice.startswith("gemini:")
+# Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
+from voice_utils import is_gemini_voice as _is_gemini_voice
 
 
 def _max_text_chars_for_voice(voice):
@@ -3262,7 +3261,7 @@ def admin_logs():
     # (esclude le anteprime: richiediamo GENERATE in events).
     gemini_started = sum(
         1 for s in sessions.values()
-        if "GENERATE" in s["events"] and str(s.get("voice", "")).startswith("gemini:")
+        if "GENERATE" in s["events"] and _is_gemini_voice(s.get("voice", ""))
     )
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
     _TR_OPS_STAT = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL", "TRANSLATE_ADOPT",
@@ -3475,7 +3474,7 @@ def admin_logs():
             card_cls = "card card-in-progress" if is_progress else "card"
             is_gemini_run = (
                 "GENERATE" in s["events"]
-                and str(voice_raw).startswith("gemini:")
+                and _is_gemini_voice(voice_raw)
             )
             session_platform = html_mod.escape(s.get("platform", "") or "")
             session_transferred = s.get("transferred", False)
@@ -7473,7 +7472,7 @@ def api_preview_audio(job_id):
 
     # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
     # contenere il costo per-token (input + output sono fatturati).
-    if voice.startswith("gemini:"):
+    if _is_gemini_voice(voice):
         import re as _re
         _t = _re.sub(r'\s+', ' ', preview_text).strip()
         if len(_t) > 400:
@@ -7507,7 +7506,7 @@ def api_preview_audio(job_id):
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
-    use_gemini_preview = gemini_tts is not None and voice.startswith("gemini:")
+    use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
     client_id = "anon"
 
     # Direttiva di accento per la preview (solo Gemini): deve allinearsi al job
@@ -7675,7 +7674,7 @@ def api_preview_audio(job_id):
     _wrapper_timeout = 30
     if use_gemini_preview:
         try:
-            _mk = voice.split(":")[1] if voice.startswith("gemini:") else ""
+            _mk = voice.split(":")[1] if _is_gemini_voice(voice) else ""
             if _mk == "flash31":
                 _wrapper_timeout = int(os.environ.get(
                     "ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31", "65"))
@@ -7874,7 +7873,7 @@ def api_generate():
     read_square_brackets = bool(data.get("read_square_brackets", False))
 
     # Refuse Gemini voices when the module is missing or the API key is not configured.
-    if voice and voice.startswith("gemini:"):
+    if _is_gemini_voice(voice):
         if gemini_tts is None or not gemini_tts.is_available():
             return jsonify({"error": "gemini_tts_not_configured"}), 400
 
@@ -7907,7 +7906,7 @@ def api_generate():
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
     accent_variant = (data.get("gemini_accent") or "").strip()[:8]
-    if voice and voice.startswith("gemini:"):
+    if _is_gemini_voice(voice):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")
         all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
@@ -8459,7 +8458,7 @@ def api_cancel(job_id):
     with _jobs_lock:
         job = jobs[job_id]
         voice = job.get("voice", "") or job.get("opt_voice", "") or ""
-        is_gemini = voice.startswith("gemini:")
+        is_gemini = _is_gemini_voice(voice)
         force = request.args.get("force") == "1"
         # Kill amministrativo (force=1 + auth admin): bypassa il lock Gemini
         # anti-abuso (pensato per i cancel volontari utente) e il guard
@@ -9585,7 +9584,7 @@ def api_gemini_estimate():
     rate = data.get("rate", "+0%")
     ui_lang = (data.get("lang") or "").strip().split("-")[0].lower()
 
-    if not voice_id.startswith("gemini:"):
+    if not _is_gemini_voice(voice_id):
         return jsonify({"error": "voice_id must be a Gemini voice"}), 400
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -9673,7 +9672,7 @@ def api_combined_estimate():
     gemini_eur = 0.0
     gemini_breakdown = {}
     rate_step = 0
-    if voice_id.startswith("gemini:"):
+    if _is_gemini_voice(voice_id):
         try:
             est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
@@ -9703,7 +9702,7 @@ def api_combined_estimate():
     # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
     # l'avviso "non disponibile" senza passare per il flusso pagamento/PayPal.
     overload_info = None
-    if voice_id.startswith("gemini:"):
+    if _is_gemini_voice(voice_id):
         try:
             _max_chars_cb = _pick_chunk_max_chars(voice_id, lang)
             _max_bytes_cb = _pick_chunk_max_bytes(voice_id)
@@ -9810,7 +9809,7 @@ def api_paypal_create_order_gemini():
     lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
 
     gemini_eur = 0.0
-    if voice_id.startswith("gemini:"):
+    if _is_gemini_voice(voice_id):
         try:
             # rate_pct: la stima dipende dalla velocità scelta, quindi va
             # passata anche qui per coerenza con /api/combined_estimate.
@@ -10013,7 +10012,7 @@ def api_optimize():
     # consumarlo per la sola quota LLM — la gestione e` delegata al
     # blocco "Combined payment" piu` avanti.
     _is_combined_gemini = (auto_generate
-                           and data.get("voice", "").startswith("gemini:")
+                           and _is_gemini_voice(data.get("voice", ""))
                            and gemini_tts is not None)
     if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
         payment_token = (data.get("payment_token") or "").strip()
@@ -10758,6 +10757,48 @@ def api_active_jobs():
     return jsonify({"jobs": active, "count": len(active)})
 
 
+def _check_dl_token(token):
+    """Validazione comune degli endpoint file /dl/<token>/*: esistenza del token
+    e retention effettiva. Ritorna (token_info, None) se valido, altrimenti
+    (None, (body, 410)) con il token gia' rimosso e persistito se scaduto.
+    La pagina /dl/<token> NON usa questo helper (risposta renderizzata, non
+    plain-text)."""
+    token_info = _download_tokens.get(token)
+    if not token_info:
+        return None, ("Link scaduto", 410)
+    _ret = _effective_retention_for_token_info(token_info)
+    if time.time() - token_info["created_at"] > _ret:
+        _download_tokens.pop(token, None)
+        _save_tokens()
+        return None, (f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410)
+    return token_info, None
+
+
+def _resolve_snapshot_path(path_snap, job_dir=None, legacy_flat=False):
+    """Risolve un path assoluto snapshotato in un download token.
+
+    Ordine: path originale se esiste; ricostruzione per-epoch
+    job_dir/<epoch_dir>/<basename> (data-dir migrata); opzionale fallback
+    legacy flat job_dir/<basename> (layout pre per-epoch). Ritorna il path
+    esistente (str) oppure "" se il file non e' reperibile in locale (il
+    chiamante prova poi il cold tier). job_dir=None disabilita ogni
+    ricostruzione (es. token senza job_id)."""
+    if not path_snap:
+        return ""
+    if os.path.exists(path_snap):
+        return str(path_snap)
+    if job_dir is None:
+        return ""
+    cand = job_dir / Path(path_snap).parent.name / Path(path_snap).name
+    if cand.exists():
+        return str(cand)
+    if legacy_flat:
+        alt = job_dir / os.path.basename(path_snap)
+        if alt.exists():
+            return str(alt)
+    return ""
+
+
 @app.route("/dl/<token>")
 def token_download_page(token):
     """Serve download page for email-linked token."""
@@ -10821,13 +10862,9 @@ def token_download_page(token):
     #      NON ha info di epoch (token vecchi creati prima del layout per-epoch).
     m4b_available = False
     m4b_path_snap = token_info.get("output_m4b", "")
-    if m4b_path_snap and os.path.exists(m4b_path_snap):
-        m4b_available = True
-    elif m4b_path_snap:
-        # Per-epoch reconstruction: output_{epoch}/<basename>.m4b
-        candidate = job_dir / Path(m4b_path_snap).parent.name / Path(m4b_path_snap).name
-        if candidate.exists():
-            m4b_available = True
+    if m4b_path_snap:
+        # Include la ricostruzione per-epoch: output_{epoch}/<basename>.m4b
+        m4b_available = bool(_resolve_snapshot_path(m4b_path_snap, job_dir))
     else:
         # Token legacy senza snapshot M4B: live job o glob ricorsivo come
         # last-resort. Non rompe l'isolamento per-epoch perche' arriva qui
@@ -10845,20 +10882,12 @@ def token_download_page(token):
 
     # Kit di ripiego M4B (ZIP con MP3 + capitoli): disponibile se l'M4B vero manca.
     kit_snap = token_info.get("output_m4b_fallback_zip", "")
-    m4b_kit_available = bool(kit_snap) and os.path.exists(kit_snap)
-    if not m4b_kit_available and kit_snap:
-        candidate = job_dir / Path(kit_snap).parent.name / Path(kit_snap).name
-        if candidate.exists():
-            m4b_kit_available = True
+    m4b_kit_available = bool(_resolve_snapshot_path(kit_snap, job_dir))
     if not m4b_kit_available and kit_snap and _cold_object_available(kit_snap):
         m4b_kit_available = True
 
     abm_path_snap = token_info.get("optimized_abm_path", "")
-    has_abm = bool(abm_path_snap) and os.path.exists(abm_path_snap)
-    if not has_abm and abm_path_snap:
-        candidate = job_dir / Path(abm_path_snap).parent.name / Path(abm_path_snap).name
-        if candidate.exists():
-            has_abm = True
+    has_abm = bool(_resolve_snapshot_path(abm_path_snap, job_dir))
     if not has_abm and _cold_object_available(abm_path_snap):
         has_abm = True
 
@@ -10870,17 +10899,9 @@ def token_download_page(token):
     translated_available = False
     if dl_type == "translated":
         tr_path_snap = token_info.get("translated_path", "")
-        if tr_path_snap and os.path.exists(tr_path_snap):
-            translated_available = True
-        elif tr_path_snap:
-            candidate = job_dir / Path(tr_path_snap).parent.name / Path(tr_path_snap).name
-            if candidate.exists():
-                translated_available = True
-            else:
-                # Legacy flat layout fallback (mirrors token_do_download_translated)
-                alt = job_dir / os.path.basename(tr_path_snap)
-                if alt.exists():
-                    translated_available = True
+        # legacy_flat: mirrors token_do_download_translated
+        translated_available = bool(_resolve_snapshot_path(tr_path_snap, job_dir,
+                                                           legacy_flat=True))
         if not translated_available and _cold_object_available(tr_path_snap):
             translated_available = True
 
@@ -10908,33 +10929,19 @@ def token_download_page(token):
 @app.route("/dl/<token>/abm")
 def token_do_download_abm(token):
     """Serve the optimized .abm file for a token (when available)."""
-    token_info = _download_tokens.get(token)
-    if not token_info:
-        return "Link scaduto", 410
-    _ret = _effective_retention_for_token_info(token_info)
-    if time.time() - token_info["created_at"] > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
+    token_info, _err = _check_dl_token(token)
+    if _err:
+        return _err
     job_id = token_info.get("job_id", "")
     abm_name = token_info.get("optimized_abm_name", "optimized.abm")
     # Always serve the .abm captured in this token's snapshot. Each generation
     # epoch writes its own output_{epoch}/foo_optimized.abm; regenerating from
     # the live job state would overwrite with the latest cumulative selection
     # and break per-epoch isolation across sibling email tokens.
-    abm_path = token_info.get("optimized_abm_path", "")
-    if abm_path and not os.path.exists(abm_path) and job_id:
-        job_dir = UPLOAD_DIR / job_id
-        # Reconstruct by basename within the snapshot's epoch dir
-        candidate = job_dir / Path(abm_path).parent.name / Path(abm_path).name
-        if candidate.exists():
-            abm_path = str(candidate)
-        else:
-            # Last-resort: legacy flat layout at work_dir root
-            alt = job_dir / os.path.basename(abm_path)
-            if alt.exists():
-                abm_path = str(alt)
-    if not abm_path or not os.path.exists(abm_path):
+    abm_path = _resolve_snapshot_path(token_info.get("optimized_abm_path", ""),
+                                      (UPLOAD_DIR / job_id) if job_id else None,
+                                      legacy_flat=True)
+    if not abm_path:
         _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
         if _cold is not None:
             return _cold
@@ -10949,30 +10956,17 @@ def token_do_download_abm(token):
 @app.route("/dl/<token>/translated")
 def token_do_download_translated(token):
     """Serve the translated book file for a token (download_type=translated)."""
-    token_info = _download_tokens.get(token)
-    if not token_info:
-        return "Link scaduto", 410
-    _ret = _effective_retention_for_token_info(token_info)
-    if time.time() - token_info["created_at"] > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
+    token_info, _err = _check_dl_token(token)
+    if _err:
+        return _err
     job_id = token_info.get("job_id", "")
     name = token_info.get("translated_name", "translated")
     # Always serve the file captured in this token's snapshot (per-epoch
     # isolation, same rationale as /dl/<token>/abm).
-    path = token_info.get("translated_path", "")
-    if path and not os.path.exists(path) and job_id:
-        job_dir = UPLOAD_DIR / job_id
-        # Reconstruct by basename within the snapshot's epoch dir
-        candidate = job_dir / Path(path).parent.name / Path(path).name
-        if candidate.exists():
-            path = str(candidate)
-        else:
-            alt = job_dir / os.path.basename(path)
-            if alt.exists():
-                path = str(alt)
-    if not path or not os.path.exists(path):
+    path = _resolve_snapshot_path(token_info.get("translated_path", ""),
+                                  (UPLOAD_DIR / job_id) if job_id else None,
+                                  legacy_flat=True)
+    if not path:
         _cold = _try_cold_serve(token_info.get("translated_path", ""), download_name=name)
         if _cold is not None:
             return _cold
@@ -10993,16 +10987,11 @@ def token_do_download_m4b(token):
     - fallback su MP3 con header X-Fallback se M4B non esiste
     - sync di job["output_m4b"] quando il file è trovato via glob
     """
-    token_info = _download_tokens.get(token)
-    if not token_info:
-        return "Link scaduto", 410
+    token_info, _err = _check_dl_token(token)
+    if _err:
+        return _err
 
     job_id = token_info["job_id"]
-    _ret = _effective_retention_for_token_info(token_info)
-    if time.time() - token_info["created_at"] > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
     # Per-epoch isolation: il token email punta a UNA specifica generazione.
     # Non usiamo MAI lo stato del job vivo (job["output_m4b"]) come fonte
@@ -11013,15 +11002,11 @@ def token_do_download_m4b(token):
         job["last_poll"] = time.time()
         job["downloaded_at"] = time.time()
 
-    m4b_path = token_info.get("output_m4b", "")
     job_dir = UPLOAD_DIR / job_id
 
-    # 1) Path reconstruction per-epoch: cerca il basename del file dentro la
-    # cartella output_{epoch}/ catturata nello snapshot del token.
-    if m4b_path and not os.path.exists(m4b_path):
-        candidate = job_dir / Path(m4b_path).parent.name / Path(m4b_path).name
-        if candidate.exists():
-            m4b_path = str(candidate)
+    # 1) Path snapshot + reconstruction per-epoch: cerca il basename del file
+    # dentro la cartella output_{epoch}/ catturata nello snapshot del token.
+    m4b_path = _resolve_snapshot_path(token_info.get("output_m4b", ""), job_dir)
 
     # 2) Legacy fallback: per token CREATI PRIMA dell'introduzione del layout
     # per-epoch (snapshot privo di output_m4b), usiamo un glob ricorsivo come
@@ -11058,13 +11043,7 @@ def token_do_download_m4b(token):
     # M4B fallito ma esiste un kit di ripiego (ZIP con MP3 + capitoli + script):
     # serviamo quello invece del solo MP3, così l'utente può ricostruire l'M4B.
     kit_snap = token_info.get("output_m4b_fallback_zip", "")
-    kit_path = ""
-    if kit_snap and os.path.exists(kit_snap):
-        kit_path = kit_snap
-    elif kit_snap:
-        candidate = job_dir / Path(kit_snap).parent.name / Path(kit_snap).name
-        if candidate.exists():
-            kit_path = str(candidate)
+    kit_path = _resolve_snapshot_path(kit_snap, job_dir)
     if not kit_path:
         _kits = list(job_dir.glob("**/*_audiolibro_capitoli.zip"))
         if _kits:
@@ -11121,16 +11100,11 @@ def token_do_download_m4b(token):
 @app.route("/dl/<token>/download")
 def token_do_download(token):
     """Execute the actual file download via token."""
-    token_info = _download_tokens.get(token)
-    if not token_info:
-        return "Link scaduto", 410
+    token_info, _err = _check_dl_token(token)
+    if _err:
+        return _err
 
     job_id = token_info["job_id"]
-    _ret = _effective_retention_for_token_info(token_info)
-    if time.time() - token_info["created_at"] > _ret:
-        _download_tokens.pop(token, None)
-        _save_tokens()
-        return f"Link scaduto  -  i file sono stati cancellati dopo {_ret // 3600} ore", 410
 
     # Try to get data from job in memory, otherwise use token snapshot
     job = jobs.get(job_id)
@@ -11154,16 +11128,9 @@ def token_do_download(token):
             abm_name = token_info.get("optimized_abm_name", "optimized.abm")
             # Serve the .abm captured in this token's snapshot — see
             # /dl/<token>/abm comment for the per-epoch isolation rationale.
-            abm_path = token_info.get("optimized_abm_path", "")
-            if abm_path and not os.path.exists(abm_path):
-                cand = job_dir / Path(abm_path).parent.name / Path(abm_path).name
-                if cand.exists():
-                    abm_path = str(cand)
-                else:
-                    alt = job_dir / os.path.basename(abm_path)
-                    if alt.exists():
-                        abm_path = str(alt)
-            if abm_path and os.path.exists(abm_path):
+            abm_path = _resolve_snapshot_path(token_info.get("optimized_abm_path", ""),
+                                              job_dir, legacy_flat=True)
+            if abm_path:
                 if job:
                     job["downloaded_at"] = time.time()
                 if not _is_resume_or_probe_request():

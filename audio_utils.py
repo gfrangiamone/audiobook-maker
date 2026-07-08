@@ -907,25 +907,29 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         return False
 
 
-def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=None, **kwargs):
-    """Wrapper monitored di _convert_mp3_to_m4b: chiama on_phase(pct, msg) ai punti chiave.
+def _monitored_m4b_run(tag, convert, output_path, on_phase, status_out,
+                       prep_msg, encoding_msg):
+    """Corpo comune dei wrapper monitored di conversione M4B.
+
+    Choreography condivisa: on_phase a 0 (prep) → 5 (encoding) → 98 (validazione)
+    → 100 (ok), con status_out popolato a fine corsa
+    ({"status": "ok"|"fail"|"timeout"|"invalid", "pct": int, "msg": str}).
+    Il file di output invalido (ffprobe KO) viene rimosso best-effort.
 
     Args:
-        mp3_path, m4b_path: come _convert_mp3_to_m4b.
-        on_phase: callable(pct: int, msg: str) o None per no-op.
-        status_out: dict opzionale che verrà popolato con
-            {"status": "ok"|"fail"|"timeout"|"invalid", "pct": int, "msg": str}
-            al termine della conversione. None per non ricevere lo status.
-        **kwargs: tutti gli altri parametri di _convert_mp3_to_m4b.
-
-    Returns: bool come _convert_mp3_to_m4b.
+        tag: nome del wrapper per il log degli errori di on_phase.
+        convert: thunk senza argomenti che esegue la conversione e ritorna bool.
+        output_path: file M4B atteso, validato con _validate_m4b_file.
+        on_phase: callable(pct, msg) o None per no-op.
+        status_out: dict opzionale per lo status finale, None per ignorarlo.
+        prep_msg, encoding_msg: messaggi specifici del wrapper per le fasi 0 e 5.
     """
     def _emit(pct, msg):
         if on_phase:
             try:
                 on_phase(pct, msg)
             except Exception as e:
-                print(f"[_convert_mp3_to_m4b_monitored] on_phase error: {e}")
+                print(f"[{tag}] on_phase error: {e}")
 
     def _finish(status, pct, msg):
         if status_out is not None:
@@ -933,17 +937,10 @@ def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=
             status_out["pct"] = pct
             status_out["msg"] = msg
 
-    # Skip rapido: sorgente mancante → niente callback, fail.
-    if not os.path.exists(mp3_path):
-        _finish("fail", 0, "source missing")
-        return False
-
-    _emit(0, "Conversione M4B — preparazione metadati…")
-
-    # Delega alla funzione originale per la preparazione + FFmpeg + fallback.
+    _emit(0, prep_msg)
+    _emit(5, encoding_msg)
     try:
-        _emit(5, "Conversione M4B — encoding AAC…")
-        result = _convert_mp3_to_m4b(mp3_path, m4b_path, **kwargs)
+        result = convert()
     except subprocess.TimeoutExpired:
         _emit(0, "Conversione M4B timeout")
         _finish("timeout", 0, "Conversione M4B timeout")
@@ -958,22 +955,50 @@ def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=
         _finish("fail", 0, "Conversione M4B fallita")
         return False
 
-    # Fase 2: validazione ffprobe (98 → 100)
+    # Validazione ffprobe (98 → 100)
     _emit(98, "Conversione M4B — validazione finale…")
-    if _validate_m4b_file(m4b_path):
+    if _validate_m4b_file(output_path):
         _emit(100, "Conversione M4B completata")
         _finish("ok", 100, "Conversione M4B completata")
         return True
 
     # File invalido: tentiamo rimozione (best-effort, come l'originale).
-    if os.path.exists(m4b_path):
+    if os.path.exists(output_path):
         try:
-            os.remove(m4b_path)
+            os.remove(output_path)
         except OSError:
             pass
     _emit(0, "Conversione M4B — file invalido")
     _finish("invalid", 0, "Conversione M4B — file invalido")
     return False
+
+
+def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=None, **kwargs):
+    """Wrapper monitored di _convert_mp3_to_m4b: chiama on_phase(pct, msg) ai punti chiave.
+
+    Args:
+        mp3_path, m4b_path: come _convert_mp3_to_m4b.
+        on_phase: callable(pct: int, msg: str) o None per no-op.
+        status_out: dict opzionale che verrà popolato con
+            {"status": "ok"|"fail"|"timeout"|"invalid", "pct": int, "msg": str}
+            al termine della conversione. None per non ricevere lo status.
+        **kwargs: tutti gli altri parametri di _convert_mp3_to_m4b.
+
+    Returns: bool come _convert_mp3_to_m4b.
+    """
+    # Skip rapido: sorgente mancante → niente callback, fail.
+    if not os.path.exists(mp3_path):
+        if status_out is not None:
+            status_out["status"] = "fail"
+            status_out["pct"] = 0
+            status_out["msg"] = "source missing"
+        return False
+    return _monitored_m4b_run(
+        "_convert_mp3_to_m4b_monitored",
+        lambda: _convert_mp3_to_m4b(mp3_path, m4b_path, **kwargs),
+        m4b_path, on_phase, status_out,
+        "Conversione M4B — preparazione metadati…",
+        "Conversione M4B — encoding AAC…")
 
 
 # ---------------------------------------------------------------------------
@@ -1614,48 +1639,9 @@ def pcm_to_aac_m4b_monitored(pcm_paths, output_path, on_phase=None, status_out=N
 
     Returns: bool come pcm_to_aac_m4b.
     """
-    def _emit(pct, msg):
-        if on_phase:
-            try:
-                on_phase(pct, msg)
-            except Exception as e:
-                print(f"[pcm_to_aac_m4b_monitored] on_phase error: {e}")
-
-    def _finish(status, pct, msg):
-        if status_out is not None:
-            status_out["status"] = status
-            status_out["pct"] = pct
-            status_out["msg"] = msg
-
-    _emit(0, "Conversione M4B — preparazione…")
-    _emit(5, "Conversione M4B — encoding AAC (PCM→AAC diretto)…")
-    try:
-        result = pcm_to_aac_m4b(pcm_paths, output_path, **kwargs)
-    except subprocess.TimeoutExpired:
-        _emit(0, "Conversione M4B timeout")
-        _finish("timeout", 0, "Conversione M4B timeout")
-        return False
-    except Exception:
-        _emit(0, "Conversione M4B fallita")
-        _finish("fail", 0, "Conversione M4B fallita")
-        return False
-
-    if not result:
-        _emit(0, "Conversione M4B fallita")
-        _finish("fail", 0, "Conversione M4B fallita")
-        return False
-
-    _emit(98, "Conversione M4B — validazione finale…")
-    if _validate_m4b_file(output_path):
-        _emit(100, "Conversione M4B completata")
-        _finish("ok", 100, "Conversione M4B completata")
-        return True
-
-    if os.path.exists(output_path):
-        try:
-            os.remove(output_path)
-        except OSError:
-            pass
-    _emit(0, "Conversione M4B — file invalido")
-    _finish("invalid", 0, "Conversione M4B — file invalido")
-    return False
+    return _monitored_m4b_run(
+        "pcm_to_aac_m4b_monitored",
+        lambda: pcm_to_aac_m4b(pcm_paths, output_path, **kwargs),
+        output_path, on_phase, status_out,
+        "Conversione M4B — preparazione…",
+        "Conversione M4B — encoding AAC (PCM→AAC diretto)…")

@@ -24,6 +24,9 @@ import unicodedata
 
 import edge_tts
 
+# Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
+from voice_utils import is_gemini_voice as _is_gemini_voice
+
 try:
     import google_tts
 except ImportError:
@@ -54,7 +57,7 @@ def _pick_chunk_max_chars(voice_id, language):
 
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
-    if isinstance(voice_id, str) and voice_id.startswith("gemini:"):
+    if _is_gemini_voice(voice_id):
         lang_code = (language or "").lower().split("-")[0]
         try:
             import gemini_tts
@@ -72,7 +75,7 @@ def _pick_chunk_max_bytes(voice_id):
     sul payload API. I prefissi style/rate aggiunti da synthesize() sono
     direttive di prompt e non concorrono al budget byte qui.
     """
-    if not (isinstance(voice_id, str) and voice_id.startswith("gemini:")):
+    if not _is_gemini_voice(voice_id):
         return None
     try:
         import gemini_tts
