@@ -109,6 +109,22 @@ def _sanitize_header(value, max_len=200):
     return s[:max_len].strip()
 
 
+def _esc_html(value, max_len=None):
+    """HTML-escape di un valore controllato dall'utente prima di interpolarlo nel
+    CORPO HTML di un'email. `_sanitize_header` protegge solo gli header (CRLF) e
+    NON escapa `<`/`>`: senza questo passaggio un titolo/autore/nome-file come
+    `<a href="https://phish">…</a>` o `<img src="http://tracker">` verrebbe iniettato
+    raw nella mailbox admin (content-spoofing/phishing, leak IP admin via img remota).
+    Escapa `& < > " '`."""
+    import html as _html
+    if value is None:
+        return ""
+    s = str(value)
+    if max_len is not None:
+        s = s[:max_len]
+    return _html.escape(s, quote=True)
+
+
 def _send_email(to_addr, subject, html_body):
     """Send an HTML email via SMTP. Returns True on success."""
     import smtplib
@@ -223,13 +239,13 @@ def _try_send_admin_digest():
     for e in events:
         rows += f"""<tr>
 <td style="padding:8px 12px;border-bottom:1px solid #eee">{e['timestamp']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{e['title']}</strong><br>
-<span style="color:#666;font-size:13px">{e['author']}</span></td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px">{e['filename']}</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{_esc_html(e['title'])}</strong><br>
+<span style="color:#666;font-size:13px">{_esc_html(e['author'])}</span></td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px">{_esc_html(e['filename'])}</td>
 <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{e['chapters']}</td>
 <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">{e['words']:,}</td>
 <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">{e['duration_est']}</td>
-<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888">{e['voice']}</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888">{_esc_html(e['voice'])}</td>
 </tr>"""
 
     funnel_block = _funnel_block_html()
@@ -500,9 +516,12 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         chars_line = (f"<tr><td><strong>Caratteri</strong></td>"
                       f"<td>{chars_total:,}</td></tr>")
 
-    title_safe = _sanitize_header(book_title or "(senza titolo)", max_len=120)
-    email_safe = _sanitize_header(email or "(sconosciuta)", max_len=200)
-    reason_safe = _sanitize_header(reason_detail or "", max_len=300)
+    # Sec: questi valori sono controllati dall'utente (titolo/metadata libro, email,
+    # dettaglio errore) e finiscono nel corpo HTML dell'email admin → HTML-escape,
+    # non solo _sanitize_header (che copre i soli header CRLF).
+    title_safe = _esc_html(_sanitize_header(book_title or "(senza titolo)", max_len=120))
+    email_safe = _esc_html(_sanitize_header(email or "(sconosciuta)", max_len=200))
+    reason_safe = _esc_html(_sanitize_header(reason_detail or "", max_len=300))
     subject = (f"[ABM-ADMIN] Gemini TTS — {kind_label} "
                f"— job {job_id[:8]}")
 
