@@ -194,11 +194,6 @@ def build_html_template(
     from templates.seo_i18n import prefill_seo_text
     html = prefill_seo_text(html, lang)
 
-    # ── 6. Build the multilingual visible SEO content block ──
-    # Removed: server-rendered visible SEO block duplicated content already
-    # present in the app interface. JSON-LD schema remains in <head>.
-    seo_content_html = ""
-
     # Insert version/updated badges before </body>
     html = html.replace(
         "</body>",

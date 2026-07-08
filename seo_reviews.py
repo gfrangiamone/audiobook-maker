@@ -225,20 +225,6 @@ def build_reviews(lang: str) -> dict:
     }
 
 
-def llms_txt_summary() -> str:
-    """One-line rating summary for inclusion in /llms.txt. Returns empty
-    string if there are no reviews yet."""
-    try:
-        items = community_store.feedback().all(include_archived=False)
-    except Exception:
-        return ""
-    if not items:
-        return ""
-    total = len(items)
-    avg = round(sum(int(it.get("rating", 0)) for it in items) / total, 2)
-    return f"User rating: {avg}/5 from {total} verified reviews."
-
-
 def llms_txt_block() -> str:
     """Multi-line "User feedback" block for /llms.txt — adds up to three
     recent review excerpts with dates and ratings on top of the headline.

@@ -1558,20 +1558,15 @@ def build_seo_content_html(initial_lang: str) -> str:
 
     # Build all language blocks
     articles = []
-    initial_faq_ld = ""
-    initial_howto_ld = ""
 
     for lang in _ALL_LANGS:
-        article_html, faq_ld, howto_ld = _build_seo_block(lang)
+        article_html, _, _ = _build_seo_block(lang)
         display = "block" if lang == initial_lang else "none"
         articles.append(
             f'    <article data-seo-lang="{lang}" style="display:{display}">'
             f'{article_html}'
             f'\n    </article>'
         )
-        if lang == initial_lang:
-            initial_faq_ld = faq_ld
-            initial_howto_ld = howto_ld
 
     articles_html = "\n".join(articles)
 

@@ -185,12 +185,6 @@ NON_CONTENT_TITLES = {
     "errata", "credits", "crediti",
 }
 
-# Pattern per rilevare footnote nel corpo del testo PDF
-# (numeri in apice seguiti o preceduti da testo che sembra una nota)
-FOOTNOTE_SUPERSCRIPT_RE = re.compile(
-    r"(?:^|\n)\s*\d{1,3}[\.\)]\s+.{10,200}$", re.MULTILINE
-)
-
 # Pattern per numeri di pagina isolati (righe con solo un numero)
 PAGE_NUMBER_RE = re.compile(r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$")
 

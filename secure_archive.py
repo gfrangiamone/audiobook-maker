@@ -101,14 +101,3 @@ def safe_xml_fromstring(data: bytes):
         print("[secure_archive] WARN defusedxml not available, "
               "falling back to stdlib XML parser")
         return _ET.fromstring(data)
-
-
-def iter_safe_zip_names(zf: zipfile.ZipFile, *, base: str = "") -> Iterable[str]:
-    """Itera le entries di un zip filtrando quelle che violano zip-safety.
-    Le entries non-safe vengono saltate con warning (non solleva)."""
-    for info in zf.infolist():
-        try:
-            yield safe_zip_path(info.filename, base=base)
-        except ZipSafetyError as e:
-            print(f"[secure_archive] skipping unsafe entry: {e}")
-            continue

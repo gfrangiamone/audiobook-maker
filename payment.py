@@ -754,14 +754,6 @@ def _consume_pending_order(order_id):
 # F3: Payment token consumption (voucher or captured PayPal order)
 # ---------------------------------------------------------------------------
 
-def _paypal_order_is_captured(token: str) -> bool:
-    """True if token is a captured PayPal order not yet consumed."""
-    if not token:
-        return False
-    pay = _payments.get(token)
-    return bool(pay) and not pay.get("used", False)
-
-
 def _paypal_amount_matches(token: str, amount_eur: float, tolerance: float = 0.05) -> bool:
     """True if captured order amount >= amount_eur (with tolerance for rounding)."""
     pay = _payments.get(token)

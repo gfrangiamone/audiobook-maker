@@ -159,13 +159,6 @@ def get_usage():
     return used, remaining, GOOGLE_TTS_MONTHLY_LIMIT
 
 
-def check_budget(chars_needed):
-    """Verifica se ci sono abbastanza caratteri nel budget mensile.
-    Restituisce (ok, remaining) dove ok=True se chars_needed <= remaining."""
-    _, remaining, _ = get_usage()
-    return chars_needed <= remaining, remaining
-
-
 def reserve_chars(chars_needed):
     """Verifica e deduce atomicamente i caratteri richiesti dal budget mensile.
     Restituisce (ok, remaining_after) dove ok=True se la prenotazione è riuscita.

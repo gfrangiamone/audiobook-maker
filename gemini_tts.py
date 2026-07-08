@@ -45,8 +45,6 @@ def _audio_tokens_per_second(model_key=None):
 AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
 AUDIO_SAMPLE_WIDTH_BYTES = 2
-AAC_BITRATE_M4B = "96k"
-MP3_BITRATE_DEFAULT = "64k"
 
 # Per-language token ratios (chars per token).
 # Copre tutte le lingue ufficialmente supportate da Gemini TTS (vedi
@@ -428,11 +426,6 @@ def get_margin_percent(model_key):
     raise ValueError(f"Unknown model_key: {model_key}")
 
 
-def is_gemini_voice(voice_id):
-    """True se il voice_id ha prefisso 'gemini:'."""
-    return isinstance(voice_id, str) and voice_id.startswith("gemini:")
-
-
 def parse_voice_id(voice_id):
     """Estrae (model_key, model_full_id, voice_name) da 'gemini:flash25:Zephyr'.
 
@@ -708,11 +701,6 @@ def google_cost_breakdown(input_tokens, output_tokens, model_key):
     }
 
 
-def estimate_google_cost_eur(input_tokens, output_tokens, model_key):
-    """Costo Google totale in EUR (semplificato, restituisce solo il totale)."""
-    return google_cost_breakdown(input_tokens, output_tokens, model_key)["total_eur"]
-
-
 def compute_user_price_eur(google_cost_eur, model_key):
     """Calcola prezzo finale all'utente da costo Google netto.
 
@@ -857,11 +845,6 @@ _active_reservations: dict = {}            # job_id -> reserved_eur
 _reservations_lock = _threading_budget.Lock()
 
 
-def _reserved_sum_eur():
-    """Somma EUR riservate da job in corso (chiamare sotto lock)."""
-    return sum(float(v or 0) for v in _active_reservations.values())
-
-
 def reserve_budget(job_id, estimated_cost_eur):
     """Atomicamente verifica + riserva budget per un job. Solleva
     GeminiBudgetExceeded se il cap verrebbe sforato considerando lo speso
@@ -934,22 +917,6 @@ def get_daily_spent_eur():
         print(f"[gemini-tts] get_daily_spent_eur failed: {e}")
         return 0.0
     return spent
-
-
-def budget_status():
-    """Snapshot del budget (per admin/UI)."""
-    daily_cap = _daily_budget_eur()
-    spent = get_daily_spent_eur()
-    pct = (spent / daily_cap * 100.0) if daily_cap > 0 else 0.0
-    return {
-        "daily_cap_eur": daily_cap,
-        "daily_spent_eur": round(spent, 4),
-        "daily_remaining_eur": round(max(0.0, daily_cap - spent), 4) if daily_cap > 0 else None,
-        "daily_used_pct": round(pct, 1) if daily_cap > 0 else None,
-        "per_job_cap_eur": _per_job_budget_eur(),
-        "alert_pct": _budget_alert_pct(),
-        "hard_stop": _budget_hard_stop(),
-    }
 
 
 def preflight_budget_check(estimated_cost_eur):
@@ -1095,11 +1062,6 @@ def _load_admin_state():
               f"DISABILITATE (reason={_admin_disabled_reason!r}, "
               f"updated_at={_admin_disabled_at}). Se non atteso, riattivare "
               f"da /admin/audit-tts.", flush=True)
-
-
-def is_admin_disabled():
-    """True se l'admin ha disattivato manualmente le voci PREMIUM."""
-    return bool(_admin_disabled)
 
 
 def is_capability_available():
@@ -1580,25 +1542,6 @@ def get_empirical_rate(lang, model_key=None, rate_step=0, window=None, min_sampl
     return _avg(tier3)
 
 
-def get_rate_log_stats():
-    """Snapshot diagnostico: numero campioni e rate medio per (lang, model)."""
-    with _rate_log_lock:
-        samples = list(_load_rate_log().get("samples", []))
-    by_key = {}
-    for s in samples:
-        k = (s.get("lang", "?"), s.get("model", "?"))
-        b = by_key.setdefault(k, {"n": 0, "chars": 0, "secs": 0.0})
-        b["n"] += 1
-        b["chars"] += s.get("chars", 0)
-        b["secs"] += s.get("secs", 0.0)
-    out = []
-    for (lang, model), b in by_key.items():
-        rate = (b["chars"] / b["secs"]) if b["secs"] > 0 else 0.0
-        out.append({"lang": lang, "model": model, "samples": b["n"], "chars_per_sec": round(rate, 2)})
-    out.sort(key=lambda x: (-x["samples"], x["lang"]))
-    return {"total_samples": len(samples), "by_key": out}
-
-
 _available = None
 _available_lock = threading.Lock()
 _clients_by_location = {}
@@ -1710,9 +1653,6 @@ def _get_client(model_key=None):
     return client
 
 
-SYNTH_MAX_ATTEMPTS = 3  # kept for backward import compat; runtime uses _synth_max_attempts()
-
-
 # ---------------------------------------------------------------------------
 # Request guard: RPM throttle + RPD daily counter
 # ---------------------------------------------------------------------------
@@ -1769,42 +1709,6 @@ def _rpd_increment(model_key):
         data = _rpd_load()
         data[model_key] = data.get(model_key, 0) + 1
         _rpd_save()
-
-
-def rpd_status():
-    """Espone lo stato corrente del contatore RPD (per admin/dashboard)."""
-    with _rpd_lock:
-        data = _rpd_load()
-        return {
-            "date": data.get("date"),
-            "flash25": {
-                "used": data.get("flash25", 0),
-                "cap": _rpd_cap("flash25"),
-                "reserve": _rpd_safety_reserve(),
-            },
-            "flash31": {
-                "used": data.get("flash31", 0),
-                "cap": _rpd_cap("flash31"),
-                "reserve": _rpd_safety_reserve(),
-            },
-        }
-
-
-def rpd_available(model_key):
-    """Numero di richieste residue al model_key prima di esaurire la quota giornaliera.
-
-    Tiene conto del cap configurato meno l'utilizzato e meno la safety reserve.
-    Ritorna 0 quando il job non puo' partire; un cap <= 0 (non configurato) ritorna
-    un valore "infinito" sentinella (es. 10**9) per non bloccare configurazioni
-    senza limite.
-    """
-    cap = _rpd_cap(model_key)
-    if cap <= 0:
-        return 10**9
-    with _rpd_lock:
-        used = _rpd_load().get(model_key, 0)
-    reserve = _rpd_safety_reserve()
-    return max(0, cap - used - reserve)
 
 
 def preflight_can_run(model_key, chunks_needed):

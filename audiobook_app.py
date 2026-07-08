@@ -706,12 +706,6 @@ def _get_browser_lang():
     return first.split("-")[0].lower() if first else ""
 
 
-def _active_generating_for_client(client_id):
-    """Count how many jobs are currently generating for the given client_id. Thread-safe."""
-    with _jobs_lock:
-        return _active_generating_for_client_unlocked(client_id)
-
-
 def _active_generating_for_client_unlocked(client_id):
     """Internal: caller MUST hold _jobs_lock."""
     if not client_id:
@@ -995,12 +989,6 @@ def _recover_orphan_jobs():
         except Exception as e:
             print(f"[recover] {job_id}: re-enqueue fallito (tentativo {attempts}): {e}")
         time.sleep(2)  # throttle anti-spike se molti orfani
-
-
-def _active_optimizing_for_client(client_id):
-    """Count how many jobs are currently optimizing for the given client_id. Thread-safe."""
-    with _jobs_lock:
-        return _active_optimizing_for_client_unlocked(client_id)
 
 
 def _active_optimizing_for_client_unlocked(client_id):
@@ -2226,7 +2214,7 @@ _FAQ_TITLES = {
 @app.route("/faq/")
 def faq_page_root():
     """Redirect root FAQ to the browser-language or English variant."""
-    lang = _detect_lang()
+    lang = _detect_lang_from_request()
     if not lang or lang not in _SUPPORTED_LANGS:
         lang = "en"
     base = BASE_URL or ""

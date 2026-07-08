@@ -84,9 +84,6 @@ def _pick_chunk_max_bytes(voice_id):
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
 # alla frase successiva per garantire abbastanza contesto al motore TTS.
 _TTS_MIN_SENT_CHARS = 80
-# Limite superiore di sicurezza: frasi enormi non vengono ulteriormente spezzate
-# (ci pensa il chunking a monte).
-_TTS_MAX_SENT_CHARS = 1500
 
 
 # ---------------------------------------------------------------------------
