@@ -83,3 +83,49 @@ def test_combined_estimate_speechify(client, spx_job):
     assert bd.get("user_price_eur") == expected
     assert data["speechify_eur"] == expected
     assert "paypal_available" in data  # shape completa, non early-return
+
+
+def test_generate_passes_speechify_emotion(client, monkeypatch):
+    """/api/generate salva l'emozione validata sul job e la inoltra a
+    run_generation via kwargs (percorso free: 1000 char < soglia gratuita
+    Speechify, nessun payment_token necessario).
+    """
+    import audiobook_app
+    from epub_to_tts import BookInfo, Chapter
+
+    captured = {}
+
+    def _fake_run(job_id, info, voice, rate, single_file, **kw):
+        captured["voice"] = voice
+        captured["speechify_emotion"] = kw.get("speechify_emotion")
+
+    monkeypatch.setattr(audiobook_app, "run_generation", _fake_run)
+    # Evita l'invio di una email admin reale (SMTP configurato nell'ambiente
+    # dev) quando il test colpisce l'endpoint /api/generate vero.
+    monkeypatch.setattr(audiobook_app, "_admin_notify_generation", lambda *a, **k: None)
+
+    job_id = "spx-gen-1"
+    ch = Chapter(index=0, title="Cap0", text="A" * 1000)
+    info = BookInfo(
+        title="T", author="A", language="en", chapters=[ch],
+        total_words=ch.word_count, total_chars=ch.char_count,
+        estimated_duration_minutes=1.0,
+    )
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[job_id] = {"info": info, "status": "analyzed"}
+    try:
+        r = client.post("/api/generate", json={
+            "job_id": job_id,
+            "voice": "speechify:simba-3.2:harper_32",
+            "rate": "+0%",
+            "output_format": "mp3",
+            "speechify_emotion": "cheerful",
+            "lang": "en",
+        })
+        assert r.status_code in (200, 202), r.get_data(as_text=True)
+        assert audiobook_app.jobs[job_id].get("speechify_emotion") == "cheerful"
+        assert captured.get("speechify_emotion") == "cheerful"
+        assert captured.get("voice") == "speechify:simba-3.2:harper_32"
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(job_id, None)
