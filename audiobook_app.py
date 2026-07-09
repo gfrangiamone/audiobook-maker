@@ -88,6 +88,7 @@ from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
     _extract_cover_for_preview, _generate_podcast_rss,
     _safe_filename, _check_audio_dependencies, pcm_to_mp3,
+    _generate_silence_mp3,
 )
 
 
@@ -7401,6 +7402,9 @@ def api_preview_audio(job_id):
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
     accent = (request.args.get("accent") or "").strip()[:8]
+    speechify_emotion = (request.args.get("speechify_emotion") or "").strip().lower()
+    if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
+        speechify_emotion = ""  # valore ignoto -> neutro
     # Lettura opzionale del testo tra parentesi (default: rimosso). L'anteprima
     # applica lo stesso preprocessing della generazione finale, cosi` l'utente
     # sente esattamente cosa verra` letto.
@@ -7459,9 +7463,9 @@ def api_preview_audio(job_id):
         strip_square=not read_square_brackets,
     ) or preview_text
 
-    # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
-    # contenere il costo per-token (input + output sono fatturati).
-    if _is_gemini_voice(voice):
+    # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400
+    # char) per contenere il costo per-token/per-carattere fatturato.
+    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
         import re as _re
         _t = _re.sub(r'\s+', ' ', preview_text).strip()
         if len(_t) > 400:
@@ -7482,7 +7486,7 @@ def api_preview_audio(job_id):
     # La selezione capitoli entra nella chiave perché il testo varia con essa.
     sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
     paren_key = f"{int(read_round_parens)}{int(read_square_brackets)}"
-    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}|{paren_key}"
+    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}|{paren_key}|{speechify_emotion}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -7496,6 +7500,7 @@ def api_preview_audio(job_id):
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
+    use_speechify_preview = _is_speechify_voice(voice) and speechify_tts.is_available()
     client_id = "anon"
 
     # Direttiva di accento per la preview (solo Gemini): deve allinearsi al job
@@ -7566,6 +7571,16 @@ def api_preview_audio(job_id):
             # downstream che bloccare un preview legittimo.
             print(f"[preview] preflight check error (non-fatal): {_pf_err}")
 
+    # Speechify: nessun preview cap ne' RPD (a differenza di Gemini). Serve
+    # solo il preflight ffmpeg, perche' il PCM nativo va convertito in MP3.
+    if use_speechify_preview:
+        if not _preview_ffmpeg_ok():
+            return jsonify({
+                "error": ("Anteprima voci PREMIUM non disponibile: ffmpeg "
+                          "non installato sul server."),
+                "code": "ffmpeg_missing",
+            }), 503
+
     def _generate():
         if use_gemini_preview:
             # Native output is PCM — convert to MP3 inline for browser playback.
@@ -7632,6 +7647,26 @@ def api_preview_audio(job_id):
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_rate_sample failed (non-fatal): {e}")
                 gemini_tts.increment_preview(client_id)
+            finally:
+                if os.path.exists(pcm_tmp):
+                    try:
+                        os.remove(pcm_tmp)
+                    except OSError:
+                        pass
+        elif use_speechify_preview:
+            pcm_tmp = str(preview_path) + ".pcm"
+            try:
+                res = speechify_tts.synthesize(
+                    preview_text, voice, pcm_tmp,
+                    emotion=(speechify_emotion or None), rate=rate, max_attempts=1)
+                _sr = int(res.get("sample_rate", 48000) or 48000)
+                # PCM raw -> MP3 con il sample rate REALE (Speechify = 48kHz
+                # nativo, a differenza del default 24kHz di pcm_to_mp3 usato
+                # per Gemini).
+                pcm_to_mp3([pcm_tmp], str(preview_path), sample_rate=_sr, channels=1)
+            except Exception as _e_spx:
+                print(f"[preview] speechify failed, silence fallback: {_e_spx}")
+                _generate_silence_mp3(str(preview_path), duration_sec=1)
             finally:
                 if os.path.exists(pcm_tmp):
                     try:

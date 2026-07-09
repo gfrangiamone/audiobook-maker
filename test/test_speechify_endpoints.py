@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 
 from epub_to_tts import BookInfo, Chapter
@@ -138,6 +140,41 @@ def test_generate_passes_speechify_emotion(client, monkeypatch):
         assert audiobook_app.jobs[job_id].get("speechify_emotion") == "cheerful"
         assert captured.get("speechify_emotion") == "cheerful"
         assert captured.get("voice") == "speechify:simba-3.2:harper_32"
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(job_id, None)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not in PATH")
+def test_preview_audio_speechify(client, monkeypatch):
+    """/api/preview_audio deve sintetizzare via Speechify (PCM->MP3) per una
+    voce speechify:, rispettando emotion/rate passati come query string
+    (l'endpoint e' GET, legge da request.args).
+    """
+    import audiobook_app
+    import speechify_tts
+
+    def _fake_synth(text, voice_id, output_path, emotion=None, rate="+0%", **kw):
+        with open(output_path, "wb") as fp:
+            fp.write(b"\x00\x00" * 4800)  # 0.1s @ 48kHz mono 16-bit
+        return {"success": True, "bytes_written": 9600, "sample_rate": 48000,
+                "channels": 1, "billable_chars": len(text), "voice_name": "harper_32"}
+    monkeypatch.setattr(speechify_tts, "synthesize", _fake_synth)
+
+    job_id = "spx-preview-1"
+    ch = Chapter(index=0, title="Cap0", text="Hello world. " * 40)
+    info = BookInfo(title="T", author="A", language="en", chapters=[ch],
+                    total_words=ch.word_count, total_chars=ch.char_count,
+                    estimated_duration_minutes=1.0)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[job_id] = {"info": info, "status": "analyzed",
+                                      "preview_text": "Hello world. " * 40}
+    try:
+        r = client.get(f"/api/preview_audio/{job_id}",
+                       query_string={"voice": "speechify:simba-3.2:harper_32",
+                                     "rate": "+0%", "speechify_emotion": "calm"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.mimetype in ("audio/mpeg", "audio/mp3")
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(job_id, None)
