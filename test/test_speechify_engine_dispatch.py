@@ -87,3 +87,43 @@ def test_run_generation_speechify_smoke(monkeypatch, tmp_path):
     assert all(c["emotion"] == "cheerful" for c in synth_calls)
     # Sample rate reale (48kHz) propagato sul job dalla pre-sintesi.
     assert job.get("speechify_sample_rate") == 48000
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg not in PATH")
+def test_run_generation_speechify_all_failed_refunds_premium_pocket(monkeypatch, tmp_path):
+    """Regressione payment-safety: se TUTTI i chunk Speechify falliscono, un job
+    pagato deve essere rimborsato sulla tasca PREMIUM (job['payment'] via
+    _refund_gemini_payment), NON sulla tasca LLM (_refund_job_payment)."""
+    monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "sk_test")
+    import generation_engine as ge
+    import speechify_tts
+    speechify_tts._reset_gate_for_test()
+
+    def _fail_chunk(text, voice_id, output_path, emotion=None, rate="+0%", **kw):
+        # Scrive silenzio e ritorna False = chunk fallito (fallback silenzio).
+        with open(output_path, "wb") as fp:
+            fp.write(b"\x00\x00" * 4800)
+        return False
+
+    monkeypatch.setattr(ge, "generate_chunk_pcm_speechify", _fail_chunk, raising=False)
+
+    calls = {"gemini": [], "job": []}
+    monkeypatch.setattr(ge, "_refund_gemini_payment",
+                        lambda *a, **k: calls["gemini"].append(a) or None)
+    monkeypatch.setattr(ge, "_refund_job_payment",
+                        lambda *a, **k: calls["job"].append(a) or None)
+    monkeypatch.setattr(ge, "_mark_pending_failed", lambda *a, **k: None)
+
+    job_id, info = _make_speechify_job(ge, tmp_path, monkeypatch,
+                                       text="Hello world. Second sentence.")
+    # Job pagato: tasca premium popolata come farebbe Task 12 (== Gemini).
+    ge._jobs[job_id]["payment"] = {"token": "tok_x", "total_eur": 2.0,
+                                   "method": "voucher"}
+    ge.run_generation(job_id, info, "speechify:simba-3.2:harper_32", "+0%",
+                      single_file=True, output_format="mp3",
+                      speechify_emotion="cheerful")
+
+    job = ge._jobs.get(job_id)
+    assert job["status"] == "error"
+    assert len(calls["gemini"]) == 1, "refund tasca premium (job['payment']) atteso"
+    assert calls["job"] == [], "_refund_job_payment (tasca LLM) NON deve essere chiamato"
