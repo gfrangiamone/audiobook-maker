@@ -14,9 +14,14 @@ def test_panel3_has_two_tab_panels():
     assert 'role="tabpanel"' in HTML
 
 def test_panel3_premium_tab_has_model_selector():
+    # Il <select> del modello e' nel markup, ma le <option> (flash25/flash31 e,
+    # solo per l'inglese, simba-3.2) sono iniettate da updModelsPremium() in
+    # app.js — non piu' statiche nell'HTML (Speechify Simba-3.2).
     assert 'id="vmPremium"' in HTML
-    assert 'value="flash25"' in HTML
-    assert 'value="flash31"' in HTML
+    APPJS = Path("static/js/app.js").read_text(encoding="utf-8")
+    assert "updModelsPremium" in APPJS
+    assert "flash25" in APPJS
+    assert "flash31" in APPJS
 
 def test_panel3_premium_tab_has_style_textarea():
     assert 'id="geminiStyle"' in HTML
