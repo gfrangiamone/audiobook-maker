@@ -436,6 +436,7 @@ LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 
 def _max_text_chars_for_voice(voice):
@@ -9671,6 +9672,23 @@ def api_combined_estimate():
             "rate_step": rate_step,
         }
 
+    speechify_eur = 0.0
+    speechify_breakdown = {}
+    if _is_speechify_voice(voice_id):
+        try:
+            est_spx = speechify_tts.estimate_book_cost(chs, language="en")
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        speechify_eur = round(est_spx["user_price_eur"], 2)
+        speechify_breakdown = {
+            "chars": est_spx["chars_total"],
+            "chars_total": est_spx["chars_total"],
+            "user_price_eur": est_spx["user_price_eur"],
+            "is_free": est_spx["is_free"],
+            "model_label": est_spx["model_label"],
+            "margin_percent": est_spx["margin_percent"],
+        }
+
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
@@ -9679,7 +9697,7 @@ def api_combined_estimate():
         llm_eur = round((chars / 1_000_000.0) * llm_rate, 2)
         llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
 
-    total = round(gemini_eur + llm_eur, 2)
+    total = round(gemini_eur + speechify_eur + llm_eur, 2)
     threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
 
     # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
@@ -9716,12 +9734,14 @@ def api_combined_estimate():
 
     return jsonify({
         "gemini_eur": gemini_eur,
+        "speechify_eur": speechify_eur,
         "llm_eur": llm_eur,
         "total_eur": total,
         "is_free": total <= threshold,
         "threshold_eur": threshold,
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
+        "speechify_breakdown": speechify_breakdown,
         "llm_breakdown": llm_breakdown,
         "gemini_overloaded": overload_info is not None,
         "gemini_overload_info": overload_info,

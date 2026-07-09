@@ -1,5 +1,7 @@
 import pytest
 
+from epub_to_tts import BookInfo, Chapter
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -8,6 +10,34 @@ def client(monkeypatch):
     audiobook_app._invalidate_voices_cache()
     audiobook_app.app.config["TESTING"] = True
     return audiobook_app.app.test_client()
+
+
+@pytest.fixture
+def spx_job(client):
+    """Job analizzato con un capitolo da 200000 caratteri, per la stima combinata.
+
+    Riferisce dinamicamente `audiobook_app.jobs`/`_jobs_lock` (invece di un
+    import statico a livello modulo) perche' `test_voices_exclude_speechify_without_key`
+    ricarica `audiobook_app` con `importlib.reload`, sostituendo l'oggetto
+    modulo: un import catturato all'import-time del file punterebbe al dict
+    `jobs` stantio del modulo pre-reload.
+    """
+    import audiobook_app
+    ch = Chapter(index=0, title="Cap0", text="A" * 200000)
+    info = BookInfo(
+        title="T",
+        author="A",
+        language="en",
+        chapters=[ch],
+        total_words=ch.word_count,
+        total_chars=ch.char_count,
+        estimated_duration_minutes=1.0,
+    )
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["spx_est_1"] = {"info": info, "status": "analyzed"}
+    yield "spx_est_1"
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs.pop("spx_est_1", None)
 
 
 def test_voices_include_speechify_when_available(client):
@@ -33,3 +63,23 @@ def test_voices_exclude_speechify_without_key(monkeypatch):
     en_voices = data["en"]["voices"]
     ids = [v["id"] for v in en_voices]
     assert not any(i.startswith("speechify:") for i in ids)
+
+
+def test_combined_estimate_speechify(client, spx_job):
+    """La stima combinata per una voce speechify usa il pricing Speechify e
+    ritorna la forma completa della risposta (paypal_* inclusi, no early-return).
+    """
+    import speechify_tts
+
+    r = client.post("/api/combined_estimate", json={
+        "job_id": spx_job,
+        "voice_id": "speechify:simba-3.2:harper_32",
+        "selected_chapters": [0],
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    data = r.get_json()
+    bd = data.get("speechify_breakdown") or {}
+    expected = speechify_tts.compute_user_price_eur(200_000)["user_price_eur"]
+    assert bd.get("user_price_eur") == expected
+    assert data["speechify_eur"] == expected
+    assert "paypal_available" in data  # shape completa, non early-return
