@@ -652,6 +652,48 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     return _fail("synthesize_failed", str(last_error) if last_error else "")
 
 
+def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
+                                 rate="+0%", max_retries=1, failure_info=None):
+    """Genera PCM 16-bit mono da testo via Speechify Simba-3.2 con fallback silenzio.
+
+    SpeechifyUnavailable viene ri-sollevata (errore permanente: silenziarlo
+    silenzierebbe l'intero libro). Su testo vuoto o fallimento totale scrive
+    silenzio PCM e ritorna False.
+    """
+    import speechify_tts as _spx
+
+    def _fail(reason, detail=""):
+        if isinstance(failure_info, dict):
+            failure_info["reason"] = reason
+            failure_info["detail"] = str(detail)[:300]
+        return False
+
+    clean = _sanitize_tts_text(text)
+    if clean is None:
+        _generate_silence_pcm(output_path, duration_sec=1)
+        return _fail("empty_after_sanitize")
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return _spx.synthesize(clean, voice_id, output_path,
+                                   emotion=emotion, rate=rate)
+        except _spx.SpeechifyUnavailable:
+            raise  # non silenziare: il caller decide
+        except Exception as e:
+            last_error = e
+            snippet = clean[:60].replace('\n', ' ')
+            print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
+                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    print(f"[speechify] WARNING: all {max_retries} attempts failed, silence "
+          f"({len(clean)} chars). Last error: {last_error}")
+    _generate_silence_pcm(output_path, duration_sec=1)
+    return _fail("synthesize_failed", str(last_error) if last_error else "")
+
+
 # ---------------------------------------------------------------------------
 # Google Cloud TTS generation
 # ---------------------------------------------------------------------------

@@ -102,3 +102,46 @@ def test_synthesize_unavailable_without_key(monkeypatch, tmp_path):
     with pytest.raises(speechify_tts.SpeechifyUnavailable):
         speechify_tts.synthesize("Hi", "speechify:simba-3.2:dominic_32",
                                  str(tmp_path / "c.pcm"))
+
+
+import tts_split
+
+
+def test_generate_chunk_speechify_success(monkeypatch, tmp_path):
+    calls = {}
+
+    def _fake_synth(text, voice_id, output_path, emotion=None, rate="+0%", **kw):
+        calls["text"] = text
+        calls["emotion"] = emotion
+        with open(output_path, "wb") as fp:
+            fp.write(b"\x00\x00" * 100)
+        return {"success": True, "bytes_written": 200, "sample_rate": 48000,
+                "channels": 1, "billable_chars": len(text), "voice_name": "harper_32"}
+
+    monkeypatch.setattr("speechify_tts.synthesize", _fake_synth)
+    out = tmp_path / "c.pcm"
+    res = tts_split.generate_chunk_pcm_speechify(
+        "Hello world", "speechify:simba-3.2:harper_32", str(out), emotion="warm")
+    assert res["success"] is True
+    assert calls["emotion"] == "warm"
+    assert out.exists()
+
+
+def test_generate_chunk_speechify_reraises_unavailable(monkeypatch, tmp_path):
+    import speechify_tts
+
+    def _boom(*a, **k):
+        raise speechify_tts.SpeechifyUnavailable("no key")
+
+    monkeypatch.setattr("speechify_tts.synthesize", _boom)
+    with pytest.raises(speechify_tts.SpeechifyUnavailable):
+        tts_split.generate_chunk_pcm_speechify(
+            "Hi", "speechify:simba-3.2:harper_32", str(tmp_path / "c.pcm"))
+
+
+def test_generate_chunk_speechify_empty_text_silence(monkeypatch, tmp_path):
+    out = tmp_path / "c.pcm"
+    res = tts_split.generate_chunk_pcm_speechify(
+        "   ", "speechify:simba-3.2:harper_32", str(out))
+    assert res is False
+    assert out.exists()  # silenzio PCM scritto
