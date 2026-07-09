@@ -18,6 +18,10 @@ from pathlib import Path
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+# Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
+# NB: set_admin_disabled (kill-switch) NON lo usa di proposito: ha un proprio
+# protocollo write+verifica+retry (hardening incidente 2026-06).
+from community_store import atomic_write_json as _atomic_write_json
 
 # Audio output constants
 CHARS_PER_AUDIO_SECOND = 15
@@ -1237,10 +1241,7 @@ def _save_usage(data):
     if _usage_file_path is None:
         return
     try:
-        _usage_file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _usage_file_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(_usage_file_path)
+        _atomic_write_json(_usage_file_path, data, ensure_ascii=True, indent=2)
     except Exception as e:
         print(f"[gemini-tts] Warning: could not save usage file: {e}")
 
@@ -1354,10 +1355,7 @@ def _save_previews(data):
     if p is None:
         return
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        tmp.replace(p)
+        _atomic_write_json(p, data, ensure_ascii=True)
     except Exception as e:
         print(f"[gemini-tts] Warning: could not save previews file: {e}")
 
@@ -1453,10 +1451,7 @@ def _save_rate_log(data):
     if p is None:
         return
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        tmp.replace(p)
+        _atomic_write_json(p, data, ensure_ascii=True)
     except Exception as e:
         print(f"[gemini-tts] Warning: could not save rate log: {e}")
 

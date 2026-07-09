@@ -2,9 +2,11 @@
 Struttura: {"YYYY-MM-DD": {"app_open": {"android": N, ...}, "web_visit_from_app": {...}}}
 Nessun dato personale. Best-effort, thread-safe, scrittura atomica.
 """
-import json, os, threading
+import json, threading
 from datetime import datetime
 from pathlib import Path
+
+from community_store import atomic_write_json
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _METRICS_FILE = _SCRIPT_DIR / "_metrics.json"
@@ -27,13 +29,7 @@ def _load():
 
 
 def _save(d):
-    tmp = _METRICS_FILE.with_suffix(_METRICS_FILE.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False)
-        f.flush()
-        try: os.fsync(f.fileno())
-        except OSError: pass
-    os.replace(str(tmp), str(_METRICS_FILE))
+    atomic_write_json(_METRICS_FILE, d)
 
 
 def incr(event, platform, day=None):
