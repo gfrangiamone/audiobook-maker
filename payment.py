@@ -12,7 +12,8 @@ Funzioni:
   - _save_paid_opt_done / _load_paid_opt_done / _mark_paid_opt_done / _cleanup_paid_opt_done
   - _recover_orphaned_voucher_charges(jobs)  — jobs passato come parametro esplicito
 
-Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
+Dipende solo dalla stdlib, da os.environ e dal modulo foglia community_store
+(primitivo atomic_write_json) — nessun import da audiobook_app.
 """
 
 import json
@@ -21,6 +22,10 @@ import shutil
 import threading
 import time
 from pathlib import Path
+
+# Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
+# L'alias conserva il nome storico usato da call-site e test.
+from community_store import atomic_write_json as _atomic_write_json
 
 # ---------------------------------------------------------------------------
 # PayPal + payment config
@@ -234,25 +239,10 @@ def _voucher_rl_record_result(email, success):
 # Persistence: payments
 # ---------------------------------------------------------------------------
 
-def _atomic_json_write(path, payload):
-    """Scrive JSON in modo atomico: tmp file + fsync + rename.
-    Evita file corrotti se il processo crasha a meta' write."""
-    path = Path(path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-        f.flush()
-        try:
-            os.fsync(f.fileno())
-        except OSError:
-            pass  # filesystem non supporta fsync (rari edge case)
-    os.replace(str(tmp), str(path))
-
-
 def _save_payments():
     try:
         with _payments_lock:
-            _atomic_json_write(_PAYMENTS_FILE, _payments)
+            _atomic_write_json(_PAYMENTS_FILE, _payments, indent=2)
     except Exception as e:
         print(f"[payments] Failed to save: {e}")
 
@@ -282,7 +272,7 @@ def _load_payments():
 def _save_vouchers():
     try:
         with _vouchers_lock:
-            _atomic_json_write(_VOUCHERS_FILE, _vouchers)
+            _atomic_write_json(_VOUCHERS_FILE, _vouchers, indent=2)
     except Exception as e:
         print(f"[vouchers] Failed to save: {e}")
 
@@ -501,8 +491,7 @@ def _voucher_refund(code: str, amount: float, job_id: str = "", reason: str = ""
 
 def _save_paid_opt_done():
     try:
-        with open(_PAID_OPT_DONE_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(_paid_opt_done), f)
+        _atomic_write_json(_PAID_OPT_DONE_FILE, list(_paid_opt_done))
     except Exception as e:
         print(f"[paid_opt_done] Failed to save: {e}")
 
@@ -535,13 +524,6 @@ def _cleanup_paid_opt_done():
 # ---------------------------------------------------------------------------
 # F4: Unified paid jobs store with atomic migration
 # ---------------------------------------------------------------------------
-
-def _atomic_write_json(path, data):
-    tmp = Path(str(path) + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    tmp.replace(path)
-
 
 def _migrate_paid_opt_to_paid_jobs():
     """One-shot startup migration: legacy _paid_opt_done.json -> _paid_jobs_done.json.
