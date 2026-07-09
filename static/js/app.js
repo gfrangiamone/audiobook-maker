@@ -1433,14 +1433,13 @@ async function onGenerateClick() {
     if (!est || est.is_free) {
       return startCombinedGeneration();
     }
-    // Voci STANDARD: il costo (solo LLM) si paga col popup dedicato
-    // all'ottimizzazione AI, già ottenuto al toggle (window._couponPaymentToken)
-    // o richiesto lazy dentro startCombinedGeneration. Il modale combinato
-    // (con riga "Voci PREMIUM") è riservato alle voci PREMIUM: aprirlo qui per
-    // le standard duplicherebbe un pagamento già fatto. Vedi guard gemella in
-    // _fetchCostEstimate.
+    // Voci STANDARD: il costo (solo LLM) si paga dentro startCombinedGeneration
+    // col modal condiviso Buono/PayPal (_showPaymentModal), al momento del
+    // Generate — quando la selezione capitoli è definitiva e l'importo non può
+    // più cambiare. Il modale combinato (con riga "Voci PREMIUM") è riservato
+    // alle voci PREMIUM: aprirlo qui per le standard duplicherebbe il pagamento.
     if (wizardState.audioTab !== 'premium') {
-      return startCombinedGeneration(window._couponPaymentToken || null);
+      return startCombinedGeneration(null);
     }
     openPaymentModal(est);
   } finally {
@@ -1455,8 +1454,10 @@ async function onGenerateClick() {
 //   voucherPurpose: string  (passato a /api/voucher_validate, solo audit)
 //   paypal: { endpoint, buildBody:()=>({...}) }
 //   onConfirm: (token)=>void
+//   onCancel?: ()=>void  (chiusura senza conferma; usato dai flussi promise-based)
 function _openPayModalCtx(ctx) {
   _payCtx = ctx;
+  _payConfirmed = false;
   _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null };
   // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
   const rowMap = [
@@ -1518,9 +1519,19 @@ function openPaymentModal(estimate) {
   });
 }
 
+// True dopo onPayConfirm nella sessione modal corrente: distingue la chiusura
+// post-conferma dall'annullo (X / Annulla). Reset a ogni _openPayModalCtx.
+let _payConfirmed = false;
 function closePaymentModal() {
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = true;
+  // Chiusura senza conferma = annullo: notifica il flusso chiamante (una sola
+  // volta). I contesti senza onCancel (premium/traduzione) non sono toccati.
+  const ctx = _payCtx;
+  if (ctx && !_payConfirmed && typeof ctx.onCancel === 'function') {
+    _payCtx = null;
+    ctx.onCancel();
+  }
 }
 
 // ─────────── PayPal buttons in combined payment modal ───────────
@@ -1636,6 +1647,7 @@ function onPayConfirm() {
   if (!_payState.token) return;
   const _cb = _payCtx && _payCtx.onConfirm;
   const _tok = _payState.token;
+  _payConfirmed = true;  // la close che segue NON deve scattare come annullo
   closePaymentModal();
   if (typeof _cb === 'function') _cb(_tok);
 }
@@ -2512,9 +2524,6 @@ function toggleAIOptimization(){
   }else{
     if(aiOptInfo)aiOptInfo.style.display='none';
     if(costEstimate)costEstimate.classList.remove('visible');
-    const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
-    const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
-    window._couponPaymentToken=null;
   }
   _updateAiOptCard();
   _updateSummary();
@@ -2534,8 +2543,6 @@ async function _fetchCostEstimate(){
   // Saltare il popup voucher LLM-only per evitare una doppia richiesta di pagamento.
   if(wizardState.audioTab==='premium'){
     const costEl=document.getElementById('costEstimate');if(costEl)costEl.classList.remove('visible');
-    const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
-    const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
     return;
   }
   try{
@@ -2548,37 +2555,17 @@ async function _fetchCostEstimate(){
     if(est.error){return}
     const costEl=document.getElementById('costEstimate');
     if(est.requires_payment){
-      // Onerous: hide cost UI and open the rich popup directly
-      if(costEl)costEl.classList.remove('visible');
-      if(!window._couponPaymentToken){
-        try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
-          llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
-          llmConfig.threshold=cfg.free_threshold_eur||0.5;
-          llmConfig.bonus=cfg.voucher_bonus_percent||10;
-          llmConfig.expiry=cfg.voucher_expiry_days||180;
-          llmConfig.paypalClientId=cfg.paypal_client_id||"";
-          llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
-          llmConfig.paypalAvailable=!!cfg.paypal_available;
-        }catch(e){}
-        const token=await _showPaymentModal(est.cost_eur,est.chars);
-        if(token){
-          window._couponPaymentToken=token;
-          const result=document.getElementById('couponResult');
-          if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
-        }else{
-          // Popup closed without validating: turn AI optimization off
-          const aiToggle=document.getElementById('aiToggle');
-          if(aiToggle)aiToggle.checked=false;
-          aiOptEnabled=false;
-          const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
-          _updateAiOptCard();_updateSummary();
-        }
-      }
+      // Oneroso: mostra la stima nella card AI. Il pagamento (buono o PayPal)
+      // avviene al click Genera col modal condiviso del flusso premium, quando
+      // la selezione capitoli è definitiva (vedi startCombinedGeneration).
+      const amountEl=document.getElementById('costAmount');
+      if(amountEl)amountEl.textContent='€ '+Number(est.cost_eur).toFixed(2);
+      const detEl=document.getElementById('costDetail');
+      if(detEl)detEl.textContent=Number(est.chars).toLocaleString(cl||'it')+' char';
+      if(costEl)costEl.classList.add('visible');
     }else{
       // Free (below threshold): hide cost UI completely — say nothing
       if(costEl)costEl.classList.remove('visible');
-      const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
-      const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.textContent='';
     }
   }catch(e){/* ignore estimate errors */}
 }
@@ -2685,80 +2672,29 @@ async function _loadLlmPaymentConfig(){
   }catch(e){/* best-effort */}
 }
 
-async function _showPaymentModal(costEur,chars,orderOpts){
-  // orderOpts (optional): {endpoint, body} overrides the PayPal order-creation
-  // call for alternate flows (es. translate). Voucher path is unaffected.
-  return new Promise(async function(resolve){
-    var modal=document.getElementById('payModal');
-    var errEl=document.getElementById('payErr');
-    var okEl=document.getElementById('payOk');
-    errEl.style.display='none';okEl.style.display='none';
-    document.getElementById('payCostValue').textContent='€ '+costEur.toFixed(2);
-    document.getElementById('payCostDetails').textContent=chars.toLocaleString()+' char × '+llmConfig.rate.toFixed(2)+' €/M';
-    document.getElementById('payVoucherCode').value='';
-    document.getElementById('payVoucherEmail').value=lastVoucherEmail;
-    applyI18n();
-    // pay_desc contiene tag HTML (<b>) e placeholder {chars} → calcolo dinamico della soglia in caratteri
-    // soglia_char = floor(threshold_eur / rate_eur_per_Mchar * 1_000_000), arrotondato per difetto a migliaia
-    var thresholdChars=Math.floor((llmConfig.threshold/llmConfig.rate)*1000000/1000)*1000;
-    var charsStr=thresholdChars.toLocaleString(cl||'it');
-    document.getElementById('payDescText').innerHTML=t('pay_desc').replace('{chars}',charsStr);
-    modal.classList.add('open');
-
-    var resolved=false;
-    function done(token){if(resolved)return;resolved=true;modal.classList.remove('open');resolve(token)}
-    document.getElementById('payClose').onclick=function(){done(null)};
-    document.getElementById('payVoucherSubmit').onclick=async function(){
-      errEl.style.display='none';
-      var code=document.getElementById('payVoucherCode').value.trim().toUpperCase();
-      var email=document.getElementById('payVoucherEmail').value.trim();
-      if(!code||!email){errEl.textContent=t('pay_err_generic');errEl.style.display='';return}
-      try{
-        var r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
-        var d=await r.json();
-        if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
-        lastVoucherEmail=email; // Save for pre-filling notification email
-        try{localStorage.setItem('abm_v_email',email)}catch(e){}
-        okEl.textContent=t('pay_voucher_valid');okEl.style.display='';
-        setTimeout(function(){done(d.payment_token)},800);
-      }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
-    };
-
-    /* PayPal SDK loading disabled — payment via voucher only.
-       Backend PayPal routes are preserved for potential future re-enablement.
-    if(llmConfig.paypalAvailable&&llmConfig.paypalClientId){
-      try{
-        await _loadPaypalSdk(llmConfig.paypalClientId);
-        document.getElementById('payPaypalLoading').style.display='none';
-        window.paypal.Buttons({
-          style:{layout:'vertical',color:'gold',shape:'rect',label:'pay'},
-          createOrder:async function(){
-            var _ep=(orderOpts&&orderOpts.endpoint)||'/api/paypal_create_order';
-            var _bd=(orderOpts&&orderOpts.body)||{job_id:jobId};
-            var r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_bd)});
-            var d=await r.json();
-            if(d.error)throw new Error(d.error);
-            return d.order_id;
-          },
-          onApprove:async function(data){
-            try{
-              var r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
-              var d=await r.json();
-              if(d.error){errEl.textContent=d.error;errEl.style.display='';return}
-              okEl.textContent=t('pay_success');okEl.style.display='';
-              setTimeout(function(){done(d.payment_token)},800);
-            }catch(e){errEl.textContent='Error: '+e.message;errEl.style.display=''}
-          },
-          onError:function(err){errEl.textContent=t('pay_err_generic');errEl.style.display='';console.error(err)},
-          onCancel:function(){}
-        }).render('#paypal-button-container');
-      }catch(e){
-        document.getElementById('payPaypalLoading').textContent='PayPal unavailable: '+e.message;
-      }
-    }else{
-      document.getElementById('payPaypalLoading').textContent='PayPal not configured';
-    }
-    */
+function _showPaymentModal(costEur,chars,orderOpts){
+  // Ottimizzazione AI standalone (voci standard): riusa il modal condiviso
+  // Buono/PayPal del flusso premium (_openPayModalCtx) come adapter
+  // promise-based — risolve col payment_token alla conferma, null all'annullo.
+  // orderOpts (optional): {endpoint, body} override della create-order PayPal
+  // per flussi alternativi. Il path voucher non ne è influenzato.
+  return new Promise(function(resolve){
+    _openPayModalCtx({
+      lines:[{labelKey:'pay_text_ai_optimization',amount:costEur}],
+      total:costEur,
+      voucherPurpose:'llm',
+      paypal:{
+        endpoint:(orderOpts&&orderOpts.endpoint)||'/api/paypal_create_order',
+        buildBody:function(){
+          if(orderOpts&&orderOpts.body)return orderOpts.body;
+          // Stessi capitoli usati per la stima: il server ricalcola l'importo
+          // sul medesimo subset (capitoli già ottimizzati esclusi lato server).
+          return {job_id:jobId,selected_chapters:(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[]};
+        }
+      },
+      onConfirm:function(token){resolve(token)},
+      onCancel:function(){resolve(null)}
+    });
   });
 }
 
@@ -2826,22 +2762,11 @@ async function startCombinedGeneration(combinedPaymentToken){
       var est=await fetch(url.toString()).then(r=>r.json());
       if(est.error){showS3Err(est.error);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
       if(est.requires_payment&&!paymentToken){
-        // Reuse token already validated via the popup (showCoupon)
-        if(window._couponPaymentToken){
-          paymentToken=window._couponPaymentToken;
-        }else{
-          try{var cfg=await fetch('/api/llm_available').then(r=>r.json());
-            llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
-            llmConfig.threshold=cfg.free_threshold_eur||0.5;
-            llmConfig.bonus=cfg.voucher_bonus_percent||10;
-            llmConfig.expiry=cfg.voucher_expiry_days||180;
-            llmConfig.paypalClientId=cfg.paypal_client_id||"";
-            llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
-            llmConfig.paypalAvailable=!!cfg.paypal_available;
-          }catch(e){}
-          paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
-          if(!paymentToken){if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
-        }
+        // Pagamento al Generate: config PayPal aggiornata, poi modal condiviso
+        // Buono/PayPal (stesso strumento delle voci premium).
+        await _loadLlmPaymentConfig();
+        paymentToken=await _showPaymentModal(est.cost_eur,est.chars);
+        if(!paymentToken){if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
       }
     }catch(e){showS3Err('Estimate error: '+e.message);if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}return}
 
@@ -4221,7 +4146,6 @@ async function goBackToChapters(){
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
   const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
-  const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
   _updateAiOptCard();
   // Hide generation/download UI
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
@@ -4329,8 +4253,6 @@ function resetAll(){
   const aiOptInfo=document.getElementById('aiOptInfo');if(aiOptInfo)aiOptInfo.style.display='none';
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
   const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
-  const couponRow=document.getElementById('couponRow');if(couponRow)couponRow.classList.remove('visible');
-  const couponResult=document.getElementById('couponResult');if(couponResult)couponResult.innerHTML='';
   // Reset old progress
   document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
   document.getElementById('pMsg').style.color='';
@@ -4362,52 +4284,9 @@ function confirmReset(){
   resetAll();
 }
 
-async function showCoupon(){
-  // Open the rich payment modal (more explanatory space) for voucher entry
-  if(!jobId)return;
-  try{
-    let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-    const selLang=document.getElementById('vl').value||cl;
-    url.searchParams.append('lang',selLang);
-    _getSelectedChapterIndexes().forEach(idx=>url.searchParams.append('selected_chapters',idx));
-    const est=await fetch(url.toString()).then(r=>r.json());
-    if(est.error||!est.requires_payment)return;
-    try{
-      var cfg=await fetch('/api/llm_available').then(r=>r.json());
-      llmConfig.rate=cfg.rate_eur_per_mchar||1.1;
-      llmConfig.threshold=cfg.free_threshold_eur||0.5;
-      llmConfig.bonus=cfg.voucher_bonus_percent||10;
-      llmConfig.expiry=cfg.voucher_expiry_days||180;
-      llmConfig.paypalClientId=cfg.paypal_client_id||"";
-      llmConfig.paypalMode=cfg.paypal_mode||"sandbox";
-      llmConfig.paypalAvailable=!!cfg.paypal_available;
-    }catch(e){}
-    const token=await _showPaymentModal(est.cost_eur,est.chars);
-    if(token){
-      window._couponPaymentToken=token;
-      const result=document.getElementById('couponResult');
-      if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
-      const amountEl=document.getElementById('costAmount');if(amountEl)amountEl.textContent='€ 0.00';
-    }
-  }catch(e){/* ignore */}
-}
-
-async function validateCoupon(){
-  const code=(document.getElementById('couponCode').value||'').trim().toUpperCase();
-  const email=(document.getElementById('couponEmail').value||'').trim()||lastVoucherEmail||prompt('Email:','');
-  if(!code||!email)return;
-  const result=document.getElementById('couponResult');
-  if(result){result.innerHTML='<div class="sp"></div>';result.className='coupon-result'}
-  try{
-    const r=await fetch('/api/voucher_validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,email:email})});
-    const d=await r.json();
-    if(d.error){if(result){result.textContent=d.error;result.className='coupon-result error'}return}
-    lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
-    if(result){result.textContent='✅ '+(t('pay_voucher_valid')||'Voucher valid!');result.className='coupon-result success'}
-    const amountEl=document.getElementById('costAmount');if(amountEl)amountEl.textContent='€ 0.00';
-    window._couponPaymentToken=d.payment_token;
-  }catch(e){if(result){result.textContent='Error: '+e.message;result.className='coupon-result error'}}
-}
+// showCoupon()/validateCoupon() rimossi: il prepagamento voucher al toggle è
+// stato sostituito dal pagamento al Generate col modal condiviso Buono/PayPal
+// (_showPaymentModal). UI coupon inline (couponRow) rimossa dal markup.
 
 function _ensureEmailAreaVisible(){
   // Safety net: garantisce che l'area email sia visibile anche se

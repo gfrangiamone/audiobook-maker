@@ -565,26 +565,14 @@ __REVIEWS_LD__
           <span data-t="ai_already_opt"></span>
         </div>
 
+        <!-- Stima costo ottimizzazione AI: il pagamento (Buono/PayPal) avviene
+             al click Genera col modal condiviso geminiPayModal. -->
         <div class="cost-estimate" id="costEstimate">
           <div style="flex:1">
             <div class="cost-amount" id="costAmount">—</div>
             <div class="cost-detail" id="costDetail"></div>
           </div>
-          <button class="btn btn-outline btn-sm" id="btnApplyCoupon" onclick="showCoupon()">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="11.5" r="1.5"/><circle cx="16" cy="11.5" r="1.5"/></svg>
-            <span data-t="pay_tab_voucher"></span>
-          </button>
         </div>
-
-        <div class="coupon-row" id="couponRow">
-          <input type="text" id="couponCode" placeholder="XXXX-XXXX-XXXX" aria-label="Codice coupon">
-          <input type="email" id="couponEmail" placeholder="Email associata" aria-label="Email buono">
-          <button class="btn btn-p btn-sm" id="btnValidateCoupon" onclick="validateCoupon()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            <span data-t="pay_voucher_submit"></span>
-          </button>
-        </div>
-        <div class="coupon-result" id="couponResult"></div>
       </div>
 
       <div class="summary-box">
@@ -923,44 +911,8 @@ __REVIEWS_LD__
   </div>
 
   <!-- OPTIMIZATION PAYMENT MODAL -->
-  <div class="modal-overlay" id="payModal" role="dialog" aria-modal="true" aria-labelledby="payModalTitle">
-    <div class="modal" style="max-width:560px">
-      <div class="modal-head">
-        <h2 id="payModalTitle">&#x1F4B3; <span data-t="pay_title"></span></h2>
-        <button class="modal-close" id="payClose" aria-label="Close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p id="payDescText" style="margin-bottom:14px"></p>
-        <div id="payCostBox" style="padding:16px;background:var(--acs);border-left:4px solid var(--ac);border-radius:6px;margin-bottom:16px">
-          <div style="font-size:.85em;color:var(--txd)" data-t="pay_cost_label"></div>
-          <div style="font-size:1.6em;font-weight:700;color:var(--ac)" id="payCostValue">—</div>
-          <div style="font-size:.8em;color:#666;margin-top:4px" id="payCostDetails"></div>
-        </div>
-        <div id="payDonorInfo" style="padding:16px 18px;background:linear-gradient(135deg,var(--srf2) 0%,#fff8f0 100%);border:1px solid #e8c99a;border-radius:12px;margin-bottom:16px;text-align:center">
-          <div style="font-size:.92em;color:var(--tx);font-weight:500;line-height:1.5;margin-bottom:14px" data-t="pay_donors_info"></div>
-          <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap">
-            <a href="https://buymeacoffee.com/audiobookmaker" target="_blank" rel="noopener" class="donate-btn donate-coffee">☕ <span data-t="donate_coffee"></span></a>
-            <a href="https://www.paypal.com/paypalme/gfrangiamone" target="_blank" rel="noopener" class="donate-btn donate-paypal">💙 <span data-t="donate_paypal"></span></a>
-          </div>
-        </div>
-        <div id="payVoucherPane">
-          <p style="font-size:.9em;color:var(--txd);margin-bottom:12px" data-t="pay_voucher_hint"></p>
-          <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_code_label"></label>
-          <input type="text" id="payVoucherCode" placeholder="XXXX-XXXX-XXXX" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;font-family:monospace;text-transform:uppercase;box-sizing:border-box;margin-bottom:10px">
-          <label style="display:block;font-weight:600;margin-bottom:4px;font-size:.9em" data-t="pay_voucher_email_label"></label>
-          <input type="email" id="payVoucherEmail" style="width:100%;padding:10px;border:1px solid var(--brd);border-radius:6px;box-sizing:border-box;margin-bottom:12px">
-          <button class="btn" id="payVoucherSubmit" style="width:100%;padding:12px;background:var(--ac);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600" data-t="pay_voucher_submit"></button>
-        </div>
-        <div id="payPaypalPane" style="display:none">
-          <div id="paypal-button-container" style="min-height:48px"></div>
-          <div id="payPaypalLoading" style="text-align:center;padding:12px;color:var(--txd);font-size:.9em" data-t="pay_loading"></div>
-        </div>
-        <div id="payErr" style="color:var(--err);font-size:.9em;margin-top:10px;display:none"></div>
-        <div id="payOk" style="color:var(--ok);font-size:.95em;margin-top:10px;display:none"></div>
-        <p style="font-size:.75em;color:var(--txd);margin-top:16px" data-t="pay_legal"></p>
-      </div>
-    </div>
-  </div>
+  <!-- Il modal legacy #payModal (voucher-only per l'ottimizzazione AI) è stato
+       rimosso: il flusso usa il modal condiviso #geminiPayModal (Buono/PayPal). -->
 
   <!-- DONATE PROMPT MODAL -->
   <div class="modal-overlay" id="donateModal" role="dialog" aria-modal="true" aria-labelledby="donateModalTitle" onclick="if(event.target===this)closeDonateModalX()">

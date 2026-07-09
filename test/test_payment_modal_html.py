@@ -11,7 +11,16 @@ def test_modal_exists():
 
 def test_modal_has_voucher_tab():
     assert 'id="payTabVoucher"' in HTML
-    assert 'id="payVoucherCode"' in HTML
+    assert 'id="geminiPayVoucherCode"' in HTML
+
+
+def test_legacy_pay_modal_removed():
+    """Il vecchio #payModal voucher-only è stato rimosso: l'ottimizzazione AI
+    standalone usa il modal condiviso geminiPayModal (Buono/PayPal)."""
+    assert 'id="payModal"' not in HTML
+    assert 'id="payVoucherCode"' not in HTML
+    assert 'id="couponRow"' not in HTML
+    assert 'id="btnApplyCoupon"' not in HTML
 
 
 def test_modal_has_paypal_tab():

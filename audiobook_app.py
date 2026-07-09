@@ -9346,10 +9346,15 @@ def api_paypal_create_order():
     job = jobs[job_id]; info = job.get("info")
     if not info: return jsonify({"error": "No book data"}), 400
     selected_chapters = _parse_selected_chapters(data.get("selected_chapters"))
+    # Allinea il calcolo a /api/optimize_estimate e /api/optimize: i capitoli
+    # gia' ottimizzati non vengono rilavorati e non vanno addebitati, altrimenti
+    # la capture PayPal supererebbe il costo reale del job.
+    already = set(job.get("optimized_chapters", []))
     if selected_chapters:
-        total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_chapters)
+        total_chars = sum(ch.char_count for ch in info.chapters
+                          if ch.index in selected_chapters and ch.index not in already)
     else:
-        total_chars = sum(ch.char_count for ch in info.chapters)
+        total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
     cost = _estimate_llm_cost_eur(total_chars)
     if cost <= LLM_FREE_THRESHOLD_EUR:
         return jsonify({"error": "Payment not required for this job"}), 400

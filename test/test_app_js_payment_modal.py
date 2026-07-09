@@ -127,3 +127,62 @@ def test_gemini_builder_sets_endpoint_and_purpose():
     assert "voucherPurpose:'gemini'" in snippet or 'voucherPurpose: "gemini"' in snippet \
         or "voucherPurpose: 'gemini'" in snippet
     assert "_openPayModalCtx" in snippet
+
+
+# ─────────── Ottimizzazione AI standalone (voci standard): modal condiviso ───────────
+
+def test_llm_standalone_uses_shared_modal():
+    """_showPaymentModal è un adapter sul modal condiviso Buono/PayPal:
+    purpose 'llm' ed endpoint create-order dedicato all'ottimizzazione."""
+    start = APP.find("function _showPaymentModal")
+    assert start >= 0
+    snippet = APP[start:start + 1500]
+    assert "_openPayModalCtx" in snippet
+    assert "voucherPurpose:'llm'" in snippet
+    assert "/api/paypal_create_order" in snippet
+    assert "onCancel" in snippet  # annullo -> resolve(null)
+
+
+def test_llm_standalone_order_body_has_selected_chapters():
+    """La create-order LLM passa i capitoli selezionati: il server ricalcola
+    l'importo sullo stesso subset della stima."""
+    start = APP.find("function _showPaymentModal")
+    snippet = APP[start:start + 1500]
+    assert "selected_chapters" in snippet
+
+
+def test_legacy_voucher_only_modal_removed():
+    """Il vecchio popup #payModal voucher-only non esiste più: niente ramo
+    PayPal commentato né submit voucher legacy."""
+    assert "PayPal SDK loading disabled" not in APP
+    assert "payVoucherSubmit" not in APP
+    assert "getElementById('payModal')" not in APP
+
+
+def test_close_modal_fires_oncancel_once():
+    """closePaymentModal notifica onCancel SOLO su chiusura senza conferma
+    (flag _payConfirmed settato da onPayConfirm)."""
+    assert "_payConfirmed" in APP
+    start = APP.find("function closePaymentModal")
+    assert start >= 0
+    snippet = APP[start:start + 800]
+    assert "onCancel" in snippet
+    assert "_payConfirmed" in snippet
+    start_c = APP.find("function onPayConfirm")
+    snippet_c = APP[start_c:start_c + 600]
+    assert "_payConfirmed = true" in snippet_c or "_payConfirmed=true" in snippet_c
+
+
+def test_payment_happens_at_generate_not_at_toggle():
+    """_fetchCostEstimate mostra solo la stima (nessun popup al toggle);
+    il pagamento avviene in startCombinedGeneration col modal condiviso."""
+    start = APP.find("async function _fetchCostEstimate")
+    assert start >= 0
+    end = APP.find("function _updateAiOptUI")
+    snippet = APP[start:end]
+    assert "_showPaymentModal" not in snippet
+    assert "costEstimate" in snippet
+    start_g = APP.find("async function startCombinedGeneration")
+    snippet_g = APP[start_g:start_g + 4000]
+    assert "_showPaymentModal" in snippet_g
+    assert "_loadLlmPaymentConfig" in snippet_g
