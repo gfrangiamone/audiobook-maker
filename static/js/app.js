@@ -406,10 +406,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
-    updVoicesPremium();
+    // _onPremiumModelChanged() gestisce il toggle stile/emozioni, ripopola
+    // voci/accenti/emozioni e propaga il cambio al sig di preview.
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
-    // Il modello è codificato nel voice id (gemini:<model>:<voice>): cambia il sig.
-    _onPreviewParamsChanged();
   });
   const gStyle=document.getElementById('geminiStyle');
   if(gStyle){
@@ -1086,11 +1086,86 @@ function updModelsPremium(){
   vmEl.value=target;
 }
 
+// Accenti Speechify Simba: locale che filtrano le 8 voci _32 e valorizzano
+// il campo language inviato all'API.
+const _SPEECHIFY_ACCENTS=[['en-US','American English'],['en-GB','British English']];
+
+function _isSpeechifyModelSelected(){
+  const vm=document.getElementById('vmPremium');
+  return !!(vm&&vm.value==='simba-3.2');
+}
+
+// Mostra/nasconde i controlli in base al modello premium selezionato e
+// (ri)popola voci/emozioni/accento coerentemente.
+function _onPremiumModelChanged(){
+  const styleRow=document.getElementById('geminiStyleRow');
+  const emoRow=document.getElementById('speechifyEmotionRow');
+  const accentRow=document.getElementById('geminiAccentRow');
+  const simba=_isSpeechifyModelSelected();
+  if(styleRow)styleRow.hidden=simba;
+  if(emoRow)emoRow.hidden=!simba;
+  if(simba){
+    _populateSpeechifyAccents();
+    _populateSpeechifyEmotions();
+    if(accentRow)accentRow.hidden=false;   // accento (locale) sempre visibile per Simba
+  }else{
+    // Gemini: ripristina l'accento gemini gestito da _updateAccentDropdown().
+    if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
+  }
+  updVoicesPremium();
+  if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+}
+
+function _populateSpeechifyAccents(){
+  const acc=document.getElementById('geminiAccent');
+  if(!acc)return;
+  const prev=acc.value;
+  acc.innerHTML='';
+  for(const [code,label] of _SPEECHIFY_ACCENTS){
+    const o=document.createElement('option');o.value=code;o.textContent=label;acc.appendChild(o);
+  }
+  acc.value=(_SPEECHIFY_ACCENTS.some(a=>a[0]===prev))?prev:'en-US';
+  acc.onchange=()=>{updVoicesPremium();if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+}
+
+function _populateSpeechifyEmotions(){
+  const sel=document.getElementById('speechifyEmotion');
+  if(!sel)return;
+  const emotions=['angry','cheerful','sad','terrified','relaxed','fearful','surprised','calm','assertive','energetic','warm','direct','bright'];
+  const prev=sel.value;
+  sel.innerHTML='';
+  const none=document.createElement('option');none.value='';none.textContent=t('emotion_none')||'None (neutral)';sel.appendChild(none);
+  for(const e of emotions){
+    const o=document.createElement('option');o.value=e;o.textContent=(t('emotion_'+e)||e);sel.appendChild(o);
+  }
+  sel.value=prev||'';
+  sel.onchange=()=>{if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+}
+
 function updVoicesPremium(){
   const vlEl=document.getElementById('vlPremium');
   const vmEl=document.getElementById('vmPremium');
   const sel=document.getElementById('vvPremium');
   if(!sel)return;
+  // --- Ramo Speechify Simba-3.2: voci filtrate per accento (locale), non per lingua ---
+  if(vmEl&&vmEl.value==='simba-3.2'){
+    const accEl=document.getElementById('geminiAccent');
+    const locale=(accEl&&accEl.value)||'en-US';
+    const en=voices&&voices['en'];
+    const arr=en&&Array.isArray(en.voices)?en.voices:[];
+    const spx=arr.filter(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:')&&v.locale===locale);
+    sel.innerHTML='';
+    let lg='';
+    for(const v of spx){
+      if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender;}
+      const o=document.createElement('option');o.value=v.id;
+      o.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.id.split(':').pop());
+      sel.lastElementChild.appendChild(o);
+    }
+    sel.onchange=()=>{if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+    return;
+  }
+  // --- Ramo Gemini (esistente) ---
   const lang=(vlEl&&vlEl.value)||'it';
   const modelKey=(vmEl&&vmEl.value)||'flash25';
   sel.innerHTML='';
@@ -1697,6 +1772,7 @@ let _currentPreviewSig=null;
 const _knownPreviewSigs=new Set();
 
 function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
+function _isSpeechifyVoiceId(v){return typeof v==='string' && v.startsWith('speechify:');}
 
 // Catalogo accenti per lingua (mirror di gemini_tts.ACCENT_VARIANTS lato backend).
 // Ogni voce: [code, i18nKey]. Il primo e' il default. Solo le lingue qui elencate
@@ -1772,7 +1848,8 @@ function _getPreviewSig(){
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
   const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
-  return voice+'|'+rate+'|'+style+'|'+accent+'|'+_getSelectedChaptersKey();
+  const emo=_isSpeechifyVoiceId(voice)?(document.getElementById('speechifyEmotion')?.value||''):'';
+  return voice+'|'+rate+'|'+style+'|'+accent+'|'+emo+'|'+_getSelectedChaptersKey();
 }
 
 function _buildPreviewUrl(){
@@ -1799,6 +1876,10 @@ function _buildPreviewUrl(){
   if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
   const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
   if(accent)u+='&accent='+encodeURIComponent(accent);
+  if(_isSpeechifyVoiceId(voice)){
+    const _emo=(document.getElementById('speechifyEmotion')?.value||'');
+    if(_emo)u+='&speechify_emotion='+encodeURIComponent(_emo);
+  }
   const _pf=getParenFlags();
   if(_pf.read_round_parens)u+='&read_round_parens=1';
   if(_pf.read_square_brackets)u+='&read_square_brackets=1';
@@ -2882,6 +2963,10 @@ async function startCombinedGeneration(combinedPaymentToken){
         var _ga=_getAccentVariant();
         if(_ga)genPayload.gemini_accent=_ga;
       }
+      if(_isSpeechifyVoiceId(getCurrentVoiceId())){
+        var _emo=(document.getElementById('speechifyEmotion')?.value||'');
+        if(_emo)genPayload.speechify_emotion=_emo;
+      }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
@@ -3277,6 +3362,10 @@ async function startGen(){
       if(_gs)payload.gemini_style_instruction=_gs;
       const _ga=_getAccentVariant();
       if(_ga)payload.gemini_accent=_ga;
+    }
+    if(_isSpeechifyVoiceId(getCurrentVoiceId())){
+      const _emo=(document.getElementById('speechifyEmotion')?.value||'');
+      if(_emo)payload.speechify_emotion=_emo;
     }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
