@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from community_store import atomic_write_json
+
 
 # ── Lazy import del SDK Google (opzionale) ──
 _gtts_client = None
@@ -138,14 +140,14 @@ def _load_usage():
 
 
 def _save_usage(data):
-    """Salva l'utilizzo mensile su file."""
+    """Salva l'utilizzo mensile su file (scrittura atomica: un crash a metà
+    write non azzera il contatore del budget free-tier)."""
     global _usage_cache
     _usage_cache = data
     if _usage_file_path is None:
         return
     try:
-        _usage_file_path.parent.mkdir(parents=True, exist_ok=True)
-        _usage_file_path.write_text(json.dumps(data), encoding="utf-8")
+        atomic_write_json(_usage_file_path, data, ensure_ascii=True)
     except Exception as e:
         print(f"[google-tts] Warning: could not save usage file: {e}")
 

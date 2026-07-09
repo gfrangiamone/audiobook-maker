@@ -94,6 +94,21 @@ def test_concurrent_writers_never_corrupt(tmp_path):
     assert set(final) == {"tid", "i", "fill"}
 
 
+def test_google_tts_usage_roundtrip_atomic(tmp_path, monkeypatch):
+    """_save_usage di google_tts (contatore budget free-tier) scrive in modo
+    atomico e _load_usage rilegge lo stesso stato — nessun .tmp residuo."""
+    import google_tts
+    monkeypatch.setattr(google_tts, "_usage_file_path",
+                        tmp_path / "google_tts_usage.json")
+    monkeypatch.setattr(google_tts, "_usage_cache", None)
+    data = {"month": google_tts._current_month(), "chars_used": 12345}
+    google_tts._save_usage(data)
+    monkeypatch.setattr(google_tts, "_usage_cache", None)  # forza rilettura da disco
+    loaded = google_tts._load_usage()
+    assert loaded == data
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_jsonstore_write_still_atomic_with_bak(tmp_path):
     """JsonStore (news/feedback) continua a scrivere via primitivo condiviso
     mantenendo il backup .bak."""
