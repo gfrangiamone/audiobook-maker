@@ -1027,16 +1027,9 @@ def _load_transfer_tokens():
 
 def _save_transfer_tokens():
     try:
-        tmp = _TRANSFER_TOKENS_FILE.with_suffix(_TRANSFER_TOKENS_FILE.suffix + ".tmp")
         with _transfer_lock:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(_transfer_tokens, f, ensure_ascii=False, indent=2)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-            os.replace(str(tmp), str(_TRANSFER_TOKENS_FILE))
+            community_store.atomic_write_json(_TRANSFER_TOKENS_FILE,
+                                              _transfer_tokens, indent=2)
     except Exception as e:
         print(f"[transfer] save failed: {e}")
 
@@ -1060,16 +1053,9 @@ def _load_share_tokens():
 
 def _save_share_tokens():
     try:
-        tmp = _SHARE_TOKENS_FILE.with_suffix(_SHARE_TOKENS_FILE.suffix + ".tmp")
         with _share_lock:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(_share_tokens, f, ensure_ascii=False, indent=2)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-            os.replace(str(tmp), str(_SHARE_TOKENS_FILE))
+            community_store.atomic_write_json(_SHARE_TOKENS_FILE,
+                                              _share_tokens, indent=2)
     except Exception as e:
         print(f"[share] save failed: {e}")
 
@@ -1546,16 +1532,8 @@ def _save_tokens():
                     # Mobile: client identifier for job reconstruction after restart
                     "client_id": info.get("client_id", ""),
                 }
-            # Atomic write: tmp + fsync + rename per evitare corruzione su crash
-            _tmp_tokens = _TOKENS_FILE.with_suffix(_TOKENS_FILE.suffix + ".tmp")
-            with open(_tmp_tokens, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-            os.replace(str(_tmp_tokens), str(_TOKENS_FILE))
+            # Atomic write (tmp + fsync + rename) per evitare corruzione su crash
+            community_store.atomic_write_json(_TOKENS_FILE, data, indent=2)
     except Exception as e:
         print(f"[tokens] Failed to save tokens: {e}")
 
@@ -1619,15 +1597,8 @@ def _load_device_tokens():
 def _save_device_tokens():
     """Caller MUST hold _device_tokens_lock."""
     try:
-        _tmp = _DEVICE_TOKENS_FILE.with_suffix(_DEVICE_TOKENS_FILE.suffix + ".tmp")
-        with open(_tmp, "w", encoding="utf-8") as f:
-            json.dump(_device_tokens, f, ensure_ascii=False, indent=2)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
-        os.replace(str(_tmp), str(_DEVICE_TOKENS_FILE))
+        community_store.atomic_write_json(_DEVICE_TOKENS_FILE,
+                                          _device_tokens, indent=2)
     except Exception as e:
         print(f"[device] Failed to save device tokens: {e}")
 
@@ -1726,17 +1697,8 @@ def _save_client_emails():
     """Persiste la mappatura client_id → email in scrittura atomica."""
     try:
         with _client_emails_lock:
-            tmp_file = _CLIENT_EMAILS_FILE.with_suffix(
-                _CLIENT_EMAILS_FILE.suffix + ".tmp"
-            )
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(_client_emails, f, ensure_ascii=False, indent=2)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-            os.replace(str(tmp_file), str(_CLIENT_EMAILS_FILE))
+            community_store.atomic_write_json(_CLIENT_EMAILS_FILE,
+                                              _client_emails, indent=2)
     except Exception as e:
         print(f"[client_emails] Failed to save: {e}")
 
