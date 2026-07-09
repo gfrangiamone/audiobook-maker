@@ -81,6 +81,9 @@ except ImportError:
     gemini_tts = None
     print("[startup] gemini_tts module not available (google-genai not installed)")
 
+#  -  -  Speechify Simba-3.2 (PREMIUM, solo inglese)  -  opzionale  -  -
+import speechify_tts
+
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
     _extract_cover_for_preview, _generate_podcast_rss,
@@ -1827,6 +1830,20 @@ async def _fetch_voices():
                 languages[lc_short]["voices"].extend(v_list)
         except Exception as e:
             print(f"Error merging Gemini voices: {e}")
+
+    # 4. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
+    if speechify_tts.is_available():
+        try:
+            spx_dict = speechify_tts.get_voices()  # -> {"en": [entry, ...]}
+            for lc_short, v_list in spx_dict.items():
+                if lc_short not in languages:
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            print(f"Error merging Speechify voices: {e}")
 
     # Sorting
     for lang in languages.values():
