@@ -50,6 +50,64 @@ SPEECH_ENDPOINT = "/v1/audio/speech"
 CHUNK_MAX_CHARS = 1800  # cap sotto il limite ~2000 char/richiesta dell'endpoint
 
 
+def _f(env, default):
+    try:
+        return float(str(os.environ.get(env, default)).replace(",", "."))
+    except (ValueError, TypeError):
+        return float(default)
+
+
+def _i(env, default):
+    try:
+        return int(os.environ.get(env, str(default)))
+    except (ValueError, TypeError):
+        return int(default)
+
+
+def api_key():
+    return os.environ.get("ABM_SPEECHIFY_API_KEY", "").strip()
+
+
+def is_available():
+    """True sse la API key Speechify e' configurata."""
+    return bool(api_key())
+
+
+def max_concurrency():
+    """Concorrenza API globale (limite abbonamento). Floor a 1."""
+    return max(1, _i("ABM_SPEECHIFY_MAX_CONCURRENCY", 3))
+
+
+def per_job_concurrency():
+    """Chiamate API simultanee per singolo job. Floor a 1."""
+    return max(1, _i("ABM_SPEECHIFY_PER_JOB_CONCURRENCY", 1))
+
+
+def cost_usd_per_mchar():
+    return _f("ABM_SPEECHIFY_COST_USD_PER_MCHAR", 11.18)
+
+
+def margin_percent():
+    return _f("ABM_SPEECHIFY_MARGIN_PERCENT", 60.0)
+
+
+def free_threshold_eur():
+    return _f("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", 0.50)
+
+
+# Costanti condivise con Gemini (stesse env per non divergere sui prezzi).
+def usd_eur_rate():
+    return _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
+
+
+def paypal_fixed_fee_eur():
+    return _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
+
+
+def paypal_percent_fee():
+    return _f("ABM_GEMINI_PAYPAL_PERCENT_FEE", 3.4)
+
+
 def voice_locale(voice_name):
     """Locale (en-US/en-GB) della voce, o None se sconosciuta."""
     return _VOICE_LOCALE.get(voice_name)
