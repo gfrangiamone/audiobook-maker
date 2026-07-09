@@ -675,7 +675,10 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
 
     clean = _sanitize_tts_text(text)
     if clean is None:
-        _generate_silence_pcm(output_path, duration_sec=1)
+        # Speechify Simba-3.2 e' nativo a 48000 Hz: il silenzio di fallback deve
+        # usare lo stesso sample rate, altrimenti a 24000 durerebbe ~0.5s reali
+        # nello stream a 48kHz e sballerebbe i marker M4B.
+        _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
         return _fail("empty_after_sanitize")
 
     last_error = None
@@ -695,7 +698,7 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
 
     print(f"[speechify] WARNING: all {max_retries} attempts failed, silence "
           f"({len(clean)} chars). Last error: {last_error}")
-    _generate_silence_pcm(output_path, duration_sec=1)
+    _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
     return _fail("synthesize_failed", str(last_error) if last_error else "")
 
 

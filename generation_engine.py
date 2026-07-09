@@ -3658,6 +3658,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 job["progress_message"] = "In attesa di uno slot disponibile..."
             def _pre_one(_ib):
                 _idx, _blk = _ib
+                # Cancellazione durante la pre-sintesi: interrompe subito la
+                # sottomissione di nuove chiamate API (stop billing). L'eccezione
+                # propaga fuori da _ex.map e viene intercettata dall'except
+                # _CancelledError esterno (refund premium via cancel path).
+                if _check_cancelled():
+                    raise _CancelledError("Job cancelled")
                 _pp = str(work_dir / f"chunk_{_idx:06d}.pcm")
                 _fi = {}
                 _res = generate_chunk_pcm_speechify(
@@ -4351,9 +4357,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["error"] = _user_msg
             job["user_facing_error"] = _user_msg
             print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
-                  f"engine=edge -> error + refund, nessuna consegna.")
+                  f"engine={engine} -> error + refund, nessuna consegna.")
             try:
-                _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+                # Speechify e' un engine premium: il pagamento vive in
+                # job["payment"] (stessa tasca di Gemini) e va rimborsato via
+                # _refund_gemini_payment. _refund_job_payment tratta la tasca
+                # LLM (payment_amount_eur) e sarebbe la tasca sbagliata.
+                if use_speechify:
+                    _refund_gemini_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+                else:
+                    _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
@@ -4413,6 +4426,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                 except Exception:
                     pass
+            elif use_speechify:
+                # Premium: rimborso sulla tasca job["payment"] (come Gemini).
+                try:
+                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             else:
                 try:
                     _refund_job_payment(job_id, job, "no_output")
@@ -4666,6 +4685,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     pass
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
+        elif use_speechify and still_current:
+            # Cancel volontario di un job Speechify pagato: rimborso INTEGRALE
+            # (nessuna retention parziale; l'audio parziale non viene consegnato
+            # per questo engine). Tasca premium job["payment"] come Gemini.
+            # _refund_gemini_payment e' no-op se il job non era pagato.
+            try:
+                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+            except Exception as _ref_err:
+                print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
 
         if use_google:
             _google_tts_refund_unused(job_id, job)
