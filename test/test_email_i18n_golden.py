@@ -7,6 +7,9 @@ test/data/email_i18n_golden.json catturato PRIMA della centralizzazione
 dei dizionari i18n: il refactor deve preservare i testi user-facing
 verbatim (whitespace incluso).
 
+NB: lo snapshot vive in test/golden/ (non test/data/: la regola `data/`
+del .gitignore ignorerebbe il file).
+
 Rigenerazione snapshot (solo se una modifica ai testi e' VOLUTA):
     python test/test_email_i18n_golden.py --regen
 """
@@ -19,7 +22,7 @@ import audiobook_app  # noqa: F401  (esegue configure() sui sub-moduli)
 import email_service
 import generation_engine as ge
 
-GOLDEN_PATH = Path(__file__).parent / "data" / "email_i18n_golden.json"
+GOLDEN_PATH = Path(__file__).parent / "golden" / "email_i18n_golden.json"
 LANGS = ["it", "en", "fr", "es", "de", "pt", "zh", "xx"]  # xx -> fallback en
 
 
