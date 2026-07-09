@@ -141,6 +141,7 @@ _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 
 def _retention_for_job(job):
@@ -2802,12 +2803,15 @@ def _engine_for_voice(voice):
     """Sceglie il motore TTS dal voice ID.
 
     Prefissi:
+      - "speechify:..." -> Speechify Simba-3.2 (PCM native)
       - "gemini:..."  -> Gemini TTS (PCM native)
       - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
       - altrimenti    -> Microsoft Edge TTS (MP3, default)
     """
     if not voice:
         return "edge"
+    if _is_speechify_voice(voice):
+        return "speechify"
     if _is_gemini_voice(voice):
         return "gemini"
     if _google_tts is not None and _google_tts.is_google_voice(voice):
