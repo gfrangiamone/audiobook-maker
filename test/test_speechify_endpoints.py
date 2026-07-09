@@ -104,6 +104,18 @@ def test_generate_passes_speechify_emotion(client, monkeypatch):
     # dev) quando il test colpisce l'endpoint /api/generate vero.
     monkeypatch.setattr(audiobook_app, "_admin_notify_generation", lambda *a, **k: None)
 
+    # Rende sincrono lo spawn del thread di generazione: senza questo, il
+    # dict `captured` viene mutato da un thread daemon reale senza join,
+    # rendendo le asserzioni sotto teoricamente in race con il return
+    # dell'endpoint.
+    class _SyncThread:
+        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+            self._t, self._a, self._k = target, args, kwargs or {}
+
+        def start(self):
+            self._t(*self._a, **self._k)
+    monkeypatch.setattr(audiobook_app.threading, "Thread", _SyncThread)
+
     job_id = "spx-gen-1"
     ch = Chapter(index=0, title="Cap0", text="A" * 1000)
     info = BookInfo(
@@ -126,6 +138,39 @@ def test_generate_passes_speechify_emotion(client, monkeypatch):
         assert audiobook_app.jobs[job_id].get("speechify_emotion") == "cheerful"
         assert captured.get("speechify_emotion") == "cheerful"
         assert captured.get("voice") == "speechify:simba-3.2:harper_32"
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(job_id, None)
+
+
+def test_generate_speechify_unconfigured_returns_400(client, monkeypatch):
+    """/api/generate deve rifiutare una voce Speechify PRIMA di consumare
+    token/spawnare il thread quando ABM_SPEECHIFY_API_KEY non e' configurata
+    (parita' con il guard analogo per le voci Gemini).
+    """
+    import audiobook_app
+
+    monkeypatch.delenv("ABM_SPEECHIFY_API_KEY", raising=False)
+
+    job_id = "spx-gen-unconfigured"
+    ch = Chapter(index=0, title="Cap0", text="A" * 1000)
+    info = BookInfo(
+        title="T", author="A", language="en", chapters=[ch],
+        total_words=ch.word_count, total_chars=ch.char_count,
+        estimated_duration_minutes=1.0,
+    )
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[job_id] = {"info": info, "status": "analyzed"}
+    try:
+        r = client.post("/api/generate", json={
+            "job_id": job_id,
+            "voice": "speechify:simba-3.2:harper_32",
+            "rate": "+0%",
+            "output_format": "mp3",
+            "lang": "en",
+        })
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert r.get_json().get("error") == "speechify_not_configured"
     finally:
         with audiobook_app._jobs_lock:
             audiobook_app.jobs.pop(job_id, None)

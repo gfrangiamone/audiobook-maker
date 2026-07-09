@@ -7865,6 +7865,9 @@ def api_generate():
     if _is_gemini_voice(voice):
         if gemini_tts is None or not gemini_tts.is_available():
             return jsonify({"error": "gemini_tts_not_configured"}), 400
+    if _is_speechify_voice(voice):
+        if not speechify_tts.is_available():
+            return jsonify({"error": "speechify_not_configured"}), 400
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
@@ -8149,6 +8152,7 @@ def api_generate():
     # chiamato alcun gemini_tts.* qui (ne' reserve_budget ne'
     # release_reservation: nulla e' stato prenotato in questo ramo).
     if _is_speechify_voice(voice):
+        # TODO(refactor): estrarre un helper _consume_premium_payment condiviso col ramo gemini (duplicazione ~90 righe).
         info_pre = job.get("info")
         all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
         sel = selected_chapters or []
