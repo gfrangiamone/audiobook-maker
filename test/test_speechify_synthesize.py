@@ -1,7 +1,6 @@
 import base64
 import io
 import wave
-import types
 import pytest
 import speechify_tts
 

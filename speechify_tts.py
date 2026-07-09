@@ -263,7 +263,9 @@ def compute_user_price_eur(chars):
     }
 
 
-_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+def _is_retryable(status_code):
+    """Determina se uno status HTTP e' retriabile: 429 o qualunque 5xx."""
+    return status_code == 429 or 500 <= status_code <= 599
 
 
 class SpeechifyUnavailable(RuntimeError):
@@ -360,15 +362,23 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
             pcm, rate_hz, channels = _wav_bytes_to_pcm(wav_bytes)
             with open(output_path, "wb") as fp:
                 fp.write(pcm)
+            # Billable chars parsing: fallback robusto a len(text) su missing/null/non-numeric
+            billable_chars = len(text)
+            try:
+                val = data.get("billable_characters_count")
+                if val is not None:
+                    billable_chars = int(val)
+            except (ValueError, TypeError):
+                pass  # fallback a len(text)
             return {
                 "success": True,
                 "bytes_written": len(pcm),
                 "sample_rate": rate_hz,
                 "channels": channels,
-                "billable_chars": int(data.get("billable_characters_count", len(text)) or 0),
+                "billable_chars": billable_chars,
                 "voice_name": voice_name,
             }
-        if resp.status_code not in _RETRYABLE_STATUS:
+        if not _is_retryable(resp.status_code):
             raise RuntimeError(f"Speechify HTTP {resp.status_code} (fatal): {getattr(resp, 'text', '')[:200]}")
         last_error = f"HTTP {resp.status_code}"
         if attempt < max_attempts - 1:
