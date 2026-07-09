@@ -398,7 +398,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(vlPrem)vlPrem.addEventListener('change',()=>{
     const src=document.getElementById('vl');
     if(src){src.value=vlPrem.value;updVoices();}
+    if(typeof updModelsPremium==='function')updModelsPremium();
     updVoicesPremium();
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
     // La lingua entra nella stima (cluster rate-log + ratio chars/token).
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   });
@@ -963,6 +965,8 @@ function syncLanguageOptions(){
   // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
   if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
   else if(ordered.length>0)dst.value=ordered[0].value;
+  if(typeof updModelsPremium==='function')updModelsPremium();
+  if(typeof updVoicesPremium==='function')updVoicesPremium();
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
@@ -1048,6 +1052,39 @@ function updVoices(){
 }
 
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
+
+// Popola #vmPremium in base alla lingua premium corrente. Per l'inglese aggiunge
+// l'opzione "Simba (English)" (id modello 'simba-3.2') e la preseleziona come
+// default; per le altre lingue elenca solo i modelli Gemini.
+function updModelsPremium(){
+  const vlEl=document.getElementById('vlPremium');
+  const vmEl=document.getElementById('vmPremium');
+  if(!vmEl)return;
+  const lang=(vlEl&&vlEl.value)||'it';
+  const prev=vmEl.value;
+  vmEl.innerHTML='';
+  const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
+  const isEnglish=(lang==='en');
+  // Modelli Gemini (sempre presenti). Le etichette usano i18n se disponibili.
+  addOpt('flash25', t('lbl_model_flash25')||'Standard');
+  addOpt('flash31', t('lbl_model_flash31')||'Avanzato');
+  if(isEnglish){
+    // Speechify Simba disponibile solo se il catalogo espone voci speechify per 'en'.
+    const en=voices&&voices['en'];
+    const arr=en&&Array.isArray(en.voices)?en.voices:[];
+    const hasSimba=arr.some(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:'));
+    if(hasSimba){
+      addOpt('simba-3.2', t('lbl_model_simba')||'Simba (English)');
+    }
+  }
+  // Default: su inglese preferisci Simba (se presente), altrimenti mantieni la
+  // scelta precedente se ancora valida, altrimenti il primo modello.
+  let target=null;
+  if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
+  else if(prev && vmEl.querySelector('option[value="'+prev+'"]')) target=prev;
+  else target=vmEl.options.length?vmEl.options[0].value:'flash25';
+  vmEl.value=target;
+}
 
 function updVoicesPremium(){
   const vlEl=document.getElementById('vlPremium');
