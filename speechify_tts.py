@@ -263,6 +263,120 @@ def compute_user_price_eur(chars):
     }
 
 
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+class SpeechifyUnavailable(RuntimeError):
+    """TTS Speechify non disponibile (API key mancante)."""
+
+
+def build_ssml(text, emotion=None, rate="+0%"):
+    """Costruisce l'SSML con emozione (se valida) e rate (se != +0%)."""
+    inner = text
+    if rate and rate not in ("+0%", "0%", "+0", 0):
+        pct = str(rate).replace("%", "").replace("+", "")
+        try:
+            n = int(pct)
+            if n != 0:
+                inner = f'<prosody rate="{n:+d}%">{inner}</prosody>'
+        except ValueError:
+            pass
+    emo = (emotion or "").strip().lower()
+    if emo and emo in EMOTIONS:
+        inner = f'<speechify:style emotion="{emo}">{inner}</speechify:style>'
+    return f'<speak>{inner}</speak>'
+
+
+def _wav_bytes_to_pcm(wav_bytes):
+    """Estrae PCM raw + (sample_rate, channels) leggendo l'header WAV.
+
+    L'header e' riletto dinamicamente (mai assunto 48kHz).
+    """
+    with _wave_open(io.BytesIO(wav_bytes)) as w:
+        channels = w.getnchannels()
+        rate = w.getframerate()
+        frames = w.readframes(w.getnframes())
+    return frames, rate, channels
+
+
+def _wave_open(fileobj):
+    return wave.open(fileobj, "rb")
+
+
+def _retry_after_seconds(resp, attempt):
+    """Secondi da attendere: header Retry-After se presente, altrimenti backoff."""
+    ra = resp.headers.get("Retry-After") if resp is not None else None
+    if ra is not None:
+        try:
+            return max(0.0, float(ra))
+        except (ValueError, TypeError):
+            pass
+    return min(30.0, 2.0 ** attempt)
+
+
+def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
+               max_attempts=3, session=None):
+    """Sintetizza `text` in PCM raw 16-bit mono via Speechify Simba-3.2.
+
+    Scrive PCM in output_path. Ogni chiamata HTTP passa dal gate globale
+    (invariante concorrenza). Ritorna dict con success/bytes_written/
+    sample_rate/channels/billable_chars/voice_name.
+
+    Raises:
+        SpeechifyUnavailable se API key mancante.
+        RuntimeError su 4xx non-429 (fail-fast) o dopo esaurimento retry.
+        ValueError se voice_id invalido.
+    """
+    if not is_available():
+        raise SpeechifyUnavailable("Speechify TTS not available (check ABM_SPEECHIFY_API_KEY)")
+    model_key, voice_name, locale = parse_voice_id(voice_id)
+
+    if session is None:
+        import requests
+        session = requests.Session()
+
+    ssml = build_ssml(text, emotion=emotion, rate=rate)
+    payload = {
+        "input": ssml,
+        "voice_id": voice_name,
+        "model": MODEL_ID,
+        "language": locale,
+        "audio_format": "wav",
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key()}",
+        "Content-Type": "application/json",
+    }
+    url = API_BASE + SPEECH_ENDPOINT
+
+    last_error = None
+    for attempt in range(max_attempts):
+        with slot():  # gate globale: acquisisce/rilascia un permesso per chiamata
+            resp = session.post(url, json=payload, headers=headers, timeout=120)
+        if resp.status_code == 200:
+            data = resp.json()
+            wav_b64 = data.get("audio_data") or ""
+            wav_bytes = base64.b64decode(wav_b64)
+            pcm, rate_hz, channels = _wav_bytes_to_pcm(wav_bytes)
+            with open(output_path, "wb") as fp:
+                fp.write(pcm)
+            return {
+                "success": True,
+                "bytes_written": len(pcm),
+                "sample_rate": rate_hz,
+                "channels": channels,
+                "billable_chars": int(data.get("billable_characters_count", len(text)) or 0),
+                "voice_name": voice_name,
+            }
+        if resp.status_code not in _RETRYABLE_STATUS:
+            raise RuntimeError(f"Speechify HTTP {resp.status_code} (fatal): {getattr(resp, 'text', '')[:200]}")
+        last_error = f"HTTP {resp.status_code}"
+        if attempt < max_attempts - 1:
+            time.sleep(_retry_after_seconds(resp, attempt))
+
+    raise RuntimeError(f"Speechify synthesis failed after {max_attempts} attempts: {last_error}")
+
+
 def estimate_book_cost(chapters, language="en"):
     """Stima costo end-to-end su caratteri di input (somma capitoli).
 
