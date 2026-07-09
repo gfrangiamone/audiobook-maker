@@ -2,6 +2,11 @@
 
 Atomic write (tmp + rename), per-file lock, single backup .bak.
 No SQLite — small datasets, simple deployment.
+
+Espone anche `atomic_write_json`, il primitivo di scrittura JSON atomica
+condiviso da tutte le persistenze snapshot dell'app (token, pagamenti,
+voucher, usage, metriche): prima era duplicato in ~10 copie inline nei
+singoli moduli. Non richiede init() e non tocca _data_dir.
 """
 from __future__ import annotations
 
@@ -17,6 +22,31 @@ from typing import Any
 _data_dir: Path | None = None
 _stores: dict[str, "JsonStore"] = {}
 _init_lock = threading.Lock()
+
+
+def atomic_write_json(path, data, *, fsync=True, ensure_ascii=False, indent=None):
+    """Scrive `data` come JSON su `path` in modo atomico: tmp + fsync opzionale
+    + os.replace. Un crash a metà write lascia intatto il file precedente; il
+    rename atomico garantisce che il file non sia mai osservabile troncato.
+
+    NON è thread-safe di per sé: la disciplina di lock resta a carico del
+    chiamante (ogni store mantiene il proprio lock, come prima). Propaga le
+    eccezioni: la gestione errori (log best-effort vs fatal) resta nei wrapper
+    per-store. I parametri di formato replicano quelli del writer originale
+    per mantenere byte-stabile il contenuto su disco.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=ensure_ascii, indent=indent)
+        if fsync:
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass  # filesystem senza fsync (rari edge case)
+    os.replace(str(tmp), str(path))
 
 
 def init(data_dir: str | os.PathLike) -> None:
@@ -59,10 +89,9 @@ class JsonStore:
                 self.path.replace(self.bak)
             except OSError:
                 pass
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(self.path)
+        # fsync=False: comportamento storico di questo store (dataset piccoli,
+        # best-effort); il .bak sopra copre il recovery.
+        atomic_write_json(self.path, data, fsync=False, indent=2)
 
     def all(self, include_archived: bool = False) -> list[dict]:
         with self._lock:
