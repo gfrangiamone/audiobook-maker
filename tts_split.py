@@ -468,9 +468,14 @@ _PCM_CHANNELS = 1
 _PCM_SAMPLE_WIDTH = 2  # bytes per sample (16-bit)
 
 
-def _generate_silence_pcm(output_path, duration_sec=1):
-    """Scrive N secondi di silenzio PCM 24kHz mono 16-bit (zero bytes)."""
-    n_bytes = int(duration_sec * _PCM_SAMPLE_RATE * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
+def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
+    """Scrive N secondi di silenzio PCM mono 16-bit (zero bytes).
+
+    sample_rate=None usa il default Gemini (24kHz). I chiamanti PCM a rate
+    diverso (es. Speechify Simba-3.2, 48kHz nativo) passano il rate reale.
+    """
+    sr = sample_rate or _PCM_SAMPLE_RATE
+    n_bytes = int(duration_sec * sr * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
     with open(output_path, "wb") as f:
         if n_bytes > 0:
             f.write(b"\x00" * n_bytes)
