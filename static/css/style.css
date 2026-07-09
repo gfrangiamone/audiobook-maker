@@ -649,6 +649,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 [data-theme="dark"] .toggle-slider:before{background:#e8e8ed}
 
 /* ═══ COST ESTIMATE ═══ */
+.gen-details{margin:18px auto 0;max-width:520px;padding:14px 18px;background:var(--srf);border:1px solid var(--brd);border-radius:var(--rs);font-size:.86rem;line-height:1.6;color:var(--txd);text-align:left}
+.gen-details-title{font-weight:700;font-size:.95rem;color:var(--tx);margin-bottom:6px;word-break:break-word}
+.gen-details-lines strong{color:var(--tx)}
 .cost-estimate{margin-top:18px;padding:14px 18px;background:var(--srf);border-radius:var(--rs);display:none;align-items:center;gap:18px;border:1px solid var(--brd)}
 .cost-estimate.visible{display:flex;flex-wrap:wrap}
 .cost-estimate .cost-amount{font-size:1.25rem;font-weight:700;color:var(--tx)}

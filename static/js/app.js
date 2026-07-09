@@ -3422,7 +3422,7 @@ function listenProgress(){
   _updateGenNoticeWarning();
   _autoRegisterEmailFromStorage(myJobId);
   function connect(){
-    const es=new EventSource('/api/progress/'+myJobId);
+    const es=new EventSource('/api/progress/'+myJobId+'?lang='+encodeURIComponent(cl||'en'));
     es.onmessage=ev=>{
       retries=0;
       const d=JSON.parse(ev.data);
@@ -3531,6 +3531,17 @@ function listenProgress(){
 
         // Navigate to panel 5 (completion)
         _unlockStep(5);
+        // Dettagli generazione: titolo libro + righe localizzate dal server
+        // (stessi testi del blocco email di completamento; gen_details_html
+        // è HTML server-generated con campi utente già escaped).
+        const genDet=document.getElementById('genDetails');
+        if(genDet){
+          let h='';
+          if(bookData&&bookData.title)h+='<div class="gen-details-title">'+esc(bookData.title)+'</div>';
+          if(d.gen_details_html)h+='<div class="gen-details-lines">'+d.gen_details_html+'</div>';
+          genDet.innerHTML=h;
+          genDet.style.display=h?'':'none';
+        }
         // Populate panel 5 download buttons
         const btnD=document.getElementById('btnD');
         const btnM=document.getElementById('btnM');
@@ -4149,6 +4160,7 @@ async function goBackToChapters(){
   _updateAiOptCard();
   // Hide generation/download UI
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  const genDet=document.getElementById('genDetails');if(genDet){genDet.style.display='none';genDet.innerHTML='';}
   ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
   ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
@@ -4237,6 +4249,7 @@ function resetAll(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  const genDet=document.getElementById('genDetails');if(genDet){genDet.style.display='none';genDet.innerHTML='';}
   ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
   ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}

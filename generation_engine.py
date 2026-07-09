@@ -1230,6 +1230,58 @@ def _friendly_voice_name(voice):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", base).strip()
 
 
+def _generation_details_lines(job, lang):
+    """Righe HTML localizzate con i parametri di generazione (lingua+tipo voce,
+    voce+velocita', modello e stile per PREMIUM, ottimizzazione AI).
+
+    Fonte unica dei testi (_email_details_i18n): usata sia dall'email di
+    completamento sia dal pannello "Audiolibro pronto" del wizard (via
+    gen_details_html nel payload done di /api/progress). I campi utente sono
+    HTML-escaped. Solleva su input malformato: la difensivita' (return '')
+    resta nei chiamanti."""
+    d = _email_details_i18n.get(lang, _email_details_i18n["en"])
+    voice = (job.get("voice") or "").strip()
+    is_premium = _is_gemini_voice(voice)
+    lines = []
+
+    # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
+    #    lingua del job per le PREMIUM).
+    if is_premium:
+        lang_code = (job.get("gen_lang") or job.get("opt_lang") or "").strip()
+        if not lang_code:
+            lang_code = (getattr(job.get("info"), "language", "") or "").strip()
+    else:
+        parts = voice.split("-")
+        lang_code = "-".join(parts[:2]) if len(parts) >= 3 else ""
+    voice_type = d["voice_type_premium"] if is_premium else d["voice_type_standard"]
+    if lang_code:
+        lines.append(d["lang_line"].format(
+            lang=_htmlesc.escape(lang_code), voice_type=voice_type))
+
+    # 2) Voce + velocità ("+0%" -> normale, altrimenti valore raw).
+    vname = _friendly_voice_name(voice)
+    rate = (job.get("rate") or "").strip()
+    speed = d["speed_normal"] if rate in ("", "+0%", "0%", "+0") else rate
+    if vname:
+        lines.append(d["voice_line"].format(
+            voice=_htmlesc.escape(vname), speed=_htmlesc.escape(speed)))
+
+    if is_premium:
+        # 3) Modello TTS reale (stesse label del selettore UI).
+        vparts = voice.split(":")
+        model = _EMAIL_MODEL_LABELS.get(vparts[1]) if len(vparts) >= 3 else None
+        if model:
+            lines.append(d["model_line"].format(model=model))
+        # 4) Istruzioni di stile (input utente: escape obbligatorio).
+        style = (job.get("gemini_style_instruction") or "").strip()
+        if style:
+            lines.append(d["style_line"].format(style=_htmlesc.escape(style)))
+
+    # 5) Ottimizzazione AI del testo (sempre, entrambi gli stati).
+    lines.append(d["opt_yes"] if job.get("ai_optimized") else d["opt_no"])
+    return lines
+
+
 def _email_generation_details(job, lang):
     """Blocco HTML con i parametri di generazione per l'email di completamento.
 
@@ -1237,47 +1289,7 @@ def _email_generation_details(job, lang):
     (mai un'email rotta). Vedi spec 2026-06-06-email-generation-details.
     """
     try:
-        d = _email_details_i18n.get(lang, _email_details_i18n["en"])
-        voice = (job.get("voice") or "").strip()
-        is_premium = _is_gemini_voice(voice)
-        lines = []
-
-        # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
-        #    lingua del job per le PREMIUM).
-        if is_premium:
-            lang_code = (job.get("gen_lang") or job.get("opt_lang") or "").strip()
-            if not lang_code:
-                lang_code = (getattr(job.get("info"), "language", "") or "").strip()
-        else:
-            parts = voice.split("-")
-            lang_code = "-".join(parts[:2]) if len(parts) >= 3 else ""
-        voice_type = d["voice_type_premium"] if is_premium else d["voice_type_standard"]
-        if lang_code:
-            lines.append(d["lang_line"].format(
-                lang=_htmlesc.escape(lang_code), voice_type=voice_type))
-
-        # 2) Voce + velocità ("+0%" -> normale, altrimenti valore raw).
-        vname = _friendly_voice_name(voice)
-        rate = (job.get("rate") or "").strip()
-        speed = d["speed_normal"] if rate in ("", "+0%", "0%", "+0") else rate
-        if vname:
-            lines.append(d["voice_line"].format(
-                voice=_htmlesc.escape(vname), speed=_htmlesc.escape(speed)))
-
-        if is_premium:
-            # 3) Modello TTS reale (stesse label del selettore UI).
-            vparts = voice.split(":")
-            model = _EMAIL_MODEL_LABELS.get(vparts[1]) if len(vparts) >= 3 else None
-            if model:
-                lines.append(d["model_line"].format(model=model))
-            # 4) Istruzioni di stile (input utente: escape obbligatorio).
-            style = (job.get("gemini_style_instruction") or "").strip()
-            if style:
-                lines.append(d["style_line"].format(style=_htmlesc.escape(style)))
-
-        # 5) Ottimizzazione AI del testo (sempre, entrambi gli stati).
-        lines.append(d["opt_yes"] if job.get("ai_optimized") else d["opt_no"])
-
+        lines = _generation_details_lines(job, lang)
         if not lines:
             return ""
         return ('<p style="color:#555;line-height:1.6">'

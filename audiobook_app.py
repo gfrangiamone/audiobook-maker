@@ -8284,6 +8284,9 @@ def api_progress(job_id):
     _job_pre, _err_pre, _sc_pre = _check_job_owner(job_id)
     if _err_pre is not None:
         return _err_pre, _sc_pre
+    # Lingua UI per il blocco dettagli localizzato del payload done (catturata
+    # qui: `request` non è disponibile dentro il generator).
+    _ui_lang = (request.args.get("lang") or "").strip().split("-")[0].lower()
 
     def stream():
         while True:
@@ -8392,6 +8395,17 @@ def api_progress(job_id):
                 # Kit ZIP di ripiego (MP3 + capitoli + script) quando l'M4B è fallito.
                 _kit_zip = job.get("output_m4b_fallback_zip")
                 payload["m4b_fallback_zip"] = bool(_kit_zip and os.path.exists(_kit_zip))
+                # Dettagli di generazione localizzati per il pannello
+                # "Audiolibro pronto": stessi testi del blocco email di
+                # completamento (fonte unica _generation_details_lines,
+                # campi utente già HTML-escaped). Best-effort.
+                try:
+                    _det = generation_engine._generation_details_lines(
+                        job, _ui_lang or (job.get("notify_lang") or "en"))
+                    if _det:
+                        payload["gen_details_html"] = "<br>".join(_det)
+                except Exception as _det_err:
+                    print(f"[{job_id}] gen_details payload failed (non-fatal): {_det_err}")
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
             yield f"data: {json.dumps(payload)}\n\n"
