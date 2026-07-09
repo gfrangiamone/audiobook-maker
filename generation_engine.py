@@ -486,42 +486,12 @@ def parse_abm(file_path):
 # LLM text optimization helpers
 # ---------------------------------------------------------------------------
 
-def _split_text_into_chunks(text, max_chars):
-    """Split text into chunks respecting paragraph boundaries (LLM chunker)."""
-    paragraphs = re.split(r'\n\s*\n', text)
-    chunks = []
-    current_chunk = []
-    current_size = 0
-
-    for para in paragraphs:
-        para_size = len(para)
-        if para_size > max_chars:
-            if current_chunk:
-                chunks.append("\n\n".join(current_chunk))
-                current_chunk = []
-                current_size = 0
-            sentences = re.split(r'(?<=[.!?\u2026])\s+', para)
-            sub_chunk = []
-            sub_size = 0
-            for sent in sentences:
-                if sub_size + len(sent) > max_chars and sub_chunk:
-                    chunks.append(" ".join(sub_chunk))
-                    sub_chunk = []
-                    sub_size = 0
-                sub_chunk.append(sent)
-                sub_size += len(sent)
-            if sub_chunk:
-                chunks.append(" ".join(sub_chunk))
-            continue
-        if current_size + para_size + 2 > max_chars and current_chunk:
-            chunks.append("\n\n".join(current_chunk))
-            current_chunk = []
-            current_size = 0
-        current_chunk.append(para)
-        current_size += para_size + 2
-    if current_chunk:
-        chunks.append("\n\n".join(current_chunk))
-    return chunks
+# Chunker paragrafo/frase: versione canonica unica in translation_core
+# (include il fix "sep space": conteggio dello spazio di join tra frasi;
+# la copia locale pre-unificazione poteva superare max_chars di n-1 char
+# su paragrafi giganti, rischiando risposte LLM troncate).
+# Confini fissati da test/test_chunker_golden.py.
+_split_text_into_chunks = translation_core.split_text_into_chunks
 
 
 # Pattern di preamboli/postfazioni meta che il LLM a volte emette nonostante
