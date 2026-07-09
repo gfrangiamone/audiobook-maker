@@ -158,3 +158,63 @@ def parse_voice_id(voice_id):
     if voice_name not in _VALID_VOICE_NAMES:
         raise ValueError(f"Unknown Speechify voice: {voice_name!r}")
     return model_key, voice_name, _VOICE_LOCALE[voice_name]
+
+
+def compute_user_price_eur(chars):
+    """Prezzo finale utente per `chars` caratteri.
+
+    Formula (allineata a gemini_tts.compute_user_price_eur):
+        cost_usd = chars/1e6 * COST_USD_PER_MCHAR
+        base_eur = cost_usd * USD_EUR_RATE * (1 + margin/100)
+        gross    = (base_eur + PAYPAL_FIXED_FEE) / (1 - PAYPAL_PERCENT/100)
+        user     = round(gross, 2); is_free se < FREE_THRESHOLD.
+    """
+    if chars is None or chars < 0:
+        chars = 0
+    cost_usd = chars / 1_000_000.0 * cost_usd_per_mchar()
+    margin = margin_percent()
+    base_eur = cost_usd * usd_eur_rate() * (1.0 + margin / 100.0)
+    paypal_factor = 1.0 - (paypal_percent_fee() / 100.0)
+    if paypal_factor <= 0:
+        raise ValueError("PAYPAL_PERCENT_FEE >= 100, invalid config")
+    gross = (base_eur + paypal_fixed_fee_eur()) / paypal_factor
+    user_price = round(gross, 2)
+    threshold = free_threshold_eur()
+    is_free = user_price < threshold
+    return {
+        "chars": chars,
+        "cost_usd": round(cost_usd, 6),
+        "base_price_eur": round(base_eur, 4),
+        "margin_percent": margin,
+        "user_price_eur": 0.0 if is_free else user_price,
+        "is_free": is_free,
+        "free_threshold_eur": threshold,
+    }
+
+
+def estimate_book_cost(chapters, language="en"):
+    """Stima costo end-to-end su caratteri di input (somma capitoli).
+
+    Args:
+        chapters: lista di oggetti con attributo `.text`.
+        language: ISO 639-1 (solo 'en' supportato; parametro per simmetria).
+    """
+    chars_per_chapter = []
+    chars_total = 0
+    for ch in chapters:
+        txt = getattr(ch, "text", "") or ""
+        n = len(txt)
+        chars_per_chapter.append(n)
+        chars_total += n
+    price = compute_user_price_eur(chars_total)
+    return {
+        "chars_total": chars_total,
+        "chars_per_chapter": chars_per_chapter,
+        "cost_usd": price["cost_usd"],
+        "user_price_eur": price["user_price_eur"],
+        "is_free": price["is_free"],
+        "margin_percent": price["margin_percent"],
+        "language": language,
+        "model_key": MODEL_ID,
+        "model_label": MODEL_LABEL,
+    }
