@@ -55,3 +55,19 @@ def test_parse_voice_id_invalid():
         speechify_tts.parse_voice_id("gemini:flash25:Zephyr")
     with pytest.raises(ValueError):
         speechify_tts.parse_voice_id("speechify:simba-3.2:unknown_voice")
+
+
+def test_display_name_friendly():
+    # 'harper_32' -> 'Harper': niente suffisso locale _NN, case normalizzato.
+    assert speechify_tts._display_name("harper_32") == "Harper"
+    assert speechify_tts._display_name("hugh_32") == "Hugh"
+
+
+def test_get_voices_name_is_friendly_no_model_label():
+    # Il dropdown mostra solo il nome voce: il modello e' gia' nel selettore
+    # Modello, quindi il campo name NON deve contenere id grezzo ne' label modello.
+    cat = speechify_tts.get_voices()
+    for entry in cat["en"]:
+        assert entry["name"][:1].isupper()
+        assert "_32" not in entry["name"]
+        assert speechify_tts.MODEL_LABEL not in entry["name"]

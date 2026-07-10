@@ -234,6 +234,15 @@ def _gender_icon(gender):
     return "♀" if gender == "Female" else "♂"  # ♀ / ♂
 
 
+def _display_name(voice_name):
+    """Nome amichevole per l'UI: 'harper_32' -> 'Harper'. Rimuove il suffisso
+    locale `_NN` e normalizza il case. Il modello e' gia' indicato dal selettore
+    Modello, quindi il nome voce non lo ripete."""
+    import re as _re
+    base = _re.sub(r"_\d+$", "", voice_name or "")
+    return base.replace("_", " ").strip().title()
+
+
 def get_voices(ui_lang="en"):
     """Catalogo voci per l'UI. Solo inglese (chiave 'en').
 
@@ -248,7 +257,7 @@ def get_voices(ui_lang="en"):
     for v in sorted_voices:
         entries.append({
             "id": f"speechify:{MODEL_ID}:{v['id']}",
-            "name": f"{v['id']} ({MODEL_LABEL})",
+            "name": _display_name(v["id"]),
             "locale": v["locale"],
             "engine": "speechify",
             "model_key": MODEL_ID,
