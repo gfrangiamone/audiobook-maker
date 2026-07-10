@@ -171,6 +171,12 @@ def test_quality_failure_marks_pending_failed(setup_engine, mark_failed_calls,
         raise RuntimeError("transient synth error")
 
     monkeypatch.setattr("gemini_tts.synthesize", boom)
+    # v3.35.0: quando Gemini fallisce, generate_chunk_pcm_gemini tenta un
+    # fallback edge-tts prima di silenziare (recupero chunk). Qui testiamo il
+    # path in cui ANCHE l'edge fallback fallisce -> il chunk resta silenziato ->
+    # scatta il quality-gate/refund. Senza questo, i chunk verrebbero recuperati
+    # e il job completerebbe (comportamento coperto da test_gemini_edge_fallback).
+    monkeypatch.setattr("tts_split._edge_fallback_to_pcm", lambda *a, **k: False)
 
     generation_engine.run_generation(
         job_id, _Info(),

@@ -3318,6 +3318,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] accent directive build failed (non-fatal): {_e_acc}",
                   flush=True)
             gemini_accent_directive = ""
+    # Lingua di lettura usata per scegliere la voce edge-tts di fallback quando
+    # Gemini rifiuta un chunk in modo definitivo (content policy): meglio una
+    # voce standard che un buco di silenzio. "" -> nessun fallback (silenzio).
+    gemini_fallback_lang = _audit_language(job, info) if use_gemini else ""
 
     try:
         job["progress_message"] = "Preparing..."
@@ -3565,7 +3569,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                        rate=rate,
                                                        debug_prompt_path=debug_prompt_path,
                                                        accent_directive=gemini_accent_directive or None,
-                                                       failure_info=_chunk_fi)
+                                                       failure_info=_chunk_fi,
+                                                       fallback_lang=gemini_fallback_lang or None)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.
@@ -3587,6 +3592,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     raise
                 if result is False:
                     _record_gemini_chunk_failure(job, job_id, work_dir, i, block, _chunk_fi)
+                    return result, part_path
+                if isinstance(result, dict) and result.get("fallback_engine") == "edge":
+                    # Chunk recuperato con voce edge dopo rifiuto Gemini: niente
+                    # token/costo Gemini da contabilizzare e niente rate-sample
+                    # (falserebbe la calibrazione empirica). Conta come chunk
+                    # riuscito (il chiamante NON incrementa failed_chunks).
+                    job["gemini_edge_fallback_chunks"] = job.get("gemini_edge_fallback_chunks", 0) + 1
+                    print(f"[{job_id}] chunk {i} recuperato via edge-fallback "
+                          f"(Gemini ha rifiutato il contenuto)", flush=True)
                     return result, part_path
                 gemini_usage["input_tokens"] += result.get("input_tokens", 0)
                 gemini_usage["output_tokens"] += result.get("output_tokens", 0)

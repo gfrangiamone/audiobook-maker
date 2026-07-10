@@ -815,6 +815,18 @@ def _build_job_descriptor(job, phase):
         "notify_download_type": job.get("notify_download_type", "audio"),
         "notify_base_url": job.get("notify_base_url", ""),
         "notify_lang": job.get("notify_lang", "en"),
+        # Lingua di lettura TTS/ottimizzazione: senza questi campi il recovery
+        # post-restart ricostruiva il job senza lingua e run_optimization
+        # cadeva sul default hardcoded "it", caricando il prompt italiano su un
+        # libro di altra lingua (es. incidente kd8XQj6WWdrZJt1_z0VMPQ: prompt it
+        # su libro es). _audit_language e run_optimization leggono opt_lang/
+        # gen_lang/lang, quindi vanno persistiti.
+        "lang": job.get("lang", ""),
+        "opt_lang": job.get("opt_lang", ""),
+        "gen_lang": job.get("gen_lang", ""),
+        "browser_lang": job.get("browser_lang", ""),
+        "platform": job.get("platform", ""),
+        "gemini_accent": job.get("gemini_accent"),
         "original_filename": fname,
         "client_id": job.get("client_id", ""),
         "client_ip": job.get("client_ip", ""),
@@ -876,6 +888,16 @@ def _reenqueue_orphan(job_id, rec):
         "notify_download_type": rec.get("notify_download_type", "audio"),
         "notify_base_url": rec.get("notify_base_url", ""),
         "notify_lang": rec.get("notify_lang", "en"),
+        # Ripristina la lingua di lettura: run_optimization (prompt LLM) e
+        # _audit_language (accento/rate-sample Gemini) leggono opt_lang/gen_lang/
+        # lang. Senza, il recovery ricadeva sul default "it" degradando prompt e
+        # calibrazione per libri non italiani.
+        "lang": rec.get("lang", ""),
+        "opt_lang": rec.get("opt_lang", ""),
+        "gen_lang": rec.get("gen_lang", ""),
+        "browser_lang": rec.get("browser_lang", ""),
+        "platform": rec.get("platform", ""),
+        "gemini_accent": rec.get("gemini_accent"),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
         "client_ip": rec.get("client_ip", ""),

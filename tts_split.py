@@ -495,6 +495,108 @@ def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
             f.write(b"\x00" * n_bytes)
 
 
+# Voci edge-tts di fallback per lingua: usate quando Gemini rifiuta un chunk in
+# modo definitivo (tipicamente content policy / safety su testi sensibili) per
+# non lasciare un buco di silenzio nell'audiolibro. Chiave = codice lingua a 2
+# lettere; valore = voce edge-tts standard neutra per quella lingua.
+_EDGE_FALLBACK_VOICES = {
+    "it": "it-IT-ElsaNeural",
+    "en": "en-US-AriaNeural",
+    "es": "es-ES-ElviraNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "pt": "pt-BR-FranciscaNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "ar": "ar-EG-SalmaNeural",
+    "hi": "hi-IN-SwaraNeural",
+    "nl": "nl-NL-ColetteNeural",
+    "pl": "pl-PL-ZofiaNeural",
+    "tr": "tr-TR-EmelNeural",
+}
+_EDGE_FALLBACK_DEFAULT = "en-US-AriaNeural"
+
+
+def _mp3_to_pcm_24k(mp3_path, pcm_path):
+    """Converte un MP3 in PCM raw 24kHz mono 16-bit (stesso formato dei chunk
+    Gemini, cosi' il PCM edge si concatena senza discontinuita' di sample rate).
+    Ritorna True se il PCM prodotto e' non vuoto. Best-effort: log su errore."""
+    import subprocess
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", mp3_path,
+            "-ar", str(_PCM_SAMPLE_RATE), "-ac", str(_PCM_CHANNELS),
+            "-f", "s16le", pcm_path,
+        ]
+        subprocess.run(cmd, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0
+    except Exception as e:
+        print(f"[gemini-tts] edge-fallback mp3->pcm failed: {e}")
+        return False
+
+
+def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path):
+    """Sintetizza `text` con una voce edge-tts standard e scrive il risultato
+    come PCM 24kHz mono in output_path. Usato quando Gemini rifiuta il chunk in
+    modo definitivo: una voce standard e' preferibile a un buco di silenzio.
+
+    Ritorna un dict in stile synthesize() (marcato fallback_engine='edge') su
+    successo, oppure False. Non solleva: ogni errore -> False (il caller scrive
+    comunque il silenzio a monte).
+    """
+    lang2 = (fallback_lang or "").split("-")[0].lower()
+    voice = _EDGE_FALLBACK_VOICES.get(lang2, _EDGE_FALLBACK_DEFAULT)
+    tmp_mp3 = output_path + ".edgefallback.mp3"
+    # Loop asyncio dedicato e isolato: generate_chunk_mp3 e' async ma qui siamo
+    # in contesto sincrono, fuori dal loop del thread di generazione. Un loop
+    # nuovo evita di interferire con quello usato dai chunk edge nativi.
+    _loop = None
+    try:
+        _loop = asyncio.new_event_loop()
+        _loop.run_until_complete(
+            generate_chunk_mp3(text, voice, rate or "+0%", tmp_mp3, max_retries=3)
+        )
+    except Exception as e:
+        print(f"[gemini-tts] edge-fallback synth failed (voice={voice}): {e}")
+        return False
+    finally:
+        if _loop is not None:
+            try:
+                _loop.close()
+            except Exception:
+                pass
+    if not (os.path.exists(tmp_mp3) and os.path.getsize(tmp_mp3) > 0):
+        return False
+    ok = _mp3_to_pcm_24k(tmp_mp3, output_path)
+    try:
+        os.remove(tmp_mp3)
+    except Exception:
+        pass
+    if not ok:
+        return False
+    try:
+        bytes_written = os.path.getsize(output_path)
+    except Exception:
+        bytes_written = 0
+    print(f"[gemini-tts] edge-fallback OK: chunk recuperato con voce {voice} "
+          f"({bytes_written} bytes PCM)")
+    return {
+        "success": True,
+        "bytes_written": bytes_written,
+        "audio_seconds_real": bytes_written / float(
+            _PCM_SAMPLE_RATE * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH),
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "model_key": None,
+        "voice_name": voice,
+        "fallback_engine": "edge",
+    }
+
+
 def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries,
                                       debug_prompt_path=None, rate="+0%", accent_directive=None):
     """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
@@ -578,7 +680,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
                               debug_prompt_path=None, rate="+0%", accent_directive=None,
-                              failure_info=None):
+                              failure_info=None, fallback_lang=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -667,6 +769,18 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
+    # Prima del silenzio: tenta una voce edge-tts standard, cosi' un chunk
+    # rifiutato da Gemini (tipicamente content policy / safety su testi
+    # sensibili) non lascia un buco muto nell'audiolibro. Solo se conosciamo la
+    # lingua di lettura. Su successo il chunk NON conta come failed.
+    if fallback_lang:
+        fb = _edge_fallback_to_pcm(clean, fallback_lang, rate, output_path)
+        if fb is not False:
+            if isinstance(failure_info, dict):
+                failure_info["fallback_engine"] = "edge"
+                failure_info["reason"] = "gemini_failed_edge_fallback"
+                failure_info["detail"] = str(last_error)[:300] if last_error else ""
+            return fb
     _generate_silence_pcm(output_path, duration_sec=1)
     return _fail("synthesize_failed", str(last_error) if last_error else "")
 

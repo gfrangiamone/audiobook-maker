@@ -4,7 +4,7 @@ Aggiornare __version__ ad ogni rilascio.
 """
 from datetime import datetime
 
-__version__ = "3.34.2"
+__version__ = "3.35.0"
 
 # Data dell'ultimo aggiornamento (AAAA-MM) - si aggiorna automaticamente
 __updated_date__ = datetime.now().strftime("%Y-%m")

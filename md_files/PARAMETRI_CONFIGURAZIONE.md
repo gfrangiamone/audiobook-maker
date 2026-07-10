@@ -41,6 +41,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` inizia per `gemini:` o il token ha `is_gemini=True`. **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
 | `ABM_RECOVER_ENABLED` | `1` (abilita il recupero al boot dei job **batch** interrotti da un riavvio/deploy; `0\|false\|no\|off` per disabilitare). Letto in `_recover_orphan_jobs()`. | `audiobook_app.py` | — |
 | `ABM_RECOVER_MAX_ATTEMPTS` | `2` (tentativi di recupero per job prima del fallback = rimborso secondo policy + mail "interrotto" + `state=failed`). Il contatore è persistito su disco **prima** di rilanciare (crash-safe) e azzerato al primo capitolo completato di un job recuperato. | `audiobook_app.py` | — |
+| Descrittore recover — campi lingua | `_build_job_descriptor()` persiste `lang`, `opt_lang`, `gen_lang`, `browser_lang`, `platform`, `gemini_accent`; `_reenqueue_orphan()` li ripristina nel job ricostruito. Senza, il recovery post-restart perdeva la lingua e `run_optimization` cadeva sul default hardcoded `"it"` (prompt LLM italiano su libro di altra lingua) e `_audit_language` degradava accento/rate-sample Gemini. Fix v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`: prompt `it` su libro `es` dopo restart alle 12:15). | `audiobook_app.py` | — |
 
 ---
 
@@ -260,6 +261,7 @@ Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`
 | `CHAPTER_SILENCE_SEC` | `3` (secondi di silenzio tra capitoli) | `generation_engine.py` | 78 |
 | `_TTS_MIN_SENT_CHARS` | `80` (soglia minima di caratteri per frase inviata a edge-tts su voci Multilingual) | `tts_split.py` | 41 |
 | `_TTS_MAX_SENT_CHARS` | `1500` (cap superiore di sicurezza per frase) | `tts_split.py` | 43 |
+| `_EDGE_FALLBACK_VOICES` / `_EDGE_FALLBACK_DEFAULT` | Mappa lingua (2 lettere) → voce edge-tts standard (default `en-US-AriaNeural`) usata come **fallback quando un chunk Gemini viene rifiutato in modo definitivo** (content policy / safety su testi sensibili). Invece di scrivere silenzio, `generate_chunk_pcm_gemini(..., fallback_lang=...)` sintetizza il chunk con la voce edge, lo converte in PCM 24 kHz mono (`_mp3_to_pcm_24k` via ffmpeg) e lo concatena come i chunk Gemini. Chunk recuperato → **non conta come `failed_chunks`**, contatore `job["gemini_edge_fallback_chunks"]`, contabilità token/costo/rate-sample Gemini **saltata** (0 token reali). Quota/budget/kill-switch restano job-fatal senza fallback. Introdotto v3.35.0 (incidente `kd8XQj6WWdrZJt1_z0VMPQ`). | `tts_split.py` / `generation_engine.py` | — |
 
 **Output M4B (v3.8.0+):**
 
