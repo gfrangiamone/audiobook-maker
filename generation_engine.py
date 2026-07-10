@@ -1743,6 +1743,15 @@ def _send_optimization_email(job_id):
     t = _opt_email_i18n.get(lang, _opt_email_i18n["en"])
     subject = t["subject"]
     html_body = _email_html_body(t, dl_url)
+    # Copie amministrative agganciate durante l'ottimizzazione (QR admin da
+    # log-activities): ora che esiste un token .abm clonabile, materializza le
+    # copie admin-owned. Nei job optimize-only batch questo e' il COMPLETE
+    # (run_generation non viene mai eseguito).
+    try:
+        _materialize_admin_copies(job_id)
+    except Exception as _amc_err:
+        print(f"[{job_id}] admin-copy materialization failed (non-fatal): {_amc_err}", flush=True)
+
     success = email_service._send_email(email, subject, html_body)
     if success:
         _log_activity(job_id, job.get("original_filename", ""), "OPT_EMAIL_SENT",

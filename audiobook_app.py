@@ -8746,7 +8746,14 @@ def api_my_jobs():
     with _jobs_lock:
         snapshot = list(jobs.items())
     for jid, job in snapshot:
-        if job.get("client_id") != cid:
+        # Copia amministrativa PENDING: il cid (app admin) e' agganciato via QR
+        # a un job di un altro utente ancora in corso (api_transfer_claim ramo
+        # admin_copy). Senza questo ramo l'app confermava "job aggiunto" ma la
+        # tab Attivita' restava vuota fino al COMPLETE: il job pending deve
+        # comparire subito; il download token admin-owned arriva al COMPLETE
+        # (_materialize_admin_copies).
+        _is_admin_pending = cid in (job.get("admin_copy_cids") or [])
+        if job.get("client_id") != cid and not _is_admin_pending:
             continue
         status = job.get("status", "")
         if job.get("server_interrupted"):
@@ -8762,6 +8769,8 @@ def api_my_jobs():
             "output_format": job.get("output_format", ""),
             "created_at": job.get("start_time") or job.get("last_poll") or 0,
         }
+        if _is_admin_pending:
+            entry["admin_copy"] = True
         if status == "generating":
             entry.update({
                 "progress_current": job.get("progress_current", 0),

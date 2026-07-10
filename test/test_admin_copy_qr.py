@@ -235,6 +235,58 @@ def test_admin_copy_inprogress_hooks_and_delivers(monkeypatch, tmp_path):
         audiobook_app._transfer_tokens.pop(tok, None)
 
 
+def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
+    """Regressione: dopo il claim di un job IN CORSO l'app mostrava
+    "job aggiunto" ma /api/my_jobs dell'admin restava vuoto fino al COMPLETE.
+    Il job pending deve comparire subito nella tab Attivita' (flag admin_copy),
+    e al COMPLETE trasformarsi nell'entry done col download token clonato."""
+    _align_ge(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "acp-myjobs"
+    out = tmp_path / "out.m4b"; out.write_bytes(b"x")
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "generating", "client_id": "web-owner", "info": None,
+            "original_filename": "libro.epub", "output_m4b": str(out),
+            "output_files": [str(out)], "output_format": "m4b",
+            "start_time": time.time(), "progress_current": 3,
+            "progress_total": 10,
+        }
+    created = []
+    tok = None
+    try:
+        tok = audiobook_app._ensure_admin_copy_token(jid)
+        c = audiobook_app.app.test_client()
+        r = c.post(f"/api/transfer/claim/{tok}", headers={"X-ABM-Cid": "admin-mj"})
+        assert r.status_code == 200 and r.get_json().get("pending") is True
+
+        # PENDING: il job in corso compare subito tra i my_jobs dell'admin
+        mj = c.get("/api/my_jobs", headers={"X-ABM-Cid": "admin-mj"}).get_json()
+        entry = next((e for e in mj["jobs"] if e["job_id"] == jid), None)
+        assert entry is not None, "job pending assente da my_jobs admin"
+        assert entry["status"] == "generating"
+        assert entry.get("admin_copy") is True
+        # ...e NON compare per un cid terzo qualunque
+        mj3 = c.get("/api/my_jobs", headers={"X-ABM-Cid": "cid-terzo-000"}).get_json()
+        assert all(e["job_id"] != jid for e in mj3["jobs"])
+
+        # COMPLETE: materializzazione -> entry done col token clonato
+        audiobook_app.jobs[jid]["status"] = "done"
+        generation_engine._materialize_admin_copies(jid)
+        created = [t for t, v in audiobook_app._download_tokens.items()
+                   if isinstance(v, dict) and v.get("job_id") == jid]
+        mj2 = c.get("/api/my_jobs", headers={"X-ABM-Cid": "admin-mj"}).get_json()
+        entry2 = next((e for e in mj2["jobs"] if e["job_id"] == jid), None)
+        assert entry2 is not None and entry2["status"] == "done"
+        assert entry2.get("download_token") in created
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+        for t in created:
+            audiobook_app._download_tokens.pop(t, None)
+        audiobook_app._transfer_tokens.pop(tok, None)
+
+
 def test_admin_copy_finalized_not_in_ram_reconstructs_from_disk(monkeypatch, tmp_path):
     """Job finalizzato NON più in RAM ma con output ancora su disco: il claim
     ricostruisce lo snapshot e consegna la copia admin (nessun 410)."""
