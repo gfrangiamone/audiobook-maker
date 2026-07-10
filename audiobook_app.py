@@ -3370,8 +3370,16 @@ def admin_logs():
             first = s["first_dt"].strftime("%H:%M")
             last = s["last_dt"].strftime("%H:%M")
 
+            is_paid = False
             if is_progress:
                 job = jobs.get(sid)
+                # Job con pagamento (PayPal o voucher, indifferente): la card
+                # in corso viene evidenziata in giallo acceso invece del rosso.
+                _paym = (job or {}).get("payment") or {}
+                try:
+                    is_paid = float(_paym.get("total_eur", 0) or 0) > 0
+                except (TypeError, ValueError):
+                    is_paid = bool(_paym)
                 pct_html = ""
                 if job:
                     st = job.get("status", "")
@@ -3483,7 +3491,12 @@ def admin_logs():
             blang = html_mod.escape(s.get("browser_lang", "") or "")
             blang_display = f'<span class="card-blang">{blang}</span>' if blang else " - "
 
-            card_cls = "card card-in-progress" if is_progress else "card"
+            if is_progress and is_paid:
+                card_cls = "card card-in-progress card-paid"
+            elif is_progress:
+                card_cls = "card card-in-progress"
+            else:
+                card_cls = "card"
             is_gemini_run = (
                 "GENERATE" in s["events"]
                 and _is_gemini_voice(voice_raw)
@@ -3649,6 +3662,9 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .card-m4b-progress .lbl{{font-weight:600;min-width:32px}}
 .card-m4b-progress .msg{{color:#666;font-style:italic}}
 @keyframes pulse-border{{0%,100%{{border-color:var(--orange);box-shadow:0 0 0 0 rgba(249,115,22,.15)}}50%{{border-color:rgba(249,115,22,.5);box-shadow:0 0 8px 0 rgba(249,115,22,.2)}}}}
+.card-in-progress.card-paid{{border-color:#facc15;background:rgba(250,204,21,.09);animation:pulse-border-paid 1.4s ease-in-out infinite}}
+.card-in-progress.card-paid:hover{{border-color:#fde047;box-shadow:0 0 0 2px rgba(250,204,21,.45)}}
+@keyframes pulse-border-paid{{0%,100%{{border-color:#facc15;box-shadow:0 0 0 0 rgba(250,204,21,.3)}}50%{{border-color:#fde047;box-shadow:0 0 14px 2px rgba(250,204,21,.55)}}}}
 .card.card-hidden{{display:none}}
 .day-group.day-hidden{{display:none}}
 .card-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}}
