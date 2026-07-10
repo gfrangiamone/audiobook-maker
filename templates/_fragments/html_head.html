@@ -413,17 +413,8 @@ __REVIEWS_LD__
           </div>
           <div class="form-group">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
-            <select id="vmPremium">
-              <option value="flash25" data-t="lbl_model_flash25" selected>Standard</option>
-              <option value="flash31" data-t="lbl_model_flash31">Avanzato</option>
-            </select>
+            <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="vvPremium" data-t="lbl_voice">Voce</label>
-            <select id="vvPremium"></select>
           </div>
         </div>
         <div class="form-row" id="geminiAccentRow" hidden>
@@ -434,11 +425,23 @@ __REVIEWS_LD__
           </div>
         </div>
         <div class="form-row">
+          <div class="form-group">
+            <label for="vvPremium" data-t="lbl_voice">Voce</label>
+            <select id="vvPremium"></select>
+          </div>
+        </div>
+        <div class="form-row" id="geminiStyleRow">
           <div class="form-group" style="flex:1 1 100%">
             <label for="geminiStyle" data-t="lbl_style_instruction">Istruzioni di stile (opzionale)</label>
             <textarea id="geminiStyle" maxlength="200" rows="2"
                       placeholder="es. tono calmo, ritmo narrativo lento"></textarea>
             <div class="char-counter"><span id="styleCounter">0</span>/200</div>
+          </div>
+        </div>
+        <div class="form-row" id="speechifyEmotionRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="speechifyEmotion" data-t="lbl_emotion">Emozione</label>
+            <select id="speechifyEmotion"></select>
           </div>
         </div>
       </div>

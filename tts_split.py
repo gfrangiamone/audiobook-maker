@@ -26,6 +26,7 @@ import edge_tts
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 try:
     import google_tts
@@ -55,6 +56,13 @@ def _pick_chunk_max_chars(voice_id, language):
     per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
     ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
 
+    Speechify: speechify_tts.chunk_max_chars() (default 1800, override env
+    ABM_SPEECHIFY_CHUNK_CHARS, clampato per sicurezza). L'endpoint rifiuta con
+    HTTP 400 un `input` SSML > 2000 char; il testo del chunk piu' l'overhead dei
+    tag SSML (<speak>/<prosody>/<speechify:style>) deve stare sotto 2000, quindi
+    il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
+    per i tag; il clamp lato speechify_tts impedisce override pericolosi).
+
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
     if _is_gemini_voice(voice_id):
@@ -64,6 +72,12 @@ def _pick_chunk_max_chars(voice_id, language):
             return gemini_tts.get_max_chunk_chars(lang_code)
         except Exception:
             return 700
+    if _is_speechify_voice(voice_id):
+        try:
+            import speechify_tts
+            return speechify_tts.chunk_max_chars()
+        except Exception:
+            return 1800
     return CHUNK_MAX_CHARS
 
 
@@ -468,9 +482,14 @@ _PCM_CHANNELS = 1
 _PCM_SAMPLE_WIDTH = 2  # bytes per sample (16-bit)
 
 
-def _generate_silence_pcm(output_path, duration_sec=1):
-    """Scrive N secondi di silenzio PCM 24kHz mono 16-bit (zero bytes)."""
-    n_bytes = int(duration_sec * _PCM_SAMPLE_RATE * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
+def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
+    """Scrive N secondi di silenzio PCM mono 16-bit (zero bytes).
+
+    sample_rate=None usa il default Gemini (24kHz). I chiamanti PCM a rate
+    diverso (es. Speechify Simba-3.2, 48kHz nativo) passano il rate reale.
+    """
+    sr = sample_rate or _PCM_SAMPLE_RATE
+    n_bytes = int(duration_sec * sr * _PCM_CHANNELS * _PCM_SAMPLE_WIDTH)
     with open(output_path, "wb") as f:
         if n_bytes > 0:
             f.write(b"\x00" * n_bytes)
@@ -649,6 +668,51 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     print(f"[gemini-tts] WARNING: All {max_retries} attempts failed, "
           f"generating silence ({len(clean)} chars). Last error: {last_error}")
     _generate_silence_pcm(output_path, duration_sec=1)
+    return _fail("synthesize_failed", str(last_error) if last_error else "")
+
+
+def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
+                                 rate="+0%", max_retries=1, failure_info=None):
+    """Genera PCM 16-bit mono da testo via Speechify Simba-3.2 con fallback silenzio.
+
+    SpeechifyUnavailable viene ri-sollevata (errore permanente: silenziarlo
+    silenzierebbe l'intero libro). Su testo vuoto o fallimento totale scrive
+    silenzio PCM e ritorna False.
+    """
+    import speechify_tts as _spx
+
+    def _fail(reason, detail=""):
+        if isinstance(failure_info, dict):
+            failure_info["reason"] = reason
+            failure_info["detail"] = str(detail)[:300]
+        return False
+
+    clean = _sanitize_tts_text(text)
+    if clean is None:
+        # Speechify Simba-3.2 e' nativo a 48000 Hz: il silenzio di fallback deve
+        # usare lo stesso sample rate, altrimenti a 24000 durerebbe ~0.5s reali
+        # nello stream a 48kHz e sballerebbe i marker M4B.
+        _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
+        return _fail("empty_after_sanitize")
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return _spx.synthesize(clean, voice_id, output_path,
+                                   emotion=emotion, rate=rate)
+        except _spx.SpeechifyUnavailable:
+            raise  # non silenziare: il caller decide
+        except Exception as e:
+            last_error = e
+            snippet = clean[:60].replace('\n', ' ')
+            print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
+                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    print(f"[speechify] WARNING: all {max_retries} attempts failed, silence "
+          f"({len(clean)} chars). Last error: {last_error}")
+    _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
     return _fail("synthesize_failed", str(last_error) if last_error else "")
 
 

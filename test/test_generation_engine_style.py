@@ -89,13 +89,13 @@ def test_run_generation_applies_style_to_every_chunk(monkeypatch, tmp_path):
     monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
-    monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1, sample_rate=None: open(p, "wb").write(b"\x00"))
 
     # Avoid heavy post-processing (mp3 encoding etc.)
     monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out, **kw: open(out, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "pcm_to_aac_m4b", lambda *a, **k: True)
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
-    monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
+    monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b, **kw: 1.0)
     monkeypatch.setattr(generation_engine, "_prepare_m4b_cover_path", lambda *a, **k: None)
 
     # Build a fake info + job
@@ -156,10 +156,10 @@ def test_run_generation_multi_file_branch_also_applies_style_to_every_chunk(monk
     monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
     monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "gemini")
-    monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1: open(p, "wb").write(b"\x00"))
+    monkeypatch.setattr(generation_engine, "_generate_silence_pcm", lambda p, s=1, sample_rate=None: open(p, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "pcm_to_mp3", lambda parts, out, **kw: open(out, "wb").write(b"\x00"))
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
-    monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b: 1.0)
+    monkeypatch.setattr(generation_engine, "pcm_size_to_seconds", lambda b, **kw: 1.0)
 
     class _Ch:
         def __init__(self, title, index):

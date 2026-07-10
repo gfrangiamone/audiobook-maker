@@ -15,3 +15,14 @@ def is_gemini_voice(voice):
     Safe su input non-stringa/None/"": ritorna False senza sollevare.
     """
     return bool(voice) and isinstance(voice, str) and voice.startswith(GEMINI_VOICE_PREFIX)
+
+
+SPEECHIFY_VOICE_PREFIX = "speechify:"
+
+
+def is_speechify_voice(voice):
+    """True se la voce e' una voce PREMIUM Speechify (formato speechify:<model>:<voice>).
+
+    Safe su input non-stringa/None/"": ritorna False senza sollevare.
+    """
+    return bool(voice) and isinstance(voice, str) and voice.startswith(SPEECHIFY_VOICE_PREFIX)

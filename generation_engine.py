@@ -42,6 +42,7 @@ try:
 except ImportError:
     gemini_tts = None
 import gemini_cost_audit
+import speechify_tts
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -61,6 +62,7 @@ from tts_split import (
     _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
     _pick_chunk_max_chars, _pick_chunk_max_bytes,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
+    generate_chunk_pcm_speechify,
 )
 
 # ---------------------------------------------------------------------------
@@ -141,6 +143,7 @@ _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 
 def _retention_for_job(job):
@@ -1131,6 +1134,7 @@ def _generate_optimized_abm(job_id):
 _EMAIL_MODEL_LABELS = {
     "flash25": "Gemini 2.5 Flash TTS",
     "flash31": "Gemini 3.1 Flash TTS",
+    "simba-3.2": "Simba (English)",
 }
 
 _email_details_i18n = {
@@ -1221,6 +1225,12 @@ def _friendly_voice_name(voice):
     v = (voice or "").strip()
     if not v:
         return ""
+    if _is_speechify_voice(v):
+        # 'speechify:simba-3.2:harper_32' -> 'Harper' (rimuove il suffisso locale
+        # _NN e normalizza il case).
+        name = v.split(":")[-1]
+        name = re.sub(r"_\d+$", "", name)
+        return name.replace("_", " ").strip().title()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
@@ -1241,7 +1251,7 @@ def _generation_details_lines(job, lang):
     resta nei chiamanti."""
     d = _email_details_i18n.get(lang, _email_details_i18n["en"])
     voice = (job.get("voice") or "").strip()
-    is_premium = _is_gemini_voice(voice)
+    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice)
     lines = []
 
     # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
@@ -2823,12 +2833,15 @@ def _engine_for_voice(voice):
     """Sceglie il motore TTS dal voice ID.
 
     Prefissi:
+      - "speechify:..." -> Speechify Simba-3.2 (PCM native)
       - "gemini:..."  -> Gemini TTS (PCM native)
       - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
       - altrimenti    -> Microsoft Edge TTS (MP3, default)
     """
     if not voice:
         return "edge"
+    if _is_speechify_voice(voice):
+        return "speechify"
     if _is_gemini_voice(voice):
         return "gemini"
     if _google_tts is not None and _google_tts.is_google_voice(voice):
@@ -3236,7 +3249,7 @@ def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info
         print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
 
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None, speechify_emotion=None):
     job = _jobs.get(job_id)
     if job is None:
         # La entry e' stata rimossa tra l'avvio del thread e questo lookup
@@ -3282,6 +3295,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     engine = _engine_for_voice(voice)
     use_google = (engine == "google")
     use_gemini = (engine == "gemini")
+    use_speechify = (engine == "speechify")
+    use_pcm = use_gemini or use_speechify
+    if use_speechify:
+        speechify_emotion = speechify_emotion or job.get("speechify_emotion")
+    # Sample rate reale del PCM Speechify (Simba-3.2 nativo 48000). Popolato dal
+    # primo chunk sintetizzato; default 48000. Per Gemini resta 24000.
+    _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
 
     # Direttiva di accento (solo Gemini): ancora TUTTI i chunk allo stesso accento.
     # Senza, ogni chiamata stateless puo` scegliere una variante regionale diversa
@@ -3437,10 +3457,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
-        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini, MP3 altrimenti)
-        if use_gemini:
+        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify, MP3 altrimenti)
+        if use_pcm:
             silence_path = str(work_dir / "_silence.pcm")
-            _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC)
+            _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC,
+                                  sample_rate=(48000 if use_speechify else None))
             silence_ok = os.path.exists(silence_path)
         else:
             silence_path = str(work_dir / "_silence.mp3")
@@ -3495,6 +3516,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         gap_ms_inter = (gemini_tts.inter_chunk_gap_ms()
                         if (use_gemini and gemini_tts is not None) else 0)
 
+        # Risultati pre-sintetizzati in pool parallelo (vedi sotto), letti da
+        # _synthesize_chunk invece di richiamare l'API una seconda volta.
+        _speechify_pre = {}
+
         def _synthesize_chunk(i, block):
             """Sintetizza il chunk `i`. Ritorna (result, part_path).
 
@@ -3512,6 +3537,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             dopo il gap-timing ma e' indipendente da esso (scrive lo usage store,
             non tocca all_parts/m4b_chapters), quindi spostarlo qui e' equivalente.
             """
+            if use_speechify:
+                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                pre = _speechify_pre.get(i)
+                if pre is not None:
+                    if isinstance(pre, dict) and not job.get("speechify_sample_rate"):
+                        job["speechify_sample_rate"] = pre.get("sample_rate", 48000)
+                    return pre, part_path
+                _chunk_fi = {}
+                result = generate_chunk_pcm_speechify(
+                    block["text"], voice, part_path,
+                    emotion=speechify_emotion, rate=rate, failure_info=_chunk_fi)
+                if isinstance(result, dict) and not job.get("speechify_sample_rate"):
+                    job["speechify_sample_rate"] = result.get("sample_rate", 48000)
+                return result, part_path
             if use_gemini:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                 debug_prompt_path = str(work_dir / f"prompt{i+1}.txt")
@@ -3634,12 +3673,46 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # i rami (single-file / multi-file).
         _ea_ratio, _ea_min = _early_abort_params()
 
+        # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata
+        # attraversa il gate globale (invariante concorrenza abbonamento). L'attesa
+        # su slot saturo e' trasparente. L'assemblaggio sotto resta sequenziale e
+        # legge i .pcm gia' prodotti (via _speechify_pre).
+        if use_speechify:
+            import concurrent.futures as _cf
+            _k = speechify_tts.per_job_concurrency()
+            _n = speechify_tts.max_concurrency()
+            _workers = max(1, min(_k, _n))
+            if speechify_tts.free_slots() <= 0:
+                job["progress_message"] = "In attesa di uno slot disponibile..."
+            def _pre_one(_ib):
+                _idx, _blk = _ib
+                # Cancellazione durante la pre-sintesi: interrompe subito la
+                # sottomissione di nuove chiamate API (stop billing). L'eccezione
+                # propaga fuori da _ex.map e viene intercettata dall'except
+                # _CancelledError esterno (refund premium via cancel path).
+                if _check_cancelled():
+                    raise _CancelledError("Job cancelled")
+                _pp = str(work_dir / f"chunk_{_idx:06d}.pcm")
+                _fi = {}
+                _res = generate_chunk_pcm_speechify(
+                    _blk["text"], voice, _pp,
+                    emotion=speechify_emotion, rate=rate, failure_info=_fi)
+                return _idx, _res
+            with _cf.ThreadPoolExecutor(max_workers=_workers) as _ex:
+                for _idx, _res in _ex.map(_pre_one, list(enumerate(plan))):
+                    _speechify_pre[_idx] = _res
+                    if isinstance(_res, dict) and not job.get("speechify_sample_rate"):
+                        job["speechify_sample_rate"] = _res.get("sample_rate", 48000)
+            job["progress_message"] = "Assembling audio..."
+        # Re-read del sample rate reale ora che la pre-sintesi lo ha popolato.
+        _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
+
         if single_file:
             all_parts = []
             m4b_chapters = []
             current_ms = 0
-            if use_gemini and os.path.exists(silence_path):
-                silence_ms = int(pcm_size_to_seconds(os.path.getsize(silence_path)) * 1000)
+            if use_pcm and os.path.exists(silence_path):
+                silence_ms = int(pcm_size_to_seconds(os.path.getsize(silence_path), sample_rate=_pcm_sr) * 1000)
             else:
                 silence_ms = _get_audio_duration_ms(silence_path) if os.path.exists(silence_path) else 0
             prev_chapter_idx = -1
@@ -3723,9 +3796,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                           f"failed={failed_chunks}")
 
                 # Aggiorna timing per capitolo M4B
-                if use_gemini and os.path.exists(part_path):
+                if use_pcm and os.path.exists(part_path):
                     size_bytes = os.path.getsize(part_path)
-                    duration = int(pcm_size_to_seconds(size_bytes) * 1000)
+                    duration = int(pcm_size_to_seconds(size_bytes, sample_rate=_pcm_sr) * 1000)
                 else:
                     duration = _get_audio_duration_ms(part_path)
                 if m4b_chapters:
@@ -3743,8 +3816,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["progress_message"] = "Merging audio..."
             safe_name = _safe_filename(info.title) or "audiolibro"
 
-            if use_gemini:
-                # Gemini: tutto PCM. Assembly diretto in base a output_format.
+            if use_pcm:
+                # Gemini/Speechify: tutto PCM. Assembly diretto in base a output_format.
                 final_mp3 = str(output_dir / f"{safe_name}.mp3")
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 valid_m4b_ch = [c for c in m4b_chapters if c.get("end", 0) > c.get("start", 0)]
@@ -3752,7 +3825,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                 if output_format in ('mp3', 'zip', 'zip_rss'):
                     # Solo MP3 finale richiesto
-                    pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
+                    pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
                     print(f"[{job_id}] PCM->MP3 merged: {final_mp3}, "
                           f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}, "
                           f"gap_ms={gap_ms_inter}")
@@ -3809,6 +3882,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 language=getattr(info, "language", None),
                                 description=getattr(info, "description", None),
                                 gap_ms=gap_ms_inter,
+                                sample_rate=_pcm_sr,
                             ):
                                 job["output_m4b"] = final_m4b
                                 job["m4b_failed"] = False
@@ -3828,7 +3902,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if not m4b_ok:
                         job["m4b_failed"] = True
                         # Fallback: produci MP3 cosi' l'utente ha qualcosa
-                        pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter)
+                        pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
                         print(f"[{job_id}] M4B failed, fallback MP3 produced: {final_mp3}")
             else:
                 # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
@@ -3837,8 +3911,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] MP3 merged: {final_mp3}, "
                       f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
 
-            # Generate M4B too (skip for mp3-only format and for Gemini, which already handled it)
-            if not use_gemini and output_format != 'mp3':
+            # Generate M4B too (skip for mp3-only format and for Gemini/Speechify, which already handled it)
+            if not use_pcm and output_format != 'mp3':
                 final_m4b = str(output_dir / f"{safe_name}.m4b")
                 job["progress_message"] = "Converting to M4B..."
                 job["m4b_progress_current"] = 0
@@ -3947,8 +4021,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if output_format == 'm4b' and job.get("output_m4b"):
                 # When the user requested M4B and conversion succeeded, the intermediate
                 # MP3 is no longer needed: drop it to reclaim disk (a 500MB book stores
-                # MP3 + M4B = ~1GB otherwise). For Gemini there is no intermediate MP3.
-                if not use_gemini and os.path.exists(final_mp3):
+                # MP3 + M4B = ~1GB otherwise). For Gemini/Speechify there is no intermediate MP3.
+                if not use_pcm and os.path.exists(final_mp3):
                     try:
                         mp3_size = os.path.getsize(final_mp3)
                         os.remove(final_mp3)
@@ -4002,8 +4076,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
                         out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                        if use_gemini:
-                            pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
+                        if use_pcm:
+                            pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
                         else:
                             _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
@@ -4063,8 +4137,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 safe_title = _safe_filename(ch.title)[:50] or f"ch_{current_chapter_idx}"
                 out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
-                if use_gemini:
-                    pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter)
+                if use_pcm:
+                    pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
                 else:
                     _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
@@ -4311,9 +4385,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["error"] = _user_msg
             job["user_facing_error"] = _user_msg
             print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
-                  f"engine=edge -> error + refund, nessuna consegna.")
+                  f"engine={engine} -> error + refund, nessuna consegna.")
             try:
-                _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+                # Speechify e' un engine premium: il pagamento vive in
+                # job["payment"] (stessa tasca di Gemini) e va rimborsato via
+                # _refund_gemini_payment. _refund_job_payment tratta la tasca
+                # LLM (payment_amount_eur) e sarebbe la tasca sbagliata.
+                if use_speechify:
+                    _refund_gemini_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
+                else:
+                    _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
@@ -4373,6 +4454,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     )
                 except Exception:
                     pass
+            elif use_speechify:
+                # Premium: rimborso sulla tasca job["payment"] (come Gemini).
+                try:
+                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             else:
                 try:
                     _refund_job_payment(job_id, job, "no_output")
@@ -4626,6 +4713,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     pass
         elif use_gemini and not still_current:
             print(f"[{job_id}] Gemini cancel STALE - no refund/audit")
+        elif use_speechify and still_current:
+            # Cancel volontario di un job Speechify pagato: rimborso INTEGRALE
+            # (nessuna retention parziale; l'audio parziale non viene consegnato
+            # per questo engine). Tasca premium job["payment"] come Gemini.
+            # _refund_gemini_payment e' no-op se il job non era pagato.
+            try:
+                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+            except Exception as _ref_err:
+                print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
 
         if use_google:
             _google_tts_refund_unused(job_id, job)
@@ -4762,6 +4858,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _is_unavailable = isinstance(e, gemini_tts.GeminiUnavailable)
             except Exception:
                 _is_unavailable = False
+        if use_speechify:
+            try:
+                _is_unavailable = isinstance(e, speechify_tts.SpeechifyUnavailable)
+            except Exception:
+                _is_unavailable = False
         if _is_unavailable:
             _user_msg = ("Generazione interrotta: il motore voci PREMIUM non "
                          "e' disponibile al momento. Hai diritto al rimborso "
@@ -4784,6 +4885,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 audit_outcome="failed_refunded",
                 reason_detail=f"{type(e).__name__}: {str(e)[:300]}",
             )
+            _mark_pending_failed(job_id, "failed_refunded")
+        if use_speechify:
+            # Job premium Speechify fallito: rimborso integrale (path generico premium,
+            # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
+            try:
+                _refund_gemini_payment(job_id, job, f"failed: {e}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] Speechify refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_refunded")
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:

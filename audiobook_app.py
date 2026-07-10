@@ -81,10 +81,14 @@ except ImportError:
     gemini_tts = None
     print("[startup] gemini_tts module not available (google-genai not installed)")
 
+#  -  -  Speechify Simba-3.2 (PREMIUM, solo inglese)  -  opzionale  -  -
+import speechify_tts
+
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
     _extract_cover_for_preview, _generate_podcast_rss,
     _safe_filename, _check_audio_dependencies, pcm_to_mp3,
+    _generate_silence_mp3,
 )
 
 
@@ -410,6 +414,9 @@ ABM_SHARE_UPLOAD_TTL_SEC = int(os.environ.get("ABM_SHARE_UPLOAD_TTL_SEC", "3600"
 #   le voci Gemini hanno cost-per-char piu' alto e RPM/RPD piu' restrittive.
 MAX_TEXT_CHARS = int(os.environ.get("ABM_MAX_TEXT_CHARS", "1500000"))
 MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"))
+# Voci Speechify (PREMIUM, solo inglese): stesso cap di Gemini per default,
+# override indipendente disponibile.
+MAX_SPEECHIFY_TEXT_CHARS = int(os.environ.get("ABM_MAX_SPEECHIFY_TEXT_CHARS", str(MAX_GEMINI_TEXT_CHARS)))
 
 # Whitelist charset per gli id voce ricevuti dal client (edge
 # "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
@@ -433,11 +440,17 @@ LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 
 def _max_text_chars_for_voice(voice):
-    """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
-    return MAX_GEMINI_TEXT_CHARS if _is_gemini_voice(voice) else MAX_TEXT_CHARS
+    """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS,
+    Speechify -> MAX_SPEECHIFY_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
+    if _is_gemini_voice(voice):
+        return MAX_GEMINI_TEXT_CHARS
+    if _is_speechify_voice(voice):
+        return MAX_SPEECHIFY_TEXT_CHARS
+    return MAX_TEXT_CHARS
 
 
 def _effective_max_text_chars(voice, job=None):
@@ -1828,6 +1841,20 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Gemini voices: {e}")
 
+    # 4. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
+    if speechify_tts.is_available():
+        try:
+            spx_dict = speechify_tts.get_voices()  # -> {"en": [entry, ...]}
+            for lc_short, v_list in spx_dict.items():
+                if lc_short not in languages:
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            print(f"Error merging Speechify voices: {e}")
+
     # Sorting
     for lang in languages.values():
         lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
@@ -1887,11 +1914,12 @@ def run_optimization(job_id, selected_chapters=None):
 def run_translation(job_id):
     return generation_engine.run_translation(job_id)
 
-def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None):
+def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None, speechify_emotion=None):
     try:
         return generation_engine.run_generation(job_id, info, voice, rate, single_file,
                                                  output_format=output_format, podcast_base_url=podcast_base_url,
-                                                 gemini_style_instruction=gemini_style_instruction)
+                                                 gemini_style_instruction=gemini_style_instruction,
+                                                 speechify_emotion=speechify_emotion)
     except BaseException as e:
         # SystemExit/KeyboardInterrupt devono propagare — non sopprimerli.
         if isinstance(e, (SystemExit, KeyboardInterrupt)):
@@ -7374,6 +7402,9 @@ def api_preview_audio(job_id):
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
     accent = (request.args.get("accent") or "").strip()[:8]
+    speechify_emotion = (request.args.get("speechify_emotion") or "").strip().lower()
+    if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
+        speechify_emotion = ""  # valore ignoto -> neutro
     # Lettura opzionale del testo tra parentesi (default: rimosso). L'anteprima
     # applica lo stesso preprocessing della generazione finale, cosi` l'utente
     # sente esattamente cosa verra` letto.
@@ -7432,9 +7463,9 @@ def api_preview_audio(job_id):
         strip_square=not read_square_brackets,
     ) or preview_text
 
-    # Per Gemini riduciamo il testo a ~20-30 sec di audio (250-400 char) per
-    # contenere il costo per-token (input + output sono fatturati).
-    if _is_gemini_voice(voice):
+    # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400
+    # char) per contenere il costo per-token/per-carattere fatturato.
+    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
         import re as _re
         _t = _re.sub(r'\s+', ' ', preview_text).strip()
         if len(_t) > 400:
@@ -7455,7 +7486,7 @@ def api_preview_audio(job_id):
     # La selezione capitoli entra nella chiave perché il testo varia con essa.
     sel_key = ",".join(str(i) for i in sorted(sel_idxs)) if sel_idxs else ""
     paren_key = f"{int(read_round_parens)}{int(read_square_brackets)}"
-    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}|{paren_key}"
+    cache_key = f"{voice}|{rate}|{style}|{accent}|{sel_key}|{paren_key}|{speechify_emotion}"
     key_hash = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
     preview_path = work_dir / f"preview_{key_hash}.mp3"
 
@@ -7469,6 +7500,7 @@ def api_preview_audio(job_id):
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
     use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
+    use_speechify_preview = _is_speechify_voice(voice) and speechify_tts.is_available()
     client_id = "anon"
 
     # Direttiva di accento per la preview (solo Gemini): deve allinearsi al job
@@ -7539,6 +7571,16 @@ def api_preview_audio(job_id):
             # downstream che bloccare un preview legittimo.
             print(f"[preview] preflight check error (non-fatal): {_pf_err}")
 
+    # Speechify: nessun preview cap ne' RPD (a differenza di Gemini). Serve
+    # solo il preflight ffmpeg, perche' il PCM nativo va convertito in MP3.
+    if use_speechify_preview:
+        if not _preview_ffmpeg_ok():
+            return jsonify({
+                "error": ("Anteprima voci PREMIUM non disponibile: ffmpeg "
+                          "non installato sul server."),
+                "code": "ffmpeg_missing",
+            }), 503
+
     def _generate():
         if use_gemini_preview:
             # Native output is PCM — convert to MP3 inline for browser playback.
@@ -7605,6 +7647,26 @@ def api_preview_audio(job_id):
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_rate_sample failed (non-fatal): {e}")
                 gemini_tts.increment_preview(client_id)
+            finally:
+                if os.path.exists(pcm_tmp):
+                    try:
+                        os.remove(pcm_tmp)
+                    except OSError:
+                        pass
+        elif use_speechify_preview:
+            pcm_tmp = str(preview_path) + ".pcm"
+            try:
+                res = speechify_tts.synthesize(
+                    preview_text, voice, pcm_tmp,
+                    emotion=(speechify_emotion or None), rate=rate, max_attempts=1)
+                _sr = int(res.get("sample_rate", 48000) or 48000)
+                # PCM raw -> MP3 con il sample rate REALE (Speechify = 48kHz
+                # nativo, a differenza del default 24kHz di pcm_to_mp3 usato
+                # per Gemini).
+                pcm_to_mp3([pcm_tmp], str(preview_path), sample_rate=_sr, channels=1)
+            except Exception as _e_spx:
+                print(f"[preview] speechify failed, silence fallback: {_e_spx}")
+                _generate_silence_mp3(str(preview_path), duration_sec=1)
             finally:
                 if os.path.exists(pcm_tmp):
                     try:
@@ -7838,6 +7900,9 @@ def api_generate():
     if _is_gemini_voice(voice):
         if gemini_tts is None or not gemini_tts.is_available():
             return jsonify({"error": "gemini_tts_not_configured"}), 400
+    if _is_speechify_voice(voice):
+        if not speechify_tts.is_available():
+            return jsonify({"error": "speechify_not_configured"}), 400
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
@@ -7868,6 +7933,9 @@ def api_generate():
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
     accent_variant = (data.get("gemini_accent") or "").strip()[:8]
+    speechify_emotion = (data.get("speechify_emotion") or "").strip().lower()
+    if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
+        speechify_emotion = ""  # valore ignoto -> neutro
     if _is_gemini_voice(voice):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")
@@ -8111,6 +8179,119 @@ def api_generate():
         if accent_variant:
             job["gemini_accent"] = accent_variant
 
+    # ----- F3bis: Speechify payment preflight -----
+    # Specchio LEAN del ramo Gemini sopra: stesso pocket di pagamento
+    # (job["payment"]), stesso gate soglia/consumo token, stesso audit di
+    # acquisizione + batch email registration. NIENTE budget Google/RPD:
+    # Speechify non ha prenotazione budget ne' preflight RPD, quindi non va
+    # chiamato alcun gemini_tts.* qui (ne' reserve_budget ne'
+    # release_reservation: nulla e' stato prenotato in questo ramo).
+    if _is_speechify_voice(voice):
+        # TODO(refactor): estrarre un helper _consume_premium_payment condiviso col ramo gemini (duplicazione ~90 righe).
+        info_pre = job.get("info")
+        all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
+        sel = selected_chapters or []
+        if sel:
+            _by_index_pre = {ch.index: ch for ch in all_chs_pre}
+            chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
+        else:
+            chs_pre = all_chs_pre
+        # Cap caratteri PRIMA di consumare il pagamento (stessa motivazione del
+        # ramo Gemini sopra: evita di trattenere denaro per un job che verra'
+        # comunque rifiutato dal cap a valle).
+        _max_chars_pre = _effective_max_text_chars(voice, job)
+        _sel_chars_pre = sum(getattr(ch, "char_count", 0) for ch in chs_pre)
+        if _sel_chars_pre > _max_chars_pre:
+            return jsonify({
+                "error": f"Selection too large: {_sel_chars_pre:,} characters "
+                         f"(limit {_max_chars_pre:,}). Please reduce the chapter selection.",
+                "error_code": "selection_too_large",
+                "chars_selected": _sel_chars_pre,
+                "chars_limit": _max_chars_pre,
+            }), 413
+        # Speechify e' solo inglese: nessuna selezione lingua come nel ramo
+        # Gemini. Persisti comunque gen_lang="en" per coerenza con l'audit e
+        # con /api/combined_estimate.
+        job["gen_lang"] = "en"
+        try:
+            est_pre = speechify_tts.estimate_book_cost(chs_pre, language="en")
+            # Persisti la stima sul job: serve all'eventuale audit Speechify
+            # per popolare i campi *_est.
+            job["speechify_estimate"] = est_pre
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        speechify_eur_pre = round(est_pre["user_price_eur"], 2)
+        llm_eur_pre = 0.0
+        if data.get("ai_opt_enabled"):
+            chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
+            llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+        total_eur_pre = round(speechify_eur_pre + llm_eur_pre, 2)
+
+        threshold_pre = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
+        if total_eur_pre > threshold_pre:
+            if not payment_token:
+                return jsonify({
+                    "error": "payment_required",
+                    "total_eur": total_eur_pre,
+                    "threshold_eur": threshold_pre,
+                }), 402
+            try:
+                _pay_method = payment.consume_payment_token(
+                    payment_token, total_eur_pre, job_id, purpose="speechify"
+                )
+            except ValueError as _pay_err:
+                return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
+            # Stash payment info on job for refund + audit. Stesso pocket
+            # (job["payment"]) usato dal ramo Gemini: i path di refund
+            # a valle (_refund_payment_on_orphan, _refund_gemini_payment) sono
+            # pocket-based, non purpose-based, quindi funzionano identici.
+            job["payment"] = {
+                "token": payment_token,
+                "total_eur": total_eur_pre,
+                "method": _pay_method,
+                "ts": time.time(),
+                "speechify_est": est_pre,
+                "llm_eur": llm_eur_pre,
+            }
+            _acq_src, _acq_plat = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src
+            job["payment"]["acquisition_platform"] = _acq_plat
+            if _acq_src == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat)
+                except Exception:
+                    pass
+            # Batch implicito per job PAGATO (stessa logica del ramo Gemini):
+            # un job pagato non deve morire per heartbeat alla chiusura del
+            # browser.
+            if not job.get("email_registered"):
+                _pay_email = ""
+                try:
+                    _pay_email = payment.email_for_token(payment_token)
+                except Exception as _e:
+                    print(f"[{job_id}] email_for_token failed (non-fatal): {_e}", flush=True)
+                if _pay_email:
+                    job["notify_email"] = _pay_email
+                    job.setdefault("notify_download_type",
+                                   "podcast" if output_format == "zip_rss" else "audio")
+                    job.setdefault("notify_base_url", podcast_base_url)
+                    job["notify_lang"] = (data.get("lang") or "en")
+                    job["email_registered"] = True
+                    job["_auto_batch_notify"] = True
+                    _write_email_pending_marker(UPLOAD_DIR / job_id)
+                    try:
+                        pending_jobs.register(job_id, "generate",
+                                              _build_job_descriptor(job, "generate"))
+                    except Exception as _e:
+                        print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
+                              f"failed (non-fatal): {_e}", flush=True)
+                    print(f"[{job_id}] Paid Speechify job -> batch mode "
+                          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
+        # Stash emotion for run_generation (outer indent: vale per speechify,
+        # non annidato nel ramo gemini).
+        if speechify_emotion:
+            job["speechify_emotion"] = speechify_emotion
+
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
@@ -8223,7 +8404,8 @@ def api_generate():
     thread = threading.Thread(
         target=run_generation, args=(job_id, info, voice, rate, single_file),
         kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url,
-                'gemini_style_instruction': job.get("gemini_style_instruction")},
+                'gemini_style_instruction': job.get("gemini_style_instruction"),
+                'speechify_emotion': job.get("speechify_emotion")},
         daemon=True
     )
     thread.start()
@@ -8368,7 +8550,13 @@ def api_progress(job_id):
                     payload["partial_download_url"] = _pdl
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
-            if job.get("status") == "done":
+            if job.get("status") in ("done", "partial"):
+                # 'partial' (frazione chunk falliti oltre soglia) percorre lo
+                # stesso path di completamento di 'done' — file, ABM, email e
+                # offload sono gia' prodotti. E' uno stato TERMINALE: va emesso
+                # il payload di completamento e chiuso lo stream, altrimenti il
+                # frontend resta appeso sulla schermata di avanzamento.
+                # payload["status"] conserva il valore reale ('partial'/'done').
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
                 # Reconnection fallback: se output_m4b o optimized_abm_path non sono
@@ -9677,6 +9865,23 @@ def api_combined_estimate():
             "rate_step": rate_step,
         }
 
+    speechify_eur = 0.0
+    speechify_breakdown = {}
+    if _is_speechify_voice(voice_id):
+        try:
+            est_spx = speechify_tts.estimate_book_cost(chs, language="en")
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        speechify_eur = round(est_spx["user_price_eur"], 2)
+        speechify_breakdown = {
+            "chars": est_spx["chars_total"],
+            "chars_total": est_spx["chars_total"],
+            "user_price_eur": est_spx["user_price_eur"],
+            "is_free": est_spx["is_free"],
+            "model_label": est_spx["model_label"],
+            "margin_percent": est_spx["margin_percent"],
+        }
+
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
@@ -9685,8 +9890,17 @@ def api_combined_estimate():
         llm_eur = round((chars / 1_000_000.0) * llm_rate, 2)
         llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
 
-    total = round(gemini_eur + llm_eur, 2)
-    threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+    total = round(gemini_eur + speechify_eur + llm_eur, 2)
+    # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
+    # ABM_SPEECHIFY_FREE_THRESHOLD_EUR sul ramo Speechify e
+    # ABM_GEMINI_FREE_THRESHOLD_EUR altrove. Se qui usassimo sempre quella Gemini,
+    # un totale Speechify compreso tra le due soglie (soglia Speechify < Gemini)
+    # risulterebbe is_free lato UI ma verrebbe respinto con 402 dal backend, con il
+    # job bloccato a 0% (nessun payment token inviato). Vedi incidente 402 Speechify.
+    if _is_speechify_voice(voice_id):
+        threshold = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
+    else:
+        threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
 
     # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
     # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
@@ -9722,12 +9936,14 @@ def api_combined_estimate():
 
     return jsonify({
         "gemini_eur": gemini_eur,
+        "speechify_eur": speechify_eur,
         "llm_eur": llm_eur,
         "total_eur": total,
         "is_free": total <= threshold,
         "threshold_eur": threshold,
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
+        "speechify_breakdown": speechify_breakdown,
         "llm_breakdown": llm_breakdown,
         "gemini_overloaded": overload_info is not None,
         "gemini_overload_info": overload_info,
@@ -9808,13 +10024,21 @@ def api_paypal_create_order_gemini():
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
 
+    speechify_eur = 0.0
+    if _is_speechify_voice(voice_id):
+        try:
+            est = speechify_tts.estimate_book_cost(chs, language="en")
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        speechify_eur = round(est["user_price_eur"], 2)
+
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
         rate = LLM_RATE_EUR_PER_MCHAR
         llm_eur = round((chars / 1_000_000.0) * rate, 2)
 
-    server_total = round(gemini_eur + llm_eur, 2)
+    server_total = round(gemini_eur + speechify_eur + llm_eur, 2)
 
     if abs(server_total - requested_amount) > 0.01:
         return jsonify({

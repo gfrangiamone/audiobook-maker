@@ -398,16 +398,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(vlPrem)vlPrem.addEventListener('change',()=>{
     const src=document.getElementById('vl');
     if(src){src.value=vlPrem.value;updVoices();}
+    if(typeof updModelsPremium==='function')updModelsPremium();
     updVoicesPremium();
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
     // La lingua entra nella stima (cluster rate-log + ratio chars/token).
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
   });
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
-    updVoicesPremium();
+    // _onPremiumModelChanged() gestisce il toggle stile/emozioni, ripopola
+    // voci/accenti/emozioni e propaga il cambio al sig di preview.
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
-    // Il modello è codificato nel voice id (gemini:<model>:<voice>): cambia il sig.
-    _onPreviewParamsChanged();
   });
   const gStyle=document.getElementById('geminiStyle');
   if(gStyle){
@@ -887,8 +889,19 @@ function fillLangs(){
       // Gemini; altrimenti lascia la precedente selezione Premium intatta
       // (evita il side-effect "value=stringa non presente" che azzera il select).
       const ok=Array.from(dst.options).some(o=>o.value===sel.value);
-      if(ok)dst.value=sel.value;
-      updVoicesPremium&&updVoicesPremium();
+      if(ok){
+        dst.value=sel.value;
+        // La lingua premium è cambiata: ricostruisci i modelli e risincronizza
+        // le righe dipendenti dal modello. Simba è solo inglese, quindi
+        // passando a una lingua non-EN updModelsPremium NON ripropone Simba e
+        // il modello torna a Gemini. Senza questo il modello resterebbe su
+        // Simba anche per lingue incompatibili (es. italiano).
+        if(typeof updModelsPremium==='function')updModelsPremium();
+        if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+        else updVoicesPremium&&updVoicesPremium();
+      }else{
+        updVoicesPremium&&updVoicesPremium();
+      }
     }
     // La lingua entra nella stima (cluster rate-log + ratio chars/token).
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
@@ -963,6 +976,13 @@ function syncLanguageOptions(){
   // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
   if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
   else if(ordered.length>0)dst.value=ordered[0].value;
+  if(typeof updModelsPremium==='function')updModelsPremium();
+  // updModelsPremium può forzare il modello a Simba (default EN) via .value, che
+  // NON emette 'change': sincronizza esplicitamente i controlli dipendenti dal
+  // modello (riga accento/emozione/stile). Senza, su un nuovo libro la riga
+  // accento Simba resta nascosta finché l'utente non cambia modello a mano.
+  if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+  else if(typeof updVoicesPremium==='function')updVoicesPremium();
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
@@ -1049,11 +1069,141 @@ function updVoices(){
 
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
 
+// Popola #vmPremium in base alla lingua premium corrente. Per l'inglese aggiunge
+// l'opzione "Simba (English)" (id modello 'simba-3.2') e la preseleziona come
+// default; per le altre lingue elenca solo i modelli Gemini.
+function updModelsPremium(){
+  const vlEl=document.getElementById('vlPremium');
+  const vmEl=document.getElementById('vmPremium');
+  if(!vmEl)return;
+  const lang=(vlEl&&vlEl.value)||'it';
+  const prev=vmEl.value;
+  vmEl.innerHTML='';
+  const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
+  const isEnglish=(lang==='en');
+  // Modelli Gemini (sempre presenti). Le etichette usano i18n se disponibili.
+  addOpt('flash25', t('lbl_model_flash25')||'Standard');
+  addOpt('flash31', t('lbl_model_flash31')||'Avanzato');
+  if(isEnglish){
+    // Speechify Simba disponibile solo se il catalogo espone voci speechify per 'en'.
+    const en=voices&&voices['en'];
+    const arr=en&&Array.isArray(en.voices)?en.voices:[];
+    const hasSimba=arr.some(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:'));
+    if(hasSimba){
+      addOpt('simba-3.2', t('lbl_model_simba')||'Simba (English)');
+    }
+  }
+  // Default: su inglese preferisci Simba (se presente), altrimenti mantieni la
+  // scelta precedente se ancora valida, altrimenti il primo modello.
+  let target=null;
+  if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
+  else if(prev && vmEl.querySelector('option[value="'+prev+'"]')) target=prev;
+  else target=vmEl.options.length?vmEl.options[0].value:'flash25';
+  vmEl.value=target;
+}
+
+// Accenti Speechify Simba: locale che filtrano le 8 voci _32 e valorizzano
+// il campo language inviato all'API.
+const _SPEECHIFY_ACCENTS=[['en-US','American English'],['en-GB','British English']];
+
+// Selezione Speechify persistita fuori dal DOM: il dropdown `geminiAccent` è
+// CONDIVISO con Gemini e viene ripopolato da _updateAccentDropdown() con codici
+// accento Gemini; leggere `prev` dal solo DOM fa perdere la scelta dell'utente
+// (accento -> reset en-US, voce -> reset alla prima = harper_32). Queste due
+// variabili sono la fonte di verità per accento e voce Speechify, aggiornate
+// solo dagli onchange utente e usate per ripristinare dopo ogni rebuild.
+let _speechifyAccentSel='';
+let _speechifyVoiceSel='';
+
+function _isSpeechifyModelSelected(){
+  const vm=document.getElementById('vmPremium');
+  return !!(vm&&vm.value==='simba-3.2');
+}
+
+// Mostra/nasconde i controlli in base al modello premium selezionato e
+// (ri)popola voci/emozioni/accento coerentemente.
+function _onPremiumModelChanged(){
+  const styleRow=document.getElementById('geminiStyleRow');
+  const emoRow=document.getElementById('speechifyEmotionRow');
+  const accentRow=document.getElementById('geminiAccentRow');
+  const simba=_isSpeechifyModelSelected();
+  if(styleRow)styleRow.hidden=simba;
+  if(emoRow)emoRow.hidden=!simba;
+  if(simba){
+    _populateSpeechifyAccents();
+    _populateSpeechifyEmotions();
+    if(accentRow)accentRow.hidden=false;   // accento (locale) sempre visibile per Simba
+  }else{
+    // Gemini: ripristina l'accento gemini gestito da _updateAccentDropdown().
+    if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
+  }
+  updVoicesPremium();
+  if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+}
+
+function _populateSpeechifyAccents(){
+  const acc=document.getElementById('geminiAccent');
+  if(!acc)return;
+  // Fonte di verità: la selezione Speechify persistita, NON acc.value (che può
+  // contenere un codice accento Gemini se il dropdown condiviso è stato appena
+  // ripopolato da _updateAccentDropdown()). Fallback ad acc.value solo se non
+  // c'è ancora una scelta Speechify registrata.
+  const prev=(_speechifyAccentSel&&_SPEECHIFY_ACCENTS.some(a=>a[0]===_speechifyAccentSel))?_speechifyAccentSel:acc.value;
+  acc.innerHTML='';
+  for(const [code,label] of _SPEECHIFY_ACCENTS){
+    const o=document.createElement('option');o.value=code;o.textContent=label;acc.appendChild(o);
+  }
+  acc.value=(_SPEECHIFY_ACCENTS.some(a=>a[0]===prev))?prev:'en-US';
+  _speechifyAccentSel=acc.value;
+  acc.onchange=()=>{_speechifyAccentSel=acc.value;updVoicesPremium();if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+}
+
+function _populateSpeechifyEmotions(){
+  const sel=document.getElementById('speechifyEmotion');
+  if(!sel)return;
+  const emotions=['angry','cheerful','sad','terrified','relaxed','fearful','surprised','calm','assertive','energetic','warm','direct','bright'];
+  const prev=sel.value;
+  sel.innerHTML='';
+  const none=document.createElement('option');none.value='';none.textContent=t('emotion_none')||'None (neutral)';sel.appendChild(none);
+  for(const e of emotions){
+    const o=document.createElement('option');o.value=e;o.textContent=(t('emotion_'+e)||e);sel.appendChild(o);
+  }
+  sel.value=prev||'';
+  sel.onchange=()=>{if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+}
+
 function updVoicesPremium(){
   const vlEl=document.getElementById('vlPremium');
   const vmEl=document.getElementById('vmPremium');
   const sel=document.getElementById('vvPremium');
   if(!sel)return;
+  // --- Ramo Speechify Simba-3.2: voci filtrate per accento (locale), non per lingua ---
+  if(vmEl&&vmEl.value==='simba-3.2'){
+    const accEl=document.getElementById('geminiAccent');
+    const locale=(accEl&&accEl.value)||'en-US';
+    const en=voices&&voices['en'];
+    const arr=en&&Array.isArray(en.voices)?en.voices:[];
+    const spx=arr.filter(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:')&&v.locale===locale);
+    // Preserva la voce scelta dall'utente attraverso il rebuild: senza questo,
+    // ogni ricostruzione (cambio tab/modello/re-analyze) azzera la selezione
+    // alla prima voce del locale corrente. Fonte di verità = _speechifyVoiceSel.
+    const prevVoice=_speechifyVoiceSel||sel.value;
+    sel.innerHTML='';
+    let lg='';
+    for(const v of spx){
+      if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender;}
+      const o=document.createElement('option');o.value=v.id;
+      o.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.id.split(':').pop());
+      sel.lastElementChild.appendChild(o);
+    }
+    // Ripristina la voce se ancora presente nel locale corrente; altrimenti resta
+    // la prima (comportamento corretto quando l'utente cambia accento).
+    if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
+    _speechifyVoiceSel=sel.value;
+    sel.onchange=()=>{_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+    return;
+  }
+  // --- Ramo Gemini (esistente) ---
   const lang=(vlEl&&vlEl.value)||'it';
   const modelKey=(vmEl&&vmEl.value)||'flash25';
   sel.innerHTML='';
@@ -1246,7 +1396,11 @@ function switchAudioTab(tab){
   // restare disponibile. La voce "attiva" è risolta da getCurrentVoiceId() in
   // base al tab corrente, quindi non serve azzerare l'altro tab.
   if(tab==='premium'){
-    updVoicesPremium();
+    // Sincronizza i controlli dipendenti dal modello (accento/emozione/stile)
+    // all'ingresso nel tab: il modello può essere già impostato a Simba senza
+    // che sia scattato un evento 'change', lasciando la riga accento nascosta.
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+    else updVoicesPremium();
   }
   if(prev!==tab){
     // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
@@ -1500,12 +1654,15 @@ function _openPayModalCtx(ctx) {
 // Chiamante Gemini: costruisce il contesto e apre il popup.
 function openPaymentModal(estimate) {
   _openPayModalCtx({
+    // Importo premium = engine attivo (Gemini o Speechify, mutuamente esclusivi:
+    // una sola voce premium selezionata). Usare solo gemini_eur mostrerebbe "—"
+    // per le voci Speechify pur avendo un totale a pagamento.
     lines: [
-      { labelKey: 'pay_premium_voices', amount: estimate.gemini_eur },
+      { labelKey: 'pay_premium_voices', amount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0) },
       { labelKey: 'pay_text_ai_optimization', amount: estimate.llm_eur },
     ],
     total: estimate.total_eur,
-    geminiAmount: estimate.gemini_eur,
+    geminiAmount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0),
     voucherPurpose: 'gemini',
     paypal: {
       endpoint: '/api/paypal_create_order_gemini',
@@ -1660,6 +1817,7 @@ let _currentPreviewSig=null;
 const _knownPreviewSigs=new Set();
 
 function _isGeminiVoiceId(v){return typeof v==='string' && v.startsWith('gemini:');}
+function _isSpeechifyVoiceId(v){return typeof v==='string' && v.startsWith('speechify:');}
 
 // Catalogo accenti per lingua (mirror di gemini_tts.ACCENT_VARIANTS lato backend).
 // Ogni voce: [code, i18nKey]. Il primo e' il default. Solo le lingue qui elencate
@@ -1735,7 +1893,8 @@ function _getPreviewSig(){
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
   const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
-  return voice+'|'+rate+'|'+style+'|'+accent+'|'+_getSelectedChaptersKey();
+  const emo=_isSpeechifyVoiceId(voice)?(document.getElementById('speechifyEmotion')?.value||''):'';
+  return voice+'|'+rate+'|'+style+'|'+accent+'|'+emo+'|'+_getSelectedChaptersKey();
 }
 
 function _buildPreviewUrl(){
@@ -1762,6 +1921,10 @@ function _buildPreviewUrl(){
   if(_selLang)u+='&lang='+encodeURIComponent(_selLang);
   const accent=_isGeminiVoiceId(voice)?_getAccentVariant():'';
   if(accent)u+='&accent='+encodeURIComponent(accent);
+  if(_isSpeechifyVoiceId(voice)){
+    const _emo=(document.getElementById('speechifyEmotion')?.value||'');
+    if(_emo)u+='&speechify_emotion='+encodeURIComponent(_emo);
+  }
   const _pf=getParenFlags();
   if(_pf.read_round_parens)u+='&read_round_parens=1';
   if(_pf.read_square_brackets)u+='&read_square_brackets=1';
@@ -2845,6 +3008,10 @@ async function startCombinedGeneration(combinedPaymentToken){
         var _ga=_getAccentVariant();
         if(_ga)genPayload.gemini_accent=_ga;
       }
+      if(_isSpeechifyVoiceId(getCurrentVoiceId())){
+        var _emo=(document.getElementById('speechifyEmotion')?.value||'');
+        if(_emo)genPayload.speechify_emotion=_emo;
+      }
       var gr=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(genPayload)});
       var gd=await gr.json();
       if(gd.error){
@@ -3241,6 +3408,10 @@ async function startGen(){
       const _ga=_getAccentVariant();
       if(_ga)payload.gemini_accent=_ga;
     }
+    if(_isSpeechifyVoiceId(getCurrentVoiceId())){
+      const _emo=(document.getElementById('speechifyEmotion')?.value||'');
+      if(_emo)payload.speechify_emotion=_emo;
+    }
     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
     if(d.error){
@@ -3505,7 +3676,11 @@ function listenProgress(){
         }
       }
 
-      if(d.status==='done'){
+      if(d.status==='done'||d.status==='partial'){
+        // 'partial' = completato con alcuni chunk saltati (oltre soglia): il
+        // file è comunque prodotto e consegnato. Va trattato come stato
+        // terminale, altrimenti la schermata di avanzamento resta bloccata.
+        // Il ramo `d.failed_chunks>0` sotto mostra già l'avviso adeguato.
         es.close();
         generating=false;jobDone=true;
         _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons
