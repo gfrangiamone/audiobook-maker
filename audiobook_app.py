@@ -9868,7 +9868,16 @@ def api_combined_estimate():
         llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
 
     total = round(gemini_eur + speechify_eur + llm_eur, 2)
-    threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+    # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
+    # ABM_SPEECHIFY_FREE_THRESHOLD_EUR sul ramo Speechify e
+    # ABM_GEMINI_FREE_THRESHOLD_EUR altrove. Se qui usassimo sempre quella Gemini,
+    # un totale Speechify compreso tra le due soglie (soglia Speechify < Gemini)
+    # risulterebbe is_free lato UI ma verrebbe respinto con 402 dal backend, con il
+    # job bloccato a 0% (nessun payment token inviato). Vedi incidente 402 Speechify.
+    if _is_speechify_voice(voice_id):
+        threshold = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
+    else:
+        threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
 
     # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
     # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
