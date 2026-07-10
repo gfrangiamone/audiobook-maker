@@ -1095,6 +1095,15 @@ function updModelsPremium(){
 // il campo language inviato all'API.
 const _SPEECHIFY_ACCENTS=[['en-US','American English'],['en-GB','British English']];
 
+// Selezione Speechify persistita fuori dal DOM: il dropdown `geminiAccent` è
+// CONDIVISO con Gemini e viene ripopolato da _updateAccentDropdown() con codici
+// accento Gemini; leggere `prev` dal solo DOM fa perdere la scelta dell'utente
+// (accento -> reset en-US, voce -> reset alla prima = harper_32). Queste due
+// variabili sono la fonte di verità per accento e voce Speechify, aggiornate
+// solo dagli onchange utente e usate per ripristinare dopo ogni rebuild.
+let _speechifyAccentSel='';
+let _speechifyVoiceSel='';
+
 function _isSpeechifyModelSelected(){
   const vm=document.getElementById('vmPremium');
   return !!(vm&&vm.value==='simba-3.2');
@@ -1124,13 +1133,18 @@ function _onPremiumModelChanged(){
 function _populateSpeechifyAccents(){
   const acc=document.getElementById('geminiAccent');
   if(!acc)return;
-  const prev=acc.value;
+  // Fonte di verità: la selezione Speechify persistita, NON acc.value (che può
+  // contenere un codice accento Gemini se il dropdown condiviso è stato appena
+  // ripopolato da _updateAccentDropdown()). Fallback ad acc.value solo se non
+  // c'è ancora una scelta Speechify registrata.
+  const prev=(_speechifyAccentSel&&_SPEECHIFY_ACCENTS.some(a=>a[0]===_speechifyAccentSel))?_speechifyAccentSel:acc.value;
   acc.innerHTML='';
   for(const [code,label] of _SPEECHIFY_ACCENTS){
     const o=document.createElement('option');o.value=code;o.textContent=label;acc.appendChild(o);
   }
   acc.value=(_SPEECHIFY_ACCENTS.some(a=>a[0]===prev))?prev:'en-US';
-  acc.onchange=()=>{updVoicesPremium();if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+  _speechifyAccentSel=acc.value;
+  acc.onchange=()=>{_speechifyAccentSel=acc.value;updVoicesPremium();if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
 }
 
 function _populateSpeechifyEmotions(){
@@ -1159,6 +1173,10 @@ function updVoicesPremium(){
     const en=voices&&voices['en'];
     const arr=en&&Array.isArray(en.voices)?en.voices:[];
     const spx=arr.filter(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:')&&v.locale===locale);
+    // Preserva la voce scelta dall'utente attraverso il rebuild: senza questo,
+    // ogni ricostruzione (cambio tab/modello/re-analyze) azzera la selezione
+    // alla prima voce del locale corrente. Fonte di verità = _speechifyVoiceSel.
+    const prevVoice=_speechifyVoiceSel||sel.value;
     sel.innerHTML='';
     let lg='';
     for(const v of spx){
@@ -1167,7 +1185,11 @@ function updVoicesPremium(){
       o.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.id.split(':').pop());
       sel.lastElementChild.appendChild(o);
     }
-    sel.onchange=()=>{if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+    // Ripristina la voce se ancora presente nel locale corrente; altrimenti resta
+    // la prima (comportamento corretto quando l'utente cambia accento).
+    if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
+    _speechifyVoiceSel=sel.value;
+    sel.onchange=()=>{_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
     return;
   }
   // --- Ramo Gemini (esistente) ---
