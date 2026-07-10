@@ -56,10 +56,12 @@ def _pick_chunk_max_chars(voice_id, language):
     per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
     ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
 
-    Speechify: 1800 (speechify_tts.CHUNK_MAX_CHARS). L'endpoint rifiuta con
+    Speechify: speechify_tts.chunk_max_chars() (default 1800, override env
+    ABM_SPEECHIFY_CHUNK_CHARS, clampato per sicurezza). L'endpoint rifiuta con
     HTTP 400 un `input` SSML > 2000 char; il testo del chunk piu' l'overhead dei
     tag SSML (<speak>/<prosody>/<speechify:style>) deve stare sotto 2000, quindi
-    il cap sul testo e' 1800 (~100 char di margine per i tag).
+    il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
+    per i tag; il clamp lato speechify_tts impedisce override pericolosi).
 
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
@@ -73,7 +75,7 @@ def _pick_chunk_max_chars(voice_id, language):
     if _is_speechify_voice(voice_id):
         try:
             import speechify_tts
-            return speechify_tts.CHUNK_MAX_CHARS
+            return speechify_tts.chunk_max_chars()
         except Exception:
             return 1800
     return CHUNK_MAX_CHARS

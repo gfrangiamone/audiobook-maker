@@ -614,6 +614,8 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 | `ABM_SPEECHIFY_MARGIN_PERCENT` | Ricarico % (margine netto operatore) applicato sul costo per determinare il prezzo utente. Accetta virgola decimale. | `60` | `speechify_tts.py` `margin_percent()` (162) |
 | `ABM_SPEECHIFY_FREE_THRESHOLD_EUR` | Soglia gratuità: sotto questo prezzo la voce PREMIUM è offerta senza pagamento. | `0.50` | `speechify_tts.py` `free_threshold_eur()` (166) |
 | `ABM_MAX_SPEECHIFY_TEXT_CHARS` | Cap caratteri testo per job con voce Speechify. Default = `ABM_MAX_GEMINI_TEXT_CHARS` (`800000`). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `speechify:`. | `800000` | `audiobook_app.py` `MAX_SPEECHIFY_TEXT_CHARS` (419) |
+| `ABM_SPEECHIFY_CHUNK_CHARS` | Cap caratteri **testo** per chunk TTS. Clampato a `[200, 1850]` (`SAFE_MAX_CHUNK_CHARS`): il tetto garantisce che l'`input` SSML (testo + tag `build_ssml`) resti sotto il limite hard `2000` char dell'endpoint (oltre → HTTP 400 → chunk silenziato). Valori non validi → default. Usato da `tts_split._pick_chunk_max_chars` per le voci Speechify. | `1800` | `speechify_tts.py` `chunk_max_chars()` |
+| `ABM_SPEECHIFY_USE_STREAM` | Sceglie l'endpoint API: `false` = non-streaming `/v1/audio/speech` (JSON con `audio_data` base64); `true` = streaming `/v1/audio/stream` (corpo audio grezzo). Booleano: `1/true/yes/on`. In streaming `billable_characters_count` non è disponibile → fallback a `len(text)` per il reconcile (il costo è comunque riservato sui caratteri di input). | `false` | `speechify_tts.py` `use_stream_api()` |
 
 **Costanti condivise con Gemini** (stesse env per non divergere sui prezzi): tasso USD→EUR `ABM_GEMINI_USD_EUR_RATE` (`0.86`) e fee PayPal `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` (`0.34`) + `ABM_GEMINI_PAYPAL_PERCENT_FEE` (`3.4`). Vedi §7.2 e §7.4. Definite in `speechify_tts.py:170-179`.
 
@@ -623,7 +625,8 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 - 13 emozioni (`EMOTIONS`, `speechify_tts.py:98`): `angry, cheerful, sad, terrified, relaxed, fearful, surprised, calm, assertive, energetic, warm, direct, bright`. Nell'UI PREMIUM la combo "Emozione" sostituisce "Istruzioni di stile" quando il modello selezionato è Simba.
 - Accento di lettura (en-US / en-GB) posizionato **sopra** la selezione voce; filtra le voci per locale.
 - Su lingua inglese il modello PREMIUM di default è Simba-3.2 (preselezionato in `updModelsPremium()`, `static/js/app.js`).
-- Chunk max: `CHUNK_MAX_CHARS = 1800` (`speechify_tts.py:121`), sotto il limite ~2000 char/richiesta dell'endpoint.
+- Chunk max: default `CHUNK_MAX_CHARS = 1800` (`speechify_tts.py`), sotto il limite ~2000 char/richiesta dell'endpoint. Override via `ABM_SPEECHIFY_CHUNK_CHARS` (clampato a `[200, 1850]` per non superare mai il limite hard dell'endpoint con l'overhead SSML).
+- Endpoint API selezionabile via `ABM_SPEECHIFY_USE_STREAM` (default `false` = `/v1/audio/speech`; `true` = `/v1/audio/stream`). In streaming il corpo della risposta è audio WAV grezzo (`audio_format=wav`) e il download viene consumato dentro lo slot del gate per rispettare l'invariante di concorrenza.
 - **Invariante concorrenza:** chiamate simultanee verso l'API ≤ `ABM_SPEECHIFY_MAX_CONCURRENCY` su tutti i job del processo; ogni job usa al più `ABM_SPEECHIFY_PER_JOB_CONCURRENCY` slot del gate globale.
 - Cancel di un job con voce Speechify → refund **integrale** (`retained_eur=0.0`), nessuna retention parziale né consegna audio parziale (a differenza di Gemini).
 
@@ -807,9 +810,9 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
 | Google Cloud TTS (`google_tts.py`) | 5 |
 | Gemini TTS (`gemini_tts.py`) | 15 |
-| Speechify TTS (`speechify_tts.py`) | 7 |
+| Speechify TTS (`speechify_tts.py`) | 9 |
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
 | Push FCM app mobile (`push_service.py`) | 5 |
-| **Totale** | **115** |
+| **Totale** | **117** |

@@ -16,11 +16,12 @@ def _make_wav_bytes(sample_rate=48000, n_frames=2400):
 
 
 class _Resp:
-    def __init__(self, status, json_data=None, headers=None):
+    def __init__(self, status, json_data=None, headers=None, content=None):
         self.status_code = status
         self._json = json_data or {}
         self.headers = headers or {}
         self.text = "err"
+        self.content = content  # corpo grezzo (usato in modalita' streaming)
 
     def json(self):
         return self._json
@@ -32,8 +33,9 @@ class _Session:
         self._responses = list(responses)
         self.calls = []
 
-    def post(self, url, json=None, headers=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
+    def post(self, url, json=None, headers=None, timeout=None, stream=False):
+        self.calls.append({"url": url, "json": json, "headers": headers,
+                           "stream": stream})
         return self._responses.pop(0)
 
 
@@ -68,6 +70,56 @@ def test_synthesize_writes_pcm(monkeypatch, tmp_path):
     assert speechify_tts.active_slots() == 0
     # language derivato dalla voce (en-US)
     assert sess.calls[0]["json"].get("language") == "en-US"
+
+
+def test_use_stream_api_default_false(monkeypatch):
+    monkeypatch.delenv("ABM_SPEECHIFY_USE_STREAM", raising=False)
+    assert speechify_tts.use_stream_api() is False
+
+
+def test_use_stream_api_env_true(monkeypatch):
+    for val in ("1", "true", "YES", "on"):
+        monkeypatch.setenv("ABM_SPEECHIFY_USE_STREAM", val)
+        assert speechify_tts.use_stream_api() is True
+
+
+def test_synthesize_uses_speech_endpoint_by_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "sk_test")
+    monkeypatch.delenv("ABM_SPEECHIFY_USE_STREAM", raising=False)
+    speechify_tts._reset_gate_for_test()
+    wav = _make_wav_bytes()
+    resp = _Resp(200, {"audio_data": base64.b64encode(wav).decode(),
+                       "billable_characters_count": 5})
+    sess = _Session([resp])
+    out = tmp_path / "chunk.pcm"
+    res = speechify_tts.synthesize("Hello", "speechify:simba-3.2:harper_32",
+                                   str(out), session=sess)
+    assert res["success"] is True
+    assert sess.calls[0]["url"].endswith(speechify_tts.SPEECH_ENDPOINT)
+    assert sess.calls[0]["stream"] is False
+    assert out.read_bytes() == b"\x01\x00" * 2400
+
+
+def test_synthesize_uses_stream_endpoint_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("ABM_SPEECHIFY_API_KEY", "sk_test")
+    monkeypatch.setenv("ABM_SPEECHIFY_USE_STREAM", "true")
+    speechify_tts._reset_gate_for_test()
+    wav = _make_wav_bytes()
+    # In streaming il corpo E' l'audio grezzo: nessun JSON/base64.
+    resp = _Resp(200, content=wav)
+    sess = _Session([resp])
+    out = tmp_path / "chunk.pcm"
+    res = speechify_tts.synthesize("Hello world", "speechify:simba-3.2:harper_32",
+                                   str(out), session=sess)
+    assert res["success"] is True
+    assert res["sample_rate"] == 48000
+    assert res["channels"] == 1
+    # billable non disponibile in streaming -> fallback a len(text)
+    assert res["billable_chars"] == len("Hello world")
+    assert sess.calls[0]["url"].endswith(speechify_tts.STREAM_ENDPOINT)
+    assert sess.calls[0]["stream"] is True
+    assert out.read_bytes() == b"\x01\x00" * 2400
+    assert speechify_tts.active_slots() == 0
 
 
 def test_synthesize_retries_on_429(monkeypatch, tmp_path):

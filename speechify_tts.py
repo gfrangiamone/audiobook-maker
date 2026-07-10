@@ -117,8 +117,22 @@ _VOICE_GENDER = {v["id"]: v["gender"] for v in VOICES}
 _VALID_VOICE_NAMES = set(_VOICE_LOCALE.keys())
 
 API_BASE = "https://api.speechify.ai"
-SPEECH_ENDPOINT = "/v1/audio/speech"
+SPEECH_ENDPOINT = "/v1/audio/speech"   # non-streaming: JSON con audio_data base64
+STREAM_ENDPOINT = "/v1/audio/stream"   # streaming: corpo audio grezzo (no JSON)
+
+# Limite hard dell'endpoint: l'`input` SSML (testo + tag) non puo' superare
+# 2000 char, altrimenti HTTP 400 validation_failed.
+ENDPOINT_MAX_INPUT_CHARS = 2000
+# Riserva per l'overhead dei tag SSML aggiunti da build_ssml nel caso peggiore
+# (<speak> + <prosody rate="..."> + <speechify:style emotion="...">, ~102 char)
+# piu' margine. Il testo del chunk non deve mai eccedere ENDPOINT - riserva.
+_SSML_OVERHEAD_RESERVE = 150
+# Cap massimo di sicurezza sul testo: garantisce input SSML < 2000 anche con i
+# tag peggiori. E' anche il tetto a cui viene clampato l'override via env.
+SAFE_MAX_CHUNK_CHARS = ENDPOINT_MAX_INPUT_CHARS - _SSML_OVERHEAD_RESERVE  # 1850
+# Default del cap testo/chunk (override via ABM_SPEECHIFY_CHUNK_CHARS).
 CHUNK_MAX_CHARS = 1800  # cap sotto il limite ~2000 char/richiesta dell'endpoint
+_CHUNK_MIN_CHARS = 200  # floor: sotto questo il TTS perde contesto/qualita'
 
 
 def _f(env, default):
@@ -133,6 +147,14 @@ def _i(env, default):
         return int(os.environ.get(env, str(default)))
     except (ValueError, TypeError):
         return int(default)
+
+
+def _b(env, default=False):
+    """Parsing booleano da env: 1/true/yes/on (case-insensitive) -> True."""
+    raw = os.environ.get(env)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def api_key():
@@ -164,6 +186,30 @@ def margin_percent():
 
 def free_threshold_eur():
     return _f("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", 0.50)
+
+
+def use_stream_api():
+    """True se usare l'endpoint di streaming (STREAM_ENDPOINT) invece del
+    non-streaming (SPEECH_ENDPOINT). Override via ABM_SPEECHIFY_USE_STREAM.
+
+    Default False (endpoint /v1/audio/speech, comportamento storico). Con lo
+    streaming il corpo della risposta e' audio grezzo (nessun wrapper JSON /
+    base64): synthesize richiede comunque audio_format=wav e ne estrae il PCM.
+    """
+    return _b("ABM_SPEECHIFY_USE_STREAM", False)
+
+
+def chunk_max_chars():
+    """Cap caratteri/chunk sul testo (override via ABM_SPEECHIFY_CHUNK_CHARS).
+
+    Clampato a [_CHUNK_MIN_CHARS, SAFE_MAX_CHUNK_CHARS]: il tetto garantisce che
+    l'`input` SSML (testo + tag di build_ssml) resti sotto il limite hard di
+    ENDPOINT_MAX_INPUT_CHARS (2000) dell'endpoint, evitando l'HTTP 400 che
+    silenzierebbe il chunk. Valori non validi ricadono sul default
+    CHUNK_MAX_CHARS.
+    """
+    val = _i("ABM_SPEECHIFY_CHUNK_CHARS", CHUNK_MAX_CHARS)
+    return max(_CHUNK_MIN_CHARS, min(SAFE_MAX_CHUNK_CHARS, val))
 
 
 # Costanti condivise con Gemini (stesse env per non divergere sui prezzi).
@@ -349,27 +395,41 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
         "Authorization": f"Bearer {api_key()}",
         "Content-Type": "application/json",
     }
-    url = API_BASE + SPEECH_ENDPOINT
+    use_stream = use_stream_api()
+    url = API_BASE + (STREAM_ENDPOINT if use_stream else SPEECH_ENDPOINT)
 
     last_error = None
     for attempt in range(max_attempts):
-        with slot():  # gate globale: acquisisce/rilascia un permesso per chiamata
-            resp = session.post(url, json=payload, headers=headers, timeout=120)
+        with slot():  # gate globale: un permesso per l'intera chiamata
+            resp = session.post(url, json=payload, headers=headers,
+                                timeout=120, stream=use_stream)
+            # In streaming il corpo si scarica solo all'accesso: consumalo DENTRO
+            # lo slot cosi' la call occupa il permesso per header + download audio
+            # (invariante di concorrenza).
+            raw_body = resp.content if (use_stream and resp.status_code == 200) else None
         if resp.status_code == 200:
-            data = resp.json()
-            wav_b64 = data.get("audio_data") or ""
-            wav_bytes = base64.b64decode(wav_b64)
+            if use_stream:
+                # Streaming: il corpo E' l'audio WAV grezzo (audio_format=wav),
+                # nessun wrapper JSON/base64. billable_characters_count non e'
+                # disponibile qui: fallback a len(text) (serve solo al reconcile;
+                # il costo e' gia' riservato sui caratteri di input).
+                wav_bytes = raw_body or b""
+                billable_chars = len(text)
+            else:
+                data = resp.json()
+                wav_b64 = data.get("audio_data") or ""
+                wav_bytes = base64.b64decode(wav_b64)
+                # Billable chars parsing: fallback robusto a len(text) su missing/null/non-numeric
+                billable_chars = len(text)
+                try:
+                    val = data.get("billable_characters_count")
+                    if val is not None:
+                        billable_chars = int(val)
+                except (ValueError, TypeError):
+                    pass  # fallback a len(text)
             pcm, rate_hz, channels = _wav_bytes_to_pcm(wav_bytes)
             with open(output_path, "wb") as fp:
                 fp.write(pcm)
-            # Billable chars parsing: fallback robusto a len(text) su missing/null/non-numeric
-            billable_chars = len(text)
-            try:
-                val = data.get("billable_characters_count")
-                if val is not None:
-                    billable_chars = int(val)
-            except (ValueError, TypeError):
-                pass  # fallback a len(text)
             return {
                 "success": True,
                 "bytes_written": len(pcm),
