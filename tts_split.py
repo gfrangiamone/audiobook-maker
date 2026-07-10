@@ -26,6 +26,7 @@ import edge_tts
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+from voice_utils import is_speechify_voice as _is_speechify_voice
 
 try:
     import google_tts
@@ -55,6 +56,11 @@ def _pick_chunk_max_chars(voice_id, language):
     per stabilita` acustica; override env ABM_GEMINI_CHUNK_CHARS o
     ABM_GEMINI_MAX_CHUNK_CHARS_<LANG>). Richiede Tier 2/3.
 
+    Speechify: 1800 (speechify_tts.CHUNK_MAX_CHARS). L'endpoint rifiuta con
+    HTTP 400 un `input` SSML > 2000 char; il testo del chunk piu' l'overhead dei
+    tag SSML (<speak>/<prosody>/<speechify:style>) deve stare sotto 2000, quindi
+    il cap sul testo e' 1800 (~100 char di margine per i tag).
+
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
     if _is_gemini_voice(voice_id):
@@ -64,6 +70,12 @@ def _pick_chunk_max_chars(voice_id, language):
             return gemini_tts.get_max_chunk_chars(lang_code)
         except Exception:
             return 700
+    if _is_speechify_voice(voice_id):
+        try:
+            import speechify_tts
+            return speechify_tts.CHUNK_MAX_CHARS
+        except Exception:
+            return 1800
     return CHUNK_MAX_CHARS
 
 
