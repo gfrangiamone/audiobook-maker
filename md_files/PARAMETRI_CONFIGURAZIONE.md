@@ -599,7 +599,37 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 
 ---
 
-## 8. Cold Storage S3 (tiering hot/cold)
+## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)
+
+Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello fisso `simba-3.2` (costante interna `MODEL_ID`, `speechify_tts.py:88`), etichetta UI "Simba (English)" — nessun nome provider esposto nella UI utente. Audio nativo PCM 48000 Hz mono 16-bit. Il pagamento premium vive nella stessa "tasca" di Gemini (`job["payment"]`) e si rimborsa via `_refund_gemini_payment` / `_refund_payment_on_orphan`.
+
+### 8.1 Configurazione (env)
+
+| Variabile | Descrizione | Default | Sorgente |
+|-----------|-------------|---------|----------|
+| `ABM_SPEECHIFY_API_KEY` | API key Speechify. Se vuota l'engine è disabilitato (`is_available()` → False: voci Simba assenti dal catalogo, stime/pagamenti Premium rispondono 503). Solo variabile d'ambiente, mai esposta in UI o log. | *(vuoto)* | `speechify_tts.py` `api_key()` (139) |
+| `ABM_SPEECHIFY_MAX_CONCURRENCY` | Concorrenza API **globale** (limite abbonamento): numero massimo di chiamate simultanee verso l'API Speechify su **tutti** i job del processo. Floor a 1. | `3` | `speechify_tts.py` `max_concurrency()` (149) |
+| `ABM_SPEECHIFY_PER_JOB_CONCURRENCY` | Chiamate API simultanee per **singolo** job. Floor a 1. Se il gate globale è saturo, il job attende in modo trasparente ("in attesa") senza fallire. | `1` | `speechify_tts.py` `per_job_concurrency()` (154) |
+| `ABM_SPEECHIFY_COST_USD_PER_MCHAR` | Costo USD per 1M caratteri (listino provider). Accetta virgola decimale. | `11.18` | `speechify_tts.py` `cost_usd_per_mchar()` (158) |
+| `ABM_SPEECHIFY_MARGIN_PERCENT` | Ricarico % (margine netto operatore) applicato sul costo per determinare il prezzo utente. Accetta virgola decimale. | `60` | `speechify_tts.py` `margin_percent()` (162) |
+| `ABM_SPEECHIFY_FREE_THRESHOLD_EUR` | Soglia gratuità: sotto questo prezzo la voce PREMIUM è offerta senza pagamento. | `0.50` | `speechify_tts.py` `free_threshold_eur()` (166) |
+| `ABM_MAX_SPEECHIFY_TEXT_CHARS` | Cap caratteri testo per job con voce Speechify. Default = `ABM_MAX_GEMINI_TEXT_CHARS` (`800000`). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `speechify:`. | `800000` | `audiobook_app.py` `MAX_SPEECHIFY_TEXT_CHARS` (419) |
+
+**Costanti condivise con Gemini** (stesse env per non divergere sui prezzi): tasso USD→EUR `ABM_GEMINI_USD_EUR_RATE` (`0.86`) e fee PayPal `ABM_GEMINI_PAYPAL_FIXED_FEE_EUR` (`0.34`) + `ABM_GEMINI_PAYPAL_PERCENT_FEE` (`3.4`). Vedi §7.2 e §7.4. Definite in `speechify_tts.py:170-179`.
+
+### 8.2 Note operative
+
+- Voice ID formato: `speechify:simba-3.2:<voiceId>` (es. `speechify:simba-3.2:harper_32`). 8 voci `_32`: 4 en-US (dominic/geffen/harper/wyatt) + 4 en-GB (beatrice/edmund/hugh/imogen). `speechify_tts.py:104`.
+- 13 emozioni (`EMOTIONS`, `speechify_tts.py:98`): `angry, cheerful, sad, terrified, relaxed, fearful, surprised, calm, assertive, energetic, warm, direct, bright`. Nell'UI PREMIUM la combo "Emozione" sostituisce "Istruzioni di stile" quando il modello selezionato è Simba.
+- Accento di lettura (en-US / en-GB) posizionato **sopra** la selezione voce; filtra le voci per locale.
+- Su lingua inglese il modello PREMIUM di default è Simba-3.2 (preselezionato in `updModelsPremium()`, `static/js/app.js`).
+- Chunk max: `CHUNK_MAX_CHARS = 1800` (`speechify_tts.py:121`), sotto il limite ~2000 char/richiesta dell'endpoint.
+- **Invariante concorrenza:** chiamate simultanee verso l'API ≤ `ABM_SPEECHIFY_MAX_CONCURRENCY` su tutti i job del processo; ogni job usa al più `ABM_SPEECHIFY_PER_JOB_CONCURRENCY` slot del gate globale.
+- Cancel di un job con voce Speechify → refund **integrale** (`retained_eur=0.0`), nessuna retention parziale né consegna audio parziale (a differenza di Gemini).
+
+---
+
+## 9. Cold Storage S3 (tiering hot/cold)
 
 | Variabile | Descrizione | Default | Sorgente |
 |-----------|-------------|---------|----------|
@@ -647,7 +677,7 @@ delete cold a fine retention totale (escluso per job sotto retention forense).
 
 ---
 
-## 9. Versione (`version.py`)
+## 10. Versione (`version.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -656,7 +686,7 @@ delete cold a fine retention totale (escluso per job sotto retention forense).
 
 ---
 
-## 10. SEO Content (`seo_content.py`)
+## 11. SEO Content (`seo_content.py`)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
@@ -665,7 +695,7 @@ delete cold a fine retention totale (escluso per job sotto retention forense).
 
 ---
 
-## 11. Nuovi moduli (v3.8.0)
+## 12. Nuovi moduli (v3.8.0)
 
 ### Architettura a moduli
 
@@ -682,7 +712,7 @@ A partire dalla v3.8.0, il codice è distribuito su più file per migliorare la 
 
 ---
 
-## 12. Community widget (v3.13.0)
+## 13. Community widget (v3.13.0)
 
 Live Stats, News e Feedback aggiungono questi file su `ABM_DATA_DIR`:
 
@@ -702,7 +732,7 @@ Anti-spam feedback (in-memory, no DB): rate-limit `1/h, 5/24h` per IP-hash, hone
 
 ---
 
-## 13. Recupero job batch interrotti (`pending_jobs.py`)
+## 14. Recupero job batch interrotti (`pending_jobs.py`)
 
 I job **batch** (con email registrata) vivono solo in memoria; un riavvio/deploy li perderebbe. Per recuperarli, ogni job batch viene descritto in un file su `ABM_DATA_DIR`:
 
@@ -715,24 +745,24 @@ Ciclo di vita del descrittore: **scritto** quando il job diventa batch (`/api/re
 
 ---
 
-## 14. Push FCM (app mobile) (`push_service.py`)
+## 15. Push FCM (app mobile) (`push_service.py`)
 
 Modulo `push_service.py` — notifiche push Firebase Cloud Messaging (HTTP v1) per l'app mobile.
 Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non sono mai bloccanti.
 
-### 14.1 Variabile d'ambiente
+### 15.1 Variabile d'ambiente
 
 | Variabile | Default | Descrizione | File | Riga |
 |-----------|---------|-------------|------|------|
 | `ABM_FCM_CREDENTIALS_FILE` | *(vuoto)* | Path del service-account JSON Firebase per le notifiche push FCM HTTP v1. Push disabilitate se vuota o file assente (`is_available()` ritorna `False`). | `push_service.py` | 14 |
 
-### 14.2 Costanti interne (`push_service.py`)
+### 15.2 Costanti interne (`push_service.py`)
 
 | Parametro | Valore | File | Riga | Note |
 |-----------|--------|------|------|------|
 | `_SEND_RETRIES` | `3` | `push_service.py` | 16 | Tentativi invio push per token; backoff esponenziale `2**attempt` secondi tra tentativi (sleep solo tra retry, non prima del primo). |
 
-### 14.3 Costanti interne (`audiobook_app.py`)
+### 15.3 Costanti interne (`audiobook_app.py`)
 
 | Parametro | Valore | File | Riga | Note |
 |-----------|--------|------|------|------|
@@ -741,7 +771,7 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 | `_DEVICE_TOKENS_FILE` | `UPLOAD_DIR / "_device_tokens.json"` | `audiobook_app.py` | 1381 | File di persistenza dei token FCM registrati per client. Write atomico (tmp + rename). |
 | `_MOBILE_CID_RE` | `r"^[A-Za-z0-9_-]{8,64}$"` | `audiobook_app.py` | 572 | Regex di validazione del `client_id` letto dall'header `X-ABM-Cid`. Il CID mobile è preferito rispetto al cookie `abm_cid` se presente e valido. |
 
-### 14.4 Flusso operativo
+### 15.4 Flusso operativo
 
 - **Registrazione device**: `POST /api/device/register` — il client mobile invia `{fcm_token, job_ids[]}`. Il server valida il token (regex `_FCM_TOKEN_RE`), deduplica per `(token, cid)`, mantiene al massimo `_MAX_DEVICES_PER_CLIENT` entry per client, persiste su `_device_tokens.json`.
 - **Identificazione client mobile**: header `X-ABM-Cid` (validato da `_MOBILE_CID_RE` a `audiobook_app.py:572`). Se presente e valido viene preferito al cookie `abm_cid`, così l'app mobile non dipende dalla gestione cookie del browser.
@@ -777,8 +807,9 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
 | Google Cloud TTS (`google_tts.py`) | 5 |
 | Gemini TTS (`gemini_tts.py`) | 15 |
+| Speechify TTS (`speechify_tts.py`) | 7 |
 | Versione (`version.py`) | 2 |
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
 | Push FCM app mobile (`push_service.py`) | 5 |
-| **Totale** | **108** |
+| **Totale** | **115** |
