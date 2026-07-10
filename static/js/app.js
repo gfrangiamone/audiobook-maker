@@ -3631,7 +3631,11 @@ function listenProgress(){
         }
       }
 
-      if(d.status==='done'){
+      if(d.status==='done'||d.status==='partial'){
+        // 'partial' = completato con alcuni chunk saltati (oltre soglia): il
+        // file è comunque prodotto e consegnato. Va trattato come stato
+        // terminale, altrimenti la schermata di avanzamento resta bloccata.
+        // Il ramo `d.failed_chunks>0` sotto mostra già l'avviso adeguato.
         es.close();
         generating=false;jobDone=true;
         _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons

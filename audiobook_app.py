@@ -8547,7 +8547,13 @@ def api_progress(job_id):
                     payload["partial_download_url"] = _pdl
                 yield f"data: {json.dumps(payload)}\n\n"
                 break
-            if job.get("status") == "done":
+            if job.get("status") in ("done", "partial"):
+                # 'partial' (frazione chunk falliti oltre soglia) percorre lo
+                # stesso path di completamento di 'done' — file, ABM, email e
+                # offload sono gia' prodotti. E' uno stato TERMINALE: va emesso
+                # il payload di completamento e chiuso lo stream, altrimenti il
+                # frontend resta appeso sulla schermata di avanzamento.
+                # payload["status"] conserva il valore reale ('partial'/'done').
                 payload["output_name"] = job.get("output_name", "output")
                 payload["has_podcast"] = job.get("podcast_ready", False)
                 # Reconnection fallback: se output_m4b o optimized_abm_path non sono
