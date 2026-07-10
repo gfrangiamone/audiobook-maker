@@ -966,7 +966,12 @@ function syncLanguageOptions(){
   if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
   else if(ordered.length>0)dst.value=ordered[0].value;
   if(typeof updModelsPremium==='function')updModelsPremium();
-  if(typeof updVoicesPremium==='function')updVoicesPremium();
+  // updModelsPremium può forzare il modello a Simba (default EN) via .value, che
+  // NON emette 'change': sincronizza esplicitamente i controlli dipendenti dal
+  // modello (riga accento/emozione/stile). Senza, su un nuovo libro la riga
+  // accento Simba resta nascosta finché l'utente non cambia modello a mano.
+  if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+  else if(typeof updVoicesPremium==='function')updVoicesPremium();
 }
 function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
@@ -1358,7 +1363,11 @@ function switchAudioTab(tab){
   // restare disponibile. La voce "attiva" è risolta da getCurrentVoiceId() in
   // base al tab corrente, quindi non serve azzerare l'altro tab.
   if(tab==='premium'){
-    updVoicesPremium();
+    // Sincronizza i controlli dipendenti dal modello (accento/emozione/stile)
+    // all'ingresso nel tab: il modello può essere già impostato a Simba senza
+    // che sia scattato un evento 'change', lasciando la riga accento nascosta.
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+    else updVoicesPremium();
   }
   if(prev!==tab){
     // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
