@@ -889,8 +889,19 @@ function fillLangs(){
       // Gemini; altrimenti lascia la precedente selezione Premium intatta
       // (evita il side-effect "value=stringa non presente" che azzera il select).
       const ok=Array.from(dst.options).some(o=>o.value===sel.value);
-      if(ok)dst.value=sel.value;
-      updVoicesPremium&&updVoicesPremium();
+      if(ok){
+        dst.value=sel.value;
+        // La lingua premium è cambiata: ricostruisci i modelli e risincronizza
+        // le righe dipendenti dal modello. Simba è solo inglese, quindi
+        // passando a una lingua non-EN updModelsPremium NON ripropone Simba e
+        // il modello torna a Gemini. Senza questo il modello resterebbe su
+        // Simba anche per lingue incompatibili (es. italiano).
+        if(typeof updModelsPremium==='function')updModelsPremium();
+        if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+        else updVoicesPremium&&updVoicesPremium();
+      }else{
+        updVoicesPremium&&updVoicesPremium();
+      }
     }
     // La lingua entra nella stima (cluster rate-log + ratio chars/token).
     if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
