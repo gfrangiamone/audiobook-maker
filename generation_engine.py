@@ -1134,6 +1134,7 @@ def _generate_optimized_abm(job_id):
 _EMAIL_MODEL_LABELS = {
     "flash25": "Gemini 2.5 Flash TTS",
     "flash31": "Gemini 3.1 Flash TTS",
+    "simba-3.2": "Simba (English)",
 }
 
 _email_details_i18n = {
@@ -1224,6 +1225,12 @@ def _friendly_voice_name(voice):
     v = (voice or "").strip()
     if not v:
         return ""
+    if _is_speechify_voice(v):
+        # 'speechify:simba-3.2:harper_32' -> 'Harper' (rimuove il suffisso locale
+        # _NN e normalizza il case).
+        name = v.split(":")[-1]
+        name = re.sub(r"_\d+$", "", name)
+        return name.replace("_", " ").strip().title()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
@@ -1242,7 +1249,7 @@ def _email_generation_details(job, lang):
     try:
         d = _email_details_i18n.get(lang, _email_details_i18n["en"])
         voice = (job.get("voice") or "").strip()
-        is_premium = _is_gemini_voice(voice)
+        is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice)
         lines = []
 
         # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
