@@ -3028,6 +3028,132 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
 
+def _accumulate_speechify_actual(job, block, result):
+    """Accumula in job['speechify_actual'] i caratteri e i secondi audio del
+    chunk `block` appena sintetizzato. No-op se il chunk e' fallito (result
+    non e' un dict) o se lo store non e' inizializzato. Chiamata una sola volta
+    per chunk durante l'assemblaggio (vedi _synthesize_chunk)."""
+    sa = job.get("speechify_actual")
+    if sa is None or not isinstance(result, dict):
+        return
+    try:
+        sa["chars"] += len(block.get("text", "") or "")
+        sa["billable_chars"] += int(result.get("billable_chars", 0) or 0)
+        bw = int(result.get("bytes_written", 0) or 0)
+        sr = int(result.get("sample_rate", 48000) or 48000) or 48000
+        sa["audio_seconds"] += bw / (sr * 2.0)
+        if not sa.get("model_key"):
+            sa["model_key"] = getattr(speechify_tts, "MODEL_ID", "simba-3.2")
+    except Exception:
+        pass
+
+
+def _write_speechify_audit(job_id, job, voice_id, language, outcome):
+    """Append audit record al termine di un job Speechify (Simba). Best-effort,
+    non-fatale. Mirror di _write_gemini_audit ma con la contabilita' costo/prezzo
+    di speechify_tts (char-based). Il costo provider (USD->EUR) viene scritto nel
+    campo `google_cost_eur_actual` cosi' l'aggregato /admin/audit-tts —
+    provider-agnostico — lo tratta come costo vivo esattamente come per Gemini."""
+    try:
+        if not _is_speechify_voice(voice_id):
+            return
+        actual = job.get("speechify_actual") or {}
+        parts = voice_id.split(":")
+        model_key = parts[1] if len(parts) >= 3 else getattr(
+            speechify_tts, "MODEL_ID", "simba-3.2")
+        # --- Pagamento (stessa tasca premium job["payment"] di Gemini) ---
+        payment = job.get("payment") or {}
+        charged = float(payment.get("total_eur", 0) or 0)
+        payment_method = payment.get("method", "") or ""
+        payment_source = payment.get("source", "") or ""
+        payment_token_full = payment.get("token", "") or ""
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        if payment_token_full:
+            payment_token_short = (payment_token_full[:8] + "..."
+                                   if len(payment_token_full) > 12
+                                   else payment_token_full)
+        else:
+            payment_token_short = ""
+        # --- Costo provider + prezzo "dovuto" (char-based Simba) ---
+        metered_chars = int(actual.get("billable_chars", 0) or 0) or int(
+            actual.get("chars", 0) or 0)
+        provider_cost_eur = 0.0
+        should_have_been = 0.0
+        try:
+            price = speechify_tts.compute_user_price_eur(metered_chars)
+            provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
+                speechify_tts.usd_eur_rate())
+            should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+        except Exception:
+            provider_cost_eur = 0.0
+            should_have_been = 0.0
+        delta_eur = round(should_have_been - charged, 4)
+        delta_pct = round((delta_eur / provider_cost_eur * 100), 2) if provider_cost_eur > 0 else 0.0
+        rate_raw = job.get("rate", "+0%")
+        try:
+            if isinstance(rate_raw, str):
+                rate_pct_val = int(rate_raw.replace("%", "").replace("+", "").strip() or 0)
+            else:
+                rate_pct_val = int(rate_raw or 0)
+        except Exception:
+            rate_pct_val = 0
+        rate_step_val = max(-3, min(3, round(rate_pct_val / 10.0)))
+        rec = {
+            "job_id": job_id,
+            "provider": "speechify",
+            "model_key": model_key,
+            "language": language or "",
+            "rate_pct": rate_pct_val,
+            "rate_step": rate_step_val,
+            "chars_total": int(actual.get("chars", 0) or 0),
+            "billable_chars": metered_chars,
+            "input_tokens_est": 0,
+            "input_tokens_actual": 0,
+            "output_tokens_est": 0,
+            "output_tokens_actual": 0,
+            "audio_seconds_est": 0.0,
+            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "google_cost_eur_est": 0.0,
+            "google_cost_eur_actual": round(provider_cost_eur, 4),
+            "user_price_eur_charged": charged,
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "delta_pct": delta_pct,
+            "margin_eur_actual": round(charged - provider_cost_eur, 4),
+            "outcome": outcome,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+        }
+        _cancel_meta = job.get("cancel_meta")
+        if isinstance(_cancel_meta, dict):
+            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
+            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
+            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
+            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
+            rec["cancel_partial_audio_delivered"] = bool(
+                _cancel_meta.get("partial_audio_delivered", False))
+        gemini_cost_audit.append_record(rec)
+        try:
+            _free_thr = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40"))
+        except (TypeError, ValueError):
+            _free_thr = 0.40
+        if (outcome == "completed"
+                and charged <= 0.0
+                and should_have_been > _free_thr):
+            print(f"[{job_id}] AUDIT WARNING: completed Speechify job sopra soglia "
+                  f"({should_have_been:.2f}€) senza pagamento registrato "
+                  f"(payment_method={payment_method or 'NONE'}).")
+    except Exception as e:
+        print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
+
+
 # F1: finestra di "quiete" sotto cui un output senza marker .generation_complete
 # è considerato ancora in scrittura (conversione in corso) e NON viene offloadato.
 _OFFLOAD_QUIET_SEC = int(os.environ.get("ABM_OFFLOAD_QUIET_SEC", "180"))
@@ -3346,6 +3472,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             "google_cost_eur": 0.0,
             "model_key": None,
         }
+        if use_speechify:
+            job["speechify_actual"] = {
+                "chars": 0,
+                "billable_chars": 0,
+                "audio_seconds": 0.0,
+                "model_key": None,
+            }
         total_chunks = len(plan)
         total_chars = sum(b["chars"] for b in plan)
         print(f"[{job_id}] Plan ready: {total_chunks} chunks, {total_chars:,} chars total")
@@ -3547,6 +3680,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 if pre is not None:
                     if isinstance(pre, dict) and not job.get("speechify_sample_rate"):
                         job["speechify_sample_rate"] = pre.get("sample_rate", 48000)
+                    _accumulate_speechify_actual(job, block, pre)
                     return pre, part_path
                 _chunk_fi = {}
                 result = generate_chunk_pcm_speechify(
@@ -3554,6 +3688,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     emotion=speechify_emotion, rate=rate, failure_info=_chunk_fi)
                 if isinstance(result, dict) and not job.get("speechify_sample_rate"):
                     job["speechify_sample_rate"] = result.get("sample_rate", 48000)
+                _accumulate_speechify_actual(job, block, result)
                 return result, part_path
             if use_gemini:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
@@ -4411,6 +4546,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            if use_speechify:
+                try:
+                    _write_speechify_audit(job_id, job, voice,
+                                           _audit_language(job, info),
+                                           "failed_all_chunks_refunded")
+                except Exception:
+                    pass
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
             return
 
@@ -4470,6 +4612,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     pass
             elif use_speechify:
                 # Premium: rimborso sulla tasca job["payment"] (come Gemini).
+                try:
+                    _write_speechify_audit(job_id, job, voice,
+                                           _audit_language(job, info),
+                                           "failed_no_output_refunded")
+                except Exception:
+                    pass
                 try:
                     _refund_gemini_payment(job_id, job, "no_output: assembly failed")
                 except Exception as _ref_err:
@@ -4539,6 +4687,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
+        elif use_speechify:
+            _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
         # Send push notification to mobile devices
         if _send_push:
@@ -4733,6 +4883,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # per questo engine). Tasca premium job["payment"] come Gemini.
             # _refund_gemini_payment e' no-op se il job non era pagato.
             try:
+                _write_speechify_audit(job_id, job, voice,
+                                       _audit_language(job, info),
+                                       "cancelled_refunded")
+            except Exception:
+                pass
+            try:
                 _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
@@ -4903,6 +5059,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if use_speechify:
             # Job premium Speechify fallito: rimborso integrale (path generico premium,
             # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
+            try:
+                _write_speechify_audit(job_id, job, voice,
+                                       _audit_language(job, info), "failed_refunded")
+            except Exception:
+                pass
             try:
                 _refund_gemini_payment(job_id, job, f"failed: {e}")
             except Exception as _ref_err:

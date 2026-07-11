@@ -5130,7 +5130,7 @@ def admin_logs_page():
 </div>
 
 <div class="tab-bar">
-  <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit Gemini TTS</button>
+  <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit PREMIUM TTS</button>
   <button type="button" class="tab-btn" data-tab="gemini_events">Eventi &amp; Rimborsi</button>
 </div>
 
@@ -5144,6 +5144,7 @@ def admin_logs_page():
           <option value="all">Tutti</option>
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
+          <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
         </select>
       </div>
       <div>
@@ -5163,6 +5164,8 @@ def admin_logs_page():
           <option value="failed_budget_refunded">Fallito budget (rimborsato)</option>
           <option value="failed_quality_refunded">Fallito qualit&agrave; (rimborsato)</option>
           <option value="failed_quality_free">Fallito qualit&agrave; (gratuito, nessun rimborso)</option>
+          <option value="failed_no_output_refunded">Fallito nessun output (rimborsato)</option>
+          <option value="failed_all_chunks_refunded">Fallito tutti i segmenti (rimborsato)</option>
           <option value="preflight_blocked_refunded">Bloccato preventivamente</option>
           <option value="cancelled_refunded">Annullato (rimborsato)</option>
           <option value="cancelled_partial">Annullato (parziale)</option>
@@ -5219,6 +5222,7 @@ def admin_logs_page():
           <option value="all">Tutti</option>
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
+          <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
         </select>
       </div>
       <div>
@@ -5498,7 +5502,8 @@ def admin_logs_page():
   // ---- Eventi & Rimborsi tab ----
   const REFUND_OUTCOMES = new Set([
     "failed_refunded", "failed_quota_refunded", "failed_budget_refunded",
-    "failed_quality_refunded", "preflight_blocked_refunded",
+    "failed_quality_refunded", "failed_no_output_refunded",
+    "failed_all_chunks_refunded", "preflight_blocked_refunded",
     "cancelled_refunded", "cancelled_partial",
   ]);
   const OUTCOME_BADGE = {
@@ -5509,6 +5514,8 @@ def admin_logs_page():
     "failed_budget_refunded":     ["badge-err",  "Budget superato"],
     "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
     "failed_quality_free":        ["badge-warn", "Qualità ins. (free)"],
+    "failed_no_output_refunded":  ["badge-err",  "Nessun output"],
+    "failed_all_chunks_refunded": ["badge-err",  "Tutti segmenti falliti"],
     "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
     "cancelled_refunded":         ["badge-muted","Annullato"],
     "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
@@ -5692,16 +5699,16 @@ _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
 
 
 def _synth_running_gemini_audit_records():
-    """Snapshot dei job Gemini attivi sintetizzato in forma audit-shaped.
+    """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba) in forma
+    audit-shaped.
 
     Permette a /admin/audit-tts di mostrare una riga immediatamente all'avvio
-    di una generazione Premium, aggiornata ad ogni refresh con i dati di
-    costo accumulati in `job["gemini_actual"]`. Quando il job termina, la riga
-    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
+    di una generazione Premium, aggiornata ad ogni refresh con i dati di costo
+    accumulati in `job["gemini_actual"]` (Gemini) o `job["speechify_actual"]`
+    (Simba). Quando il job termina, la riga "running" sparisce e viene
+    rimpiazzata dal record persistito nel JSONL.
     """
     out = []
-    if gemini_tts is None:
-        return out
     now_iso = datetime.now(timezone.utc).isoformat()
     with _jobs_lock:
         snapshot = list(jobs.items())
@@ -5713,42 +5720,64 @@ def _synth_running_gemini_audit_records():
             if status not in _ACTIVE_JOB_STATUSES:
                 continue
             voice = job.get("voice") or job.get("opt_voice") or ""
-            if not _is_gemini_voice(voice):
+            is_gem = _is_gemini_voice(voice)
+            is_spe = _is_speechify_voice(voice)
+            if not (is_gem or is_spe):
                 continue
-            ga = job.get("gemini_actual") or {}
             parts = voice.split(":")
-            model_key = parts[1] if len(parts) >= 3 else (ga.get("model_key") or "?")
+            model_key = parts[1] if len(parts) >= 3 else "?"
             info = job.get("info")
             language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
             payment = job.get("payment") or {}
             charged = float(payment.get("total_eur", 0) or 0)
             if charged <= 0:
                 charged = float(job.get("payment_amount_eur", 0) or 0)
-            google_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
-            try:
-                should = gemini_tts.compute_user_price_eur(google_cost_actual, model_key)
-                should_have_been = float(should.get("user_price_eur", 0.0))
-            except Exception:
-                should_have_been = 0.0
-            delta_eur = round(should_have_been - charged, 4)
             rate_raw = job.get("rate", "+0%")
             try:
                 rate_pct = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
             except Exception:
                 rate_pct = 0
+            if is_gem:
+                if gemini_tts is None:
+                    continue
+                ga = job.get("gemini_actual") or {}
+                if model_key == "?":
+                    model_key = ga.get("model_key") or "?"
+                provider_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
+                try:
+                    should = gemini_tts.compute_user_price_eur(provider_cost_actual, model_key)
+                    should_have_been = float(should.get("user_price_eur", 0.0))
+                except Exception:
+                    should_have_been = 0.0
+                chars_total = int(ga.get("chars", 0) or 0)
+                audio_seconds = float(ga.get("audio_seconds", 0) or 0)
+            else:  # Speechify / Simba
+                sa = job.get("speechify_actual") or {}
+                metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
+                try:
+                    price = speechify_tts.compute_user_price_eur(metered)
+                    provider_cost_actual = float(price.get("cost_usd", 0.0) or 0.0) * float(
+                        speechify_tts.usd_eur_rate())
+                    should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+                except Exception:
+                    provider_cost_actual = 0.0
+                    should_have_been = 0.0
+                chars_total = int(sa.get("chars", 0) or 0)
+                audio_seconds = float(sa.get("audio_seconds", 0) or 0)
+            delta_eur = round(should_have_been - charged, 4)
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
                 "model_key": model_key,
                 "language": language,
                 "rate_pct": rate_pct,
-                "chars_total": int(ga.get("chars", 0) or 0),
-                "audio_seconds_actual": round(float(ga.get("audio_seconds", 0) or 0), 2),
-                "google_cost_eur_actual": round(google_cost_actual, 4),
+                "chars_total": chars_total,
+                "audio_seconds_actual": round(audio_seconds, 2),
+                "google_cost_eur_actual": round(provider_cost_actual, 4),
                 "user_price_eur_charged": round(charged, 4),
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": delta_eur,
-                "margin_eur_actual": round(charged - google_cost_actual, 4),
+                "margin_eur_actual": round(charged - provider_cost_actual, 4),
                 "outcome": "running",
                 "_live": True,
             }
@@ -5766,6 +5795,8 @@ _FULL_REFUND_OUTCOMES = frozenset({
     "failed_quota_refunded",
     "failed_budget_refunded",
     "failed_quality_refunded",
+    "failed_no_output_refunded",
+    "failed_all_chunks_refunded",
     "preflight_blocked_refunded",
     "cancelled_refunded",
 })
