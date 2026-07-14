@@ -10301,7 +10301,16 @@ def api_optimize():
     _is_combined_gemini = (auto_generate
                            and _is_gemini_voice(data.get("voice", ""))
                            and gemini_tts is not None)
-    if estimated_cost > LLM_FREE_THRESHOLD_EUR and not _is_combined_gemini:
+    # Idem per le voci PREMIUM Speechify (Simba): il flusso auto_generate chiama
+    # run_generation direttamente, bypassando il preflight pagamento di
+    # /api/generate (dove il TTS Simba viene addebitato). Senza un enforcement
+    # QUI, ogni audiolibro Speechify prodotto dal wizard con costo LLM sotto
+    # soglia veniva erogato SENZA incassare la quota TTS (margine negativo).
+    _is_combined_speechify = (auto_generate
+                              and _is_speechify_voice(data.get("voice", ""))
+                              and speechify_tts.is_available())
+    if (estimated_cost > LLM_FREE_THRESHOLD_EUR
+            and not _is_combined_gemini and not _is_combined_speechify):
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
             _release_opt_claim()
@@ -10488,6 +10497,117 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total:.2f}€ ({_consumed_method})")
+
+    # ----- Combined payment (LLM + Speechify in auto_generate flow) -----
+    # Mirror LEAN del blocco Gemini sopra per le voci PREMIUM Simba. Un unico
+    # token (PayPal order o voucher) copre LLM + TTS Simba. Enforcement SEMPRE
+    # (anche senza token): il flusso auto-gen chiama run_generation diretto,
+    # bypassando il preflight pagamento di /api/generate. Senza questo blocco il
+    # TTS Simba veniva regalato (margine negativo) ogni volta che la sola quota
+    # LLM cadeva sotto soglia. Speechify e' solo inglese: niente rate/lang nella
+    # stima (compute su caratteri, come /api/combined_estimate).
+    if _is_combined_speechify:
+        _combined_token_spx = (data.get("payment_token_combined")
+                               or data.get("payment_token") or "").strip()
+        # Capitoli selezionati per la generazione (stessa logica frontend
+        # combined_estimate: subset se selected_chapters, altrimenti tutti).
+        _all_chs_spx = list(getattr(info, "chapters", []) or [])
+        _sel_list_spx = _parse_selected_chapters(data.get("selected_chapters"))
+        if _sel_list_spx:
+            _by_idx_spx = {ch.index: ch for ch in _all_chs_spx}
+            _chs_for_est_spx = [_by_idx_spx[i] for i in _sel_list_spx if i in _by_idx_spx]
+        else:
+            _chs_for_est_spx = _all_chs_spx
+        try:
+            _est_spx = speechify_tts.estimate_book_cost(_chs_for_est_spx, language="en")
+            _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
+        except Exception as _e_est_spx:
+            print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}")
+            _est_spx = None
+            _speechify_eur_quota = 0.0
+        _expected_total_spx = round(_speechify_eur_quota + estimated_cost, 2)
+        # Soglia coerente col ramo Speechify di /api/generate e /api/combined_estimate.
+        _threshold_spx = float(
+            os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50")
+        )
+        if _expected_total_spx > _threshold_spx:
+            if not _combined_token_spx:
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Payment required for generation.",
+                    "error_code": "payment_required",
+                    "total_eur": _expected_total_spx,
+                    "speechify_eur": _speechify_eur_quota,
+                    "llm_eur": estimated_cost,
+                    "threshold_eur": _threshold_spx,
+                }), 402
+            # Validazione + consume del token combinato.
+            _consumed_spx = False
+            _consumed_method_spx = ""
+            _consumed_email_spx = ""
+            if _combined_token_spx in payment._payments:
+                with payment._payments_lock:
+                    _pay_spx = payment._payments.get(_combined_token_spx)
+                    if (_pay_spx and not _pay_spx.get("used")
+                            and float(_pay_spx.get("amount_eur", 0)) + 0.05
+                            >= _expected_total_spx):
+                        _pay_spx["used"] = True
+                        _pay_spx["used_at"] = time.time()
+                        _pay_spx["used_job_id"] = job_id
+                        _consumed_method_spx = "paypal"
+                        _consumed_email_spx = _pay_spx.get("email", "") or ""
+                        _consumed_spx = True
+                if _consumed_spx:
+                    _save_payments()
+            elif _combined_token_spx in payment._vouchers:
+                try:
+                    payment._voucher_consume(_combined_token_spx, _expected_total_spx,
+                                             job_id=job_id)
+                    _v_spx = payment._vouchers.get(_combined_token_spx, {})
+                    _consumed_method_spx = "voucher"
+                    _consumed_email_spx = _v_spx.get("email", "") or ""
+                    _consumed_spx = True
+                except ValueError as _vc_err_spx:
+                    print(f"[{job_id}] combined voucher consume failed: {_vc_err_spx}")
+            if not _consumed_spx:
+                print(f"[{job_id}] combined payment token "
+                      f"{_combined_token_spx[:12]}... not consumable "
+                      f"(expected_total={_expected_total_spx:.2f}€) -> 402")
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Invalid or already-used payment token.",
+                    "error_code": "invalid_payment",
+                }), 402
+            # Stash payment per audit Speechify (_write_speechify_audit legge
+            # job["payment"]["total_eur"]) + refund su cancel/error. total_eur =
+            # quota Simba (la quota LLM e' in payment["llm_eur"]).
+            job["payment"] = {
+                "token": _combined_token_spx,
+                "total_eur": _speechify_eur_quota,
+                "method": _consumed_method_spx,
+                "ts": time.time(),
+                "speechify_est": _est_spx,
+                "llm_eur": float(estimated_cost),
+                "source": "combined_optimize_autogen",
+            }
+            _acq_src_spx, _acq_plat_spx = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src_spx
+            job["payment"]["acquisition_platform"] = _acq_plat_spx
+            if _acq_src_spx == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat_spx)
+                except Exception:
+                    pass
+            job["payment_token"] = _combined_token_spx
+            job["payment_type"] = _consumed_method_spx
+            job["payment_email"] = _consumed_email_spx
+            job["payment_amount_eur"] = _expected_total_spx
+            # Snapshot stima pre-LLM: allinea i campi *_est dell'audit al prezzo
+            # lockato in payment["total_eur"] (come per Gemini).
+            job["speechify_estimate"] = _est_spx
+            print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                  f"speechify={_speechify_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"= {_expected_total_spx:.2f}€ ({_consumed_method_spx})")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).

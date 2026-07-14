@@ -499,6 +499,12 @@ def _generate_silence_pcm(output_path, duration_sec=1, sample_rate=None):
 # modo definitivo (tipicamente content policy / safety su testi sensibili) per
 # non lasciare un buco di silenzio nell'audiolibro. Chiave = codice lingua a 2
 # lettere; valore = voce edge-tts standard neutra per quella lingua.
+#
+# LEGACY: mappa female-only conservata per retrocompatibilita' (ultimo fallback
+# quando il genere della voce Gemini e' ignoto). La selezione vera passa ora da
+# `_pick_edge_fallback_voice`, che rispetta genere e accento della voce Gemini
+# scelta (vedi sotto): un chunk rifiutato di una voce MASCHILE en-GB non deve
+# essere recuperato con una voce femminile en-US (salto di genere + accento).
 _EDGE_FALLBACK_VOICES = {
     "it": "it-IT-ElsaNeural",
     "en": "en-US-AriaNeural",
@@ -517,6 +523,78 @@ _EDGE_FALLBACK_VOICES = {
     "tr": "tr-TR-EmelNeural",
 }
 _EDGE_FALLBACK_DEFAULT = "en-US-AriaNeural"
+
+# Voce edge-tts di fallback per (lingua, codice-accento) -> {genere: voce}.
+# I codici-accento sono gli stessi di gemini_tts.ACCENT_VARIANTS (us/gb/au/in,
+# es/419, br/pt, fr/ca, cn/tw, de/at/ch, eg/sa/ae): cosi' un chunk rifiutato da
+# Gemini viene recuperato con una voce edge dello STESSO accento regionale, non
+# solo della stessa lingua. Mantenere allineato con gemini_tts.ACCENT_VARIANTS.
+_EDGE_FALLBACK_ACCENT = {
+    ("en", "us"): {"Male": "en-US-GuyNeural",     "Female": "en-US-AriaNeural"},
+    ("en", "gb"): {"Male": "en-GB-RyanNeural",    "Female": "en-GB-SoniaNeural"},
+    ("en", "au"): {"Male": "en-AU-WilliamNeural", "Female": "en-AU-NatashaNeural"},
+    ("en", "in"): {"Male": "en-IN-PrabhatNeural", "Female": "en-IN-NeerjaNeural"},
+    ("es", "es"):  {"Male": "es-ES-AlvaroNeural", "Female": "es-ES-ElviraNeural"},
+    ("es", "419"): {"Male": "es-MX-JorgeNeural",  "Female": "es-MX-DaliaNeural"},
+    ("pt", "br"): {"Male": "pt-BR-AntonioNeural", "Female": "pt-BR-FranciscaNeural"},
+    ("pt", "pt"): {"Male": "pt-PT-DuarteNeural",  "Female": "pt-PT-RaquelNeural"},
+    ("fr", "fr"): {"Male": "fr-FR-HenriNeural",   "Female": "fr-FR-DeniseNeural"},
+    ("fr", "ca"): {"Male": "fr-CA-JeanNeural",    "Female": "fr-CA-SylvieNeural"},
+    ("zh", "cn"): {"Male": "zh-CN-YunxiNeural",   "Female": "zh-CN-XiaoxiaoNeural"},
+    ("zh", "tw"): {"Male": "zh-TW-YunJheNeural",  "Female": "zh-TW-HsiaoChenNeural"},
+    ("de", "de"): {"Male": "de-DE-ConradNeural",  "Female": "de-DE-KatjaNeural"},
+    ("de", "at"): {"Male": "de-AT-JonasNeural",   "Female": "de-AT-IngridNeural"},
+    ("de", "ch"): {"Male": "de-CH-JanNeural",     "Female": "de-CH-LeniNeural"},
+    ("ar", "eg"): {"Male": "ar-EG-ShakirNeural",  "Female": "ar-EG-SalmaNeural"},
+    ("ar", "sa"): {"Male": "ar-SA-HamedNeural",   "Female": "ar-SA-ZariyahNeural"},
+    ("ar", "ae"): {"Male": "ar-AE-HamdanNeural",  "Female": "ar-AE-FatimaNeural"},
+}
+
+# Voce edge-tts di fallback per lingua -> {genere: voce}. Usata quando la lingua
+# non ha varianti d'accento (mono-variante) o l'accento richiesto non e' mappato:
+# garantisce comunque la coerenza di GENERE con la voce Gemini scelta.
+_EDGE_FALLBACK_GENDER = {
+    "en": {"Male": "en-US-GuyNeural",     "Female": "en-US-AriaNeural"},
+    "es": {"Male": "es-ES-AlvaroNeural",  "Female": "es-ES-ElviraNeural"},
+    "fr": {"Male": "fr-FR-HenriNeural",   "Female": "fr-FR-DeniseNeural"},
+    "de": {"Male": "de-DE-ConradNeural",  "Female": "de-DE-KatjaNeural"},
+    "pt": {"Male": "pt-BR-AntonioNeural", "Female": "pt-BR-FranciscaNeural"},
+    "zh": {"Male": "zh-CN-YunxiNeural",   "Female": "zh-CN-XiaoxiaoNeural"},
+    "ar": {"Male": "ar-EG-ShakirNeural",  "Female": "ar-EG-SalmaNeural"},
+    "it": {"Male": "it-IT-DiegoNeural",   "Female": "it-IT-ElsaNeural"},
+    "ru": {"Male": "ru-RU-DmitryNeural",  "Female": "ru-RU-SvetlanaNeural"},
+    "ja": {"Male": "ja-JP-KeitaNeural",   "Female": "ja-JP-NanamiNeural"},
+    "ko": {"Male": "ko-KR-InJoonNeural",  "Female": "ko-KR-SunHiNeural"},
+    "hi": {"Male": "hi-IN-MadhurNeural",  "Female": "hi-IN-SwaraNeural"},
+    "nl": {"Male": "nl-NL-MaartenNeural", "Female": "nl-NL-ColetteNeural"},
+    "pl": {"Male": "pl-PL-MarekNeural",   "Female": "pl-PL-ZofiaNeural"},
+    "tr": {"Male": "tr-TR-AhmetNeural",   "Female": "tr-TR-EmelNeural"},
+}
+
+
+def _pick_edge_fallback_voice(lang2, gender=None, accent_code=None):
+    """Sceglie la voce edge-tts di fallback coerente per genere e accento con la
+    voce Gemini rifiutata. Priorita':
+      1. (lingua, accento) + genere  -> stesso accento regionale e stesso genere
+      2. lingua + genere             -> almeno stesso genere (accento standard)
+      3. mappa legacy female-only    -> retrocompat (genere ignoto)
+      4. default globale
+    `gender`: 'Male'/'Female' (case-insensitive) o None. None -> Female
+    (comportamento storico). `accent_code`: codice come in ACCENT_VARIANTS.
+    """
+    lang2 = (lang2 or "").split("-")[0].lower()
+    g = "Male" if str(gender or "").strip().lower().startswith("m") else "Female"
+    if accent_code:
+        ac = str(accent_code).strip().lower()
+        by_acc = _EDGE_FALLBACK_ACCENT.get((lang2, ac))
+        if by_acc and by_acc.get(g):
+            return by_acc[g]
+    by_lang = _EDGE_FALLBACK_GENDER.get(lang2)
+    if by_lang and by_lang.get(g):
+        return by_lang[g]
+    if lang2 in _EDGE_FALLBACK_VOICES:
+        return _EDGE_FALLBACK_VOICES[lang2]
+    return _EDGE_FALLBACK_DEFAULT
 
 
 def _mp3_to_pcm_24k(mp3_path, pcm_path):
@@ -539,17 +617,23 @@ def _mp3_to_pcm_24k(mp3_path, pcm_path):
         return False
 
 
-def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path):
+def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,
+                          gender=None, accent_code=None):
     """Sintetizza `text` con una voce edge-tts standard e scrive il risultato
     come PCM 24kHz mono in output_path. Usato quando Gemini rifiuta il chunk in
     modo definitivo: una voce standard e' preferibile a un buco di silenzio.
+
+    La voce edge e' scelta per essere coerente in GENERE e ACCENTO con la voce
+    Gemini originariamente selezionata (`gender`/`accent_code`), cosi' un chunk
+    rifiutato di una voce maschile en-GB non viene recuperato con una voce
+    femminile en-US (salto di genere + accento udibile).
 
     Ritorna un dict in stile synthesize() (marcato fallback_engine='edge') su
     successo, oppure False. Non solleva: ogni errore -> False (il caller scrive
     comunque il silenzio a monte).
     """
     lang2 = (fallback_lang or "").split("-")[0].lower()
-    voice = _EDGE_FALLBACK_VOICES.get(lang2, _EDGE_FALLBACK_DEFAULT)
+    voice = _pick_edge_fallback_voice(lang2, gender=gender, accent_code=accent_code)
     tmp_mp3 = output_path + ".edgefallback.mp3"
     # Loop asyncio dedicato e isolato: generate_chunk_mp3 e' async ma qui siamo
     # in contesto sincrono, fuori dal loop del thread di generazione. Un loop
@@ -680,7 +764,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
                               debug_prompt_path=None, rate="+0%", accent_directive=None,
-                              failure_info=None, fallback_lang=None):
+                              failure_info=None, fallback_lang=None, accent_code=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -774,7 +858,17 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     # sensibili) non lascia un buco muto nell'audiolibro. Solo se conosciamo la
     # lingua di lettura. Su successo il chunk NON conta come failed.
     if fallback_lang:
-        fb = _edge_fallback_to_pcm(clean, fallback_lang, rate, output_path)
+        # Genere della voce Gemini scelta (voice_id = 'gemini:<model>:<Voice>'):
+        # serve a scegliere una voce edge dello stesso genere ed evitare il
+        # salto maschile<->femminile percepito dall'utente.
+        gemini_gender = None
+        try:
+            _vname = str(voice_id).split(":")[-1]
+            gemini_gender = _gemini.GEMINI_VOICE_GENDER.get(_vname)
+        except Exception:
+            gemini_gender = None
+        fb = _edge_fallback_to_pcm(clean, fallback_lang, rate, output_path,
+                                   gender=gemini_gender, accent_code=accent_code)
         if fb is not False:
             if isinstance(failure_info, dict):
                 failure_info["fallback_engine"] = "edge"

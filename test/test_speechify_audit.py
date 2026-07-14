@@ -75,6 +75,43 @@ def test_write_speechify_audit_completed(tmp_path, monkeypatch):
                for r in gemini_cost_audit.iter_records(model="simba-3.2"))
 
 
+def test_write_speechify_audit_cost_est_from_estimate(tmp_path, monkeypatch):
+    # Parita' con l'audit Gemini: google_cost_eur_est va popolato dallo snapshot
+    # pre-generazione (job["speechify_estimate"]), non lasciato a 0.
+    monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
+    metered = 120_000
+    est = speechify_tts.estimate_book_cost(
+        [type("C", (), {"text": "a" * 121_000})()], language="en")
+    job = {
+        "speechify_actual": {"chars": 118_000, "billable_chars": metered,
+                             "audio_seconds": 640.0, "model_key": "simba-3.2"},
+        "payment": {"total_eur": 2.0, "method": "paypal", "token": "ORDER-123456789"},
+        "speechify_estimate": est,
+        "rate": "+0%",
+    }
+    generation_engine._write_speechify_audit("Jest", job, VOICE, "en", "completed")
+    rec = next(r for r in gemini_cost_audit.iter_records(outcome="completed")
+               if r.get("job_id") == "Jest")
+    exp_est = round(est["cost_usd"] * speechify_tts.usd_eur_rate(), 4)
+    assert exp_est > 0
+    assert rec["google_cost_eur_est"] == exp_est
+
+
+def test_write_speechify_audit_cost_est_zero_without_estimate(tmp_path, monkeypatch):
+    # Nessuno snapshot -> il campo resta 0.0 (comportamento invariato).
+    monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
+    job = {
+        "speechify_actual": {"chars": 5000, "billable_chars": 5000,
+                             "audio_seconds": 30.0, "model_key": "simba-3.2"},
+        "payment": {"total_eur": 1.5, "method": "voucher", "token": "V-ABCDEF"},
+        "rate": "+0%",
+    }
+    generation_engine._write_speechify_audit("Jnoest", job, VOICE, "en", "completed")
+    rec = next(r for r in gemini_cost_audit.iter_records(outcome="completed")
+               if r.get("job_id") == "Jnoest")
+    assert rec["google_cost_eur_est"] == 0.0
+
+
 def test_write_speechify_audit_skips_non_speechify_voice(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
     job = {"speechify_actual": {"chars": 10, "billable_chars": 10,

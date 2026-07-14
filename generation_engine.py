@@ -2465,6 +2465,25 @@ def run_optimization(job_id, selected_chapters=None):
                 except Exception as _e_est_ag:
                     print(f"[{job_id}] auto-gen gemini_estimate persist failed (non-fatal): {_e_est_ag}")
 
+            # Idem per le voci PREMIUM Speechify (Simba): popola speechify_estimate
+            # cosi` l'audit TTS (_write_speechify_audit) ha i campi *_est anche sui
+            # job free-threshold, dove /api/optimize non ha lockato una stima.
+            # Come per Gemini: non sovrascrivere lo snapshot pre-LLM salvato in
+            # /api/optimize (combined_optimize_autogen), su cui e` stato lockato
+            # payment["total_eur"].
+            if (_is_speechify_voice(voice) and speechify_tts.is_available()
+                    and not job.get("speechify_estimate")):
+                try:
+                    _est_spx_ag = speechify_tts.estimate_book_cost(
+                        info.chapters,
+                        language=((job.get("opt_lang") or "").lower()
+                                  or (getattr(info, "language", "") or "").split("-")[0].lower()
+                                  or "en"),
+                    )
+                    job["speechify_estimate"] = _est_spx_ag
+                except Exception as _e_est_spx_ag:
+                    print(f"[{job_id}] auto-gen speechify_estimate persist failed (non-fatal): {_e_est_spx_ag}")
+
             # Tracking nell'Activity Log: il flusso auto-gen bypassa
             # /api/generate (dove l'evento GENERATE viene scritto con voice),
             # quindi la voce non comparirebbe nella UI admin. Mirroriamo qui
@@ -3095,6 +3114,20 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             should_have_been = 0.0
         delta_eur = round(should_have_been - charged, 4)
         delta_pct = round((delta_eur / provider_cost_eur * 100), 2) if provider_cost_eur > 0 else 0.0
+        # Costo provider STIMATO (EUR) dallo snapshot pre-generazione, se presente
+        # (lockato in /api/optimize o popolato nel path auto-gen). Parita' col
+        # campo `google_cost_eur_est` dell'audit Gemini; i *_tokens_est /
+        # audio_seconds_est non si applicano a Simba (modello char-based) e
+        # restano 0. Nessuna stima disponibile -> 0.0 (invariato).
+        _spx_est = job.get("speechify_estimate") or {}
+        provider_cost_eur_est = 0.0
+        try:
+            _cost_usd_est = float(_spx_est.get("cost_usd", 0.0) or 0.0)
+            if _cost_usd_est > 0:
+                provider_cost_eur_est = round(
+                    _cost_usd_est * float(speechify_tts.usd_eur_rate()), 4)
+        except Exception:
+            provider_cost_eur_est = 0.0
         rate_raw = job.get("rate", "+0%")
         try:
             if isinstance(rate_raw, str):
@@ -3119,7 +3152,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "output_tokens_actual": 0,
             "audio_seconds_est": 0.0,
             "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
-            "google_cost_eur_est": 0.0,
+            "google_cost_eur_est": provider_cost_eur_est,
             "google_cost_eur_actual": round(provider_cost_eur, 4),
             "user_price_eur_charged": charged,
             "user_price_eur_should_have_been": round(should_have_been, 2),
@@ -3448,6 +3481,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # Gemini rifiuta un chunk in modo definitivo (content policy): meglio una
     # voce standard che un buco di silenzio. "" -> nessun fallback (silenzio).
     gemini_fallback_lang = _audit_language(job, info) if use_gemini else ""
+    # Accento di lettura (stesso della direttiva Gemini): usato per scegliere la
+    # voce edge-tts di fallback con l'ACCENTO regionale coerente (es. en-GB ->
+    # voce edge en-GB). Se l'utente non ha scelto un accento, si usa il default
+    # della lingua dal catalogo (lo stesso che Gemini ancora via directive).
+    gemini_fallback_accent = ""
+    if use_gemini and gemini_tts is not None:
+        try:
+            gemini_fallback_accent = (job.get("gemini_accent")
+                                      or gemini_tts.default_accent_code(gemini_fallback_lang)
+                                      or "")
+        except Exception:
+            gemini_fallback_accent = ""
 
     try:
         job["progress_message"] = "Preparing..."
@@ -3705,7 +3750,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                        debug_prompt_path=debug_prompt_path,
                                                        accent_directive=gemini_accent_directive or None,
                                                        failure_info=_chunk_fi,
-                                                       fallback_lang=gemini_fallback_lang or None)
+                                                       fallback_lang=gemini_fallback_lang or None,
+                                                       accent_code=gemini_fallback_accent or None)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.
