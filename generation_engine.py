@@ -42,6 +42,7 @@ try:
 except ImportError:
     gemini_tts = None
 import gemini_cost_audit
+import translation_cost_audit
 import speechify_tts
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
@@ -2595,6 +2596,8 @@ def run_translation(job_id):
         return False
 
     usage = translation_core.UsageTracker()
+    backend = ""
+    model = ""
     try:
         if _cancelled():
             raise translation_core.TranslationCancelled("cancelled at start")
@@ -2637,6 +2640,7 @@ def run_translation(job_id):
                 "text": "\n\n".join(parts),
             })
             job["tr_processed_chars"] += len(ch["text"])
+            job["tr_usage"] = usage.report()
 
         job["tr_progress_message"] = "Translating chapter titles..."
         titles = [c["title"] for c in out_chapters]
@@ -2689,6 +2693,11 @@ def run_translation(job_id):
                 _send_translation_email(job_id)
             except Exception as e:
                 _log(f"translation email error (non-fatal): {e}")
+        _write_translation_audit(
+            job_id, job, backend=backend, model=model,
+            source_lang=source, target_lang=target, optimize=optimize,
+            chars_total=total_chars, usage_report=usage.report(),
+            outcome="completed")
         _set_job_status(job, "translated")
         # Marker di completamento durevole per /admin/log-activity: senza
         # questo evento una traduzione conclusa resta indistinguibile da una
@@ -2720,6 +2729,11 @@ def run_translation(job_id):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
+        _write_translation_audit(
+            job_id, job, backend=backend, model=model,
+            source_lang=source, target_lang=target, optimize=optimize,
+            chars_total=total_chars, usage_report=usage.report(),
+            outcome="cancelled_refunded")
         _set_job_status(job, "analyzed")  # consenti retry (gate riaperto per ultimo)
     except Exception as e:
         _set_job_status(job, "error")
@@ -2727,6 +2741,11 @@ def run_translation(job_id):
         job["tr_progress_message"] = f"Translation error: {e}"
         _log(f"translation FAILED: {type(e).__name__}: {e}")
         _refund_job_payment(job_id, job, "error")
+        _write_translation_audit(
+            job_id, job, backend=backend, model=model,
+            source_lang=source, target_lang=target, optimize=optimize,
+            chars_total=total_chars, usage_report=usage.report(),
+            outcome="failed_refunded")
 
 
 # i18n email traduzione completata. Stessa struttura chiavi di _opt_email_i18n
@@ -3185,6 +3204,77 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
                   f"(payment_method={payment_method or 'NONE'}).")
     except Exception as e:
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
+
+
+def _write_translation_audit(job_id, job, *, backend, model, source_lang,
+                             target_lang, optimize, chars_total,
+                             usage_report, outcome):
+    """Append record audit al termine (o interruzione) di un job di traduzione.
+
+    Best-effort/non-fatale. Costo LLM stimato dai token reali dell'UsageTracker
+    (payment._translation_provider_cost_eur) e salvato sotto la chiave
+    provider-agnostica `google_cost_eur_actual`, cosi' gli aggregati e
+    _apply_cancel_effective si riusano invariati. Il ricavo effettivo per gli
+    esiti *_refunded viene azzerato a lettura da _apply_cancel_effective.
+    """
+    try:
+        ur = usage_report or {}
+        prompt_tokens = int(ur.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(ur.get("completion_tokens", 0) or 0)
+        tokens_estimated = bool(ur.get("estimated", False))
+        cost_eur = payment._translation_provider_cost_eur(
+            prompt_tokens, completion_tokens)
+
+        # --- Pagamento (stessa tasca job["payment"], fallback legacy) ---
+        pay = job.get("payment") or {}
+        charged = float(pay.get("total_eur", 0) or 0)
+        payment_method = pay.get("method", "") or ""
+        payment_source = pay.get("source", "") or ""
+        payment_token_full = pay.get("token", "") or ""
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        if payment_token_full:
+            payment_token_short = (payment_token_full[:8] + "..."
+                                   if len(payment_token_full) > 12
+                                   else payment_token_full)
+        else:
+            payment_token_short = ""
+
+        # Prezzo "dovuto" secondo il modello di pricing traduzione, sui char
+        # effettivamente tradotti (+AI se attiva).
+        est = payment._estimate_translation_cost_eur(chars_total, optimize=optimize)
+        should_have_been = float(est.get("due_eur", 0.0) or 0.0)
+        delta_eur = round(should_have_been - charged, 4)
+
+        rec = {
+            "job_id": job_id,
+            "backend": backend or "",
+            "model_key": model or "",
+            "source_lang": (source_lang or "").lower(),
+            "target_lang": (target_lang or "").lower(),
+            "optimize": bool(optimize),
+            "chars_total": int(chars_total or 0),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "tokens_estimated": tokens_estimated,
+            "google_cost_eur_actual": round(cost_eur, 6),
+            "user_price_eur_charged": round(charged, 4),
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "margin_eur_actual": round(charged - cost_eur, 4),
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+            "outcome": outcome,
+        }
+        translation_cost_audit.append_record(rec)
+    except Exception as e:
+        print(f"[{job_id}] translation audit write failed (non-fatal): {e}")
 
 
 # F1: finestra di "quiete" sotto cui un output senza marker .generation_complete
