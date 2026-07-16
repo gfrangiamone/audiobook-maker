@@ -5787,6 +5787,67 @@ def _synth_running_gemini_audit_records():
     return out
 
 
+def _synth_running_translation_audit_records():
+    """Snapshot dei job di traduzione attivi (status "translating") in forma
+    audit-shaped, per mostrare una riga live in /admin/audit-translations.
+
+    Il costo parziale usa i token accumulati in `job["tr_usage"]` (aggiornato
+    a fine di ogni capitolo da run_translation). Quando il job termina la riga
+    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
+    """
+    out = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for job_id, job in snapshot:
+        try:
+            if not isinstance(job, dict):
+                continue
+            if job.get("status", "") != "translating":
+                continue
+            p = job.get("tr_params") or {}
+            source_lang = (p.get("source_lang") or "").lower()
+            target_lang = (p.get("target_lang") or "").lower()
+            optimize = bool(p.get("optimize"))
+            chars_total = int(job.get("tr_total_chars", 0) or 0)
+            ur = job.get("tr_usage") or {}
+            prompt_tokens = int(ur.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(ur.get("completion_tokens", 0) or 0)
+            cost_eur = payment._translation_provider_cost_eur(
+                prompt_tokens, completion_tokens)
+            pay = job.get("payment") or {}
+            charged = float(pay.get("total_eur", 0) or 0)
+            if charged <= 0:
+                charged = float(job.get("payment_amount_eur", 0) or 0)
+            est = payment._estimate_translation_cost_eur(chars_total, optimize=optimize)
+            should_have_been = float(est.get("due_eur", 0.0) or 0.0)
+            rec = {
+                "ts": job.get("started_at") or now_iso,
+                "job_id": job_id,
+                "backend": job.get("tr_backend", "") or "",
+                "model_key": job.get("tr_model", "") or "",
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "optimize": optimize,
+                "chars_total": chars_total,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "tokens_estimated": bool(ur.get("estimated", False)),
+                "google_cost_eur_actual": round(cost_eur, 6),
+                "user_price_eur_charged": round(charged, 4),
+                "user_price_eur_should_have_been": round(should_have_been, 2),
+                "delta_eur": round(should_have_been - charged, 4),
+                "margin_eur_actual": round(charged - cost_eur, 4),
+                "payment_method": pay.get("method", "") or "",
+                "outcome": "running",
+                "_live": True,
+            }
+            out.append(rec)
+        except Exception:
+            continue
+    return out
+
+
 # Outcome che rappresentano un rimborso TOTALE all'utente: il ricavo
 # effettivo e' 0 a prescindere da `user_price_eur_charged` originario.
 # I `cancelled_partial` sono trattati a parte tramite `cancel_retained_eur`.
