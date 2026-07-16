@@ -60,6 +60,15 @@ TRANSLATE_RATE_EUR_PER_MCHAR = float(
     os.environ.get("ABM_TRANSLATE_COST", "3.0").replace(",", "."))
 TRANSLATE_MIN_COST_EUR = float(
     os.environ.get("ABM_TRANSLATE_MIN_COST", "1.5").replace(",", "."))
+# Costo provider LLM per la traduzione (base costo audit /admin/audit-translations).
+# Coppia unica input/output EUR per 1M token, valida a prescindere dal backend
+# (Vertex/DeepSeek). Default = listino Gemini 2.5 Flash (backend Vertex di
+# prod): BASE DA VERIFICARE/AGGIORNARE se il modello o il listino cambiano.
+# Accettano virgola decimale.
+TRANSLATE_COST_IN_EUR_PER_MTOK = float(
+    os.environ.get("ABM_TRANSLATE_COST_IN_EUR_PER_MTOK", "0.28").replace(",", "."))
+TRANSLATE_COST_OUT_EUR_PER_MTOK = float(
+    os.environ.get("ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK", "2.30").replace(",", "."))
 VOUCHER_EXPIRY_DAYS = int(os.environ.get("ABM_VOUCHER_EXPIRY_DAYS", "180"))
 VOUCHER_BONUS_PERCENT = int(os.environ.get("ABM_VOUCHER_BONUS_PERCENT", "10"))
 PAYMENT_RETENTION_DAYS = int(os.environ.get("ABM_PAYMENT_RETENTION_DAYS", "730"))  # 24 mesi GDPR
@@ -113,6 +122,17 @@ def _estimate_translation_cost_eur(char_count, optimize=False):
         "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
         "optimize": bool(optimize),
     }
+
+
+def _translation_provider_cost_eur(prompt_tokens, completion_tokens):
+    """Costo LLM stimato (EUR) dai token reali di una traduzione.
+
+    costo = in/1M × RATE_IN + out/1M × RATE_OUT. Coppia unica in/out; il
+    backend effettivo (vertex/apikey) e' registrato a parte nel record audit.
+    """
+    ci = (prompt_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_IN_EUR_PER_MTOK
+    co = (completion_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_OUT_EUR_PER_MTOK
+    return round(ci + co, 6)
 
 
 # ---------------------------------------------------------------------------
