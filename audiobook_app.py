@@ -5119,7 +5119,7 @@ def admin_logs_page():
 
 <div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
   <div style="flex:1;min-width:280px">
-    <h2 style="margin:0 0 4px">Voci PREMIUM (Gemini TTS)</h2>
+    <h2 style="margin:0 0 4px">Voci PREMIUM</h2>
     <div id="ksStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
     <div id="ksReason" style="font-size:.8rem;color:var(--muted);margin-top:4px;display:none"></div>
   </div>
@@ -5191,10 +5191,10 @@ def admin_logs_page():
     <div class="agg-grid agg-grid-6" id="auditAggregates">
       <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
       <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
-      <div class="agg-box"><div class="agg-label">Costo Google</div><div class="agg-value" id="aggCost">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi − Costo Google (include fee PayPal)">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine − fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo provider TTS</div><div class="agg-value" id="aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi (somma dei prezzi pagati) − Costo provider TTS. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo − fee PayPal totali. Per i job pagati con voucher la fee è zero (PayPal non coinvolto), quindi margine netto = margine lordo.">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Costo provider TTS totale × 100. È il ricarico netto medio pesato sul costo del provider (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
     </div>
   </div>
 
@@ -5203,8 +5203,8 @@ def admin_logs_page():
     <table>
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
-        <th>Char</th><th>Sec audio</th><th>Costo G.</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo Google (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo Google · markup applicato">Margine %</th><th>Esito</th>
+        <th>Char</th><th>Sec audio</th><th title="Costo del provider TTS per questo job">Costo TTS</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS · markup applicato">Margine %</th><th>Esito</th>
       </tr></thead>
       <tbody id="auditRecordsBody">
         <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
