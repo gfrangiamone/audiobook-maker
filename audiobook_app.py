@@ -3721,6 +3721,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
         <a class="btn btn-accent" href="/admin/audit-tts?{ym}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
+        <a class="btn btn-accent" href="/admin/audit-translations?{ym}" title="Audit Traduzioni: costi/margini LLM">🌍 Audit Traduzioni</a>
         <a class="btn btn-accent" href="/admin/log-activity/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
@@ -5695,6 +5696,486 @@ def admin_logs_page():
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+@app.route("/admin/audit-translations", methods=["GET"])
+def admin_audit_translations_page():
+    """Admin dashboard audit traduzioni libro. Speculare a /admin/audit-tts ma
+    ristretto ai job di traduzione, con assi lingua origine/destinazione e
+    costo provider LLM. Due tab: "Audit Traduzioni" ed "Eventi & Rimborsi".
+    """
+    if not ADMIN_TOKEN:
+        return ("Admin audit traduzioni UI disabled.", 404,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    token = _admin_auth_from_request()
+    if not _admin_auth_ok(token):
+        return (_render_admin_gate("Audit Traduzioni", "/admin/audit-translations"),
+                200, {"Content-Type": "text/html; charset=utf-8"})
+    html = r"""<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - Audit Traduzioni</title>
+<style>
+  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#0ea5e9;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px;margin:0 auto}
+  h1{margin:0 0 20px;font-size:1.5rem}
+  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
+  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
+  .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
+  .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
+  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
+  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+  button.secondary{background:#334155}
+  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:12px}
+  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
+  td{padding:6px 8px;border-bottom:1px solid #1e293b}
+  .agg-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:12px}
+  @media(max-width:900px){.agg-grid{grid-template-columns:1fr 1fr}}
+  .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
+  .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
+  .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
+  .delta-positive{color:var(--ok)}
+  .delta-negative{color:var(--err)}
+  .empty-msg{text-align:center;color:var(--muted);padding:20px}
+  tr.row-refund{background:rgba(239,68,68,0.10)}
+  tr.row-refund td{border-bottom-color:rgba(239,68,68,0.35)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .badge-ok{background:rgba(16,185,129,.18);color:#10b981}
+  .badge-err{background:rgba(239,68,68,.18);color:#ef4444}
+  .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
+  .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
+  .badge-live{background:rgba(14,165,233,.22);color:var(--accent);animation:livePulse 1.8s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
+  tr.row-live{background:rgba(14,165,233,.10)}
+  tr.row-live td{border-bottom-color:rgba(14,165,233,.30)}
+  .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
+  .toggle-row input{width:auto}
+  .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(14,165,233,.18);color:var(--accent);margin-left:6px}
+</style></head>
+<body>
+<h1>Admin - Audit Traduzioni <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+
+<div class="tab-bar">
+  <button type="button" class="tab-btn active" data-tab="tr_audit">Audit Traduzioni</button>
+  <button type="button" class="tab-btn" data-tab="tr_events">Eventi &amp; Rimborsi</button>
+</div>
+
+<div class="tab-panel active" id="tab_tr_audit">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="auditModelFilter">Backend / Modello</label>
+        <select id="auditModelFilter"><option value="all">Tutti</option></select>
+      </div>
+      <div>
+        <label for="auditSrcFilter">Lingua origine</label>
+        <select id="auditSrcFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="auditDstFilter">Lingua destinazione</label>
+        <select id="auditDstFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="auditOutcomeFilter">Esito</label>
+        <select id="auditOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+        </select>
+      </div>
+      <div>
+        <label for="auditDateFrom">Dal</label>
+        <input type="date" id="auditDateFrom">
+      </div>
+      <div>
+        <label for="auditDateTo">Al</label>
+        <input type="date" id="auditDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="auditRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid" id="auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Costo provider LLM (token reali)">Costo LLM</div><div class="agg-value" id="aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi − Costo LLM (include fee PayPal)">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine − fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Origine</th><th>Dest.</th>
+        <th>Char</th><th title="Token prompt + completion (reali o stimati)">Token</th>
+        <th title="Costo provider LLM">Costo LLM</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo LLM (lordo, include fee PayPal)">Margine &euro;</th>
+        <th title="Margine netto = Margine − fee PayPal. Zero per voucher.">Margine netto &euro;</th>
+        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="auditRecordsBody">
+        <tr><td colspan="13" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_tr_events">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="evModelFilter">Backend / Modello</label>
+        <select id="evModelFilter"><option value="all">Tutti</option></select>
+      </div>
+      <div>
+        <label for="evSrcFilter">Lingua origine</label>
+        <select id="evSrcFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="evDstFilter">Lingua destinazione</label>
+        <select id="evDstFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="evDateFrom">Dal</label>
+        <input type="date" id="evDateFrom">
+      </div>
+      <div>
+        <label for="evDateTo">Al</label>
+        <input type="date" id="evDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="evRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <label><input type="checkbox" id="evOnlyRefunds"> Solo eventi con rimborso</label>
+      <span style="margin-left:auto;font-size:.85em">Eventi con rimborso evidenziati in rosso.</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati Eventi</h2>
+    <div class="agg-grid">
+      <div class="agg-box"><div class="agg-label">Totale eventi</div><div class="agg-value" id="evCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Completati</div><div class="agg-value" id="evCompleted">-</div></div>
+      <div class="agg-box"><div class="agg-label">Rimborsi</div><div class="agg-value" id="evRefunds" style="color:#ef4444">-</div></div>
+      <div class="agg-box"><div class="agg-label">Annullati</div><div class="agg-value" id="evCancelled">-</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Eventi (ultimi 500)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Esito</th><th>Modello</th>
+        <th>Origine</th><th>Dest.</th><th>Char</th><th>Prezzo &euro;</th><th>Costo LLM &euro;</th>
+      </tr></thead>
+      <tbody id="evRecordsBody">
+        <tr><td colspan="9" class="empty-msg">Premi "Aggiorna" per caricare gli eventi.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
+                      localStorage.getItem('abm_admin_token') || '';
+  const $ = (id) => document.getElementById(id);
+
+  function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
+  function fmtPct(n){
+    const v = Number(n)||0;
+    const cls = v >= 0 ? "delta-positive" : "delta-negative";
+    return `<span class="${cls}">${v.toFixed(2)}%</span>`;
+  }
+
+  const LANG_NAMES = {
+    "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
+    "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
+    "ko":"Coreano","zh":"Cinese","hi":"Hindi","ar":"Arabo",
+    "id":"Indonesiano","nl":"Olandese","pl":"Polacco","th":"Thai",
+    "tr":"Turco","vi":"Vietnamita","ro":"Rumeno","uk":"Ucraino",
+    "bn":"Bengalese","mr":"Marathi","ta":"Tamil","te":"Telugu",
+  };
+  function langLabel(code){
+    const c = (code||"").toLowerCase();
+    return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
+  }
+
+  function fillSelect(sel, values, labeler){
+    if (!sel) return;
+    const prev = sel.value;
+    Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = labeler ? labeler(v) : v;
+      sel.appendChild(opt);
+    }
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+  }
+
+  async function loadFilterOptions(){
+    let src = [], dst = [], models = [];
+    try {
+      const r = await fetch("/admin/api/translation_cost_audit/languages",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (r.ok) {
+        const d = await r.json();
+        src = Array.isArray(d.source_langs) ? d.source_langs : [];
+        dst = Array.isArray(d.target_langs) ? d.target_langs : [];
+        models = Array.isArray(d.models) ? d.models : [];
+      }
+    } catch(e) { /* silenzioso */ }
+    const byLabel = (a,b) => langLabel(a).localeCompare(langLabel(b), "it");
+    src = src.slice().sort(byLabel);
+    dst = dst.slice().sort(byLabel);
+    models = models.slice().sort();
+    fillSelect($("auditSrcFilter"), src, langLabel);
+    fillSelect($("evSrcFilter"), src, langLabel);
+    fillSelect($("auditDstFilter"), dst, langLabel);
+    fillSelect($("evDstFilter"), dst, langLabel);
+    fillSelect($("auditModelFilter"), models, null);
+    fillSelect($("evModelFilter"), models, null);
+  }
+
+  const REFUND_OUTCOMES = new Set(["failed_refunded", "cancelled_refunded"]);
+  const OUTCOME_BADGE = {
+    "running":            ["badge-live",  "In corso"],
+    "completed":          ["badge-ok",    "Completato"],
+    "failed_refunded":    ["badge-err",   "Fallito (rimborso)"],
+    "cancelled_refunded": ["badge-muted", "Annullato (rimborso)"],
+  };
+
+  function esc(s){
+    const d = document.createElement('div');
+    d.textContent = (s == null ? "" : String(s));
+    return d.innerHTML;
+  }
+
+  async function fetchAudit(){
+    const params = new URLSearchParams();
+    const m = $("auditModelFilter").value;
+    const s = $("auditSrcFilter").value;
+    const t = $("auditDstFilter").value;
+    const o = $("auditOutcomeFilter").value;
+    const df = $("auditDateFrom").value;
+    const dt = $("auditDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (s && s !== "all") params.set("source_lang", s);
+    if (t && t !== "all") params.set("target_lang", t);
+    if (o && o !== "all") params.set("outcome", o);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "200");
+    const r = await fetch("/admin/api/translation_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
+    const d = await r.json();
+    renderAggregates(d.aggregates || {});
+    renderRecords(d.records || []);
+  }
+
+  function renderAggregates(agg){
+    $("aggCount").textContent = agg.count ?? 0;
+    $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("aggMargin").textContent = fmtEur(agg.margin_eur);
+    const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
+                      : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
+    const netEl = $("aggNetMargin");
+    if (netEl) {
+      netEl.textContent = fmtEur(netMargin);
+      netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
+    }
+    const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
+      ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
+      : 0;
+    $("aggDelta").innerHTML = fmtPct(_margPctAvg);
+  }
+
+  function renderRecords(recs){
+    const tbody = $("auditRecordsBody");
+    if (!recs.length) {
+      tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nessun record trovato.</td></tr>';
+      return;
+    }
+    recs = recs.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = recs.map(r => {
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      const cost = Number(r.google_cost_eur_actual || 0);
+      const margEur = revenue - cost;
+      const fee = Number(r._paypal_fee_eur || 0);
+      const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur) : (margEur - fee);
+      const method = (r.payment_method || "").toLowerCase();
+      const netTip = method === "paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (revenue × % + fissa)`
+        : (method === "voucher" ? "Voucher: nessuna fee PayPal"
+            : (revenue > 0 ? "Pagamento non PayPal: nessuna fee" : "Free: nessun pagamento"));
+      const margPct = cost > 0 ? (netMarg / cost * 100) : 0;
+      const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
+      const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
+      const rowCls = r._live ? "row-live" : "";
+      const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      const rerunBadge = r._rerun
+        ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery)">re-run</span>'
+        : "";
+      const aiFlag = r.optimize ? '<span class="ai-flag" title="Ottimizzazione AI attiva">AI</span>' : "";
+      const tokIn = Number(r.prompt_tokens || 0), tokOut = Number(r.completion_tokens || 0);
+      const tokTip = r.tokens_estimated ? ' title="Token stimati (usage non riportato)"' : "";
+      const tokStar = r.tokens_estimated ? "*" : "";
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(r.model_key || r.backend)}${aiFlag}</td>
+        <td>${esc(langLabel(r.source_lang))}</td>
+        <td>${esc(langLabel(r.target_lang))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td${tokTip}>${(tokIn + tokOut).toLocaleString()}${tokStar}</td>
+        <td>${fmtEur(cost)}</td>
+        <td>${fmtEur(revenue)}</td>
+        <td class="${dCls}">${fmtEur(margEur)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(netMarg)}</td>
+        <td class="${dCls}">${margPct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("auditRefreshBtn").addEventListener("click", fetchAudit);
+
+  // ---- Tab switching ----
+  function showTab(name){
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.tab === name);
+    });
+    document.querySelectorAll(".tab-panel").forEach(p => {
+      p.classList.toggle("active", p.id === "tab_" + name);
+    });
+    if (name === "tr_events" && !window._evLoaded) {
+      window._evLoaded = true;
+      fetchEvents();
+    }
+    if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    b.addEventListener("click", () => showTab(b.dataset.tab));
+  });
+  if (location.hash === "#tab-tr_events") showTab("tr_events");
+
+  // ---- Eventi & Rimborsi tab ----
+  async function fetchEvents(){
+    const params = new URLSearchParams();
+    const m = $("evModelFilter").value;
+    const s = $("evSrcFilter").value;
+    const t = $("evDstFilter").value;
+    const df = $("evDateFrom").value;
+    const dt = $("evDateTo").value;
+    if (m && m !== "all") params.set("model", m);
+    if (s && s !== "all") params.set("source_lang", s);
+    if (t && t !== "all") params.set("target_lang", t);
+    if (df) params.set("date_from", df);
+    if (dt) params.set("date_to", dt);
+    params.set("limit", "500");
+    const r = await fetch("/admin/api/translation_cost_audit?" + params.toString(),
+                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+    if (!r.ok) { alert("Errore caricamento eventi: " + r.status); return; }
+    const d = await r.json();
+    renderEvents(d.records || []);
+  }
+
+  function renderEvents(recs){
+    const onlyRefunds = $("evOnlyRefunds").checked;
+    let filtered = recs;
+    if (onlyRefunds) filtered = recs.filter(r => REFUND_OUTCOMES.has(r.outcome));
+    let completed=0, refunds=0, cancelled=0;
+    for (const r of recs) {
+      if (r.outcome === "completed") completed++;
+      else if (REFUND_OUTCOMES.has(r.outcome)) {
+        refunds++;
+        if (r.outcome.startsWith("cancelled")) cancelled++;
+      }
+    }
+    $("evCount").textContent = recs.length;
+    $("evCompleted").textContent = completed;
+    $("evRefunds").textContent = refunds;
+    $("evCancelled").textContent = cancelled;
+
+    const tbody = $("evRecordsBody");
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">Nessun evento.</td></tr>';
+      return;
+    }
+    filtered = filtered.slice().sort((a,b) => {
+      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tbody.innerHTML = filtered.map(r => {
+      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
+      const out = r.outcome || "?";
+      const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
+      const rowCls = r._live ? "row-live" : (REFUND_OUTCOMES.has(out) ? "row-refund" : "");
+      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
+                                                  : Number(r.user_price_eur_charged || 0);
+      return `<tr class="${rowCls}">
+        <td>${ts}</td>
+        <td><code>${esc(r.job_id)}</code></td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td>${esc(r.model_key || r.backend)}</td>
+        <td>${esc(langLabel(r.source_lang))}</td>
+        <td>${esc(langLabel(r.target_lang))}</td>
+        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
+        <td>${fmtEur(revenue)}</td>
+        <td>${fmtEur(r.google_cost_eur_actual)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("evRefreshBtn").addEventListener("click", fetchEvents);
+  $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
+
+  // Default periodo: primo giorno del mese corrente (entrambe le tab).
+  (function setDefaultDateFrom(){
+    const now = new Date();
+    const firstDay = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-01";
+    const af = $("auditDateFrom"); if (af && !af.value) af.value = firstDay;
+    const ef = $("evDateFrom");    if (ef && !ef.value) ef.value = firstDay;
+  })();
+
+  loadFilterOptions().finally(fetchAudit);
+})();
+</script>
+</body></html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
 
 
@@ -6100,6 +6581,119 @@ def admin_api_gemini_cost_audit_languages():
         if lang:
             seen.add(lang)
     return jsonify({"languages": sorted(seen)})
+
+
+@app.route("/admin/api/translation_cost_audit", methods=["GET"])
+def admin_api_translation_cost_audit():
+    """List record audit traduzioni con filtri + aggregati. Admin-only.
+
+    Include righe sintetiche outcome="running" per i job di traduzione in
+    corso. Ogni record e' arricchito con `_eff_*` (ricavo/margine effettivi
+    dopo refund) da _apply_cancel_effective.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import translation_cost_audit
+    model = request.args.get("model")
+    source_lang = request.args.get("source_lang")
+    target_lang = request.args.get("target_lang")
+    outcome = request.args.get("outcome")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+
+    def _norm(v):
+        return v if v and v != "all" else None
+
+    persisted = list(translation_cost_audit.iter_records(
+        model=_norm(model), source_lang=_norm(source_lang),
+        target_lang=_norm(target_lang), outcome=_norm(outcome),
+        date_from=date_from, date_to=date_to,
+    ))
+    persisted_ids = {r.get("job_id") for r in persisted}
+
+    live = []
+    out_filter = _norm(outcome)
+    if out_filter in (None, "running"):
+        for r in _synth_running_translation_audit_records():
+            if _norm(model) and r.get("model_key") != _norm(model):
+                continue
+            if _norm(source_lang) and r.get("source_lang") != _norm(source_lang):
+                continue
+            if _norm(target_lang) and r.get("target_lang") != _norm(target_lang):
+                continue
+            if r.get("job_id") in persisted_ids:
+                r["_rerun"] = True
+            live.append(r)
+
+    recs = live + persisted
+    for r in recs:
+        _apply_cancel_effective(r)
+    total = len(recs)
+    page = recs[offset:offset + limit]
+
+    agg_n = 0
+    agg_rev = 0.0
+    agg_cost = 0.0
+    agg_delta = 0.0
+    agg_fee = 0.0
+    for r in recs:
+        oc = r.get("outcome") or ""
+        if oc not in ("completed", "running"):
+            continue
+        agg_n += 1
+        agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
+        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
+        agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
+    agg = {
+        "count": agg_n,
+        "revenue_eur": round(agg_rev, 4),
+        "google_cost_eur": round(agg_cost, 4),
+        "margin_eur": round(agg_rev - agg_cost, 4),
+        "paypal_fees_eur": round(agg_fee, 4),
+        "net_margin_eur": round(agg_rev - agg_cost - agg_fee, 4),
+        "delta_pct_avg": round((agg_delta / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "filters": {"model": _norm(model), "source_lang": _norm(source_lang),
+                    "target_lang": _norm(target_lang),
+                    "date_from": date_from, "date_to": date_to},
+    }
+    return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/translation_cost_audit/languages", methods=["GET"])
+def admin_api_translation_cost_audit_languages():
+    """Codici lingua origine/destinazione e modelli distinti nei record audit
+    traduzioni. Popola i filtri di /admin/audit-translations."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import translation_cost_audit
+    src, dst, models = set(), set(), set()
+    for rec in translation_cost_audit.iter_records():
+        s = (rec.get("source_lang") or "").strip().lower()
+        t = (rec.get("target_lang") or "").strip().lower()
+        mk = (rec.get("model_key") or "").strip()
+        if s:
+            src.add(s)
+        if t:
+            dst.add(t)
+        if mk:
+            models.add(mk)
+    return jsonify({"source_langs": sorted(src),
+                    "target_langs": sorted(dst),
+                    "models": sorted(models)})
 
 
 @app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])

@@ -186,6 +186,8 @@ Parametri per la funzionalità di traduzione del testo del libro in un'altra lin
 |-----------|----------------|------|------|
 | `ABM_TRANSLATE_COST` | `3.0` (EUR per 1M caratteri input traduzione; accetta virgola decimale) | `payment.py` | 54–55 |
 | `ABM_TRANSLATE_MIN_COST` | `1.5` (floor EUR sul totale dovuto, applicato solo quando si paga; gratis sotto soglia `ABM_LLM_FREE_THRESHOLD_EUR`) | `payment.py` | 56–57 |
+| `ABM_TRANSLATE_COST_IN_EUR_PER_MTOK` | `0.28` (Costo LLM input EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
+| `ABM_TRANSLATE_COST_OUT_EUR_PER_MTOK` | `2.30` (Costo LLM output EUR/1M token — base costo audit traduzioni) | `payment.py` | (dopo TRANSLATE_MIN_COST_EUR) |
 
 **Formula di pricing** (funzione `_estimate_translation_cost_eur` in `payment.py:75`):
 
