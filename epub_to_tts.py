@@ -181,6 +181,29 @@ NON_CONTENT_TITLE_PHRASES = [
 ]
 
 
+# Caratteri di freccia "indietro" usati dai back-link a nota (return-to-text).
+# Un titolo TOC che è SOLO una di queste frecce seguita da cifre è un rimando
+# di apparato (es. "←7"), non un capitolo.
+_BACKNOTE_ARROWS = "←↩⇐⬅⟵‹◀↺⎌"
+_BACKNOTE_TITLE_RE = re.compile(
+    rf"^\s*(?:<[-‐-―]|[{_BACKNOTE_ARROWS}])\s*\d*\s*$"
+)
+
+
+def _is_backnote_toc_title(title) -> bool:
+    """True se il titolo TOC è un back-link a nota (freccia indietro + numero).
+
+    Alcuni EPUB esportati da Word listano nel TOC i rimandi di ritorno dalle
+    note ("←1", "←2", … o la forma ASCII "<-1"): non sono capitoli ma apparato.
+    Vanno ignorati, altrimenti mis-ancorano lo spine e mistitolano i capitoli.
+    Match volutamente stretto: un titolo reale non inizia mai con una freccia
+    indietro isolata.
+    """
+    if not title:
+        return False
+    return bool(_BACKNOTE_TITLE_RE.match(str(title)))
+
+
 def _title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     """True se il titolo corrisponde a una frase di apparato critico.
 
@@ -729,9 +752,52 @@ def detect_chapter_title(html_content: str) -> Optional[str]:
     title_tag = soup.find("title")
     if title_tag:
         title = title_tag.get_text(strip=True)
-        if title and len(title) < 200 and title.lower() not in ("", "untitled"):
+        if title and len(title) < 200 and title.lower() not in ("", "untitled", "unknown"):
             return title
 
+    return None
+
+
+# Marcatori di apertura capitolo/parte in prosa (multilingua) usati per
+# derivare un titolo quando l'HTML non ha heading semantici né <title> utile
+# (tipico degli export da Word: il titolo vive in un <p class="block_..">).
+_CHAPTER_MARKER_RE = re.compile(
+    r"^\s*(chapitre|chapter|capitolo|cap[íi]tulo|kapitel|cap\.?|"
+    r"parte|part|première partie|deuxième partie|troisième partie|"
+    r"partie|prologue|prologo|epilogue|epilogo|"
+    r"introduzione|introduction|préface|prefazione|preface)\b",
+    re.IGNORECASE,
+)
+
+
+def _derive_chapter_title(html_content: str) -> Optional[str]:
+    """Deriva un titolo di capitolo dal corpo quando detect_chapter_title fallisce.
+
+    Cerca nei primi blocchi (<p>/<div>/heading) un testo breve che apra con un
+    marcatore di capitolo/parte (es. "Chapitre 1", "Première partie"). Serve per
+    EPUB (export Word) privi di heading semantici e con <title> generico
+    ("Unknown"), dove il titolo reale è un paragrafo stilizzato in testa.
+    """
+    real = detect_chapter_title(html_content)
+    if real:
+        return real
+    try:
+        soup = BeautifulSoup(html_content, "lxml")
+    except Exception:
+        return None
+    body = soup.find("body") or soup
+    checked = 0
+    for tag in body.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6"]):
+        text = tag.get_text(" ", strip=True)
+        if not text:
+            continue
+        checked += 1
+        if len(text) <= 80 and _CHAPTER_MARKER_RE.match(text):
+            # Normalizza spazi interni (gli export Word spezzano le cifre in
+            # span separati: "Chapitre 1 0" -> "Chapitre 10").
+            return re.sub(r"(?<=\d)\s+(?=\d)", "", re.sub(r"\s+", " ", text)).strip()
+        if checked >= 6:
+            break  # il titolo, se c'è, è nei primissimi blocchi
     return None
 
 
@@ -1024,10 +1090,11 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             continue
 
         # ── File singolo capitolo (comportamento originale) ──
-        # Titolo: prima dal TOC, poi dall'HTML
+        # Titolo: prima dal TOC, poi dall'HTML (heading/<title>, poi marcatore
+        # di capitolo nel corpo per gli export senza heading semantici)
         title = toc_map.get(file_name)
         if not title:
-            title = detect_chapter_title(html_content)
+            title = _derive_chapter_title(html_content)
         if not title:
             title = f"Sezione {chapter_index + 1}"
 
@@ -1168,12 +1235,16 @@ def _build_toc_map(book: epub.EpubBook) -> dict[str, str]:
             if isinstance(item, tuple):
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
-                    href = section.href.split("#")[0]
-                    toc_map[href] = str(section.title or "").strip()
+                    title = str(section.title or "").strip()
+                    if not _is_backnote_toc_title(title):
+                        href = section.href.split("#")[0]
+                        toc_map[href] = title
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
-                href = item.href.split("#")[0]
-                toc_map[href] = str(item.title or "").strip()
+                title = str(item.title or "").strip()
+                if not _is_backnote_toc_title(title):
+                    href = item.href.split("#")[0]
+                    toc_map[href] = title
 
     try:
         walk_toc(book.toc)
@@ -1195,12 +1266,16 @@ def _build_toc_fragments(book: epub.EpubBook) -> dict[str, list[str]]:
             if isinstance(item, tuple):
                 section, children = item
                 if hasattr(section, "href") and hasattr(section, "title"):
-                    href_file = section.href.split("#")[0]
-                    file_titles.setdefault(href_file, []).append(str(section.title or "").strip())
+                    title = str(section.title or "").strip()
+                    if not _is_backnote_toc_title(title):
+                        href_file = section.href.split("#")[0]
+                        file_titles.setdefault(href_file, []).append(title)
                 walk_toc(children)
             elif hasattr(item, "href") and hasattr(item, "title"):
-                href_file = item.href.split("#")[0]
-                file_titles.setdefault(href_file, []).append(str(item.title or "").strip())
+                title = str(item.title or "").strip()
+                if not _is_backnote_toc_title(title):
+                    href_file = item.href.split("#")[0]
+                    file_titles.setdefault(href_file, []).append(title)
 
     try:
         walk_toc(book.toc)
