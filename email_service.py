@@ -549,7 +549,7 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
     </div>
     <a href="{forensic_url}" style="display:inline-block;padding:9px 14px;background:#2563eb;color:#fff;border-radius:5px;text-decoration:none;font-weight:600;font-size:13px">Scarica ZIP forense</a>
     <div style="margin-top:8px;font-size:11px;color:#64748b">
-      Richiede login admin (cookie su /admin/audit-tts). Se ricevi 401, fai login e ritorna a questo link.
+      Richiede login admin (cookie su /admin/audit-premium). Se ricevi 401, fai login e ritorna a questo link.
     </div>
   </div>"""
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">

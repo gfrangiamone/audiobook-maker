@@ -1068,7 +1068,7 @@ def _load_admin_state():
         print(f"[gemini-tts] BOOT: kill-switch ATTIVO da disco — voci PREMIUM "
               f"DISABILITATE (reason={_admin_disabled_reason!r}, "
               f"updated_at={_admin_disabled_at}). Se non atteso, riattivare "
-              f"da /admin/audit-tts.", flush=True)
+              f"da /admin/audit-premium.", flush=True)
 
 
 def is_capability_available():

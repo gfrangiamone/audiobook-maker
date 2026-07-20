@@ -5017,7 +5017,7 @@ def admin_forensic_zip(job_id):
         return ("Admin disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
     token = _admin_auth_from_request()
     if not _admin_auth_ok(token):
-        return ("Unauthorized. Effettua login su /admin/audit-tts e ritorna a questo link.",
+        return ("Unauthorized. Effettua login su /admin/audit-premium e ritorna a questo link.",
                 401, {"Content-Type": "text/plain; charset=utf-8"})
     if "/" in job_id or "\\" in job_id or ".." in job_id:
         return ("Invalid job_id", 400, {"Content-Type": "text/plain; charset=utf-8"})
@@ -5934,6 +5934,9 @@ def _synth_running_gemini_audit_records():
                 chars_total = int(sa.get("chars", 0) or 0)
                 audio_seconds = float(sa.get("audio_seconds", 0) or 0)
             delta_eur = round(should_have_been - charged, 4)
+            _llm_quota = (job.get("payment") or {}).get("llm_eur")
+            combined_total = (round(charged + float(_llm_quota or 0), 4)
+                              if _llm_quota is not None else round(charged, 4))
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
@@ -5947,6 +5950,7 @@ def _synth_running_gemini_audit_records():
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": delta_eur,
                 "margin_eur_actual": round(charged - provider_cost_actual, 4),
+                "combined_total_eur": combined_total,
                 "outcome": "running",
                 "_live": True,
             }
@@ -5990,6 +5994,9 @@ def _synth_running_translation_audit_records():
                 charged = float(job.get("payment_amount_eur", 0) or 0)
             est = payment._estimate_translation_cost_eur(chars_total, optimize=optimize)
             should_have_been = float(est.get("due_eur", 0.0) or 0.0)
+            _llm_quota = (job.get("payment") or {}).get("llm_eur")
+            combined_total = (round(charged + float(_llm_quota or 0), 4)
+                              if _llm_quota is not None else round(charged, 4))
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
@@ -6007,6 +6014,7 @@ def _synth_running_translation_audit_records():
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": round(should_have_been - charged, 4),
                 "margin_eur_actual": round(charged - cost_eur, 4),
+                "combined_total_eur": combined_total,
                 "payment_method": pay.get("method", "") or "",
                 "outcome": "running",
                 "_live": True,
@@ -6056,7 +6064,7 @@ def _synth_running_optimization_audit_records():
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
-                "model_key": getattr(payment, "LLM_MODEL", "") or "",
+                "model_key": getattr(generation_engine, "LLM_MODEL", "") or "",
                 "language": (job.get("opt_lang") or "").lower(),
                 "chars_total": chars_total,
                 "prompt_tokens": prompt_tokens,
@@ -8704,6 +8712,14 @@ def api_generate():
                 except Exception: pass
                 return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
             # Stash payment info on job for refund + audit
+            # NB: qui `total_eur` e' il COMBINED totale (Gemini TTS + LLM,
+            # vedi total_eur_pre = gemini_eur_pre + llm_eur_pre sopra), non la
+            # sola quota TTS come assumono i writer/synth di audit
+            # (_write_gemini_audit, _synth_running_gemini_audit_records), che
+            # trattano payment["total_eur"] come quota TTS e sommano
+            # payment["llm_eur"] a parte per ottenere combined_total_eur.
+            # Questo path non e' raggiungibile da UI con llm_eur_pre > 0:
+            # app.js non invia mai ai_opt_enabled a /api/generate.
             job["payment"] = {
                 "token": payment_token,
                 "total_eur": total_eur_pre,

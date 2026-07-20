@@ -818,6 +818,15 @@ def _call_llm(user_content, job=None, max_retries=None):
                 if leak_attempts < LLM_LEAK_MAX_RETRIES:
                     leak_attempts += 1
                     print(f"  [LLM] prompt-leak detected (attempt {leak_attempts}/{LLM_LEAK_MAX_RETRIES}), retrying with degraded params")
+                    # Il tentativo leaked ha comunque completato lo stream ed
+                    # emesso usage: quei token sono stati realmente fatturati
+                    # dal provider, quindi vanno accumulati prima di scartare
+                    # l'output (stesso pattern del success path piu' sotto).
+                    if job is not None and isinstance(job.get("opt_usage"), dict) and call_usage is not None:
+                        job["opt_usage"]["prompt_tokens"] += int(
+                            getattr(call_usage, "prompt_tokens", 0) or 0)
+                        job["opt_usage"]["completion_tokens"] += int(
+                            getattr(call_usage, "completion_tokens", 0) or 0)
                     time.sleep(1.0)
                     continue
                 print(f"  [LLM] prompt-leak persists after {LLM_LEAK_MAX_RETRIES} retries — giving up")
