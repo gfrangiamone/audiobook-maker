@@ -3720,8 +3720,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
         <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
-        <a class="btn btn-accent" href="/admin/audit-tts?{ym}" title="Audit Gemini TTS &amp; Eventi/Rimborsi">🎙️ Audit TTS</a>
-        <a class="btn btn-accent" href="/admin/audit-translations?{ym}" title="Audit Traduzioni: costi/margini LLM">🌍 Audit Traduzioni</a>
+        <a class="btn btn-accent" href="/admin/audit-premium?{ym}" title="Audit dei servizi premium: TTS, Traduzioni, AI Optimization">🎛️ Audit Premium Services</a>
         <a class="btn btn-accent" href="/admin/log-activity/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
 </div>
@@ -5054,19 +5053,23 @@ def admin_forensic_zip(job_id):
     )
 
 
-@app.route("/admin/audit-tts", methods=["GET"])
-def admin_logs_page():
-    """Admin TTS audit dashboard. Hosts the Gemini Cost Audit and Events/Refunds tabs."""
+@app.route("/admin/audit-premium", methods=["GET"])
+def admin_audit_premium_page():
+    """Admin dashboard unificata dei servizi premium: 3 tab (Audit TTS,
+    Audit Traduzioni, Audit AI Optimization). Sostituisce /admin/audit-tts e
+    /admin/audit-translations."""
     if not ADMIN_TOKEN:
-        return ("Admin audit TTS UI disabled.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+        return ("Admin audit premium UI disabled.", 404,
+                {"Content-Type": "text/plain; charset=utf-8"})
     token = _admin_auth_from_request()
     if not _admin_auth_ok(token):
-        return _render_admin_gate("Audit TTS", "/admin/audit-tts"), 200, {"Content-Type": "text/html; charset=utf-8"}
+        return (_render_admin_gate("Audit Premium Services", "/admin/audit-premium"),
+                200, {"Content-Type": "text/html; charset=utf-8"})
     html = r"""<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Admin - Audit TTS</title>
+<title>Admin - Audit Premium Services</title>
 <style>
   :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#8b5cf6;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
   *{box-sizing:border-box}
@@ -5113,9 +5116,10 @@ def admin_logs_page():
   tr.row-live td{border-bottom-color:rgba(139,92,246,.30)}
   .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
   .toggle-row input{width:auto}
+  .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
 </style></head>
 <body>
-<h1>Admin - Audit TTS <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+<h1>Admin - Audit Premium Services <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
 
 <div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
   <div style="flex:1;min-width:280px">
@@ -5131,17 +5135,18 @@ def admin_logs_page():
 </div>
 
 <div class="tab-bar">
-  <button type="button" class="tab-btn active" data-tab="gemini_audit">Audit PREMIUM TTS</button>
-  <button type="button" class="tab-btn" data-tab="gemini_events">Eventi &amp; Rimborsi</button>
+  <button type="button" class="tab-btn active" data-tab="tts">Audit TTS</button>
+  <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
+  <button type="button" class="tab-btn" data-tab="optimization">Audit AI Optimization</button>
 </div>
 
-<div class="tab-panel active" id="tab_gemini_audit">
+<div class="tab-panel active" id="tab_tts">
   <div class="panel">
     <h2>Filtri</h2>
     <div class="filters">
       <div>
-        <label for="auditModelFilter">Modello</label>
-        <select id="auditModelFilter">
+        <label for="tts_auditModelFilter">Modello</label>
+        <select id="tts_auditModelFilter">
           <option value="all">Tutti</option>
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
@@ -5149,14 +5154,14 @@ def admin_logs_page():
         </select>
       </div>
       <div>
-        <label for="auditLangFilter">Lingua</label>
-        <select id="auditLangFilter">
+        <label for="tts_auditLangFilter">Lingua</label>
+        <select id="tts_auditLangFilter">
           <option value="all">Tutte</option>
         </select>
       </div>
       <div>
-        <label for="auditOutcomeFilter">Esito</label>
-        <select id="auditOutcomeFilter">
+        <label for="tts_auditOutcomeFilter">Esito</label>
+        <select id="tts_auditOutcomeFilter">
           <option value="all">Tutti</option>
           <option value="running">In corso</option>
           <option value="completed">Completato</option>
@@ -5173,28 +5178,28 @@ def admin_logs_page():
         </select>
       </div>
       <div>
-        <label for="auditDateFrom">Dal</label>
-        <input type="date" id="auditDateFrom">
+        <label for="tts_auditDateFrom">Dal</label>
+        <input type="date" id="tts_auditDateFrom">
       </div>
       <div>
-        <label for="auditDateTo">Al</label>
-        <input type="date" id="auditDateTo">
+        <label for="tts_auditDateTo">Al</label>
+        <input type="date" id="tts_auditDateTo">
       </div>
     </div>
-    <button type="button" id="auditRefreshBtn">Aggiorna</button>
-    <button type="button" id="auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
-    <pre id="auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.5"></pre>
+    <button type="button" id="tts_auditRefreshBtn">Aggiorna</button>
+    <button type="button" id="tts_auditRecalcBtn" class="btn">Calcola parametri suggeriti</button>
+    <pre id="tts_auditRecalcOutput" class="recalc-output" style="display:none;white-space:pre-wrap;margin-top:10px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem;line-height:1.5"></pre>
   </div>
 
   <div class="panel">
     <h2>Aggregati</h2>
-    <div class="agg-grid agg-grid-6" id="auditAggregates">
-      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
-      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
-      <div class="agg-box"><div class="agg-label">Costo provider TTS</div><div class="agg-value" id="aggCost">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi (somma dei prezzi pagati) − Costo provider TTS. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo − fee PayPal totali. Per i job pagati con voucher la fee è zero (PayPal non coinvolto), quindi margine netto = margine lordo.">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Costo provider TTS totale × 100. È il ricarico netto medio pesato sul costo del provider (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
+    <div class="agg-grid agg-grid-6" id="tts_auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="tts_aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="tts_aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo provider TTS</div><div class="agg-value" id="tts_aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi (somma dei prezzi pagati) - Costo provider TTS. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="tts_aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal totali. Per i job pagati con voucher la fee e zero (PayPal non coinvolto), quindi margine netto = margine lordo.">Margine netto</div><div class="agg-value" id="tts_aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % medio = Margine netto totale / Costo provider TTS totale x 100. E il ricarico netto medio pesato sul costo del provider (non la media aritmetica delle percentuali dei singoli job).">Margine % medio</div><div class="agg-value" id="tts_aggDelta">-</div></div>
     </div>
   </div>
 
@@ -5204,73 +5209,142 @@ def admin_logs_page():
       <thead><tr>
         <th>Data</th><th>Job</th><th>Modello</th><th>Lingua</th>
         <th>Char</th><th>Sec audio</th><th title="Costo del provider TTS per questo job">Costo TTS</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine − fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue × % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS · markup applicato">Margine %</th><th>Esito</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo provider TTS (lordo, include fee PayPal)">Margine &euro;</th><th title="Margine netto = Margine - fee PayPal. Zero per voucher (PayPal non coinvolto). Per PayPal: revenue x % + fee fissa.">Margine netto &euro;</th><th title="Margine % = Margine netto / Costo provider TTS - markup applicato">Margine %</th><th>Esito</th>
       </tr></thead>
-      <tbody id="auditRecordsBody">
+      <tbody id="tts_auditRecordsBody">
         <tr><td colspan="12" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
-<div class="tab-panel" id="tab_gemini_events">
+<div class="tab-panel" id="tab_translations">
   <div class="panel">
     <h2>Filtri</h2>
     <div class="filters">
       <div>
-        <label for="evModelFilter">Modello</label>
-        <select id="evModelFilter">
+        <label for="tr_auditModelFilter">Backend / Modello</label>
+        <select id="tr_auditModelFilter"><option value="all">Tutti</option></select>
+      </div>
+      <div>
+        <label for="tr_auditSrcFilter">Lingua origine</label>
+        <select id="tr_auditSrcFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="tr_auditDstFilter">Lingua destinazione</label>
+        <select id="tr_auditDstFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="tr_auditOutcomeFilter">Esito</label>
+        <select id="tr_auditOutcomeFilter">
           <option value="all">Tutti</option>
-          <option value="flash25">Gemini 2.5 Flash TTS</option>
-          <option value="flash31">Gemini 3.1 Flash TTS</option>
-          <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
         </select>
       </div>
       <div>
-        <label for="evLangFilter">Lingua</label>
-        <select id="evLangFilter">
-          <option value="all">Tutte</option>
-        </select>
+        <label for="tr_auditDateFrom">Dal</label>
+        <input type="date" id="tr_auditDateFrom">
       </div>
       <div>
-        <label for="evDateFrom">Dal</label>
-        <input type="date" id="evDateFrom">
-      </div>
-      <div>
-        <label for="evDateTo">Al</label>
-        <input type="date" id="evDateTo">
+        <label for="tr_auditDateTo">Al</label>
+        <input type="date" id="tr_auditDateTo">
       </div>
       <div>
         <label>&nbsp;</label>
-        <button type="button" id="evRefreshBtn">Aggiorna</button>
+        <button type="button" id="tr_auditRefreshBtn">Aggiorna</button>
       </div>
     </div>
-    <div class="toggle-row">
-      <label><input type="checkbox" id="evOnlyRefunds"> Solo eventi con rimborso</label>
-      <span style="margin-left:auto;font-size:.85em">Eventi con rimborso evidenziati in rosso; blocchi preventivi in blu.</span>
+  </div>
+
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6" id="tr_auditAggregates">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="tr_aggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="tr_aggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Costo provider LLM (token reali)">Costo LLM</div><div class="agg-value" id="tr_aggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo LLM (include fee PayPal)">Margine</div><div class="agg-value" id="tr_aggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine - fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="tr_aggNetMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="tr_aggDelta">-</div></div>
     </div>
   </div>
 
   <div class="panel">
-    <h2>Aggregati Eventi</h2>
-    <div class="agg-grid">
-      <div class="agg-box"><div class="agg-label">Totale eventi</div><div class="agg-value" id="evCount">-</div></div>
-      <div class="agg-box"><div class="agg-label">Completati</div><div class="agg-value" id="evCompleted">-</div></div>
-      <div class="agg-box"><div class="agg-label">Rimborsi</div><div class="agg-value" id="evRefunds" style="color:#ef4444">-</div></div>
-      <div class="agg-box"><div class="agg-label">Bloccati preflight</div><div class="agg-value" id="evPreflight" style="color:#60a5fa">-</div></div>
-      <div class="agg-box"><div class="agg-label">Annullati</div><div class="agg-value" id="evCancelled">-</div></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Eventi (ultimi 500)</h2>
+    <h2>Record (ultimi 200)</h2>
     <table>
       <thead><tr>
-        <th>Data</th><th>Job</th><th>Esito</th><th>Modello</th>
-        <th>Lingua</th><th>Char</th><th>Prezzo &euro;</th><th>Costo G. &euro;</th>
+        <th>Data</th><th>Job</th><th>Modello</th><th>Origine</th><th>Dest.</th>
+        <th>Char</th><th title="Token prompt + completion (reali o stimati)">Token</th>
+        <th title="Costo provider LLM">Costo LLM</th>
+        <th>Prezzo &euro;</th><th title="Margine = Prezzo - Costo LLM (lordo, include fee PayPal)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal. Zero per voucher.">Margine netto &euro;</th>
+        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
       </tr></thead>
-      <tbody id="evRecordsBody">
-        <tr><td colspan="8" class="empty-msg">Premi "Aggiorna" per caricare gli eventi.</td></tr>
+      <tbody id="tr_auditRecordsBody">
+        <tr><td colspan="13" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab_optimization">
+  <div class="panel">
+    <h2>Filtri</h2>
+    <div class="filters">
+      <div>
+        <label for="optLangFilter">Lingua</label>
+        <select id="optLangFilter"><option value="all">Tutte</option></select>
+      </div>
+      <div>
+        <label for="optOutcomeFilter">Esito</label>
+        <select id="optOutcomeFilter">
+          <option value="all">Tutti</option>
+          <option value="running">In corso</option>
+          <option value="completed">Completato</option>
+          <option value="failed_refunded">Fallito (rimborsato)</option>
+          <option value="cancelled_refunded">Annullato (rimborsato)</option>
+        </select>
+      </div>
+      <div>
+        <label for="optDateFrom">Dal</label>
+        <input type="date" id="optDateFrom">
+      </div>
+      <div>
+        <label for="optDateTo">Al</label>
+        <input type="date" id="optDateTo">
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button type="button" id="optRefreshBtn">Aggiorna</button>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Aggregati</h2>
+    <div class="agg-grid agg-grid-6">
+      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="optAggCount">-</div></div>
+      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="optAggRevenue">-</div></div>
+      <div class="agg-box"><div class="agg-label">Costo provider LLM</div><div class="agg-value" id="optAggCost">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi - Costo provider LLM. Include ancora le fee PayPal.">Margine</div><div class="agg-value" id="optAggMargin">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine lordo - fee PayPal (fissa ripartita proporzionalmente sui pagamenti combinati; zero per voucher).">Margine netto</div><div class="agg-value" id="optAggNet">-</div></div>
+      <div class="agg-box"><div class="agg-label" title="Margine % = Margine netto / Costo provider LLM x 100.">Margine %</div><div class="agg-value" id="optAggPct">-</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Record (ultimi 200)</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Job</th><th>Lingua</th><th>Char</th><th>Token</th>
+        <th title="Prezzo pagato dall'utente per l'ottimizzazione AI">Prezzo &euro;</th>
+        <th title="Costo del provider LLM per questo job">Costo LLM &euro;</th>
+        <th title="Margine = Prezzo - Costo LLM (lordo)">Margine &euro;</th>
+        <th title="Margine netto = Margine - fee PayPal">Margine netto &euro;</th>
+        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
+      </tr></thead>
+      <tbody id="optRecordsBody">
+        <tr><td colspan="11" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
       </tbody>
     </table>
   </div>
@@ -5278,10 +5352,6 @@ def admin_logs_page():
 
 <script>
 (function(){
-  // Sec: il token NON viene piu' inlinato nel sorgente della pagina (finiva
-  // in chiaro nell'HTML servito). Le fetch API usano header X-Admin-Token
-  // letto da session/localStorage, popolato dal gate /admin/login (stesso
-  // pattern della pagina /admin/log-activity).
   const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
                       localStorage.getItem('abm_admin_token') || '';
   const $ = (id) => document.getElementById(id);
@@ -5292,10 +5362,6 @@ def admin_logs_page():
     const cls = v >= 0 ? "delta-positive" : "delta-negative";
     return `<span class="${cls}">${v.toFixed(2)}%</span>`;
   }
-
-  // Italian display names per i codici lingua usati dal motore Gemini TTS.
-  // Coprire l'intero set ufficiale (24) cosi` la dropdown e` sensata anche
-  // quando in futuro verranno generati audio in lingue oggi non esposte in UI.
   const LANG_NAMES = {
     "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
     "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
@@ -5308,8 +5374,41 @@ def admin_logs_page():
     const c = (code||"").toLowerCase();
     return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
   }
+  function esc(s){
+    const d = document.createElement('div');
+    d.textContent = (s == null ? "" : String(s));
+    return d.innerHTML;
+  }
+  function fillSelect(sel, values, labeler){
+    if (!sel) return;
+    const prev = sel.value;
+    Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = labeler ? labeler(v) : v;
+      sel.appendChild(opt);
+    }
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+  }
 
-  async function loadLanguageOptions(){
+  // ===================== Tab TTS =====================
+  const TTS_OUTCOME_BADGE = {
+    "running":                    ["badge-live", "In corso"],
+    "completed":                  ["badge-ok",   "Completato"],
+    "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
+    "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
+    "failed_budget_refunded":     ["badge-err",  "Budget superato"],
+    "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
+    "failed_quality_free":        ["badge-warn", "Qualità ins. (free)"],
+    "failed_no_output_refunded":  ["badge-err",  "Nessun output"],
+    "failed_all_chunks_refunded": ["badge-err",  "Tutti segmenti falliti"],
+    "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
+    "cancelled_refunded":         ["badge-muted","Annullato"],
+    "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
+    "cancelled":                  ["badge-muted","Annullato"],
+  };
+  async function ttsLoadLanguages(){
     let codes = [];
     try {
       const r = await fetch("/admin/api/gemini_cost_audit/languages",
@@ -5318,34 +5417,17 @@ def admin_logs_page():
         const d = await r.json();
         codes = Array.isArray(d.languages) ? d.languages : [];
       }
-    } catch(e) { /* silenzioso: dropdown resta con solo "Tutte" */ }
-    codes = codes.slice().sort((a,b) =>
-      langLabel(a).localeCompare(langLabel(b), "it"));
-    for (const selId of ["auditLangFilter", "evLangFilter"]) {
-      const sel = $(selId);
-      if (!sel) continue;
-      const prev = sel.value;
-      // Rimuove option diverse da "all" e ripopola
-      Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
-      for (const code of codes) {
-        const opt = document.createElement("option");
-        opt.value = code;
-        opt.textContent = langLabel(code);
-        sel.appendChild(opt);
-      }
-      if (prev && Array.from(sel.options).some(o => o.value === prev)) {
-        sel.value = prev;
-      }
-    }
+    } catch(e) {}
+    codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
+    fillSelect($("tts_auditLangFilter"), codes, langLabel);
   }
-
-  async function fetchAudit(){
+  async function ttsFetch(){
     const params = new URLSearchParams();
-    const m = $("auditModelFilter").value;
-    const l = $("auditLangFilter").value;
-    const o = $("auditOutcomeFilter").value;
-    const df = $("auditDateFrom").value;
-    const dt = $("auditDateTo").value;
+    const m = $("tts_auditModelFilter").value;
+    const l = $("tts_auditLangFilter").value;
+    const o = $("tts_auditOutcomeFilter").value;
+    const df = $("tts_auditDateFrom").value;
+    const dt = $("tts_auditDateTo").value;
     if (m && m !== "all") params.set("model", m);
     if (l && l !== "all") params.set("language", l);
     if (o && o !== "all") params.set("outcome", o);
@@ -5356,19 +5438,17 @@ def admin_logs_page():
                          {headers: {"X-Admin-Token": ADMIN_TOKEN}});
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
     const d = await r.json();
-    renderAggregates(d.aggregates || {});
-    renderRecords(d.records || []);
+    ttsRenderAggregates(d.aggregates || {});
+    ttsRenderRecords(d.records || []);
   }
-
-  function renderAggregates(agg){
-    $("aggCount").textContent = agg.count ?? 0;
-    $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
-    $("aggCost").textContent = fmtEur(agg.google_cost_eur);
-    $("aggMargin").textContent = fmtEur(agg.margin_eur);
-    // Margine netto: gia` decurtato delle fee PayPal lato server (voucher=0).
+  function ttsRenderAggregates(agg){
+    $("tts_aggCount").textContent = agg.count ?? 0;
+    $("tts_aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("tts_aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("tts_aggMargin").textContent = fmtEur(agg.margin_eur);
     const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
                       : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
-    const netEl = $("aggNetMargin");
+    const netEl = $("tts_aggNetMargin");
     if (netEl) {
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
@@ -5376,22 +5456,14 @@ def admin_logs_page():
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
-    $("aggDelta").innerHTML = fmtPct(_margPctAvg);
+    $("tts_aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
-
-  function esc(s){
-    const d = document.createElement('div');
-    d.textContent = (s == null ? "" : String(s));
-    return d.innerHTML;
-  }
-
-  function renderRecords(recs){
-    const tbody = $("auditRecordsBody");
+  function ttsRenderRecords(recs){
+    const tbody = $("tts_auditRecordsBody");
     if (!recs.length) {
       tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">Nessun record trovato.</td></tr>';
       return;
     }
-    // Ordina mettendo i live "running" sempre in cima, poi gli altri per ts desc.
     recs = recs.slice().sort((a,b) => {
       const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
       if (la !== lb) return lb - la;
@@ -5399,18 +5471,10 @@ def admin_logs_page():
     });
     tbody.innerHTML = recs.map(r => {
       const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
-      // Prezzo effettivo: per cancel anticipato usa quanto trattenuto
-      // (cancel_retained_eur) invece dell'originale pre-pagato; per record
-      // normali coincide con user_price_eur_charged.
       const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
                                                   : Number(r.user_price_eur_charged || 0);
       const gCost = Number(r.google_cost_eur_actual || 0);
-      // Margine = Prezzo − Costo Google (lordo, include fee PayPal).
       const margEur = revenue - gCost;
-      // Margine netto: prende _net_margin_eur dal server (gia` decurta fee
-      // PayPal per i record paypal, zero per voucher/free). Fallback locale:
-      // se il campo manca (record antichi non passati per _apply_cancel_effective),
-      // assume nessuna fee.
       const fee = Number(r._paypal_fee_eur || 0);
       const netMarg = (r._net_margin_eur != null) ? Number(r._net_margin_eur)
                                                   : (margEur - fee);
@@ -5424,13 +5488,10 @@ def admin_logs_page():
       const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const isLive = !!r._live;
       const rowCls = isLive ? "row-live" : "";
-      const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
-      // Job rilanciato dal recovery dopo un esito terminale gia' persistito:
-      // la riga live resta visibile (non piu' soppressa) e viene marcata.
+      const [bcls, blab] = TTS_OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
       const rerunBadge = r._rerun
         ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery): esiti precedenti dello stesso job_id nelle righe storiche">re-run</span>'
         : "";
-      // Per cancel: mostra prezzo effettivo + tooltip con il pagato originale.
       const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
         ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
         : "";
@@ -5450,166 +5511,31 @@ def admin_logs_page():
       </tr>`;
     }).join("");
   }
-
-  $("auditRefreshBtn").addEventListener("click", fetchAudit);
-
-  async function recalcParams(){
-    const out = $("auditRecalcOutput");
+  $("tts_auditRefreshBtn").addEventListener("click", ttsFetch);
+  async function ttsRecalcParams(){
+    const out = $("tts_auditRecalcOutput");
     out.style.display = "block";
     out.textContent = "Caricamento...";
     try {
       const r = await fetch("/admin/api/gemini_cost_audit/recalc-params",
                             {headers: {"X-Admin-Token": ADMIN_TOKEN}});
-      if (!r.ok) {
-        out.textContent = "Errore: " + r.status;
-        return;
-      }
+      if (!r.ok) { out.textContent = "Errore: " + r.status; return; }
       const d = await r.json();
       const sugg = d.suggestions || [];
-      if (!sugg.length) {
-        out.textContent = "Nessun suggerimento (campioni insufficienti).";
-      } else {
-        out.textContent = sugg.join("\n");
-      }
+      out.textContent = sugg.length ? sugg.join("\n")
+                                    : "Nessun suggerimento (campioni insufficienti).";
     } catch (e) {
       out.textContent = "Errore: " + e;
     }
   }
-  $("auditRecalcBtn").addEventListener("click", recalcParams);
+  $("tts_auditRecalcBtn").addEventListener("click", ttsRecalcParams);
 
-  // ---- Tab switching ----
-  function showTab(name){
-    document.querySelectorAll(".tab-btn").forEach(b => {
-      b.classList.toggle("active", b.dataset.tab === name);
-    });
-    document.querySelectorAll(".tab-panel").forEach(p => {
-      p.classList.toggle("active", p.id === "tab_" + name);
-    });
-    if (name === "gemini_events" && !window._evLoaded) {
-      window._evLoaded = true;
-      fetchEvents();
-    }
-    if (location.hash !== "#tab-" + name) {
-      location.hash = "#tab-" + name;
-    }
-  }
-  document.querySelectorAll(".tab-btn").forEach(b => {
-    b.addEventListener("click", () => showTab(b.dataset.tab));
-  });
-  if (location.hash === "#tab-gemini" || location.hash === "#tab-gemini_events") {
-    showTab("gemini_events");
-  }
-
-  // ---- Eventi & Rimborsi tab ----
-  const REFUND_OUTCOMES = new Set([
-    "failed_refunded", "failed_quota_refunded", "failed_budget_refunded",
-    "failed_quality_refunded", "failed_no_output_refunded",
-    "failed_all_chunks_refunded", "preflight_blocked_refunded",
-    "cancelled_refunded", "cancelled_partial",
-  ]);
-  const OUTCOME_BADGE = {
-    "running":                    ["badge-live", "In corso"],
-    "completed":                  ["badge-ok",   "Completato"],
-    "failed_refunded":            ["badge-err",  "Fallito (rimborso)"],
-    "failed_quota_refunded":      ["badge-err",  "Quota esaurita"],
-    "failed_budget_refunded":     ["badge-err",  "Budget superato"],
-    "failed_quality_refunded":    ["badge-warn", "Qualità ins."],
-    "failed_quality_free":        ["badge-warn", "Qualità ins. (free)"],
-    "failed_no_output_refunded":  ["badge-err",  "Nessun output"],
-    "failed_all_chunks_refunded": ["badge-err",  "Tutti segmenti falliti"],
-    "preflight_blocked_refunded": ["badge-info", "Bloccato preflight"],
-    "cancelled_refunded":         ["badge-muted","Annullato"],
-    "cancelled_partial":          ["badge-muted","Annullato (parz.)"],
-    "cancelled":                  ["badge-muted","Annullato"],
-  };
-
-  async function fetchEvents(){
-    const params = new URLSearchParams();
-    const m = $("evModelFilter").value;
-    const l = $("evLangFilter").value;
-    const df = $("evDateFrom").value;
-    const dt = $("evDateTo").value;
-    if (m && m !== "all") params.set("model", m);
-    if (l && l !== "all") params.set("language", l);
-    if (df) params.set("date_from", df);
-    if (dt) params.set("date_to", dt);
-    params.set("limit", "500");
-    const r = await fetch("/admin/api/gemini_cost_audit?" + params.toString(),
-                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
-    if (!r.ok) { alert("Errore caricamento eventi: " + r.status); return; }
-    const d = await r.json();
-    renderEvents(d.records || []);
-  }
-
-  function renderEvents(recs){
-    const onlyRefunds = $("evOnlyRefunds").checked;
-    let filtered = recs;
-    if (onlyRefunds) filtered = recs.filter(r => REFUND_OUTCOMES.has(r.outcome));
-    // Aggregati
-    let completed=0, refunds=0, preflight=0, cancelled=0;
-    for (const r of recs) {
-      if (r.outcome === "completed") completed++;
-      else if (r.outcome === "preflight_blocked_refunded") { preflight++; refunds++; }
-      else if (REFUND_OUTCOMES.has(r.outcome)) {
-        refunds++;
-        if (r.outcome.startsWith("cancelled")) cancelled++;
-      }
-    }
-    $("evCount").textContent = recs.length;
-    $("evCompleted").textContent = completed;
-    $("evRefunds").textContent = refunds;
-    $("evPreflight").textContent = preflight;
-    $("evCancelled").textContent = cancelled;
-
-    const tbody = $("evRecordsBody");
-    if (!filtered.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Nessun evento.</td></tr>';
-      return;
-    }
-    // Live in cima, poi resto desc per ts.
-    filtered = filtered.slice().sort((a,b) => {
-      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
-      if (la !== lb) return lb - la;
-      return (b.ts||"").localeCompare(a.ts||"");
-    });
-    tbody.innerHTML = filtered.map(r => {
-      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
-      const out = r.outcome || "?";
-      const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
-      const rowCls = r._live ? "row-live"
-        : (REFUND_OUTCOMES.has(out)
-            ? (out === "preflight_blocked_refunded" ? "row-preflight" : "row-refund")
-            : "");
-      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
-                                                  : Number(r.user_price_eur_charged || 0);
-      const cancelTip = (r.cancel_retained_eur != null && r.user_price_eur_charged != null)
-        ? ` title="Pagato: ${Number(r.user_price_eur_charged).toFixed(2)} € · Rimborso: ${Number(r.cancel_refund_eur || 0).toFixed(2)} €"`
-        : "";
-      return `<tr class="${rowCls}">
-        <td>${ts}</td>
-        <td><code>${esc(r.job_id)}</code></td>
-        <td><span class="badge ${cls}">${esc(label)}</span></td>
-        <td>${esc(r.model_key)}</td>
-        <td>${esc(langLabel(r.language))}</td>
-        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
-        <td${cancelTip}>${fmtEur(revenue)}</td>
-        <td>${fmtEur(r.google_cost_eur_actual)}</td>
-      </tr>`;
-    }).join("");
-  }
-
-  $("evRefreshBtn").addEventListener("click", fetchEvents);
-  $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
-
-  // ---- Kill-switch voci PREMIUM ----
+  // ---- Kill-switch voci PREMIUM (solo TTS) ----
   async function ksRefresh(){
     try {
       const r = await fetch("/admin/api/gemini_kill_switch",
                             {headers: {"X-Admin-Token": ADMIN_TOKEN}});
-      if (!r.ok) {
-        $("ksStatus").textContent = "Errore caricamento stato (" + r.status + ")";
-        return;
-      }
+      if (!r.ok) { $("ksStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return; }
       const s = await r.json();
       ksApply(s);
     } catch (e) {
@@ -5663,9 +5589,6 @@ def admin_logs_page():
       });
       if (!r.ok) { alert("Errore: " + r.status); await ksRefresh(); return; }
       const s = await r.json();
-      // Write su disco fallita (es. disco pieno): lo stato vale solo in
-      // memoria e un restart ripristinera' quello precedente (incidente
-      // 2026-06). L'admin DEVE saperlo subito.
       if (s.persisted === false) {
         alert("ATTENZIONE: stato kill-switch NON salvato su disco (disco pieno?).\n" +
               "Vale solo fino al prossimo restart: liberare spazio e ripetere l'operazione.");
@@ -5679,263 +5602,14 @@ def admin_logs_page():
   }
   $("ksToggleBtn").addEventListener("click", ksToggle);
 
-  // Default periodo: data inizio = primo giorno del mese corrente (entrambe le tab).
-  (function setDefaultDateFrom(){
-    const now = new Date();
-    const firstDay = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-01";
-    const af = $("auditDateFrom"); if (af && !af.value) af.value = firstDay;
-    const ef = $("evDateFrom");    if (ef && !ef.value) ef.value = firstDay;
-  })();
-
-  // Auto-load on page open: prima popola la dropdown lingue, poi carica i record.
-  loadLanguageOptions().finally(fetchAudit);
-  ksRefresh();
-})();
-</script>
-</body></html>"""
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
-
-
-@app.route("/admin/audit-translations", methods=["GET"])
-def admin_audit_translations_page():
-    """Admin dashboard audit traduzioni libro. Speculare a /admin/audit-tts ma
-    ristretto ai job di traduzione, con assi lingua origine/destinazione e
-    costo provider LLM. Due tab: "Audit Traduzioni" ed "Eventi & Rimborsi".
-    """
-    if not ADMIN_TOKEN:
-        return ("Admin audit traduzioni UI disabled.", 404,
-                {"Content-Type": "text/plain; charset=utf-8"})
-    token = _admin_auth_from_request()
-    if not _admin_auth_ok(token):
-        return (_render_admin_gate("Audit Traduzioni", "/admin/audit-translations"),
-                200, {"Content-Type": "text/html; charset=utf-8"})
-    html = r"""<!DOCTYPE html>
-<html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>Admin - Audit Traduzioni</title>
-<style>
-  :root{--bg:#0f172a;--panel:#1e293b;--ink:#e2e8f0;--muted:#94a3b8;--accent:#0ea5e9;--ok:#10b981;--err:#ef4444;--warn:#f59e0b;}
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding:20px;max-width:1400px;margin:0 auto}
-  h1{margin:0 0 20px;font-size:1.5rem}
-  .panel{background:var(--panel);border-radius:10px;padding:20px;margin-bottom:20px}
-  .panel h2{margin:0 0 14px;font-size:1.1rem;color:var(--accent)}
-  .tab-bar{display:flex;gap:8px;margin-bottom:16px;border-bottom:2px solid #334155}
-  .tab-btn{padding:10px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent;margin-bottom:-2px}
-  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
-  .tab-panel{display:none}
-  .tab-panel.active{display:block}
-  .filters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
-  @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}}
-  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
-  input,select{width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;color:var(--ink);border-radius:6px;font-size:.9rem}
-  button{padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}
-  button.secondary{background:#334155}
-  table{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:12px}
-  th{text-align:left;padding:8px;border-bottom:2px solid #334155;color:var(--muted);font-weight:500}
-  td{padding:6px 8px;border-bottom:1px solid #1e293b}
-  .agg-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:12px}
-  @media(max-width:900px){.agg-grid{grid-template-columns:1fr 1fr}}
-  .agg-box{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px;text-align:center}
-  .agg-label{font-size:.75rem;color:var(--muted);text-transform:uppercase}
-  .agg-value{font-size:1.3rem;font-weight:600;color:var(--ink);margin-top:4px}
-  .delta-positive{color:var(--ok)}
-  .delta-negative{color:var(--err)}
-  .empty-msg{text-align:center;color:var(--muted);padding:20px}
-  tr.row-refund{background:rgba(239,68,68,0.10)}
-  tr.row-refund td{border-bottom-color:rgba(239,68,68,0.35)}
-  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-  .badge-ok{background:rgba(16,185,129,.18);color:#10b981}
-  .badge-err{background:rgba(239,68,68,.18);color:#ef4444}
-  .badge-warn{background:rgba(245,158,11,.18);color:#f59e0b}
-  .badge-muted{background:rgba(148,163,184,.18);color:var(--muted)}
-  .badge-live{background:rgba(14,165,233,.22);color:var(--accent);animation:livePulse 1.8s ease-in-out infinite}
-  @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.55}}
-  tr.row-live{background:rgba(14,165,233,.10)}
-  tr.row-live td{border-bottom-color:rgba(14,165,233,.30)}
-  .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:.9rem;color:var(--muted)}
-  .toggle-row input{width:auto}
-  .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(14,165,233,.18);color:var(--accent);margin-left:6px}
-</style></head>
-<body>
-<h1>Admin - Audit Traduzioni <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
-
-<div class="tab-bar">
-  <button type="button" class="tab-btn active" data-tab="tr_audit">Audit Traduzioni</button>
-  <button type="button" class="tab-btn" data-tab="tr_events">Eventi &amp; Rimborsi</button>
-</div>
-
-<div class="tab-panel active" id="tab_tr_audit">
-  <div class="panel">
-    <h2>Filtri</h2>
-    <div class="filters">
-      <div>
-        <label for="auditModelFilter">Backend / Modello</label>
-        <select id="auditModelFilter"><option value="all">Tutti</option></select>
-      </div>
-      <div>
-        <label for="auditSrcFilter">Lingua origine</label>
-        <select id="auditSrcFilter"><option value="all">Tutte</option></select>
-      </div>
-      <div>
-        <label for="auditDstFilter">Lingua destinazione</label>
-        <select id="auditDstFilter"><option value="all">Tutte</option></select>
-      </div>
-      <div>
-        <label for="auditOutcomeFilter">Esito</label>
-        <select id="auditOutcomeFilter">
-          <option value="all">Tutti</option>
-          <option value="running">In corso</option>
-          <option value="completed">Completato</option>
-          <option value="failed_refunded">Fallito (rimborsato)</option>
-          <option value="cancelled_refunded">Annullato (rimborsato)</option>
-        </select>
-      </div>
-      <div>
-        <label for="auditDateFrom">Dal</label>
-        <input type="date" id="auditDateFrom">
-      </div>
-      <div>
-        <label for="auditDateTo">Al</label>
-        <input type="date" id="auditDateTo">
-      </div>
-      <div>
-        <label>&nbsp;</label>
-        <button type="button" id="auditRefreshBtn">Aggiorna</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Aggregati</h2>
-    <div class="agg-grid" id="auditAggregates">
-      <div class="agg-box"><div class="agg-label">Job</div><div class="agg-value" id="aggCount">-</div></div>
-      <div class="agg-box"><div class="agg-label">Ricavi</div><div class="agg-value" id="aggRevenue">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Costo provider LLM (token reali)">Costo LLM</div><div class="agg-value" id="aggCost">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine lordo = Ricavi − Costo LLM (include fee PayPal)">Margine</div><div class="agg-value" id="aggMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label" title="Margine netto = Margine − fee PayPal (zero per voucher)">Margine netto</div><div class="agg-value" id="aggNetMargin">-</div></div>
-      <div class="agg-box"><div class="agg-label">Margine % medio</div><div class="agg-value" id="aggDelta">-</div></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Record (ultimi 200)</h2>
-    <table>
-      <thead><tr>
-        <th>Data</th><th>Job</th><th>Modello</th><th>Origine</th><th>Dest.</th>
-        <th>Char</th><th title="Token prompt + completion (reali o stimati)">Token</th>
-        <th title="Costo provider LLM">Costo LLM</th>
-        <th>Prezzo &euro;</th><th title="Margine = Prezzo − Costo LLM (lordo, include fee PayPal)">Margine &euro;</th>
-        <th title="Margine netto = Margine − fee PayPal. Zero per voucher.">Margine netto &euro;</th>
-        <th title="Margine % = Margine netto / Costo LLM">Margine %</th><th>Esito</th>
-      </tr></thead>
-      <tbody id="auditRecordsBody">
-        <tr><td colspan="13" class="empty-msg">Premi "Aggiorna" per caricare i record.</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="tab-panel" id="tab_tr_events">
-  <div class="panel">
-    <h2>Filtri</h2>
-    <div class="filters">
-      <div>
-        <label for="evModelFilter">Backend / Modello</label>
-        <select id="evModelFilter"><option value="all">Tutti</option></select>
-      </div>
-      <div>
-        <label for="evSrcFilter">Lingua origine</label>
-        <select id="evSrcFilter"><option value="all">Tutte</option></select>
-      </div>
-      <div>
-        <label for="evDstFilter">Lingua destinazione</label>
-        <select id="evDstFilter"><option value="all">Tutte</option></select>
-      </div>
-      <div>
-        <label for="evDateFrom">Dal</label>
-        <input type="date" id="evDateFrom">
-      </div>
-      <div>
-        <label for="evDateTo">Al</label>
-        <input type="date" id="evDateTo">
-      </div>
-      <div>
-        <label>&nbsp;</label>
-        <button type="button" id="evRefreshBtn">Aggiorna</button>
-      </div>
-    </div>
-    <div class="toggle-row">
-      <label><input type="checkbox" id="evOnlyRefunds"> Solo eventi con rimborso</label>
-      <span style="margin-left:auto;font-size:.85em">Eventi con rimborso evidenziati in rosso.</span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Aggregati Eventi</h2>
-    <div class="agg-grid">
-      <div class="agg-box"><div class="agg-label">Totale eventi</div><div class="agg-value" id="evCount">-</div></div>
-      <div class="agg-box"><div class="agg-label">Completati</div><div class="agg-value" id="evCompleted">-</div></div>
-      <div class="agg-box"><div class="agg-label">Rimborsi</div><div class="agg-value" id="evRefunds" style="color:#ef4444">-</div></div>
-      <div class="agg-box"><div class="agg-label">Annullati</div><div class="agg-value" id="evCancelled">-</div></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Eventi (ultimi 500)</h2>
-    <table>
-      <thead><tr>
-        <th>Data</th><th>Job</th><th>Esito</th><th>Modello</th>
-        <th>Origine</th><th>Dest.</th><th>Char</th><th>Prezzo &euro;</th><th>Costo LLM &euro;</th>
-      </tr></thead>
-      <tbody id="evRecordsBody">
-        <tr><td colspan="9" class="empty-msg">Premi "Aggiorna" per caricare gli eventi.</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<script>
-(function(){
-  const ADMIN_TOKEN = sessionStorage.getItem('abm_admin_token') ||
-                      localStorage.getItem('abm_admin_token') || '';
-  const $ = (id) => document.getElementById(id);
-
-  function fmtEur(n){ return (Number(n)||0).toFixed(2) + " €"; }
-  function fmtPct(n){
-    const v = Number(n)||0;
-    const cls = v >= 0 ? "delta-positive" : "delta-negative";
-    return `<span class="${cls}">${v.toFixed(2)}%</span>`;
-  }
-
-  const LANG_NAMES = {
-    "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
-    "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
-    "ko":"Coreano","zh":"Cinese","hi":"Hindi","ar":"Arabo",
-    "id":"Indonesiano","nl":"Olandese","pl":"Polacco","th":"Thai",
-    "tr":"Turco","vi":"Vietnamita","ro":"Rumeno","uk":"Ucraino",
-    "bn":"Bengalese","mr":"Marathi","ta":"Tamil","te":"Telugu",
+  // ===================== Tab Traduzioni =====================
+  const TR_OUTCOME_BADGE = {
+    "running":            ["badge-live",  "In corso"],
+    "completed":          ["badge-ok",    "Completato"],
+    "failed_refunded":    ["badge-err",   "Fallito (rimborso)"],
+    "cancelled_refunded": ["badge-muted", "Annullato (rimborso)"],
   };
-  function langLabel(code){
-    const c = (code||"").toLowerCase();
-    return LANG_NAMES[c] ? `${LANG_NAMES[c]} (${c})` : c;
-  }
-
-  function fillSelect(sel, values, labeler){
-    if (!sel) return;
-    const prev = sel.value;
-    Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o => o.remove());
-    for (const v of values) {
-      const opt = document.createElement("option");
-      opt.value = v;
-      opt.textContent = labeler ? labeler(v) : v;
-      sel.appendChild(opt);
-    }
-    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
-  }
-
-  async function loadFilterOptions(){
+  async function trLoadFilters(){
     let src = [], dst = [], models = [];
     try {
       const r = await fetch("/admin/api/translation_cost_audit/languages",
@@ -5946,41 +5620,23 @@ def admin_audit_translations_page():
         dst = Array.isArray(d.target_langs) ? d.target_langs : [];
         models = Array.isArray(d.models) ? d.models : [];
       }
-    } catch(e) { /* silenzioso */ }
+    } catch(e) {}
     const byLabel = (a,b) => langLabel(a).localeCompare(langLabel(b), "it");
     src = src.slice().sort(byLabel);
     dst = dst.slice().sort(byLabel);
     models = models.slice().sort();
-    fillSelect($("auditSrcFilter"), src, langLabel);
-    fillSelect($("evSrcFilter"), src, langLabel);
-    fillSelect($("auditDstFilter"), dst, langLabel);
-    fillSelect($("evDstFilter"), dst, langLabel);
-    fillSelect($("auditModelFilter"), models, null);
-    fillSelect($("evModelFilter"), models, null);
+    fillSelect($("tr_auditSrcFilter"), src, langLabel);
+    fillSelect($("tr_auditDstFilter"), dst, langLabel);
+    fillSelect($("tr_auditModelFilter"), models, null);
   }
-
-  const REFUND_OUTCOMES = new Set(["failed_refunded", "cancelled_refunded"]);
-  const OUTCOME_BADGE = {
-    "running":            ["badge-live",  "In corso"],
-    "completed":          ["badge-ok",    "Completato"],
-    "failed_refunded":    ["badge-err",   "Fallito (rimborso)"],
-    "cancelled_refunded": ["badge-muted", "Annullato (rimborso)"],
-  };
-
-  function esc(s){
-    const d = document.createElement('div');
-    d.textContent = (s == null ? "" : String(s));
-    return d.innerHTML;
-  }
-
-  async function fetchAudit(){
+  async function trFetch(){
     const params = new URLSearchParams();
-    const m = $("auditModelFilter").value;
-    const s = $("auditSrcFilter").value;
-    const t = $("auditDstFilter").value;
-    const o = $("auditOutcomeFilter").value;
-    const df = $("auditDateFrom").value;
-    const dt = $("auditDateTo").value;
+    const m = $("tr_auditModelFilter").value;
+    const s = $("tr_auditSrcFilter").value;
+    const t = $("tr_auditDstFilter").value;
+    const o = $("tr_auditOutcomeFilter").value;
+    const df = $("tr_auditDateFrom").value;
+    const dt = $("tr_auditDateTo").value;
     if (m && m !== "all") params.set("model", m);
     if (s && s !== "all") params.set("source_lang", s);
     if (t && t !== "all") params.set("target_lang", t);
@@ -5992,18 +5648,17 @@ def admin_audit_translations_page():
                          {headers: {"X-Admin-Token": ADMIN_TOKEN}});
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
     const d = await r.json();
-    renderAggregates(d.aggregates || {});
-    renderRecords(d.records || []);
+    trRenderAggregates(d.aggregates || {});
+    trRenderRecords(d.records || []);
   }
-
-  function renderAggregates(agg){
-    $("aggCount").textContent = agg.count ?? 0;
-    $("aggRevenue").textContent = fmtEur(agg.revenue_eur);
-    $("aggCost").textContent = fmtEur(agg.google_cost_eur);
-    $("aggMargin").textContent = fmtEur(agg.margin_eur);
+  function trRenderAggregates(agg){
+    $("tr_aggCount").textContent = agg.count ?? 0;
+    $("tr_aggRevenue").textContent = fmtEur(agg.revenue_eur);
+    $("tr_aggCost").textContent = fmtEur(agg.google_cost_eur);
+    $("tr_aggMargin").textContent = fmtEur(agg.margin_eur);
     const netMargin = (agg.net_margin_eur != null) ? Number(agg.net_margin_eur)
                       : ((Number(agg.margin_eur)||0) - (Number(agg.paypal_fees_eur)||0));
-    const netEl = $("aggNetMargin");
+    const netEl = $("tr_aggNetMargin");
     if (netEl) {
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
@@ -6011,11 +5666,10 @@ def admin_audit_translations_page():
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
-    $("aggDelta").innerHTML = fmtPct(_margPctAvg);
+    $("tr_aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
-
-  function renderRecords(recs){
-    const tbody = $("auditRecordsBody");
+  function trRenderRecords(recs){
+    const tbody = $("tr_auditRecordsBody");
     if (!recs.length) {
       tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nessun record trovato.</td></tr>';
       return;
@@ -6042,7 +5696,7 @@ def admin_audit_translations_page():
       const dCls = margEur >= 0 ? "delta-positive" : "delta-negative";
       const nCls = netMarg >= 0 ? "delta-positive" : "delta-negative";
       const rowCls = r._live ? "row-live" : "";
-      const [bcls, blab] = OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
+      const [bcls, blab] = TR_OUTCOME_BADGE[r.outcome] || ["badge-muted", r.outcome || "?"];
       const rerunBadge = r._rerun
         ? ' <span class="badge badge-warn" title="Job ri-lanciato (recovery)">re-run</span>'
         : "";
@@ -6067,10 +5721,93 @@ def admin_audit_translations_page():
       </tr>`;
     }).join("");
   }
+  $("tr_auditRefreshBtn").addEventListener("click", trFetch);
 
-  $("auditRefreshBtn").addEventListener("click", fetchAudit);
+  // ===================== Tab AI Optimization =====================
+  const OPT_OUTCOME_BADGE = {
+    "running":["badge-live","in corso"],
+    "completed":["badge-ok","completato"],
+    "failed_refunded":["badge-err","fallito (rimborsato)"],
+    "cancelled_refunded":["badge-warn","annullato (rimborsato)"],
+  };
+  async function optLoadLanguages(){
+    try {
+      const r = await fetch("/admin/api/optimization_cost_audit/languages",
+                            {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+      if (!r.ok) return;
+      const d = await r.json();
+      const sel = $("optLangFilter"); if (!sel) return;
+      const prev = sel.value;
+      Array.from(sel.querySelectorAll('option:not([value="all"])')).forEach(o=>o.remove());
+      (d.languages||[]).slice().sort((a,b)=>langLabel(a).localeCompare(langLabel(b),"it"))
+        .forEach(code=>{const o=document.createElement("option");o.value=code;o.textContent=langLabel(code);sel.appendChild(o);});
+      if (prev && Array.from(sel.options).some(o=>o.value===prev)) sel.value=prev;
+    } catch(e){}
+  }
+  async function optFetch(){
+    const p = new URLSearchParams();
+    const l=$("optLangFilter").value, o=$("optOutcomeFilter").value;
+    const df=$("optDateFrom").value, dt=$("optDateTo").value;
+    if (l && l!=="all") p.set("language",l);
+    if (o && o!=="all") p.set("outcome",o);
+    if (df) p.set("date_from",df);
+    if (dt) p.set("date_to",dt);
+    p.set("limit","200");
+    const r = await fetch("/admin/api/optimization_cost_audit?"+p.toString(),
+                          {headers:{"X-Admin-Token":ADMIN_TOKEN}});
+    if (!r.ok){ alert("Errore caricamento audit: "+r.status); return; }
+    const d = await r.json();
+    const a = d.aggregates||{};
+    $("optAggCount").textContent = a.count ?? 0;
+    $("optAggRevenue").textContent = fmtEur(a.revenue_eur);
+    $("optAggCost").textContent = fmtEur(a.provider_cost_eur);
+    $("optAggMargin").textContent = fmtEur(a.margin_eur);
+    $("optAggNet").textContent = fmtEur(a.net_margin_eur);
+    $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
+    optRender(d.records||[]);
+  }
+  function optRender(recs){
+    const tb = $("optRecordsBody");
+    if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>'; return; }
+    recs = recs.slice().sort((a,b)=>{
+      const la=a._live?1:0, lb=b._live?1:0;
+      if (la!==lb) return lb-la;
+      return (b.ts||"").localeCompare(a.ts||"");
+    });
+    tb.innerHTML = recs.map(r=>{
+      const ts = esc((r.ts||"").slice(0,19).replace("T"," "));
+      const revenue = (r._eff_revenue_eur!=null)?Number(r._eff_revenue_eur):Number(r.user_price_eur_charged||0);
+      const cost = Number(r.google_cost_eur_actual||0);
+      const marg = revenue - cost;
+      const fee = Number(r._paypal_fee_eur||0);
+      const net = (r._net_margin_eur!=null)?Number(r._net_margin_eur):(marg-fee);
+      const pct = cost>0?(net/cost*100):0;
+      const method = (r.payment_method||"").toLowerCase();
+      const netTip = method==="paypal"
+        ? `PayPal fee: ${fmtEur(fee)} (fissa ripartita per pagamenti combinati)`
+        : (method==="voucher"?"Voucher: nessuna fee PayPal":(revenue>0?"Nessuna fee":"Free"));
+      const tok = (Number(r.prompt_tokens||0)+Number(r.completion_tokens||0));
+      const tokTip = r.tokens_estimated?" title=\"token stimati (usage non disponibile)\"":"";
+      const dCls = marg>=0?"delta-positive":"delta-negative";
+      const nCls = net>=0?"delta-positive":"delta-negative";
+      const rowCls = r._live?"row-live":"";
+      const [bcls,blab] = OPT_OUTCOME_BADGE[r.outcome]||["badge-muted", r.outcome||"?"];
+      return `<tr class="${rowCls}">
+        <td>${ts}</td><td><code>${esc(r.job_id)}</code></td>
+        <td>${esc(langLabel(r.language))}</td>
+        <td>${(Number(r.chars_total)||0).toLocaleString()}</td>
+        <td${tokTip}>${tok.toLocaleString()}</td>
+        <td>${fmtEur(revenue)}</td><td>${fmtEur(cost)}</td>
+        <td class="${dCls}">${fmtEur(marg)}</td>
+        <td class="${nCls}" title="${esc(netTip)}">${fmtEur(net)}</td>
+        <td class="${dCls}">${pct.toFixed(2)}%</td>
+        <td><span class="badge ${bcls}">${esc(blab)}</span></td>
+      </tr>`;
+    }).join("");
+  }
+  $("optRefreshBtn").addEventListener("click", optFetch);
 
-  // ---- Tab switching ----
+  // ===================== Tab switching =====================
   function showTab(name){
     document.querySelectorAll(".tab-btn").forEach(b => {
       b.classList.toggle("active", b.dataset.tab === name);
@@ -6078,102 +5815,53 @@ def admin_audit_translations_page():
     document.querySelectorAll(".tab-panel").forEach(p => {
       p.classList.toggle("active", p.id === "tab_" + name);
     });
-    if (name === "tr_events" && !window._evLoaded) {
-      window._evLoaded = true;
-      fetchEvents();
+    if (name === "translations" && !window._trLoaded) {
+      window._trLoaded = true;
+      trLoadFilters().finally(trFetch);
+    }
+    if (name === "optimization" && !window._optLoaded) {
+      window._optLoaded = true;
+      optLoadLanguages().finally(optFetch);
     }
     if (location.hash !== "#tab-" + name) location.hash = "#tab-" + name;
   }
   document.querySelectorAll(".tab-btn").forEach(b => {
     b.addEventListener("click", () => showTab(b.dataset.tab));
   });
-  if (location.hash === "#tab-tr_events") showTab("tr_events");
 
-  // ---- Eventi & Rimborsi tab ----
-  async function fetchEvents(){
-    const params = new URLSearchParams();
-    const m = $("evModelFilter").value;
-    const s = $("evSrcFilter").value;
-    const t = $("evDstFilter").value;
-    const df = $("evDateFrom").value;
-    const dt = $("evDateTo").value;
-    if (m && m !== "all") params.set("model", m);
-    if (s && s !== "all") params.set("source_lang", s);
-    if (t && t !== "all") params.set("target_lang", t);
-    if (df) params.set("date_from", df);
-    if (dt) params.set("date_to", dt);
-    params.set("limit", "500");
-    const r = await fetch("/admin/api/translation_cost_audit?" + params.toString(),
-                         {headers: {"X-Admin-Token": ADMIN_TOKEN}});
-    if (!r.ok) { alert("Errore caricamento eventi: " + r.status); return; }
-    const d = await r.json();
-    renderEvents(d.records || []);
-  }
-
-  function renderEvents(recs){
-    const onlyRefunds = $("evOnlyRefunds").checked;
-    let filtered = recs;
-    if (onlyRefunds) filtered = recs.filter(r => REFUND_OUTCOMES.has(r.outcome));
-    let completed=0, refunds=0, cancelled=0;
-    for (const r of recs) {
-      if (r.outcome === "completed") completed++;
-      else if (REFUND_OUTCOMES.has(r.outcome)) {
-        refunds++;
-        if (r.outcome.startsWith("cancelled")) cancelled++;
-      }
-    }
-    $("evCount").textContent = recs.length;
-    $("evCompleted").textContent = completed;
-    $("evRefunds").textContent = refunds;
-    $("evCancelled").textContent = cancelled;
-
-    const tbody = $("evRecordsBody");
-    if (!filtered.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-msg">Nessun evento.</td></tr>';
-      return;
-    }
-    filtered = filtered.slice().sort((a,b) => {
-      const la = a._live ? 1 : 0, lb = b._live ? 1 : 0;
-      if (la !== lb) return lb - la;
-      return (b.ts||"").localeCompare(a.ts||"");
-    });
-    tbody.innerHTML = filtered.map(r => {
-      const ts = esc((r.ts || "").slice(0, 19).replace("T", " "));
-      const out = r.outcome || "?";
-      const [cls, label] = OUTCOME_BADGE[out] || ["badge-muted", out];
-      const rowCls = r._live ? "row-live" : (REFUND_OUTCOMES.has(out) ? "row-refund" : "");
-      const revenue = (r._eff_revenue_eur != null) ? Number(r._eff_revenue_eur)
-                                                  : Number(r.user_price_eur_charged || 0);
-      return `<tr class="${rowCls}">
-        <td>${ts}</td>
-        <td><code>${esc(r.job_id)}</code></td>
-        <td><span class="badge ${cls}">${esc(label)}</span></td>
-        <td>${esc(r.model_key || r.backend)}</td>
-        <td>${esc(langLabel(r.source_lang))}</td>
-        <td>${esc(langLabel(r.target_lang))}</td>
-        <td>${(Number(r.chars_total) || 0).toLocaleString()}</td>
-        <td>${fmtEur(revenue)}</td>
-        <td>${fmtEur(r.google_cost_eur_actual)}</td>
-      </tr>`;
-    }).join("");
-  }
-
-  $("evRefreshBtn").addEventListener("click", fetchEvents);
-  $("evOnlyRefunds").addEventListener("change", () => fetchEvents());
-
-  // Default periodo: primo giorno del mese corrente (entrambe le tab).
+  // Default periodo: primo giorno del mese corrente (tutte le tab).
   (function setDefaultDateFrom(){
     const now = new Date();
     const firstDay = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-01";
-    const af = $("auditDateFrom"); if (af && !af.value) af.value = firstDay;
-    const ef = $("evDateFrom");    if (ef && !ef.value) ef.value = firstDay;
+    ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom"].forEach(id => {
+      const el = $(id); if (el && !el.value) el.value = firstDay;
+    });
   })();
 
-  loadFilterOptions().finally(fetchAudit);
+  // Auto-load: TTS (tab di default) + kill-switch. Traduzioni/Optimization lazy.
+  ttsLoadLanguages().finally(ttsFetch);
+  ksRefresh();
+
+  // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
+  const _h = location.hash;
+  if (_h === "#tab-translations") showTab("translations");
+  else if (_h === "#tab-optimization") showTab("optimization");
 })();
 </script>
 </body></html>"""
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/admin/audit-tts", methods=["GET"])
+def admin_logs_page():
+    """Deprecato: unificato in /admin/audit-premium. Redirect."""
+    return redirect("/admin/audit-premium#tab-tts", code=302)
+
+
+@app.route("/admin/audit-translations", methods=["GET"])
+def admin_audit_translations_page():
+    """Deprecato: unificato in /admin/audit-premium. Redirect."""
+    return redirect("/admin/audit-premium#tab-translations", code=302)
 
 
 _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")

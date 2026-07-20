@@ -76,7 +76,8 @@ def test_admin_log_escapes_voice_in_render(client, monkeypatch):
 
 
 def test_admin_audit_page_does_not_inline_token(client):
-    r = client.get("/admin/audit-tts", headers={"X-Admin-Token": "test-admin-token"})
+    # Pagina unificata (i vecchi /admin/audit-tts|translations ora redirigono qui).
+    r = client.get("/admin/audit-premium", headers={"X-Admin-Token": "test-admin-token"})
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     # Il token reale non deve comparire nel sorgente HTML servito.

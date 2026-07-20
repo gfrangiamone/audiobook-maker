@@ -1,4 +1,5 @@
-"""Test /admin/audit-tts page exists and has Gemini Audit tab structure."""
+"""Test /admin/audit-tts: dopo l'unificazione (Task 7) e' un redirect 302
+verso la pagina unificata /admin/audit-premium#tab-tts."""
 import os
 import pytest
 import audiobook_app
@@ -11,36 +12,37 @@ def client(monkeypatch):
     return audiobook_app.app.test_client()
 
 
-def test_admin_logs_page_exists_and_requires_auth(client):
+def test_admin_logs_page_redirects_to_premium(client):
+    # Il vecchio URL non renderizza piu': reindirizza alla pagina unificata.
     r = client.get("/admin/audit-tts")
-    # Without token -> admin gate page (200 with gate HTML) or 401
-    assert r.status_code in (200, 401)
-    if r.status_code == 200:
-        body = r.get_data(as_text=True)
-        # Must contain admin gate form when unauthorized
-        assert "X-Admin-Token" in body or "password" in body.lower() or "admin" in body.lower()
-        # CRITICAL: real admin token must NOT leak into unauthenticated response
-        assert "test-admin-token" not in body
+    assert r.status_code == 302
+    assert "/admin/audit-premium" in r.headers["Location"]
+    # Nessun token deve trapelare nella risposta di redirect.
+    assert "test-admin-token" not in r.get_data(as_text=True)
 
 
-def test_admin_logs_page_renders_with_token(client):
+def test_admin_logs_page_redirect_targets_tts_tab(client):
     r = client.get("/admin/audit-tts", headers={"X-Admin-Token": "test-admin-token"})
+    assert r.status_code == 302
+    assert r.headers["Location"] == "/admin/audit-premium#tab-tts"
+
+
+def test_admin_premium_page_renders_with_token(client):
+    # La pagina unificata (bersaglio del redirect) mantiene la struttura audit TTS.
+    r = client.get("/admin/audit-premium", headers={"X-Admin-Token": "test-admin-token"})
     assert r.status_code == 200
     body = r.get_data(as_text=True)
-    assert 'data-tab="gemini_audit"' in body
-    # Filter selects must be present
-    assert 'id="auditModelFilter"' in body
-    assert 'id="auditLangFilter"' in body
-    assert 'id="auditOutcomeFilter"' in body
-    # Aggregates panel
-    assert 'id="auditAggregates"' in body
-    # Records table
-    assert 'id="auditRecordsBody"' in body
-    # Spec requires auto-fetch on page load
-    assert "fetchAudit()" in body
+    assert 'data-tab="tts"' in body
+    assert 'id="tts_auditModelFilter"' in body
+    assert 'id="tts_auditLangFilter"' in body
+    assert 'id="tts_auditOutcomeFilter"' in body
+    assert 'id="tts_auditAggregates"' in body
+    assert 'id="tts_auditRecordsBody"' in body
+    # Auto-fetch della tab TTS al caricamento pagina.
+    assert "ttsFetch" in body
 
 
-def test_admin_logs_page_disabled_without_admin_token(client, monkeypatch):
+def test_admin_premium_page_disabled_without_admin_token(client, monkeypatch):
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "")
-    r = client.get("/admin/audit-tts")
+    r = client.get("/admin/audit-premium")
     assert r.status_code == 404
