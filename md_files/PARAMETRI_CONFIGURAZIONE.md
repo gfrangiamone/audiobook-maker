@@ -32,6 +32,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 106 |
 | `ABM_LLM_RATE_EUR_PER_MCHAR` | `1.10` (EUR per 1M char input, include markup + fee PayPal) | `audiobook_app.py` | 108 |
 | `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 109 |
+| `ABM_LLM_COST_IN_EUR_PER_MTOK` | `0.26` (Costo provider LLM per l'ottimizzazione AI del testo, EUR per 1M token input — base costo audit /admin/audit-premium) | `payment.py` | 62–63 |
+| `ABM_LLM_COST_OUT_EUR_PER_MTOK` | `1.04` (Costo provider LLM per l'ottimizzazione AI del testo, EUR per 1M token output — base costo audit /admin/audit-premium) | `payment.py` | 64–65 |
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
