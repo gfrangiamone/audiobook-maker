@@ -273,3 +273,53 @@ il client è mockato.
 8. `write_epub_nested` → riletto con `ebooklib`: TOC annidata corretta,
    ordine dello spine corretto
 9. fallback: zero titoli → capitolo unico, exit 0
+
+## Addendum realizzativo (2026-07-21)
+
+Implementazione completata. Quanto segue documenta le differenze fra questo
+design e il codice finale: sono tutte reazioni a difetti emersi provando lo
+strumento su documenti reali, non cambi di rotta.
+
+### Requisito sopravvenuto: copertina da file locale
+
+`-Cover` accetta **solo** `.jpg`, `.jpeg`, `.png`. Un'estensione diversa e un
+errore esplicito, mai un'accettazione silenziosa: il design originale avrebbe
+incorporato qualunque file dichiarandolo JPEG, producendo un EPUB malformato.
+Nuovo exit code **5** (uso errato). La validazione e doppia, nel wrapper
+PowerShell (prima di avviare Python) e nell'engine.
+
+### Euristiche aggiunte
+
+| Regola | Perche |
+|---|---|
+| Contenitori misti (`<div>testo<p>figlio</p></div>`) producono un blocco anche per il testo diretto | Il design scartava l'intero contenitore, perdendo il testo diretto: frequente fuori dai siti ben formati |
+| `_is_navigation`: si scartano i blocchi il cui testo sta per l'80% in due o piu `<a>` e che non chiudono con punteggiatura | Gli indici interni al documento venivano scambiati per titoli. Le due guardie (due link, punteggiatura) evitano di cancellare prosa fatta di nomi linkati |
+| Fusione dei titoli consecutivi dello stesso livello senza corpo in mezzo, massimo 3 righe | `CAPITOLO 1` e il nome del capitolo sono due righe dello stesso titolo; senza fusione il secondo apriva un capitolo vuoto che rubava i sottocapitoli. Il tetto di 3 righe impedisce di inghiottire un indice |
+| Ramo semantico solo con >= 2 heading di testo distinto che introducono contenuto | Due `<h2>La Santa Sede</h2>` di template attivavano il ramo semantico e producevano un libro intitolato al sito |
+| `_normalize_outline`: nei documenti sopra i 20k caratteri si potano i capitoli sotto i 200 caratteri, escluso l'introduttivo, dichiarando sempre cosa si scarta | Il sommario in cima al documento veniva preso per struttura. La soglia e **assoluta**: una soglia proporzionale al totale cancellerebbe capitoli brevi ma veri accanto a un capitolo dominante |
+| Promozione dei sottocapitoli quando resta un solo capitolo | Un capitolo unico con N sottocapitoli e in realta un documento di N capitoli |
+
+### Principio guida emerso
+
+Perdere testo in silenzio e il modo peggiore di sbagliare per uno strumento
+di conversione: un EPUB amputato ma dall'aspetto sano non da all'utente
+alcun segnale. Ogni potatura, ogni troncamento del crawl e ogni pagina
+saltata vengono percio dichiarati su stdout.
+
+### Collocazione finale e test
+
+`scripts/web_to_epub.py`, `scripts/web_to_epub.ps1`,
+`scripts/test_web_to_epub.py`, `scripts/fixtures_web_to_epub/` — 86 test
+offline. La directory `scripts/` e ignorata da git: i file restano locali e
+non deployati, per scelta esplicita. I test non girano nella CI; si eseguono
+con `pytest scripts/test_web_to_epub.py -v`.
+
+### Difetto di produzione trovato per strada (non corretto)
+
+Validando l'EPUB con `epub_to_tts.parse_epub()` e emerso un bug dell'app,
+indipendente da questo strumento: `epub_to_tts.py` in `roman_to_readable`
+usa `m.group(1)` (il prefisso) al posto di `m.group(2)` (il numero romano) e
+li scambia; il match e inoltre case-insensitive, cosi una `i` minuscola
+interna a una parola comune viene presa per numero romano. `"capitolo
+intendo"` diventa `"i capitolontendo"`. Corrompe il testo TTS di qualunque
+libro italiano contenente `"capitolo i..."` o `"parte i..."`.
