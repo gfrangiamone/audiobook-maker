@@ -43,6 +43,7 @@ except ImportError:
     gemini_tts = None
 import gemini_cost_audit
 import translation_cost_audit
+import optimization_cost_audit
 import speechify_tts
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
@@ -2390,6 +2391,9 @@ def run_optimization(job_id, selected_chapters=None):
         optimized.update(ch.index for ch in chapters_to_opt)
         job["optimized_chapters"] = list(optimized)
         job["ai_optimized"] = True
+        _write_optimization_audit(
+            job_id, job, language=lang, chars_total=total_chars,
+            outcome="completed")
         # Segna il job come completato per il recovery voucher all'avvio
         if job.get("payment_type"):
             payment._mark_paid_opt_done(job_id)
@@ -2552,12 +2556,18 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
         _refund_job_payment(job_id, job, "cancel")
+        _write_optimization_audit(
+            job_id, job, language=lang, chars_total=total_chars,
+            outcome="cancelled_refunded")
     except Exception as e:
         _set_job_status(job, "error")
         job["error"] = f"LLM optimization error: {e}"
         import traceback
         traceback.print_exc()
         _refund_job_payment(job_id, job, "error")
+        _write_optimization_audit(
+            job_id, job, language=lang, chars_total=total_chars,
+            outcome="failed_refunded")
 
 
 # ---------------------------------------------------------------------------
@@ -2971,6 +2981,9 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
                                    else payment_token_full)
         else:
             payment_token_short = ""
+        _llm_quota = payment.get("llm_eur")
+        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
+                               if _llm_quota is not None else round(charged, 4))
         google_cost_actual = float(actual.get("google_cost_eur", 0.0) or 0.0)
         try:
             if gemini_tts is not None:
@@ -3026,6 +3039,7 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "delta_eur": delta_eur,
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - google_cost_actual, 4),
+            "combined_total_eur": _combined_total_eur,
             "outcome": outcome,
             "payment_method": payment_method,
             "payment_token_short": payment_token_short,
@@ -3136,6 +3150,9 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
                                    else payment_token_full)
         else:
             payment_token_short = ""
+        _llm_quota = payment.get("llm_eur")
+        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
+                               if _llm_quota is not None else round(charged, 4))
         # --- Costo provider + prezzo "dovuto" (char-based Simba) ---
         metered_chars = int(actual.get("billable_chars", 0) or 0) or int(
             actual.get("chars", 0) or 0)
@@ -3196,6 +3213,7 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "delta_eur": delta_eur,
             "delta_pct": delta_pct,
             "margin_eur_actual": round(charged - provider_cost_eur, 4),
+            "combined_total_eur": _combined_total_eur,
             "outcome": outcome,
             "payment_method": payment_method,
             "payment_token_short": payment_token_short,
@@ -3293,6 +3311,86 @@ def _write_translation_audit(job_id, job, *, backend, model, source_lang,
         translation_cost_audit.append_record(rec)
     except Exception as e:
         print(f"[{job_id}] translation audit write failed (non-fatal): {e}")
+
+
+def _write_optimization_audit(job_id, job, *, language, chars_total, outcome):
+    """Append record audit al termine (o interruzione) di un'ottimizzazione AI.
+
+    Best-effort/non-fatale. Costo LLM dai token reali di job["opt_usage"]
+    (fallback stima-da-caratteri se estimated). Revenue = quota LLM del
+    pagamento: job["payment"]["llm_eur"] se il pagamento e' combinato
+    (voci premium + AI), altrimenti job["payment"]["total_eur"] (optimize
+    standalone). Salva combined_total_eur = totale premium dell'intera
+    transazione, cosi' _compute_paypal_fee_eur ripartisce la fee fissa.
+    """
+    try:
+        ur = job.get("opt_usage") or {}
+        prompt_tokens = int(ur.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(ur.get("completion_tokens", 0) or 0)
+        tokens_estimated = bool(ur.get("estimated", False))
+        # Fallback stima-da-caratteri se il provider non ha emesso usage.
+        if tokens_estimated or (prompt_tokens == 0 and completion_tokens == 0):
+            ct = int(chars_total or 0)
+            streamed = int(job.get("opt_streamed_chars", 0) or 0)
+            prompt_tokens = prompt_tokens or (ct // 4)
+            completion_tokens = completion_tokens or ((streamed or ct) // 4)
+            tokens_estimated = True
+        cost_eur = payment._optimization_provider_cost_eur(
+            prompt_tokens, completion_tokens)
+
+        pay = job.get("payment") or {}
+        total_eur = float(pay.get("total_eur", 0) or 0)
+        llm_eur = pay.get("llm_eur")
+        payment_method = pay.get("method", "") or ""
+        payment_source = pay.get("source", "") or ""
+        payment_token_full = pay.get("token", "") or ""
+        if llm_eur is not None:
+            # Pagamento combinato: la quota LLM e' isolata; combined = TTS + LLM.
+            charged = float(llm_eur or 0)
+            combined_total = round(total_eur + charged, 4)
+        else:
+            # Optimize standalone: total_eur È la quota LLM.
+            charged = total_eur
+            if charged <= 0:
+                _legacy = float(job.get("payment_amount_eur", 0) or 0)
+                if _legacy > 0:
+                    charged = _legacy
+                    payment_method = job.get("payment_type", "") or payment_method
+                    payment_token_full = job.get("payment_token", "") or payment_token_full
+                    payment_source = payment_source or "legacy_fallback"
+            combined_total = round(charged, 4)
+        if payment_token_full:
+            payment_token_short = (payment_token_full[:8] + "..."
+                                   if len(payment_token_full) > 12
+                                   else payment_token_full)
+        else:
+            payment_token_short = ""
+
+        should_have_been = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+        delta_eur = round(should_have_been - charged, 4)
+
+        rec = {
+            "job_id": job_id,
+            "model_key": LLM_MODEL,
+            "language": (language or "").lower(),
+            "chars_total": int(chars_total or 0),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "tokens_estimated": tokens_estimated,
+            "google_cost_eur_actual": round(cost_eur, 6),
+            "user_price_eur_charged": round(charged, 4),
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "margin_eur_actual": round(charged - cost_eur, 4),
+            "combined_total_eur": combined_total,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+            "outcome": outcome,
+        }
+        optimization_cost_audit.append_record(rec)
+    except Exception as e:
+        print(f"[{job_id}] optimization audit write failed (non-fatal): {e}")
 
 
 # F1: finestra di "quiete" sotto cui un output senza marker .generation_complete
