@@ -5119,10 +5119,12 @@ def admin_audit_premium_page():
   .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
 </style></head>
 <body>
-<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px">
-  <h1 style="margin:0">Admin - Audit Premium Services</h1>
-  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+<div style="margin-bottom:16px">
+  <div style="text-align:right;margin-bottom:8px">
     <a href="/admin/log-activity" style="font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <h1 style="margin:0">Admin - Audit Premium Services</h1>
     <div title="Somma dei margini netti dei tre servizi premium (Audit TTS + Traduzioni + AI Optimization), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
       <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
       <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
