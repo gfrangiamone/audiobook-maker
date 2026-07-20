@@ -6329,6 +6329,67 @@ def _synth_running_translation_audit_records():
     return out
 
 
+def _synth_running_optimization_audit_records():
+    """Snapshot dei job in ottimizzazione (status "optimizing") in forma
+    audit-shaped, per la riga live nella tab AI Optimization.
+
+    Costo parziale dai token accumulati in job["opt_usage"]. Revenue = quota
+    LLM (payment.llm_eur se combinato, altrimenti total_eur). Quando il job
+    termina la riga "running" sparisce, rimpiazzata dal record JSONL.
+    """
+    out = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _jobs_lock:
+        snapshot = list(jobs.items())
+    for job_id, job in snapshot:
+        try:
+            if not isinstance(job, dict):
+                continue
+            if job.get("status", "") != "optimizing":
+                continue
+            ur = job.get("opt_usage") or {}
+            prompt_tokens = int(ur.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(ur.get("completion_tokens", 0) or 0)
+            cost_eur = payment._optimization_provider_cost_eur(
+                prompt_tokens, completion_tokens)
+            chars_total = int(job.get("opt_total_chars", 0) or 0)
+            pay = job.get("payment") or {}
+            total_eur = float(pay.get("total_eur", 0) or 0)
+            llm_eur = pay.get("llm_eur")
+            if llm_eur is not None:
+                charged = float(llm_eur or 0)
+                combined_total = round(total_eur + charged, 4)
+            else:
+                charged = total_eur
+                if charged <= 0:
+                    charged = float(job.get("payment_amount_eur", 0) or 0)
+                combined_total = round(charged, 4)
+            should_have_been = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+            rec = {
+                "ts": job.get("started_at") or now_iso,
+                "job_id": job_id,
+                "model_key": getattr(payment, "LLM_MODEL", "") or "",
+                "language": (job.get("opt_lang") or "").lower(),
+                "chars_total": chars_total,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "tokens_estimated": bool(ur.get("estimated", False)),
+                "google_cost_eur_actual": round(cost_eur, 6),
+                "user_price_eur_charged": round(charged, 4),
+                "user_price_eur_should_have_been": round(should_have_been, 2),
+                "delta_eur": round(should_have_been - charged, 4),
+                "margin_eur_actual": round(charged - cost_eur, 4),
+                "combined_total_eur": combined_total,
+                "payment_method": pay.get("method", "") or "",
+                "outcome": "running",
+                "_live": True,
+            }
+            out.append(rec)
+        except Exception:
+            continue
+    return out
+
+
 # Outcome che rappresentano un rimborso TOTALE all'utente: il ricavo
 # effettivo e' 0 a prescindere da `user_price_eur_charged` originario.
 # I `cancelled_partial` sono trattati a parte tramite `cancel_retained_eur`.
@@ -6707,6 +6768,102 @@ def admin_api_translation_cost_audit_languages():
     return jsonify({"source_langs": sorted(src),
                     "target_langs": sorted(dst),
                     "models": sorted(models)})
+
+
+@app.route("/admin/api/optimization_cost_audit", methods=["GET"])
+def admin_api_optimization_cost_audit():
+    """List record audit ottimizzazione AI con filtri + aggregati. Admin-only.
+
+    Include righe sintetiche outcome="running" per i job in ottimizzazione.
+    Ogni record e' arricchito con `_eff_*` da _apply_cancel_effective (la fee
+    fissa PayPal e' ripartita proporzionalmente via combined_total_eur).
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import optimization_cost_audit
+    language = request.args.get("language")
+    outcome = request.args.get("outcome")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid limit/offset"}), 400
+
+    def _norm(v):
+        return v if v and v != "all" else None
+
+    persisted = list(optimization_cost_audit.iter_records(
+        language=_norm(language), outcome=_norm(outcome),
+        date_from=date_from, date_to=date_to,
+    ))
+    persisted_ids = {r.get("job_id") for r in persisted}
+
+    live = []
+    out_filter = _norm(outcome)
+    if out_filter in (None, "running"):
+        for r in _synth_running_optimization_audit_records():
+            if _norm(language) and r.get("language") != _norm(language):
+                continue
+            if r.get("job_id") in persisted_ids:
+                r["_rerun"] = True
+            live.append(r)
+
+    recs = live + persisted
+    for r in recs:
+        _apply_cancel_effective(r)
+    total = len(recs)
+    page = recs[offset:offset + limit]
+
+    agg_n = 0
+    agg_rev = 0.0
+    agg_cost = 0.0
+    agg_fee = 0.0
+    for r in recs:
+        oc = r.get("outcome") or ""
+        if oc not in ("completed", "running"):
+            continue
+        agg_n += 1
+        agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
+        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
+    net = agg_rev - agg_cost - agg_fee
+    agg = {
+        "count": agg_n,
+        "revenue_eur": round(agg_rev, 4),
+        "provider_cost_eur": round(agg_cost, 4),
+        "margin_eur": round(agg_rev - agg_cost, 4),
+        "paypal_fees_eur": round(agg_fee, 4),
+        "net_margin_eur": round(net, 4),
+        "margin_pct_avg": round((net / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "filters": {"language": _norm(language),
+                    "date_from": date_from, "date_to": date_to},
+    }
+    return jsonify({"records": page, "count": total, "aggregates": agg})
+
+
+@app.route("/admin/api/optimization_cost_audit/languages", methods=["GET"])
+def admin_api_optimization_cost_audit_languages():
+    """Codici lingua distinti nei record audit ottimizzazione. Popola i filtri
+    della tab AI Optimization."""
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+
+    import optimization_cost_audit
+    langs = set()
+    for rec in optimization_cost_audit.iter_records():
+        code = (rec.get("language") or "").strip().lower()
+        if code:
+            langs.add(code)
+    return jsonify({"languages": sorted(langs)})
 
 
 @app.route("/admin/api/gemini_cost_audit/recalc-params", methods=["GET"])
