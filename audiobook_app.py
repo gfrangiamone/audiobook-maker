@@ -5119,7 +5119,16 @@ def admin_audit_premium_page():
   .ai-flag{display:inline-block;padding:1px 6px;border-radius:8px;font-size:.65rem;font-weight:600;background:rgba(139,92,246,.18);color:var(--accent);margin-left:6px}
 </style></head>
 <body>
-<h1>Admin - Audit Premium Services <a href="/admin/log-activity" style="float:right;font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a></h1>
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+  <h1 style="margin:0">Admin - Audit Premium Services</h1>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+    <a href="/admin/log-activity" style="font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a>
+    <div title="Somma dei margini netti dei tre servizi premium (Audit TTS + Traduzioni + AI Optimization), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
+      <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
+    </div>
+  </div>
+</div>
 
 <div class="panel" id="killSwitchPanel" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
   <div style="flex:1;min-width:280px">
@@ -5421,6 +5430,21 @@ def admin_audit_premium_page():
     codes = codes.slice().sort((a,b) => langLabel(a).localeCompare(langLabel(b), "it"));
     fillSelect($("tts_auditLangFilter"), codes, langLabel);
   }
+  // ---- Totale margine netto: somma dei 3 servizi premium ----
+  // Ogni tab, dopo il suo fetch, deposita qui il proprio net_margin_eur; il
+  // box in alto a destra mostra la somma dei valori gia' caricati.
+  const netMarginByService = { tts: null, translations: null, optimization: null };
+  function updateTotalNetMargin(){
+    const el = $("totalNetMarginValue");
+    if (!el) return;
+    const loaded = [netMarginByService.tts, netMarginByService.translations,
+                    netMarginByService.optimization].filter(v => v != null);
+    if (!loaded.length) { el.textContent = "-"; el.style.color = ""; return; }
+    const total = loaded.reduce((s, v) => s + Number(v || 0), 0);
+    el.textContent = fmtEur(total);
+    el.style.color = total >= 0 ? "var(--ok)" : "var(--err)";
+  }
+
   async function ttsFetch(){
     const params = new URLSearchParams();
     const m = $("tts_auditModelFilter").value;
@@ -5453,6 +5477,7 @@ def admin_audit_premium_page():
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
+    netMarginByService.tts = netMargin; updateTotalNetMargin();
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
@@ -5663,6 +5688,7 @@ def admin_audit_premium_page():
       netEl.textContent = fmtEur(netMargin);
       netEl.title = "Fee PayPal totali: " + fmtEur(agg.paypal_fees_eur || 0);
     }
+    netMarginByService.translations = netMargin; updateTotalNetMargin();
     const _margPctAvg = (Number(agg.google_cost_eur)||0) > 0
       ? (Number(agg.net_margin_eur)||0) / Number(agg.google_cost_eur) * 100
       : 0;
@@ -5764,6 +5790,7 @@ def admin_audit_premium_page():
     $("optAggMargin").textContent = fmtEur(a.margin_eur);
     $("optAggNet").textContent = fmtEur(a.net_margin_eur);
     $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
+    netMarginByService.optimization = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
     optRender(d.records||[]);
   }
   function optRender(recs){
@@ -5838,9 +5865,17 @@ def admin_audit_premium_page():
     });
   })();
 
-  // Auto-load: TTS (tab di default) + kill-switch. Traduzioni/Optimization lazy.
+  // Auto-load: TTS (tab di default) + kill-switch.
   ttsLoadLanguages().finally(ttsFetch);
   ksRefresh();
+  // Traduzioni e Optimization vengono caricate anche in background all'avvio,
+  // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
+  // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
+  // rifare il fetch al primo click.
+  window._trLoaded = true;
+  trLoadFilters().finally(trFetch);
+  window._optLoaded = true;
+  optLoadLanguages().finally(optFetch);
 
   // Deep-link hash: apre direttamente la tab richiesta dai vecchi URL redirected.
   const _h = location.hash;
