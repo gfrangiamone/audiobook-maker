@@ -54,6 +54,15 @@ if PAYPAL_CLIENT_ID:
     print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
 LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
 LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
+# Costo provider LLM per l'OTTIMIZZAZIONE AI del testo (base costo audit
+# /admin/audit-premium tab "AI Optimization"). Coppia unica input/output EUR
+# per 1M token. Default = listino DeepSeek deepseek-chat (cache-miss):
+# BASE DA VERIFICARE/AGGIORNARE se il modello o il listino cambiano.
+# Accettano virgola decimale.
+LLM_COST_IN_EUR_PER_MTOK = float(
+    os.environ.get("ABM_LLM_COST_IN_EUR_PER_MTOK", "0.26").replace(",", "."))
+LLM_COST_OUT_EUR_PER_MTOK = float(
+    os.environ.get("ABM_LLM_COST_OUT_EUR_PER_MTOK", "1.04").replace(",", "."))
 # Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
 # applicato solo quando si paga). Accettano virgola decimale.
 TRANSLATE_RATE_EUR_PER_MCHAR = float(
@@ -132,6 +141,17 @@ def _translation_provider_cost_eur(prompt_tokens, completion_tokens):
     """
     ci = (prompt_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_IN_EUR_PER_MTOK
     co = (completion_tokens or 0) / 1_000_000.0 * TRANSLATE_COST_OUT_EUR_PER_MTOK
+    return round(ci + co, 6)
+
+
+def _optimization_provider_cost_eur(prompt_tokens, completion_tokens):
+    """Costo LLM stimato (EUR) dai token reali di un'ottimizzazione AI del testo.
+
+    costo = in/1M × LLM_COST_IN + out/1M × LLM_COST_OUT. Speculare a
+    _translation_provider_cost_eur ma con le tariffe dell'ottimizzazione.
+    """
+    ci = (prompt_tokens or 0) / 1_000_000.0 * LLM_COST_IN_EUR_PER_MTOK
+    co = (completion_tokens or 0) / 1_000_000.0 * LLM_COST_OUT_EUR_PER_MTOK
     return round(ci + co, 6)
 
 
