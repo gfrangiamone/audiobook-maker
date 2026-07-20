@@ -6344,7 +6344,7 @@ _FULL_REFUND_OUTCOMES = frozenset({
 })
 
 
-def _compute_paypal_fee_eur(revenue_eur, payment_method):
+def _compute_paypal_fee_eur(revenue_eur, payment_method, combined_total_eur=None):
     """Stima fee PayPal addebitata sul ricavo PER QUESTO record.
 
     Applica la formula PayPal standard (`% gross + fissa`) solo se il record
@@ -6374,7 +6374,19 @@ def _compute_paypal_fee_eur(revenue_eur, payment_method):
         fixed = float(gemini_tts.PAYPAL_FIXED_FEE_EUR)
     except (AttributeError, TypeError, ValueError):
         return 0.0
-    return round(rev * pct / 100.0 + fixed, 4)
+    # Fee fissa ripartita in proporzione al prezzo quando il pagamento copre
+    # piu' servizi premium in un'unica transazione PayPal (combined_total_eur =
+    # somma delle quote). Per servizio singolo/legacy (combined assente o <= rev)
+    # la fissa resta piena. La percentuale e' sempre sul revenue del servizio
+    # (naturalmente additiva, nessun doppio conteggio).
+    try:
+        combined = float(combined_total_eur) if combined_total_eur is not None else rev
+    except (TypeError, ValueError):
+        combined = rev
+    if combined <= 0:
+        combined = rev
+    fixed_share = fixed * rev / combined if combined > 0 else fixed
+    return round(rev * pct / 100.0 + fixed_share, 4)
 
 
 def _apply_cancel_effective(rec):
@@ -6406,7 +6418,8 @@ def _apply_cancel_effective(rec):
     rec["_eff_margin_eur"] = round(revenue - cost, 4)
     rec["_eff_delta_eur"] = round(should - revenue, 4)
     rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / cost * 100), 2) if cost > 0 else 0.0
-    fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""))
+    fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""),
+                                  combined_total_eur=rec.get("combined_total_eur"))
     rec["_paypal_fee_eur"] = round(fee, 4)
     rec["_net_margin_eur"] = round(revenue - cost - fee, 4)
     return rec
