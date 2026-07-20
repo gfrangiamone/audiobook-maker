@@ -762,6 +762,7 @@ def _call_llm(user_content, job=None, max_retries=None):
                 "max_tokens": LLM_MAX_TOKENS,
                 "temperature": effective_temp,
                 "stream": True,
+                "stream_options": {"include_usage": True},
                 "timeout": LLM_REQUEST_TIMEOUT_SEC,
             }
             if effective_reasoning != "none":
@@ -770,14 +771,22 @@ def _call_llm(user_content, job=None, max_retries=None):
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
 
             stream = _llm_client.chat.completions.create(**kwargs)
+            call_usage = None
             for event in stream:
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
                     raise _CancelledError("Optimization cancelled during streaming")
 
+                # Il chunk finale (include_usage) porta usage e choices vuoto.
+                if getattr(event, "usage", None) is not None:
+                    call_usage = event.usage
+
+                if not event.choices:
+                    continue
+
                 # Capture normal content
-                if event.choices and event.choices[0].delta.content:
+                if event.choices[0].delta.content:
                     chunk = event.choices[0].delta.content
                     result_parts.append(chunk)
                     if job is not None:
@@ -816,6 +825,14 @@ def _call_llm(user_content, job=None, max_retries=None):
                     job["_last_leak_chars_output"] = len(cleaned)
                 raise _PromptLeakError("LLM output contains system-prompt echo")
 
+            if job is not None and isinstance(job.get("opt_usage"), dict):
+                if call_usage is not None:
+                    job["opt_usage"]["prompt_tokens"] += int(
+                        getattr(call_usage, "prompt_tokens", 0) or 0)
+                    job["opt_usage"]["completion_tokens"] += int(
+                        getattr(call_usage, "completion_tokens", 0) or 0)
+                else:
+                    job["opt_usage"]["estimated"] = True
             return cleaned
         except _PromptLeakError:
             raise
@@ -2304,6 +2321,7 @@ def run_optimization(job_id, selected_chapters=None):
     job["opt_finalization_weight"] = finalization_weight
     job["opt_processed_chars"] = 0
     job["opt_streamed_chars"] = 0
+    job["opt_usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "estimated": False}
     job["opt_start_time"] = start_time
     job["opt_progress_message"] = "Starting optimization..."
 
