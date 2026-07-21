@@ -104,7 +104,11 @@ def test_create_order_llm_selected_subset(client):
         status, body, cost = _create_order(client, jid, selected=[0, 1])
         assert status == 200, body
         assert cost == pytest.approx(est["cost_eur"])
-        assert cost == pytest.approx(audiobook_app._estimate_llm_cost_eur(400000))
+        # L'importo addebitato include il floor minimo parametrico
+        # (ABM_LLM_MIN_COST_EUR): sopra soglia non scende sotto il minimo.
+        assert cost == pytest.approx(
+            audiobook_app._llm_apply_min_cost(
+                audiobook_app._estimate_llm_cost_eur(400000)))
     finally:
         _cleanup(jid)
 

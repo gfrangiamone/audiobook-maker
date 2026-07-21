@@ -54,15 +54,25 @@ if PAYPAL_CLIENT_ID:
     print(f"[payment] PayPal configured: mode={PAYPAL_MODE} base={PAYPAL_API_BASE}")
 LLM_RATE_EUR_PER_MCHAR = float(os.environ.get("ABM_LLM_RATE_EUR_PER_MCHAR", "1.10").replace(",", "."))
 LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.50").replace(",", "."))
+# Costo minimo (floor) fatturato per l'OTTIMIZZAZIONE testo AI standalone: quando
+# la stima grezza supera LLM_FREE_THRESHOLD_EUR (quindi si paga), l'importo dovuto
+# viene alzato ad almeno questo valore. Sotto la soglia gratuita il job resta free
+# e il floor non si applica. Vale solo per l'ottimizzazione standalone (non per la
+# quota LLM dei pagamenti combinati con voci PREMIUM). Accetta virgola decimale.
+LLM_MIN_COST_EUR = float(os.environ.get("ABM_LLM_MIN_COST_EUR", "1.0").replace(",", "."))
 # Costo provider LLM per l'OTTIMIZZAZIONE AI del testo (base costo audit
-# /admin/audit-premium tab "AI Optimization"). Coppia unica input/output EUR
-# per 1M token. Default = listino DeepSeek deepseek-chat (cache-miss):
+# /admin/audit-premium tab "AI Optimization"). Parametro UNICO blended in USD
+# per 1M token TOTALI (prompt + completion): assorbe il mix input/output e i
+# token in cache in un solo valore medio, piu' affidabile della coppia
+# input/output al prezzo cache-miss. Default = costo reale medio osservato su
+# una settimana di elaborazioni. Convertito in EUR con USD_EUR_RATE (parametro
+# di conversione condiviso ABM_GEMINI_USD_EUR_RATE, gia' usato da Gemini/Speechify).
 # BASE DA VERIFICARE/AGGIORNARE se il modello o il listino cambiano.
 # Accettano virgola decimale.
-LLM_COST_IN_EUR_PER_MTOK = float(
-    os.environ.get("ABM_LLM_COST_IN_EUR_PER_MTOK", "0.26").replace(",", "."))
-LLM_COST_OUT_EUR_PER_MTOK = float(
-    os.environ.get("ABM_LLM_COST_OUT_EUR_PER_MTOK", "1.04").replace(",", "."))
+LLM_COST_USD_PER_MTOK = float(
+    os.environ.get("ABM_LLM_COST_USD_PER_MTOK", "0.18").replace(",", "."))
+USD_EUR_RATE = float(
+    os.environ.get("ABM_GEMINI_USD_EUR_RATE", "0.86").replace(",", "."))
 # Traduzione libro: €/M caratteri input e costo minimo (floor sul totale,
 # applicato solo quando si paga). Accettano virgola decimale.
 TRANSLATE_RATE_EUR_PER_MCHAR = float(
@@ -108,6 +118,22 @@ def _estimate_llm_cost_eur(char_count):
     return round((char_count / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
 
 
+def _llm_apply_min_cost(raw_cost):
+    """Applica il floor minimo parametrico al costo dell'ottimizzazione LLM.
+
+    `raw_cost` e' la stima grezza (output di `_estimate_llm_cost_eur`). Sotto o
+    pari alla soglia gratuita il valore resta invariato (il job e' free); sopra
+    la soglia (quindi a pagamento) viene alzato ad almeno LLM_MIN_COST_EUR.
+
+    La funzione preserva il lato della soglia: un valore free resta free, un
+    valore a pagamento resta a pagamento. Cosi' i confronti `> LLM_FREE_THRESHOLD_EUR`
+    a valle continuano a funzionare identici sia sull'input grezzo che sull'output.
+    """
+    if raw_cost <= LLM_FREE_THRESHOLD_EUR:
+        return round(raw_cost, 2)
+    return round(max(raw_cost, LLM_MIN_COST_EUR), 2)
+
+
 def _estimate_translation_cost_eur(char_count, optimize=False):
     """Stima costo traduzione (+ eventuale ottimizzazione AI integrata).
 
@@ -147,12 +173,15 @@ def _translation_provider_cost_eur(prompt_tokens, completion_tokens):
 def _optimization_provider_cost_eur(prompt_tokens, completion_tokens):
     """Costo LLM stimato (EUR) dai token reali di un'ottimizzazione AI del testo.
 
-    costo = in/1M × LLM_COST_IN + out/1M × LLM_COST_OUT. Speculare a
-    _translation_provider_cost_eur ma con le tariffe dell'ottimizzazione.
+    Parametro UNICO blended: costo_usd = (prompt + completion)/1M × LLM_COST_USD_PER_MTOK,
+    poi convertito in EUR con USD_EUR_RATE. Il valore medio in USD assorbe il mix
+    input/output e i token in cache, evitando di fatturare tutti i prompt token al
+    prezzo cache-miss. La firma resta (prompt, completion) per compatibilita' con i
+    chiamanti e gli audit.
     """
-    ci = (prompt_tokens or 0) / 1_000_000.0 * LLM_COST_IN_EUR_PER_MTOK
-    co = (completion_tokens or 0) / 1_000_000.0 * LLM_COST_OUT_EUR_PER_MTOK
-    return round(ci + co, 6)
+    total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+    cost_usd = total_tokens / 1_000_000.0 * LLM_COST_USD_PER_MTOK
+    return round(cost_usd * USD_EUR_RATE, 6)
 
 
 # ---------------------------------------------------------------------------

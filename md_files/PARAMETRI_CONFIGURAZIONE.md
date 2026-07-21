@@ -32,8 +32,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 106 |
 | `ABM_LLM_RATE_EUR_PER_MCHAR` | `1.10` (EUR per 1M char input, include markup + fee PayPal) | `audiobook_app.py` | 108 |
 | `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 109 |
-| `ABM_LLM_COST_IN_EUR_PER_MTOK` | `0.26` (Costo provider LLM per l'ottimizzazione AI del testo, EUR per 1M token input — base costo audit /admin/audit-premium) | `payment.py` | 62–63 |
-| `ABM_LLM_COST_OUT_EUR_PER_MTOK` | `1.04` (Costo provider LLM per l'ottimizzazione AI del testo, EUR per 1M token output — base costo audit /admin/audit-premium) | `payment.py` | 64–65 |
+| `ABM_LLM_MIN_COST_EUR` | `1.0` (floor EUR sull'importo dovuto per l'ottimizzazione AI **standalone**, applicato solo quando la stima supera `ABM_LLM_FREE_THRESHOLD_EUR`; sotto soglia resta gratis; non si applica alla quota LLM dei pagamenti combinati con voci PREMIUM) | `payment.py` | 58–62 |
+| `ABM_LLM_COST_USD_PER_MTOK` | `0.18` (Costo provider LLM per l'ottimizzazione AI del testo — parametro **unico blended in USD** per 1M token TOTALI prompt+completion; assorbe mix input/output e token in cache; convertito in EUR con `ABM_GEMINI_USD_EUR_RATE`; base costo audit /admin/audit-premium) | `payment.py` | 68–69 |
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
@@ -143,6 +143,7 @@ Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREV
 **Funzionamento pagamenti:**
 
 - **Sotto soglia** (costo stimato ≤ `ABM_LLM_FREE_THRESHOLD_EUR`): l'ottimizzazione AI è **gratuita** e liberamente testabile (nessuna richiesta di pagamento).
+- **Floor minimo** (`ABM_LLM_MIN_COST_EUR`, default €1): quando la stima supera la soglia gratuita, l'importo dovuto per l'ottimizzazione **standalone** è alzato ad almeno il minimo (`due = max(stima, ABM_LLM_MIN_COST_EUR)`). Il floor preserva il lato della soglia (un job free resta free) e vale per stima UI, ordine PayPal e consumo voucher. Non si applica alla quota LLM dei pagamenti combinati con voci PREMIUM. Implementazione: `payment._llm_apply_min_cost()`.
 - **Sopra soglia**: l'utente deve utilizzare un buono (voucher) ottenuto tramite donazione al progetto. Il pagamento diretto PayPal nel frontend è stato disabilitato (v3.7.0) ma i route backend PayPal sono mantenuti per eventuale riattivazione futura.
 - **Flusso PayPal (backend, disabilitato nel frontend)**: ordine creato con `intent=CAPTURE`, `currency_code=EUR`, `shipping_preference=NO_SHIPPING`, `user_action=PAY_NOW`, `Prefer: return=representation`; OAuth2 client_credentials con cache ~8h; capture idempotente (re-capture dello stesso `order_id` ritorna lo stesso `payment_token`).
 - **Voucher refund (errore/cancel)**: se l'ottimizzazione fallisce o viene annullata dopo un pagamento con voucher, l'importo viene **ri-accreditato integralmente** sul voucher originale tramite `_voucher_refund()`. Se il pagamento era PayPal, viene emesso un nuovo buono pari all'importo pagato + `ABM_VOUCHER_BONUS_PERCENT`%.

@@ -3375,7 +3375,12 @@ def _write_optimization_audit(job_id, job, *, language, chars_total, outcome):
         else:
             payment_token_short = ""
 
-        should_have_been = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+        _shb_raw = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+        # Standalone (llm_eur is None): applica il floor minimo parametrico al
+        # prezzo atteso, coerente con quanto effettivamente incassato. Combinato:
+        # la quota LLM non ha floor, resta la stima grezza.
+        should_have_been = (_shb_raw if llm_eur is not None
+                            else payment._llm_apply_min_cost(_shb_raw))
         delta_eur = round(should_have_been - charged, 4)
 
         rec = {

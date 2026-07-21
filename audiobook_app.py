@@ -180,7 +180,7 @@ from payment import (
     PAYPAL_CLIENT_ID, PAYPAL_MODE, PAYPAL_API_BASE,
     LLM_RATE_EUR_PER_MCHAR, LLM_FREE_THRESHOLD_EUR,
     VOUCHER_EXPIRY_DAYS, VOUCHER_BONUS_PERCENT,
-    _paypal_available, _estimate_llm_cost_eur,
+    _paypal_available, _estimate_llm_cost_eur, _llm_apply_min_cost,
     _paypal_get_access_token, _paypal_create_order,
     _voucher_rl_check, _voucher_rl_record_result,
     _save_payments, _load_payments,
@@ -6130,7 +6130,12 @@ def _synth_running_optimization_audit_records():
                 if charged <= 0:
                     charged = float(job.get("payment_amount_eur", 0) or 0)
                 combined_total = round(charged, 4)
-            should_have_been = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+            _shb_raw = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
+            # Standalone (llm_eur is None): applica il floor minimo al prezzo atteso
+            # cosi' il delta rispetto all'importo effettivamente incassato e' coerente.
+            # Combinato: la quota LLM non ha floor, resta la stima grezza.
+            should_have_been = (_shb_raw if llm_eur is not None
+                                else payment._llm_apply_min_cost(_shb_raw))
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
@@ -10188,7 +10193,9 @@ def api_optimize_estimate(job_id):
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index in selected_indices and ch.index not in already)
     else:
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
-    cost = _estimate_llm_cost_eur(total_chars)
+    # Floor minimo parametrico (ABM_LLM_MIN_COST_EUR): sopra la soglia gratuita
+    # l'importo dovuto e' alzato ad almeno il minimo. Sotto soglia resta free.
+    cost = _llm_apply_min_cost(_estimate_llm_cost_eur(total_chars))
 
     # Pre-validate the output-size cap against the full selected set so the
     # user is informed before being asked to pay. La voce influisce sul cap
@@ -10216,6 +10223,7 @@ def api_optimize_estimate(job_id):
         "chars": total_chars, "cost_eur": cost,
         "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
         "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "min_cost_eur": payment.LLM_MIN_COST_EUR,
         "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
         "optimized_chapters": list(already),
     })
@@ -10238,7 +10246,9 @@ def api_paypal_create_order():
                           if ch.index in selected_chapters and ch.index not in already)
     else:
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
-    cost = _estimate_llm_cost_eur(total_chars)
+    # Floor minimo parametrico coerente con /api/optimize_estimate e /api/optimize:
+    # l'importo addebitato non scende mai sotto ABM_LLM_MIN_COST_EUR quando si paga.
+    cost = _llm_apply_min_cost(_estimate_llm_cost_eur(total_chars))
     if cost <= LLM_FREE_THRESHOLD_EUR:
         return jsonify({"error": "Payment not required for this job"}), 400
 
@@ -10910,13 +10920,17 @@ def api_optimize():
                               and speechify_tts.is_available())
     if (estimated_cost > LLM_FREE_THRESHOLD_EUR
             and not _is_combined_gemini and not _is_combined_speechify):
+        # Importo effettivo dovuto per l'ottimizzazione standalone: floor minimo
+        # parametrico (ABM_LLM_MIN_COST_EUR). `estimated_cost` resta grezzo perche'
+        # il ramo combinato piu' sotto lo somma alla quota TTS senza floor.
+        _due = _llm_apply_min_cost(estimated_cost)
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
             _release_opt_claim()
             return jsonify({
                 "error": "Payment required for this optimization.",
                 "error_code": "payment_required",
-                "estimated_cost_eur": estimated_cost,
+                "estimated_cost_eur": _due,
                 "chars": total_chars,
             }), 402
         # Validate payment_token (PayPal order_id or voucher code).
@@ -10928,7 +10942,7 @@ def api_optimize():
             _claimed_pay = None
             with payment._payments_lock:
                 pay = payment._payments.get(payment_token)
-                if pay and not pay.get("used") and pay.get("amount_eur", 0) >= estimated_cost:
+                if pay and not pay.get("used") and pay.get("amount_eur", 0) >= _due:
                     pay["used"] = True
                     pay["used_at"] = time.time()
                     pay["used_job_id"] = job_id
@@ -10943,9 +10957,9 @@ def api_optimize():
         elif payment_token in payment._vouchers:
             v = payment._vouchers[payment_token]
             remaining = _voucher_remaining(v)
-            if v.get("expires_at", 0) > time.time() and remaining >= estimated_cost - 0.01:
+            if v.get("expires_at", 0) > time.time() and remaining >= _due - 0.01:
                 try:
-                    new_remaining = _voucher_consume(payment_token, estimated_cost, job_id=job_id)
+                    new_remaining = _voucher_consume(payment_token, _due, job_id=job_id)
                 except ValueError as _ve:
                     _release_opt_claim()
                     return jsonify({
@@ -10955,7 +10969,7 @@ def api_optimize():
                 job["payment_token"] = payment_token
                 job["payment_type"] = "voucher"
                 job["payment_email"] = v.get("email", "")
-                job["payment_amount_eur"] = round(float(estimated_cost), 2)
+                job["payment_amount_eur"] = round(float(_due), 2)
                 job["voucher_remaining_after"] = new_remaining
                 valid = True
         if not valid:
