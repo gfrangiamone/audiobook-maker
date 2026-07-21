@@ -2557,6 +2557,8 @@ _APP_CERT_FINGERPRINTS = [
     # App signing key di Google (Play Console) — copre le installazioni da Play
     "6A:77:8A:0E:75:60:E3:22:BB:AE:75:2C:03:1F:E4:C7:59:16:25:69:01:4B:C2:F6:89:75:46:BF:95:96:09:BB",
 ]
+# iOS: appID = <Apple Team ID>.<Bundle ID>, usato nell'apple-app-site-association.
+_IOS_APP_ID = "DXD84TM2T3.it.abm.audiobookMakerMobile"
 # URL store da env (omogenei): se assenti, il bottone è mostrato ma disabilitato.
 # Valore Play da impostare in ABM_PLAY_STORE_URL al rilascio: https://play.google.com/store/apps/details?id=it.nextsw.audiobook_maker_mobile
 _PLAY_STORE_URL = (os.environ.get("ABM_PLAY_STORE_URL", "") or "").strip()
@@ -2650,6 +2652,25 @@ def assetlinks_json():
             "sha256_cert_fingerprints": _APP_CERT_FINGERPRINTS,
         },
     }]
+    return app.response_class(json.dumps(data), mimetype="application/json")
+
+
+@app.route("/.well-known/apple-app-site-association")
+def apple_app_site_association():
+    # Apple App Site Association: verifica il dominio per gli Universal Links iOS,
+    # così i link https://<dominio>/t/<token> (QR trasferimento) e /s/<token>
+    # (condivisione file) aprono direttamente l'app invece del browser.
+    # Requisiti Apple: nessuna estensione nel path, Content-Type application/json,
+    # nessun redirect (il file deve rispondere 200 direttamente).
+    data = {
+        "applinks": {
+            "apps": [],
+            "details": [{
+                "appID": _IOS_APP_ID,
+                "paths": ["/t/*", "/s/*"],
+            }],
+        }
+    }
     return app.response_class(json.dumps(data), mimetype="application/json")
 
 
