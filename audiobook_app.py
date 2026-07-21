@@ -122,6 +122,7 @@ import email_service
 import push_service
 import metrics_store
 import privacy_content
+import support_content
 import payment
 import generation_engine
 import translation_core
@@ -2749,6 +2750,17 @@ def privacy_page():
         al = (request.headers.get("Accept-Language") or "").strip().lower()
         lang = "en" if al.startswith("en") else "it"
     return privacy_content.render_privacy_page(lang, BASE_URL)
+
+
+@app.route("/support")
+def support_page():
+    # Pagina di assistenza con FAQ sull'app. IT default, EN via ?lang=en o
+    # Accept-Language. Pagina statica self-contained (come /privacy).
+    lang = (request.args.get("lang") or "").strip().lower()[:2]
+    if lang not in ("it", "en"):
+        al = (request.headers.get("Accept-Language") or "").strip().lower()
+        lang = "en" if al.startswith("en") else "it"
+    return support_content.render_support_page(lang, BASE_URL)
 
 
 @app.route("/robots.txt")
