@@ -647,14 +647,20 @@ def clean_text_for_tts(text: str, expand_abbr: bool = True) -> str:
                 flags=re.IGNORECASE
             )
 
-    # 5. Gestione numeri romani per capitoli
+    # 5. Gestione numeri romani per capitoli: normalizza la spaziatura fra
+    # il marcatore e il numerale, lasciandoli nell'ordine di lettura.
+    # NB storico: questa funzione prendeva m.group(1) (il PREFISSO) credendolo
+    # il numerale e restituiva i due invertiti; il match, case-insensitive
+    # anche sul numerale, scambiava per numero romano la "i" iniziale di una
+    # parola comune. "capitolo intendo" diventava "i capitolontendo" e
+    # "Capitolo IV" diventava "IV Capitolo": il testo TTS di qualunque libro
+    # italiano contenente "capitolo i..." o "parte i..." usciva corrotto.
+    # Il \b finale impedisce che il numerale mangi l'inizio di una parola.
     def roman_to_readable(m):
-        roman = m.group(1)
-        prefix = m.group(0).replace(roman, "").strip()
-        return f"{prefix} {roman}"
+        return f"{m.group(1)} {m.group(2)}"
 
     text = re.sub(
-        r"(Capitolo|Chapter|Cap\.?|Parte|Part)\s+((?=[MDCLXVI])[MDCLXVI]+)",
+        r"(Capitolo|Chapter|Cap\.?|Parte|Part)\s+((?=[MDCLXVI])[MDCLXVI]+)\b",
         roman_to_readable,
         text,
         flags=re.IGNORECASE,
