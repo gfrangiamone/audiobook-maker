@@ -750,14 +750,15 @@ def detect_chapter_title(html_content: str) -> Optional[str]:
     for tag_name in ["h1", "h2", "h3"]:
         tag = soup.find(tag_name)
         if tag:
-            title = tag.get_text(strip=True)
+            # sep " ": titoli spezzati in <span> adiacenti (export Word)
+            title = tag.get_text(" ", strip=True)
             if title and len(title) < 200:
                 return title
 
     # Cerca titolo in <title>
     title_tag = soup.find("title")
     if title_tag:
-        title = title_tag.get_text(strip=True)
+        title = title_tag.get_text(" ", strip=True)
         if title and len(title) < 200 and title.lower() not in ("", "untitled", "unknown"):
             return title
 
@@ -1170,19 +1171,25 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     sec_title, sec_html = sections[i_sec]
                     sec_text_raw = html_to_text(sec_html or "").strip()
 
-                    # Rileva pattern "Capitolo/Chapter N" senza contenuto
-                    is_chapter_number = bool(re.match(
-                        r"^(Capitolo|Chapter|Cap\.?|Parte|Part|Sezione|Section)"
-                        r"\s*(primo|secondo|terzo|quarto|quinto|sesto|settimo|"
-                        r"ottavo|nono|decimo|\d+|[IVXLCDM]+)\s*$",
-                        str(sec_title or "").strip(), re.IGNORECASE
-                    ))
+                    # Rileva un titolo che è solo un marcatore di capitolo/parte
+                    # senza corpo ("Chapitre 1", "Capitolo primo", "Première
+                    # partie"…). Usa il rilevatore multilingua condiviso
+                    # (is_chapter_marker_line) invece di una regex IT/EN ristretta,
+                    # così gli export in francese/tedesco/spagnolo/… vengono uniti
+                    # al titolo reale del capitolo che segue.
+                    is_chapter_number = is_chapter_marker_line(str(sec_title or ""))
 
                     if is_chapter_number and len(sec_text_raw) < 50:
                         # Unisci con la sezione successiva (se esiste)
                         if i_sec + 1 < len(sections):
                             next_title, next_html = sections[i_sec + 1]
-                            combined_title = f"{sec_title} — {next_title}"
+                            # Separatore ". ": un punto dopo "Chapitre N" impone
+                            # al TTS una pausa naturale prima del sottotitolo,
+                            # invece del trattino lungo che verrebbe letto di
+                            # seguito ("Chapitre 1. Victoria…" non "Chapitre 1 —
+                            # Victoria…").
+                            sep = ". " if not re.search(r"[.!?…]$", sec_title.strip()) else " "
+                            combined_title = f"{sec_title.strip()}{sep}{next_title}"
                             # Unisci anche il contenuto HTML
                             combined_html = sec_html.replace("</body>", "") + next_html.replace("<body>", "")
                             merged_sections.append((combined_title, combined_html))
@@ -1587,7 +1594,11 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
     if all_headings:
         heading_opts = []  # parallel list of (heading_el, valid_toc_indices)
         for heading in all_headings:
-            text = heading.get_text(strip=True)
+            # Separatore " ": gli export Word/InDesign spezzano un titolo in
+            # <span> adiacenti ("Chapitre "+"1"); get_text(strip=True) li
+            # concatenerebbe senza spazio ("Chapitre1") facendo fallire il
+            # match con la voce TOC "Chapitre 1".
+            text = heading.get_text(" ", strip=True)
             exact, fuzzy = find_match_indices(text)
             opts = exact if exact else fuzzy
             if opts:
@@ -1636,7 +1647,7 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
         para_opts_tier1 = []
         para_opts_tier2 = []
         for tag in body.find_all(["p", "div"]):
-            text = tag.get_text(strip=True)
+            text = tag.get_text(" ", strip=True)  # sep " ": vedi Step 1
             if not text or len(text) > 300:
                 continue  # i titoli non sono blocchi di prosa
             # Escludi container con figli block-level (es. <div> wrapper)
@@ -1695,7 +1706,7 @@ def _split_html_by_headings(html_content: str, toc_titles: list[str]) -> list[tu
             level_headings = [h for h in all_headings if h.name == most_common_level]
             if len(level_headings) >= 2:
                 for i, heading in enumerate(level_headings):
-                    text = heading.get_text(strip=True)
+                    text = heading.get_text(" ", strip=True)  # sep " ": vedi Step 1
                     chapter_headings.append({
                         "element": heading,
                         "toc_index": i,
