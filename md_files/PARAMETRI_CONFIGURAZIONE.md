@@ -452,6 +452,9 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `FOOTNOTE_SUPERSCRIPT_RE` | Regex compilata per footnote nel testo | `pdf_to_tts.py` | 180 |
 | `PAGE_NUMBER_RE` | Regex compilata: `r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$"` | `pdf_to_tts.py` | 185 |
 | `MIN_REPEAT_FOR_HEADER` | `3` (minimo ripetizioni per header/footer statistico) | `pdf_to_tts.py` | 188 |
+| `MIN_TITLE_STRATEGY_COVERAGE` | `0.95` (copertura minima: una strategia di riconoscimento titoli che scarta >5% del testo estratto viene ignorata, si passa alla successiva) | `pdf_to_tts.py` | 200 |
+| `CHAPTER_DIVIDER_RE` / `is_chapter_marker_line()` | Regex multilingua per marcatori di suddivisione su riga isolata ("Chapter 4", "Capitolo III"/"Parte prima", "Première partie", "Erstes Kapitel", "Глава 1", "अध्याय १", "第2章"…), keyword+numero e numero+keyword, cardinali/ordinali; lingue allineate ai prompt in `prompt_opt_AI/` (de/en/es/fr/hi/it/pt/ru/zh). **Definito in `epub_to_tts.py`** (modulo base) e riusato da `pdf_to_tts.py` (alias `_line_is_chapter_marker`) come terzo segnale titolo oltre a font-size e grassetto | `epub_to_tts.py` | 883 / 886 |
+| Soglia ri-segmentazione EPUB | Costante inline `4`: se il parsing EPUB via TOC produce **< 4** capitoli di contenuto (escluse note/apparato), si ri-segmenta il testo per marcatori (`_resegment_chapters_by_markers`); con ≥ 4 ci si affida al TOC senza suddivisioni ulteriori. Non perde testo (sostituisce solo se produce più capitoli) | `epub_to_tts.py` | 1345 |
 
 ---
 

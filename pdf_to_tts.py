@@ -56,6 +56,7 @@ try:
     from epub_to_tts import (
         BookInfo, Chapter, clean_text_for_tts, is_content_chapter,
         _title_is_non_content,
+        is_chapter_marker_line as _is_chapter_marker_line,
     )
 except ImportError:
     # Fallback: definisci localmente se epub_to_tts non è disponibile
@@ -108,6 +109,21 @@ except ImportError:
             if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
                 return True
         return False
+
+    _FALLBACK_MARKER_RE = re.compile(
+        r"^\s*(?:chapter|chapitre|capitolo|cap[íi]tulo|kapitel|part|partie|parte"
+        r"|teil|глава|часть|अध्याय)\s+(?:\d{1,3}|[ivxlcdm]{1,7})\b",
+        re.IGNORECASE | re.UNICODE,
+    )
+
+    def _is_chapter_marker_line(text):
+        """Fallback minimale: keyword + numero su riga breve isolata."""
+        if not text:
+            return False
+        text = text.strip()
+        if len(text) >= 80 or len(text.split()) > 12:
+            return False
+        return bool(_FALLBACK_MARKER_RE.match(text))
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -190,6 +206,20 @@ PAGE_NUMBER_RE = re.compile(r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$")
 
 # Pattern per header/footer ripetuti (rilevati statisticamente)
 MIN_REPEAT_FOR_HEADER = 3  # minimo ripetizioni per considerare una riga header/footer
+
+# Copertura minima di testo per accettare una strategia di riconoscimento titoli
+# (outline, heading font-size, indice visuale). Se una di queste strategie cattura
+# meno di questa frazione del testo complessivo estratto dal documento — cioè
+# scarta più del 5% — la si considera inaffidabile (tipicamente un titolo non
+# riconosciuto fa collassare intere sezioni in un unico capitolo, perdendo tutto
+# il testo che le precede) e si passa alla strategia successiva.
+MIN_TITLE_STRATEGY_COVERAGE = 0.95
+
+# ── Rilevamento suddivisioni per pattern testuale ──
+# Definito una sola volta in epub_to_tts (modulo base condiviso) per evitare
+# divergenze fra parser PDF ed EPUB. Alias locale `_line_is_chapter_marker`
+# mantenuto per compatibilità con il codice e i test esistenti.
+_line_is_chapter_marker = _is_chapter_marker_line
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -527,15 +557,65 @@ def _detect_chapters_from_outline(doc: fitz.Document, outline: list,
     return chapters
 
 
+def _span_is_bold(span: dict) -> bool:
+    """True se lo span è in grassetto (flag bold di PyMuPDF o nome del font)."""
+    if span.get("flags", 0) & 16:  # bit 4 = bold in PyMuPDF
+        return True
+    font = span.get("font", "").lower()
+    return any(k in font for k in ("bold", "black", "heavy"))
+
+
+def _adaptive_heading_threshold(raw_lines: list, body_font_size: float) -> float:
+    """Determina in modo adattivo la soglia di font-size per i titoli.
+
+    Un multiplo fisso del body (es. 1.2×) fallisce quando i titoli sono solo
+    di poco più grandi del corpo: caso reale osservato con body 11.8pt e titoli
+    a 13.7pt (1.16×), sotto la soglia 1.2× → capitoli non riconosciuti. Qui si
+    cerca il più piccolo livello di font *ricorrente* su righe brevi nettamente
+    sopra il body e si pone la soglia a metà strada tra body e quel livello.
+
+    `raw_lines` è una lista di (max_size, is_all_bold, line_text).
+    """
+    short_sizes = Counter()
+    for max_size, _is_bold, text in raw_lines:
+        if len(text) < 150 and len(text.split()) < 20:
+            short_sizes[round(max_size, 1)] += 1
+
+    recurring = sorted(
+        s for s, c in short_sizes.items()
+        if s >= body_font_size * 1.10 and c >= 2
+    )
+    if recurring:
+        return (body_font_size + recurring[0]) / 2
+
+    return body_font_size * 1.2  # fallback: nessun livello-titolo distinto
+
+
 def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
                                     repeated_headers: set) -> list:
-    """Fallback: rileva capitoli dal font size (titoli = font più grande del body).
+    """Fallback: rileva capitoli dallo stile del titolo (font size, grassetto o
+    pattern testuale).
 
-    Cerca righe con font significativamente più grande del body text come
-    delimitatori di capitolo.
+    Una riga è un titolo/delimitatore se soddisfa almeno uno di questi segnali:
+      1. dimensione del font sopra la soglia adattiva (`_adaptive_heading_threshold`);
+      2. riga interamente in grassetto (indizio utile quando il titolo ha la
+         stessa dimensione del corpo, es. sezioni di coda "Anmerkungen");
+      3. pattern testuale di marcatore di suddivisione (`_line_is_chapter_marker`:
+         "Chapter 4", "Capitolo III", "Kapitel 5", "第2章"…), necessario quando il
+         titolo è tipograficamente identico al corpo e l'unico segnale è il testo.
+
+    Grassetto e pattern richiedono la riga più corta per non confondere enfasi o
+    inizi di frase nel corpo del testo con un titolo.
+
+    La rilevazione lavora a livello di **riga**, non di blocco: molti PDF
+    raggruppano titolo e primo paragrafo nello stesso blocco (es. la riga
+    "Part I" a 13.7pt seguita dal body a 11.8pt nello stesso block). Valutare
+    il font a livello di blocco mascherava il titolo dietro la lunghezza del
+    testo di corpo, facendo fallire il riconoscimento. Analizzando ogni riga
+    singolarmente il titolo resta distinguibile anche se condivide il blocco.
     """
-    heading_threshold = body_font_size * 1.2  # 20% più grande del body
-    all_text_parts = []  # (page_num, text, is_heading, heading_text)
+    # ── Pass unico: raccogli (max_size, is_all_bold, testo) per ogni riga ──
+    raw_lines = []
 
     for page_num in range(len(doc)):
         page = doc[page_num]
@@ -544,51 +624,90 @@ def _detect_chapters_from_headings(doc: fitz.Document, body_font_size: float,
         text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
 
         for block in text_blocks:
-            block_parts = []
-            max_size = 0
-
             for line in block.get("lines", []):
+                line_parts = []
+                max_size = 0
+                bold_spans = 0
+                total_spans = 0
                 for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    size = span.get("size", 0)
-                    flags = span.get("flags", 0)
-                    if flags & 1:  # superscript
+                    if span.get("flags", 0) & 1:  # superscript
                         continue
-                    block_parts.append(text)
+                    text = span.get("text", "")
+                    line_parts.append(text)
+                    # La dimensione considera anche gli span di soli spazi: molti
+                    # PDF codificano l'altezza-riga del titolo in uno span-spazio
+                    # a font grande accanto al testo visibile reso più piccolo
+                    # (es. divisori di capitolo "XXXX" 11.5pt + " " 15.4pt). Senza
+                    # includerli il titolo non verrebbe riconosciuto.
+                    size = span.get("size", 0)
                     if size > max_size:
                         max_size = size
+                    if not text.strip():
+                        continue  # spazi: non contano per il grassetto
+                    total_spans += 1
+                    if _span_is_bold(span):
+                        bold_spans += 1
 
-            block_text = " ".join(block_parts).strip()
-            if not block_text:
-                continue
+                line_text = "".join(line_parts).strip()
+                if not line_text:
+                    continue
 
-            # Un heading candidato: font grande, testo breve, possibilmente bold
-            is_heading = (
-                max_size >= heading_threshold
-                and len(block_text) < 150
-                and len(block_text.split()) < 20
-            )
+                is_all_bold = total_spans > 0 and bold_spans == total_spans
+                raw_lines.append((max_size, is_all_bold, line_text))
 
-            all_text_parts.append((page_num, block_text, is_heading, max_size))
-
-    if not all_text_parts:
+    if not raw_lines:
         return []
 
-    # Trova gli heading e segmenta
-    heading_indices = [i for i, (_, _, is_h, _) in enumerate(all_text_parts) if is_h]
+    heading_threshold = _adaptive_heading_threshold(raw_lines, body_font_size)
 
-    if not heading_indices:
+    # ── Classifica ogni riga come heading o contenuto ──
+    lines_seq = []
+    for max_size, is_all_bold, line_text in raw_lines:
+        words = len(line_text.split())
+        short = len(line_text) < 150 and words < 20
+        by_size = short and max_size >= heading_threshold
+        # Grassetto: vincoli più stretti (riga molto corta, dimensione >= body)
+        # per evitare falsi positivi da enfasi in linea nel corpo del testo.
+        by_bold = (
+            is_all_bold
+            and max_size >= body_font_size * 0.98
+            and len(line_text) < 60
+            and words <= 8
+        )
+        # Pattern testuale: cattura i marcatori anche a dimensione-corpo.
+        by_pattern = _line_is_chapter_marker(line_text)
+        lines_seq.append((by_size or by_bold or by_pattern, line_text))
+
+    if not any(is_h for is_h, _ in lines_seq):
         return []
 
+    n = len(lines_seq)
     chapters = []
-    for idx, h_idx in enumerate(heading_indices):
-        title = all_text_parts[h_idx][1]
-        # Raccogli testo fino al prossimo heading
-        end_idx = heading_indices[idx + 1] if idx + 1 < len(heading_indices) else len(all_text_parts)
+
+    # Testo che precede il primo heading: preservato come capitolo iniziale
+    # (senza titolo) per non perdere contenuto quando il documento inizia con
+    # del testo prima del primo titolo riconosciuto.
+    first_heading = next(i for i, (h, _) in enumerate(lines_seq) if h)
+    if first_heading > 0:
+        pre_text = "\n\n".join(t for _, t in lines_seq[:first_heading])
+        if pre_text.strip():
+            chapters.append(("", pre_text))
+
+    # Segmenta: righe-heading consecutive → un unico titolo, poi le righe di
+    # contenuto fino al prossimo heading.
+    i = first_heading
+    while i < n:
+        title_parts = []
+        while i < n and lines_seq[i][0]:
+            title_parts.append(lines_seq[i][1])
+            i += 1
+        title = " ".join(title_parts).strip()
+
         content_parts = []
-        for j in range(h_idx + 1, end_idx):
-            _, text, _, _ = all_text_parts[j]
-            content_parts.append(text)
+        while i < n and not lines_seq[i][0]:
+            content_parts.append(lines_seq[i][1])
+            i += 1
+
         chapter_text = "\n\n".join(content_parts)
         if chapter_text.strip():
             chapters.append((title, chapter_text))
@@ -813,9 +932,12 @@ def _build_chapters_from_raw(raw_chapters: list, pdf_path: str) -> list:
             continue
 
         chapter_index += 1
+        # Fallback per capitoli senza titolo (es. testo che precede il primo
+        # heading riconosciuto): etichetta generica in inglese.
+        chapter_title = title.strip() or f"Chapter {chapter_index}"
         chapter = Chapter(
             index=chapter_index,
-            title=title.strip(),
+            title=chapter_title,
             text=cleaned.strip(),
             source_file=os.path.basename(pdf_path),
         )
@@ -890,10 +1012,10 @@ def parse_pdf(pdf_path: str) -> BookInfo:
         if raw:
             strategies.append(("outline", raw))
 
-    # Strategia 2: heading detection per font size
+    # Strategia 2: titoli per stile (font size / grassetto) o pattern testuale
     raw = _detect_chapters_from_headings(doc, body_font_size, repeated_headers)
     if raw:
-        strategies.append(("heading font-size", raw))
+        strategies.append(("titoli (font/grassetto/pattern)", raw))
 
     # Strategia 3: indice visuale
     raw = _detect_chapters_from_visual_toc(doc, body_font_size, repeated_headers)
@@ -908,7 +1030,23 @@ def parse_pdf(pdf_path: str) -> BookInfo:
     doc.close()
 
     # ── Prova ogni strategia in ordine ──
+    # `full_text` è il testo completo del documento (strategia "documento singolo")
+    # e funge da riferimento per la guardia di copertura: una strategia di
+    # riconoscimento titoli che ne cattura troppo poco sta perdendo contenuto.
+    full_text_chars = len(full_text.strip())
+
     for strategy_name, raw_chapters in strategies:
+        # Guardia di copertura: applicata solo alle strategie di riconoscimento
+        # titoli, NON al fallback "documento singolo" (che È il testo completo).
+        if strategy_name != "documento singolo" and full_text_chars > 0:
+            captured = sum(len(t or "") for _, t in raw_chapters)
+            coverage = captured / full_text_chars
+            if coverage < MIN_TITLE_STRATEGY_COVERAGE:
+                print(f"[pdf] Strategia '{strategy_name}' scarta "
+                      f"{100 * (1 - coverage):.0f}% del testo "
+                      f"(soglia max 5%): ignorata")
+                continue
+
         chapters = _build_chapters_from_raw(raw_chapters, pdf_path)
         if chapters:
             print(f"[pdf] Capitoli da {strategy_name}: {len(chapters)}")

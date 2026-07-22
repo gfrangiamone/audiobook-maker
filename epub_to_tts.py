@@ -807,6 +807,105 @@ def _derive_chapter_title(html_content: str) -> Optional[str]:
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════
+# RILEVATORE DI SUDDIVISIONI PER PATTERN TESTUALE (condiviso con pdf_to_tts)
+# ═══════════════════════════════════════════════════════════════════
+# Marcatori di capitolo/parte riconosciuti dal solo testo, su riga isolata.
+# Usato: (1) dal parsing PDF come terzo segnale-titolo (oltre a font-size e
+# grassetto); (2) dal parsing EPUB per ri-segmentare libri sotto-strutturati
+# (indice con <4 capitoli). Vive qui, nel modulo base, perché pdf_to_tts
+# importa da epub_to_tts (l'inverso creerebbe un import circolare).
+#
+# Copertura linguistica allineata (almeno) alle lingue con prompt di
+# ottimizzazione dedicato in prompt_opt_AI/ (de, en, es, fr, hi, it, pt, ru, zh).
+_DIVIDER_NUMBER = (
+    r"(?:\d{1,3}"                               # arabo: 1, 42
+    r"|[०-९]{1,3}"                              # devanagari (hi): १, ४२
+    r"|[ivxlcdm]{1,7}"                          # romano: I, IV, Xii
+    # cardinali inglesi (en: "Chapter One")
+    r"|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
+    r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty"
+    r"|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred"
+    # ordinali italiani (it: "Parte prima", "Capitolo terzo")
+    r"|prim[oa]|second[oa]|terz[oa]|quart[oa]|quint[oa]|sest[oa]|settim[oa]"
+    r"|ottav[oa]|non[oa]|decim[oa]|undicesim[oa]|dodicesim[oa]"
+    # ordinali francesi (fr: "Première partie")
+    r"|premi(?:er|ère)|deuxième|troisième|quatrième|cinquième|sixième"
+    r"|septième|huitième|neuvième|dixième|onzième|douzième"
+    # ordinali spagnoli/portoghesi (es/pt: "Capítulo primero", "Parte primeira")
+    r"|primer[oa]?|segund[oa]|tercer[oa]|cuart[oa]|sext[oa]|s[ée]ptim[oa]"
+    r"|octav[oa]|noven[oa]|d[ée]cim[oa]|primeir[oa]|terceir[oa]|s[ée]tim[oa]|oitav[oa]"
+    # ordinali tedeschi con declinazione (de: "Erstes Kapitel"→"Kapitel erste…")
+    r"|erste[nrs]?|zweite[nrs]?|dritte[nrs]?|vierte[nrs]?|fünfte[nrs]?"
+    r"|sechste[nrs]?|siebte[nrs]?|achte[nrs]?|neunte[nrs]?|zehnte[nrs]?"
+    # ordinali russi (ru: "Глава первая"; f./m.)
+    r"|перв(?:ая|ый)|втор(?:ая|ой)|треть(?:я|ий)|четв[её]рт(?:ая|ый)"
+    r"|пят(?:ая|ый)|шест(?:ая|ой)|седьм(?:ая|ой)|восьм(?:ая|ой)"
+    r"|девят(?:ая|ый)|десят(?:ая|ый)|одиннадцат(?:ая|ый)|двенадцат(?:ая|ый)"
+    # ordinali hindi (hi)
+    r"|प्रथम|पहल[ीा]|द्वितीय|दूसर[ीा]|तृतीय|तीसर[ीा]|चतुर्थ|चौथा)"
+)
+_DIVIDER_KEYWORD = (
+    r"chapter|chapitre|capitolo|cap[íi]tulo|kapitel"          # en/fr/it/es-pt/de
+    r"|part|partie|parte|teil|section|sezione|canto"          # parte/sezione
+    r"|book|livre|libro|livro|buch"                           # libro
+    r"|глава|часть|книга|том|раздел"                          # ru
+    r"|अध्याय|भाग|खण्ड|खंड"                                    # hi
+)
+_DIVIDER_STANDALONE = (
+    r"prologue|prologo|pr[óo]logo|vorwort"                    # prologo
+    r"|epilogue|epilogo|ep[íi]logo|nachwort"                  # epilogo
+    r"|preface|prefazione|pr[ée]face|pref[áa]cio|vorrede"     # prefazione
+    r"|introduction|introduzione|introducci[óo]n|introdu[çc][ãa]o|einleitung"  # introduzione
+    r"|conclusion|conclusione|conclusi[óo]n|conclus[ãa]o|schluss"              # conclusione
+    r"|пролог|эпилог|введение|заключение|предисловие|послесловие"              # ru
+    r"|प्रस्तावना|भूमिका|उपसंहार"                              # hi
+)
+# Fine-token: confine di parola \b OPPURE seguito da spazio/punteggiatura/fine.
+# Il solo \b fallisce dopo le grafie con segni combinanti (ordinali Devanagari
+# come "पहला" che finiscono con una matra), ma conserva il backtracking che
+# impedisce a "four" di matchare dentro "fourteen".
+_TOK_END = r"(?:\b|(?=[\s.,:;!?—–\-]|$))"
+_KW = r"(?:" + _DIVIDER_KEYWORD + r")"
+_NUM = _DIVIDER_NUMBER  # già racchiuso in (?:...)
+_CHAPTER_DIVIDER_PATTERN = (
+    r"^\s*(?:"
+    # keyword + numero: "Chapter 4", "Capitolo III", "Parte prima", "अध्याय पहला"
+    + _KW + r"\s+" + _NUM + _TOK_END
+    # numero + keyword: "Première partie", "Erstes Kapitel", "Prima parte"
+    + r"|" + _NUM + r"\s+" + _KW + _TOK_END
+    # niente \b dopo le parole standalone: fallisce sulle grafie con segni
+    # combinanti (Devanagari); la coda è comunque validata da islower()
+    + r"|(?:" + _DIVIDER_STANDALONE + r")"
+    + r"|第\s*[\d一二三四五六七八九十百千]+\s*[章部回節]"   # cinese: 第1章
+    + r")"
+)
+CHAPTER_DIVIDER_RE = re.compile(_CHAPTER_DIVIDER_PATTERN, re.IGNORECASE | re.UNICODE)
+
+
+def is_chapter_marker_line(text: str) -> bool:
+    """True se la riga è un marcatore di suddivisione (capitolo/parte/prologo…).
+
+    Richiede una riga *isolata* e breve, e che dopo il marcatore la riga finisca
+    oppure continui come un titolo (maiuscola o punteggiatura). Se dopo il
+    marcatore prosegue in minuscolo è una frase di corpo, non un titolo:
+    "Chapter four introduced a concept…" → NON è un marcatore, mentre
+    "Chapter Four" e "Chapter Three — The Hidden Path" lo sono.
+    """
+    if not text:
+        return False
+    text = text.strip()
+    if len(text) >= 80 or len(text.split()) > 12:
+        return False
+    m = CHAPTER_DIVIDER_RE.match(text)
+    if not m:
+        return False
+    rest = text[m.end():].lstrip()
+    # Riga esattamente uguale al marcatore, oppure titolo che segue (non
+    # inizia con lettera minuscola → non è la prosecuzione di una frase).
+    return not rest or not rest[0].islower()
+
+
 def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> bool:
     """
     Determina se un blocco di testo è un capitolo con contenuto narrativo reale.
@@ -902,6 +1001,78 @@ def _is_title_content(title: str) -> bool:
     dove l'intro può essere breve ma il marcatore strutturale è utile.
     """
     return not _title_is_non_content(title)
+
+
+def _resegment_chapters_by_markers(chapters: list) -> list:
+    """Ri-suddivide il testo dei capitoli usando i marcatori testuali di capitolo
+    ("Chapter 4", "Capitolo III", "Глава 1", "第2章"…) su riga isolata.
+
+    È il "riconoscimento automatico dei capitoli" del parsing EPUB, allineato a
+    quello PDF (stesso rilevatore `is_chapter_marker_line`). Va usato solo quando
+    l'indice dell'EPUB è sotto-strutturato (meno di 4 capitoli di contenuto).
+
+    Non perde testo: ogni riga confluisce in una sezione; i marcatori senza corpo
+    (es. "Part I" seguito da "Chapter One") vengono fusi nel titolo successivo.
+    Restituisce [] se non trova almeno 2 marcatori (niente da ri-segmentare).
+    """
+    # Concatena le righe di tutti i capitoli, con un confine tra loro.
+    lines = []
+    for ch in chapters:
+        lines.extend(ch.text.split("\n"))
+        lines.append("")
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    marker_pos = [i for i, ln in enumerate(lines) if is_chapter_marker_line(ln)]
+    if len(marker_pos) < 2:
+        return []
+
+    # Sezioni grezze: (titolo|None, corpo)
+    raw = []
+    if marker_pos[0] > 0:
+        pre = "\n".join(lines[:marker_pos[0]]).strip()
+        if pre:
+            raw.append((None, pre))
+    for k, mi in enumerate(marker_pos):
+        end = marker_pos[k + 1] if k + 1 < len(marker_pos) else len(lines)
+        title = lines[mi].strip()
+        body = "\n".join(lines[mi + 1:end]).strip()
+        raw.append((title, body))
+
+    # Fondi i marcatori senza corpo nel titolo della sezione successiva, così
+    # non restano capitoli vuoti (es. una riga "Parte prima" seguita subito da
+    # "Capitolo 1").
+    sections = []
+    prefix = None
+    for title, body in raw:
+        if not body:
+            prefix = f"{prefix} — {title}" if prefix else title
+            continue
+        if prefix:
+            title = f"{prefix} — {title}" if title else prefix
+            prefix = None
+        sections.append((title, body))
+
+    # Costruisci i capitoli. Il testo proviene da capitoli già validati come
+    # contenuto: non riapplichiamo il filtro length-based (perderebbe capitoli
+    # brevi legittimi), scartiamo solo l'apparato critico per titolo.
+    result = []
+    for title, body in sections:
+        text = body.strip()
+        if not text:
+            continue
+        if title and not _is_title_content(title):
+            continue
+        idx = len(result) + 1
+        # Titolo None = sezione che precede il primo marcatore: "Premessa",
+        # coerente con la fallback di _split_html_by_headings.
+        result.append(Chapter(
+            index=idx,
+            title=(title or "").strip() or "Premessa",
+            text=text,
+            source_file=chapters[0].source_file if chapters else "",
+        ))
+    return result
 
 
 def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
@@ -1163,6 +1334,18 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         )
         info.chapters.append(chapter)
         pending_toc_title = None
+
+    # ── Riconoscimento automatico capitoli (allineamento al parsing PDF) ──
+    # Se l'indice dell'EPUB codifica meno di 4 capitoli di contenuto (le note e
+    # l'apparato critico sono già stati esclusi sopra), il libro è
+    # sotto-strutturato: proviamo a suddividerlo per marcatori testuali di
+    # capitolo. Con >= 4 capitoli ci si affida al TOC dell'EPUB, senza
+    # introdurre suddivisioni ulteriori. Si sostituisce solo se la
+    # ri-segmentazione produce PIÙ capitoli (non perde mai testo).
+    if len(info.chapters) < 4:
+        resegmented = _resegment_chapters_by_markers(info.chapters)
+        if len(resegmented) > len(info.chapters):
+            info.chapters = resegmented
 
     # Totali
     info.total_words = sum(c.word_count for c in info.chapters)
