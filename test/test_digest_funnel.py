@@ -18,9 +18,17 @@ def test_funnel_block_html_no_provider():
 
 
 def test_privacy_text_updated():
+    """La privacy riflette la raccolta di metriche: traffico web misurato in
+    forma aggregata via Google Analytics solo previo consenso, e un segnale di
+    avvio dell'app a fini statistici (funnel, Task A8)."""
     import privacy_content as pc
     it = pc.render_privacy_page("it")
     en = pc.render_privacy_page("en")
-    assert "anonime e aggregate" in it
-    assert "anonymous, aggregate" in en
-    assert "non</strong> utilizza strumenti di analisi" not in it
+    # Metriche web in forma aggregata, previo consenso esplicito.
+    assert "in forma aggregata" in it
+    assert "previo tuo consenso" in it
+    assert "aggregate traffic" in en
+    assert "with your consent" in en
+    # Segnale di avvio app a fini statistici (funnel Task A8).
+    assert "segnale di avvio" in it
+    assert "app-open signal" in en

@@ -134,6 +134,52 @@ def _llm_apply_min_cost(raw_cost):
     return round(max(raw_cost, LLM_MIN_COST_EUR), 2)
 
 
+def llm_price_eur(char_count, *, is_combined=False):
+    """Source of truth UNICA del prezzo dell'OTTIMIZZAZIONE testo AI.
+
+    Consolida in un solo punto stima grezza + soglia gratuita + floor minimo,
+    cosi' stima combinata (`/api/combined_estimate`), stima standalone
+    (`/api/optimize_estimate`), ordine PayPal, consumo voucher, addebito e
+    audit non possono divergere (incidente: la stima combinata mostrava il
+    grezzo mentre l'addebito applicava il floor).
+
+    Ritorna un dict:
+      raw_eur           stima grezza (chars x LLM_RATE_EUR_PER_MCHAR / 1M)
+      due_eur           importo dovuto/mostrato all'utente
+      requires_payment  bool (True solo se standalone e sopra soglia)
+      floored           bool (True se il floor minimo ha alzato il prezzo)
+      free_threshold_eur, min_cost_eur, rate_eur_per_mchar
+
+    - is_combined=False (ottimizzazione STANDALONE, es. voce standard + AI):
+        raw <= LLM_FREE_THRESHOLD_EUR -> free, due = grezzo (nessun floor)
+        raw >  LLM_FREE_THRESHOLD_EUR -> due = max(raw, LLM_MIN_COST_EUR)
+      Il ramo standalone e' identico a `_llm_apply_min_cost(raw)` per
+      costruzione (stesse costanti), cosi' il consolidamento non cambia gli
+      importi gia' corretti.
+    - is_combined=True (quota LLM di un pagamento PREMIUM combinato): nessun
+      floor e nessuna soglia propria; due = grezzo. Il pagamento e' deciso dal
+      totale combinato (TTS premium + LLM) a monte.
+    """
+    raw = _estimate_llm_cost_eur(char_count)
+    if is_combined or raw <= LLM_FREE_THRESHOLD_EUR:
+        due = raw
+        requires = False
+        floored = False
+    else:
+        due = round(max(raw, LLM_MIN_COST_EUR), 2)
+        requires = True
+        floored = due > raw
+    return {
+        "raw_eur": raw,
+        "due_eur": due,
+        "requires_payment": requires,
+        "floored": floored,
+        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
+        "min_cost_eur": LLM_MIN_COST_EUR,
+        "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
+    }
+
+
 def _estimate_translation_cost_eur(char_count, optimize=False):
     """Stima costo traduzione (+ eventuale ottimizzazione AI integrata).
 

@@ -1,13 +1,19 @@
 """Test per POST /api/gemini_estimate."""
 import pytest
-from audiobook_app import app, jobs, _jobs_lock
+import audiobook_app
 from epub_to_tts import BookInfo, Chapter
+
+# NB: accesso a app/jobs/_jobs_lock via attributo a runtime, mai from-import:
+# altri test (test_translation_audit_write.py, test_cold_*.py) fanno
+# importlib.reload(generation_engine)/reload(audiobook_app) e ri-bindano
+# audiobook_app.jobs; un from-import a collection time resterebbe legato agli
+# oggetti pre-reload -> 404 "job not found" solo nella suite completa.
 
 
 @pytest.fixture
 def client():
-    app.config['TESTING'] = True
-    with app.test_client() as c:
+    audiobook_app.app.config['TESTING'] = True
+    with audiobook_app.app.test_client() as c:
         yield c
 
 
@@ -33,11 +39,11 @@ def job_with_text():
         total_chars=sum(c.char_count for c in chs),
         estimated_duration_minutes=1.0,
     )
-    with _jobs_lock:
-        jobs["testjob1"] = {"info": info, "status": "analyzed"}
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["testjob1"] = {"info": info, "status": "analyzed"}
     yield
-    with _jobs_lock:
-        jobs.pop("testjob1", None)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs.pop("testjob1", None)
 
 
 def test_gemini_estimate_returns_price_for_gemini_voice(client, job_with_text):

@@ -109,9 +109,11 @@ def test_llm_rate_respects_module_constant(client, jb, monkeypatch):
     paypal_create_order_gemini and assert it is accepted (no mismatch).
     A control test with a deliberately stale amount must 400.
     """
-    import audiobook_app
+    import payment
 
-    monkeypatch.setattr(audiobook_app, "LLM_RATE_EUR_PER_MCHAR", 5.50)
+    # Fonte canonica del rate LLM post-consolidamento: payment.llm_price_eur
+    # (usata sia da /api/combined_estimate sia da /api/paypal_create_order_gemini).
+    monkeypatch.setattr(payment, "LLM_RATE_EUR_PER_MCHAR", 5.50)
 
     payload_est = {
         "job_id": "pj1",

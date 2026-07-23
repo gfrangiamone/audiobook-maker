@@ -12,7 +12,7 @@ data/
 md_files/
 mockup/
 scripts/
-test/
+test/books/
 dist/
 build/
 backup/
@@ -57,3 +57,6 @@ voucher_admin.log
 
 .aider*
 .superpowers/
+
+# Script di test standalone con API key impostate a mano (mai committare)
+tts_kokoro_test.py

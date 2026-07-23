@@ -6130,12 +6130,13 @@ def _synth_running_optimization_audit_records():
                 if charged <= 0:
                     charged = float(job.get("payment_amount_eur", 0) or 0)
                 combined_total = round(charged, 4)
-            _shb_raw = float(payment._estimate_llm_cost_eur(chars_total) or 0.0)
-            # Standalone (llm_eur is None): applica il floor minimo al prezzo atteso
-            # cosi' il delta rispetto all'importo effettivamente incassato e' coerente.
-            # Combinato: la quota LLM non ha floor, resta la stima grezza.
-            should_have_been = (_shb_raw if llm_eur is not None
-                                else payment._llm_apply_min_cost(_shb_raw))
+            _lp_shb = payment.llm_price_eur(chars_total,
+                                            is_combined=(llm_eur is not None))
+            # Standalone (llm_eur is None): il floor minimo alza il prezzo atteso
+            # cosi' il delta rispetto all'incassato e' coerente. Combinato: la
+            # quota LLM non ha floor, resta la stima grezza. Fonte unica:
+            # payment.llm_price_eur.
+            should_have_been = _lp_shb["due_eur"]
             rec = {
                 "ts": job.get("started_at") or now_iso,
                 "job_id": job_id,
@@ -8663,7 +8664,9 @@ def api_generate():
         llm_eur_pre = 0.0
         if data.get("ai_opt_enabled"):
             chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
-            llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+            # Quota LLM combinata (nessun floor): fonte unica payment.llm_price_eur,
+            # coerente con /api/combined_estimate e /api/paypal_create_order_gemini.
+            llm_eur_pre = payment.llm_price_eur(chars_pre, is_combined=True)["due_eur"]
         total_eur_pre = round(gemini_eur_pre + llm_eur_pre, 2)
 
         # ----- Pre-flight budget guard (Google cost server-side) -----
@@ -8901,7 +8904,8 @@ def api_generate():
         llm_eur_pre = 0.0
         if data.get("ai_opt_enabled"):
             chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
-            llm_eur_pre = round((chars_pre / 1_000_000.0) * LLM_RATE_EUR_PER_MCHAR, 2)
+            # Quota LLM combinata (nessun floor): fonte unica payment.llm_price_eur.
+            llm_eur_pre = payment.llm_price_eur(chars_pre, is_combined=True)["due_eur"]
         total_eur_pre = round(speechify_eur_pre + llm_eur_pre, 2)
 
         threshold_pre = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
@@ -10195,7 +10199,10 @@ def api_optimize_estimate(job_id):
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
     # Floor minimo parametrico (ABM_LLM_MIN_COST_EUR): sopra la soglia gratuita
     # l'importo dovuto e' alzato ad almeno il minimo. Sotto soglia resta free.
-    cost = _llm_apply_min_cost(_estimate_llm_cost_eur(total_chars))
+    # Unica fonte prezzo: payment.llm_price_eur (coerente con stima combinata,
+    # ordine PayPal e addebito).
+    _lp = payment.llm_price_eur(total_chars)
+    cost = _lp["due_eur"]
 
     # Pre-validate the output-size cap against the full selected set so the
     # user is informed before being asked to pay. La voce influisce sul cap
@@ -10221,10 +10228,10 @@ def api_optimize_estimate(job_id):
 
     return jsonify({
         "chars": total_chars, "cost_eur": cost,
-        "requires_payment": cost > LLM_FREE_THRESHOLD_EUR,
-        "free_threshold_eur": LLM_FREE_THRESHOLD_EUR,
-        "min_cost_eur": payment.LLM_MIN_COST_EUR,
-        "rate_eur_per_mchar": LLM_RATE_EUR_PER_MCHAR,
+        "requires_payment": _lp["requires_payment"],
+        "free_threshold_eur": _lp["free_threshold_eur"],
+        "min_cost_eur": _lp["min_cost_eur"],
+        "rate_eur_per_mchar": _lp["rate_eur_per_mchar"],
         "optimized_chapters": list(already),
     })
 
@@ -10248,8 +10255,10 @@ def api_paypal_create_order():
         total_chars = sum(ch.char_count for ch in info.chapters if ch.index not in already)
     # Floor minimo parametrico coerente con /api/optimize_estimate e /api/optimize:
     # l'importo addebitato non scende mai sotto ABM_LLM_MIN_COST_EUR quando si paga.
-    cost = _llm_apply_min_cost(_estimate_llm_cost_eur(total_chars))
-    if cost <= LLM_FREE_THRESHOLD_EUR:
+    # Unica fonte prezzo: payment.llm_price_eur.
+    _lp = payment.llm_price_eur(total_chars)
+    cost = _lp["due_eur"]
+    if not _lp["requires_payment"]:
         return jsonify({"error": "Payment not required for this job"}), 400
 
     book_title = getattr(info, "title", "") or "Audiobook"
@@ -10564,13 +10573,24 @@ def api_combined_estimate():
             "margin_percent": est_spx["margin_percent"],
         }
 
+    # Quota ottimizzazione AI: sul ramo STANDALONE (voce standard, nessun
+    # PREMIUM) l'importo mostrato DEVE applicare il floor minimo, come fanno
+    # ordine PayPal/voucher/addebito. Sul ramo PREMIUM combinato la quota LLM
+    # resta grezza (si somma al TTS, il pagamento e' del totale). Unica fonte:
+    # payment.llm_price_eur (incidente stima 0,48 vs addebito 1,00).
+    _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
-        llm_rate = LLM_RATE_EUR_PER_MCHAR
-        llm_eur = round((chars / 1_000_000.0) * llm_rate, 2)
-        llm_breakdown = {"chars": chars, "rate_eur_per_mchar": llm_rate}
+        _lp = payment.llm_price_eur(chars, is_combined=_has_premium)
+        llm_eur = _lp["due_eur"]
+        llm_breakdown = {
+            "chars": chars,
+            "rate_eur_per_mchar": _lp["rate_eur_per_mchar"],
+            "raw_eur": _lp["raw_eur"],
+            "floored": _lp["floored"],
+        }
 
     total = round(gemini_eur + speechify_eur + llm_eur, 2)
     # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
@@ -10581,8 +10601,14 @@ def api_combined_estimate():
     # job bloccato a 0% (nessun payment token inviato). Vedi incidente 402 Speechify.
     if _is_speechify_voice(voice_id):
         threshold = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
-    else:
+    elif _is_gemini_voice(voice_id):
         threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
+    else:
+        # Ottimizzazione AI standalone (voce standard): la gratuita' e' governata
+        # dalla soglia LLM, non da quella PREMIUM, coerente con l'addebito reale
+        # (/api/optimize usa LLM_FREE_THRESHOLD_EUR). Il floor rende due binario
+        # (grezzo<=soglia oppure >=MIN_COST), quindi is_free riflette il pagamento.
+        threshold = LLM_FREE_THRESHOLD_EUR
 
     # Pre-flight RPD check ANTICIPATO (prima ancora di proporre il pagamento).
     # Cosi' l'utente che ha selezionato una voce PREMIUM saturata vede subito
@@ -10717,8 +10743,12 @@ def api_paypal_create_order_gemini():
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
-        rate = LLM_RATE_EUR_PER_MCHAR
-        llm_eur = round((chars / 1_000_000.0) * rate, 2)
+        # is_combined solo se e' presente una voce PREMIUM (allineato a
+        # /api/combined_estimate): con voce standard la quota LLM e' standalone
+        # e applica il floor. Fonte unica payment.llm_price_eur, cosi' il
+        # server-side amount check non produce falsi mismatch.
+        _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
+        llm_eur = payment.llm_price_eur(chars, is_combined=_has_premium)["due_eur"]
 
     server_total = round(gemini_eur + speechify_eur + llm_eur, 2)
 
@@ -10923,7 +10953,8 @@ def api_optimize():
         # Importo effettivo dovuto per l'ottimizzazione standalone: floor minimo
         # parametrico (ABM_LLM_MIN_COST_EUR). `estimated_cost` resta grezzo perche'
         # il ramo combinato piu' sotto lo somma alla quota TTS senza floor.
-        _due = _llm_apply_min_cost(estimated_cost)
+        # Unica fonte prezzo: payment.llm_price_eur (coerente con stima/ordine).
+        _due = payment.llm_price_eur(total_chars)["due_eur"]
         payment_token = (data.get("payment_token") or "").strip()
         if not payment_token:
             _release_opt_claim()
