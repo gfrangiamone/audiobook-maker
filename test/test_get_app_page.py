@@ -135,13 +135,42 @@ def test_ua_is_android_true_false():
 
 def test_android_intent_url_format():
     intent = audiobook_app._android_intent_url("https://audiobook-maker.com/t/abc123")
-    # bypassa la soppressione same-origin: intent:// con package + fallback https
+    # bypassa la soppressione same-origin: intent:// (scheme=abm) + package + fallback https
     assert intent.startswith("intent://audiobook-maker.com/t/abc123#Intent;")
-    assert "scheme=https;" in intent
+    assert f"scheme={audiobook_app._APP_SCHEME};" in intent
+    assert "scheme=abm;" in intent
     assert f"package={audiobook_app._APP_PACKAGE};" in intent
     # il fallback è l'https url-encoded, e termina con ;end
     assert "S.browser_fallback_url=https%3A%2F%2Faudiobook-maker.com%2Ft%2Fabc123" in intent
     assert intent.endswith(";end")
+
+
+def test_app_scheme_url_format():
+    url = audiobook_app._app_scheme_url("https://audiobook-maker.com/t/abc123")
+    assert url == "abm://audiobook-maker.com/t/abc123"
+
+
+def test_ua_is_ios_true_false():
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari"}):
+        assert audiobook_app._ua_is_ios() is True
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel) Chrome"}):
+        assert audiobook_app._ua_is_ios() is False
+
+
+def test_dl_page_mobile_ios_adds_open_in_app_scheme_link():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+        transfer_url="https://example.com/t/abc123",
+        is_mobile=True, is_android=False, is_ios=True,
+    )
+    # CTA principale = https (Universal Link); link secondario = custom scheme abm://
+    assert 'href="https://example.com/t/abc123"' in html
+    assert 'href="abm://example.com/t/abc123"' in html
+    assert "Apri nell" in html  # label "Apri nell'app"
+    assert "intent://" not in html
 
 
 def test_dl_page_mobile_android_uses_intent_url():

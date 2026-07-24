@@ -44,14 +44,26 @@ def test_app_open_url_android_intent_branch():
     m = re.search(r"function _appOpenUrl\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
     assert m, "_appOpenUrl non trovata"
     body = m.group(0)
-    # Android: intent:// con package + fallback https; bypassa la soppressione
-    # same-origin degli App Links in Chrome.
+    # Android: intent:// (scheme=abm) con package + fallback https; bypassa la
+    # soppressione same-origin degli App Links in Chrome.
     assert "intent://" in body
-    assert "scheme=https" in body
+    assert "scheme=' + ABM_SCHEME" in body
     assert "ABM_ANDROID_PKG" in body
     assert "browser_fallback_url" in body
     # _bindTransferButtonForMobile usa _appOpenUrl (non piu' /t/ inline)
     assert "_appOpenUrl(token)" in APP_JS
+    # ABM_SCHEME definito e uguale al custom scheme dell'app
+    assert "ABM_SCHEME = 'abm'" in APP_JS
+
+
+def test_ios_open_in_app_scheme_link():
+    # su iOS il bind aggiunge un link secondario col custom scheme abm://
+    assert "function _appSchemeUrl(" in APP_JS
+    a = re.search(r"function _appSchemeUrl\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
+    assert a and "ABM_SCHEME + '://'" in a.group(0)
+    assert "function _isIOSUA(" in APP_JS
+    assert "_addIosOpenInAppLink(box, token)" in APP_JS
+    assert "transfer_open_in_app" in APP_JS
 
 
 def test_i18n_has_mobile_transfer_cta():
@@ -59,3 +71,6 @@ def test_i18n_has_mobile_transfer_cta():
     # una entry per lingua (7 blocchi: it/en/fr/es/de/zh/hi)
     assert i18n.count("transfer_cta_mobile:") == 7
     assert "Sposta su AudioBook Maker & Player" in i18n
+    # label secondaria iOS presente in tutti i 7 blocchi
+    assert i18n.count("transfer_open_in_app:") == 7
+    assert "Apri nell'app" in i18n

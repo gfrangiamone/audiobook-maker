@@ -1171,6 +1171,10 @@ def _ua_is_mobile():
     return bool(re.search(r"Android|iPhone|iPad|iPod|Mobile|Tablet", ua, re.I))
 
 
+# Custom scheme dell'app (Android + iOS): gancio alternativo agli App Links.
+_APP_SCHEME = "abm"
+
+
 def _ua_is_android():
     """True se lo User-Agent della request corrente è Android."""
     try:
@@ -1180,19 +1184,40 @@ def _ua_is_android():
     return "android" in ua.lower()
 
 
+def _ua_is_ios():
+    """True se lo User-Agent della request corrente è iOS (iPhone/iPad/iPod).
+    Nota: l'iPad in UA-desktop non è distinguibile server-side (nessun segnale
+    touch) → classificato non-iOS; vede solo la CTA https (nessun errore)."""
+    try:
+        ua = (request.headers.get("User-Agent") or "")
+    except Exception:
+        return False
+    return bool(re.search(r"iPhone|iPad|iPod", ua, re.I))
+
+
 def _android_intent_url(https_url):
     """Converte un URL https `{host}/t/{token}` nell'intent:// URL per Chrome
-    Android. Serve perché Chrome NON devia all'app una navigazione https
-    SAME-ORIGIN (regola App Links a tutela della navigazione web): dal sito
-    stesso il link https resterebbe nel browser. L'intent:// bypassa la
-    soppressione; se l'app non è installata, Chrome apre `browser_fallback_url`
-    (la stessa pagina /t/ con lo store). Funzione pura (nessun accesso a request)."""
+    Android (scheme=abm, il custom scheme dell'app). Serve perché Chrome NON
+    devia all'app una navigazione https SAME-ORIGIN (regola App Links a tutela
+    della navigazione web): dal sito stesso il link https resterebbe nel browser.
+    L'intent:// bypassa la soppressione; se l'app non è installata, Chrome apre
+    `browser_fallback_url` (la stessa pagina /t/ con lo store). Funzione pura."""
     from urllib.parse import urlsplit, quote
     parts = urlsplit(https_url)
     host_path = parts.netloc + parts.path
     fallback = quote(https_url, safe="")
-    return (f"intent://{host_path}#Intent;scheme=https;"
+    return (f"intent://{host_path}#Intent;scheme={_APP_SCHEME};"
             f"package={_APP_PACKAGE};S.browser_fallback_url={fallback};end")
+
+
+def _app_scheme_url(https_url):
+    """Converte un URL https `{host}/t/{token}` nel custom scheme `abm://{host}/t/{token}`.
+    Su iOS bypassa la soppressione same-origin di Safari (apre l'app anche da
+    dentro la webapp sullo stesso dominio); se l'app manca, Safari erra → offerto
+    come link secondario, non come CTA. Funzione pura."""
+    from urllib.parse import urlsplit
+    parts = urlsplit(https_url)
+    return f"{_APP_SCHEME}://{parts.netloc}{parts.path}"
 
 
 def _find_available_download_token(job_id, cid, now=None):
@@ -12016,7 +12041,8 @@ def token_download_page(token):
                            transfer_qr=_transfer_qr,
                            transfer_url=_transfer_url,
                            is_mobile=_ua_is_mobile(),
-                           is_android=_ua_is_android())
+                           is_android=_ua_is_android(),
+                           is_ios=_ua_is_ios())
 
 
 @app.route("/dl/<token>/abm")
@@ -12806,7 +12832,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False, is_android=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False, is_android=False, is_ios=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -12988,6 +13014,16 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "zh": "下载到 AudioBook Maker &amp; Player",
             "hi": "AudioBook Maker &amp; Player में डाउनलोड करें",
         }
+        # Label del link secondario iOS "Apri nell'app" (custom scheme abm://).
+        _transfer_open_in_app = {
+            "en": "Open in app",
+            "it": "Apri nell&rsquo;app",
+            "fr": "Ouvrir dans l&rsquo;application",
+            "es": "Abrir en la app",
+            "de": "In der App &ouml;ffnen",
+            "zh": "在应用中打开",
+            "hi": "ऐप में खोलें",
+        }
         _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
         _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
         _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
@@ -13003,6 +13039,19 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             # href escapato per difesa in profondità: l'URL deriva da ABM_BASE_URL
             # (config fidata) + token server-side, ma non lo riflettiamo mai grezzo.
             _safe_url = _html.escape(_open_url, quote=True)
+            # iOS: link secondario "Apri nell'app" col custom scheme abm:// (l'https
+            # same-origin in Safari può non aprire l'app installata). Se l'app manca
+            # Safari erra, per questo resta secondario e la CTA principale è https.
+            _ios_link = ""
+            if is_ios:
+                _scheme_url = _html.escape(_app_scheme_url(transfer_url), quote=True)
+                _open_label = _transfer_open_in_app.get(lang, _transfer_open_in_app["en"])
+                _ios_link = (
+                    f'<a href="{_scheme_url}" '
+                    'style="display:block;margin-top:12px;font-size:.85rem;'
+                    'color:#2563eb;text-decoration:underline;">'
+                    f'{_open_label}</a>'
+                )
             transfer_html = (
                 '<div style="text-align:center;margin:28px auto;max-width:320px;">'
                 f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'
@@ -13010,6 +13059,7 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
                 'style="display:inline-block;padding:12px 20px;background:#2563eb;'
                 'color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">'
                 f'{_cta}</a>'
+                f'{_ios_link}'
                 '</div>'
             )
         else:

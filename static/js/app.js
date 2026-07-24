@@ -3506,33 +3506,66 @@ function _isMobileLike(){
   }catch(_e){ return false; }
 }
 
-// Package Android dell'app (stabile). Serve a costruire l'intent:// URL.
+// Package Android + custom scheme dell'app (stabili). Servono a costruire i
+// deep link (intent:// su Android, abm:// su iOS).
 var ABM_ANDROID_PKG = 'it.abm.audiobook_maker_mobile';
+var ABM_SCHEME = 'abm';
 
-// URL per aprire il job nell'app dal dispositivo stesso.
-// Chrome Android NON devia all'app una navigazione https SAME-ORIGIN
-// (audiobook-maker.com -> audiobook-maker.com/t/...): e' una regola degli
-// App Links per non interrompere la navigazione web, quindi il link resta nel
-// browser. L'intent:// bypassa la soppressione; se l'app non e' installata,
-// Chrome apre S.browser_fallback_url (la stessa pagina /t/ che mostra lo store).
-// iOS/altro: https (Universal Link). L'app iOS NON registra alcun custom scheme:
-// l'unico gancio e' l'Universal Link https. Un tap same-origin in Safari sullo
-// stesso dominio puo' non deviare all'app: limite di sistema, accettato.
+function _isAndroidUA(){ try{ return /Android/i.test(navigator.userAgent||''); }catch(_e){ return false; } }
+function _isIOSUA(){
+  try{
+    var ua = navigator.userAgent||'';
+    if(/iPhone|iPad|iPod/i.test(ua)) return true;
+    // iPad in UA-desktop (iPadOS 13+): Mac con touch screen.
+    return /Macintosh/i.test(ua) && (navigator.maxTouchPoints||0) > 1;
+  }catch(_e){ return false; }
+}
+
+// URL PRIMARIO (CTA) per aprire il job nell'app dal dispositivo stesso.
+// Android: intent:// (scheme=abm) con package + fallback https. Serve perche'
+// Chrome NON devia all'app una navigazione https SAME-ORIGIN
+// (audiobook-maker.com -> audiobook-maker.com/t/...): regola App Links a tutela
+// della navigazione web. L'intent:// bypassa la soppressione; app assente ->
+// Chrome apre S.browser_fallback_url (pagina /t/ con lo store).
+// iOS/altro: https (Universal Link) come CTA principale; su iOS il custom scheme
+// abm:// e' offerto a parte come link secondario (vedi _appSchemeUrl).
 function _appOpenUrl(token){
   var https = window.location.origin + '/t/' + encodeURIComponent(token);
-  try{
-    if(/Android/i.test(navigator.userAgent||'')){
-      return 'intent://' + window.location.host + '/t/' + encodeURIComponent(token) +
-             '#Intent;scheme=https;package=' + ABM_ANDROID_PKG +
-             ';S.browser_fallback_url=' + encodeURIComponent(https) + ';end';
-    }
-  }catch(_e){}
+  if(_isAndroidUA()){
+    return 'intent://' + window.location.host + '/t/' + encodeURIComponent(token) +
+           '#Intent;scheme=' + ABM_SCHEME + ';package=' + ABM_ANDROID_PKG +
+           ';S.browser_fallback_url=' + encodeURIComponent(https) + ';end';
+  }
   return https;
+}
+
+// Custom scheme abm://<host>/t/<token>: bypassa la soppressione same-origin di
+// Safari (apre l'app anche se cliccato dentro la webapp sullo stesso dominio).
+// Se l'app NON e' installata Safari mostra un errore, per questo su iOS e'
+// offerto come link secondario "Apri nell'app", non come CTA principale.
+function _appSchemeUrl(token){
+  return ABM_SCHEME + '://' + window.location.host + '/t/' + encodeURIComponent(token);
+}
+
+// iOS: aggiunge, idempotente, un link secondario "Apri nell'app" (abm://) nella
+// stessa area del bottone, perche' su Safari l'Universal Link same-origin puo'
+// non aprire l'app installata. flex-basis:100% -> il link va su una riga propria.
+function _addIosOpenInAppLink(box, token){
+  if(!box || box.querySelector('.transfer-open-app')) return;
+  var a = document.createElement('a');
+  a.className = 'transfer-open-app';
+  a.href = _appSchemeUrl(token);
+  var label = 'Open in app';
+  try{ if(typeof t==='function'){ var x=t('transfer_open_in_app'); if(x && x!=='transfer_open_in_app') label=x; } }catch(_e){}
+  a.textContent = label;
+  a.style.cssText = 'display:block;flex-basis:100%;width:100%;margin-top:8px;'
+                  + 'font-size:.85rem;text-align:center;color:inherit;text-decoration:underline;';
+  box.appendChild(a);
 }
 
 // Su mobile ricabla il bottone dell'area transfer perche' apra il deep link
 // dell'app (intent:// su Android, https altrove) invece del modale col QR
-// ingrandito, e ne cambia la label.
+// ingrandito, e ne cambia la label. Su iOS aggiunge il link secondario abm://.
 function _bindTransferButtonForMobile(boxId, token){
   if(!_isMobileLike() || !token) return;
   var box = document.getElementById(boxId);
@@ -3546,6 +3579,7 @@ function _bindTransferButtonForMobile(boxId, token){
     span.setAttribute('data-t','transfer_cta_mobile');
     try{ if(typeof t==='function') span.textContent = t('transfer_cta_mobile'); }catch(_e){}
   }
+  if(_isIOSUA()){ _addIosOpenInAppLink(box, token); }
 }
 
 async function _showTransferQr(jobId, imgId, boxId){
