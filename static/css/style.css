@@ -698,7 +698,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .email-transfer-row>#transferStartArea{margin:0}
 /* Affiancato al box email: il bottone si estende in altezza fino a pari box. */
 .email-transfer-row>#transferStartArea:not([hidden]){display:flex}
-.email-transfer-row>#transferStartArea .btn{white-space:nowrap}
+.email-transfer-row>#transferStartArea .btn{white-space:normal;text-align:center}
 
 /* ═══ PANEL FOOTER ═══ */
 .panel-footer{display:flex;justify-content:space-between;align-items:center;margin-top:34px;padding-top:22px;border-top:1px solid var(--brd);gap:14px}

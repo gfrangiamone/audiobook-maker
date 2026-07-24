@@ -1171,6 +1171,30 @@ def _ua_is_mobile():
     return bool(re.search(r"Android|iPhone|iPad|iPod|Mobile|Tablet", ua, re.I))
 
 
+def _ua_is_android():
+    """True se lo User-Agent della request corrente è Android."""
+    try:
+        ua = (request.headers.get("User-Agent") or "")
+    except Exception:
+        return False
+    return "android" in ua.lower()
+
+
+def _android_intent_url(https_url):
+    """Converte un URL https `{host}/t/{token}` nell'intent:// URL per Chrome
+    Android. Serve perché Chrome NON devia all'app una navigazione https
+    SAME-ORIGIN (regola App Links a tutela della navigazione web): dal sito
+    stesso il link https resterebbe nel browser. L'intent:// bypassa la
+    soppressione; se l'app non è installata, Chrome apre `browser_fallback_url`
+    (la stessa pagina /t/ con lo store). Funzione pura (nessun accesso a request)."""
+    from urllib.parse import urlsplit, quote
+    parts = urlsplit(https_url)
+    host_path = parts.netloc + parts.path
+    fallback = quote(https_url, safe="")
+    return (f"intent://{host_path}#Intent;scheme=https;"
+            f"package={_APP_PACKAGE};S.browser_fallback_url={fallback};end")
+
+
 def _find_available_download_token(job_id, cid, now=None):
     """Download token del job ancora valido e di proprietà di [cid], o None.
     Stessa logica di retention di /api/my_jobs (riusa _effective_retention_for_token_info)."""
@@ -11991,7 +12015,8 @@ def token_download_page(token):
                            translated_available=translated_available,
                            transfer_qr=_transfer_qr,
                            transfer_url=_transfer_url,
-                           is_mobile=_ua_is_mobile())
+                           is_mobile=_ua_is_mobile(),
+                           is_android=_ua_is_android())
 
 
 @app.route("/dl/<token>/abm")
@@ -12781,7 +12806,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False, is_android=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -12971,10 +12996,13 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             # Mobile/tablet: bottone che apre il deep link /t/<token> (App Link);
             # niente QR (inutile sul dispositivo stesso), niente hint "scan the QR".
             _cta = _transfer_cta.get(lang, _transfer_cta["en"])
-            # href escapato per difesa in profondità: transfer_url deriva da
-            # ABM_BASE_URL (config fidata) + token server-side, ma non lo riflettiamo
-            # mai grezzo nel markup.
-            _safe_url = _html.escape(transfer_url, quote=True)
+            # Android Chrome: intent:// per bypassare la soppressione same-origin
+            # degli App Links (un https verso lo stesso dominio non apre l'app).
+            # Altrove: https diretto.
+            _open_url = _android_intent_url(transfer_url) if is_android else transfer_url
+            # href escapato per difesa in profondità: l'URL deriva da ABM_BASE_URL
+            # (config fidata) + token server-side, ma non lo riflettiamo mai grezzo.
+            _safe_url = _html.escape(_open_url, quote=True)
             transfer_html = (
                 '<div style="text-align:center;margin:28px auto;max-width:320px;">'
                 f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'

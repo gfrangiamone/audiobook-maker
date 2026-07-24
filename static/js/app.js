@@ -3506,15 +3506,39 @@ function _isMobileLike(){
   }catch(_e){ return false; }
 }
 
-// Su mobile ricabla il bottone dell'area transfer perche' navighi al deep link
-// /t/<token> invece di aprire il modale col QR ingrandito, e ne cambia la label.
+// Package Android dell'app (stabile). Serve a costruire l'intent:// URL.
+var ABM_ANDROID_PKG = 'it.abm.audiobook_maker_mobile';
+
+// URL per aprire il job nell'app dal dispositivo stesso.
+// Chrome Android NON devia all'app una navigazione https SAME-ORIGIN
+// (audiobook-maker.com -> audiobook-maker.com/t/...): e' una regola degli
+// App Links per non interrompere la navigazione web, quindi il link resta nel
+// browser. L'intent:// bypassa la soppressione; se l'app non e' installata,
+// Chrome apre S.browser_fallback_url (la stessa pagina /t/ che mostra lo store).
+// iOS/altro: https (su iOS Safari la Universal Link same-origin e' soppressa;
+// l'apertura forzata richiederebbe un custom scheme dedicato, non ancora definito).
+function _appOpenUrl(token){
+  var https = window.location.origin + '/t/' + encodeURIComponent(token);
+  try{
+    if(/Android/i.test(navigator.userAgent||'')){
+      return 'intent://' + window.location.host + '/t/' + encodeURIComponent(token) +
+             '#Intent;scheme=https;package=' + ABM_ANDROID_PKG +
+             ';S.browser_fallback_url=' + encodeURIComponent(https) + ';end';
+    }
+  }catch(_e){}
+  return https;
+}
+
+// Su mobile ricabla il bottone dell'area transfer perche' apra il deep link
+// dell'app (intent:// su Android, https altrove) invece del modale col QR
+// ingrandito, e ne cambia la label.
 function _bindTransferButtonForMobile(boxId, token){
   if(!_isMobileLike() || !token) return;
   var box = document.getElementById(boxId);
   if(!box) return;
   var btn = box.querySelector('button');
   if(!btn) return;
-  var url = window.location.origin + '/t/' + encodeURIComponent(token);
+  var url = _appOpenUrl(token);
   btn.onclick = function(){ window.location.href = url; };
   var span = btn.querySelector('[data-t]');
   if(span){

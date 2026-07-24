@@ -28,13 +28,30 @@ def test_mobile_transfer_button_targets_t_deeplink():
     m = re.search(r"function _bindTransferButtonForMobile\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
     assert m, "_bindTransferButtonForMobile non trovata"
     body = m.group(0)
-    # bottone mobile naviga al deep link /t/<token>, non a /dl/
-    assert "'/t/'" in body
+    # il target (deep link app) e' costruito da _appOpenUrl, non piu' inline
+    assert "_appOpenUrl(token)" in body
     assert "window.location.href" in body
     # label mobile
     assert "transfer_cta_mobile" in body
     # _showTransferQr invoca il bind quando c'e' il token
     assert "_bindTransferButtonForMobile(" in APP_JS
+    # _appOpenUrl costruisce il path /t/<token> (https di base / fallback)
+    a = re.search(r"function _appOpenUrl\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
+    assert a and "'/t/'" in a.group(0)
+
+
+def test_app_open_url_android_intent_branch():
+    m = re.search(r"function _appOpenUrl\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
+    assert m, "_appOpenUrl non trovata"
+    body = m.group(0)
+    # Android: intent:// con package + fallback https; bypassa la soppressione
+    # same-origin degli App Links in Chrome.
+    assert "intent://" in body
+    assert "scheme=https" in body
+    assert "ABM_ANDROID_PKG" in body
+    assert "browser_fallback_url" in body
+    # _bindTransferButtonForMobile usa _appOpenUrl (non piu' /t/ inline)
+    assert "_appOpenUrl(token)" in APP_JS
 
 
 def test_i18n_has_mobile_transfer_cta():

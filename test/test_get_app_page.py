@@ -122,3 +122,48 @@ def test_dl_page_desktop_still_renders_qr():
     )
     assert "data:image/png;base64,AAAA" in html
     assert 'href="https://example.com/t/abc123"' not in html
+
+
+def test_ua_is_android_true_false():
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel) Chrome"}):
+        assert audiobook_app._ua_is_android() is True
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari"}):
+        assert audiobook_app._ua_is_android() is False
+
+
+def test_android_intent_url_format():
+    intent = audiobook_app._android_intent_url("https://audiobook-maker.com/t/abc123")
+    # bypassa la soppressione same-origin: intent:// con package + fallback https
+    assert intent.startswith("intent://audiobook-maker.com/t/abc123#Intent;")
+    assert "scheme=https;" in intent
+    assert f"package={audiobook_app._APP_PACKAGE};" in intent
+    # il fallback è l'https url-encoded, e termina con ;end
+    assert "S.browser_fallback_url=https%3A%2F%2Faudiobook-maker.com%2Ft%2Fabc123" in intent
+    assert intent.endswith(";end")
+
+
+def test_dl_page_mobile_android_uses_intent_url():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+        transfer_url="https://example.com/t/abc123",
+        is_mobile=True, is_android=True,
+    )
+    # Android: href è l'intent:// (escapato), non l'https diretto né il QR
+    assert "href=\"intent://example.com/t/abc123#Intent;" in html
+    assert f"package={audiobook_app._APP_PACKAGE}" in html
+    assert "data:image/png;base64,AAAA" not in html
+
+
+def test_dl_page_mobile_ios_uses_https_not_intent():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+        transfer_url="https://example.com/t/abc123",
+        is_mobile=True, is_android=False,
+    )
+    # iOS/altro: https diretto, nessun intent://
+    assert 'href="https://example.com/t/abc123"' in html
+    assert "intent://" not in html
