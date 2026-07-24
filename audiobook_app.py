@@ -1159,6 +1159,18 @@ def _transfer_payload_for(job_id):
     return f"{base}/t/{tok}", tok
 
 
+def _ua_is_mobile():
+    """True se lo User-Agent della request corrente è uno smartphone/tablet.
+    Limite noto: iPad in modalità desktop-UA (default iPadOS 13+) NON è
+    rilevabile server-side (nessun segnale touch) → classificato desktop e vede
+    il QR; il bottone /t/ funziona comunque se toccato manualmente."""
+    try:
+        ua = (request.headers.get("User-Agent") or "")
+    except Exception:
+        return False
+    return bool(re.search(r"Android|iPhone|iPad|iPod|Mobile|Tablet", ua, re.I))
+
+
 def _find_available_download_token(job_id, cid, now=None):
     """Download token del job ancora valido e di proprietà di [cid], o None.
     Stessa logica di retention di /api/my_jobs (riusa _effective_retention_for_token_info)."""
@@ -11960,12 +11972,15 @@ def token_download_page(token):
     # download di sola traduzione: l'app gestisce solo audiolibri, non i file
     # di testo tradotto, quindi il QR "trasferisci sull'app" non ha senso lì.
     _transfer_qr = ""
+    _transfer_url = ""
     if dl_type != "translated":
         try:
             _qr_payload, _ = _transfer_payload_for(job_id)
+            _transfer_url = _qr_payload
             _transfer_qr = _qr_data_uri(_qr_payload)
         except Exception:
             _transfer_qr = ""
+            _transfer_url = ""
 
     return _render_dl_page(token, book_title, remaining_str,
                            token_info["download_type"], lang,
@@ -11974,7 +11989,9 @@ def token_download_page(token):
                            retention_hours=round(_ret / 3600),
                            m4b_kit_available=m4b_kit_available,
                            translated_available=translated_available,
-                           transfer_qr=_transfer_qr)
+                           transfer_qr=_transfer_qr,
+                           transfer_url=_transfer_url,
+                           is_mobile=_ua_is_mobile())
 
 
 @app.route("/dl/<token>/abm")
@@ -12764,7 +12781,7 @@ a:hover{{text-decoration:underline}}
 </body></html>"""
 
 
-def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr=""):
+def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_available=False, has_abm=False, output_format="", retention_hours=0, m4b_kit_available=False, translated_available=False, transfer_qr="", transfer_url="", is_mobile=False):
     download_t = _DL_PAGES_I18N.get("download", {})
     t = dict(download_t.get(lang, download_t.get("en", {})))
 
@@ -12925,10 +12942,8 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
 
     # QR di trasferimento job sull'app mobile (best-effort: vuoto se assente).
     transfer_html = ""
-    if transfer_qr:
+    if transfer_qr or (is_mobile and transfer_url):
         _transfer_t = _DL_PAGES_I18N.get("transfer", {})
-        # Hint allineato al messaggio dell'interfaccia online (chiave i18n
-        # `transfer_hint`): stesso testo sotto il QR su web e nella pagina email.
         _transfer_fallback = {
             "en": ("Transfer to the app", "Scan the QR with the AudioBook Maker &amp; Player app"),
             "it": ("Trasferisci sull&rsquo;app", "Inquadra il QR con l&rsquo;app AudioBook Maker &amp; Player"),
@@ -12938,22 +12953,44 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             "zh": ("传输到应用", "用 AudioBook Maker &amp; Player 应用扫描二维码"),
             "hi": ("ऐप में स्थानांतरित करें", "AudioBook Maker &amp; Player ऐप से QR स्कैन करें"),
         }
+        # Label del bottone mobile ("Scarica su AudioBook Maker & Player").
+        _transfer_cta = {
+            "en": "Download to AudioBook Maker &amp; Player",
+            "it": "Scarica su AudioBook Maker &amp; Player",
+            "fr": "T&eacute;l&eacute;charger dans AudioBook Maker &amp; Player",
+            "es": "Descargar en AudioBook Maker &amp; Player",
+            "de": "In AudioBook Maker &amp; Player herunterladen",
+            "zh": "下载到 AudioBook Maker &amp; Player",
+            "hi": "AudioBook Maker &amp; Player में डाउनलोड करें",
+        }
         _tr_block = _transfer_t.get(lang, _transfer_t.get("en", {}))
         _title = _tr_block.get("title") or _transfer_fallback.get(lang, _transfer_fallback["en"])[0]
         _hint = _tr_block.get("hint") or _transfer_fallback.get(lang, _transfer_fallback["en"])[1]
-        # Solo "AudioBook Maker & Player" e' cliccabile (verso /get-app), non
-        # tutta la riga della didascalia.
         _app_name = "AudioBook Maker &amp; Player"
-        _app_link = (f'<a href="{BASE_URL}/get-app" '
-                     f'style="color:inherit;text-decoration:underline;">{_app_name}</a>')
-        _hint_html = _hint.replace(_app_name, _app_link)
-        transfer_html = (
-            '<div style="text-align:center;margin:28px auto;max-width:320px;">'
-            f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
-            f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
-            f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint_html}</p>'
-            '</div>'
-        )
+        if is_mobile and transfer_url:
+            # Mobile/tablet: bottone che apre il deep link /t/<token> (App Link);
+            # niente QR (inutile sul dispositivo stesso), niente hint "scan the QR".
+            _cta = _transfer_cta.get(lang, _transfer_cta["en"])
+            transfer_html = (
+                '<div style="text-align:center;margin:28px auto;max-width:320px;">'
+                f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'
+                f'<a href="{transfer_url}" '
+                'style="display:inline-block;padding:12px 20px;background:#2563eb;'
+                'color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">'
+                f'{_cta}</a>'
+                '</div>'
+            )
+        else:
+            _app_link = (f'<a href="{BASE_URL}/get-app" '
+                         f'style="color:inherit;text-decoration:underline;">{_app_name}</a>')
+            _hint_html = _hint.replace(_app_name, _app_link)
+            transfer_html = (
+                '<div style="text-align:center;margin:28px auto;max-width:320px;">'
+                f'<h3 style="font-size:1rem;margin:0 0 8px;">{_title}</h3>'
+                f'<img src="{transfer_qr}" alt="QR" style="width:200px;height:200px;"/>'
+                f'<p style="font-size:.8rem;color:#777;margin-top:8px;">{_hint_html}</p>'
+                '</div>'
+            )
 
     return f"""<!DOCTYPE html><html lang="{lang}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

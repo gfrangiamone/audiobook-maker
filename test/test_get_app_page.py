@@ -86,3 +86,39 @@ def test_dl_page_caption_links_only_app_name():
             f'AudioBook Maker &amp; Player</a>') in html
     # il testo iniziale della didascalia e' testo piano PRIMA dell'anchor
     assert "Inquadra il QR con l&rsquo;app <a href=" in html
+
+
+def test_ua_is_mobile_detects_iphone():
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari"}):
+        assert audiobook_app._ua_is_mobile() is True
+
+
+def test_ua_is_mobile_desktop_false():
+    with audiobook_app.app.test_request_context(
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome"}):
+        assert audiobook_app._ua_is_mobile() is False
+
+
+def test_dl_page_mobile_renders_deeplink_button_not_qr():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+        transfer_url="https://example.com/t/abc123",
+        is_mobile=True,
+    )
+    # bottone verso il deep link /t/, non l'immagine QR
+    assert 'href="https://example.com/t/abc123"' in html
+    assert "Scarica su AudioBook Maker &amp; Player" in html
+    assert "data:image/png;base64,AAAA" not in html
+
+
+def test_dl_page_desktop_still_renders_qr():
+    html = audiobook_app._render_dl_page(
+        "TOK", "Il mio libro", "1h", "m4b", lang="it",
+        transfer_qr="data:image/png;base64,AAAA",
+        transfer_url="https://example.com/t/abc123",
+        is_mobile=False,
+    )
+    assert "data:image/png;base64,AAAA" in html
+    assert 'href="https://example.com/t/abc123"' not in html
