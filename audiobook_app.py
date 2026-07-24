@@ -12971,10 +12971,14 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
             # Mobile/tablet: bottone che apre il deep link /t/<token> (App Link);
             # niente QR (inutile sul dispositivo stesso), niente hint "scan the QR".
             _cta = _transfer_cta.get(lang, _transfer_cta["en"])
+            # href escapato per difesa in profondità: transfer_url deriva da
+            # ABM_BASE_URL (config fidata) + token server-side, ma non lo riflettiamo
+            # mai grezzo nel markup.
+            _safe_url = _html.escape(transfer_url, quote=True)
             transfer_html = (
                 '<div style="text-align:center;margin:28px auto;max-width:320px;">'
                 f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'
-                f'<a href="{transfer_url}" '
+                f'<a href="{_safe_url}" '
                 'style="display:inline-block;padding:12px 20px;background:#2563eb;'
                 'color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">'
                 f'{_cta}</a>'
