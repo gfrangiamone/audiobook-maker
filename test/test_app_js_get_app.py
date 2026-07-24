@@ -56,14 +56,21 @@ def test_app_open_url_android_intent_branch():
     assert "ABM_SCHEME = 'abm'" in APP_JS
 
 
-def test_ios_open_in_app_scheme_link():
-    # su iOS il bind aggiunge un link secondario col custom scheme abm://
+def test_ios_single_button_uses_scheme_and_label():
+    # su iOS il bottone unico punta al custom scheme abm:// con label "Apri nell'app"
     assert "function _appSchemeUrl(" in APP_JS
     a = re.search(r"function _appSchemeUrl\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
     assert a and "ABM_SCHEME + '://'" in a.group(0)
     assert "function _isIOSUA(" in APP_JS
-    assert "_addIosOpenInAppLink(box, token)" in APP_JS
-    assert "transfer_open_in_app" in APP_JS
+    # il bind sceglie scheme vs intent/https in base a iOS, e la label di conseguenza
+    b = re.search(r"function _bindTransferButtonForMobile\([^)]*\)\{.*?\n}", APP_JS, re.DOTALL)
+    assert b, "_bindTransferButtonForMobile non trovata"
+    body = b.group(0)
+    assert "_isIOSUA()" in body
+    assert "_appSchemeUrl(token)" in body
+    assert "transfer_open_in_app" in body
+    # nessun link secondario residuo
+    assert "_addIosOpenInAppLink" not in APP_JS
 
 
 def test_i18n_has_mobile_transfer_cta():

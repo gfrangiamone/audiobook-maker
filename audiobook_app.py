@@ -13031,35 +13031,30 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         if is_mobile and transfer_url:
             # Mobile/tablet: bottone che apre il deep link /t/<token> (App Link);
             # niente QR (inutile sul dispositivo stesso), niente hint "scan the QR".
-            _cta = _transfer_cta.get(lang, _transfer_cta["en"])
-            # Android Chrome: intent:// per bypassare la soppressione same-origin
-            # degli App Links (un https verso lo stesso dominio non apre l'app).
-            # Altrove: https diretto.
-            _open_url = _android_intent_url(transfer_url) if is_android else transfer_url
+            # Target e label del bottone unico per piattaforma:
+            # - iOS: custom scheme abm:// (unico gancio affidabile same-origin in
+            #   Safari; se l'app manca Safari erra, scelta accettata) -> "Apri nell'app"
+            # - Android: intent:// (apre l'app o va al sito) -> "Scarica su ..."
+            # - altro: https diretto -> "Scarica su ..."
+            if is_ios:
+                _open_url = _app_scheme_url(transfer_url)
+                _btn_label = _transfer_open_in_app.get(lang, _transfer_open_in_app["en"])
+            elif is_android:
+                _open_url = _android_intent_url(transfer_url)
+                _btn_label = _transfer_cta.get(lang, _transfer_cta["en"])
+            else:
+                _open_url = transfer_url
+                _btn_label = _transfer_cta.get(lang, _transfer_cta["en"])
             # href escapato per difesa in profondità: l'URL deriva da ABM_BASE_URL
             # (config fidata) + token server-side, ma non lo riflettiamo mai grezzo.
             _safe_url = _html.escape(_open_url, quote=True)
-            # iOS: link secondario "Apri nell'app" col custom scheme abm:// (l'https
-            # same-origin in Safari può non aprire l'app installata). Se l'app manca
-            # Safari erra, per questo resta secondario e la CTA principale è https.
-            _ios_link = ""
-            if is_ios:
-                _scheme_url = _html.escape(_app_scheme_url(transfer_url), quote=True)
-                _open_label = _transfer_open_in_app.get(lang, _transfer_open_in_app["en"])
-                _ios_link = (
-                    f'<a href="{_scheme_url}" '
-                    'style="display:block;margin-top:12px;font-size:.85rem;'
-                    'color:#2563eb;text-decoration:underline;">'
-                    f'{_open_label}</a>'
-                )
             transfer_html = (
                 '<div style="text-align:center;margin:28px auto;max-width:320px;">'
                 f'<h3 style="font-size:1rem;margin:0 0 12px;">{_title}</h3>'
                 f'<a href="{_safe_url}" '
                 'style="display:inline-block;padding:12px 20px;background:#2563eb;'
                 'color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">'
-                f'{_cta}</a>'
-                f'{_ios_link}'
+                f'{_btn_label}</a>'
                 '</div>'
             )
         else:

@@ -159,18 +159,20 @@ def test_ua_is_ios_true_false():
         assert audiobook_app._ua_is_ios() is False
 
 
-def test_dl_page_mobile_ios_adds_open_in_app_scheme_link():
+def test_dl_page_mobile_ios_single_scheme_button():
     html = audiobook_app._render_dl_page(
         "TOK", "Il mio libro", "1h", "m4b", lang="it",
         transfer_qr="data:image/png;base64,AAAA",
         transfer_url="https://example.com/t/abc123",
         is_mobile=True, is_android=False, is_ios=True,
     )
-    # CTA principale = https (Universal Link); link secondario = custom scheme abm://
-    assert 'href="https://example.com/t/abc123"' in html
+    # iOS: bottone UNICO col custom scheme abm://, label "Apri nell'app".
+    # Nessuna CTA https, nessun intent://, nessun QR.
     assert 'href="abm://example.com/t/abc123"' in html
     assert "Apri nell" in html  # label "Apri nell'app"
+    assert 'href="https://example.com/t/abc123"' not in html
     assert "intent://" not in html
+    assert "data:image/png;base64,AAAA" not in html
 
 
 def test_dl_page_mobile_android_uses_intent_url():

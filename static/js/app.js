@@ -3541,45 +3541,33 @@ function _appOpenUrl(token){
 
 // Custom scheme abm://<host>/t/<token>: bypassa la soppressione same-origin di
 // Safari (apre l'app anche se cliccato dentro la webapp sullo stesso dominio).
-// Se l'app NON e' installata Safari mostra un errore, per questo su iOS e'
-// offerto come link secondario "Apri nell'app", non come CTA principale.
+// Se l'app NON e' installata Safari mostra un errore: scelta accettata su iOS
+// (bottone unico "Apri nell'app"), dove l'Universal Link same-origin sarebbe
+// comunque inaffidabile.
 function _appSchemeUrl(token){
   return ABM_SCHEME + '://' + window.location.host + '/t/' + encodeURIComponent(token);
 }
 
-// iOS: aggiunge, idempotente, un link secondario "Apri nell'app" (abm://) nella
-// stessa area del bottone, perche' su Safari l'Universal Link same-origin puo'
-// non aprire l'app installata. flex-basis:100% -> il link va su una riga propria.
-function _addIosOpenInAppLink(box, token){
-  if(!box || box.querySelector('.transfer-open-app')) return;
-  var a = document.createElement('a');
-  a.className = 'transfer-open-app';
-  a.href = _appSchemeUrl(token);
-  var label = 'Open in app';
-  try{ if(typeof t==='function'){ var x=t('transfer_open_in_app'); if(x && x!=='transfer_open_in_app') label=x; } }catch(_e){}
-  a.textContent = label;
-  a.style.cssText = 'display:block;flex-basis:100%;width:100%;margin-top:8px;'
-                  + 'font-size:.85rem;text-align:center;color:inherit;text-decoration:underline;';
-  box.appendChild(a);
-}
-
 // Su mobile ricabla il bottone dell'area transfer perche' apra il deep link
-// dell'app (intent:// su Android, https altrove) invece del modale col QR
-// ingrandito, e ne cambia la label. Su iOS aggiunge il link secondario abm://.
+// dell'app invece del modale col QR ingrandito, e ne cambia la label:
+// - Android: intent:// (apre l'app o va al sito) -> "Sposta su ..."
+// - iOS: custom scheme abm:// (unico gancio affidabile) -> "Apri nell'app"
+// - altro mobile: https.
 function _bindTransferButtonForMobile(boxId, token){
   if(!_isMobileLike() || !token) return;
   var box = document.getElementById(boxId);
   if(!box) return;
   var btn = box.querySelector('button');
   if(!btn) return;
-  var url = _appOpenUrl(token);
+  var ios = _isIOSUA();
+  var url = ios ? _appSchemeUrl(token) : _appOpenUrl(token);
   btn.onclick = function(){ window.location.href = url; };
   var span = btn.querySelector('[data-t]');
   if(span){
-    span.setAttribute('data-t','transfer_cta_mobile');
-    try{ if(typeof t==='function') span.textContent = t('transfer_cta_mobile'); }catch(_e){}
+    var key = ios ? 'transfer_open_in_app' : 'transfer_cta_mobile';
+    span.setAttribute('data-t', key);
+    try{ if(typeof t==='function') span.textContent = t(key); }catch(_e){}
   }
-  if(_isIOSUA()){ _addIosOpenInAppLink(box, token); }
 }
 
 async function _showTransferQr(jobId, imgId, boxId){
