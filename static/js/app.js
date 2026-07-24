@@ -3515,8 +3515,9 @@ var ABM_ANDROID_PKG = 'it.abm.audiobook_maker_mobile';
 // App Links per non interrompere la navigazione web, quindi il link resta nel
 // browser. L'intent:// bypassa la soppressione; se l'app non e' installata,
 // Chrome apre S.browser_fallback_url (la stessa pagina /t/ che mostra lo store).
-// iOS/altro: https (su iOS Safari la Universal Link same-origin e' soppressa;
-// l'apertura forzata richiederebbe un custom scheme dedicato, non ancora definito).
+// iOS/altro: https (Universal Link). L'app iOS NON registra alcun custom scheme:
+// l'unico gancio e' l'Universal Link https. Un tap same-origin in Safari sullo
+// stesso dominio puo' non deviare all'app: limite di sistema, accettato.
 function _appOpenUrl(token){
   var https = window.location.origin + '/t/' + encodeURIComponent(token);
   try{
