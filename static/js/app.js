@@ -3493,6 +3493,36 @@ function _lockEmailLateBoxAutoBatch(maskedEmail){
   if(btn)btn.disabled=true;
 }
 
+// Su smartphone/tablet il QR di trasferimento e' inutile: non c'e' un secondo
+// dispositivo che lo inquadri. Il bottone naviga direttamente al deep link
+// /t/<token> (App Link/Universal Link): apre l'app se installata, altrimenti la
+// pagina store di fallback. L'iPad in UA-desktop (default iPadOS 13+) sfugge
+// all'UA-sniff ma viene preso dal ramo touch (pointer:coarse + maxTouchPoints>1).
+function _isMobileLike(){
+  try{
+    if(/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'')) return true;
+    var coarse = !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+    return coarse && (navigator.maxTouchPoints||0) > 1;
+  }catch(_e){ return false; }
+}
+
+// Su mobile ricabla il bottone dell'area transfer perche' navighi al deep link
+// /t/<token> invece di aprire il modale col QR ingrandito, e ne cambia la label.
+function _bindTransferButtonForMobile(boxId, token){
+  if(!_isMobileLike() || !token) return;
+  var box = document.getElementById(boxId);
+  if(!box) return;
+  var btn = box.querySelector('button');
+  if(!btn) return;
+  var url = window.location.origin + '/t/' + encodeURIComponent(token);
+  btn.onclick = function(){ window.location.href = url; };
+  var span = btn.querySelector('[data-t]');
+  if(span){
+    span.setAttribute('data-t','transfer_cta_mobile');
+    try{ if(typeof t==='function') span.textContent = t('transfer_cta_mobile'); }catch(_e){}
+  }
+}
+
 async function _showTransferQr(jobId, imgId, boxId){
   if(!jobId) return;
   try{
@@ -3504,6 +3534,7 @@ async function _showTransferQr(jobId, imgId, boxId){
       const box = document.getElementById(boxId);
       if(img){ img.src = d.qr; }
       if(box){ box.hidden = false; }
+      if(d.token){ _bindTransferButtonForMobile(boxId, d.token); }
     }
   }catch(e){ /* best-effort: nessun QR, nessun errore visibile */ }
 }
