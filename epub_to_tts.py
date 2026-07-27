@@ -346,10 +346,36 @@ class Chapter:
     word_count: int = 0
     char_count: int = 0
     source_file: str = ""
+    # True quando `title` non e' un titolo reale del libro ma un placeholder
+    # generato dal parser (spine item senza TOC/heading, tipico front-matter:
+    # disclaimer, epigrafi, dedica). Consumato da _plan_chunks per NON far
+    # leggere al TTS un'etichetta artificiale come se fosse un titolo.
+    synthetic_title: bool = False
 
     def __post_init__(self):
         self.word_count = len(self.text.split())
         self.char_count = len(self.text)
+
+
+# Etichetta localizzata per i placeholder di sezione senza titolo. La lingua e'
+# quella del LIBRO (info.language), non della UI. Fallback "Section" (inglese)
+# per lingue non mappate: mai italiano hardcoded su libri di altra lingua.
+_SECTION_LABELS = {
+    "it": "Sezione", "en": "Section", "fr": "Section", "es": "Sección",
+    "de": "Abschnitt", "pt": "Seção", "nl": "Sectie", "ru": "Раздел",
+    "zh": "章节", "ja": "セクション", "hi": "अनुभाग", "ar": "قسم",
+}
+
+
+def _synthetic_section_title(n, language=""):
+    """Placeholder localizzato per una sezione senza titolo ("Section N").
+
+    Usato quando uno spine item non ha voce TOC ne' heading derivabile (tipico
+    front-matter). Il Chapter relativo va marcato synthetic_title=True.
+    """
+    code = (language or "").strip().lower().replace("_", "-").split("-")[0]
+    label = _SECTION_LABELS.get(code, "Section")
+    return f"{label} {n}"
 
 
 @dataclass
@@ -1265,9 +1291,11 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
                     # Orfano dopo la prima voce TOC ma senza capitolo a cui
                     # agganciarsi: tienilo come entry separata (no perdita).
                     chapter_index += 1
+                    _detected = detect_chapter_title(html_content)
                     info.chapters.append(Chapter(
                         index=chapter_index,
-                        title=detect_chapter_title(html_content) or f"Sezione {chapter_index}",
+                        title=_detected or _synthetic_section_title(chapter_index, info.language),
+                        synthetic_title=not _detected,
                         text=clean.strip(),
                         source_file=file_name,
                     ))
@@ -1279,8 +1307,9 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
         title = toc_map.get(file_name)
         if not title:
             title = _derive_chapter_title(html_content)
+        title_is_synthetic = not title
         if not title:
-            title = f"Sezione {chapter_index + 1}"
+            title = _synthetic_section_title(chapter_index + 1, info.language)
 
         # Estrai e pulisci testo
         raw_text = html_to_text(html_content)
@@ -1338,6 +1367,7 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
             title=title,
             text=clean.strip(),
             source_file=file_name,
+            synthetic_title=title_is_synthetic,
         )
         info.chapters.append(chapter)
         pending_toc_title = None
@@ -1909,7 +1939,9 @@ def _split_html_by_headings_auto(html_content: str) -> list[tuple[str, str]]:
     for i, heading in enumerate(target_headings):
         title = heading.get_text(strip=True)
         if not title or len(title) > 200:
-            title = title[:100] if title else f"Sezione {i+1}"
+            # Fallback senza lingua del libro qui: "Section" (inglese), mai
+            # italiano hardcoded. Scatta solo su heading vuoto/anomalo (raro).
+            title = title[:100] if title else f"Section {i+1}"
 
         # Raccogli tutti gli elementi tra questo heading e il prossimo
         section_parts = []

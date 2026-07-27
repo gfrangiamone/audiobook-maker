@@ -48,6 +48,66 @@ CHUNK_MAX_CHARS = 2000
 # l'hang in TimeoutError, gestito dal retry/fallback di _edge_tts_call.
 EDGE_TTS_CHUNK_TIMEOUT = int(os.environ.get("ABM_EDGE_TTS_TIMEOUT", "120"))
 
+# --- Sanity-check output edge-tts (anti-troncamento silenzioso) --------------
+# edge-tts/Azure a volte chiude lo stream WebSocket a meta' e communicate.save()
+# ritorna SENZA sollevare eccezione lasciando un MP3 valido ma incompleto: la
+# coda del testo sparisce senza alcun errore loggato (stessa famiglia dell'hang
+# websocket, incidente 2026-06). Nessun controllo lo intercettava -> testo
+# saltato a meta' capitolo, failed_chunks=0, job COMPLETE (incidente
+# fuGEZzhdnswI1_P7m6xMVw, "L'Eternel Adolescent", cap. 10 troncato).
+#
+# Rilevazione a COSTO ZERO dalla dimensione del file: l'output edge-tts e' CBR
+# 48 kbps mono (audio-24khz-48kbitrate-mono-mp3), quindi durata_sec = bytes/6000
+# (verificato empiricamente: bytes/s = 6000.0 esatto su piu' campioni). Se la
+# durata stimata e' sotto il minimo fisico per quel numero di caratteri, il file
+# e' troncato -> il caller lo tratta come fallimento e ritenta con connessione
+# nuova. Niente ffprobe: il path Multilingual fa molte micro-chiamate per frase.
+_EDGE_MP3_BYTES_PER_SEC = 6000            # 48 kbps CBR / 8 bit
+# Tetto ultra-conservativo di velocita' di lettura (char/s a rate 0%). Il parlato
+# reale edge-tts sta ~20-22 char/s (misurato); 40 lascia ~2x di margine -> un MP3
+# "piu' corto di cosi'" NON puo' contenere tutto il testo (zero falsi positivi
+# per tutte le lingue alfabetiche; CJK legge ancor meno char/s -> sempre sotto).
+_EDGE_MAX_CHARS_PER_SEC = 40
+# Sotto questa soglia di caratteri la durata e' dominata da pause/overhead
+# (attacco/coda, respiro): niente check, la varianza darebbe falsi positivi.
+_EDGE_SANITY_MIN_CHARS = 40
+
+
+def _rate_speed_factor(rate):
+    """Fattore di velocita' dal parametro rate edge-tts ("+10%" -> 1.10).
+
+    A rate alto l'MP3 e' legittimamente piu' corto: scala la soglia
+    anti-troncamento in proporzione per non generare falsi positivi. Clamp a
+    0.25 per evitare divisioni instabili su rate estremi.
+    """
+    try:
+        m = re.match(r'\s*([+-]?\d+)\s*%', str(rate))
+        if m:
+            return max(0.25, 1.0 + int(m.group(1)) / 100.0)
+    except (TypeError, ValueError):
+        pass
+    return 1.0
+
+
+def _edge_output_looks_truncated(output_path, text, rate="+0%"):
+    """True se l'MP3 edge-tts e' troppo corto per contenere `text` completo.
+
+    Confronta la durata stimata dal file (CBR 48 kbps -> bytes/6000) con il
+    minimo fisico per quel numero di caratteri alla massima velocita' plausibile
+    (scalata per il rate). Conservativo: rifiuta solo file palesemente
+    incompleti. File assente/illeggibile => considerato troncato.
+    """
+    n = len((text or "").strip())
+    if n < _EDGE_SANITY_MIN_CHARS:
+        return False
+    try:
+        size = os.path.getsize(output_path)
+    except OSError:
+        return True
+    est_sec = size / _EDGE_MP3_BYTES_PER_SEC
+    min_sec = n / (_EDGE_MAX_CHARS_PER_SEC * _rate_speed_factor(rate))
+    return est_sec < min_sec
+
 
 def _pick_chunk_max_chars(voice_id, language):
     """Sceglie il limite caratteri/chunk in base al motore e alla lingua.
@@ -374,10 +434,12 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         clean_text = _strip_parenthetical(ch.text, strip_round=strip_round,
                                           strip_square=strip_square)
         clean_text = _ensure_heading_pause(clean_text)
-        # Dedup heading: se il titolo del capitolo compare gia` in testa al testo
-        # (a meno di diacritici/punteggiatura/quote/prefissi numerici), evita
-        # di prependerlo per non far leggere al TTS due volte la stessa frase.
-        if _title_already_in_text(ch.title, clean_text):
+        # Titolo sintetico (placeholder "Section N" generato dal parser per uno
+        # spine item senza titolo reale, es. front-matter): NON leggerlo, non e'
+        # un titolo del libro. Altrimenti dedup heading: se il titolo compare
+        # gia` in testa al testo (a meno di diacritici/punteggiatura/quote/
+        # prefissi numerici), evita di prependerlo per non farlo leggere due volte.
+        if getattr(ch, "synthetic_title", False) or _title_already_in_text(ch.title, clean_text):
             full_text = clean_text
         else:
             full_text = f"{ch.title}.\n\n{clean_text}"
@@ -401,7 +463,17 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
 async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
     """Singola chiamata edge-tts con retry/backoff esponenziale.
 
-    In caso di fallimento totale scrive un breve silenzio e ritorna False.
+    Oltre alle eccezioni, tratta come fallimento anche un output MP3 TRONCATO:
+    save() puo' ritornare senza errore mentre lo stream Azure si e' chiuso a
+    meta', lasciando un file valido ma incompleto (coda del testo persa, nessun
+    log). In quel caso ritenta con una connessione nuova. Il controllo e' a costo
+    zero (dimensione file vs lunghezza testo, vedi `_edge_output_looks_truncated`)
+    quindi si applica anche alle micro-chiamate per frase del path Multilingual.
+
+    In caso di fallimento totale scrive un breve silenzio e ritorna False: cosi'
+    un troncamento persistente diventa un failed_chunk contato + silenzio
+    esplicito, non testo mancante nascosto (che passava inosservato con
+    failed_chunks=0 e job COMPLETE).
     """
     last_error = None
     for attempt in range(max_retries):
@@ -410,6 +482,19 @@ async def _edge_tts_call(text, voice, rate, output_path, max_retries=3):
             await asyncio.wait_for(
                 communicate.save(output_path), timeout=EDGE_TTS_CHUNK_TIMEOUT
             )
+            if _edge_output_looks_truncated(output_path, text, rate):
+                try:
+                    size = os.path.getsize(output_path)
+                except OSError:
+                    size = 0
+                snippet = text[:60].replace('\n', ' ')
+                print(f"[tts] Attempt {attempt+1}/{max_retries} TRUNCATED output "
+                      f"({len(text)} chars -> {size}B ~{size/_EDGE_MP3_BYTES_PER_SEC:.1f}s: "
+                      f"\"{snippet}...\"): retry")
+                last_error = "truncated_output (stream chiuso a meta')"
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                continue
             return True
         except Exception as e:
             last_error = e
