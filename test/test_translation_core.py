@@ -155,6 +155,65 @@ def test_call_llm_stream_options_fallback(monkeypatch):
     assert comp.calls == 2  # il fallback non consuma un retry
 
 
+@pytest.mark.parametrize("model", [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "google/gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
+    "google/gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3-flash-preview",
+])
+def test_thinking_off_applies_to_gemini_flash_family(model):
+    assert tc._thinking_off_kwargs(model) == {"reasoning_effort": "minimal"}
+
+
+@pytest.mark.parametrize("model", [
+    "gemini-2.5-pro",
+    "google/gemini-3.1-pro-preview",
+    "deepseek-v4-flash",
+    "deepseek-chat",
+    "",
+    None,
+])
+def test_thinking_off_noop_outside_gemini_flash(model):
+    assert tc._thinking_off_kwargs(model) == {}
+
+
+def test_call_llm_sends_reasoning_effort_for_gemini_3(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    provider, comp = _provider_for([_FakeEvent("ok")])
+    seen = {}
+    orig = comp.create
+    comp.create = lambda **kw: (seen.update(kw), orig(**kw))[1]
+    tc.call_llm(provider, "s", "u", model="google/gemini-3.1-flash-lite",
+                usage=tc.UsageTracker())
+    assert seen["reasoning_effort"] == "minimal"
+
+
+def test_call_llm_reasoning_effort_fallback(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    exc = RuntimeError("400 INVALID_ARGUMENT: reasoning_effort is not supported")
+    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=1, exc=exc)
+    usage = tc.UsageTracker()
+    out = tc.call_llm(provider, "s", "u", model="gemini-3.6-flash", usage=usage)
+    assert out == "ok"
+    assert usage.no_reasoning_effort is True
+    assert comp.calls == 2  # il fallback non consuma un retry
+
+
+def test_call_llm_reasoning_fallback_not_triggered_for_other_errors(monkeypatch):
+    monkeypatch.setenv("ABM_TRANSLATE_MAX_RETRIES", "1")
+    monkeypatch.setattr(tc.time, "sleep", lambda s: None)
+    provider, comp = _provider_for([_FakeEvent("ok")], fail_times=1,
+                                   exc=RuntimeError("503 backend unavailable"))
+    usage = tc.UsageTracker()
+    with pytest.raises(tc.TranslationError):
+        tc.call_llm(provider, "s", "u", model="gemini-3.6-flash", usage=usage)
+    assert usage.no_reasoning_effort is False
+    assert comp.calls == 1  # errore generico: consuma il tentativo
+
+
 def test_translate_titles_valid_json():
     provider, _ = _provider_for([_FakeEvent('["Uno", "Due"]')])
     out = tc.translate_titles(provider, ["One", "Two"], "en", "it",

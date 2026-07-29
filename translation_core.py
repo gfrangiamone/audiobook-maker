@@ -132,6 +132,8 @@ class UsageTracker:
         self.est_completion_chars = 0
         # Settato a True se il provider rifiuta stream_options.
         self.no_stream_options = False
+        # Settato a True se il modello rifiuta reasoning_effort.
+        self.no_reasoning_effort = False
 
     def track(self, system_prompt, user_content, output_text, usage_obj=None):
         self.calls += 1
@@ -376,22 +378,30 @@ def make_client_provider(backend):
 # Chiamate LLM
 # ---------------------------------------------------------------------------
 
+# Famiglie che accettano reasoning_effort='minimal' su Vertex: Gemini 2.5 e
+# Gemini 3.x, ramo flash/flash-lite. Il match tollera il prefisso 'google/' e
+# i suffissi di versione (-lite, -preview, -001). I Pro sono esclusi: non
+# possono scendere sotto 'low'.
+_MINIMAL_THINKING_RE = re.compile(r"gemini-(?:2\.5|3(?:\.\d+)?)-flash")
+
+
 def _thinking_off_kwargs(model):
     """Per la traduzione il 'thinking' non è mai utile: aggiunge solo latenza e
     token di reasoning a parità di qualità. Lo minimizziamo in modo hardcoded
     via OpenAI-compat con reasoning_effort='minimal' (il valore più basso
-    accettato da Vertex per Gemini 2.5 Flash).
+    accettato da Vertex per la famiglia Flash).
 
     NB: Vertex accetta SOLO 'high'/'low'/'medium'/'minimal' — 'none' viene
     rifiutato con 400 INVALID_ARGUMENT (incidente 2026-06). 'minimal' è il
     livello minimo disponibile e di fatto azzera il reasoning su flash/flash-lite.
 
-    Gating per nome modello: applicato SOLO alla famiglia Gemini 2.5
-    flash/flash-lite. Gemini 2.5 Pro / 3 non possono ridurre il thinking e
-    altri provider (es. DeepSeek sul backend apikey) non riconoscono il
-    parametro → lo applichiamo solo dove è valido, restando un no-op altrove."""
-    m = (model or "").lower()
-    if "gemini-2.5-flash" in m:  # copre flash, flash-lite e il prefisso google/
+    Gating per nome modello: la famiglia Flash di Gemini 2.5 e 3.x (verificato
+    con chiamate reali su Vertex, 2026-07: 3.1-flash-lite, 3.5-flash-lite e
+    3.6-flash accettano 'minimal' e non emettono token di reasoning). I Pro non
+    possono ridurre il thinking e gli altri provider (es. DeepSeek sul backend
+    apikey) non riconoscono il parametro → no-op altrove. Se un modello futuro
+    lo rifiuta comunque, `call_llm` degrada da solo (no_reasoning_effort)."""
+    if _MINIMAL_THINKING_RE.search((model or "").lower()):
         return {"reasoning_effort": "minimal"}
     return {}
 
@@ -422,8 +432,9 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 "messages": messages,
                 "temperature": temperature(),
                 "stream": True,
-                **_thinking_off_kwargs(model),
             }
+            if not getattr(usage, "no_reasoning_effort", False):
+                kwargs.update(_thinking_off_kwargs(model))
             if not usage.no_stream_options:
                 kwargs["stream_options"] = {"include_usage": True}
             stream = client.chat.completions.create(**kwargs)
@@ -457,6 +468,20 @@ def call_llm(client_provider, system_prompt, user_content, *, model, usage,
                 usage.no_stream_options = True
                 log(f"  {label} [LLM] provider senza stream_options: "
                     f"report costi in modalità stima")
+                continue
+            # Modello che rifiuta reasoning_effort/thinking_level (400
+            # INVALID_ARGUMENT): disabilita il parametro e riprova subito senza
+            # consumare un tentativo. Il thinking resta al default del modello
+            # (costo output più alto, ma la traduzione non si blocca).
+            _emsg = str(e).lower()
+            if (not getattr(usage, "no_reasoning_effort", False)
+                    and _thinking_off_kwargs(model)
+                    and ("reasoning_effort" in _emsg
+                         or "thinking_level" in _emsg
+                         or "thinkinglevel" in _emsg)):
+                usage.no_reasoning_effort = True
+                log(f"  {label} [LLM] reasoning_effort rifiutato da {model}: "
+                    f"riprovo senza (thinking al default del modello)")
                 continue
             last_exc = e
             if attempt >= retries - 1:
