@@ -8875,15 +8875,43 @@ def api_generate():
                 "refund_method": "",
             }), 429
 
-        threshold_pre = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
-        if total_eur_pre > threshold_pre:
+        # Quota gratuita cumulativa: si decide sul LISTINO (il prezzo pre-
+        # azzeramento), altrimenti un job sotto soglia risulterebbe sempre a
+        # costo zero e la quota non verrebbe mai intaccata.
+        _list_total_pre = round(
+            float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
+        )
+        _quota_dec = _premium_quota_decision(
+            job.get("client_id", ""), voice, _list_total_pre
+        )
+        total_eur_pre = _quota_dec["due_eur"]
+        threshold_pre = _quota_dec["threshold_eur"]
+        _free_quota_log(job_id, _quota_dec)
+        if _quota_dec["is_free"]:
+            # Consumo differito al claim atomico dello stato (vedi sotto): un
+            # job respinto dal limite di concorrenza non deve bruciare quota.
+            job["_free_quota_charge"] = _list_total_pre
+        else:
             if not payment_token:
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
+                if _quota_dec["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=voice)
+                    except Exception:
+                        pass
                 return jsonify({
                     "error": "payment_required",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec["quota_exhausted"] else "payment_required"),
                     "total_eur": total_eur_pre,
                     "threshold_eur": threshold_pre,
+                    "quota_used_eur": _quota_dec["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -9012,13 +9040,37 @@ def api_generate():
             llm_eur_pre = payment.llm_price_eur(chars_pre, is_combined=True)["due_eur"]
         total_eur_pre = round(speechify_eur_pre + llm_eur_pre, 2)
 
-        threshold_pre = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
-        if total_eur_pre > threshold_pre:
+        # Quota gratuita cumulativa (stessa logica del ramo Gemini sopra).
+        _list_total_pre = round(
+            float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
+        )
+        _quota_dec = _premium_quota_decision(
+            job.get("client_id", ""), voice, _list_total_pre
+        )
+        total_eur_pre = _quota_dec["due_eur"]
+        threshold_pre = _quota_dec["threshold_eur"]
+        _free_quota_log(job_id, _quota_dec)
+        if _quota_dec["is_free"]:
+            job["_free_quota_charge"] = _list_total_pre
+        else:
             if not payment_token:
+                if _quota_dec["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=voice)
+                    except Exception:
+                        pass
                 return jsonify({
                     "error": "payment_required",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec["quota_exhausted"] else "payment_required"),
                     "total_eur": total_eur_pre,
                     "threshold_eur": threshold_pre,
+                    "quota_used_eur": _quota_dec["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
@@ -9102,6 +9154,17 @@ def api_generate():
         # Save voice in job for logging
         job["voice"] = voice
         job["platform"] = _client_platform()
+
+    # Consumo quota: solo ora il job e' realmente partito (stato claimato,
+    # limite di concorrenza superato). Idempotente per job_id.
+    _fq_charge = job.pop("_free_quota_charge", None)
+    if _fq_charge is not None:
+        try:
+            _fq_total = free_quota.consume(client_id, _fq_charge, job_id)
+            print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
+                  f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
+        except Exception as _fq_err:
+            print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
 
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
