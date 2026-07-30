@@ -121,6 +121,7 @@ from tts_split import (
 import email_service
 import push_service
 import metrics_store
+import free_quota
 import privacy_content
 import support_content
 import payment
@@ -591,6 +592,24 @@ def _get_client_id():
     if hdr and _MOBILE_CID_RE.match(hdr):
         return hdr
     return request.cookies.get(_CLIENT_COOKIE_NAME, "")
+
+
+# Quota gratuita cumulativa per client sui TTS premium: unico punto di
+# decisione, condiviso da /api/combined_estimate, /api/paypal_create_order_gemini,
+# /api/generate e /api/optimize. Divergenze fra questi punti producono il
+# guasto gia' visto nell'incidente "402 Speechify" (UI dice gratis, backend 402).
+_premium_quota_decision = free_quota.decision
+
+
+def _free_quota_log(job_id, decision, charged=False):
+    """Traccia la decisione di quota su stdout (best-effort)."""
+    try:
+        verdict = ("charge(%.2f)" % decision["due_eur"]) if not decision["is_free"] else "free"
+        print(f"[{job_id}] free quota: used={decision['quota_used_eur']:.2f}/"
+              f"{decision['quota_limit_eur']:.2f}€ list={decision['list_total_eur']:.2f}€ "
+              f"-> {verdict}{' consumed' if charged else ''}", flush=True)
+    except Exception:
+        pass
 
 
 _PLATFORM_HEADER = "X-ABM-Platform"
