@@ -10664,12 +10664,14 @@ def api_combined_estimate():
     gemini_eur = 0.0
     gemini_breakdown = {}
     rate_step = 0
+    _premium_list_eur = 0.0
     if _is_gemini_voice(voice_id):
         try:
             est = _gemini_tts_mod.estimate_book_cost(chs, voice_id, language=lang, rate_pct=rate)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
+        _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
         rate_step = est.get("rate_step", 0)
         gemini_breakdown = {
             "chars": est["chars_total"],
@@ -10687,6 +10689,7 @@ def api_combined_estimate():
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est_spx["user_price_eur"], 2)
+        _premium_list_eur = round(est_spx.get("list_price_eur", 0.0), 2)
         speechify_breakdown = {
             "chars": est_spx["chars_total"],
             "chars_total": est_spx["chars_total"],
@@ -10716,6 +10719,15 @@ def api_combined_estimate():
         }
 
     total = round(gemini_eur + speechify_eur + llm_eur, 2)
+    # Quota gratuita cumulativa per client: sul listino (TTS premium + quota LLM
+    # combinata), non sul prezzo gia' azzerato sotto soglia. Sola lettura: qui
+    # non si consuma nulla.
+    _quota_dec = None
+    if _has_premium:
+        _quota_dec = _premium_quota_decision(
+            _get_client_id(), voice_id, round(_premium_list_eur + llm_eur, 2)
+        )
+        total = _quota_dec["due_eur"]
     # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
     # ABM_SPEECHIFY_FREE_THRESHOLD_EUR sul ramo Speechify e
     # ABM_GEMINI_FREE_THRESHOLD_EUR altrove. Se qui usassimo sempre quella Gemini,
@@ -10770,7 +10782,9 @@ def api_combined_estimate():
         "speechify_eur": speechify_eur,
         "llm_eur": llm_eur,
         "total_eur": total,
-        "is_free": total <= threshold,
+        "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
+        "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
+        "free_quota": free_quota.snapshot(_get_client_id()) if _has_premium else None,
         "threshold_eur": threshold,
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
@@ -10846,6 +10860,7 @@ def api_paypal_create_order_gemini():
     lang = ui_lang or (getattr(info, "language", "") or "").split("-")[0].lower() or "it"
 
     gemini_eur = 0.0
+    _premium_list_eur = 0.0
     if _is_gemini_voice(voice_id):
         try:
             # rate_pct: la stima dipende dalla velocità scelta, quindi va
@@ -10854,6 +10869,7 @@ def api_paypal_create_order_gemini():
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         gemini_eur = round(est["user_price_eur"], 2)
+        _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
 
     speechify_eur = 0.0
     if _is_speechify_voice(voice_id):
@@ -10862,7 +10878,9 @@ def api_paypal_create_order_gemini():
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         speechify_eur = round(est["user_price_eur"], 2)
+        _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
 
+    _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
@@ -10870,10 +10888,16 @@ def api_paypal_create_order_gemini():
         # /api/combined_estimate): con voce standard la quota LLM e' standalone
         # e applica il floor. Fonte unica payment.llm_price_eur, cosi' il
         # server-side amount check non produce falsi mismatch.
-        _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
         llm_eur = payment.llm_price_eur(chars, is_combined=_has_premium)["due_eur"]
 
     server_total = round(gemini_eur + speechify_eur + llm_eur, 2)
+    # Stesso punto di decisione di /api/combined_estimate: l'ordine PayPal deve
+    # valere esattamente l'importo che il client ha visto (e che /api/generate
+    # pretendera'), quota gratuita inclusa.
+    if _has_premium:
+        server_total = _premium_quota_decision(
+            _get_client_id(), voice_id, round(_premium_list_eur + llm_eur, 2)
+        )["due_eur"]
 
     if abs(server_total - requested_amount) > 0.01:
         return jsonify({

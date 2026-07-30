@@ -153,3 +153,15 @@ def test_speechify_estimate_exposes_list_price(monkeypatch):
     assert est["is_free"] is True
     assert est["user_price_eur"] == 0.0
     assert est["list_price_eur"] > 0.0
+
+
+def test_estimate_and_order_agree_after_quota_exhaustion(fq):
+    """Coerenza dei punti prezzo: la stessa `decision` governa stima e ordine."""
+    voice = "gemini:flash31:Laomedeia"
+    fq.consume("cid1", 1.95, "jobA")
+    est_side = fq.decision("cid1", voice, 0.15)
+    order_side = fq.decision("cid1", voice, 0.15)
+    generate_side = fq.decision("cid1", voice, 0.15)
+    assert est_side["due_eur"] == order_side["due_eur"] == generate_side["due_eur"]
+    assert est_side["due_eur"] == pytest.approx(0.50)
+    assert est_side["is_free"] is False
