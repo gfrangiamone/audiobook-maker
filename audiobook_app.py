@@ -5467,6 +5467,15 @@ def admin_audit_premium_page():
     const cls = v >= 0 ? "delta-positive" : "delta-negative";
     return `<span class="${cls}">${v.toFixed(2)}%</span>`;
   }
+  // Le tabelle audit chiedono al server le prime `limit` righe piu' RECENTI.
+  // Se il filtro ne seleziona di piu', dirlo esplicitamente: una tabella
+  // troncata in silenzio si legge come "questo e' tutto".
+  function auditTruncNote(shown, total, colspan){
+    if (!total || total <= shown) return "";
+    return `<tr><td colspan="${colspan}" class="empty-msg">`
+      + `Mostrati i ${shown} record piu' recenti su ${total}. `
+      + `Restringi l'intervallo di date per vedere gli altri.</td></tr>`;
+  }
   const LANG_NAMES = {
     "it":"Italiano","en":"Inglese","fr":"Francese","es":"Spagnolo",
     "de":"Tedesco","pt":"Portoghese","ru":"Russo","ja":"Giapponese",
@@ -5559,7 +5568,7 @@ def admin_audit_premium_page():
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
     const d = await r.json();
     ttsRenderAggregates(d.aggregates || {});
-    ttsRenderRecords(d.records || []);
+    ttsRenderRecords(d.records || [], d.count || 0);
   }
   function ttsRenderAggregates(agg){
     $("tts_aggCount").textContent = agg.count ?? 0;
@@ -5579,7 +5588,7 @@ def admin_audit_premium_page():
       : 0;
     $("tts_aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
-  function ttsRenderRecords(recs){
+  function ttsRenderRecords(recs, total){
     const tbody = $("tts_auditRecordsBody");
     if (!recs.length) {
       tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">Nessun record trovato.</td></tr>';
@@ -5630,7 +5639,7 @@ def admin_audit_premium_page():
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
       </tr>`;
-    }).join("");
+    }).join("") + auditTruncNote(recs.length, total, 12);
   }
   $("tts_auditRefreshBtn").addEventListener("click", ttsFetch);
   async function ttsRecalcParams(){
@@ -5770,7 +5779,7 @@ def admin_audit_premium_page():
     if (!r.ok) { alert("Errore caricamento audit: " + r.status); return; }
     const d = await r.json();
     trRenderAggregates(d.aggregates || {});
-    trRenderRecords(d.records || []);
+    trRenderRecords(d.records || [], d.count || 0);
   }
   function trRenderAggregates(agg){
     $("tr_aggCount").textContent = agg.count ?? 0;
@@ -5790,7 +5799,7 @@ def admin_audit_premium_page():
       : 0;
     $("tr_aggDelta").innerHTML = fmtPct(_margPctAvg);
   }
-  function trRenderRecords(recs){
+  function trRenderRecords(recs, total){
     const tbody = $("tr_auditRecordsBody");
     if (!recs.length) {
       tbody.innerHTML = '<tr><td colspan="13" class="empty-msg">Nessun record trovato.</td></tr>';
@@ -5841,7 +5850,7 @@ def admin_audit_premium_page():
         <td class="${dCls}">${margPct.toFixed(2)}%</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span>${rerunBadge}</td>
       </tr>`;
-    }).join("");
+    }).join("") + auditTruncNote(recs.length, total, 13);
   }
   $("tr_auditRefreshBtn").addEventListener("click", trFetch);
 
@@ -5887,9 +5896,9 @@ def admin_audit_premium_page():
     $("optAggNet").textContent = fmtEur(a.net_margin_eur);
     $("optAggPct").innerHTML = fmtPct(a.margin_pct_avg);
     netMarginByService.optimization = Number(a.net_margin_eur) || 0; updateTotalNetMargin();
-    optRender(d.records||[]);
+    optRender(d.records||[], d.count||0);
   }
-  function optRender(recs){
+  function optRender(recs, total){
     const tb = $("optRecordsBody");
     if (!recs.length){ tb.innerHTML='<tr><td colspan="11" class="empty-msg">Nessun record trovato.</td></tr>'; return; }
     recs = recs.slice().sort((a,b)=>{
@@ -5926,7 +5935,7 @@ def admin_audit_premium_page():
         <td class="${dCls}">${pct.toFixed(2)}%</td>
         <td><span class="badge ${bcls}">${esc(blab)}</span></td>
       </tr>`;
-    }).join("");
+    }).join("") + auditTruncNote(recs.length, total, 11);
   }
   $("optRefreshBtn").addEventListener("click", optFetch);
 
@@ -6377,6 +6386,11 @@ def admin_api_gemini_cost_audit():
                 r["_rerun"] = True
             live.append(r)
 
+    # I JSONL di audit sono append-only in ordine cronologico CRESCENTE: senza
+    # questo sort la paginazione (limit=200) taglierebbe i record piu' RECENTI
+    # invece dei piu' vecchi, e i job di oggi sparirebbero dalla tabella.
+    persisted.sort(key=lambda r: r.get("ts") or "", reverse=True)
+
     recs = live + persisted
     for r in recs:
         _apply_cancel_effective(r)
@@ -6541,6 +6555,11 @@ def admin_api_translation_cost_audit():
                 r["_rerun"] = True
             live.append(r)
 
+    # Ordine cronologico decrescente prima della paginazione: i JSONL sono
+    # append-only (piu' vecchi in testa) e il taglio a `limit` scarterebbe
+    # altrimenti i record piu' recenti. Vedi audit TTS.
+    persisted.sort(key=lambda r: r.get("ts") or "", reverse=True)
+
     recs = live + persisted
     for r in recs:
         _apply_cancel_effective(r)
@@ -6646,6 +6665,11 @@ def admin_api_optimization_cost_audit():
             if r.get("job_id") in persisted_ids:
                 r["_rerun"] = True
             live.append(r)
+
+    # Ordine cronologico decrescente prima della paginazione: i JSONL sono
+    # append-only (piu' vecchi in testa) e il taglio a `limit` scarterebbe
+    # altrimenti i record piu' recenti. Vedi audit TTS.
+    persisted.sort(key=lambda r: r.get("ts") or "", reverse=True)
 
     recs = live + persisted
     for r in recs:
