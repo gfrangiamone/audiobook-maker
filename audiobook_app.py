@@ -9155,17 +9155,6 @@ def api_generate():
         job["voice"] = voice
         job["platform"] = _client_platform()
 
-    # Consumo quota: solo ora il job e' realmente partito (stato claimato,
-    # limite di concorrenza superato). Idempotente per job_id.
-    _fq_charge = job.pop("_free_quota_charge", None)
-    if _fq_charge is not None:
-        try:
-            _fq_total = free_quota.consume(client_id, _fq_charge, job_id)
-            print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
-                  f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
-        except Exception as _fq_err:
-            print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
-
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
     # download token anche senza email (push + my_jobs). Nessun SMTP richiesto.
@@ -9246,6 +9235,22 @@ def api_generate():
         # Invalida la cache voci: se il budget si avvicina allo zero, le voci
         # potrebbero scomparire al prossimo /api/voices
         _invalidate_voices_cache()
+
+    # Consumo quota: qui, non prima. Fra il claim atomico e questo punto ci
+    # sono ancora uscite sincrone che abortiscono il job senza avviarlo
+    # (selezione capitoli vuota, cap selection_too_large con refund pagamento)
+    # e nessuna prevede un rimborso quota equivalente (scelta di progetto:
+    # si consuma tardi, non si restituisce mai). Da qui in poi non resta
+    # alcun `return` prima di thread.start(): il job e' ormai certo di
+    # partire. Idempotente per job_id.
+    _fq_charge = job.pop("_free_quota_charge", None)
+    if _fq_charge is not None:
+        try:
+            _fq_total = free_quota.consume(client_id, _fq_charge, job_id)
+            print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
+                  f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
+        except Exception as _fq_err:
+            print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
 
     # Increment generation epoch to invalidate any stale threads
     job["gen_epoch"] = job.get("gen_epoch", 0) + 1

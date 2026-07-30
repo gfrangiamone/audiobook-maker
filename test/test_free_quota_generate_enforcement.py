@@ -263,3 +263,52 @@ def test_gemini_quota_available_starts_and_consumes(client, env, monkeypatch):
     assert env["run_calls"] == [("fq-gem-free", GEMINI_VOICE)]
     assert free_quota.used_eur(CID) == pytest.approx(list_price)
     assert "payment" not in audiobook_app.jobs["fq-gem-free"]
+
+
+def test_gemini_selection_too_large_after_claim_does_not_consume_quota(client, env, monkeypatch):
+    """Finestra fra il claim atomico e thread.start(): il cap safety-net
+    selected_chars > max_text_chars (righe ~9190-9211) puo' scattare DOPO il
+    claim (nel mondo reale: testo espanso da un'ottimizzazione LLM conclusa
+    dopo la stima pre-claim a riga ~8728). Quel path rimborsa il pagamento
+    (_refund_payment_on_orphan) ma NON prevede alcun rimborso quota — quindi
+    la quota non deve MAI essere stata consumata per un job che non parte:
+    il consumo deve restare a valle di questo cap, non a monte.
+
+    Per riprodurre deterministicamente il "si e' allargato dopo il primo
+    check" senza dipendere dalla pipeline LLM reale, si monkeypatcha
+    _effective_max_text_chars con un cap che passa alla prima invocazione
+    (check pre-claim, riga ~8728) e fallisce alla seconda (check post-claim,
+    riga ~9190) — le uniche due chiamate attraversate da una singola request
+    /api/generate per una voce Gemini."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    job = _mk_job("fq-gem-toolarge", 5000)
+    est = gemini_tts.estimate_book_cost(job["info"].chapters, GEMINI_VOICE,
+                                         language="en", rate_pct="+0%")
+    list_price = round(est["list_price_eur"], 2)
+    assert 0 < list_price < 2.00, "precondizione: sotto soglia e quota disponibile"
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+
+    real_cap_fn = audiobook_app._effective_max_text_chars
+    calls = []
+
+    def _flaky_cap(voice, job=None):
+        calls.append(1)
+        # 1a chiamata (pre-claim, riga ~8728): cap ampio -> passa.
+        # 2a chiamata e succ. (post-claim, riga ~9190): cap minuscolo -> 413.
+        if len(calls) <= 1:
+            return real_cap_fn(voice, job)
+        return 100
+
+    monkeypatch.setattr(audiobook_app, "_effective_max_text_chars", _flaky_cap)
+
+    r = _post_generate(client, "fq-gem-toolarge", GEMINI_VOICE)
+    assert r.status_code == 413, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["error_code"] == "selection_too_large"
+
+    # Il job non e' mai partito: nessun thread, quota mai bruciata, e lo
+    # status torna a uno stato non-generating (nessuna consumazione residua).
+    assert env["run_calls"] == []
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+    assert audiobook_app.jobs["fq-gem-toolarge"]["status"] != "generating"
