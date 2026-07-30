@@ -4,6 +4,9 @@ from datetime import datetime
 
 import pytest
 
+import gemini_tts
+import speechify_tts
+
 
 @pytest.fixture()
 def fq(tmp_path, monkeypatch):
@@ -126,10 +129,7 @@ def test_limit_zero_disables_quota(fq, monkeypatch):
 
 
 def test_gemini_estimate_exposes_list_price(monkeypatch):
-    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
-    import importlib
-    import gemini_tts
-    importlib.reload(gemini_tts)
+    monkeypatch.setattr(gemini_tts, "FREE_THRESHOLD_EUR", 5.00)
 
     class _Ch:
         def __init__(self, text):
@@ -144,9 +144,6 @@ def test_gemini_estimate_exposes_list_price(monkeypatch):
 
 def test_speechify_estimate_exposes_list_price(monkeypatch):
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
-    import importlib
-    import speechify_tts
-    importlib.reload(speechify_tts)
 
     class _Ch:
         def __init__(self, text):
