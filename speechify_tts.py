@@ -313,6 +313,7 @@ def compute_user_price_eur(chars):
         "base_price_eur": round(base_eur, 4),
         "margin_percent": margin,
         "user_price_eur": 0.0 if is_free else user_price,
+        "list_price_eur": user_price,
         "is_free": is_free,
         "free_threshold_eur": threshold,
     }
@@ -476,6 +477,7 @@ def estimate_book_cost(chapters, language="en"):
         "chars_per_chapter": chars_per_chapter,
         "cost_usd": price["cost_usd"],
         "user_price_eur": price["user_price_eur"],
+        "list_price_eur": price["list_price_eur"],
         "is_free": price["is_free"],
         "margin_percent": price["margin_percent"],
         "language": language,

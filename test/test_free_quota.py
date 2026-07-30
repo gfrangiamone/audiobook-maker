@@ -123,3 +123,36 @@ def test_limit_zero_disables_quota(fq, monkeypatch):
     assert d["due_eur"] == pytest.approx(0.0)
     assert d["is_free"] is True
     assert d["quota_exhausted"] is False
+
+
+def test_gemini_estimate_exposes_list_price(monkeypatch):
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    import importlib
+    import gemini_tts
+    importlib.reload(gemini_tts)
+
+    class _Ch:
+        def __init__(self, text):
+            self.text = text
+
+    est = gemini_tts.estimate_book_cost([_Ch("Buongiorno a tutti. " * 200)],
+                                        "gemini:flash25:Achernar", language="it")
+    assert est["is_free"] is True
+    assert est["user_price_eur"] == 0.0
+    assert est["list_price_eur"] > 0.0
+
+
+def test_speechify_estimate_exposes_list_price(monkeypatch):
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    import importlib
+    import speechify_tts
+    importlib.reload(speechify_tts)
+
+    class _Ch:
+        def __init__(self, text):
+            self.text = text
+
+    est = speechify_tts.estimate_book_cost([_Ch("Hello there. " * 200)])
+    assert est["is_free"] is True
+    assert est["user_price_eur"] == 0.0
+    assert est["list_price_eur"] > 0.0
