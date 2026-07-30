@@ -1,5 +1,6 @@
 import importlib
 import json
+from datetime import datetime
 
 import pytest
 
@@ -43,6 +44,25 @@ def test_used_eur_survives_missing_and_corrupt_file(fq, tmp_path):
     assert fq.used_eur("cid1") == pytest.approx(0.0)
     (tmp_path / "_free_quota.json").write_text("{not json", encoding="utf-8")
     assert fq.used_eur("cid1") == pytest.approx(0.0)
+
+
+def test_used_eur_survives_schema_corruption_month_is_string(fq, tmp_path):
+    path = tmp_path / "_free_quota.json"
+    # Mese corrente è mappato a string invece di dict
+    month = datetime.now().strftime("%Y-%m")
+    path.write_text(json.dumps({month: "corrupted_value"}), encoding="utf-8")
+    assert fq.used_eur("cid1") == pytest.approx(0.0)
+
+
+def test_consume_repairs_schema_corruption_and_works(fq, tmp_path):
+    path = tmp_path / "_free_quota.json"
+    # Mese corrente è mappato a string (schema corrotto)
+    month = datetime.now().strftime("%Y-%m")
+    path.write_text(json.dumps({month: "corrupted_value"}), encoding="utf-8")
+    # consume() deve riparare e funzionare correttamente
+    total = fq.consume("cid1", 0.25, "job1")
+    assert total == pytest.approx(0.25)
+    assert fq.used_eur("cid1") == pytest.approx(0.25)
 
 
 def test_prune_keeps_last_three_months(fq, tmp_path):

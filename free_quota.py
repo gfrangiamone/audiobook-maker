@@ -57,7 +57,15 @@ def used_eur(client_id):
     """Valore di listino gia' regalato al client nel mese corrente."""
     with _lock:
         d = _load()
-    bucket = (d.get(_month()) or {}).get(_norm_client(client_id)) or {}
+    month = _month()
+    # Valida schema: mese deve mappare a dict
+    month_data = d.get(month)
+    if not isinstance(month_data, dict):
+        return 0.0
+    bucket = month_data.get(_norm_client(client_id)) or {}
+    # Valida schema: client deve mappare a dict
+    if not isinstance(bucket, dict):
+        return 0.0
     try:
         return float(bucket.get("eur", 0.0) or 0.0)
     except (TypeError, ValueError):
@@ -77,8 +85,19 @@ def consume(client_id, eur, job_id):
         amount = 0.0
     with _lock:
         d = _load()
-        bucket = d.setdefault(_month(), {}).setdefault(cid, {"eur": 0.0, "jobs": {}})
-        jobs = bucket.setdefault("jobs", {})
+        month = _month()
+        # Ripara schema corrotto: mese deve essere dict
+        if not isinstance(d.get(month), dict):
+            d[month] = {}
+        # Ripara schema corrotto: client deve essere dict
+        month_bucket = d[month]
+        if not isinstance(month_bucket.get(cid), dict):
+            month_bucket[cid] = {"eur": 0.0, "jobs": {}}
+        bucket = month_bucket[cid]
+        # Ripara schema corrotto: jobs deve essere dict
+        if not isinstance(bucket.get("jobs"), dict):
+            bucket["jobs"] = {}
+        jobs = bucket["jobs"]
         try:
             current = float(bucket.get("eur", 0.0) or 0.0)
         except (TypeError, ValueError):
