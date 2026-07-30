@@ -10397,6 +10397,25 @@ def api_paypal_capture_order():
                       "PAYMENT_DUPLICATE_REFUSED", "", "", "", str(e))
         return jsonify({"error": "already_paid_for_job",
                         "detail": "This audiobook has already been paid."}), 409
+    except payment.PayPalCaptureRefusedError as e:
+        # Ordine approvato ma capture rifiutata da PayPal (tipicamente rifiuto
+        # dell'emittente della carta). L'issue e il debug_id finiscono nel log
+        # attivita': senza di essi il 422 non e' diagnosticabile a posteriori.
+        # `retryable`: il frontend riavvia il checkout PayPal (actions.restart)
+        # per far scegliere all'utente un altro strumento di pagamento.
+        print(f"[paypal] capture REFUSED order={order_id} job={job_id} "
+              f"issue={e.issue or '-'} debug_id={e.debug_id or '-'} "
+              f"http={e.status_code}")
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_CAPTURE_REFUSED", "", "", "",
+                      f"order={order_id} issue={e.issue or '-'} "
+                      f"debug_id={e.debug_id or '-'} http={e.status_code}")
+        return jsonify({
+            "error": str(e),
+            "paypal_issue": e.issue,
+            "paypal_debug_id": e.debug_id,
+            "retryable": e.issue in ("INSTRUMENT_DECLINED", "PAYER_ACTION_REQUIRED"),
+        }), 402
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:

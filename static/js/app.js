@@ -1724,11 +1724,19 @@ async function renderPaypalGeminiButtons(){
       const r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_body)});
       const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },
-    onApprove:async function(data){
+    onApprove:async function(data,actions){
       try{
         const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
         const d=await r.json();
-        if(d.error||!d.payment_token){_payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
+        if(d.error||!d.payment_token){
+          // Capture rifiutata dall'emittente (INSTRUMENT_DECLINED): flusso
+          // ufficiale PayPal -> actions.restart() riapre il checkout così
+          // l'utente sceglie un'altra carta/metodo invece di restare bloccato.
+          if(d.retryable&&d.paypal_issue==='INSTRUMENT_DECLINED'&&actions&&typeof actions.restart==='function'){
+            _payPaypalErr((typeof t==='function'&&t('pay_paypal_declined'))||'Payment declined — choose another card or payment method');
+            return actions.restart();
+          }
+          _payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
         _geminiPayCaptured=true;  // capture ok: blocca ulteriori creazioni ordine
         _payState.token=d.payment_token;_payState.method='paypal';
         const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;

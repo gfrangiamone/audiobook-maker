@@ -807,6 +807,13 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
         json=payload,
         timeout=15,
     )
+    if r.status_code >= 400:
+        # Log diagnostico prima di propagare: senza body + debug_id l'errore in
+        # log e' solo "HTTP 4xx" e la causa non e' ricostruibile a posteriori.
+        issue, name, description, debug_id = _paypal_error_details(r)
+        print(f"[paypal] create_order refused http={r.status_code} "
+              f"issue={issue or '-'} name={name or '-'} debug_id={debug_id or '-'} "
+              f"body={(r.text or '')[:500]}")
     r.raise_for_status()
     resp = r.json()
     order_id = resp.get("id")
@@ -922,8 +929,63 @@ def email_for_token(token: str) -> str:
     return ""
 
 
+def _paypal_error_details(r):
+    """Estrae (issue, name, description, debug_id) da una risposta PayPal 4xx/5xx.
+
+    Il body di errore PayPal ha forma::
+
+        {"name": "UNPROCESSABLE_ENTITY", "message": "...",
+         "details": [{"issue": "INSTRUMENT_DECLINED", "description": "..."}],
+         "debug_id": "..."}
+
+    L'header ``PayPal-Debug-Id`` e' il riferimento da citare nel supporto PayPal.
+    Best-effort: risposte non-JSON o senza `details` non devono far esplodere il
+    chiamante (che sta gia' gestendo un errore).
+    """
+    issue = name = description = ""
+    debug_id = (r.headers.get("PayPal-Debug-Id")
+                or r.headers.get("Paypal-Debug-Id") or "")
+    try:
+        body = r.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        name = str(body.get("name") or "")
+        description = str(body.get("message") or "")
+        debug_id = debug_id or str(body.get("debug_id") or "")
+        details = body.get("details")
+        if isinstance(details, list) and details and isinstance(details[0], dict):
+            issue = str(details[0].get("issue") or "")
+            description = str(details[0].get("description") or description)
+    return issue, name, description, debug_id
+
+
+class PayPalCaptureRefusedError(ValueError):
+    """PayPal ha rifiutato la capture di un ordine gia' approvato (HTTP 4xx).
+
+    Espone l'``issue`` PayPal (`INSTRUMENT_DECLINED`, `ORDER_NOT_APPROVED`,
+    `PAYER_ACTION_REQUIRED`, `TRANSACTION_REFUSED`, `COMPLIANCE_VIOLATION`, ...)
+    e il ``debug_id``: senza questi dati un 422 in log e' cieco e la causa reale
+    (rifiuto dell'emittente vs errore nostro) non e' distinguibile a posteriori.
+    Vedi caso ordine 36M6852033504281N (2026-07, carta IN su importo EUR).
+    """
+
+    def __init__(self, message, issue="", name="", debug_id="",
+                 status_code=0, body=""):
+        super().__init__(message)
+        self.issue = issue or ""
+        self.name = name or ""
+        self.debug_id = debug_id or ""
+        self.status_code = int(status_code or 0)
+        self.body = body or ""
+
+
 def _paypal_capture_order(order_id):
-    """Capture a previously-approved order. Returns captured order dict."""
+    """Capture a previously-approved order. Returns captured order dict.
+
+    Su rifiuto PayPal (4xx) logga body + debug_id e solleva
+    ``PayPalCaptureRefusedError`` con l'issue diagnostico.
+    """
     import requests
     token = _paypal_get_access_token()
     if not token:
@@ -933,7 +995,19 @@ def _paypal_capture_order(order_id):
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         timeout=20,
     )
-    r.raise_for_status()
+    if r.status_code >= 400:
+        issue, name, description, debug_id = _paypal_error_details(r)
+        body = (r.text or "")[:500]
+        print(f"[paypal] capture refused order={order_id} http={r.status_code} "
+              f"issue={issue or '-'} name={name or '-'} debug_id={debug_id or '-'} "
+              f"body={body}")
+        label = issue or name or f"HTTP {r.status_code}"
+        msg = f"PayPal refused the capture ({label})"
+        if description:
+            msg += f": {description}"
+        raise PayPalCaptureRefusedError(
+            msg, issue=issue, name=name, debug_id=debug_id,
+            status_code=r.status_code, body=body)
     return r.json()
 
 
