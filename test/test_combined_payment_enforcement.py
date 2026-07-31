@@ -62,6 +62,10 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(payment, "_vouchers", {})
     monkeypatch.setattr(payment, "_PAYMENTS_FILE", tmp_path / "_payments.json")
     monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
+    # Isola la quota gratuita cumulativa (Task 6) dal file reale di
+    # ABM_DATA_DIR: senza questo i test leggerebbero/scriverebbero
+    # _free_quota.json nell'ambiente dev reale, con stato residuo tra run.
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
     # Soglia bassa cosi' anche un libro di test modesto richiede pagamento.
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.10")
     yield calls
@@ -145,6 +149,11 @@ def test_combined_below_threshold_runs_free(client, env, monkeypatch):
     """Sotto soglia il flusso combinato resta gratuito (nessun 402 senza token)."""
     _mk_job("cpe-free", 300_000)
     monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "100000")
+    # Il listino di questo job (~8€) supera di gran lunga la quota gratuita
+    # mensile di default (2€/mese): qui si vuole isolare lo scenario "sotto
+    # SOGLIA" da quello "quota esaurita" (coperto da test dedicati), quindi
+    # si alza il tetto mensile cosi' la quota non interferisce.
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "1000")
     r = _post_optimize(client, "cpe-free")
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()["status"] == "started"

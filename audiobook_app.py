@@ -11260,26 +11260,48 @@ def api_optimize():
                 language=_lang_for_est, rate_pct=_rate_for_est,
             )
             _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
+            _gemini_list_quota = round(_est_gemini.get("list_price_eur", 0.0), 2)
         except Exception as _e_est:
             print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
             _est_gemini = None
             _gemini_eur_quota = 0.0
-        _expected_total = round(_gemini_eur_quota + estimated_cost, 2)
-        # Soglia per richiedere il pagamento: ABM_GEMINI_FREE_THRESHOLD_EUR
-        # (allineata con /api/generate). Sotto soglia il job e' free.
-        _threshold_combined = float(
-            os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+            _gemini_list_quota = 0.0
+        # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
+        _quota_dec = _premium_quota_decision(
+            job.get("client_id", ""), _voice_for_est,
+            round(_gemini_list_quota + estimated_cost, 2),
         )
-        if _expected_total > _threshold_combined:
+        _expected_total = _quota_dec["due_eur"]
+        _threshold_combined = _quota_dec["threshold_eur"]
+        _free_quota_log(job_id, _quota_dec)
+        if _quota_dec["is_free"]:
+            try:
+                free_quota.consume(job.get("client_id", ""),
+                                   _quota_dec["list_total_eur"], job_id)
+            except Exception as _fq_err:
+                print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}")
+        if not _quota_dec["is_free"]:
             if not _combined_token:
+                if _quota_dec["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=_voice_for_est)
+                    except Exception:
+                        pass
                 _release_opt_claim()
                 return jsonify({
                     "error": "Payment required for generation.",
-                    "error_code": "payment_required",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec["quota_exhausted"] else "payment_required"),
                     "total_eur": _expected_total,
                     "gemini_eur": _gemini_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_combined,
+                    "quota_used_eur": _quota_dec["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec["quota_limit_eur"],
                 }), 402
             # Validazione + consume del token combinato.
             _consumed = False
@@ -11380,25 +11402,49 @@ def api_optimize():
         try:
             _est_spx = speechify_tts.estimate_book_cost(_chs_for_est_spx, language="en")
             _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
+            _speechify_list_quota = round(_est_spx.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_spx:
             print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}")
             _est_spx = None
             _speechify_eur_quota = 0.0
-        _expected_total_spx = round(_speechify_eur_quota + estimated_cost, 2)
-        # Soglia coerente col ramo Speechify di /api/generate e /api/combined_estimate.
-        _threshold_spx = float(
-            os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50")
+            _speechify_list_quota = 0.0
+        # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
+        _voice_spx = data.get("voice", "")
+        _quota_dec_spx = _premium_quota_decision(
+            job.get("client_id", ""), _voice_spx,
+            round(_speechify_list_quota + estimated_cost, 2),
         )
-        if _expected_total_spx > _threshold_spx:
+        _expected_total_spx = _quota_dec_spx["due_eur"]
+        _threshold_spx = _quota_dec_spx["threshold_eur"]
+        _free_quota_log(job_id, _quota_dec_spx)
+        if _quota_dec_spx["is_free"]:
+            try:
+                free_quota.consume(job.get("client_id", ""),
+                                   _quota_dec_spx["list_total_eur"], job_id)
+            except Exception as _fq_err_spx:
+                print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_spx}")
+        if not _quota_dec_spx["is_free"]:
             if not _combined_token_spx:
+                if _quota_dec_spx["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=_voice_spx)
+                    except Exception:
+                        pass
                 _release_opt_claim()
                 return jsonify({
                     "error": "Payment required for generation.",
-                    "error_code": "payment_required",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec_spx["quota_exhausted"] else "payment_required"),
                     "total_eur": _expected_total_spx,
                     "speechify_eur": _speechify_eur_quota,
                     "llm_eur": estimated_cost,
                     "threshold_eur": _threshold_spx,
+                    "quota_used_eur": _quota_dec_spx["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec_spx["quota_limit_eur"],
                 }), 402
             # Validazione + consume del token combinato.
             _consumed_spx = False

@@ -31,7 +31,7 @@ class _Info:
         self.language = "en"
 
 
-def _setup(monkeypatch, audiobook_app, job_id, chars):
+def _setup(monkeypatch, audiobook_app, job_id, chars, tmp_path):
     # ~`chars` caratteri: quota Speechify sopra soglia, quota LLM sotto soglia.
     info = _Info([_Ch(1, "a" * chars)])
     # Job legacy senza client_id -> _check_job_owner passa senza cookie.
@@ -45,14 +45,18 @@ def _setup(monkeypatch, audiobook_app, job_id, chars):
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50")
     monkeypatch.setenv("ABM_SPEECHIFY_COST_USD_PER_MCHAR", "11.18")
     monkeypatch.setenv("ABM_SPEECHIFY_MARGIN_PERCENT", "60")
+    # Isola la quota gratuita cumulativa (Task 6) dal file reale di
+    # ABM_DATA_DIR: senza questo i test leggerebbero/scriverebbero
+    # _free_quota.json nell'ambiente dev reale, con stato residuo tra run.
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
 
 
-def test_speechify_autogen_requires_payment_when_llm_below_threshold(monkeypatch):
+def test_speechify_autogen_requires_payment_when_llm_below_threshold(monkeypatch, tmp_path):
     import audiobook_app
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
     # 40k caratteri: quota Simba ~1.4€ (> 0.50), quota LLM << 0.50 (free).
-    _setup(monkeypatch, audiobook_app, "SPX1", 40_000)
+    _setup(monkeypatch, audiobook_app, "SPX1", 40_000, tmp_path)
 
     # Sanity: la quota Simba supera la soglia, la quota LLM no.
     spx_eur = audiobook_app.speechify_tts.compute_user_price_eur(40_000)["user_price_eur"]
@@ -78,11 +82,11 @@ def test_speechify_autogen_requires_payment_when_llm_below_threshold(monkeypatch
     assert audiobook_app.jobs["SPX1"]["status"] == "analyzed"
 
 
-def test_speechify_autogen_bad_token_rejected(monkeypatch):
+def test_speechify_autogen_bad_token_rejected(monkeypatch, tmp_path):
     import audiobook_app
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
-    _setup(monkeypatch, audiobook_app, "SPX2", 40_000)
+    _setup(monkeypatch, audiobook_app, "SPX2", 40_000, tmp_path)
 
     client = audiobook_app.app.test_client()
     resp = client.post("/api/optimize", json={
@@ -99,12 +103,12 @@ def test_speechify_autogen_bad_token_rejected(monkeypatch):
     assert audiobook_app.jobs["SPX2"]["status"] == "analyzed"
 
 
-def test_speechify_autogen_free_when_below_threshold(monkeypatch):
+def test_speechify_autogen_free_when_below_threshold(monkeypatch, tmp_path):
     import audiobook_app
     if not hasattr(audiobook_app, "jobs"):
         pytest.skip("audiobook_app.jobs non trovato")
     # 2k caratteri: quota Simba < 0.50, totale sotto soglia -> job free, parte.
-    _setup(monkeypatch, audiobook_app, "SPX3", 2_000)
+    _setup(monkeypatch, audiobook_app, "SPX3", 2_000, tmp_path)
     assert audiobook_app.speechify_tts.compute_user_price_eur(2_000)["user_price_eur"] <= 0.50
 
     client = audiobook_app.app.test_client()
