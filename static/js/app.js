@@ -2569,9 +2569,24 @@ async function submitEmailLateTr(){
   }catch(e){alert('Error: '+e.message)}
 }
 
+function _setPanel5Desc(key,fallback){
+  // Il pannello 5 e' condiviso audio/traduzione: cambia anche la chiave data-t
+  // cosi' un cambio lingua successivo non rimette il testo dell'altro flusso.
+  const el=document.getElementById('panel5Desc');
+  if(!el)return;
+  el.setAttribute('data-t',key);
+  el.textContent=t(key)||fallback;
+}
+
 function _showTranslationDone(d){
   _unlockStep(5);
   jobDone=true;
+  // Il contenitore dei download resta display:none dopo resetAll() ("Carica
+  // altro libro") o goBackToChapters(): nel flusso audio lo riabilita il
+  // done-handler di listenProgress, qui mancava. Senza questo ripristino la
+  // schermata di fine traduzione e' un vicolo cieco (nessun download, nessun
+  // "genera audio"), pur avendo il titolo "Traduzione completata!".
+  const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='';
   ['btnD','btnM','btnA','btnP'].forEach(id=>{const b=document.getElementById(id);if(b)b.style.display='none'});
   const btnD=document.getElementById('btnD');
   if(btnD){
@@ -2584,6 +2599,7 @@ function _showTranslationDone(d){
   if(btnAdopt){btnAdopt.style.display='';btnAdopt.onclick=adoptTranslation;}
   const h=document.getElementById('panel5Heading');
   if(h)h.textContent=t('tr_done')||'Translation complete!';
+  _setPanel5Desc('tr_done_desc','Your translation is ready. The file remains available for 24 hours.');
   goToStep(5);
 }
 
@@ -3825,6 +3841,11 @@ function listenProgress(){
         const btnP=document.getElementById('btnP');
         const dlA=document.getElementById('dlA');
         if(dlA)dlA.style.display=''; // ensure visible (may have been hidden by goBackToChapters)
+        // Pannello 5 condiviso: se prima c'era una traduzione (adopt -> audio),
+        // rimetti titolo e testo del flusso audio.
+        const _h5=document.getElementById('panel5Heading');
+        if(_h5)_h5.textContent=t('p5_title')||'Audiobook Ready';
+        _setPanel5Desc('p5_desc','Your audiobook is ready. Files remain available for 24 hours.');
         if(btnD)btnD.style.display='none';
         if(btnM)btnM.style.display='none';
         if(btnA)btnA.style.display='none';
@@ -4525,6 +4546,9 @@ function resetAll(){
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
+  // Ripristina la chiave del testo pannello 5 (una traduzione precedente l'ha
+  // cambiata in tr_done_desc): applyI18n() in coda a resetAll la rilegge.
+  const _p5d=document.getElementById('panel5Desc');if(_p5d)_p5d.setAttribute('data-t','p5_desc');
   const genDet=document.getElementById('genDetails');if(genDet){genDet.style.display='none';genDet.innerHTML='';}
   ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
   ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});

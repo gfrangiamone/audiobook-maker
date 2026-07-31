@@ -12,7 +12,7 @@ NEW_KEYS = [
     "pay_err_email_mismatch","pay_err_revoked","pay_err_insufficient",
     "pay_err_unknown","pay_err_network","pay_ok_remaining",
     "pay_paypal_unavailable","pay_paypal_captured","pay_paypal_capture_failed",
-    "pay_paypal_error","p3_subtitle","free_quota_exhausted",
+    "pay_paypal_error","p3_subtitle","free_quota_exhausted","tr_done_desc",
 ]
 LANGS = ["it","en","fr","es","de","zh","hi"]
 
