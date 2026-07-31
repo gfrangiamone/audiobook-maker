@@ -3600,7 +3600,16 @@ function _bindTransferButtonForMobile(boxId, token){
   if(!btn) return;
   var ios = _isIOSUA();
   var url = ios ? _appSchemeUrl(token) : _appOpenUrl(token);
-  btn.onclick = function(){ window.location.href = url; };
+  btn.onclick = function(){
+    // Il transfer cede il job all'app: l'abbandono pagina NON e' una rinuncia.
+    // Su Android l'apertura via intent:// fa navigare Chrome altrove -> scatta
+    // beforeunload -> /api/cancel, che uccide il job appena trasferito nella
+    // race col claim dell'app (email_registered non ancora impostato). Questo
+    // flag sopprime quel cancel; se il transfer fallisce (app assente) il job
+    // viene comunque ripulito dall'heartbeat-timeout server (60s).
+    window._transferInitiated = true;
+    window.location.href = url;
+  };
   var span = btn.querySelector('[data-t]');
   if(span){
     var key = ios ? 'transfer_open_in_app' : 'transfer_cta_mobile';
@@ -4432,8 +4441,12 @@ async function downloadPodcastZip(){
 }
 
 function onBeforeUnload(e){
-  if(generating&&!jobDone&&jobId&&!emailRegistered){
-    // Cancel solo se la generazione è in corso E l'utente NON ha registrato email
+  if(generating&&!jobDone&&jobId&&!emailRegistered&&!window._transferInitiated){
+    // Cancel solo se la generazione è in corso, l'utente NON ha registrato email
+    // e non è stato avviato un transfer verso l'app (che cede il job: v.
+    // _bindTransferButtonForMobile). Senza la guardia _transferInitiated, su
+    // Android l'apertura dell'app fa navigare il browser e questo cancel uccide
+    // il job trasferito prima che il claim dell'app lo protegga.
     navigator.sendBeacon('/api/cancel/'+jobId);
   }
 }
