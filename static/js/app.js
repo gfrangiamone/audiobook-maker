@@ -1543,6 +1543,9 @@ function renderEstimate(data){
       if(data.llm_eur>0)parts.push('+ Ottimizzazione testo AI €'+Number(data.llm_eur).toFixed(2));
       const extra=parts.join(' ');
       const segs=[];
+      // Quota gratuita mensile esaurita: spiega perche' un libro breve non e' gratis.
+      if(data.quota_exhausted)segs.push((window.t&&t('free_quota_exhausted'))
+        ||'Free monthly credit for PREMIUM voices used up.');
       if(extra)segs.push(extra);
       if(minsStr)segs.push(minsStr);
       detailEl.textContent=segs.join(' · ');

@@ -34,6 +34,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 109 |
 | `ABM_LLM_MIN_COST_EUR` | `1.0` (floor EUR sull'importo dovuto per l'ottimizzazione AI **standalone**, applicato solo quando la stima supera `ABM_LLM_FREE_THRESHOLD_EUR`; sotto soglia resta gratis; non si applica alla quota LLM dei pagamenti combinati con voci PREMIUM) | `payment.py` | 58–62 |
 | `ABM_LLM_COST_USD_PER_MTOK` | `0.18` (Costo provider LLM per l'ottimizzazione AI del testo — parametro **unico blended in USD** per 1M token TOTALI prompt+completion; assorbe mix input/output e token in cache; convertito in EUR con `ABM_GEMINI_USD_EUR_RATE`; base costo audit /admin/audit-premium) | `payment.py` | 68–69 |
+| `ABM_FREE_QUOTA_EUR_PER_MONTH` | `2.00` (quota gratuita cumulativa per client, € di listino non fatturato per mese solare, sulle voci PREMIUM; `0` disattiva la feature) | `free_quota.py` | 40 |
+| `ABM_PREMIUM_MIN_COST_EUR` | `0.50` (importo minimo addebitato a un job PREMIUM quando la quota gratuita mensile è esaurita) | `free_quota.py` | 168 |
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
