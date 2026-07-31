@@ -3437,6 +3437,12 @@ async function startGen(){
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
         showErr('s3err',d.error);unlockUI();return;
       }
+      if(d.error_code==='free_quota_exhausted'||d.error_code==='payment_required'){
+        // Path di retry/generazione post-ottimizzazione standalone: senza
+        // questo case l'utente vedrebbe la stringa cruda del 402 e resterebbe
+        // senza modale di pagamento (incidente "402 Speechify").
+        _handlePremiumPaymentRequired(d);return;
+      }
       if(d.error_code==='concurrent_limit'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
