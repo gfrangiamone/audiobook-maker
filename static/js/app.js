@@ -2978,6 +2978,9 @@ async function startCombinedGeneration(combinedPaymentToken){
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
           _showSelTooLargeModal(d.chars_selected,d.chars_limit);unlockUI();return;
         }
+        if(d.error_code==='free_quota_exhausted'||d.error_code==='payment_required'){
+          _handlePremiumPaymentRequired(d);return;
+        }
         if(d.error_code==='llm_concurrent_limit'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
@@ -3043,6 +3046,9 @@ async function startCombinedGeneration(combinedPaymentToken){
           document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
           document.getElementById('btnRetryWiz').onclick=retryGeneration;
           unlockUI();return;
+        }
+        if(gd.error_code==='free_quota_exhausted'||gd.error_code==='payment_required'){
+          _handlePremiumPaymentRequired(gd);return;
         }
         if(gd.error_code==='gemini_overload'){
           // Pre-flight block sincrono: nessun job avviato, nessun payment consumato.
@@ -4856,6 +4862,40 @@ function _showSelTooLargeModal(charsSelected,limit){
   const m=document.getElementById('selTooLargeModal');if(m)m.classList.add('open');
 }
 function closeSelTooLargeModal(){const m=document.getElementById('selTooLargeModal');if(m)m.classList.remove('open')}
+// 402 di regime dei flussi PREMIUM (error_code free_quota_exhausted /
+// payment_required). Con la quota gratuita mensile per client la finestra fra
+// la stima mostrata (_doCombinedEstimate) e il POST puo' cambiare l'esito:
+// senza questo handler l'utente vedeva la stringa cruda "payment_required" nel
+// pannello di avanzamento, senza modale di pagamento e senza via d'uscita
+// (job fermo a 0% — incidente "402 Speechify"). Qui spieghiamo il motivo e
+// riapriamo il flusso di pagamento con l'importo deciso dal backend.
+function _handlePremiumPaymentRequired(d){
+  const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+  const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+  const msg=((window.t&&t('free_quota_exhausted'))
+    ||"You have used up this month's free PREMIUM voice credit. This generation has a minimum charge.");
+  showErr('s3err',msg);
+  unlockUI();
+  generating=false;
+  // Il 402 espone il totale dovuto (gia' post-quota) e, sul ramo combinato,
+  // anche la quota AI: la riga "Voci PREMIUM" e' il resto.
+  const total=Number(d.total_eur)||0;
+  const llm=Number(d.llm_eur)||0;
+  const premium=Math.max(0,Math.round((total-llm)*100)/100);
+  const _v=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
+  const isSpx=(typeof _isSpeechifyVoiceId==='function')&&_isSpeechifyVoiceId(_v);
+  openPaymentModal({
+    gemini_eur:isSpx?0:premium,
+    speechify_eur:isSpx?premium:0,
+    llm_eur:llm,
+    total_eur:total,
+    is_free:false,
+    threshold_eur:Number(d.threshold_eur)||0,
+    quota_exhausted:(d.error_code==='free_quota_exhausted'),
+    quota_used_eur:Number(d.quota_used_eur)||0,
+    quota_limit_eur:Number(d.quota_limit_eur)||0,
+  });
+}
 function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();
   if(sel.length===0){showErr('s3err',t('sel_err_none'));return}
