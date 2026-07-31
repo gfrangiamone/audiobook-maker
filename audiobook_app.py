@@ -601,6 +601,24 @@ def _get_client_id():
 _premium_quota_decision = free_quota.decision
 
 
+def _quota_client_id(job=None):
+    """Sorgente UNICA del client_id per la quota premium.
+
+    Priorita': (1) `job["client_id"]`, fissato all'analyze; (2) cookie/header
+    della richiesta corrente. Il fallback e' obbligatorio perche' il cookie
+    `abm_cid` viene emesso solo dall'after_request: un job nato da una prima
+    richiesta diretta a /api/analyze (pagina da cache, cookie scaduto a tab
+    aperta, client API) ha `client_id=""` e finirebbe nel bucket condiviso
+    `_anon`, mentre stima e ordine PayPal leggerebbero il cookie nuovo e
+    vedrebbero quota piena -> UI "Gratis" + backend 402 (incidente "402
+    Speechify"). Tutti i punti di enforcement devono usare questa funzione.
+    """
+    cid = ""
+    if isinstance(job, dict):
+        cid = (job.get("client_id") or "").strip()
+    return cid or _get_client_id()
+
+
 def _free_quota_log(job_id, decision, charged=False):
     """Traccia la decisione di quota su stdout (best-effort)."""
     try:
@@ -8704,6 +8722,15 @@ def api_generate():
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
     # ----- F3: Gemini payment preflight -----
+    # Lo stash di quota vale SOLO per la richiesta corrente: azzeralo qui, in
+    # testa al preflight premium e per qualunque voce. Fra i gate premium e la
+    # pop che consuma (poco prima di thread.start()) restano uscite sincrone
+    # (429 concurrent_limit, 400 no chapters, 413 selection_too_large, 429
+    # google_tts_budget): senza questo reset un residuo sopravvivrebbe sul job
+    # in memoria e la richiesta successiva sullo stesso job_id consumerebbe
+    # quota anche con voce standard (nessun gate premium) o dopo un pagamento
+    # regolare (il ramo `else` non scrive lo stash e ereditava il vecchio).
+    job.pop("_free_quota_charge", None)
     payment_token = (data.get("payment_token") or "").strip()
     style_instruction = (data.get("gemini_style_instruction") or "")[:200]
     accent_variant = (data.get("gemini_accent") or "").strip()[:8]
@@ -8882,7 +8909,7 @@ def api_generate():
             float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
         )
         _quota_dec = _premium_quota_decision(
-            job.get("client_id", ""), voice, _list_total_pre
+            _quota_client_id(job), voice, _list_total_pre, job_id
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
@@ -9045,7 +9072,7 @@ def api_generate():
             float(est_pre.get("list_price_eur", 0.0) or 0.0) + llm_eur_pre, 2
         )
         _quota_dec = _premium_quota_decision(
-            job.get("client_id", ""), voice, _list_total_pre
+            _quota_client_id(job), voice, _list_total_pre, job_id
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
@@ -9243,10 +9270,14 @@ def api_generate():
     # si consuma tardi, non si restituisce mai). Da qui in poi non resta
     # alcun `return` prima di thread.start(): il job e' ormai certo di
     # partire. Idempotente per job_id.
+    # Con quota disattivata (ABM_FREE_QUOTA_EUR_PER_MONTH=0) NON si consuma:
+    # riempire il contatore in silenzio significa che, alzando il limite a mese
+    # in corso, molti client risulterebbero gia' esauriti e verrebbero addebitati
+    # subito. Il client_id e' lo stesso usato dal gate (`_quota_client_id`).
     _fq_charge = job.pop("_free_quota_charge", None)
-    if _fq_charge is not None:
+    if _fq_charge is not None and free_quota.limit_eur() > 0:
         try:
-            _fq_total = free_quota.consume(client_id, _fq_charge, job_id)
+            _fq_total = free_quota.consume(_quota_client_id(job), _fq_charge, job_id)
             print(f"[{job_id}] free quota consumed: +{_fq_charge:.2f}€ -> "
                   f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
         except Exception as _fq_err:
@@ -10791,9 +10822,10 @@ def api_combined_estimate():
     # combinata), non sul prezzo gia' azzerato sotto soglia. Sola lettura: qui
     # non si consuma nulla.
     _quota_dec = None
+    _quota_cid = _quota_client_id(job)
     if _has_premium:
         _quota_dec = _premium_quota_decision(
-            _get_client_id(), voice_id, round(_premium_list_eur + llm_eur, 2)
+            _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2), job_id
         )
         total = _quota_dec["due_eur"]
     # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
@@ -10852,7 +10884,7 @@ def api_combined_estimate():
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
         "quota_exhausted": bool(_quota_dec and _quota_dec["quota_exhausted"]),
-        "free_quota": free_quota.snapshot(_get_client_id()) if _has_premium else None,
+        "free_quota": free_quota.snapshot(_quota_cid) if _has_premium else None,
         "threshold_eur": threshold,
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
@@ -10964,7 +10996,8 @@ def api_paypal_create_order_gemini():
     # pretendera'), quota gratuita inclusa.
     if _has_premium:
         server_total = _premium_quota_decision(
-            _get_client_id(), voice_id, round(_premium_list_eur + llm_eur, 2)
+            _quota_client_id(job), voice_id,
+            round(_premium_list_eur + llm_eur, 2), job_id,
         )["due_eur"]
 
     if abs(server_total - requested_amount) > 0.01:
@@ -11267,19 +11300,26 @@ def api_optimize():
             _gemini_eur_quota = 0.0
             _gemini_list_quota = 0.0
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
+        _quota_cid = _quota_client_id(job)
         _quota_dec = _premium_quota_decision(
-            job.get("client_id", ""), _voice_for_est,
-            round(_gemini_list_quota + estimated_cost, 2),
+            _quota_cid, _voice_for_est,
+            round(_gemini_list_quota + estimated_cost, 2), job_id,
         )
         _expected_total = _quota_dec["due_eur"]
         _threshold_combined = _quota_dec["threshold_eur"]
-        _free_quota_log(job_id, _quota_dec)
-        if _quota_dec["is_free"]:
+        # Consumo immediato (qui il job parte davvero) e SOLO a quota attiva:
+        # con ABM_FREE_QUOTA_EUR_PER_MONTH=0 riempire il contatore in silenzio
+        # esaurirebbe i client il giorno in cui il limite viene alzato.
+        _fq_consumed = False
+        if _quota_dec["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(job.get("client_id", ""),
-                                   _quota_dec["list_total_eur"], job_id)
+                free_quota.consume(_quota_cid, _quota_dec["list_total_eur"], job_id)
+                _fq_consumed = True
             except Exception as _fq_err:
                 print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}")
+        # Log DOPO il consumo, con l'esito reale: e' l'unica traccia forense
+        # del consumo nel flusso combinato.
+        _free_quota_log(job_id, _quota_dec, charged=_fq_consumed)
         if not _quota_dec["is_free"]:
             if not _combined_token:
                 if _quota_dec["quota_exhausted"]:
@@ -11410,19 +11450,23 @@ def api_optimize():
             _speechify_list_quota = 0.0
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
+        _quota_cid_spx = _quota_client_id(job)
         _quota_dec_spx = _premium_quota_decision(
-            job.get("client_id", ""), _voice_spx,
-            round(_speechify_list_quota + estimated_cost, 2),
+            _quota_cid_spx, _voice_spx,
+            round(_speechify_list_quota + estimated_cost, 2), job_id,
         )
         _expected_total_spx = _quota_dec_spx["due_eur"]
         _threshold_spx = _quota_dec_spx["threshold_eur"]
-        _free_quota_log(job_id, _quota_dec_spx)
-        if _quota_dec_spx["is_free"]:
+        # Consumo immediato solo a quota attiva (vedi ramo Gemini sopra).
+        _fq_consumed_spx = False
+        if _quota_dec_spx["is_free"] and free_quota.limit_eur() > 0:
             try:
-                free_quota.consume(job.get("client_id", ""),
+                free_quota.consume(_quota_cid_spx,
                                    _quota_dec_spx["list_total_eur"], job_id)
+                _fq_consumed_spx = True
             except Exception as _fq_err_spx:
                 print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_spx}")
+        _free_quota_log(job_id, _quota_dec_spx, charged=_fq_consumed_spx)
         if not _quota_dec_spx["is_free"]:
             if not _combined_token_spx:
                 if _quota_dec_spx["quota_exhausted"]:

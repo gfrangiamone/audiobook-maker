@@ -207,6 +207,131 @@ def test_speechify_quota_not_consumed_when_concurrency_limit_denies(client, env,
             audiobook_app.jobs.pop("fq-spx-blocker", None)
 
 
+def test_speechify_stash_quota_non_sopravvive_alla_richiesta(client, env, monkeypatch):
+    """C1: lo stash `_free_quota_charge` vale solo per la richiesta corrente.
+
+    Un job quota-free respinto dal 429 concurrent_limit lascia(va) il residuo
+    sul job in memoria: la richiesta successiva sullo stesso job_id — qui con
+    voce STANDARD, che non attraversa alcun gate premium — arrivava comunque
+    alla pop incondizionata e consumava quota per un job che non usa premium.
+    """
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_PER_CLIENT", 1)
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-spx-blocker2"] = {"status": "generating", "client_id": CID}
+    _mk_job("fq-residuo", 5000)
+    try:
+        r = _post_generate(client, "fq-residuo", SPEECHIFY_VOICE)
+        assert r.status_code == 429, r.get_data(as_text=True)
+        assert free_quota.used_eur(CID) == pytest.approx(0.0)
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop("fq-spx-blocker2", None)
+
+    # Seconda richiesta sullo stesso job con voce STANDARD: nessun gate premium,
+    # quindi nessuna quota deve essere consumata. Lo stash della richiesta
+    # precedente non deve poter arrivare alla pop che consuma.
+    r2 = _post_generate(client, "fq-residuo", "en-US-AriaNeural")
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert env["run_calls"] == [("fq-residuo", "en-US-AriaNeural")]
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+    assert "_free_quota_charge" not in audiobook_app.jobs["fq-residuo"]
+
+
+def test_speechify_retry_stesso_job_resta_gratis(client, env, monkeypatch):
+    """I1: `decision()` e' idempotente per job.
+
+    Al retry della stessa generazione (btnRetryWiz, reload di pagina, app
+    mobile) `used_eur` contiene gia' il contributo di quel job: senza
+    idempotenza il confronto `used + list` lo conta due volte e produce un 402
+    che chiede il floor per un credito gia' speso.
+    """
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    job = _mk_job("fq-retry", 5000)
+    est = speechify_tts.estimate_book_cost(job["info"].chapters, language="en")
+    list_price = round(est["list_price_eur"], 2)
+    assert 0 < list_price < 2.00
+
+    # Preload tale che il job entri per un soffio: dopo il primo run la quota
+    # residua e' < list_price, quindi il retry cadrebbe nel ramo floor.
+    preload = round(2.00 - list_price - 0.01, 2)
+    assert preload > 0
+    free_quota.consume(CID, preload, "preload_retry")
+
+    r1 = _post_generate(client, "fq-retry", SPEECHIFY_VOICE)
+    assert r1.status_code == 200, r1.get_data(as_text=True)
+    used_after_first = free_quota.used_eur(CID)
+    assert used_after_first == pytest.approx(round(preload + list_price, 2))
+    assert free_quota.decision(CID, SPEECHIFY_VOICE, list_price)["quota_exhausted"] is True, (
+        "precondizione: senza job_id la quota residua non basterebbe piu'"
+    )
+
+    # Retry: il job torna in uno stato rigenerabile (come dopo un errore o un
+    # reload di pagina) e viene ripresentato con gli stessi parametri.
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs["fq-retry"]["status"] = "analyzed"
+    r2 = _post_generate(client, "fq-retry", SPEECHIFY_VOICE)
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    # Nessun doppio addebito: consume e' idempotente per job_id.
+    assert free_quota.used_eur(CID) == pytest.approx(used_after_first)
+    assert "payment" not in audiobook_app.jobs["fq-retry"]
+
+
+def test_speechify_client_id_source_agrees_between_estimate_and_generate(client, env, monkeypatch):
+    """I2: stima e gate devono leggere lo STESSO bucket quota.
+
+    Un job nato da una prima richiesta diretta a /api/analyze (nessun cookie
+    ancora emesso dall'after_request) ha client_id="" e cadeva nel bucket
+    condiviso `_anon`, presto esaurito, mentre /api/combined_estimate leggeva
+    il cookie e vedeva quota piena: UI "Gratis", backend 402 (incidente
+    "402 Speechify").
+    """
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    job = _mk_job("fq-anon", 5000, client_id="")
+    est = speechify_tts.estimate_book_cost(job["info"].chapters, language="en")
+    list_price = round(est["list_price_eur"], 2)
+    assert 0 < list_price < 2.00
+
+    # Bucket anonimo condiviso gia' esaurito da altri client senza cookie.
+    free_quota.consume("", 1.99, "preload_anon")
+    assert free_quota.used_eur("") == pytest.approx(1.99)
+
+    r_est = client.post("/api/combined_estimate", json={
+        "job_id": "fq-anon", "voice_id": SPEECHIFY_VOICE,
+        "selected_chapters": [0], "ai_opt_enabled": False, "lang": "en",
+    })
+    assert r_est.status_code == 200, r_est.get_data(as_text=True)
+    assert r_est.get_json()["is_free"] is True, "la stima legge il cookie: quota piena"
+
+    # Il gate deve concordare: stesso client_id, stesso verdetto.
+    r = _post_generate(client, "fq-anon", SPEECHIFY_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert env["run_calls"] == [("fq-anon", SPEECHIFY_VOICE)]
+    # Consumo sul bucket del cookie, non su quello anonimo condiviso.
+    assert free_quota.used_eur(CID) == pytest.approx(list_price)
+    assert free_quota.used_eur("") == pytest.approx(1.99)
+
+
+def test_speechify_quota_disabled_does_not_fill_counter(client, env, monkeypatch):
+    """Minor: con quota disattivata non si consuma nulla.
+
+    Riempire il contatore in silenzio significherebbe che, alzando il limite a
+    mese in corso, molti client risulterebbero gia' esauriti e verrebbero
+    addebitati subito.
+    """
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "0")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    _mk_job("fq-spx-nocount", 5000)
+
+    r = _post_generate(client, "fq-spx-nocount", SPEECHIFY_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert env["run_calls"] == [("fq-spx-nocount", SPEECHIFY_VOICE)]
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+
+
 def test_speechify_quota_disabled_zero_limit_no_402(client, env, monkeypatch):
     """ABM_FREE_QUOTA_EUR_PER_MONTH=0 -> feature disattivata: nessun 402 nuovo
     per un job sotto soglia (comportamento pre-esistente preservato)."""

@@ -265,3 +265,32 @@ def test_speechify_combined_quota_disabled_zero_limit_no_402(client, env, monkey
     r = _post_optimize(client, "fqo-spx-disabled", SPEECHIFY_VOICE)
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()["status"] == "started"
+
+
+# ---------------------------------------------------------------------------
+# Quota disattivata: nessun consumo silenzioso (entrambi i rami combinati)
+# ---------------------------------------------------------------------------
+
+def test_gemini_combined_quota_disabled_does_not_fill_counter(client, env, monkeypatch):
+    """Con ABM_FREE_QUOTA_EUR_PER_MONTH=0 il contatore non deve muoversi:
+    altrimenti, alzando il limite a mese in corso, i client risulterebbero
+    gia' esauriti e verrebbero addebitati subito."""
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "0")
+    monkeypatch.setenv("ABM_GEMINI_FREE_THRESHOLD_EUR", "5.00")
+    _mk_job("fqo-gem-nocount", 5000)
+
+    r = _post_optimize(client, "fqo-gem-nocount", GEMINI_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert env["run_calls"] == [("fqo-gem-nocount", [0])]
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
+
+
+def test_speechify_combined_quota_disabled_does_not_fill_counter(client, env, monkeypatch):
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "0")
+    monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
+    _mk_job("fqo-spx-nocount", 5000)
+
+    r = _post_optimize(client, "fqo-spx-nocount", SPEECHIFY_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert env["run_calls"] == [("fqo-spx-nocount", [0])]
+    assert free_quota.used_eur(CID) == pytest.approx(0.0)
