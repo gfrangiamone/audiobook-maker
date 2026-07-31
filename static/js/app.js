@@ -3535,14 +3535,14 @@ function _lockEmailLateBoxAutoBatch(maskedEmail){
 // Su smartphone/tablet il QR di trasferimento e' inutile: non c'e' un secondo
 // dispositivo che lo inquadri. Il bottone naviga direttamente al deep link
 // /t/<token> (App Link/Universal Link): apre l'app se installata, altrimenti la
-// pagina store di fallback. L'iPad in UA-desktop (default iPadOS 13+) sfugge
-// all'UA-sniff ma viene preso dal ramo touch (pointer:coarse + maxTouchPoints>1).
+// pagina store di fallback.
+// Solo Android e iOS/iPadOS: l'app esiste unicamente su quelle piattaforme.
+// Il vecchio ramo generico (pointer:coarse + maxTouchPoints>1) prendeva anche i
+// PC Windows con schermo touch, che si vedevano il bottone "Sposta su ..." al
+// posto del QR (e un click che navigava via dalla pagina). L'iPad in UA-desktop
+// resta coperto: _isIOSUA() gestisce il caso Macintosh + touch points.
 function _isMobileLike(){
-  try{
-    if(/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'')) return true;
-    var coarse = !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    return coarse && (navigator.maxTouchPoints||0) > 1;
-  }catch(_e){ return false; }
+  return _isAndroidUA() || _isIOSUA();
 }
 
 // Package Android + custom scheme dell'app (stabili). Servono a costruire i
