@@ -62,6 +62,9 @@ def _call_llm(text: str, *, timeout: float) -> dict | None:
         max_tokens=256,
         temperature=0.0,
         timeout=timeout,
+        # Thinking off esplicito: con max_tokens=256 il reasoning_content
+        # brucerebbe il budget e il verdetto JSON arriverebbe troncato.
+        extra_body=ge.THINKING_OFF_BODY,
     )
     try:
         completion = client.chat.completions.create(**kwargs)

@@ -69,8 +69,10 @@ _call_llm(user_content, job)
    ├── openai.chat.completions.create(stream=True, ...)
    │     ├── max_tokens = LLM_MAX_TOKENS (default 65536)
    │     ├── temperature = LLM_TEMPERATURE (0.3)
-   │     ├── reasoning_effort = LLM_REASONING_EFFORT (se ≠ "none")
-   │     └── extra_body.thinking.type = "enabled" (se LLM_THINKING)
+   │     └── llm_thinking_kwargs()  # sempre esplicito, mai il default provider
+   │           ├── effort none + THINKING false -> extra_body.thinking.type = "disabled"
+   │           ├── effort none + THINKING true  -> extra_body.thinking.type = "enabled"
+   │           └── effort low/high/max          -> reasoning_effort (senza extra_body)
    ├── Streaming loop:
    │     ├── if job["opt_cancelled"]: stream.close() + raise _CancelledError
    │     ├── result_parts += event.choices[0].delta.content
@@ -247,8 +249,8 @@ Tutti i parametri sono **env-driven** (`ABM_LLM_*`) con default hardcoded tarati
 
 | Env | Default | Significato |
 |-----|---------|-------------|
-| `ABM_LLM_THINKING` | `false` | Thinking mode (chain-of-thought). Aggiunge `extra_body.thinking.type="enabled"` |
-| `ABM_LLM_REASONING_EFFORT` | `none` | `none`/`low`/`medium`/`high`. Se ≠ `none`, passato come `reasoning_effort` |
+| `ABM_LLM_THINKING` | `false` | Thinking mode (chain-of-thought). Con effort `none` invia `extra_body.thinking.type="enabled"` |
+| `ABM_LLM_REASONING_EFFORT` | `none` | `none`/`low`/`high`/`max`. `none` → `extra_body.thinking.type="disabled"` (opt-out esplicito); altrimenti `reasoning_effort` (`medium` degrada a `high`) |
 | `ABM_LLM_TEMPERATURE` | `0.3` | Bassa → editing deterministico, non riscrittura creativa |
 | `ABM_LLM_MAX_TOKENS` | `65536` | Cap output token per call. Governa `LLM_SAFE_OUTPUT_CHUNK` (≈ MAX_TOKENS × CHARS_PER_TOKEN × SAFETY_MARGIN ≈ 195k char). Valore basso = aderenza al prompt costante anche su libri lunghi (ogni chunk = call separata con system prompt ricaricato identico) |
 
@@ -285,12 +287,27 @@ Con i default → `MAX_INPUT_TOKENS ≈ 930k`, `MAX_INPUT_CHARS ≈ 3.26M`, `SAF
 
 ### 5.3 Thinking / reasoning effort
 
-Le opzioni `THINKING` e `REASONING_EFFORT` sono ortogonali:
+**Il default del provider è "thinking ON".** Sull'API DeepSeek v4 (`deepseek-v4-pro`, `deepseek-v4-flash`) una richiesta che non contiene né `thinking` né `reasoning_effort` viene servita **in thinking mode con effort `high`**: omettere i parametri non disabilita nulla. Inoltre `reasoning_effort` e `thinking.type` sono **mutuamente esclusivi** — non vanno mai inviati insieme — e `reasoning_effort` non ammette il valore `none` (valori validi: `low`, `high`, `max`).
 
-- `THINKING=true`: attiva il chain-of-thought interno del modello (output ha un campo `reasoning_content` streamed separatamente). I caratteri di ragionamento contano nel progress (`opt_streamed_chars`) ma non finiscono nell'output finale.
-- `REASONING_EFFORT=low|medium|high`: parametro server-side che istruisce il modello a investire più o meno calcolo in ragionamento.
+Per questo `llm_thinking_kwargs(effort=None, thinking=None)` (`generation_engine.py:133`) produce sempre una configurazione esplicita:
 
-Trade-off: alzare entrambi migliora la qualità dell'ottimizzazione (specie su periodi lunghi o disambiguazione eteronimi) ma allunga il tempo e aumenta il costo per token. Default `none/false` per coerenza con il tier base.
+| `ABM_LLM_REASONING_EFFORT` | `ABM_LLM_THINKING` | Parametri inviati |
+|---|---|---|
+| `none` (default, o `off`/`false`/`0`/vuoto) | `false` (default) | `extra_body={"thinking": {"type": "disabled"}}` |
+| `none` | `true` | `extra_body={"thinking": {"type": "enabled"}}` |
+| `low` / `high` / `max` | ignorato | `reasoning_effort=<valore>` |
+| `medium` | ignorato | `reasoning_effort=high` (degrado: `medium` non esiste su DeepSeek v4) |
+| valore non riconosciuto | ignorato | `thinking disabled` + warning a log |
+
+Note operative:
+
+- Con thinking attivo l'output porta un campo `reasoning_content` streamed separatamente: i caratteri di ragionamento contano nel progress (`opt_streamed_chars`) ma non finiscono nel testo finale, e vengono fatturati come token di output.
+- In thinking mode l'API ignora `temperature`, `top_p`, `presence_penalty`, `frequency_penalty` — quindi il `LLM_TEMPERATURE=0.3` (editing deterministico) è efficace **solo** con thinking disabilitato.
+- Il retry anti-leak forza sempre `thinking disabled`, a prescindere dalla configurazione.
+- Lo stesso opt-out è applicato alle altre chiamate che condividono il client (`ge.THINKING_OFF_BODY`): `detect_book_language()` (`max_tokens=8`), `community_translator`, `community_moderator` (`max_tokens=256`) — lì il reasoning brucerebbe l'intero budget di output lasciando la risposta vuota o troncata.
+- Il log di startup e quello di avvio ottimizzazione stampano la configurazione effettiva via `llm_thinking_summary()` (es. `Reasoning: thinking=disabled`).
+
+Trade-off: alzare l'effort può migliorare la qualità su periodi lunghi o disambiguazione di eteronimi, ma allunga i tempi e aumenta il costo per token. Default `none/false` = ragionamento spento.
 
 ### 5.4 Init del client
 
@@ -654,8 +671,8 @@ Lo scopo:
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_LLM_THINKING` | `false` | Thinking mode (CoT) — supportato da modelli `*-thinking` |
-| `ABM_LLM_REASONING_EFFORT` | `none` | `none`/`low`/`medium`/`high` |
+| `ABM_LLM_THINKING` | `false` | Thinking mode (CoT). `false` → opt-out esplicito `thinking.type="disabled"` (vedi §5.3) |
+| `ABM_LLM_REASONING_EFFORT` | `none` | `none`/`low`/`high`/`max` (`none` = reasoning spento) |
 | `ABM_LLM_TEMPERATURE` | `0.3` | Bassa → editing deterministico |
 | `ABM_LLM_MAX_TOKENS` | `65536` | Cap output token. Influenza `SAFE_OUTPUT_CHUNK` (~195k char) |
 

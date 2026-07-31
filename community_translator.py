@@ -115,7 +115,7 @@ def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool) -
     if client is None:
         return None
     user_content = json.dumps(payload, ensure_ascii=False)
-    kwargs = dict(
+    kwargs: dict = dict(
         model=ge.LLM_MODEL,
         messages=[
             {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
@@ -124,6 +124,9 @@ def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool) -
         max_tokens=4096,
         temperature=0.2,
         timeout=timeout,
+        # Thinking off esplicito: il provider lo attiva di default (vedi
+        # generation_engine.llm_thinking_kwargs) e qui serve solo latenza/costo.
+        extra_body=ge.THINKING_OFF_BODY,
     )
     if use_json_mode:
         kwargs["response_format"] = {"type": "json_object"}

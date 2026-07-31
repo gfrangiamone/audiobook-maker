@@ -238,8 +238,16 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_API_KEY` | *(empty)* | `ABM_LLM_API_KEY` | `generation_engine.py` | 77 |
 | `LLM_API_BASE` | `https://api.deepseek.com` | `ABM_LLM_API_BASE` | `generation_engine.py` | 78 |
 | `LLM_MODEL` | `deepseek-chat` | `ABM_LLM_MODEL` | `generation_engine.py` | 79 |
-| `LLM_THINKING` | `False` | `ABM_LLM_THINKING` | `generation_engine.py` | 82 |
-| `LLM_REASONING_EFFORT` | `none` | `ABM_LLM_REASONING_EFFORT` | `generation_engine.py` | 83 |
+| `LLM_THINKING` | `False` | `ABM_LLM_THINKING` | `generation_engine.py` | 98 |
+| `LLM_REASONING_EFFORT` | `none` | `ABM_LLM_REASONING_EFFORT` | `generation_engine.py` | 99 |
+| `THINKING_OFF_BODY` | `{"thinking": {"type": "disabled"}}` | — (costante) | `generation_engine.py` | 130 |
+
+> **Thinking sempre esplicito.** `llm_thinking_kwargs()` (`generation_engine.py:133`) traduce le due env in parametri di richiesta e non lascia mai decidere al provider: DeepSeek v4 (`v4-pro`/`v4-flash`) abilita il thinking **di default con effort `high`** se la richiesta non contiene né `thinking` né `reasoning_effort`.
+> - `REASONING_EFFORT=none` + `THINKING=false` (default) → `extra_body={"thinking": {"type": "disabled"}}`
+> - `THINKING=true` con effort `none` → `extra_body={"thinking": {"type": "enabled"}}`
+> - `REASONING_EFFORT=low|high|max` → `reasoning_effort=<valore>` (senza `extra_body`: i due parametri sono mutuamente esclusivi). `medium` degrada a `high`, valori non riconosciuti → thinking disabilitato.
+>
+> Lo stesso opt-out è applicato alle chiamate one-shot che condividono il client: `detect_book_language()`, `community_translator`, `community_moderator`.
 | `LLM_TEMPERATURE` | `0.3` | `ABM_LLM_TEMPERATURE` | `generation_engine.py` | 84 |
 | `LLM_MAX_TOKENS` | `65536` (~195k char/chunk) | `ABM_LLM_MAX_TOKENS` | `generation_engine.py` | 85 |
 | `LLM_CHARS_PER_TOKEN` | `3.5` | `ABM_LLM_CHARS_PER_TOKEN` | `generation_engine.py` | 88 |

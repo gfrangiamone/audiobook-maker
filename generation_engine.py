@@ -112,6 +112,58 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 
+# --- Thinking / reasoning ---------------------------------------------------
+# ATTENZIONE: sull'API DeepSeek (deepseek-v4-pro / deepseek-v4-flash) il
+# thinking e' ABILITATO DI DEFAULT con effort "high" quando la richiesta non
+# contiene ne' `thinking` ne' `reasoning_effort`. Omettere i parametri quindi
+# NON disabilita il ragionamento: costa token (`reasoning_content`), rallenta
+# e su chiamate con `max_tokens` piccoli (lang-detect, moderazione) puo'
+# svuotare la risposta. Per disattivarlo serve l'opt-out esplicito
+# `extra_body={"thinking": {"type": "disabled"}}`.
+# I due parametri sono mutuamente esclusivi: con `thinking.type` non si invia
+# mai `reasoning_effort`. Valori accettati da `reasoning_effort`: low/high/max
+# ("none" non esiste lato API: si spegne solo via thinking.type="disabled").
+_REASONING_OFF   = ("none", "off", "no", "false", "disabled", "0", "")
+_REASONING_VALID = ("low", "high", "max")
+
+# Body di opt-out riusabile dalle chiamate one-shot (lang-detect, community).
+THINKING_OFF_BODY = {"thinking": {"type": "disabled"}}
+
+
+def llm_thinking_kwargs(effort=None, thinking=None):
+    """kwargs OpenAI-compatibili per governare il thinking del modello.
+
+    Ritorna SEMPRE una configurazione esplicita (mai il default del provider):
+    - reasoning off (default `ABM_LLM_REASONING_EFFORT=none`, `ABM_LLM_THINKING=false`)
+      -> {"extra_body": {"thinking": {"type": "disabled"}}}
+    - `ABM_LLM_THINKING=true` con effort "none" -> thinking enabled (effort di default)
+    - effort low/high/max -> {"reasoning_effort": effort}
+    """
+    effort = (LLM_REASONING_EFFORT if effort is None else str(effort)).strip().lower()
+    thinking = LLM_THINKING if thinking is None else bool(thinking)
+    if effort in _REASONING_OFF:
+        state = "enabled" if thinking else "disabled"
+        return {"extra_body": {"thinking": {"type": state}}}
+    if effort == "medium":
+        # Non supportato da DeepSeek v4: degrada al valore utile piu' vicino.
+        effort = "high"
+    if effort not in _REASONING_VALID:
+        print(f"[llm] ABM_LLM_REASONING_EFFORT={effort!r} non valido "
+              f"(ammessi: none/low/high/max): thinking disabilitato")
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
+    return {"reasoning_effort": effort}
+
+
+def llm_thinking_summary():
+    """Descrizione compatta della configurazione thinking effettiva (log)."""
+    kw = llm_thinking_kwargs()
+    effort = kw.get("reasoning_effort")
+    if effort:
+        return f"reasoning_effort={effort}"
+    body = kw.get("extra_body") or {}
+    state = ((body.get("thinking") or {}).get("type")) if isinstance(body, dict) else None
+    return f"thinking={state}"
+
 # Safe chunk size in chars: garantisce che l'output entri in MAX_TOKENS.
 # Con default 65536 token output → ~195k char/chunk. Prompt ricaricato identico
 # per ogni chunk → regole sempre rispettate anche su libri lunghi.
@@ -225,7 +277,7 @@ def _init_llm():
         if not generic_path.exists():
             print(f"WARNING: {generic_path} not found \u2014 LLM optimization may fail.", flush=True)
         else:
-            print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING})")
+            print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {llm_thinking_summary()})")
     except ImportError:
         print("WARNING: openai library not installed \u2014 LLM optimization disabled. Run: pip install openai", flush=True)
         _llm_client = None
@@ -311,6 +363,9 @@ def detect_book_language(info):
             temperature=0,
             max_tokens=8,
             timeout=LANG_DETECT_TIMEOUT_SEC,
+            # Thinking sempre off: con max_tokens=8 il budget verrebbe bruciato
+            # dal reasoning_content e la risposta arriverebbe vuota.
+            extra_body=THINKING_OFF_BODY,
         )
         raw = (resp.choices[0].message.content or "").strip()
     except Exception as e:
@@ -752,10 +807,8 @@ def _call_llm(user_content, job=None, max_retries=None):
             # Su retry anti-leak: temperature un filo piu' alta + reasoning off,
             # per ridurre la probabilita' che il modello "continui" il prompt.
             effective_temp = LLM_TEMPERATURE
-            effective_reasoning = LLM_REASONING_EFFORT
             if leak_attempts > 0:
                 effective_temp = min(LLM_TEMPERATURE + 0.1 * leak_attempts, 1.0)
-                effective_reasoning = "none"
 
             kwargs = {
                 "model": LLM_MODEL,
@@ -766,10 +819,12 @@ def _call_llm(user_content, job=None, max_retries=None):
                 "stream_options": {"include_usage": True},
                 "timeout": LLM_REQUEST_TIMEOUT_SEC,
             }
-            if effective_reasoning != "none":
-                kwargs["reasoning_effort"] = effective_reasoning
-            if LLM_THINKING and leak_attempts == 0:
-                kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+            # Thinking esplicito: il default del provider e' "on" (vedi
+            # llm_thinking_kwargs). Sul retry anti-leak lo si spegne comunque.
+            if leak_attempts > 0:
+                kwargs.update(llm_thinking_kwargs(effort="none", thinking=False))
+            else:
+                kwargs.update(llm_thinking_kwargs())
 
             stream = _llm_client.chat.completions.create(**kwargs)
             call_usage = None
@@ -2319,10 +2374,10 @@ def run_optimization(job_id, selected_chapters=None):
     prompt = _get_llm_prompt(lang)
     if prompt:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} caricato: {len(prompt)} caratteri). "
-              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {llm_thinking_summary()}")
     else:
         print(f"[{job_id}] Ottimizzazione AI avviata su {total_chapters} capitoli (prompt {lang} non trovato!). "
-              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {LLM_REASONING_EFFORT}, Thinking: {LLM_THINKING}")
+              f"Model: {LLM_MODEL}, MaxTokens: {LLM_MAX_TOKENS}, Reasoning: {llm_thinking_summary()}")
 
     job["opt_progress_current"] = 0
     job["opt_progress_total"] = total_chapters
