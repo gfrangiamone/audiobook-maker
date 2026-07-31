@@ -314,7 +314,7 @@ else
 fi
 
 # Dati
-for f in _download_tokens.json _vouchers.json _payments.json google_tts_usage.json; do
+for f in _download_tokens.json _vouchers.json _payments.json google_tts_usage.json _free_quota.json; do
     if [ -f "/opt/audiobook-maker/data/$f" ]; then
         echo "  [OK] $f presente"
     else

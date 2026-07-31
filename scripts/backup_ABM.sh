@@ -59,7 +59,7 @@ echo "[5/9] Backup dati applicazione..."
 DATA_DIR="/opt/audiobook-maker/data"
 mkdir -p "$BACKUP_DIR/data"
 # File JSON critici (stato persistente)
-for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.json; do
+for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.json _free_quota.json; do
     if [ -f "$DATA_DIR/$f" ]; then
         cp "$DATA_DIR/$f" "$BACKUP_DIR/data/"
     fi
