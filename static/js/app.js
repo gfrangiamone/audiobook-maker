@@ -3530,6 +3530,42 @@ function _lockEmailLateBoxAutoBatch(maskedEmail){
   }
   const btn=document.getElementById('btnSubmitEmailLate');
   if(btn)btn.disabled=true;
+  _addAutoBatchChangeEmailLink();
+}
+
+function _addAutoBatchChangeEmailLink(){
+  // L'indirizzo dell'auto-batch e' quello del pagamento: puo' non essere la
+  // casella che l'utente controlla (incidente: notifica su email PayPal mentre
+  // l'utente aspettava su un'altra) e finora il box era irrimediabilmente in
+  // sola lettura. Offriamo di sbloccarlo e registrare un indirizzo diverso.
+  const notice=document.getElementById('autoBatchNotice');
+  if(!notice||document.getElementById('autoBatchChangeEmail'))return;
+  const a=document.createElement('a');
+  a.id='autoBatchChangeEmail';
+  a.href='#';
+  a.style.display='inline-block';
+  a.style.marginTop='6px';
+  a.style.fontSize='.9em';
+  a.style.textDecoration='underline';
+  a.style.cursor='pointer';
+  a.textContent=t('auto_batch_change_email')||'Ricevi il link a un altro indirizzo';
+  a.addEventListener('click',(e)=>{
+    e.preventDefault();
+    const input=document.getElementById('notifyEmailLate');
+    if(input){
+      input.disabled=false;
+      input.readOnly=false;
+      input.value='';
+      try{input.focus()}catch(err){}
+    }
+    const btn=document.getElementById('btnSubmitEmailLate');
+    if(btn)btn.disabled=false;
+    const area=document.getElementById('emailLateArea');
+    if(area)area.classList.add('visible');
+    a.style.display='none';
+  });
+  notice.appendChild(document.createElement('br'));
+  notice.appendChild(a);
 }
 
 // Su smartphone/tablet il QR di trasferimento e' inutile: non c'e' un secondo
@@ -4680,6 +4716,15 @@ function _resetEmailLateArea(){
   if(sb)sb.disabled=false;
   const abn=document.getElementById('autoBatchNotice');
   if(abn)abn.style.display='none';
+  // Il link "cambia indirizzo" del job precedente resta nel DOM (nascosto dopo
+  // il click) e bloccherebbe _addAutoBatchChangeEmailLink() sul job successivo:
+  // lo rimuoviamo insieme al <br> che lo precede.
+  const chg=document.getElementById('autoBatchChangeEmail');
+  if(chg){
+    const br=chg.previousSibling;
+    if(br&&br.nodeName==='BR'&&br.parentNode)br.parentNode.removeChild(br);
+    if(chg.parentNode)chg.parentNode.removeChild(chg);
+  }
 }
 
 async function _autoRegisterEmailFromStorage(myJobId){
@@ -4710,6 +4755,17 @@ async function submitEmailLate(){
     emailRegistered=true;
     const noticeEl=document.getElementById('genActiveNoticeText');
     if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',email);
+    // Job in auto-batch: il banner cita ancora l'email del pagamento. Allinealo
+    // al nuovo destinatario, altrimenti l'utente resta convinto che la notifica
+    // arrivi sull'indirizzo vecchio.
+    const abNotice=document.getElementById('autoBatchNotice');
+    if(abNotice&&abNotice.style.display!=='none'){
+      const tmplAb=t('auto_batch_notify')||"Pagamento ricevuto: ti invieremo l'audiolibro via email a {email}. Puoi chiudere questa pagina.";
+      abNotice.textContent=tmplAb.replace('{email}',email);
+      // textContent azzera il link "cambia indirizzo": lo ricreiamo, cosi' un
+      // secondo ripensamento resta possibile finche' il job non e' finito.
+      _addAutoBatchChangeEmailLink();
+    }
     const area=document.getElementById('emailLateArea');
     _setEmailLateConfirm(area,'✅ '+(t('email_late_ok')||'Email registered!'));
     _updateGenNoticeWarning();

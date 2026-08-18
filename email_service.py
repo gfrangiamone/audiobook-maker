@@ -326,10 +326,52 @@ def _send_payment_receipt_email(order_id, email, amount_eur, job):
                f"जो {VOUCHER_EXPIRY_DAYS} दिनों के लिए मान्य है."),
     }
     heading, details, info_txt, refund = body_map.get(lang, body_map["en"])
+    # Blocco consegna: rende esplicito SU QUALE indirizzo arrivera' il link di
+    # download. Il job pagato passa in batch implicito sull'email del pagamento
+    # (vedi api_paypal_capture -> job["notify_email"]), che puo' essere diversa
+    # da quella che l'utente si aspetta di controllare: senza questa riga la
+    # notifica finisce su una casella che non guarda ("email mai ricevuta").
+    # Destinatario reale della notifica: l'email eventualmente gia' registrata
+    # dall'utente ha la precedenza sull'email del pagamento (stessa priorita' di
+    # api_paypal_capture / api_register_email).
+    dest = ((job.get("notify_email") or "").strip() if job else "") or email
+    delivery_map = {
+        "it": (f"Il link per scaricare il risultato verr&agrave; inviato a "
+               f"<strong>{dest}</strong> al termine della lavorazione. "
+               f"Se preferisci riceverlo a un altro indirizzo, indicalo nella pagina di "
+               f"generazione prima che il lavoro finisca."),
+        "en": (f"The download link will be sent to <strong>{dest}</strong> "
+               f"once processing is complete. "
+               f"To receive it at a different address, enter it on the generation page "
+               f"before the job finishes."),
+        "fr": (f"Le lien de t&eacute;l&eacute;chargement sera envoy&eacute; &agrave; "
+               f"<strong>{dest}</strong> &agrave; la fin du traitement. "
+               f"Pour le recevoir &agrave; une autre adresse, indiquez-la sur la page de "
+               f"g&eacute;n&eacute;ration avant la fin du travail."),
+        "es": (f"El enlace de descarga se enviar&aacute; a <strong>{dest}</strong> "
+               f"al finalizar el procesamiento. "
+               f"Si prefieres otra direcci&oacute;n, ind&iacute;cala en la p&aacute;gina de "
+               f"generaci&oacute;n antes de que termine el trabajo."),
+        "de": (f"Der Download-Link wird nach Abschluss der Verarbeitung an "
+               f"<strong>{dest}</strong> gesendet. "
+               f"F&uuml;r eine andere Adresse gib sie vor Ende des Auftrags "
+               f"auf der Generierungsseite an."),
+        "zh": (f"处理完成后，下载链接将发送至 <strong>{dest}</strong>。"
+               f"如需发送到其他邮箱，请在任务结束前"
+               f"在生成页面填写另一个邮箱。"),
+        "hi": (f"प्रसंस्करण पूरा होने पर डाउनलोड लिंक "
+               f"<strong>{dest}</strong> पर भेजा जाएगा। "
+               f"किसी दूसरे पते पर चाहिए तो जॉब खत्म होने से पहले "
+               f"जेनरेशन पेज पर वह ईमेल दर्ज करें।"),
+    }
+    delivery = delivery_map.get(lang, delivery_map["en"])
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
   <h2 style="color:#2c3e50">&#x1F4B3; {heading}</h2>
   <div style="padding:16px;background:#f0f5ff;border-radius:8px;margin:16px 0">
     <p style="margin:0">{details}</p>
+  </div>
+  <div style="padding:14px 16px;background:#fff7ed;border-left:4px solid #f97316;border-radius:4px;margin:16px 0">
+    <p style="margin:0">&#x1F4E7; {delivery}</p>
   </div>
   <p>{info_txt}</p>
   <p style="font-size:.9em;color:#666">{refund}</p>

@@ -287,6 +287,102 @@ def test_admin_copy_pending_visible_in_my_jobs(monkeypatch, tmp_path):
         audiobook_app._transfer_tokens.pop(tok, None)
 
 
+def test_copy_qr_exposes_user_dl_link_and_notify_email(monkeypatch, tmp_path):
+    """Rimedio manuale alla mail di completamento non ricevuta: il payload del
+    QR deve esporre il link /dl DELL'UTENTE (non il clone admin) e l'indirizzo
+    a cui la notifica e' stata inviata."""
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    monkeypatch.setenv("ABM_BASE_URL", "https://audiobook-maker.test")
+    jid = "qr-dl-1"
+    out = tmp_path / "out.m4b"; out.write_bytes(b"x")
+    now = time.time()
+    with audiobook_app._jobs_lock:
+        audiobook_app.jobs[jid] = {
+            "status": "done", "client_id": "web-dl", "info": None,
+            "output_m4b": str(out), "output_format": "m4b",
+            "notify_email": "utente@example.com", "start_time": now,
+        }
+    audiobook_app._download_tokens["UTOK-DL"] = {
+        "job_id": jid, "client_id": "web-dl", "created_at": now,
+        "is_gemini": False, "output_m4b": str(out), "output_format": "m4b",
+    }
+    # Clone admin di una precedente indagine: NON deve essere proposto come
+    # link da inoltrare all'utente.
+    audiobook_app._download_tokens["ATOK-DL"] = {
+        "job_id": jid, "client_id": "admin-app", "created_at": now,
+        "admin_copy": True, "output_m4b": str(out), "output_format": "m4b",
+    }
+    tok_ref = {}
+    try:
+        c = audiobook_app.app.test_client()
+        r = c.get(f"/admin/api/job/{jid}/copy-qr",
+                  headers={"X-Admin-Token": "test-admin-token"})
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["dl_url"] == "https://audiobook-maker.test/dl/UTOK-DL"
+        assert d["notify_email"] == "utente@example.com"
+        assert d["dl_downloaded"] is False
+        assert d["dl_expires_at"] > now
+        tok_ref["t"] = [t for t, v in audiobook_app._transfer_tokens.items()
+                        if isinstance(v, dict) and v.get("job_id") == jid]
+    finally:
+        with audiobook_app._jobs_lock:
+            audiobook_app.jobs.pop(jid, None)
+        audiobook_app._download_tokens.pop("UTOK-DL", None)
+        audiobook_app._download_tokens.pop("ATOK-DL", None)
+        for t in tok_ref.get("t", []):
+            audiobook_app._transfer_tokens.pop(t, None)
+
+
+def test_admin_user_dl_link_skips_admin_copy_and_expired(monkeypatch):
+    """_admin_user_dl_link: ignora i cloni admin e i token oltre retention;
+    a parita' di job sceglie quello che scade piu' tardi."""
+    monkeypatch.setattr(audiobook_app, "_save_tokens", lambda: None)
+    jid = "dl-pick-1"
+    now = time.time()
+    ret = audiobook_app._retention_for_token_info({})
+    toks = {
+        "T-ADMIN": {"job_id": jid, "created_at": now, "admin_copy": True},
+        "T-OLD": {"job_id": jid, "created_at": now - ret - 10},
+        "T-A": {"job_id": jid, "created_at": now - 3600},
+        "T-B": {"job_id": jid, "created_at": now - 60},
+        "T-OTHER": {"job_id": "altro-job", "created_at": now},
+    }
+    audiobook_app._download_tokens.update(toks)
+    try:
+        best = audiobook_app._admin_user_dl_link(jid, now=now)
+        assert best is not None
+        assert best["token"] == "T-B"      # scade piu' tardi
+        assert best["downloaded_at"] == 0
+        # Job senza alcun token utente valido
+        assert audiobook_app._admin_user_dl_link("job-inesistente", now=now) is None
+    finally:
+        for t in toks:
+            audiobook_app._download_tokens.pop(t, None)
+
+
+def test_copy_qr_notify_email_from_pending_descriptor(monkeypatch):
+    """Job non piu' in RAM: l'indirizzo di notifica arriva dal descrittore di
+    recupero (rimosso solo dopo l'invio della mail)."""
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "test-admin-token")
+    monkeypatch.setattr(audiobook_app, "_save_transfer_tokens", lambda: None)
+    jid = "qr-pending-1"
+    monkeypatch.setattr(
+        audiobook_app.pending_jobs, "orphans",
+        lambda: [{"id": jid, "notify_email": "batch@example.com",
+                  "client_id": "web-pend"}])
+    c = audiobook_app.app.test_client()
+    r = c.get(f"/admin/api/job/{jid}/copy-qr",
+              headers={"X-Admin-Token": "test-admin-token"})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d.get("available") is False      # nessun output: QR non proponibile
+    assert d["notify_email"] == "batch@example.com"   # ...ma l'email c'e'
+    assert "dl_url" not in d
+
+
 def test_admin_copy_finalized_not_in_ram_reconstructs_from_disk(monkeypatch, tmp_path):
     """Job finalizzato NON più in RAM ma con output ancora su disco: il claim
     ricostruisce lo snapshot e consegna la copia admin (nessun 410)."""

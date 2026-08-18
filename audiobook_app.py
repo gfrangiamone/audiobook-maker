@@ -3960,7 +3960,16 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
       Scansiona con l'app <b>Audiobook Maker &amp; Player</b> per importare una <b>copia</b> del job a scopo di indagine.
       Il flusso dell'utente che ha avviato il job <b>non viene modificato</b>.
     </div>
+    <!-- Link /dl utente: consente di reinviare a mano la pagina di download
+         quando la mail di completamento non arriva a destinazione. -->
+    <div class="keffects" id="qrmDlBox" style="display:none">
+      <div class="krow" style="font-size:.72rem">&#x1F4E7; Notifica inviata a: <b id="qrmNotify">-</b></div>
+      <div class="krow" style="font-size:.72rem">&#x1F517; Pagina di download utente:</div>
+      <div class="krow" style="word-break:break-all;font-size:.68rem"><a id="qrmDlLink" href="#" target="_blank" rel="noopener"></a></div>
+      <div id="qrmDlMeta" style="font-size:.64rem;color:var(--text-dim)"></div>
+    </div>
     <div class="kbtns">
+      <button class="kcancel" id="qrmCopyDl" style="display:none">Copia link download</button>
       <button class="kcancel" id="qrmCopy">Copia link</button>
       <button class="kcancel" id="qrmClose">Chiudi</button>
     </div>
@@ -4325,6 +4334,46 @@ async function confirmKill() {{
 //  -  -  Admin: copia job sull'app via QR (indagine)  -  -
 const qrOverlay = document.getElementById('qrmodalOverlay');
 
+function _renderQrDlBox(d) {{
+    // Blocco "pagina di download utente": link /dl/<token> effettivamente
+    // recapitato via email + destinatario + scadenza. Serve a reinviare il link
+    // a mano quando la mail non arriva (spam/indirizzo diverso da quello atteso).
+    const box = document.getElementById('qrmDlBox');
+    const link = document.getElementById('qrmDlLink');
+    const meta = document.getElementById('qrmDlMeta');
+    const notify = document.getElementById('qrmNotify');
+    const btn = document.getElementById('qrmCopyDl');
+    qrOverlay.dataset.dlUrl = '';
+    if (!d || (!d.dl_url && !d.notify_email)) {{
+        box.style.display = 'none';
+        btn.style.display = 'none';
+        return;
+    }}
+    box.style.display = '';
+    notify.textContent = d.notify_email || '(nessuna notifica email per questo job)';
+    if (d.dl_url) {{
+        link.textContent = d.dl_url;
+        link.href = d.dl_url;
+        link.style.display = '';
+        qrOverlay.dataset.dlUrl = d.dl_url;
+        btn.style.display = '';
+        const parts = [];
+        if (d.dl_expires_at) {{
+            const exp = new Date(d.dl_expires_at * 1000);
+            const left = Math.round((d.dl_expires_at * 1000 - Date.now()) / 3600000);
+            parts.push('scade ' + exp.toLocaleString('it-IT') + ' (~' + left + 'h)');
+        }}
+        parts.push(d.dl_downloaded ? 'gia scaricato' : 'mai scaricato');
+        meta.textContent = parts.join(' - ');
+    }} else {{
+        link.textContent = '';
+        link.removeAttribute('href');
+        link.style.display = 'none';
+        btn.style.display = 'none';
+        meta.textContent = 'Nessun token /dl attivo per questo job (consegna diretta o token scaduto).';
+    }}
+}}
+
 async function openCopyQr(sid, title) {{
     document.getElementById('qrmTitle').textContent = title || '';
     document.getElementById('qrmSid').textContent = sid;
@@ -4335,11 +4384,13 @@ async function openCopyQr(sid, title) {{
     loading.textContent = 'Generazione QR…';
     document.getElementById('qrmUrl').textContent = '';
     qrOverlay.dataset.url = '';
+    _renderQrDlBox(null);
     qrOverlay.classList.add('open');
     try {{
         const r = await fetch('/admin/api/job/' + encodeURIComponent(sid) + '/copy-qr',
                               {{headers: adminHeaders()}});
         const d = await r.json().catch(() => ({{}}));
+        if (r.ok) _renderQrDlBox(d);
         if (r.ok && d.available === false) {{
             loading.textContent = 'File non più disponibili (né hot né cold): nulla da trasferire sull\\'app.';
             document.getElementById('qrmUrl').textContent = '';
@@ -4390,6 +4441,14 @@ document.addEventListener('click', (e) => {{
         if (u && navigator.clipboard) {{
             navigator.clipboard.writeText(u)
                 .then(() => showToast('Link copiato negli appunti', true))
+                .catch(() => showToast('Copia non riuscita', false));
+        }}
+    }}
+    if (e.target.id === 'qrmCopyDl') {{
+        const u = qrOverlay.dataset.dlUrl || '';
+        if (u && navigator.clipboard) {{
+            navigator.clipboard.writeText(u)
+                .then(() => showToast('Link download copiato negli appunti', true))
                 .catch(() => showToast('Copia non riuscita', false));
         }}
     }}
@@ -5123,18 +5182,27 @@ def admin_api_job_copy_qr(job_id):
     # Il QR ha senso solo se la copia è effettivamente consegnabile all'app: job
     # in RAM (in corso/done), token esistente, o output ancora presente hot/cold.
     # Per job definitivamente spariti non proponiamo un QR che darebbe 410.
-    if not _admin_copy_recoverable(job_id):
-        return jsonify({"available": False, "job_id": job_id}), 200
     base = (os.environ.get("ABM_BASE_URL", "") or "").rstrip("/")
     if not base:
         try:
             base = request.url_root.rstrip("/")
         except Exception:
             base = ""
+    # Link /dl utente + destinatario della notifica: servono anche quando il QR
+    # non è proponibile (job non copiabile), perché sono l'unico modo di
+    # rimediare a mano quando la mail di completamento non arriva a destinazione.
+    extra = {"notify_email": _admin_notify_email_for_job(job_id)}
+    dl = _admin_user_dl_link(job_id)
+    if dl:
+        extra["dl_url"] = f"{base}/dl/{dl['token']}"
+        extra["dl_expires_at"] = dl["expires_at"]
+        extra["dl_downloaded"] = bool(dl["downloaded_at"])
+    if not _admin_copy_recoverable(job_id):
+        return jsonify({"available": False, "job_id": job_id, **extra}), 200
     tok = _ensure_admin_copy_token(job_id)
     url = f"{base}/t/{tok}"
     qr = _qr_data_uri(url)
-    return jsonify({"available": True, "url": url, "qr": qr, "job_id": job_id})
+    return jsonify({"available": True, "url": url, "qr": qr, "job_id": job_id, **extra})
 
 
 @app.route("/admin/job/<path:job_id>/forensic.zip", methods=["GET"])
@@ -10248,6 +10316,63 @@ def _admin_copy_recoverable(job_id):
         if isinstance(_rec, dict) and _rec.get("job_id") == job_id:
             return True
     return _reconstruct_admin_download_record(job_id) is not None
+
+
+def _admin_user_dl_link(job_id, now=None):
+    """Snapshot del download token DELL'UTENTE per [job_id] (quello recapitato
+    via email), a uso della UI admin: permette di reinviare manualmente il link
+    quando l'email di completamento non arriva a destinazione.
+
+    Esclude i token `admin_copy` (cloni creati dall'indagine, di proprietà
+    dell'app admin) e quelli già oltre la retention effettiva. Se il job ha più
+    token utente validi ritorna quello che scade più tardi.
+    Ritorna dict {token, created_at, expires_at, downloaded_at} oppure None."""
+    now = now or time.time()
+    best = None
+    for tok, tinfo in list(_download_tokens.items()):
+        if not isinstance(tinfo, dict) or tinfo.get("job_id") != job_id:
+            continue
+        if tinfo.get("admin_copy"):
+            continue
+        created = tinfo.get("created_at", 0) or 0
+        ret = _effective_retention_for_token_info(tinfo)
+        if (now - created) > ret:
+            continue
+        cand = {"token": tok, "created_at": created, "expires_at": created + ret,
+                "downloaded_at": tinfo.get("downloaded_at") or 0}
+        if best is None or cand["expires_at"] > best["expires_at"]:
+            best = cand
+    return best
+
+
+def _admin_notify_email_for_job(job_id):
+    """Indirizzo a cui è stata (o sarà) inviata la notifica di completamento del
+    job, per la UI admin. Sorgenti in ordine: job in RAM, descrittore di recupero
+    pending, mappa client_id→email. "" se nessuna notifica è prevista."""
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        if job:
+            email = (job.get("notify_email") or "").strip()
+            client_id = job.get("client_id", "")
+        else:
+            email, client_id = "", ""
+    if email:
+        return email
+    # Job non più in RAM: il descrittore di recupero (rimosso solo dopo l'invio
+    # della mail) conserva l'indirizzo di notifica.
+    try:
+        for rec in pending_jobs.orphans():
+            if isinstance(rec, dict) and rec.get("id") == job_id:
+                email = (rec.get("notify_email") or "").strip()
+                client_id = client_id or rec.get("client_id", "")
+                break
+    except Exception:
+        email = ""
+    if email:
+        return email
+    if client_id:
+        return (_client_emails.get(client_id) or "").strip()
+    return ""
 
 
 def _resolve_ready_file(dltok):
