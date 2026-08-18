@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 # Windows: evita che ffmpeg/ffprobe apra finestre console nascoste
@@ -944,15 +945,20 @@ def _monitored_m4b_run(tag, convert, output_path, on_phase, status_out,
     except subprocess.TimeoutExpired:
         _emit(0, "Conversione M4B timeout")
         _finish("timeout", 0, "Conversione M4B timeout")
+        _discard_failed_output(output_path, tag)
         return False
     except Exception:
         _emit(0, "Conversione M4B fallita")
         _finish("fail", 0, "Conversione M4B fallita")
+        _discard_failed_output(output_path, tag)
         return False
 
     if not result:
         _emit(0, "Conversione M4B fallita")
         _finish("fail", 0, "Conversione M4B fallita")
+        # Il convert dovrebbe aver gia' ripulito, ma un M4B parziale sopravvissuto
+        # qui verrebbe raccolto a valle come se fosse il risultato buono.
+        _discard_failed_output(output_path, tag)
         return False
 
     # Validazione ffprobe (98 → 100)
@@ -1466,6 +1472,191 @@ def pcm_concat(pcm_paths, output_path, skip_missing=False, gap_ms=0,
         out.close()
 
 
+def _pcm_expected_duration_sec(pcm_paths, sample_rate=24000, channels=1,
+                               sample_width=2, gap_ms=0):
+    """Durata attesa (secondi) del PCM concatenato, calcolata dai soli byte su disco.
+
+    Il PCM raw non ha header: durata = byte / (sample_rate * channels * width).
+    Serve a due cose distinte: dimensionare la sorveglianza dell'encode sulla
+    lunghezza reale del libro, e verificare a valle che il file codificato non
+    sia stato troncato. Ritorna 0.0 se non calcolabile (nessun file leggibile).
+    """
+    total = 0
+    n_files = 0
+    for p in pcm_paths or []:
+        try:
+            total += os.path.getsize(p)
+            n_files += 1
+        except OSError:
+            continue
+    if total <= 0:
+        return 0.0
+    gap_sec = (max(0, n_files - 1) * max(0, int(gap_ms or 0))) / 1000.0
+    return pcm_size_to_seconds(total, sample_rate=sample_rate, channels=channels,
+                               sample_width=sample_width) + gap_sec
+
+
+def _kill_process_tree(proc):
+    """Termina un subprocess bloccato, con escalation kill dopo grace period."""
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+
+
+def _tail_text_file(path, max_chars=1500):
+    """Coda di un file di testo (per lo stderr di ffmpeg): la riga utile sta in fondo."""
+    try:
+        with open(path, "rb") as f:
+            size = os.path.getsize(path)
+            if size > max_chars * 4:
+                f.seek(size - max_chars * 4)
+            data = f.read()
+        text = data.decode("utf-8", errors="ignore")
+        return text[-max_chars:]
+    except OSError:
+        return ""
+
+
+def _run_ffmpeg_encode(cmd, output_path, tag, expected_sec=0.0,
+                       stall_timeout=300.0, poll_interval=5.0):
+    """Esegue ffmpeg sorvegliando lo STALLO dell'output invece del wall-clock.
+
+    Un timeout fisso su `subprocess.run` e' peggio del problema che vorrebbe
+    risolvere: su un audiolibro lungo ffmpeg viene ucciso a meta' opera e il
+    file troncato resta sul disco, indistinguibile da uno completo (incidente
+    2026-08-16: M4B ucciso a 3600 s, MP3 di ripiego ucciso a 600 s e consegnato
+    all'utente come se fosse l'audiolibro intero). Qui invece: finche' ffmpeg
+    scrive, ha diritto a tutto il tempo che gli serve; se non scrive piu' nulla
+    per `stall_timeout` secondi e' davvero bloccato e va terminato.
+
+    Args:
+        cmd: comando ffmpeg completo.
+        output_path: file che ffmpeg sta scrivendo (sorvegliato per la crescita).
+        tag: nome del chiamante, per i log.
+        expected_sec: durata attesa dell'audio, usata per il tetto assoluto.
+        stall_timeout: secondi senza crescita dell'output oltre i quali si uccide.
+        poll_interval: cadenza di campionamento.
+
+    Returns:
+        (ok: bool, stderr_tail: str, reason: str) — reason vale "" se ok,
+        altrimenti "rc=N" | "stall" | "hard_timeout" | il testo dell'eccezione.
+    """
+    import tempfile
+    # stderr su file e non su PIPE: ffmpeg ne produce abbastanza da riempire il
+    # buffer della pipe e bloccarsi in scrittura se nessuno legge (deadlock
+    # classico di Popen+PIPE senza communicate(), che qui non possiamo usare
+    # perche' dobbiamo restare noi a sorvegliare il processo).
+    err_fd, err_path = tempfile.mkstemp(prefix="ffmpeg_", suffix=".err")
+    os.close(err_fd)
+    # Tetto assoluto, molto largo: rete di sicurezza per il caso patologico di
+    # un output che cresce di pochi byte alla volta senza mai concludere.
+    hard_timeout = max(7200.0, (expected_sec or 0.0) * 4)
+    proc = None
+    try:
+        with open(err_path, "wb") as errf:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf,
+                                    **_SUBPROCESS_FLAGS)
+        started = time.monotonic()
+        last_size = -1
+        last_growth = started
+        while True:
+            try:
+                rc = proc.wait(timeout=poll_interval)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            now = time.monotonic()
+            try:
+                size = os.path.getsize(output_path)
+            except OSError:
+                size = -1
+            if size > last_size:
+                last_size = size
+                last_growth = now
+            if now - last_growth > stall_timeout:
+                elapsed = now - started
+                print(f"[{tag}] ffmpeg bloccato: nessuna crescita dell'output da "
+                      f"{stall_timeout:.0f}s (elapsed {elapsed:.0f}s, "
+                      f"size={last_size}) — termino")
+                _kill_process_tree(proc)
+                return False, _tail_text_file(err_path), "stall"
+            if now - started > hard_timeout:
+                print(f"[{tag}] ffmpeg oltre il tetto assoluto di {hard_timeout:.0f}s "
+                      f"(expected_audio={expected_sec:.0f}s) — termino")
+                _kill_process_tree(proc)
+                return False, _tail_text_file(err_path), "hard_timeout"
+        if rc != 0:
+            return False, _tail_text_file(err_path), f"rc={rc}"
+        return True, "", ""
+    except Exception as e:
+        if proc and proc.poll() is None:
+            _kill_process_tree(proc)
+        return False, _tail_text_file(err_path), str(e)
+    finally:
+        try:
+            os.remove(err_path)
+        except OSError:
+            pass
+
+
+def _encoded_duration_ok(output_path, expected_sec, tag, tolerance=0.02):
+    """Verifica che il file codificato duri quanto il PCM da cui proviene.
+
+    Un encode interrotto (processo ucciso, disco pieno, stream troncato) lascia
+    un file perfettamente riproducibile ma incompleto: nessun returncode e
+    nessun controllo di integrita' del container lo distingue da uno buono.
+    L'unico invariante affidabile e' la durata, che conosciamo esattamente dai
+    byte PCM sorgente.
+
+    Ritorna True anche quando la verifica non e' possibile (ffprobe assente o
+    durata attesa sconosciuta): meglio non bloccare un output valido che non
+    possiamo misurare.
+    """
+    if not expected_sec or expected_sec <= 0:
+        return True
+    _, ffprobe_ok = _check_audio_dependencies()
+    if not ffprobe_ok:
+        return True
+    actual_ms = _get_audio_duration_ms(output_path)
+    if not actual_ms:
+        print(f"[{tag}] durata non leggibile su {os.path.basename(output_path)} "
+              f"(attesi {expected_sec:.0f}s) — considero l'encode fallito")
+        return False
+    actual_sec = actual_ms / 1000.0
+    if actual_sec < expected_sec * (1.0 - tolerance):
+        missing = expected_sec - actual_sec
+        print(f"[{tag}] OUTPUT TRONCATO: {os.path.basename(output_path)} dura "
+              f"{actual_sec:.0f}s invece di {expected_sec:.0f}s "
+              f"(mancano {missing:.0f}s, {missing / expected_sec:.1%})")
+        return False
+    return True
+
+
+def _discard_failed_output(output_path, tag):
+    """Rimuove un output di encode fallito: non deve mai finire in consegna.
+
+    Un file parziale lasciato sul disco viene raccolto dai passi successivi
+    (offload su cold storage, rebuild kit, email di completamento) come se
+    fosse il risultato buono.
+    """
+    if not output_path or not os.path.exists(output_path):
+        return
+    try:
+        size = os.path.getsize(output_path)
+        os.remove(output_path)
+        print(f"[{tag}] rimosso output parziale {os.path.basename(output_path)} "
+              f"({size} bytes)")
+    except OSError as e:
+        print(f"[{tag}] impossibile rimuovere l'output parziale "
+              f"{os.path.basename(output_path)}: {e}")
+
+
 def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
                sample_width=2, bitrate="64k", gap_ms=0):
     """Concatena raw PCM e codifica in MP3 con singola passata ffmpeg.
@@ -1478,7 +1669,9 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
         gap_ms: silenzio inter-chunk in ms (vedi pcm_concat).
 
     Returns:
-        True se ok, False se nessun input o ffmpeg fallisce.
+        True se ok, False se nessun input, se ffmpeg fallisce o se l'MP3
+        prodotto e' piu' corto del PCM sorgente (encode interrotto). In tutti i
+        casi di fallimento l'eventuale file parziale viene rimosso.
     """
     if not pcm_paths:
         return False
@@ -1487,11 +1680,13 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
         print("[pcm_to_mp3] ffmpeg not available")
         return False
 
-    import subprocess
     tmp_pcm = output_path + ".tmp.pcm"
     try:
         pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
                    channels=channels, sample_width=sample_width)
+        expected_sec = _pcm_expected_duration_sec(
+            [tmp_pcm], sample_rate=sample_rate, channels=channels,
+            sample_width=sample_width)
         cmd = [
             "ffmpeg", "-y",
             "-f", "s16le",
@@ -1502,13 +1697,19 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
             "-b:a", bitrate,
             output_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=600, **_SUBPROCESS_FLAGS)
-        if result.returncode != 0:
-            print(f"[pcm_to_mp3] ffmpeg failed: {result.stderr.decode('utf-8', errors='ignore')[:500]}")
+        ok, stderr_tail, reason = _run_ffmpeg_encode(
+            cmd, output_path, "pcm_to_mp3", expected_sec=expected_sec)
+        if not ok:
+            print(f"[pcm_to_mp3] ffmpeg failed ({reason}). stderr_tail:\n{stderr_tail}")
+            _discard_failed_output(output_path, "pcm_to_mp3")
+            return False
+        if not _encoded_duration_ok(output_path, expected_sec, "pcm_to_mp3"):
+            _discard_failed_output(output_path, "pcm_to_mp3")
             return False
         return True
     except Exception as e:
         print(f"[pcm_to_mp3] error: {e}")
+        _discard_failed_output(output_path, "pcm_to_mp3")
         return False
     finally:
         try:
@@ -1542,13 +1743,14 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         print("[pcm_to_aac_m4b] ffmpeg not available")
         return False
 
-    import subprocess
-
     tmp_pcm = output_path + ".tmp.pcm"
     metadata_file = None
     try:
         pcm_concat(pcm_paths, tmp_pcm, gap_ms=gap_ms, sample_rate=sample_rate,
                    channels=channels, sample_width=sample_width)
+        expected_sec = _pcm_expected_duration_sec(
+            [tmp_pcm], sample_rate=sample_rate, channels=channels,
+            sample_width=sample_width)
 
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
@@ -1603,20 +1805,24 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
             cmd.extend(["-metadata:s:a:0", f"language={lang_iso}"])
         cmd.extend(["-metadata", "media_type=2", "-f", "ipod", output_path])
 
-        result = subprocess.run(cmd, capture_output=True, timeout=3600, **_SUBPROCESS_FLAGS)
-        if result.returncode != 0:
-            # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
-            # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",
-            # "Error opening output file", "Unknown encoder 'aac'") sta in coda:
-            # tagliare con [:N] dall'inizio nascondeva sempre la causa reale.
-            stderr_full = result.stderr.decode("utf-8", errors="ignore")
-            stderr_tail = stderr_full[-1500:] if len(stderr_full) > 1500 else stderr_full
-            print(f"[pcm_to_aac_m4b] ffmpeg failed (rc={result.returncode}). "
+        # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
+        # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",
+        # "Error opening output file", "Unknown encoder 'aac'") sta in coda:
+        # tagliare dall'inizio nasconderebbe sempre la causa reale.
+        ok, stderr_tail, reason = _run_ffmpeg_encode(
+            cmd, output_path, "pcm_to_aac_m4b", expected_sec=expected_sec)
+        if not ok:
+            print(f"[pcm_to_aac_m4b] ffmpeg failed ({reason}). "
                   f"cmd={cmd!r}\nstderr_tail:\n{stderr_tail}")
+            _discard_failed_output(output_path, "pcm_to_aac_m4b")
+            return False
+        if not _encoded_duration_ok(output_path, expected_sec, "pcm_to_aac_m4b"):
+            _discard_failed_output(output_path, "pcm_to_aac_m4b")
             return False
         return True
     except Exception as e:
         print(f"[pcm_to_aac_m4b] error: {e}")
+        _discard_failed_output(output_path, "pcm_to_aac_m4b")
         return False
     finally:
         for f in (tmp_pcm, metadata_file):

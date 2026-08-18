@@ -339,6 +339,16 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 - **Doppia virgola**: rimossa virgola duplicata `"),,` nella voce FAQ italiana.
 - **F-string e stringhe multi-riga**: corretti 5 punti in cui stringhe/f-string su più righe usavano `"...\n"` con newline letterale invece di `\n` escaped (incompatibile con Python 3.12+ in alcuni contesti).
 
+**Fix v3.43.3 (troncamento silenzioso dell'assembly PCM)**:
+
+Incidente 2026-08-16 (job `9dmJT_I3lHSeD2Vwz0Bu1A`, audiolibro ~7 h consegnato troncato a 4h18m52s, capitolo 14 di 24 interrotto a metà). Nessun chunk TTS era fallito: `pcm_to_aac_m4b` è stato ucciso dal timeout fisso `subprocess.run(timeout=3600)`, il ripiego `pcm_to_mp3` dal proprio `timeout=600`, e in entrambi i casi il file parziale è rimasto sul disco. Il valore di ritorno di `pcm_to_mp3` non veniva letto (`generation_engine.py`), quindi il job è stato marcato `done` e l'MP3 monco spedito all'utente come audiolibro completo, poi offloadato su cold storage.
+
+- **Sorveglianza dello stallo al posto del wall-clock** (`_run_ffmpeg_encode`): il processo viene campionato ogni 5 s e ucciso solo se l'output non cresce per `stall_timeout` (300 s). Un libro lungo ha quindi tutto il tempo che gli serve. Resta un tetto assoluto larghissimo (`max(7200 s, 4 × durata attesa)`) come rete di sicurezza. Lo `stderr` di ffmpeg va su file temporaneo, non su `PIPE`: senza `communicate()` una pipe piena bloccherebbe il processo.
+- **Validazione della durata** (`_encoded_duration_ok`): il PCM raw non ha header, quindi la durata attesa è esattamente `byte / (sample_rate × channels × sample_width)` (`_pcm_expected_duration_sec`, delega a `pcm_size_to_seconds`). L'output viene misurato con `ffprobe` e scartato se è più corto del 2%. È l'unico invariante che distingue un encode interrotto da uno riuscito: un file troncato è perfettamente riproducibile e `returncode` resta 0. Se `ffprobe` non è disponibile la verifica viene saltata (skip sicuro).
+- **Rimozione del parziale** (`_discard_failed_output`): ogni path di fallimento di `pcm_to_mp3`, `pcm_to_aac_m4b` e `_monitored_m4b_run` cancella l'output. Un file parziale lasciato sul disco viene altrimenti raccolto dai passi a valle (offload cold, rebuild kit, email di completamento) come se fosse il risultato buono.
+- **Valori di ritorno onorati** (`generation_engine.py`): i quattro call site di `pcm_to_mp3` verificano l'esito. Nel modo per capitoli il fallimento solleva `_AssemblyError` → status `error` + rimborso integrale + messaggio utente dedicato; nel modo file singolo l'assenza del file fa scattare la guardia output già presente, con lo stesso effetto. In nessun caso viene consegnato un audio incompleto.
+- **Test**: `test/test_pcm_encode_truncation.py` (22 casi) copre calcolo della durata attesa, rilevamento del troncamento, cancellazione del parziale su ogni encoder, watchdog di stallo (processo bloccato ucciso / processo lento ma vivo lasciato lavorare) e propagazione del returncode.
+
 **Fix v3.8.3 (integrità M4B)**:
 - **Validazione post-conversione**: nuova funzione `_validate_m4b_file(path)` in `audio_utils.py` che usa `ffprobe` per verificare, dopo ogni conversione M4B, che il container sia parsabile (`mp4/m4a/ipod/mov`), che esista almeno uno stream audio e che la durata sia > 0. Motivazione: `ffmpeg` può uscire con `returncode=0` lasciando un file troncato o senza stream audio in casi limite (disk pressure, OOM minore, buffer flush parziale, fallback cover non pulito). Senza questa validazione un M4B corrotto veniva considerato "OK" e offerto al download. Se ffprobe non è installato la validazione viene saltata (skip sicuro, mantiene compatibilità).
 - **Cleanup file parziali**: se `_convert_mp3_to_m4b` fallisce (ffmpeg rc≠0, timeout, eccezione) o la validazione rileva corruzione, il file M4B parziale viene rimosso dal disco. Questo evita che un M4B corrotto venga ripescato dal filesystem scan (`/api/events/<job_id>` L4098-4102, pagina email `/dl/<token>` L4835+).
@@ -353,7 +363,10 @@ A partire dalla v3.8.0, in modalità file unico (`single_file=True`) viene gener
 | Formato container | `ipod` (M4B/M4A) | `audio_utils.py` | `-f ipod` ffmpeg |
 | TIMEBASE capitoli | `1/1000` (millisecondi) | `audio_utils.py` | Standard iTunes/Apple Books |
 | Codec cover art | `mjpeg` (con fallback senza cover) | `audio_utils.py` | Compatibile con container ipod |
-| Timeout conversione M4B | `3600` secondi | `audio_utils.py` | Supporto audiolibri molto lunghi |
+| Timeout conversione M4B (da MP3) | `3600` secondi | `audio_utils.py` | `_convert_mp3_to_m4b`; su timeout il parziale viene rimosso |
+| Stallo massimo encode PCM | `300` secondi senza crescita dell'output | `audio_utils.py` | `_run_ffmpeg_encode(stall_timeout=300)`: finché ffmpeg scrive non viene interrotto |
+| Tetto assoluto encode PCM | `max(7200 s, 4 × durata audio attesa)` | `audio_utils.py` | `_run_ffmpeg_encode(hard_timeout)`: rete di sicurezza, non un limite di durata |
+| Tolleranza durata output | `2%` in difetto rispetto al PCM sorgente | `audio_utils.py` | `_encoded_duration_ok(tolerance=0.02)` |
 | Tag metadati globali | `title`, `album`, `artist`, `album_artist`, `date`, `genre`, `comment`, `description` | `audio_utils.py` | Scritti sempre quando disponibili |
 | Tag stream audio | `language=ita/eng/fra...` (ISO 639-2/B) | `audio_utils.py` | `-metadata:s:a:0 language=...` (MP4 usa language per-stream) |
 | Tag iTunes stik | `media_type=2` (Audiobook) | `audio_utils.py` | Apple Books classifica come audiolibro |

@@ -3574,6 +3574,16 @@ class _GeminiQualityAbort(Exception):
         self.processed = processed
 
 
+class _AssemblyError(Exception):
+    """Sollevata quando il montaggio finale dell'audio non produce un file integro.
+
+    I chunk TTS possono essere tutti corretti e l'assembly fallire comunque
+    (encode ucciso, disco pieno, output troncato). L'audio parziale NON e'
+    consegnabile: sollevando qui si entra nel path di errore + rimborso invece
+    di spedire all'utente mezzo audiolibro presentato come completo.
+    """
+
+
 def _early_abort_params():
     """(ratio, min_chunks) per l'early-abort Gemini. ratio>1 disabilita."""
     try:
@@ -4295,9 +4305,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 cover_path = _prepare_m4b_cover_path(job, info.title, info.author, work_dir)
 
                 if output_format in ('mp3', 'zip', 'zip_rss'):
-                    # Solo MP3 finale richiesto
-                    pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
-                    print(f"[{job_id}] PCM->MP3 merged: {final_mp3}, "
+                    # Solo MP3 finale richiesto. L'esito NON e' opzionale: un merge
+                    # fallito (o troncato) rimuove il file, e senza output il job
+                    # viene fermato dalla guardia a fondo funzione invece di
+                    # consegnare mezzo audiolibro.
+                    _mp3_ok = pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter,
+                                         sample_rate=_pcm_sr)
+                    print(f"[{job_id}] PCM->MP3 merged: ok={_mp3_ok}, {final_mp3}, "
                           f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}, "
                           f"gap_ms={gap_ms_inter}")
                 else:
@@ -4372,9 +4386,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                     if not m4b_ok:
                         job["m4b_failed"] = True
-                        # Fallback: produci MP3 cosi' l'utente ha qualcosa
-                        pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
-                        print(f"[{job_id}] M4B failed, fallback MP3 produced: {final_mp3}")
+                        # Fallback: produci MP3 cosi' l'utente ha qualcosa. "Qualcosa"
+                        # pero' deve essere il libro intero: se anche questo encode
+                        # fallisce non resta alcun file e la guardia di fondo funzione
+                        # trasforma il job in errore + rimborso. Consegnare un MP3
+                        # troncato spacciandolo per completo e' esattamente il difetto
+                        # che ha colpito il job 9dmJT_... (2026-08-16).
+                        _mp3_ok = pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter,
+                                             sample_rate=_pcm_sr)
+                        print(f"[{job_id}] M4B failed, fallback MP3: ok={_mp3_ok}, "
+                              f"{final_mp3}, "
+                              f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
             else:
                 # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
                 final_mp3 = str(output_dir / f"{safe_name}.mp3")
@@ -4548,7 +4570,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         if use_pcm:
-                            pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
+                            if not pcm_to_mp3(current_chapter_parts, mp3_path,
+                                              gap_ms=gap_ms_inter, sample_rate=_pcm_sr):
+                                # Capitolo non codificabile (o troncato): lo ZIP
+                                # risulterebbe incompleto senza che nulla lo segnali.
+                                raise _AssemblyError(
+                                    f"chapter {out_num} ({ch.title!r}) encode failed")
                         else:
                             _concatenate_mp3(current_chapter_parts, mp3_path)
                         mp3_files.append(mp3_path)
@@ -4609,7 +4636,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 out_num = output_num_by_idx.get(current_chapter_idx, current_chapter_idx)
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 if use_pcm:
-                    pcm_to_mp3(current_chapter_parts, mp3_path, gap_ms=gap_ms_inter, sample_rate=_pcm_sr)
+                    if not pcm_to_mp3(current_chapter_parts, mp3_path,
+                                      gap_ms=gap_ms_inter, sample_rate=_pcm_sr):
+                        raise _AssemblyError(
+                            f"chapter {out_num} ({ch.title!r}) encode failed")
                 else:
                     _concatenate_mp3(current_chapter_parts, mp3_path)
                 mp3_files.append(mp3_path)
@@ -5362,6 +5392,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                          "piu' tardi.")
             job["error"] = _user_msg
             job["user_facing_error"] = _user_msg
+        elif isinstance(e, _AssemblyError):
+            # La narrazione era corretta: e' il montaggio del file finale ad
+            # essere fallito. All'utente non serve il dettaglio tecnico, ma
+            # deve essere chiaro che non riceve un file parziale.
+            _user_msg = ("Generazione interrotta durante il montaggio del file "
+                         "audio finale. Il file sarebbe risultato incompleto e "
+                         "non e' stato consegnato: hai diritto al rimborso "
+                         "integrale, gia' emesso automaticamente.")
+            job["error"] = _user_msg
+            job["user_facing_error"] = _user_msg
+            print(f"[{job_id}] ASSEMBLY FAILED -> error + refund, nessuna consegna: {e}")
         if use_gemini:
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "failed_refunded")
             # F3: Refund the user payment (voucher or paypal) for failed Gemini job
