@@ -8503,6 +8503,8 @@ def api_preview_audio(job_id):
                         _preview_lang,
                         result.get("model_key", "flash25"),
                         rate_pct=rate,
+                        voice=(voice or "").split(":")[-1],
+                        job_id=job_id,
                     )
                 except Exception as e:
                     print(f"[preview] gemini_tts.record_rate_sample failed (non-fatal): {e}")

@@ -4120,6 +4120,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                             _norm_chars, _audio_secs, _lang,
                             result.get("model_key", "flash25"),
                             rate_pct=rate,
+                            voice=(voice or "").split(":")[-1],
+                            job_id=job_id,
                         )
                     except Exception as e:
                         print(f"[{job_id}] gemini_tts.record_rate_sample failed (non-fatal): {e}")

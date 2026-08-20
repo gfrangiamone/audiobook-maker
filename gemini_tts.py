@@ -24,7 +24,43 @@ from voice_utils import is_gemini_voice as _is_gemini_voice
 from community_store import atomic_write_json as _atomic_write_json
 
 # Audio output constants
-CHARS_PER_AUDIO_SECOND = 15
+#
+# Rate baseline char/sec per lingua. Ricavati dall'audit reale
+# (`gemini_cost_audit_2026-{06,07,08}.jsonl`, 256 job completati): mediana di
+# `chars_total / audio_seconds_actual` per lingua. Servono a due cose:
+#   1. fallback quando il log empirico non ha abbastanza campioni;
+#   2. ancora per il clamp di `get_empirical_rate` (vedi RATE_CLAMP_*).
+# La velocita` di lettura dipende molto dalla lingua (zh ~4 char/sec contro
+# ~14 delle lingue latine): un unico numero globale sbagliava di 3.5x sul
+# cinese. Il modello (flash25/flash31) invece e` irrilevante: sui 256 job
+# spiega lo 0.4% della varianza del rate, quindi non entra in nessuna chiave.
+LANG_BASELINE_RATE = {
+    "it": 14.6,   # n=54
+    "de": 14.4,   # n=75
+    "es": 14.3,   # n=19
+    "fr": 13.9,   # n=3
+    "en": 13.4,   # n=93
+    "tr": 13.0,   # n=4
+    "zh": 4.0,    # n=3
+}
+
+# Mediana globale su tutte le lingue: default per quelle senza dati propri.
+# NB: era 15 fino ad agosto 2026, valore mai misurato; i job reali danno 13.9.
+CHARS_PER_AUDIO_SECOND = 13.9
+
+# Il rate empirico non puo` allontanarsi dal baseline della lingua oltre questi
+# fattori. Sui job reali il rapporto rate/baseline sta fra 0.85 e 1.34 (p10/p90),
+# quindi la banda copre la variabilita` legittima e taglia solo le derive.
+# Incidente 2026-08: con finestra di 20 campioni il rate en/flash31 era sceso a
+# 12.53 (0.94x) senza clamp, gonfiando del 20% il preventivo di un audiolibro.
+RATE_CLAMP_LOW = 0.75
+RATE_CLAMP_HIGH = 1.35
+
+
+def baseline_rate(language=None):
+    """Rate char/sec di riferimento per la lingua (mai None, mai <=0)."""
+    lang = (language or "")[:2].lower()
+    return LANG_BASELINE_RATE.get(lang, CHARS_PER_AUDIO_SECOND)
 
 def _audio_tokens_per_second(model_key=None):
     """Token audio output per secondo, per modello.
@@ -47,7 +83,13 @@ def _audio_tokens_per_second(model_key=None):
             return float(global_val.replace(",", "."))
         except (ValueError, TypeError):
             pass
-    defaults = {"flash25": 25.0, "flash31": 29.0}
+    # Misurati sull'audit reale (giu-ago 2026, 256 job): output_tokens_actual /
+    # audio_seconds_actual vale esattamente 25.0 per entrambi i modelli
+    # (flash25: 92 job, cv 0.0%; flash31: 122 job su 168 esattamente a 25.0,
+    # gli altri sopra solo per token bruciati dai chunk ritentati).
+    # Il vecchio default flash31=29 sovrastimava il costo Google del 16%: e`
+    # la causa principale del margine realizzato al 37% contro il 15% a target.
+    defaults = {"flash25": 25.0, "flash31": 25.0}
     return defaults.get(model_key, 25.0) if model_key else 25.0
 AUDIO_SAMPLE_RATE = 24000
 AUDIO_CHANNELS = 1
@@ -644,7 +686,7 @@ def _rate_pct_to_step(rate_pct):
     return max(-3, min(3, round(n / 10)))
 
 
-def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
+def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0, voice=None):
     """Stima durata audio in secondi a una data velocita`.
 
     Strategia:
@@ -656,7 +698,8 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
             speed_factor = max(0.5, 1 + rate_pct/100)
             audio_seconds = baseline_seconds / speed_factor
          Così la stima è monotonica rispetto allo slider velocità.
-    Fallback finale: CHARS_PER_AUDIO_SECOND.
+    Fallback finale: baseline_rate(language) — il rate mediano misurato per
+    quella lingua, non piu` una costante unica.
     Il testo viene normalizzato per coerenza con il conteggio dei sample.
     """
     norm = _normalize_text(text)
@@ -667,11 +710,11 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
         try:
             # rate_step=0 (baseline): la scalatura su rate_pct la applichiamo
             # esplicitamente sotto per garantire monotonia con lo slider.
-            rate = get_empirical_rate(language, model_key, rate_step=0)
+            rate = get_empirical_rate(language, model_key, rate_step=0, voice=voice)
         except Exception:
             rate = None
     if not rate or rate <= 0:
-        rate = CHARS_PER_AUDIO_SECOND
+        rate = baseline_rate(language)
     base_seconds = len(norm) / rate
     # Converti rate_pct ("+10%", 10, "+0%", ecc.) a fattore moltiplicativo.
     try:
@@ -686,10 +729,11 @@ def estimate_audio_seconds(text, language=None, model_key=None, rate_pct=0):
     return base_seconds / speed_factor
 
 
-def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0):
+def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0, voice=None):
     """Stima token audio output. tok/s per-model x secondi stimati."""
     tok_per_sec = _audio_tokens_per_second(model_key)
-    return int(estimate_audio_seconds(text, language=language, model_key=model_key, rate_pct=rate_pct) * tok_per_sec)
+    return int(estimate_audio_seconds(text, language=language, model_key=model_key,
+                                      rate_pct=rate_pct, voice=voice) * tok_per_sec)
 
 
 def google_cost_breakdown(input_tokens, output_tokens, model_key):
@@ -767,7 +811,7 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
         output_tokens_est, google_cost_eur, user_price_eur, is_free,
         estimated_audio_minutes, model_key, language, model_label.
     """
-    model_key, _, _ = parse_voice_id(voice_id)
+    model_key, _, voice_name = parse_voice_id(voice_id)
 
     # Normalizziamo ogni capitolo separatamente per evitare che whitespace/newline
     # gonfino il conteggio caratteri rispetto a word_count*split() usato altrove.
@@ -783,8 +827,10 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
 
     combined = " ".join(normalized_parts)
     input_tokens = estimate_input_tokens(combined, language)
-    audio_seconds = estimate_audio_seconds(combined, language=language, model_key=model_key, rate_pct=rate_pct)
-    output_tokens = estimate_output_tokens(combined, language=language, model_key=model_key, rate_pct=rate_pct)
+    audio_seconds = estimate_audio_seconds(combined, language=language, model_key=model_key,
+                                           rate_pct=rate_pct, voice=voice_name)
+    output_tokens = estimate_output_tokens(combined, language=language, model_key=model_key,
+                                           rate_pct=rate_pct, voice=voice_name)
 
     breakdown = google_cost_breakdown(input_tokens, output_tokens, model_key)
     price = compute_user_price_eur(breakdown["total_eur"], model_key)
@@ -805,6 +851,7 @@ def estimate_book_cost(chapters, voice_id, language="it", rate_pct=0):
         "model_key": model_key,
         "model_label": GEMINI_MODELS[model_key]["label"],
         "language": language,
+        "voice": voice_name,
         "rate_pct": rate_pct,
         "rate_step": _rate_pct_to_step(rate_pct),
     }
@@ -1417,9 +1464,25 @@ _rate_log_path = None
 _rate_log_lock = threading.Lock()
 _rate_log_cache = None
 
-RATE_LOG_MAX_SAMPLES = int(_f("ABM_GEMINI_RATE_LOG_MAX_SAMPLES", 2000))
-RATE_LOG_WINDOW = int(_f("ABM_GEMINI_RATE_LOG_WINDOW", 20))
-RATE_LOG_MIN_SAMPLES = int(_f("ABM_GEMINI_RATE_LOG_MIN_SAMPLES", 5))
+RATE_LOG_MAX_SAMPLES = int(_f("ABM_GEMINI_RATE_LOG_MAX_SAMPLES", 6000))
+
+# Finestra e soglia minima hanno un PAVIMENTO non aggirabile da env. Con la
+# vecchia finestra di 20 campioni il prezzo di un'intera lingua era deciso dagli
+# ultimi 20 chunk dell'ultimo libro generato: il 2026-08-19 quei 20 campioni
+# venivano tutti dallo stesso job (voce Algieba, 6 minuti di generazione) e
+# hanno spostato il preventivo di un altro libro da 69,26 a 82,82 EUR.
+RATE_LOG_WINDOW_FLOOR = 200
+RATE_LOG_MIN_SAMPLES_FLOOR = 20
+RATE_LOG_WINDOW = max(RATE_LOG_WINDOW_FLOOR, int(_f("ABM_GEMINI_RATE_LOG_WINDOW", 800)))
+RATE_LOG_MIN_SAMPLES = max(RATE_LOG_MIN_SAMPLES_FLOOR, int(_f("ABM_GEMINI_RATE_LOG_MIN_SAMPLES", 40)))
+
+# Nessun singolo job puo` occupare piu` di questa quota della finestra: un
+# audiolibro lungo produce migliaia di chunk e da solo riscriverebbe il rate
+# di tutta la lingua.
+RATE_LOG_MAX_PER_JOB = int(_f("ABM_GEMINI_RATE_LOG_MAX_PER_JOB", 60))
+
+# Frazione di code scartata prima di calcolare il rate (outlier bidirezionale).
+RATE_LOG_TRIM_FRACTION = 0.10
 
 
 def _rate_log_file():
@@ -1458,12 +1521,20 @@ def _save_rate_log(data):
         print(f"[gemini-tts] Warning: could not save rate log: {e}")
 
 
-def record_rate_sample(chars, audio_seconds, lang, model_key, rate_pct=0):
-    """Registra un campione (chars_normalizzati, audio_seconds, lang, model, rate).
+def record_rate_sample(chars, audio_seconds, lang, model_key, rate_pct=0,
+                       voice=None, job_id=None):
+    """Registra un campione (chars_normalizzati, audio_seconds, lang, voce, rate).
+
+    `voice` e `job_id` sono opzionali per retrocompatibilita`, ma vanno passati
+    sempre dai call site reali: la voce e` la chiave di raggruppamento piu`
+    fine usata da `get_empirical_rate`, il job serve a impedire che un singolo
+    audiolibro monopolizzi la finestra (vedi RATE_LOG_MAX_PER_JOB).
 
     Scarta campioni degeneri (chars<=0, audio_seconds<=0.5, rate fuori range
-    plausibile 5-40 char/sec) per non avvelenare la media empirica con outlier
-    derivati da chunk troppo corti o da errori di misurazione.
+    plausibile 2-40 char/sec) per non avvelenare la media empirica con outlier
+    derivati da chunk troppo corti o da errori di misurazione. Il minimo e` 2 e
+    non 5 perche` il cinese viaggia a ~4 char/sec: con la soglia precedente
+    tutti i campioni zh venivano buttati e la lingua restava senza dati.
     """
     try:
         chars = int(chars)
@@ -1473,13 +1544,15 @@ def record_rate_sample(chars, audio_seconds, lang, model_key, rate_pct=0):
     if chars <= 0 or audio_seconds <= 0.5:
         return
     inst_rate = chars / audio_seconds
-    if inst_rate < 5.0 or inst_rate > 40.0:
+    if inst_rate < 2.0 or inst_rate > 40.0:
         return
     sample = {
         "chars": chars,
         "secs": round(audio_seconds, 3),
         "lang": (lang or "default")[:8],
         "model": model_key or "unknown",
+        "voice": (voice or "")[:32],
+        "job": (job_id or "")[:24],
         "rate_step": _rate_pct_to_step(rate_pct),
         "ts": int(time.time()),
     }
@@ -1493,16 +1566,81 @@ def record_rate_sample(chars, audio_seconds, lang, model_key, rate_pct=0):
         _save_rate_log(data)
 
 
-def get_empirical_rate(lang, model_key=None, rate_step=0, window=None, min_samples=None):
-    """Media mobile char/sec per (lang, model_key, rate_step) con fallback a tier
-    progressivamente piu` larghi:
+def _rate_from_samples(filtered, win, minN):
+    """Rate char/sec robusto da una lista di campioni gia` filtrata.
 
-      1. (lang, model, rate_step) — combo esatta
-      2. (lang, model)            — qualsiasi velocita`
-      3. (lang)                   — qualsiasi modello
+    1. prende gli ultimi `win` campioni;
+    2. limita a RATE_LOG_MAX_PER_JOB i campioni provenienti dallo stesso job
+       (i piu` recenti), cosi` un audiolibro da 4000 chunk non riscrive da solo
+       il rate della lingua;
+    3. scarta le code (RATE_LOG_TRIM_FRACTION per lato) sul rate istantaneo;
+    4. ritorna il rapporto pesato sui caratteri, che e` lo stesso estimando
+       usato per calibrare LANG_BASELINE_RATE (chars_totali/secondi_totali).
 
-    I sample legacy senza rate_step vengono trattati come rate_step=0 (normale).
-    Ritorna None se nemmeno il tier piu` largo ha min_samples campioni.
+    Ritorna None se restano meno di `minN` campioni.
+    """
+    last = filtered[-win:] if win and win > 0 else list(filtered)
+    if len(last) < minN:
+        return None
+
+    # Cap per job, conservando i campioni piu` recenti di ciascuno.
+    per_job = {}
+    kept = []
+    for s in reversed(last):
+        jid = s.get("job") or ""
+        if jid:
+            n = per_job.get(jid, 0)
+            if n >= RATE_LOG_MAX_PER_JOB:
+                continue
+            per_job[jid] = n + 1
+        kept.append(s)
+    if len(kept) < minN:
+        # Il cap ha svuotato troppo la finestra (tipico quando quasi tutti i
+        # campioni vengono da un job solo): meglio usarli tutti che ripiegare
+        # su un tier piu` largo e meno pertinente.
+        kept = list(last)
+
+    rates = []
+    for s in kept:
+        c = s.get("chars", 0)
+        sec = s.get("secs", 0.0)
+        if c > 0 and sec > 0:
+            rates.append((c / sec, c, sec))
+    if len(rates) < minN:
+        return None
+    rates.sort(key=lambda t: t[0])
+    cut = int(len(rates) * RATE_LOG_TRIM_FRACTION)
+    core = rates[cut:len(rates) - cut] if cut and len(rates) - 2 * cut >= minN // 2 else rates
+    total_chars = sum(t[1] for t in core)
+    total_secs = sum(t[2] for t in core)
+    if total_secs <= 0:
+        return None
+    return total_chars / total_secs
+
+
+def get_empirical_rate(lang, model_key=None, rate_step=0, window=None,
+                       min_samples=None, voice=None):
+    """Rate empirico char/sec per (lingua, voce, velocita`), con clamp.
+
+    Tier di fallback, dal piu` specifico al piu` largo:
+      1. (lang, voice, rate_step) — la combinazione che conta davvero
+      2. (lang, rate_step)        — qualsiasi voce, stessa velocita`
+      3. (lang, rate_step=0)      — baseline della lingua a velocita` normale
+
+    Due differenze sostanziali rispetto alla versione precedente:
+
+    * **il modello non entra nella chiave**. Sui 256 job reali di giu-ago 2026
+      flash25 e flash31 hanno la stessa mediana (13.96 vs 14.03) e il modello
+      spiega lo 0.4% della varianza del rate: raggruppare per modello dimezzava
+      la numerosita` dei gruppi senza guadagno predittivo. Contano lingua (36%
+      della varianza), velocita` (24%) e voce (11%).
+    * **campioni con rate_step diverso non vengono mai mescolati**. Il vecchio
+      tier 2 ignorava rate_step, quindi un preventivo a velocita` normale poteva
+      finire calcolato su campioni presi a +10% (15.8 char/sec contro 13.8).
+
+    Il risultato e` sempre limitato alla banda
+    [RATE_CLAMP_LOW, RATE_CLAMP_HIGH] x baseline_rate(lang).
+    Ritorna None se nemmeno il tier piu` largo ha `min_samples` campioni.
     """
     if not lang:
         return None
@@ -1513,33 +1651,34 @@ def get_empirical_rate(lang, model_key=None, rate_step=0, window=None, min_sampl
     if not samples:
         return None
 
-    def _avg(filtered):
-        last = filtered[-win:] if win > 0 else filtered
-        if len(last) < minN:
-            return None
-        total_chars = sum(s.get("chars", 0) for s in last)
-        total_secs = sum(s.get("secs", 0.0) for s in last)
-        if total_secs <= 0:
-            return None
-        return total_chars / total_secs
-
     def _step(s):
         return s.get("rate_step", 0)
 
-    # Tier 1: lang + model + rate_step
-    if model_key:
-        tier1 = [s for s in samples if s.get("lang") == lang and s.get("model") == model_key and _step(s) == rate_step]
-        rate = _avg(tier1)
-        if rate is not None:
-            return rate
-        # Tier 2: lang + model, qualsiasi velocita`
-        tier2 = [s for s in samples if s.get("lang") == lang and s.get("model") == model_key]
-        rate = _avg(tier2)
-        if rate is not None:
-            return rate
-    # Tier 3: solo lang
-    tier3 = [s for s in samples if s.get("lang") == lang]
-    return _avg(tier3)
+    same_lang_step = [s for s in samples
+                      if s.get("lang") == lang and _step(s) == rate_step]
+
+    rate = None
+    if voice:
+        rate = _rate_from_samples([s for s in same_lang_step
+                                   if s.get("voice") == voice], win, minN)
+    if rate is None:
+        rate = _rate_from_samples(same_lang_step, win, minN)
+    if rate is None and rate_step != 0:
+        rate = _rate_from_samples([s for s in samples
+                                   if s.get("lang") == lang and _step(s) == 0],
+                                  win, minN)
+    if rate is None or rate <= 0:
+        return None
+
+    base = baseline_rate(lang)
+    lo, hi = base * RATE_CLAMP_LOW, base * RATE_CLAMP_HIGH
+    if rate < lo or rate > hi:
+        clamped = min(hi, max(lo, rate))
+        print(f"[gemini-tts] rate empirico {rate:.2f} fuori banda per "
+              f"lang={lang} voice={voice or '-'} step={rate_step} "
+              f"(baseline {base:.2f}) -> uso {clamped:.2f}")
+        return clamped
+    return rate
 
 
 _available = None

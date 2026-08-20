@@ -405,14 +405,25 @@ Le **stime ex-ante** (`estimate_book_cost`) e il **costo reale ex-post** (`recor
 ```
 chars_total = sum(len(_normalize_text(ch.text)) for ch in chapters)
 input_tokens = chars_total / CHARS_PER_TOKEN_BY_LANG[lang]
-audio_seconds = chars_total / empirical_rate(lang, model)   # con fallback CHARS_PER_AUDIO_SECOND
+audio_seconds = chars_total / empirical_rate(lang, voice, rate_step)  # fallback baseline_rate(lang)
 audio_seconds /= max(0.5, 1 + rate_pct/100)                 # scaling velocità
-output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # per-model (flash25=25, flash31=29 default)
+output_tokens = audio_seconds * _audio_tokens_per_second(model_key)  # 25.0 per entrambi i modelli (misurato)
 google_cost_eur = (input_tokens × input_usd/MTok + output_tokens × output_usd/MTok) × USD_EUR_RATE
 user_price = compute_user_price_eur(google_cost_eur, model_key)
 ```
 
-`empirical_rate` viene letto dal `rate_log` (vedi §13) con fallback a `CHARS_PER_AUDIO_SECOND` (15).
+`empirical_rate` viene letto dal `rate_log` (vedi §13) con fallback a `baseline_rate(lang)` — tabella `LANG_BASELINE_RATE` misurata sull'audit reale, non più la costante unica `CHARS_PER_AUDIO_SECOND = 15`:
+
+| Lingua | char/s | n job |
+|--------|--------|-------|
+| `it` | 14.6 | 54 |
+| `de` | 14.4 | 75 |
+| `es` | 14.3 | 19 |
+| `fr` | 13.9 | 3 |
+| `en` | 13.4 | 93 |
+| `tr` | 13.0 | 4 |
+| `zh` | 4.0 | 3 |
+| *(altre)* | 13.9 | — |
 
 #### Risoluzione della lingua per la stima
 
@@ -516,15 +527,31 @@ Quando `user_price_eur < FREE_THRESHOLD_EUR`, `compute_user_price_eur` restituis
 
 ## 13. Rate logging (audio / token ratio)
 
-Per migliorare nel tempo l'accuratezza della stima durata audio, ogni preview/job memorizza un campione `(chars, audio_seconds, lang, model_key, rate_step)` in `gemini_tts_rate_log.json`. La stima ex-ante usa la mediana mobile degli ultimi N campioni filtrati per `(lang, model, rate_step)`.
+Per migliorare nel tempo l'accuratezza della stima durata audio, ogni preview/job memorizza un campione `(chars, audio_seconds, lang, model_key, rate_step, voice, job)` in `gemini_tts_rate_log.json`. Il file è una **singola lista FIFO globale**, non un dizionario per chiave.
 
-| Env | Default | Significato |
-|-----|---------|-------------|
-| `ABM_GEMINI_RATE_LOG_MAX_SAMPLES` | `2000` | Rolling buffer max |
-| `ABM_GEMINI_RATE_LOG_WINDOW` | `20` | Numero di campioni recenti usati per la mediana |
-| `ABM_GEMINI_RATE_LOG_MIN_SAMPLES` | `5` | Sotto questo numero, fallback a `CHARS_PER_AUDIO_SECOND` (15) |
+| Env | Default | Pavimento | Significato |
+|-----|---------|-----------|-------------|
+| `ABM_GEMINI_RATE_LOG_MAX_SAMPLES` | `6000` | — | Rolling buffer max |
+| `ABM_GEMINI_RATE_LOG_WINDOW` | `800` | `200` | Campioni recenti considerati per cluster |
+| `ABM_GEMINI_RATE_LOG_MIN_SAMPLES` | `40` | `20` | Sotto questo numero si scende di livello nella cascata |
+| `ABM_GEMINI_RATE_LOG_MAX_PER_JOB` | `60` | — | Tetto di campioni per singolo `job_id` dentro la finestra |
 
-`get_empirical_rate(lang, model_key, rate_step)` applica cascading fallback: `(lang, model, step)` → `(lang, model, 0)` → `(lang, *, 0)` → `CHARS_PER_AUDIO_SECOND`.
+I pavimenti (`RATE_LOG_WINDOW_FLOOR`, `RATE_LOG_MIN_SAMPLES_FLOOR`) **non sono sovrascrivibili** da env: un valore più basso viene alzato al pavimento. Servono a impedire che il prezzo di tutti gli utenti sia deciso da una manciata di chunk recenti (con `WINDOW=20` in produzione il prezzo di un libro intero era determinato dagli ultimi 20 chunk di *un altro* job, con una sola voce).
+
+`RATE_LOG_MAX_PER_JOB` impedisce che un audiolibro da migliaia di chunk monopolizzi la finestra: si tengono i suoi campioni più recenti fino al tetto, e se il taglio porta il cluster sotto `MIN_SAMPLES` si ripiega sulla finestra non tagliata.
+
+`RATE_LOG_TRIM_FRACTION = 0.10` (costante) scarta il 10% per lato sul rate istantaneo; l'aggregato è poi **pesato sui caratteri** (`somma_chars / somma_secondi`), non una mediana di rapporti.
+
+`get_empirical_rate(lang, model_key=None, rate_step=0, voice=None)` applica la cascata `(lang, voice, step)` → `(lang, step)` → `(lang, step=0)` → `baseline_rate(lang)`. Due cambi rispetto alla versione precedente:
+
+- **Il modello è stato rimosso dalla chiave**: spiega lo 0,4% della varianza del rate, quindi partizionava i campioni senza guadagno.
+- **Gli step di velocità non si mescolano mai**: il vecchio livello `(lang, model)` senza step mediava campioni presi a velocità diverse (lo step spiega il 24% della varianza).
+
+Il risultato è infine **clampato** in `[RATE_CLAMP_LOW, RATE_CLAMP_HIGH] × baseline_rate(lang)` = `[0.75, 1.35]×`, con log su stdout quando il clamp interviene.
+
+**Varianza del rate reale spiegata da ciascuna variabile** (audit giu–ago 2026, 256 job, rate mediano 13.965 char/s, cv 14,5%): lingua **36,3%**, step di velocità **24,0%**, voce **11,5%**, modello **0,4%** (voce+lingua insieme: 47,1%).
+
+**Soglia outlier**: `record_rate_sample` scarta i campioni con rate istantaneo fuori da `[2.0, 60.0]` char/s. Il precedente limite inferiore di `5.0` scartava **tutti** i campioni cinesi (~4 char/s), rendendo il cinese permanentemente dipendente dal fallback statico.
 
 `get_rate_log_stats()` espone N campioni, mediane per cluster, copertura. Utile per admin.
 
@@ -937,9 +964,10 @@ Il marker `.email_sent` e i path di cleanup orfano non hanno accesso a `voice`/`
 
 | Variabile | Default | Note |
 |-----------|---------|------|
-| `ABM_GEMINI_RATE_LOG_MAX_SAMPLES` | `2000` | Buffer rolling massimo |
-| `ABM_GEMINI_RATE_LOG_WINDOW` | `20` | N campioni per mediana |
-| `ABM_GEMINI_RATE_LOG_MIN_SAMPLES` | `5` | Soglia fallback statico |
+| `ABM_GEMINI_RATE_LOG_MAX_SAMPLES` | `6000` | Buffer rolling massimo |
+| `ABM_GEMINI_RATE_LOG_WINDOW` | `800` | N campioni per cluster (pavimento non sovrascrivibile: 200) |
+| `ABM_GEMINI_RATE_LOG_MIN_SAMPLES` | `40` | Soglia per scendere di livello (pavimento non sovrascrivibile: 20) |
+| `ABM_GEMINI_RATE_LOG_MAX_PER_JOB` | `60` | Tetto campioni per singolo job dentro la finestra |
 
 ---
 

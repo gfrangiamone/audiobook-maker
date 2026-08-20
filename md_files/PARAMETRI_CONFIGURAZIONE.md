@@ -41,6 +41,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
 | `ABM_AUTO_REFUND_UNUSED_CAPTURES` | `true` (se un capture PayPal viene incassato ma MAI consumato — `used=False`, es. avvio traduzione non partito per redirect mobile — e il job viene smaltito, emette automaticamente un voucher di rimborso all'email del pagante. Se `false`: marca solo `needs_manual_refund` e lascia all'admin il rimborso PayPal manuale) | `payment.py` | 64–66 |
 | `ABM_UNUSED_CAPTURE_MIN_AGE_SEC` | `1800` (30 min; età minima di un capture non consumato prima di considerarlo abbandonato per detection/alert/auto-refund — evita di toccare un capture appena fatto ancora in attesa che parta `/api/translate`) | `payment.py` | 70–71 |
+| `ABM_PAYPAL_UNFUNDED_PENDING_REASONS` | `ECHECK,TRANSACTION_APPROVED_AWAITING_FUNDING,INTERNATIONAL_WITHDRAWAL,RECEIVING_PREFERENCE_MANDATES_MANUAL_ACTION,UNILATERAL,VERIFICATION_REQUIRED` (CSV dei `status_details.reason` PayPal che, su una capture con status `PENDING`, indicano fondi **non trasferiti**: la capture viene rifiutata e il servizio non erogato. I `PENDING` con reason non in lista — es. `PENDING_REVIEW`, revisione antifrode — restano accettati e vengono loggati come `WARN capture PENDING accettata`) | `payment.py` | 277–291 |
 | `ABM_JOB_RETENTION_SEC` | `64800` (18 ore, retention elaborazioni completate e token download per voci standard) | `audiobook_app.py` | 300 |
 | `ABM_GEMINI_JOB_RETENTION_SEC` | `172800` (48 ore, retention estesa per job con voci PREMIUM/Gemini — token download e cleanup loop usano questo valore quando `voice` inizia per `gemini:` o il token ha `is_gemini=True`. **Protezione no-download**: se un job/token PREMIUM non risulta mai scaricato (`job["downloaded_at"]` e `token_info["downloaded_at"]` entrambi vuoti) la retention effettiva è raddoppiata via `GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER=2`, default 96h — vedi `_effective_retention_for_job` / `_effective_retention_for_token_info` in `audiobook_app.py`) | `audiobook_app.py` | 301 |
 | `ABM_RECOVER_ENABLED` | `1` (abilita il recupero al boot dei job **batch** interrotti da un riavvio/deploy; `0\|false\|no\|off` per disabilitare). Letto in `_recover_orphan_jobs()`. | `audiobook_app.py` | — |
@@ -153,6 +154,7 @@ Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREV
 - **Saldo residuo (consumo parziale)**: ogni voucher ha un campo `remaining_eur` (inizializzato all'importo totale) che viene decrementato di `estimated_cost` ad ogni operazione. Il buono torna "USED" solo quando il saldo scende sotto 0.01 EUR; fino a quel momento conserva stato `PARTIAL` e può essere usato più volte fino a scadenza. Lo storico delle spese è in `uses[]` (`job_id`, `amount_eur`, `at`, `remaining_after`). Record legacy senza `remaining_eur` vengono letti in compat: `used=True` → residuo 0; altrimenti residuo = `amount_eur`. La revoca admin azzera `remaining_eur`.
 - **Idempotenza capture**: `payment.capture_and_store_order(order_id)` acquisisce `_capture_lock` (global), verifica se il record esiste già (idempotency cache), altrimenti chiama PayPal API. 5+ thread concorrenti producono 1 sola chiamata API.
 - **Amount reconciliation**: `_pending_orders` traccia in-memory `{order_id: amount_requested_eur, purpose, ts}` registrato in `_paypal_create_order`. Al capture, l'importo PayPal viene confrontato con il pending (tolerance 0.01 EUR); mismatch → `CaptureAmountMismatchError`. Difende contro tampering del cliente sull'importo. TTL pending: 1h (cleanup automatico).
+- **Capture PENDING non finanziate (eCheck)**: una capture PayPal puo' tornare `status=PENDING`, cioè **denaro non ancora sul conto**. Poiché ABM eroga il servizio contestualmente al pagamento, i reason elencati in `ABM_PAYPAL_UNFUNDED_PENDING_REASONS` (default: `ECHECK` e affini) sollevano `payment.UnfundedCaptureError`: nessun `payment_token` emesso, HTTP 402 con `paypal_issue=UNFUNDED_PENDING` e `retryable=true` (il frontend riapre il checkout per un altro metodo). Il record resta in `_payments` con `pending_unfunded=True` — **non spendibile** come payment token, **non rimborsabile** in automatico e **non incassabile** da `settle_delivered_captures_for_job` (rimborsare o incassare denaro mai ricevuto sarebbe una seconda perdita) — visibile per la riconciliazione manuale. Incidente 2026-08: 4 eCheck respinti dalla banca del pagante dopo l'erogazione, €12,93 di servizio consegnato e mai incassato. Blocco complementare consigliato lato conto PayPal: *Impostazioni → Pagamenti → Preferenze di incasso → blocca pagamenti eCheck*.
 - **PayPal mode mandatory**: `ABM_PAYPAL_MODE` (`sandbox` | `live`) **obbligatorio** se `ABM_PAYPAL_CLIENT_ID` è settato. Module-level `RuntimeError` al boot se mancante o invalido. Difende contro deploy accidentale in sandbox in produzione.
 - **Refund bonus disabilitato su cancel volontario**: `generation_engine._refund_job_payment(reason=...)` passa `apply_bonus=(reason != "cancel")` a `_create_voucher`. Cancel volontario → rimborso 1:1, NON bonus. Bonus +10% riservato a fallimenti piattaforma (errore/eccezione) per evitare abuso "cancel per bonus".
 - **Ricevuta email**: inviata automaticamente post-capture al payer email PayPal.
@@ -538,15 +540,19 @@ Sovrascrivibili in caso di adeguamento listino Google.
 
 ### 7.4.1 Stima token audio (calibrazione margine)
 
-Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()`. Una sottostima di questo valore causa margine % a consuntivo inferiore al `MARGIN_PERCENT` configurato (il prezzo viene lockato su costo stimato, ma il costo reale è più alto). Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` medio dei record `completed` per quel modello in `/admin/audit-tts`.
+Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()`. Una sottostima di questo valore causa margine % a consuntivo inferiore al `MARGIN_PERCENT` configurato; una **sovrastima** gonfia il prezzo all'utente. Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` dei record `completed` per quel modello in `/admin/audit-tts`.
 
 | Variabile | Default |
 |-----------|---------|
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` (fallback globale, conservativo) |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` (da verificare con dati reali) |
-| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `29.0` (calibrato empiricamente) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` | `25.0` (fallback globale) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH25` | `25.0` (misurato) |
+| `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` | `25.0` (misurato — era `29.0`, vedi nota) |
 
 Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND` → default hardcoded.
+
+**Misura su audit reale (giu–ago 2026, 256 job `completed`)**: il rapporto `output_tokens_actual / audio_seconds_actual` vale **esattamente 25.0** per entrambi i modelli — su flash25 con cv 0.0%, su flash31 esattamente 25.0 in 122 job su 168 (l'eccesso residuo viene solo dai chunk ritentati, che pagano token già fatturati). Il valore è quindi una costante del formato audio, non una caratteristica del modello. Il precedente `29.0` su flash31 (e il `30` impostato in produzione) produceva un **+16–20% sistematico sul costo stimato**, con margine a consuntivo del 36,8% contro un target del 25%.
+
+> **Attenzione operativa**: se in produzione è presente un override `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31` diverso da `25`, il default corretto nel codice non ha alcun effetto. Verificare con `systemctl cat audiobook-maker`.
 
 ### 7.5 Limiti e anti-abuso
 
