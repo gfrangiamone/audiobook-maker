@@ -1702,6 +1702,7 @@ let _paypalGeminiButtonsInstance = null;
 // modal. Vedi incidente doppio pagamento K1Rpn (2026-07).
 let _geminiPayCaptured = false;
 function _payPaypalErr(msg){const e=document.getElementById('payPaypalError');if(e){e.style.color='';e.textContent=msg||''}}
+var _payBusyNotice=false;  // true = errore 'server sovraccarico' gia' mostrato nel modale
 async function renderPaypalGeminiButtons(){
   const container=document.getElementById('paypalGeminiContainer');
   if(!container)return;
@@ -1725,7 +1726,14 @@ async function renderPaypalGeminiButtons(){
       const _ep=(_payCtx&&_payCtx.paypal&&_payCtx.paypal.endpoint)||'/api/paypal_create_order_gemini';
       const _body=(_payCtx&&_payCtx.paypal&&typeof _payCtx.paypal.buildBody==='function')?_payCtx.paypal.buildBody():{job_id:jobId};
       const r=await fetch(_ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_body)});
-      const d=await r.json();if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
+      const d=await r.json();
+      if(d&&d.error_code==='server_busy'){
+        // Capacita` esaurita mentre il modale era aperto: nessun ordine creato.
+        _payBusyNotice=true;
+        _payPaypalErr((typeof t==='function'&&t('server_busy'))||d.error);
+        throw new Error('server busy');
+      }
+      if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },
     onApprove:async function(data,actions){
       try{
@@ -1748,7 +1756,11 @@ async function renderPaypalGeminiButtons(){
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
       }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
     },
-    onError:function(err){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(err&&err.message?err.message:''))},
+    onError:function(err){
+      // Il messaggio "server sovraccarico" e` gia' a schermo: non sovrascriverlo
+      // con un generico errore PayPal.
+      if(_payBusyNotice){_payBusyNotice=false;return}
+      _payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(err&&err.message?err.message:''))},
     onCancel:function(){}
   });
   try{_paypalGeminiButtonsInstance.render('#paypalGeminiContainer')}catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
@@ -3052,6 +3064,12 @@ async function startCombinedGeneration(combinedPaymentToken){
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
           _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
         }
+        if(gd.error_code==='server_busy'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('server_busy')||gd.error);
+          unlockUI();return;
+        }
         if(gd.error_code==='concurrent_limit'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
@@ -3460,6 +3478,12 @@ async function startGen(){
         // questo case l'utente vedrebbe la stringa cruda del 402 e resterebbe
         // senza modale di pagamento (incidente "402 Speechify").
         _handlePremiumPaymentRequired(d);return;
+      }
+      if(d.error_code==='server_busy'){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',t('server_busy')||d.error);
+        unlockUI();return
       }
       if(d.error_code==='concurrent_limit'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';

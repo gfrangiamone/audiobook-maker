@@ -92,3 +92,56 @@ def test_global_cap_zero_disables_the_limit(client, clean_jobs):
         r = client.post("/api/generate", json={"job_id": "CAND",
                                                "voice": "it-IT-DiegoNeural"})
     assert r.status_code == 200, r.get_json()
+
+
+# --- gate ANTICIPATO: avvisa prima di chiedere il pagamento -----------------
+# Il controllo dentro il blocco atomico arriva dopo il preflight premium: un
+# utente poteva pagare e solo dopo vedersi rifiutare il job (con rimborso del
+# capture orfano). Il gate anticipato risponde 429/server_busy prima che il
+# preflight di pagamento venga anche solo raggiunto.
+
+_GEMINI_VOICE = "gemini:gemini-2.5-flash-preview-tts:Zephyr"
+
+
+def test_server_busy_before_payment_preflight(client, clean_jobs):
+    """Server saturo + voce PREMIUM: 429 server_busy, preflight mai eseguito."""
+    _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
+    job = _seed_candidate()
+    gem = type("G", (), {"is_available": staticmethod(lambda: True)})
+    with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
+         patch("audiobook_app.gemini_tts", gem), \
+         patch("audiobook_app._effective_max_text_chars") as preflight, \
+         patch("audiobook_app.threading.Thread"):
+        r = client.post("/api/generate", json={"job_id": "CAND",
+                                               "voice": _GEMINI_VOICE})
+    assert r.status_code == 429, r.get_json()
+    assert r.get_json()["error_code"] == "server_busy"
+    # nessun passaggio dal preflight premium -> nessun pagamento richiesto
+    assert preflight.call_count == 0
+    assert audiobook_app.jobs["CAND"]["status"] == "analyzed"
+
+
+def test_payment_preflight_runs_when_server_has_capacity(client, clean_jobs):
+    """Sotto il tetto il preflight premium viene raggiunto normalmente."""
+    _seed_generating(max(0, audiobook_app.MAX_CONCURRENT_GLOBAL - 1))
+    job = _seed_candidate()
+    gem = type("G", (), {"is_available": staticmethod(lambda: True)})
+    with patch("audiobook_app._check_job_owner", return_value=(job, None, None)), \
+         patch("audiobook_app.gemini_tts", gem), \
+         patch("audiobook_app._effective_max_text_chars",
+               return_value=10 ** 9) as preflight, \
+         patch("audiobook_app.threading.Thread"):
+        client.post("/api/generate", json={"job_id": "CAND",
+                                           "voice": _GEMINI_VOICE})
+    assert preflight.call_count >= 1
+
+
+def test_paypal_create_order_gemini_rejected_when_server_busy(client, clean_jobs):
+    """Server saturo: nessun ordine PayPal viene nemmeno creato."""
+    _seed_generating(audiobook_app.MAX_CONCURRENT_GLOBAL)
+    _seed_candidate()
+    r = client.post("/api/paypal_create_order_gemini",
+                    json={"job_id": "CAND", "voice_id": _GEMINI_VOICE,
+                          "amount_eur": 1.0})
+    assert r.status_code == 429, r.get_json()
+    assert r.get_json()["error_code"] == "server_busy"

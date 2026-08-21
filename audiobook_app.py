@@ -778,6 +778,42 @@ def _active_generating_total_unlocked():
     return sum(1 for j in jobs.values() if j.get("status") == "generating")
 
 
+def _server_at_capacity():
+    """(at_capacity, active, cap) sul tetto globale di generazioni.
+
+    Prende _jobs_lock internamente: chiamarla SOLO fuori dal blocco atomico
+    di claim dello slot (che usa _active_generating_total_unlocked).
+    """
+    cap = MAX_CONCURRENT_GLOBAL
+    if cap <= 0:
+        return False, 0, cap
+    with _jobs_lock:
+        active = _active_generating_total_unlocked()
+    return active >= cap, active, cap
+
+
+def _server_busy_response(job_id="", where=""):
+    """429 server_busy se l'istanza e' al tetto globale, altrimenti None.
+
+    Va invocata PRIMA di chiedere un pagamento: l'utente deve sapere che il
+    server e' sovraccarico prima di pagare, non dopo (incidente 2026-08-21).
+    Il controllo dentro il blocco atomico di /api/generate resta come guardia
+    finale sulla race fra il gate anticipato e il claim dello slot.
+    """
+    at_capacity, active, cap = _server_at_capacity()
+    if not at_capacity:
+        return None
+    print(f"[{job_id or '-'}] {where or 'richiesta'} rifiutata: tetto globale "
+          f"raggiunto ({active}/{cap})", flush=True)
+    return jsonify({
+        "error": "The server is at capacity right now. "
+                 "Please try again in a few minutes.",
+        "error_code": "server_busy",
+        "max": cap,
+        "active": active,
+    }), 429
+
+
 def _refund_payment_on_orphan(job_id, job, reason):
     """Refund Gemini payment if /api/generate rejected after the token was consumed.
 
@@ -8882,6 +8918,14 @@ def api_generate():
     if _suspend_new_jobs:
         return jsonify({"error": "System under maintenance. Please try again in a few minutes."}), 503
 
+    # Tetto globale d'istanza valutato PRIMA del preflight di pagamento: se il
+    # server e' saturo l'utente viene avvisato subito ("server sovraccarico"),
+    # senza che gli venga chiesto alcun pagamento. La verifica dentro il blocco
+    # atomico piu' sotto resta come guardia sulla race.
+    _busy = _server_busy_response(job_id, "/api/generate")
+    if _busy is not None:
+        return _busy
+
     # ----- F3: Gemini payment preflight -----
     # Lo stash di quota vale SOLO per la richiesta corrente: azzeralo qui, in
     # testa al preflight premium e per qualunque voce. Fra i gate premium e la
@@ -11189,6 +11233,14 @@ def api_paypal_create_order_gemini():
         job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "job not found"}), 404
+
+    # Server saturo: nessun ordine PayPal viene creato. Il gate esiste anche in
+    # /api/generate prima del preflight, ma la capacita` puo` esaurirsi mentre
+    # il modale di pagamento e` gia` aperto.
+    _busy = _server_busy_response(job_id, "/api/paypal_create_order_gemini")
+    if _busy is not None:
+        return _busy
+
     info = job.get("info")
     if info is None or not getattr(info, "chapters", None):
         return jsonify({"error": "no chapters"}), 400
