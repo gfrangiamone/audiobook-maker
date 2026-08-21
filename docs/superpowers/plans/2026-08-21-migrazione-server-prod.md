@@ -606,7 +606,7 @@ curl -s http://127.0.0.1:5601/sitemap.xml | head -5
 
 Atteso: `200` e sitemap valida.
 
-- [ ] **Step 5: Puntare il dominio al nuovo server sul PC dell'utente**
+- [x] **Step 5: Puntare il dominio al nuovo server sul PC dell'utente**
 
 In PowerShell **come amministratore**:
 
@@ -618,7 +618,7 @@ Resolve-DnsName audiobook-maker.com -Type A | Select-Object Name, IPAddress
 
 Atteso: `80.211.137.33`. Da questo momento **solo il PC dell'utente** vede il nuovo server; il resto del mondo continua a usare la produzione.
 
-- [ ] **Step 6: Collaudo funzionale dal browser (eseguito dall'utente)**
+- [x] **Step 6: Collaudo funzionale dal browser (eseguito dall'utente)**
 
 Percorso completo su `https://audiobook-maker.com`:
 
@@ -633,7 +633,7 @@ Percorso completo su `https://audiobook-maker.com`:
 
 **Vincolo:** nessun pagamento PayPal reale — finirebbe in `_payments.json` della data dir di collaudo, che viene distrutta.
 
-- [ ] **Step 7: Controllare i log del collaudo**
+- [x] **Step 7: Controllare i log del collaudo**
 
 ```bash
 journalctl -u audiobook-maker --since "1 hour ago" --no-pager | grep -iE "error|traceback|exception" | head -30
@@ -643,7 +643,7 @@ df -h /opt
 
 Atteso: nessuna eccezione non gestita. Annotare eventuali warning.
 
-- [ ] **Step 8: Chiudere il collaudo e ripristinare l'isolamento**
+- [x] **Step 8: Chiudere il collaudo e ripristinare l'isolamento**
 
 ```bash
 systemctl stop audiobook-maker
@@ -1098,4 +1098,13 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
    sovrascritto). **Vale anche per la produzione attuale:** i voucher, inclusi quelli di rimborso,
    vanno creati a servizio fermo, oppure dall'interfaccia admin. Difetto pre-esistente, fuori
    dallo scope della migrazione — da valutare separatamente.
+
+9. **Esito del collaudo (2026-08-21, 17:42-18:15).** Superato: audiolibro free, PREMIUM Simba e
+   PREMIUM Gemini 3.1 generati end-to-end, email di consegna ricevute, link `/dl/<token>`
+   funzionanti. Zero eccezioni, zero chunk falliti (28/28, 1/1, 3/3), RAM di picco sotto 1 GB.
+   Unico warning: `[preview] gemini_tts.record_rate_sample failed (non-fatal): Working outside
+   of request context` — **pre-esistente** (248 occorrenze nel syslog di produzione), quindi le
+   anteprime PREMIUM non alimentano `gemini_tts_rate_log.json` e il price lock si basa solo sui
+   job veri. Non bloccante; da valutare separatamente. Collaudo chiuso: override rimosso,
+   `data_collaudo` cancellata, env di produzione ripristinate, servizio fermo e `disabled`.
 
