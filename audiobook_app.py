@@ -877,6 +877,7 @@ def _build_job_descriptor(job, phase):
         "browser_lang": job.get("browser_lang", ""),
         "platform": job.get("platform", ""),
         "gemini_accent": job.get("gemini_accent"),
+        "speechify_emotion": job.get("speechify_emotion", ""),
         "original_filename": fname,
         "client_id": job.get("client_id", ""),
         "client_ip": job.get("client_ip", ""),
@@ -917,7 +918,7 @@ def _reenqueue_orphan(job_id, rec):
         print(f"[recover] {job_id}: descrittore '{rec.get('phase')}' SENZA voce "
               f"-> skip generazione muta, fallback interrotto.")
         _orphan_fallback(job_id, rec)
-        return
+        return False
     abm_path = rec.get("abm_path") or ""
     use_abm = bool(abm_path) and os.path.exists(abm_path)
     src = abm_path if use_abm else rec.get("input_path", "")
@@ -948,6 +949,8 @@ def _reenqueue_orphan(job_id, rec):
         "browser_lang": rec.get("browser_lang", ""),
         "platform": rec.get("platform", ""),
         "gemini_accent": rec.get("gemini_accent"),
+        # Senza questa riga un job Speechify recuperato ripartiva in tono neutro.
+        "speechify_emotion": rec.get("speechify_emotion", ""),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
         "client_ip": rec.get("client_ip", ""),
@@ -998,10 +1001,12 @@ def _reenqueue_orphan(job_id, rec):
             args=(job_id, info, job["voice"], job["rate"], job["single_file"]),
             kwargs={"output_format": job["output_format"],
                     "podcast_base_url": rec.get("podcast_base_url", ""),
-                    "gemini_style_instruction": job["gemini_style_instruction"]},
+                    "gemini_style_instruction": job["gemini_style_instruction"],
+                    "speechify_emotion": job.get("speechify_emotion") or None},
             daemon=True,
         )
     t.start()
+    return True
 
 
 def _send_interrupted_email(rec, refund_code=None):
@@ -1068,8 +1073,12 @@ def _recover_orphan_jobs():
             _orphan_fallback(job_id, rec)
             continue
         try:
-            _reenqueue_orphan(job_id, rec)
-            print(f"[recover] {job_id}: re-enqueued (tentativo {attempts})")
+            # Il log va emesso solo se il job e' stato davvero riavviato: la
+            # guardia anti-audio-muto puo' dirottare su _orphan_fallback e un
+            # "re-enqueued" incondizionato faceva credere in fase forense che il
+            # job stesse ripartendo mentre era gia' stato rimborsato e chiuso.
+            if _reenqueue_orphan(job_id, rec):
+                print(f"[recover] {job_id}: re-enqueued (tentativo {attempts})")
         except Exception as e:
             print(f"[recover] {job_id}: re-enqueue fallito (tentativo {attempts}): {e}")
         time.sleep(2)  # throttle anti-spike se molti orfani
@@ -8850,8 +8859,16 @@ def api_generate():
     job["output_format"] = output_format
     # Snapshot dei parametri di generazione sul job: servono al recupero batch
     # (ricostruzione del descrittore in _build_job_descriptor) dopo un restart.
+    # DEVE avvenire PRIMA di qualunque pending_jobs.register(): la promozione di
+    # voice/selected_chapters avviene solo poco prima di thread.start(), quindi
+    # il descrittore del ramo auto-batch a pagamento (registrato subito dopo la
+    # capture) nasceva con voice="" -> al riavvio la guardia anti-audio-muto
+    # dichiarava il job irrecuperabile e lo rimborsava a generazione quasi
+    # completata (incidente tUV3YzoYMcde_euhIU6QCg, 89%).
+    job["voice"] = voice
     job["rate"] = rate
     job["single_file"] = single_file
+    job["selected_chapters"] = selected_chapters
     job["read_round_parens"] = read_round_parens
     job["read_square_brackets"] = read_square_brackets
     if podcast_base_url:
@@ -8881,6 +8898,14 @@ def api_generate():
     speechify_emotion = (data.get("speechify_emotion") or "").strip().lower()
     if speechify_emotion and speechify_emotion not in speechify_tts.EMOTIONS:
         speechify_emotion = ""  # valore ignoto -> neutro
+    # Stessa ragione dello snapshot sopra: questi parametri finiscono nel
+    # descrittore batch e vanno stashati prima della register post-capture.
+    if style_instruction:
+        job["gemini_style_instruction"] = style_instruction
+    if accent_variant:
+        job["gemini_accent"] = accent_variant
+    if speechify_emotion:
+        job["speechify_emotion"] = speechify_emotion
     if _is_gemini_voice(voice):
         # Recompute server-side total (mirror api_combined_estimate)
         info_pre = job.get("info")

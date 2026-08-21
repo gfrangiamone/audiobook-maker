@@ -34,6 +34,7 @@ import email_service
 import payment
 import pending_jobs
 import cancel_policy
+import chunk_reuse
 import storage_backend
 import storage_tiering
 import translation_core
@@ -3317,6 +3318,11 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             "payment_token_short": payment_token_short,
             "payment_source": payment_source,
         }
+        # Chunk riusati da un tentativo precedente: senza questo campo il costo
+        # provider reale di un job recuperato appare inspiegabilmente sotto stima.
+        _reused_n = int(job.get("chunks_reused", 0) or 0)
+        if _reused_n:
+            rec["chunks_reused"] = _reused_n
         _cancel_meta = job.get("cancel_meta")
         if isinstance(_cancel_meta, dict):
             rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
@@ -3491,6 +3497,11 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             "payment_token_short": payment_token_short,
             "payment_source": payment_source,
         }
+        # Chunk riusati da un tentativo precedente: senza questo campo il costo
+        # provider reale di un job recuperato appare inspiegabilmente sotto stima.
+        _reused_n = int(job.get("chunks_reused", 0) or 0)
+        if _reused_n:
+            rec["chunks_reused"] = _reused_n
         _cancel_meta = job.get("cancel_meta")
         if isinstance(_cancel_meta, dict):
             rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
@@ -4027,6 +4038,33 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["total_chars"] = total_chars
         job["total_chunks"] = total_chunks
 
+        # Riuso dei chunk gia' su disco (resume dopo crash/restart). I file
+        # `chunk_XXXXXX.*` di un tentativo precedente sono gia' sintetizzati e,
+        # per le voci PREMIUM, gia' PAGATI: rigenerarli e' tempo e denaro buttati.
+        # Il riuso avviene solo se l'impronta del run (voce, rate, stile, accento,
+        # flag parentesi, hash del testo di TUTTI i blocchi) coincide con quella
+        # registrata nel manifest, quindi mai fra voci o piani diversi.
+        _chunk_ext = "pcm" if use_pcm else "mp3"
+        _reuse_fp = chunk_reuse.fingerprint(
+            voice=voice, rate=rate, engine=engine, plan=plan,
+            style_instruction=gemini_style_instruction,
+            # Direttiva d'accento risolta (non il codice grezzo): incorpora anche
+            # la lingua di lettura, cosi' un cambio di lingua invalida il riuso.
+            accent=gemini_accent_directive,
+            strip_round=_strip_round, strip_square=_strip_square)
+        try:
+            _reusable_chunks = chunk_reuse.reusable_indices(
+                work_dir, _reuse_fp, total_chunks, _chunk_ext)
+        except Exception as _reuse_err:
+            print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
+            _reusable_chunks = set()
+        chunk_reuse.write_manifest(work_dir, _reuse_fp)
+        job["chunks_reused"] = len(_reusable_chunks)
+        if _reusable_chunks:
+            print(f"[{job_id}] Chunk reuse: {len(_reusable_chunks)}/{total_chunks} chunk "
+                  f"gia' sintetizzati riusati da un tentativo precedente "
+                  f"({total_chunks - len(_reusable_chunks)} da generare)")
+
         # Pre-flight RPD check: per job Gemini, se i chunk previsti superano
         # la quota giornaliera residua (cap - used - reserve), abortire ANTE
         # di sintetizzare alcunche': rimborso integrale, notifica utente
@@ -4035,7 +4073,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             try:
                 _parts_v = (voice or "").split(":")
                 _model_key = _parts_v[1] if len(_parts_v) >= 3 else "flash25"
-                _pf = gemini_tts.preflight_can_run(_model_key, total_chunks)
+                # I chunk riusati non consumano quota RPD: il preflight deve
+                # contare solo le richieste che verranno effettivamente fatte.
+                _pf = gemini_tts.preflight_can_run(
+                    _model_key, total_chunks - len(_reusable_chunks))
                 # Log RPD status sempre (anche quando ok) per visibilita' operativa.
                 # cap=0 = nessun cap locale configurato (l'API Google fa da unica barriera).
                 _cap_v = _pf.get("cap", 0)
@@ -4216,6 +4257,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             dopo il gap-timing ma e' indipendente da esso (scrive lo usage store,
             non tocca all_parts/m4b_chapters), quindi spostarlo qui e' equivalente.
             """
+            if i in _reusable_chunks:
+                # Chunk gia' su disco da un tentativo precedente con la stessa
+                # impronta: nessuna chiamata TTS, nessun costo, nessun usage da
+                # registrare (era gia' stato contabilizzato al primo tentativo).
+                return {"reused": True}, str(work_dir / f"chunk_{i:06d}.{_chunk_ext}")
             if use_speechify:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                 pre = _speechify_pre.get(i)
@@ -5026,7 +5072,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # branch interrotto. I file di output finali vivono in output_dir (subdir),
         # quindi una glob non-ricorsiva sul livello di work_dir non li tocca.
         try:
-            for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt"):
+            for _pattern in ("chunk_*", "prompt*.txt", "*.filelist.txt",
+                             chunk_reuse.MANIFEST_NAME):
                 for _leftover in work_dir.glob(_pattern):
                     if _leftover.is_file():
                         try:
