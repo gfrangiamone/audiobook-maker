@@ -30,6 +30,7 @@ import uuid
 from copy import copy
 from pathlib import Path
 
+import assembly_queue
 import email_service
 import payment
 import pending_jobs
@@ -3913,6 +3914,28 @@ def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info
         print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
 
 
+def _acquire_assembly_slot(job_id, job, phase):
+    """Occupa uno slot di assembly, mostrando l'attesa nella barra di avanzamento.
+
+    Gli encode FFmpeg finali sono l'unico lavoro davvero CPU-bound del job (la
+    sintesi TTS e' remota): oltre `ABM_MAX_CONCURRENT_ASSEMBLY` in parallelo si
+    ottengono solo encode piu' lenti e job vivi in RAM piu' a lungo. Senza
+    questo messaggio la barra sembrerebbe piantata durante l'attesa.
+    """
+    _prev_msg = job.get("progress_message", "")
+
+    def _on_wait(position):
+        job["progress_message"] = (
+            f"Server busy — queued for final assembly (position {position})…")
+
+    _slot = assembly_queue.acquire(job_id, on_wait=_on_wait)
+    if _slot.waited_sec:
+        print(f"[{job_id}] assembly ({phase}): avviato dopo "
+              f"{_slot.waited_sec:.0f}s in coda", flush=True)
+    job["progress_message"] = _prev_msg
+    return _slot
+
+
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None, speechify_emotion=None):
     job = _jobs.get(job_id)
     if job is None:
@@ -4001,6 +4024,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                       or "")
         except Exception:
             gemini_fallback_accent = ""
+
+    # Slot della coda di assembly: acquisito solo a fine sintesi e rilasciato
+    # esplicitamente a fine assembly. Qui resta il riferimento per la rete di
+    # sicurezza nel finally (eccezione/cancel a meta' encode).
+    _asm_slot = None
 
     try:
         job["progress_message"] = "Preparing..."
@@ -4556,6 +4584,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             job["progress_message"] = "Merging audio..."
             safe_name = _safe_filename(info.title) or "audiolibro"
 
+            # Da qui in poi il lavoro e' CPU-bound locale (encode FFmpeg): passa
+            # dalla coda di ammissione. Rilascio esplicito a fine assembly + rete
+            # di sicurezza nel finally della funzione.
+            _asm_slot = _acquire_assembly_slot(job_id, job, "single-file")
+
             if use_pcm:
                 # Gemini/Speechify: tutto PCM. Assembly diretto in base a output_format.
                 final_mp3 = str(output_dir / f"{safe_name}.mp3")
@@ -4743,6 +4776,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
                     )
 
+            _asm_slot.release()
+            _asm_slot = None
+
             for p in all_parts:
                 if os.path.exists(p) and p != silence_path:
                     os.remove(p)
@@ -4915,6 +4951,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if os.path.exists(p) and p != silence_path:
                         os.remove(p)
 
+            # Coda di ammissione: da qui parte la parte CPU-bound del ramo
+            # multi-file (deflate dello ZIP + concat + encode M4B). Gli encode
+            # per-capitolo sopra restano fuori: sono interlacciati con la
+            # sintesi e metterli sotto semaforo serializzerebbe l'intero job.
+            _asm_slot = _acquire_assembly_slot(job_id, job, "multi-file")
+
             job["progress_message"] = "Creating ZIP..."
             safe_name = _safe_filename(info.title) or "audiolibro"
 
@@ -5054,6 +5096,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 except Exception as e:
                     print(f"[{job_id}] Background M4B generation failed: {e}")
                     job["m4b_failed"] = True
+
+            _asm_slot.release()
+            _asm_slot = None
 
             # Flag: podcast available (RSS included in ZIP for zip_rss; downloadable separately)
             job["podcast_ready"] = (output_format == 'zip_rss')
@@ -5701,4 +5746,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         import traceback
         traceback.print_exc()
     finally:
+        # Rete di sicurezza: un'eccezione o una cancellazione a meta' encode non
+        # deve lasciare uno slot di assembly occupato per sempre. release() e'
+        # idempotente e no-op se lo slot e' gia' stato restituito.
+        if _asm_slot is not None:
+            try:
+                _asm_slot.release()
+            except Exception as _e_slot:
+                print(f"[{job_id}] assembly slot release error (non-fatale): {_e_slot}")
         loop.close()

@@ -118,6 +118,7 @@ from tts_split import (
     _strip_parenthetical,
 )
 
+import assembly_queue
 import email_service
 import push_service
 import metrics_store
@@ -15049,9 +15050,14 @@ def _log_memory_stats(now, force=False):
         n_jobs = len(jobs)
         n_gen = _active_generating_total_unlocked()
         n_spilled = sum(1 for j in jobs.values() if j.get("_texts_spilled"))
+    try:
+        _asm = assembly_queue.stats()
+        asm_part = f" asm={_asm['held']}/{_asm['max']}+{_asm['waiting']}q"
+    except Exception:
+        asm_part = ""
     line = (f"[mem] rss={rss_mb:.0f}MB avail={avail_mb:.0f}MB "
             f"swap={swap_pct:.0f}% jobs={n_jobs} (gen={n_gen}, spilled={n_spilled}) "
-            f"threads={status.get('Threads', 0)}")
+            f"threads={status.get('Threads', 0)}{asm_part}")
     if avail_mb < MEM_WARN_AVAIL_MB or swap_pct >= MEM_WARN_SWAP_PCT:
         print(f"[mem] WARN memoria in esaurimento — {line}")
         try:
@@ -15440,6 +15446,8 @@ def _ensure_background_threads():
     print(f"[startup] Max concurrent global: "
           f"{MAX_CONCURRENT_GLOBAL if MAX_CONCURRENT_GLOBAL > 0 else 'unlimited'}")
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
+    print(f"[startup] Max concurrent assembly (encode FFmpeg): "
+          f"{assembly_queue.MAX_CONCURRENT_ASSEMBLY}")
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
