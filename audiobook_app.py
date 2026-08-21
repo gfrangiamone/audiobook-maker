@@ -6968,12 +6968,25 @@ _NEWS_TAGS = {"feature", "fix", "info"}
 _NEWS_LANGS = {"it", "en", "fr", "es", "de", "zh", "hi"}
 
 
-def _sanitize_text(s, maxlen):
-    """Strip HTML tags + collapse whitespace + truncate."""
+def _sanitize_text(s, maxlen, keep_newlines=False):
+    """Strip HTML tags + collapse whitespace + truncate.
+
+    ``keep_newlines=True`` (body delle news, scritto in Markdown-lite) conserva
+    gli a capo: collassa solo gli spazi orizzontali e comprime le righe vuote
+    consecutive a una sola. I tag HTML restano vietati in ogni caso: il markup
+    lo genera il renderer client (``static/js/news_md.js``) a partire dai
+    marker Markdown, mai il testo inserito.
+    """
     if not isinstance(s, str):
         return ""
     s = re.sub(r"<[^>]+>", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
+    if keep_newlines:
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        s = re.sub(r"[^\S\n]+", " ", s)     # spazi/tab, mai gli a capo
+        s = re.sub(r"\n{3,}", "\n\n", s)     # max una riga vuota di stacco
+        s = "\n".join(line.strip() for line in s.split("\n")).strip()
+    else:
+        s = re.sub(r"\s+", " ", s).strip()
     return s[:maxlen]
 
 
@@ -7041,7 +7054,8 @@ def admin_api_news_create():
     title = _sanitize_text(body.get("title"), 200)
     if not title:
         return jsonify({"error": "title required"}), 400
-    text = _sanitize_text(body.get("body"), 2000)
+    # Markdown-lite: gli a capo e i marker sopravvivono, i tag HTML no.
+    text = _sanitize_text(body.get("body"), 2000, keep_newlines=True)
     lang = (body.get("lang") or "en").strip().lower()
     if lang not in _NEWS_LANGS:
         return jsonify({"error": "invalid lang"}), 400
@@ -7584,6 +7598,15 @@ tr.archived{opacity:.45}
 .reply-modal .chars{margin-top:6px;font-size:.75rem;color:var(--muted);text-align:right}
 .reply-modal .err{color:var(--err);margin:10px 0;font-size:.85rem}
 .reply-modal-btns{display:flex;gap:10px;margin-top:14px;justify-content:flex-end}
+.md-help{font-size:.78rem;color:var(--muted);margin-top:6px;line-height:1.5}
+.md-help code{background:#0f172a;border:1px solid #334155;border-radius:4px;padding:1px 5px;font-size:.75rem}
+.md-preview{margin-top:10px;background:#0f172a;border:1px dashed #334155;border-radius:6px;padding:10px 12px;font-size:.9rem;line-height:1.55;min-height:1.55em}
+.md-preview:empty::before{content:'(anteprima)';color:var(--muted);font-style:italic}
+.md-preview p{margin:0 0 8px}
+.md-preview p:last-child,.md-preview ul:last-child{margin-bottom:0}
+.md-preview ul{margin:0 0 8px;padding-left:20px}
+.md-preview li{margin:2px 0}
+.md-preview a{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -7625,7 +7648,15 @@ tr.archived{opacity:.45}
     <label>Titolo</label>
     <input id="nTitle" maxlength="200">
     <label>Testo</label>
-    <textarea id="nBody" rows="4" maxlength="2000"></textarea>
+    <textarea id="nBody" rows="6" maxlength="2000"></textarea>
+    <div class="md-help">
+      Formattazione ammessa: <code>**grassetto**</code> · <code>*corsivo*</code> ·
+      <code>[testo](https://esempio.com)</code> o <code>[testo](/pagina-interna)</code> ·
+      elenco con <code>- </code> a inizio riga · riga vuota = nuovo paragrafo.
+      Nient'altro: l'HTML viene rimosso.
+    </div>
+    <label>Anteprima</label>
+    <div id="nPreview" class="md-preview"></div>
     <div style="margin-top:10px"><button id="nPublish" onclick="createNews()">Pubblica</button></div>
     <div id="nMsg"></div>
   </div>
@@ -7639,12 +7670,28 @@ tr.archived{opacity:.45}
   </table>
 </section>
 
+<script src="/static/js/news_md.js"></script>
 <script>
 const TOKEN=localStorage.getItem('abm_admin_token')||new URLSearchParams(location.search).get('token')||'';
 if(!TOKEN){alert('Admin token mancante');}else{localStorage.setItem('abm_admin_token',TOKEN);}
 const HDR={'X-Admin-Token':TOKEN,'Content-Type':'application/json'};
 function esc(s){return (s||'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
 function fmtDate(ts){return new Date(ts*1000).toLocaleString();}
+
+/* Anteprima news: stesso renderer Markdown-lite del sito pubblico, cosi'
+   quello che si vede qui e' esattamente quello che vedra' il visitatore. */
+function renderNewsPreview(){
+  const el=document.getElementById('nPreview');
+  const src=document.getElementById('nBody');
+  if(!el||!src) return;
+  if(window.ABMNewsMd) ABMNewsMd.render(el,src.value);
+  else el.textContent=src.value;
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  const src=document.getElementById('nBody');
+  if(src) src.addEventListener('input',renderNewsPreview);
+  renderNewsPreview();
+});
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));

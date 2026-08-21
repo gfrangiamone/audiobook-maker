@@ -5279,6 +5279,14 @@ function tryGoToAudioSettings(){
       sync();
     });
   }
+  // Il body delle news e' Markdown-lite: reso in HTML da news_md.js, che fa
+  // escape dell'input e ammette solo http/https/mailto/path interni negli href.
+  // Se il modulo non e' stato caricato si degrada a testo semplice.
+  function setBody(el,src){
+    if(!el) return;
+    if(window.ABMNewsMd&&typeof window.ABMNewsMd.render==='function') window.ABMNewsMd.render(el,src);
+    else el.textContent=src||'';
+  }
   function buildItem(it){
     const div=document.createElement('div');
     div.className='news-item';
@@ -5291,19 +5299,19 @@ function tryGoToAudioSettings(){
         <span class="news-item-date">${fmtDate(it.created_at)}</span>
       </div>
       <h4 class="news-item-title"></h4>
-      <p class="news-item-body"></p>
+      <div class="news-item-body"></div>
       <div class="news-item-foot">
         <button type="button" class="news-i18n-btn" hidden aria-label="">🌐</button>
       </div>`;
     const titleEl=div.querySelector('.news-item-title');
     const bodyEl=div.querySelector('.news-item-body');
     titleEl.textContent=titleInfo.text;
-    bodyEl.textContent=bodyInfo.text;
+    setBody(bodyEl,bodyInfo.text);
     if(hasTr){
       const btn=div.querySelector('.news-i18n-btn');
       attachI18nToggle(btn,(showOrig)=>{
         titleEl.textContent=showOrig?titleInfo.orig:titleInfo.localized||titleInfo.orig;
-        bodyEl.textContent=showOrig?bodyInfo.orig:bodyInfo.localized||bodyInfo.orig;
+        setBody(bodyEl,showOrig?bodyInfo.orig:bodyInfo.localized||bodyInfo.orig);
       },{hasTr:true,orig:'',localized:''});
     }
     return div;
@@ -5320,7 +5328,7 @@ function tryGoToAudioSettings(){
     const tInfo=pickI18n(item.title||'',item.title_i18n||{},item.lang||'');
     const bInfo=pickI18n(item.body||'',item.body_i18n||{},item.lang||'');
     if(titleEl) titleEl.textContent=tInfo.text;
-    if(bodyEl) bodyEl.textContent=bInfo.text;
+    setBody(bodyEl,bInfo.text);
     if(okBtn) okBtn.textContent=tt('news_modal_ok','OK');
     overlay.hidden=false;
     document.body.style.overflow='hidden';

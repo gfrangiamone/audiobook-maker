@@ -850,6 +850,13 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .news-item-date{font-size:.72rem;color:var(--txm)}
 .news-item-title{font-weight:700;color:var(--tx);margin:0 0 4px;font-size:.95rem}
 .news-item-body{color:var(--txd);font-size:.85rem;line-height:1.5;margin:0}
+.news-item-body p{margin:0 0 6px}
+.news-item-body p:last-child{margin-bottom:0}
+.news-item-body a{color:var(--ac);text-decoration:underline;text-underline-offset:2px}
+.news-item-body a:hover{opacity:.8}
+.news-item-body ul{margin:6px 0;padding-left:18px}
+.news-item-body li{margin:2px 0}
+.news-item-body strong{color:var(--tx);font-weight:700}
 .news-empty{color:var(--txm);font-size:.85rem;font-style:italic;padding:8px 0}
 .news-toggle-more{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:12px;padding:8px 14px;background:transparent;border:1px solid var(--brd);border-radius:6px;color:var(--ac);font-size:.85rem;cursor:pointer;transition:background .15s}
 .news-toggle-more:hover{background:rgba(217,164,65,.06)}
@@ -867,7 +874,14 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .news-modal-close{background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--txm);padding:0 4px;line-height:1}
 .news-modal-close:hover{color:var(--tx)}
 .news-modal-title{font-family:'DM Serif Display',serif;font-size:1.3rem;font-weight:400;margin:0 0 12px;color:var(--tx)}
-.news-modal-body{color:var(--txd);font-size:.95rem;line-height:1.55;margin:0 0 18px;white-space:pre-wrap}
+.news-modal-body{color:var(--txd);font-size:.95rem;line-height:1.55;margin:0 0 18px}
+.news-modal-body p{margin:0 0 8px}
+.news-modal-body p:last-child{margin-bottom:0}
+.news-modal-body a{color:var(--ac);text-decoration:underline;text-underline-offset:2px}
+.news-modal-body a:hover{opacity:.8}
+.news-modal-body ul{margin:8px 0;padding-left:20px}
+.news-modal-body li{margin:3px 0}
+.news-modal-body strong{color:var(--tx);font-weight:700}
 .news-modal-footer{display:flex;justify-content:flex-end}
 
 /* ─── FEEDBACK WIDGET + WHATSAPP COMMUNITY ROW ─── */

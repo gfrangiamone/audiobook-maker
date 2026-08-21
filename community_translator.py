@@ -40,6 +40,10 @@ improve, rephrase, or correct typos).
 register, punctuation, emoji and newlines.
 - Keep these proper nouns / brand terms untranslated: AudioBook Maker, \
 EPUB, PDF, TXT, MP3, TTS.
+- Content may use light Markdown: **bold**, *italic*, [label](url) links and \
+"- " bullet lists. Reproduce every marker exactly, around the corresponding \
+words of the translated sentence. Translate the link label only: copy each \
+URL character by character, never translate or shorten it.
 - Do not add explanations, prefixes, quotation marks, or extra keys.
 - Preserve every input key exactly.
 
