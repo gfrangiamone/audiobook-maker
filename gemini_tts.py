@@ -2067,6 +2067,72 @@ def _extract_audio_pcm(response, model_key):
     return data
 
 
+def build_final_text(text, style_instruction=None, rate=None,
+                     accent_directive=None):
+    """Assembla il prompt finale: blocco "[style: ...] " + testo.
+
+    Estratta da `synthesize` per avere UNA sola definizione del prompt:
+    la ricostruzione offline (backfill del manifest di riuso chunk, che
+    confronta i prompt*.txt di un run interrotto) deve produrre byte per
+    byte lo stesso testo, altrimenti il confronto e' privo di valore.
+    """
+    # Kill-switch del rate prompt-directive. Default "prompt" = directive attiva.
+    # Qualsiasi altro valore (incluso il legacy "token"/"estimate") disattiva
+    # l'iniezione. Nessun altro effetto: non e` usato per cost calc o altro.
+    rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
+    # Costruiamo un singolo blocco "[style: ... ]" che combina lo stile utente
+    # con la direttiva di velocita`. Il rate non e` esposto dall'API Gemini come
+    # parametro audio, quindi va comunicato in linguaggio naturale. Inserirlo
+    # DENTRO il blocco style (anziche` come prefisso separato in fila al testo)
+    # ha due vantaggi:
+    #   1. Semanticamente piu` corretto: "come leggere" = stile, non testo.
+    #   2. Aderenza maggiore: Gemini ignora spesso istruzioni in linguaggio
+    #      diverso da quello del testo se non sono incapsulate.
+    # Lo style utente viene capato a 300 char (qualita` UI); la directive rate
+    # e` costante e si appende dopo senza re-cap (max ~110 char system-added).
+    style_parts = []
+    # Accento per primo: e' l'ancora piu` importante per la coerenza tra chunk.
+    if accent_directive:
+        ad = str(accent_directive).strip()[:160]
+        if ad:
+            style_parts.append(ad)
+    if style_instruction:
+        # Cap a 200 char (non 300): la directive rate piu` lunga e` ~95 char e
+        # va a sommarsi nello stesso blocco [style: ...]. 200 + 95 + 1 (sep) =
+        # 296, sotto il budget storico di 300 char "comprensibili" dal modello.
+        s = str(style_instruction).strip()[:200]
+        if s:
+            style_parts.append(s)
+    # Iniezione della rate directive nel blocco [style:...]. Silenziosa su
+    # successo (per non spammare il log con N chunk * stesso messaggio). Loud
+    # solo quando il rate non-default viene scartato: utile per diagnosi rapida
+    # ("ho chiesto +30% ma l'audio e` a velocita` normale").
+    if rate and rate != "+0%":
+        if rate_mode != "prompt":
+            print(f"[gemini-tts] WARN: rate={rate!r} richiesto ma "
+                  f"ABM_GEMINI_RATE_MODE={rate_mode!r} disattiva la directive. "
+                  f"Setta ABM_GEMINI_RATE_MODE=prompt (o unset) per attivarla.")
+        else:
+            pct = str(rate).replace("%", "").replace("+", "")
+            try:
+                n = int(pct)
+                step = max(-3, min(3, round(n / 10)))
+                directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
+                if directive:
+                    style_parts.append(directive)
+                # step 0 = directive vuota = niente da appendere (silenzioso).
+            except ValueError as _ve:
+                print(f"[gemini-tts] WARN: rate={rate!r} parse failed ({_ve}). "
+                      f"Directive non aggiunta.")
+
+    if style_parts:
+        final_text = f"[style: {' '.join(style_parts)}] {text}"
+    else:
+        final_text = text
+
+    return final_text
+
+
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
                debug_prompt_path=None, max_attempts=None, accent_directive=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
@@ -2122,59 +2188,8 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         print(f"[gemini-tts] WARN: testo {text_size}b oltre soglia qualita` "
               f"{MAX_BYTES_PER_CALL}b -- possibile lieve degrado acustico")
 
-    # Kill-switch del rate prompt-directive. Default "prompt" = directive attiva.
-    # Qualsiasi altro valore (incluso il legacy "token"/"estimate") disattiva
-    # l'iniezione. Nessun altro effetto: non e` usato per cost calc o altro.
-    rate_mode = os.environ.get("ABM_GEMINI_RATE_MODE", "prompt")
-    # Costruiamo un singolo blocco "[style: ... ]" che combina lo stile utente
-    # con la direttiva di velocita`. Il rate non e` esposto dall'API Gemini come
-    # parametro audio, quindi va comunicato in linguaggio naturale. Inserirlo
-    # DENTRO il blocco style (anziche` come prefisso separato in fila al testo)
-    # ha due vantaggi:
-    #   1. Semanticamente piu` corretto: "come leggere" = stile, non testo.
-    #   2. Aderenza maggiore: Gemini ignora spesso istruzioni in linguaggio
-    #      diverso da quello del testo se non sono incapsulate.
-    # Lo style utente viene capato a 300 char (qualita` UI); la directive rate
-    # e` costante e si appende dopo senza re-cap (max ~110 char system-added).
-    style_parts = []
-    # Accento per primo: e' l'ancora piu` importante per la coerenza tra chunk.
-    if accent_directive:
-        ad = str(accent_directive).strip()[:160]
-        if ad:
-            style_parts.append(ad)
-    if style_instruction:
-        # Cap a 200 char (non 300): la directive rate piu` lunga e` ~95 char e
-        # va a sommarsi nello stesso blocco [style: ...]. 200 + 95 + 1 (sep) =
-        # 296, sotto il budget storico di 300 char "comprensibili" dal modello.
-        s = str(style_instruction).strip()[:200]
-        if s:
-            style_parts.append(s)
-    # Iniezione della rate directive nel blocco [style:...]. Silenziosa su
-    # successo (per non spammare il log con N chunk * stesso messaggio). Loud
-    # solo quando il rate non-default viene scartato: utile per diagnosi rapida
-    # ("ho chiesto +30% ma l'audio e` a velocita` normale").
-    if rate and rate != "+0%":
-        if rate_mode != "prompt":
-            print(f"[gemini-tts] WARN: rate={rate!r} richiesto ma "
-                  f"ABM_GEMINI_RATE_MODE={rate_mode!r} disattiva la directive. "
-                  f"Setta ABM_GEMINI_RATE_MODE=prompt (o unset) per attivarla.")
-        else:
-            pct = str(rate).replace("%", "").replace("+", "")
-            try:
-                n = int(pct)
-                step = max(-3, min(3, round(n / 10)))
-                directive = _GEMINI_RATE_DIRECTIVES.get(step, "")
-                if directive:
-                    style_parts.append(directive)
-                # step 0 = directive vuota = niente da appendere (silenzioso).
-            except ValueError as _ve:
-                print(f"[gemini-tts] WARN: rate={rate!r} parse failed ({_ve}). "
-                      f"Directive non aggiunta.")
-
-    if style_parts:
-        final_text = f"[style: {' '.join(style_parts)}] {text}"
-    else:
-        final_text = text
+    final_text = build_final_text(text, style_instruction, rate,
+                                  accent_directive)
 
     # Check 2: hard cap API sul PAYLOAD COMPLETO (testo + prefissi). E` il vero
     # limite tecnico oltre il quale Gemini TTS rifiuta la chiamata.
