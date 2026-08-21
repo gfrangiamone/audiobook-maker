@@ -730,7 +730,7 @@ nuovo server**, a servizio fermo (rifiuta di applicare modifiche se trova un pro
 Sul vecchio server:
 
 ```bash
-python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data --window-min 10
+python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data --window-min 25
 ```
 
 Serve a sapere da dove si parte: quanti job vivi, quanti bloccanti, quanti recuperabili.
@@ -759,18 +759,59 @@ ricevono `503 System under maintenance.`; i job in corso proseguono, i download 
 **Non stampare il token.** Se serve rileggerlo, ripetere il comando: resta solo nella variabile
 di shell della sessione.
 
-- [ ] **Step 5: Attendere fino a zero job BLOCCANTI**
+`_suspend_new_jobs` è una variabile **in RAM**: un restart del servizio durante il drenaggio
+(crash, OOM, riavvio manuale) la azzera **in silenzio** e i job nuovi ricominciano ad arrivare
+proprio mentre si aspetta lo zero bloccanti. Per questo il ciclo dello Step 5 la ricontrolla a
+ogni giro invece di darla per acquisita.
+
+- [ ] **Step 5: Attendere due letture consecutive a zero job BLOCCANTI**
+
+Il ciclo sorveglia tre cose insieme: i bloccanti, la sospensione (che può cadere da sola) e il
+tempo trascorso (non deve restare appeso a tempo indefinito su una sessione plink).
 
 ```bash
-while true; do
-  python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data \
-    --window-min 10 --quiet && break
+PID=$(systemctl show audiobook-maker -p MainPID --value)
+ADMIN_TOKEN=$(tr '\0' '\n' < /proc/$PID/environ | sed -n 's/^ABM_ADMIN_TOKEN=//p')
+
+CLEAN=0
+for i in $(seq 1 24); do        # 24 giri x 5 min = 2 h di tetto
+  SUSP=$(curl -s http://127.0.0.1:5601/api/admin/suspend)
+  case "$SUSP" in
+    *true*) : ;;
+    *) echo "!! SOSPENSIONE CADUTA ($SUSP) - la riattivo"
+       curl -s -X POST http://127.0.0.1:5601/api/admin/suspend \
+         -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+         -d '{"suspend": true}' > /dev/null
+       CLEAN=0 ;;
+  esac
+  if python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data \
+       --window-min 25 --quiet; then
+    CLEAN=$((CLEAN + 1))
+    echo "letta pulita $CLEAN/2"
+    [ "$CLEAN" -ge 2 ] && break
+  else
+    CLEAN=0
+  fi
   sleep 300
 done
+echo "uscito con CLEAN=$CLEAN dopo $i giri"
 ```
 
-Il ciclo esce quando l'exit code è `0`. Ogni tanto, per vedere il dettaglio, rieseguire lo
-script senza `--quiet`.
+Tre scelte da non annacquare:
+
+- **`--window-min 25`, non 10.** Un job Gemini in attesa di rate limit, o in assembly FFmpeg su
+  un libro lungo, può non scrivere alcun file per oltre dieci minuti: con una finestra stretta
+  sparisce dall'elenco e il classificatore dichiara "nessun bloccante" mentre il lavoro pagato è
+  ancora vivo. La finestra larga costa qualche minuto di attesa in più e toglie il falso
+  negativo. Nulla vieta di allargarla ancora (`--window-min 40`) se lo snapshot dello Step 3
+  mostrava job Speechify lunghi.
+- **Due letture consecutive.** Una singola lettura pulita può cadere nel buco fra la fine di un
+  chunk e l'inizio del successivo. Il contatore riparte da zero a ogni lettura sporca **e** a
+  ogni caduta della sospensione.
+- **Tetto di 24 giri.** Se il ciclo esce con `CLEAN` diverso da `2`, il drenaggio **non** è
+  riuscito: non proseguire.
+
+Ogni tanto, per vedere il dettaglio, rieseguire lo script senza `--quiet`.
 
 Se un bloccante resta tale oltre **60 minuti** (tipicamente un job Speechify lungo), fermarsi e
 riportare la situazione all'utente: le opzioni sono attendere ancora oppure accettare la perdita
@@ -783,7 +824,7 @@ sia rimasto indietro.
 
 ```bash
 STAMP=$(date +%Y%m%d-%H%M)
-python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data --window-min 15 \
+python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data --window-min 25 \
   > /root/migration_snapshot_$STAMP.txt 2>&1
 cp /opt/audiobook-maker/data/_pending_jobs.json /root/migration_pending_$STAMP.json
 wc -l /root/migration_snapshot_$STAMP.txt
@@ -821,33 +862,111 @@ credenziali R2 di produzione (verificarlo prima di lasciarlo su: `systemctl show
 audiobook-maker-test -p MainPID --value`, poi `tr '\0' '\n' < /proc/<pid>/environ | grep -c
 ABM_S3_BUCKET`; se il conteggio non è `0`, fermare anche il test).
 
+Va sospeso anche il **cron di pulizia dei job stale sul vecchio server**, per tutta la finestra
+di rollback:
+
+```bash
+ls -la /etc/cron.d/ | grep -i abm
+cat /etc/cron.d/abm-cleanup-stale
+mv /etc/cron.d/abm-cleanup-stale /root/abm-cleanup-stale.OLD_SERVER_ROLLBACK
+systemctl restart cron
+ls /etc/cron.d/ | grep -i abm || echo "nessun cron ABM attivo sul vecchio"
+```
+
+Il servizio è masked, ma quel cron no: cancella alla cieca le job dir con mtime oltre le 25 ore
+e nei sette giorni successivi **eroderebbe la copia di rollback**, cioè l'unica cosa per cui il
+vecchio server resta acceso. Un rollback a T+3 giorni troverebbe dati già cancellati. Il file
+va ripristinato solo se si torna davvero indietro, e comunque rimosso alla dismissione (Task 10).
+
 - [ ] **Step 9: Trasformare il vecchio nginx in proxy verso il nuovo**
 
-Meglio di una pagina 503: durante la propagazione DNS (5-15 minuti con TTL 300) chi arriva
-ancora sul vecchio IP viene servito dal nuovo server, senza vedere disservizio.
+Durante la propagazione DNS (5-15 minuti con TTL 300) chi arriva ancora sul vecchio IP viene
+servito dal nuovo server, senza vedere disservizio; una pagina di manutenzione resta come
+fallback per la sola finestra in cui il nuovo servizio non è ancora acceso.
+
+**Il vhost va sostituito per intero, non ritoccato.** Il file di produzione contiene più
+`location` con `proxy_pass http://127.0.0.1:5601` — almeno `/`, `/api/analyze`
+(`client_max_body_size 200M`) e `/api/progress/` (`proxy_buffering off`, timeout 600 s) —
+e patchare solo `location /` lascerebbe gli altri puntati a un servizio ormai fermo: **upload e
+SSE risponderebbero 502** proprio al traffico che si voleva salvare. Contarli prima, per sapere
+quanti se ne stanno neutralizzando:
 
 ```bash
 cp /etc/nginx/sites-available/audiobook-maker /etc/nginx/sites-available/audiobook-maker.precutover
+grep -n "location\|proxy_pass\|ssl_certificate" /etc/nginx/sites-available/audiobook-maker
 ```
 
-Nel `server` block HTTPS di `audiobook-maker.com`, sostituire il blocco `location / { proxy_pass
-http://127.0.0.1:5601; ... }` con:
+Annotare le due righe `ssl_certificate` / `ssl_certificate_key`: vanno riportate identiche nel
+vhost di cutover (sotto sono scritte con il path standard Let's Encrypt; se il grep mostra path
+diversi, valgono quelli del grep). La copia di riferimento nel repo
+(`scripts/nginx-audiobook-maker.conf`) ha **sei** `location` nel server block HTTPS — `/`,
+`= /.well-known/assetlinks.json`, `/api/analyze`, `/api/progress/`, `~ ^/api/download`,
+`~ /\.` — e nessuna di queste regole va replicata nel proxy: le applica il nginx del **nuovo**
+server, che le ha identiche. Qui serve l'opposto, un unico `location /` che non lasci scoperto
+nulla.
 
-```
-location / {
-    proxy_pass https://80.211.137.33;
-    proxy_ssl_server_name on;
-    proxy_ssl_name audiobook-maker.com;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_set_header CF-Connecting-IP $remote_addr;
-    proxy_http_version 1.1;
-    proxy_buffering off;
-    proxy_read_timeout 600s;
-    client_max_body_size 200M;
+Scrivere il nuovo vhost — un solo `location /` che raccoglie **tutto** il traffico, più una
+pagina di manutenzione per la finestra in cui il nuovo servizio non è ancora acceso:
+
+```bash
+cat > /etc/nginx/sites-available/audiobook-maker <<'NGINX'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name audiobook-maker.com www.audiobook-maker.com;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
 }
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl ipv6only=on;
+    server_name audiobook-maker.com www.audiobook-maker.com;
+
+    ssl_certificate     /etc/letsencrypt/live/audiobook-maker.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/audiobook-maker.com/privkey.pem;
+
+    client_max_body_size 200M;
+
+    location / {
+        proxy_pass https://80.211.137.33;
+        proxy_ssl_server_name on;
+        proxy_ssl_name audiobook-maker.com;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header CF-Connecting-IP $remote_addr;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_intercept_errors on;
+        error_page 502 503 504 = @maint;
+    }
+
+    location @maint {
+        default_type text/html;
+        add_header Retry-After 600 always;
+        return 503 '<!doctype html><meta charset="utf-8"><title>Maintenance</title><style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:20vh auto;padding:0 1.5rem;line-height:1.6;color:#222}h1{font-size:1.3rem}</style><h1>Scheduled maintenance</h1><p>Audiobook Maker is being moved to a new server. Downloads and new conversions will be back online within a few minutes.</p><p>Download links already sent by email remain valid.</p>';
+    }
+}
+NGINX
+nginx -t && systemctl reload nginx
+curl -s -o /dev/null -w "%{http_code}\n" -k https://127.0.0.1/ -H "Host: audiobook-maker.com"
 ```
+
+Atteso subito dopo il reload: **`503`** (il nuovo servizio non è ancora acceso, `@maint`
+risponde al posto del 502 crudo di nginx). Diventerà `200` allo Step 18.
+
+`proxy_intercept_errors on` + `error_page 502 503 504` coprono la finestra fra questo step e lo
+Step 16 — delta rsync, verifica dei 20 JSON, igiene del registro e rotazione dei segreti: nella
+pratica **20-45 minuti** in cui il proxy punta a un servizio non ancora avviato. Senza la pagina
+di manutenzione ogni visitatore vedrebbe l'errore nginx di default.
+
+`proxy_request_buffering off` evita che il vecchio server accumuli su disco l'intero upload da
+200 MB prima di inoltrarlo: ha 40 GB e li sta ancora tenendo tutti come copia di rollback.
 
 Le tre righe di header non sono decorative:
 
@@ -855,20 +974,23 @@ Le tre righe di header non sono decorative:
   L'applicazione prende **sempre il primo valore** (`audiobook_app.py:840`), quindi il doppio
   hop non falsifica l'IP registrato nei log e nei rate limit applicativi.
 - `CF-Connecting-IP $remote_addr` serve a nginx del **nuovo** server: il suo `real_ip_header` è
-  `CF-Connecting-IP` (residuo di una configurazione Cloudflare, `nginx.conf:58`). Senza questo,
-  `$binary_remote_addr` varrebbe `80.211.136.211` per **tutto** il traffico proxato e la
-  `limit_req` da 10 r/s lo tratterebbe come un solo client, restituendo 503 a raffica.
-  Il valore viene sovrascritto dal proxy, quindi non è falsificabile dal client.
+  `CF-Connecting-IP` (`nginx.conf:58`). Senza questo, `$binary_remote_addr` varrebbe
+  `80.211.136.211` per **tutto** il traffico proxato e la `limit_req` da 10 r/s lo tratterebbe
+  come un solo client, restituendo 503 a raffica. Il valore viene sovrascritto dal proxy, quindi
+  non è falsificabile dal client.
 - `proxy_ssl_name` fa presentare il SNI corretto: il certificato del nuovo server è quello di
   `audiobook-maker.com`, copiato al Task 5.
 
-Poi:
+> **Cloudflare non è davanti al sito** (confermato dall'utente: il DNS è su Aruba e punta
+> direttamente all'origine). Le direttive `set_real_ip_from` sui range Cloudflare e
+> `real_ip_header CF-Connecting-IP` in `nginx.conf` sono un **residuo morto** e, finché restano,
+> chiunque riesca a instradare traffico da uno di quei range può dichiarare l'IP che vuole,
+> aggirando `limit_req` e falsificando i log. Non si tocca durante il cutover — cambiarlo qui
+> significherebbe cambiare due variabili insieme — ma va rimosso al Task 10, insieme alla riga
+> dello Step 10, sostituendo l'intero meccanismo con `real_ip_header X-Forwarded-For` limitato
+> al solo IP del vecchio server finché il proxy è vivo.
 
-```bash
-nginx -t && systemctl reload nginx
-```
-
-La verifica funzionale si fa allo Step 18, quando il nuovo servizio è acceso.
+La verifica funzionale completa si fa allo Step 18, quando il nuovo servizio è acceso.
 
 - [ ] **Step 10: Autorizzare il vecchio server come proxy sul nuovo nginx**
 
@@ -916,6 +1038,12 @@ frattempo la produzione ha cancellato per retention. La ricopia degli `activity_
 il collaudo: è voluta.
 
 I chunk già sintetizzati viaggiano con la job dir, quindi il riuso al riavvio è possibile.
+
+> **Questa è l'ultima sincronizzazione.** Lo Step 13 riscrive `_pending_jobs.json` sul nuovo
+> server; qualunque `rsync` eseguito dopo — per esempio ritentando questo step perché lo Step 16
+> è andato male — riporterebbe il registro sporco del vecchio, e al riavvio partirebbero
+> rigenerazioni ed email duplicate per i job già consegnati. Regola: **ogni rsync successivo
+> obbliga a rieseguire lo Step 13 prima dello Step 16.**
 
 - [ ] **Step 12: Verificare l'integrità dei JSON di stato**
 
@@ -969,13 +1097,50 @@ duplicate, rimborsi indebiti o un ciclo di recovery interrotto a metà:
 Prima in simulazione:
 
 ```bash
+ls -la /opt/audiobook-maker/activity_*.log | tail -3
 python3 /root/migration_recover_prep.py \
   --data-dir /opt/audiobook-maker/data \
   --script-dir /opt/audiobook-maker
 ```
 
-Leggere l'elenco "DA RIPRENDERE AL BOOT" e il tempo stimato di recovery (2 s a job). Poi
-applicare:
+Due righe dell'output sono **cancelli**, non informazioni:
+
+1. **`activity log: N job con evento di consegna`.** `delivered_job_ids()` avvisa solo se la
+   directory è illeggibile: se esiste ma non contiene alcun `activity_*.log` (rsync degli
+   activity log dello Step 11 non eseguito, oppure `--script-dir` sbagliato) ritorna un insieme
+   **vuoto senza dire nulla**, nessun job viene riconosciuto come già consegnato e al boot
+   partono rigenerazioni ed email duplicate. `N` deve essere dell'ordine delle **decine di
+   migliaia** (al collaudo di agosto 2026: `15671`). Un valore basso o nullo è **bloccante**:
+   rifare la copia degli activity log e ripetere la simulazione.
+
+2. **`input mancante -> failed: N`.** Ogni job in questo elenco viene chiuso senza
+   rigenerazione, **senza rimborso e senza email**: è l'esito peggiore possibile, peggiore
+   dell'interruzione. Il criterio è l'esistenza fisica di `input_path`/`abm_path`, quindi una
+   delta rsync incompleta o interrotta si presenta esattamente così. Se `N` è diverso da **0**,
+   **fermarsi** e verificare a mano ciascun job prima di applicare:
+
+```bash
+python3 - <<'PY'
+import json, os
+reg = json.load(open("/opt/audiobook-maker/data/_pending_jobs.json"))
+for r in reg.get("items", []):
+    if str(r.get("state")) == "failed":
+        continue
+    ip, ap = r.get("input_path") or "", r.get("abm_path") or ""
+    if (ip and os.path.exists(ip)) or (ap and os.path.exists(ap)):
+        continue
+    print(r.get("id"), "| purpose:", r.get("purpose"), "| email:", bool(r.get("email")),
+          "| input:", ip or "-", "| abm:", ap or "-")
+PY
+```
+
+Per ciascuno: se il file esiste ancora **sul vecchio server** si tratta di una copia incompleta
+— ripetere lo Step 11 (e poi di nuovo questo step). Se non esiste nemmeno lì, il job era già
+orfano prima della migrazione: verificarlo nell'elenco dei pagamenti pendenti dello Step 24 e,
+se risulta pagato, rimborsarlo a mano. Solo dopo si applica.
+
+Leggere poi l'elenco "DA RIPRENDERE AL BOOT" e il tempo stimato di recovery (2 s a job).
+Applicare:
 
 ```bash
 python3 /root/migration_recover_prep.py \
@@ -1023,7 +1188,27 @@ systemctl daemon-reload
 
 Aggiornare anche l'`override.conf` del **vecchio** server con gli stessi valori: se si dovesse
 tornare indietro nella finestra di rollback, deve poter parlare con R2. Le vecchie chiavi R2
-si revocano dal pannello solo **dopo** la verifica dello Step 17.
+si revocano dal pannello solo **dopo** la verifica dello Step 18.
+
+**La nuova chiave va provata prima di accendere il servizio.** Un typo nella secret key non
+impedisce l'avvio: `storage_backend.is_enabled()` guarda solo che le quattro variabili siano
+non vuote, quindi il log di avvio direbbe comunque "R2 attivo" e il primo errore arriverebbe al
+primo download cold di un utente vero. Il repo ha già lo strumento che esercita il modulo reale
+(upload multipart, `object_exists`, presigned GET con nome accentato, delete):
+
+```bash
+cd /opt/audiobook-maker
+systemctl show audiobook-maker -p Environment --value | tr ' ' '\n' \
+  | grep '^ABM_S3_' > /root/r2check.env
+set -a; . /root/r2check.env; set +a
+python3 scripts/verify_r2.py
+set +a; unset ABM_S3_SECRET_KEY ABM_S3_ACCESS_KEY
+shred -u /root/r2check.env
+```
+
+Atteso: sette blocchi con `[PASS]` e la riga finale `RISULTATO: TUTTO OK`. Un fallimento qui è
+**bloccante**: correggere l'`override.conf` (e ricordarsi del `systemctl daemon-reload`) prima
+dello Step 16. Il file temporaneo con le credenziali va distrutto subito, come sopra.
 
 - [ ] **Step 16: Avviare la produzione sul nuovo server e osservare il recovery**
 
@@ -1090,11 +1275,48 @@ Dal **vecchio** server, verificare che il proxy dello Step 9 raggiunga il nuovo:
 curl -s -o /dev/null -w "%{http_code}\n" -k https://127.0.0.1/ -H "Host: audiobook-maker.com"
 ```
 
-Atteso: `200` (non più `502`).
+Atteso: `200`. Finché il nuovo servizio non era acceso rispondeva `503` (la pagina `@maint`);
+se risponde ancora `503` il proxy non sta raggiungendo il nuovo server — controllare
+`/var/log/nginx/error.log` sul vecchio prima di andare avanti.
 
 Dal PC dell'utente (che ha ancora la riga nel file hosts), aprire `https://audiobook-maker.com`
-e verificare: home page, e soprattutto **un link di download generato prima del freeze**
-(`/dl/<token>` da una vecchia email). È la prova che i dati sono migrati integri.
+e verificare la home page.
+
+Poi la prova che conta davvero, il **download di un job già passato a cold storage**: un token
+recente è servito dal disco locale e non tocca R2, quindi non dimostrerebbe nulla sulla chiave
+ruotata allo Step 15 né sull'integrità dei dati migrati. Sul nuovo server, individuare un token
+i cui file locali non esistono più:
+
+```bash
+python3 - <<'PY'
+import json, os, time
+d = "/opt/audiobook-maker/data/"
+toks = json.load(open(d + "_download_tokens.json"))
+now = time.time()
+found = 0
+for tok, info in toks.items():
+    if not isinstance(info, dict):
+        continue
+    age_h = (now - float(info.get("created_at", 0) or 0)) / 3600.0
+    paths = [info.get(k) or "" for k in ("output_file", "output_zip")]
+    paths = [p for p in paths if p]
+    if not paths or any(os.path.exists(p) for p in paths):
+        continue                      # ancora hot: non prova il cold storage
+    print("%s  eta=%.0fh  %s" % (tok, age_h, os.path.basename(paths[0])))
+    found += 1
+    if found >= 3:
+        break
+if not found:
+    print("NESSUN token cold trovato: usare un link vecchio da una email reale")
+PY
+```
+
+Aprire uno di quei `https://audiobook-maker.com/dl/<token>` dal browser e **scaricare davvero il
+file** (non fermarsi alla pagina): la consegna deve avvenire via redirect a un presigned URL R2.
+Un `404` o un errore qui significa che i file cold non sono raggiungibili con la chiave nuova —
+bloccante, e da risolvere **prima** dello switch DNS dello Step 19, non dopo.
+
+Solo dopo questa verifica si possono revocare le vecchie chiavi R2 dal pannello Cloudflare.
 
 - [ ] **Step 19: Switch DNS su Aruba (eseguito dall'utente)**
 
@@ -1130,6 +1352,29 @@ Era stato sospeso al Task 5 perché `rsync -a` preserva gli mtime e il cron avre
 i dati migrati (cancella alla cieca le job dir con mtime > 25 h) prima del cutover. Ora che il
 servizio è vivo e la retention applicativa è di nuovo l'unica autorità, va rimesso:
 
+Prima di riattivarlo, **rileggerlo**: è uno script che cancella directory, e i dati appena
+migrati portano gli mtime originali preservati da `rsync -aHAX`. Basta un criterio più largo di
+quello ricordato (per esempio un `find` senza filtro sul nome della job dir, o una soglia in
+giorni anziché in ore) perché il primo giro cancelli lavoro ancora in retention.
+
+```bash
+cat /root/abm-cleanup-stale.DEFERRED_UNTIL_CUTOVER
+```
+
+Estrarre il comando `find` e provarlo **senza** l'azione distruttiva, contando cosa colpirebbe:
+
+```bash
+# esempio: se il cron esegue  find /opt/audiobook-maker/data -maxdepth 1 -type d -mmin +1500 -exec rm -rf {} +
+find /opt/audiobook-maker/data -maxdepth 1 -mindepth 1 -type d -mmin +1500 | wc -l
+find /opt/audiobook-maker/data -maxdepth 1 -mindepth 1 -type d -mmin +1500 | head -5
+```
+
+(sostituire il predicato con quello effettivamente presente nel file). Se il conteggio è
+dell'ordine delle migliaia, o se fra i primi risultati compaiono job dell'elenco "DA RIPRENDERE
+AL BOOT" dello Step 13, **non riattivare**: riportare all'utente e decidere insieme.
+
+Se il criterio è quello atteso:
+
 ```bash
 mv /root/abm-cleanup-stale.DEFERRED_UNTIL_CUTOVER /etc/cron.d/abm-cleanup-stale
 chmod 644 /etc/cron.d/abm-cleanup-stale
@@ -1140,7 +1385,11 @@ ls -la /etc/cron.d/
 ```
 
 Atteso: il file presente in `/etc/cron.d/` con permessi `644 root:root` (un cron file con
-permessi diversi viene ignorato in silenzio).
+permessi diversi viene ignorato in silenzio; e un nome che contiene un punto viene ignorato
+anch'esso — per questo il file sospeso sta in `/root` e non in `/etc/cron.d` con un suffisso).
+
+Il gemello sul **vecchio** server resta invece sospeso (Step 8) per tutta la finestra di
+rollback.
 
 - [ ] **Step 22: Verificare il rinnovo dei certificati dal nuovo IP**
 
@@ -1332,8 +1581,30 @@ certbot renew --dry-run 2>&1 | tail -5
 Il `certbot renew --dry-run` va rieseguito qui: finché il vecchio server faceva da proxy, una
 validazione HTTP-01 poteva passare da lui e mascherare un problema di raggiungibilità diretta.
 
+Rimuovere anche il **residuo Cloudflare** in `nginx.conf` sul nuovo server: il sito non è dietro
+Cloudflare (DNS Aruba diretto all'origine), quindi `real_ip_header CF-Connecting-IP` e i
+`set_real_ip_from` sui range CF non proteggono nulla e lasciano a chiunque instradi traffico da
+quei range la possibilità di dichiarare l'IP che vuole, aggirando `limit_req` e falsificando i
+log applicativi. Con il proxy ormai smontato non c'è più alcun hop intermedio legittimo:
+
+```bash
+# sul NUOVO, dopo la rimozione della riga 80.211.136.211
+cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.precf
+sed -i '/set_real_ip_from/d; /real_ip_header/d; /real_ip_recursive/d' /etc/nginx/nginx.conf
+nginx -t && systemctl reload nginx
+tail -3 /var/log/nginx/access.log     # l'IP loggato deve essere quello reale del client
+```
+
+Verificare da un'altra rete (hotspot del telefono) che l'IP che compare nel log e in
+`/logs` sia quello vero e non `127.0.0.1`.
+
 Revocare inoltre dal pannello Cloudflare R2 le **vecchie** chiavi sostituite al Task 8, Step 15,
-dopo aver verificato che il nuovo server legge e scrive in cold storage senza errori.
+dopo aver verificato che il nuovo server legge e scrive in cold storage senza errori (Task 8,
+Step 18).
+
+Sul **vecchio** server, il cron `abm-cleanup-stale` sospeso al Task 8, Step 8 va lasciato dov'è
+(`/root/abm-cleanup-stale.OLD_SERVER_ROLLBACK`) e sparisce con la macchina: non va rimesso in
+`/etc/cron.d`.
 
 - [ ] **Step 6: Dismissione del vecchio server (T+7 giorni)**
 
@@ -1370,18 +1641,29 @@ rsync -aHAX --numeric-ids -e "ssh -i /root/.ssh/id_migrate" \
 
 Da lanciare **dal vecchio server**, e senza `--delete`: si aggiunge, non si sovrascrive alla cieca.
 
-3. Ripristinare il vhost del vecchio server (rimuovere il blocco `return 503;` reintroducendo il `location /` originale) e ricaricare nginx:
+3. Ripristinare il vhost originale del vecchio server (salvato al Task 8, Step 9) e ricaricare nginx:
 
 ```bash
+cp /etc/nginx/sites-available/audiobook-maker.precutover /etc/nginx/sites-available/audiobook-maker
 nginx -t && systemctl reload nginx
 ```
 
-4. Riavviare il servizio sul vecchio server:
+4. Riavviare il servizio sul vecchio server — che al Task 8, Step 8 era stato **masked**, non solo disabilitato:
 
 ```bash
+systemctl unmask audiobook-maker
 systemctl enable audiobook-maker
 systemctl start audiobook-maker
 journalctl -u audiobook-maker -n 40 --no-pager
+```
+
+4-bis. Ripristinare il cron di pulizia sospeso al Task 8, Step 8:
+
+```bash
+mv /root/abm-cleanup-stale.OLD_SERVER_ROLLBACK /etc/cron.d/abm-cleanup-stale
+chmod 644 /etc/cron.d/abm-cleanup-stale
+chown root:root /etc/cron.d/abm-cleanup-stale
+systemctl restart cron
 ```
 
 5. Riportare i record A di `audiobook-maker.com` e `www` a `80.211.136.211` su Aruba (TTL 3600 → propagazione entro un'ora).
@@ -1402,6 +1684,14 @@ Fermarsi e chiedere all'utente se si verifica una di queste condizioni:
 6. `certbot renew --dry-run` fallisce dopo lo switch.
 7. Il download di un token preesistente non funziona dopo il cutover.
 8. Compaiono job attivi sul vecchio server al momento del freeze.
+9. Il ciclo di drenaggio (Task 8, Step 5) esce senza due letture consecutive pulite, o la
+   sospensione dei nuovi job cade più di una volta.
+10. `migration_recover_prep.py` riporta un numero di job con evento di consegna basso o nullo,
+    oppure un solo job in `input mancante -> failed`.
+11. `scripts/verify_r2.py` non chiude con `RISULTATO: TUTTO OK` dopo la rotazione della chiave.
+12. Il download di un token **cold** (Task 8, Step 18) fallisce.
+13. Il `find` del cron di pulizia, provato a vuoto, colpirebbe migliaia di job dir o job
+    dell'elenco di recovery.
 
 ---
 
@@ -1503,3 +1793,33 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
     raffica. L'IP applicativo invece è già corretto per costruzione: il codice prende il primo
     valore di `X-Forwarded-For` (`audiobook_app.py:840`). Entrambe le righe vanno rimosse alla
     dismissione del vecchio server (Task 10).
+
+14. **Revisione critica del Task 8 (2026-08-21, prima del via libera).** Rilettura completa dei
+    24 step alla ricerca di punti deboli. Dieci difetti recepiti, tutti dentro il Task 8 e il
+    Task 10:
+
+    | # | Difetto | Dove è stato corretto |
+    |---|---|---|
+    | 1 | Il proxy sostituiva solo `location /`, ma il vhost ne ha **sei** con `proxy_pass`: upload (`/api/analyze`) e SSE (`/api/progress/`) sarebbero rimasti puntati al servizio fermo → 502 sul traffico ancora sul vecchio IP | Step 9: vhost di cutover riscritto per intero, un solo `location /` |
+    | 2 | Fra l'accensione del proxy (Step 9) e l'avvio del nuovo servizio (Step 16) passano 20-45 minuti di **502 crudo** | Step 9: `proxy_intercept_errors` + `error_page 502 503 504 = @maint` con pagina di manutenzione |
+    | 3 | `input mancante -> failed` chiude i job **senza rimborso e senza email**: una delta rsync incompleta si presenta esattamente così | Step 13: cancello a `N=0` + script che elenca i job e li confronta con il vecchio server |
+    | 4 | `delivered_job_ids()` ritorna un insieme vuoto **senza errore** se gli activity log mancano → email duplicate al boot | Step 13: cancello sul numero di job con evento di consegna (atteso: decine di migliaia) |
+    | 5 | `--window-min 10` dichiara "non vivo" un job PREMIUM fermo da 11 minuti (rate limit Gemini, assembly lungo) → falso negativo che autorizza il freeze | Step 5 e 6: finestra a **25 minuti**, due letture consecutive pulite, tetto di 24 giri |
+    | 6 | `_suspend_new_jobs` è in RAM: un restart durante il drenaggio la azzera in silenzio | Step 5: il ciclo interroga `GET /api/admin/suspend` a ogni giro e la riattiva, azzerando il contatore |
+    | 7 | Il cron di pulizia stale restava attivo sul **vecchio** server per i 7 giorni di rollback, erodendo la copia di rollback | Step 8: sospensione del cron sul vecchio; Task 10 Step 5 e appendice di rollback aggiornati |
+    | 8 | Il cron veniva riattivato sul nuovo senza rileggere che cosa cancella, su dati con mtime originali preservati da rsync | Step 21: `cat` del file + prova a vuoto del `find` prima di riabilitarlo |
+    | 9 | Nessuna prova reale di R2 dopo la rotazione della chiave: `is_enabled()` guarda solo che le variabili non siano vuote, quindi un typo passerebbe l'avvio | Step 15: `scripts/verify_r2.py` con le env dell'unit; Step 18: download di un token **cold** vero prima dello switch DNS |
+    | 10 | Un rsync ripetuto dopo lo Step 13 riporterebbe il registro sporco → rigenerazioni ed email duplicate | Step 11: regola esplicita "ogni rsync successivo obbliga a rieseguire lo Step 13" |
+
+    Chiarito inoltre che **Cloudflare non è davanti al sito**: le direttive `set_real_ip_from` /
+    `real_ip_header CF-Connecting-IP` sono un residuo morto e, finché restano, chiunque instradi
+    traffico da quei range può falsificare l'IP client aggirando `limit_req`. Restano invariate
+    durante il cutover (servono al doppio hop, scostamento 13) e vengono rimosse insieme al proxy
+    al Task 10, Step 5.
+
+    Non recepiti, perché minori: il log `Chunk reuse:` è emesso solo quando il riuso è > 0
+    (`generation_engine.py:4091`), quindi la verifica dello Step 17 non distingue "riuso rotto"
+    da "sintesi non ancora iniziata"; lo script dello Step 24 non filtra i pagamenti pendenti per
+    data e ne stampa solo dieci; il `sed -i` dello Step 10 non verifica di aver inserito la riga
+    dentro il blocco `http`; `pscp -pw` lascia la password root nella history di PowerShell; lo
+    Step 11 non etichetta per comando l'host di esecuzione.

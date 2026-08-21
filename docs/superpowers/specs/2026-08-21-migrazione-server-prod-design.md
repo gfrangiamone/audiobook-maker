@@ -115,29 +115,50 @@ perdita accettabile (il browser regge comunque solo ~30 s di interruzione SSE).
 Il drenaggio si ottiene con `POST /api/admin/suspend`, che blocca i nuovi job **prima** del
 preflight di pagamento lasciando attivi i download, e si misura con
 `scripts/migration/migration_live_jobs.py` (exit code 2 finché ci sono bloccanti).
+Il criterio di uscita è **due letture consecutive pulite con finestra di 25 minuti**: una
+finestra stretta scambierebbe per morto un job PREMIUM in attesa di rate limit o in assembly
+lungo, e una singola lettura può cadere nel buco fra due chunk. Il ciclo ricontrolla a ogni giro
+anche che la sospensione sia ancora in piedi, perché `_suspend_new_jobs` vive in RAM e un
+restart la azzera senza dirlo.
 Poi report all'utente e **attesa del via libera esplicito**.
 
 **Freeze (~10-20 min):**
 1. `systemctl stop` + `disable` + `mask` di `audiobook-maker` sul vecchio (deve restare giù
-   anche dopo un riavvio della macchina).
+   anche dopo un riavvio della macchina), e sospensione del cron `abm-cleanup-stale` **sul
+   vecchio**: cancella job dir per mtime e nei sette giorni di rollback eroderebbe la copia di
+   rollback stessa.
 2. Nginx del vecchio diventa un **proxy verso il nuovo** per chi arriva prima della propagazione
-   DNS (niente pagina 503): il nuovo va autorizzato con `set_real_ip_from` dell'IP vecchio,
-   altrimenti il rate limit tratta tutto il traffico proxato come un unico client.
+   DNS: il vhost viene sostituito per intero con un unico `location /` (il file di produzione ne
+   ha sei con `proxy_pass`, e lasciarne indietro anche uno significa 502 su upload o SSE), con
+   una pagina di manutenzione servita via `error_page 502 503 504` per la finestra in cui il
+   nuovo servizio non è ancora acceso. Il nuovo va autorizzato con `set_real_ip_from` dell'IP
+   vecchio, altrimenti il rate limit tratta tutto il traffico proxato come un unico client.
 3. Sul nuovo, a servizio ancora fermo, `scripts/migration/migration_recover_prep.py --apply`
    ripulisce il registro orfani (job già consegnati, input mancante, tentativi da azzerare)
-   prima che `_recover_orphan_jobs()` rilanci tutto al boot.
+   prima che `_recover_orphan_jobs()` rilanci tutto al boot. Due esiti sono cancelli: zero job
+   con "input mancante" (chiuderebbero senza rimborso né email) e un numero di job con evento di
+   consegna nell'ordine delle decine di migliaia (se gli activity log mancano la funzione
+   risponde "nessuno" senza errore, e al boot partono email duplicate). Da qui in avanti nessun
+   altro rsync: ripeterlo riporterebbe il registro sporco.
 4. rsync delta della data dir, degli `activity_*.log` e dei JSON di stato
    (`_download_tokens.json`, `_payments.json`, `_vouchers.json`, `google_tts_usage.json`,
    `_pending_jobs.json`, `_client_emails.json`).
 5. Verifica di integrità: conteggio job, dimensione totale, checksum dei JSON critici,
    validazione sintattica di ciascun JSON.
 6. Sul nuovo: rimozione dell'override di collaudo → data dir reale, **R2 riattivato**,
-   segreti esposti ruotati (`ABM_S3_SECRET_KEY`, `ABM_ADMIN_TOKEN`), servizio `enable` + `start`,
-   con osservazione del recovery dei job interrotti e verifica che il riuso dei chunk sia attivo.
-7. Smoke test locale: `curl` su `127.0.0.1:5601`, download da un token preesistente.
+   segreti esposti ruotati (`ABM_S3_SECRET_KEY`, `ABM_ADMIN_TOKEN`) e **provati** con
+   `scripts/verify_r2.py` prima dell'avvio — `is_enabled()` controlla solo che le variabili non
+   siano vuote, quindi un typo nella chiave supererebbe l'avvio e si manifesterebbe al primo
+   download cold di un utente. Poi servizio `enable` + `start`, con osservazione del recovery dei
+   job interrotti e verifica che il riuso dei chunk sia attivo.
+7. Smoke test locale: `curl` su `127.0.0.1:5601`, download da un token preesistente e da un
+   token **cold** (job già evicted): è l'unico che dimostra insieme chiave nuova e integrità dei
+   dati migrati. Le vecchie chiavi R2 si revocano solo dopo.
 8. Switch DNS su Aruba: A `audiobook-maker.com` e `www` → `80.211.137.33`.
 9. Rimozione della riga dal file hosts e verifica dal browser reale.
-10. Ripristino del cron `abm-cleanup-stale`, sospeso durante la preparazione.
+10. Ripristino del cron `abm-cleanup-stale` **sul nuovo**, dopo averne riletto il criterio di
+    cancellazione e averlo provato a vuoto: i dati appena migrati portano gli mtime originali
+    preservati da `rsync -aHAX`. Quello sul vecchio resta sospeso fino alla dismissione.
 11. A T+2h: riconciliazione dei job interrotti (recuperati, rimborsati automaticamente, oppure
     da rimborsare a mano).
 
@@ -185,7 +206,12 @@ server sarebbero orfani e si corregge in avanti.
 | Rischio | Mitigazione |
 |---|---|
 | Doppio processo attivo → cancellazioni incrociate su R2 | Servizio nuovo disabilitato fino al cutover; vecchio `disable` dopo il freeze; collaudo con R2 off |
-| Propagazione DNS lenta | TTL a 300s con 7h di anticipo; pagina 503 sul vecchio |
+| Propagazione DNS lenta | TTL a 300s con 7h di anticipo; il vecchio fa da proxy verso il nuovo |
+| Finestra fra proxy acceso e servizio nuovo avviato (20-45 min) | `error_page 502 503 504 = @maint` sul proxy: pagina di manutenzione invece dell'errore nginx |
+| `location` non proxati sul vecchio (upload, SSE) | Vhost sostituito per intero con un solo `location /` |
+| Chiave R2 ruotata errata, scoperta dal primo utente | `scripts/verify_r2.py` prima dello start + download di un token cold prima dello switch DNS |
+| Copia di rollback erosa dal cron del vecchio server | Cron `abm-cleanup-stale` sospeso sul vecchio per tutti i 7 giorni |
+| Job chiusi senza rimborso da una delta rsync incompleta | Cancello "input mancante = 0" nell'igiene del registro, con verifica job per job |
 | Lavoro pagato perso al freeze | Drenaggio con `/api/admin/suspend` fino a zero job BLOCCANTI (`migration_live_jobs.py`); i batch riprendono dai chunk grazie a `chunk_reuse` |
 | Recovery al boot che duplica email o rimborsa job sani | `migration_recover_prep.py --apply` prima dello start: job consegnati e senza input a `failed`, tentativi azzerati |
 | Deriva delle dipendenze Python | Installazione da `pip freeze` del vecchio + diff di verifica |
