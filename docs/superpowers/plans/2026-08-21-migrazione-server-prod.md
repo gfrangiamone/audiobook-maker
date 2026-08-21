@@ -561,7 +561,7 @@ Sul nuovo, gli stessi due comandi. Atteso: dimensioni e conteggio job coerenti (
 - Consumes: Task 4 (servizio installato), Task 5 (nginx + TLS), Task 6 (dati presenti).
 - Produces: conferma che il nuovo server esegue correttamente l'intero flusso applicativo. Al termine l'override di collaudo viene **rimosso** e `data_collaudo` cancellata.
 
-- [ ] **Step 1: Creare l'override di collaudo**
+- [x] **Step 1: Creare l'override di collaudo**
 
 Il file `zz-collaudo.conf` viene letto **dopo** `override.conf` (ordine alfabetico), quindi le sue variabili vincono. Isola il collaudo dai dati reali e dal bucket R2 condiviso.
 
@@ -578,7 +578,7 @@ mkdir -p /opt/audiobook-maker/data_collaudo
 systemctl daemon-reload
 ```
 
-- [ ] **Step 2: Verificare l'isolamento PRIMA di avviare**
+- [x] **Step 2: Verificare l'isolamento PRIMA di avviare**
 
 ```bash
 systemctl show audiobook-maker -p Environment | tr ' ' '\n' | grep -E 'ABM_DATA_DIR|ABM_S3_BUCKET|ABM_S3_ENDPOINT'
@@ -586,7 +586,7 @@ systemctl show audiobook-maker -p Environment | tr ' ' '\n' | grep -E 'ABM_DATA_
 
 Atteso: `ABM_DATA_DIR=/opt/audiobook-maker/data_collaudo` e le variabili S3 **vuote**. Se `ABM_DATA_DIR` mostra ancora la data dir reale o `ABM_S3_BUCKET=audiobook-maker`, **non avviare**: il cleanup loop cancellerebbe job di produzione, in locale e su R2.
 
-- [ ] **Step 3: Avviare il servizio (senza abilitarlo al boot)**
+- [x] **Step 3: Avviare il servizio (senza abilitarlo al boot)**
 
 ```bash
 systemctl start audiobook-maker
@@ -597,7 +597,7 @@ journalctl -u audiobook-maker -n 40 --no-pager
 
 Nel log di avvio verificare le righe di configurazione: limite globale (`6`), slot di assembly, cold storage **disattivato**.
 
-- [ ] **Step 4: Smoke test locale**
+- [x] **Step 4: Smoke test locale**
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5601/
