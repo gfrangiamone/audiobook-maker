@@ -207,3 +207,45 @@ def test_pipeline_engine_dispatch_edge_unchanged(setup_engine, monkeypatch):
     job = jobs[job_id]
     # Dispatch worked if it produced output_files or completed
     assert "output_files" in job or job.get("status") in ("done", "generating", "error")
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="ffmpeg not in PATH")
+def test_m4b_progress_estimate_uses_pcm_bytes(setup_engine, mock_gemini_synth, monkeypatch):
+    """La stima di durata per la barra M4B deve venire dai byte PCM, non da ffprobe.
+
+    ffprobe non sa leggere il PCM raw (nessun header -> "N/A"): con la vecchia
+    implementazione la somma era sempre 0 e si cadeva sul fallback 60s, mandando
+    la barra al 98% in due secondi. Vedi job tUV3... del 21/08/2026.
+    """
+    upload_dir, jobs = setup_engine
+    job_id = "test_m4b_estimate"
+    jobs[job_id] = {"gen_epoch": 0, "last_poll": 0, "email_registered": True}
+
+    seen = []
+    real_sim = generation_engine._m4b_progress_simulator
+
+    def spy_sim(job, duration_audio_sec, stop_event):
+        seen.append(duration_audio_sec)
+        return real_sim(job, duration_audio_sec, stop_event)
+
+    monkeypatch.setattr("generation_engine._m4b_progress_simulator", spy_sim)
+
+    generation_engine.run_generation(
+        job_id, _Info(),
+        voice="gemini:flash25:Zephyr",
+        rate="+0%",
+        single_file=True,
+        output_format="m4b",
+    )
+
+    assert seen, "il simulatore di progresso M4B non e' stato avviato"
+    est = seen[0]
+    assert est != 60.0, "caduto sul fallback 60s: la stima non usa i byte PCM"
+
+    # La stima deve essere nell'ordine di grandezza dell'audio realmente
+    # prodotto (i chunk PCM non esistono piu' a fine assembly, quindi si
+    # confronta con il M4B finale).
+    job = jobs[job_id]
+    real_sec = generation_engine._get_audio_duration_ms(job["output_m4b"]) / 1000.0
+    assert real_sec > 0
+    assert est == pytest.approx(real_sec, rel=0.5)

@@ -4616,16 +4616,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     job["_m4b_last_log_ts"] = 0.0
 
                     _m4b_stop = threading.Event()
-                    # Stima durata FFmpeg dalla somma delle durate PCM (se disponibile)
-                    _pcm_durations_sec = []
+                    # Stima durata FFmpeg dalla somma delle durate PCM. La durata
+                    # si ricava dai BYTE (come a riga ~4569), non da ffprobe: il
+                    # PCM raw non ha header, quindi ffprobe risponde "N/A" per
+                    # OGNI chunk. Con ffprobe la somma era sempre 0 -> fallback a
+                    # 60s -> barra M4B al 98% in due secondi e poi ferma, piu' una
+                    # invocazione ffprobe per chunk buttata (11 minuti sul job da
+                    # 3906 chunk del 21/08/2026).
+                    _pcm_bytes = 0
                     for _p in all_parts:
                         try:
-                            _d = _get_audio_duration_ms(_p)
-                            if _d:
-                                _pcm_durations_sec.append(_d / 1000.0)
-                        except Exception:
+                            _pcm_bytes += os.path.getsize(_p)
+                        except OSError:
                             pass
-                    _audio_dur_sec = sum(_pcm_durations_sec) if _pcm_durations_sec else 60.0
+                    _audio_dur_sec = pcm_size_to_seconds(_pcm_bytes, sample_rate=_pcm_sr) or 60.0
                     _m4b_sim = threading.Thread(
                         target=_m4b_progress_simulator,
                         args=(job, _audio_dur_sec, _m4b_stop),
