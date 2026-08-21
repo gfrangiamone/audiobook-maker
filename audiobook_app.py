@@ -579,6 +579,13 @@ MAX_CONCURRENT_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_PER_CLIENT", 
 # Set via ABM_MAX_CONCURRENT_LLM_PER_CLIENT env var; default 1.
 MAX_CONCURRENT_LLM_PER_CLIENT = int(os.environ.get("ABM_MAX_CONCURRENT_LLM_PER_CLIENT", "1"))
 
+# Tetto GLOBALE di generazioni simultanee sull'istanza (tutti i client).
+# Incidente 2026-08-21: il solo cap per-client non limita nulla lato server —
+# 19 generazioni contemporanee (77 avviate in 3 ore) da client diversi hanno
+# saturato RAM+swap fino al thrash livelock. Set via ABM_MAX_CONCURRENT_GLOBAL;
+# 0 = illimitato (comportamento pre-fix).
+MAX_CONCURRENT_GLOBAL = int(os.environ.get("ABM_MAX_CONCURRENT_GLOBAL", "6"))
+
 # Cookie name and max-age for client identification
 _CLIENT_COOKIE_NAME = "abm_cid"
 _CLIENT_COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
@@ -764,6 +771,11 @@ def _active_generating_for_client_unlocked(client_id):
         1 for j in jobs.values()
         if j.get("client_id") == client_id and j.get("status") == "generating"
     )
+
+
+def _active_generating_total_unlocked():
+    """Internal: caller MUST hold _jobs_lock. Generazioni attive sull'istanza."""
+    return sum(1 for j in jobs.values() if j.get("status") == "generating")
 
 
 def _refund_payment_on_orphan(job_id, job, reason):
@@ -8328,23 +8340,30 @@ def api_preview_audio(job_id):
         sel_idxs = []
     preview_text = ""
     if sel_idxs:
-        info_pv = jobs[job_id].get("info")
+        _job_pv = jobs[job_id]
+        info_pv = _job_pv.get("info")
         all_chs_pv = list(getattr(info_pv, "chapters", []) or []) if info_pv else []
         by_idx_pv = {ch.index: ch for ch in all_chs_pv}
         sel_chs = [by_idx_pv[i] for i in sel_idxs if i in by_idx_pv]
+        # Job gia' terminale: i testi sono spillati su disco (contenimento RAM).
+        # Li rileggiamo in un mapping temporaneo invece di reidratare il job.
+        _pv_spill = (generation_engine.chapter_texts(job_id, _job_pv)
+                     if _job_pv.get("_texts_spilled") else {})
+        def _pv_text(c):
+            return (_pv_spill.get(c.index) if _pv_spill else None) or c.text or ""
         if sel_chs:
             try:
                 from epub_to_tts import is_content_chapter as _icc_pv
                 valid = [c for c in sel_chs
-                         if _icc_pv(c.text or "", c.title or "")
+                         if _icc_pv(_pv_text(c), c.title or "")
                          and (c.word_count or 0) >= 80]
             except Exception:
                 valid = [c for c in sel_chs if (c.word_count or 0) >= 80]
             if not valid:
-                valid = [c for c in sel_chs if ((c.text or "").strip())]
+                valid = [c for c in sel_chs if _pv_text(c).strip()]
             if valid:
                 target = valid[1] if len(valid) > 1 else valid[0]
-                raw = (target.text or "").strip()
+                raw = _pv_text(target).strip()
                 import re as _re_pv
                 raw = _re_pv.sub(r"\s+", " ", raw).strip()
                 # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
@@ -8714,6 +8733,13 @@ def api_export_abm(job_id):
             "cover_thumb": job.get("cover_thumb"),
             "original_filename": job.get("original_filename", ""),
         }
+        _spilled = bool(job.get("_texts_spilled"))
+
+    # Testi capitolo: dalla RAM, o dallo spill su disco se il job e' gia'
+    # terminale (contenimento RAM). Mapping temporaneo, non reidrata il job.
+    _texts = generation_engine.chapter_texts(job_id, job) if _spilled else None
+    if _spilled and not any((t or "").strip() for t in _texts.values()):
+        return jsonify({"error": "Book text is no longer available"}), 410
 
     import zipfile
     import io
@@ -8741,7 +8767,8 @@ def api_export_abm(job_id):
                 continue
             ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
-            zf.writestr(f"chapters/{ch_filename}", ch.text)
+            ch_text = _texts.get(ch.index, "") if _texts else ""
+            zf.writestr(f"chapters/{ch_filename}", ch_text or ch.text)
             chapters_manifest.append({
                 "index": ch.index,
                 "filename": ch_filename,
@@ -9292,6 +9319,24 @@ def api_generate():
                     "error_code": "concurrent_limit",
                     "max": MAX_CONCURRENT_PER_CLIENT,
                     "active": _active_generating_for_client_unlocked(client_id),
+                }), 429
+        # Tetto globale d'istanza: protegge RAM/CPU dal carico aggregato di
+        # client diversi (incidente 2026-08-21). Va valutato DOPO il cap
+        # per-client, così l'abuso di un singolo device resta attribuito a lui.
+        if MAX_CONCURRENT_GLOBAL > 0:
+            _active_total = _active_generating_total_unlocked()
+            if _active_total >= MAX_CONCURRENT_GLOBAL:
+                _refund_payment_on_orphan(job_id, job, "server_busy")
+                try: gemini_tts.release_reservation(job_id)
+                except Exception: pass
+                print(f"[{job_id}] /api/generate rifiutata: tetto globale "
+                      f"raggiunto ({_active_total}/{MAX_CONCURRENT_GLOBAL})")
+                return jsonify({
+                    "error": "The server is at capacity right now. "
+                             "Please try again in a few minutes.",
+                    "error_code": "server_busy",
+                    "max": MAX_CONCURRENT_GLOBAL,
+                    "active": _active_total,
                 }), 429
         # Atomically claim the slot
         job["status"] = "generating"
@@ -14747,6 +14792,64 @@ def _cleanup_expired_shares(now=None):
     return removed
 
 
+# Osservabilita' memoria: nessuna metrica RSS/swap veniva mai loggata, quindi
+# la crescita monotona che ha portato al freeze del 2026-08-21 e' rimasta
+# invisibile fino al blocco. Campionamento leggero da /proc (solo Linux), ogni
+# MEM_LOG_INTERVAL_SEC, piu' un WARN quando la memoria disponibile scende sotto
+# soglia o lo swap e' quasi pieno.
+MEM_LOG_INTERVAL_SEC = int(os.environ.get("ABM_MEM_LOG_INTERVAL_SEC", "300"))
+MEM_WARN_AVAIL_MB = int(os.environ.get("ABM_MEM_WARN_AVAIL_MB", "300"))
+MEM_WARN_SWAP_PCT = int(os.environ.get("ABM_MEM_WARN_SWAP_PCT", "80"))
+_last_mem_log = [0.0]
+
+
+def _read_proc_kv(path):
+    """Parsa un file /proc stile 'Chiave:  N kB' -> {chiave: N} (in kB)."""
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                v = v.strip().split(" ")[0]
+                if v.isdigit():
+                    out[k.strip()] = int(v)
+    except OSError:
+        return {}
+    return out
+
+
+def _log_memory_stats(now, force=False):
+    """Logga RSS del processo + memoria/swap di sistema. No-op fuori da Linux."""
+    if not force and (now - _last_mem_log[0]) < MEM_LOG_INTERVAL_SEC:
+        return
+    status = _read_proc_kv("/proc/self/status")
+    if not status:
+        _last_mem_log[0] = now      # non-Linux: non riprovare a ogni giro
+        return
+    _last_mem_log[0] = now
+    meminfo = _read_proc_kv("/proc/meminfo")
+    rss_mb = status.get("VmRSS", 0) / 1024.0
+    avail_mb = meminfo.get("MemAvailable", 0) / 1024.0
+    swap_total = meminfo.get("SwapTotal", 0)
+    swap_used = swap_total - meminfo.get("SwapFree", 0)
+    swap_pct = (swap_used * 100.0 / swap_total) if swap_total else 0.0
+    with _jobs_lock:
+        n_jobs = len(jobs)
+        n_gen = _active_generating_total_unlocked()
+        n_spilled = sum(1 for j in jobs.values() if j.get("_texts_spilled"))
+    line = (f"[mem] rss={rss_mb:.0f}MB avail={avail_mb:.0f}MB "
+            f"swap={swap_pct:.0f}% jobs={n_jobs} (gen={n_gen}, spilled={n_spilled}) "
+            f"threads={status.get('Threads', 0)}")
+    if avail_mb < MEM_WARN_AVAIL_MB or swap_pct >= MEM_WARN_SWAP_PCT:
+        print(f"[mem] WARN memoria in esaurimento — {line}")
+        try:
+            _log_activity("system", line, "MEMORY_PRESSURE")
+        except Exception:
+            pass
+    else:
+        print(line)
+
+
 def _cleanup_supervisor():
     """Mantiene vivo _cleanup_loop a ogni costo.
 
@@ -14773,6 +14876,10 @@ def _cleanup_loop():
     while True:
         time.sleep(CLEANUP_INTERVAL_SEC)
         now = time.time()
+        try:
+            _log_memory_stats(now)
+        except Exception as e:
+            print(f"[mem] sampling error (non-fatal): {e}")
         _cleanup_expired_shares(now)
 
         # Multi-worker: absorb tokens created by other workers before deciding
@@ -15118,6 +15225,8 @@ def _ensure_background_threads():
 
     print(f"[startup] Background threads started (data dir: {UPLOAD_DIR})")
     print(f"[startup] Max concurrent per client: {MAX_CONCURRENT_PER_CLIENT}")
+    print(f"[startup] Max concurrent global: "
+          f"{MAX_CONCURRENT_GLOBAL if MAX_CONCURRENT_GLOBAL > 0 else 'unlimited'}")
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")

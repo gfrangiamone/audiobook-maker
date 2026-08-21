@@ -216,13 +216,198 @@ def _retention_for_job(job):
 CHAPTER_SILENCE_SEC = 3  # secondi di silenzio all'inizio di ogni capitolo
 
 
+# ---------------------------------------------------------------------------
+# Spill dei testi capitolo su disco (contenimento RAM)
+# ---------------------------------------------------------------------------
+# Incidente 2026-08-21 (freeze prod, thrash livelock su RAM+swap): jobs{} tiene
+# in memoria `info.chapters[].text` (piu' `job["translated_chapters"]`) per
+# l'INTERA finestra di retention (24/48/96h), perche' l'unico punto che libera
+# l'entry e' `_cleanup_job` alla scadenza. Con ABM_MAX_TEXT_CHARS=3.1M e decine
+# di job vivi la RSS cresce monotona finche' il kernel entra in thrash.
+#
+# Ai terminali il testo non serve piu' in RAM: viene serializzato (gzip+JSON)
+# nella job dir e ricaricato on-demand da chi ne ha bisogno (snapshot .abm,
+# export, eventuale ri-generazione). Il file sta nella RADICE della job dir,
+# NON in output*/, quindi hot-evict/cold-offload non lo toccano; sparisce con
+# la job dir alla retention, insieme all'entry in jobs{}.
+
+_SPILL_FILENAME = ".chapters_spill.json.gz"
+
+# Stati oltre i quali il testo capitolo non serve piu' in memoria.
+# "optimized"/"translated" NON sono terminali: da li' l'utente puo' ancora
+# lanciare la generazione audio.
+_TERMINAL_STATUSES = frozenset(("done", "partial", "error", "cancelled", "canceled"))
+
+
+def _spill_path(job_id):
+    """Path del file di spill per il job, o None se la job dir non esiste."""
+    if not _upload_dir or not job_id:
+        return None
+    jdir = Path(_upload_dir) / str(job_id)
+    if not jdir.is_dir():
+        return None
+    return jdir / _SPILL_FILENAME
+
+
+def spill_job_texts(job_id, job=None):
+    """Serializza i testi capitolo nella job dir e li svuota dalla RAM.
+
+    Ritorna True se lo spill e' stato eseguito ora, False se non applicabile
+    (job/dir assenti, nessun testo, spill gia' fatto) o in caso di errore I/O.
+    In nessun caso il testo viene perso: si svuota la RAM solo dopo che il file
+    e' stato scritto e rinominato con successo.
+    """
+    import gzip
+
+    if job is None:
+        job = (_jobs or {}).get(job_id)
+    if not isinstance(job, dict) or job.get("_texts_spilled"):
+        return False
+
+    info = job.get("info")
+    chapters = list(getattr(info, "chapters", None) or [])
+    translated = job.get("translated_chapters") or []
+    if not any(getattr(ch, "text", "") for ch in chapters) and not translated:
+        return False
+
+    path = _spill_path(job_id)
+    if path is None:
+        return False
+
+    payload = {
+        "chapters": {str(getattr(ch, "index", i)): (getattr(ch, "text", "") or "")
+                     for i, ch in enumerate(chapters)},
+        "translated": translated,
+    }
+    freed = sum(len(t) for t in payload["chapters"].values())
+    freed += sum(len(c.get("text", "") or "") for c in translated if isinstance(c, dict))
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with gzip.open(tmp, "wt", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        print(f"[{job_id}] spill testi FALLITO (testi mantenuti in RAM): {e}")
+        return False
+
+    for ch in chapters:
+        try:
+            ch.text = ""
+        except Exception:
+            pass
+    if translated:
+        job["translated_chapters"] = []
+    job["_texts_spilled"] = True
+    print(f"[{job_id}] spill testi su disco: {freed} char liberati dalla RAM")
+    return True
+
+
+def load_spilled_texts(job_id):
+    """Rilegge i testi spillati. Ritorna dict con chiavi 'chapters'/'translated'
+    (mapping index->testo e lista capitoli tradotti). {} se non c'e' spill."""
+    import gzip
+
+    path = _spill_path(job_id)
+    if path is None or not path.exists():
+        return {}
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as e:
+        print(f"[{job_id}] lettura spill testi fallita: {e}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    raw = data.get("chapters") or {}
+    chapters = {}
+    for k, v in raw.items():
+        try:
+            chapters[int(k)] = v
+        except (TypeError, ValueError):
+            continue
+    return {"chapters": chapters, "translated": data.get("translated") or []}
+
+
+def chapter_texts(job_id, job=None):
+    """Mapping {index: testo} dei capitoli del job, letto dalla RAM o, se il
+    job e' stato spillato, dal disco. NON reidrata il job: il dict ritornato e'
+    temporaneo e viene rilasciato dal chiamante a fine richiesta."""
+    if job is None:
+        job = (_jobs or {}).get(job_id)
+    info = job.get("info") if isinstance(job, dict) else None
+    chapters = list(getattr(info, "chapters", None) or [])
+    out = {}
+    for i, ch in enumerate(chapters):
+        out[getattr(ch, "index", i)] = getattr(ch, "text", "") or ""
+    if isinstance(job, dict) and job.get("_texts_spilled"):
+        spilled = load_spilled_texts(job_id).get("chapters") or {}
+        for idx, txt in spilled.items():
+            if txt and not out.get(idx):
+                out[idx] = txt
+    return out
+
+
+def rehydrate_job_texts(job_id, job=None):
+    """Rimette i testi spillati dentro `info.chapters[].text` (e
+    `translated_chapters`). Serve ai flussi che rilavorano il job dopo un
+    terminale (ri-generazione audio, preview). Ritorna True se ha reidratato."""
+    if job is None:
+        job = (_jobs or {}).get(job_id)
+    if not isinstance(job, dict) or not job.get("_texts_spilled"):
+        return False
+    data = load_spilled_texts(job_id)
+    if not data:
+        return False
+    texts = data.get("chapters") or {}
+    info = job.get("info")
+    for i, ch in enumerate(getattr(info, "chapters", None) or []):
+        txt = texts.get(getattr(ch, "index", i))
+        if txt:
+            try:
+                ch.text = txt
+            except Exception:
+                pass
+    if data.get("translated"):
+        job["translated_chapters"] = data["translated"]
+    job["_texts_spilled"] = False
+    return True
+
+
+def _job_id_for(job):
+    """Reverse lookup job -> job_id. Snapshot della dict per non esplodere se
+    un altro thread la muta (cfr. incidente cleanup loop RuntimeError)."""
+    if not _jobs:
+        return None
+    for k, v in list(_jobs.items()):
+        if v is job:
+            return k
+    return None
+
+
 def _set_job_status(job, status):
-    """Thread-safe job status update."""
+    """Thread-safe job status update.
+
+    Sui terminali libera i testi capitolo dalla RAM (spill su disco). Lo spill
+    fa I/O e viene eseguito FUORI dal lock per non bloccare gli altri thread.
+    """
     if _jobs_lock:
         with _jobs_lock:
             job["status"] = status
     else:
         job["status"] = status
+
+    if status in _TERMINAL_STATUSES and isinstance(job, dict) and not job.get("_texts_spilled"):
+        try:
+            jid = job.get("job_id") or _job_id_for(job)
+            if jid:
+                spill_job_texts(jid, job)
+        except Exception as e:
+            print(f"[spill] errore non fatale su status={status}: {e}")
 
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
@@ -1082,6 +1267,24 @@ def _generate_optimized_abm(job_id):
     buf = io.BytesIO()
     safe_title = _safe_filename(info.title) or "project"
 
+    # Testi capitolo: dalla RAM, o dallo spill su disco se il job e' gia'
+    # terminale (contenimento RAM, incidente 2026-08-21). Mapping temporaneo:
+    # non reidrata il job, viene rilasciato all'uscita dalla funzione.
+    _texts = chapter_texts(job_id, job)
+
+    # Guard: se il job e' spillato ma lo spill non e' rileggibile, NON rigenerare
+    # — riscriveremmo lo snapshot buono su disco con capitoli vuoti. Meglio
+    # servire quello esistente (o fallire) che distruggere il contenuto.
+    if job.get("_texts_spilled") and not any((t or "").strip() for t in _texts.values()):
+        existing = job.get("optimized_abm_path") or ""
+        if existing and os.path.exists(existing):
+            print(f"[{job_id}] .abm: spill testi non rileggibile → servo lo "
+                  f"snapshot gia' su disco")
+            return existing, os.path.basename(existing)
+        print(f"[{job_id}] .abm: spill testi non rileggibile e nessuno snapshot "
+              f"su disco → rigenerazione annullata")
+        return None, None
+
     # Use cumulative optimized_chapters if available; fall back to selected_chapters, then all chapters
     optimized = job.get("optimized_chapters")
     selected = job.get("selected_chapters")
@@ -1117,7 +1320,8 @@ def _generate_optimized_abm(job_id):
             # .abm. Difesa di ultimo miglio per lo SNAPSHOT scaricabile: il TTS
             # gia' usa ch.text direttamente, ergo il leak nel TTS va prevenuto
             # a monte (Task 4/5 in _call_llm + _optimize_chapter_text).
-            ch_text_safe = ch.text
+            ch_text_safe = _texts.get(ch.index, "") or ch.text
+            ch_text_orig = ch_text_safe
             prompt_leak_flag = False
             if safety_prompt and _is_prompt_leak(ch_text_safe, safety_prompt):
                 prompt_leak_flag = True
@@ -1134,8 +1338,8 @@ def _generate_optimized_abm(job_id):
                     chunk_index=None,
                     outcome="prompt_leak_safety_net",
                     chars_input=0,
-                    chars_output=len(ch.text),
-                    leaked_preview=ch.text[:200],
+                    chars_output=len(ch_text_orig),
+                    leaked_preview=ch_text_orig[:200],
                 )
 
             zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
@@ -2341,6 +2545,8 @@ def run_optimization(job_id, selected_chapters=None):
     If selected_chapters is provided (list of indices), only those are optimized.
     """
     job = _jobs[job_id]
+    # Vedi run_generation: se il job era terminale i testi sono su disco.
+    rehydrate_job_texts(job_id, job)
     _set_job_status(job, "optimizing")
     job["opt_cancelled"] = False
     job["last_poll"] = time.time()
@@ -2651,6 +2857,8 @@ def run_translation(job_id):
     job = _jobs.get(job_id)
     if not job:
         return
+    # Vedi run_generation: se il job era terminale i testi sono su disco.
+    rehydrate_job_texts(job_id, job)
     p = job.get("tr_params") or {}
     source = p.get("source_lang", "")
     target = p.get("target_lang", "")
@@ -3704,6 +3912,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         print(f"[{job_id}] run_generation: job assente da _jobs all'avvio "
               f"(rimosso da cleanup o thread duplicato) — skip", flush=True)
         return
+    # Ri-generazione dopo un terminale: i testi capitolo sono stati spillati su
+    # disco per liberare RAM → vanno rimessi in memoria prima del chunking.
+    rehydrate_job_texts(job_id, job)
     _set_job_status(job, "generating")
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
