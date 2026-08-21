@@ -744,6 +744,21 @@ curl -s -o /dev/null -w "%{http_code}\n" -k https://127.0.0.1/ -H "Host: audiobo
 
 Atteso: `503`.
 
+> **Pre-condizione — chiudere il collaudo prima della delta.** Se il servizio di collaudo è
+> ancora in esecuzione, fermarlo e rimuovere l'isolamento *prima* di sincronizzare, altrimenti
+> il suo cleanup loop lavora su una data dir che sta per diventare quella reale:
+>
+> ```bash
+> systemctl stop audiobook-maker
+> rm -f /etc/systemd/system/audiobook-maker.service.d/zz-collaudo.conf
+> rm -rf /opt/audiobook-maker/data_collaudo
+> systemctl daemon-reload
+> ```
+>
+> Il collaudo scrive anche negli `activity_*.log` copiati (stanno in `SCRIPT_DIR`, non nella
+> data dir): la ricopia dello Step 6 li sovrascrive con gli originali di produzione, ripulendoli
+> dagli eventi di test. È il motivo per cui la riga `activity_*.log` **non** va saltata.
+
 - [ ] **Step 6: Passata delta dei dati**
 
 ```bash
@@ -763,18 +778,25 @@ Sul vecchio:
 
 ```bash
 cd /opt/audiobook-maker/data
-md5sum _download_tokens.json _payments.json _vouchers.json google_tts_usage.json 2>/dev/null
-ls -la _pending_jobs.json _client_emails.json 2>/dev/null
+md5sum *.json | sort -k2 > /tmp/json_md5.txt; cat /tmp/json_md5.txt
 find . -maxdepth 1 -mindepth 1 -type d | wc -l
 du -sh .
 ```
+
+Sono **20** i file di stato (agosto 2026): `_client_emails`, `_device_tokens`, `_download_tokens`,
+`_free_quota`, `_paid_jobs_done`, `_paid_opt_done`, `_payments`, `_pending_jobs`, `_share_tokens`,
+`_transfer_tokens`, `_vouchers`, il service account, `feedback`, `gemini_admin_state`,
+`gemini_tts_previews`, `gemini_tts_rate_log`, `gemini_tts_rpd`, `gemini_tts_usage`,
+`google_tts_usage`, `news`. Vanno verificati **tutti**, non un sottoinsieme: `_transfer_tokens`
+e `gemini_tts_rate_log` pesano da soli oltre 3 MB e reggono rispettivamente i trasferimenti
+attivi e il price lock delle voci PREMIUM.
 
 Sul nuovo, gli stessi comandi. Atteso: **md5 identici**, stesso conteggio job, stessa dimensione. Poi validare la sintassi:
 
 ```bash
 cd /opt/audiobook-maker/data
-for f in _download_tokens.json _payments.json _vouchers.json google_tts_usage.json _pending_jobs.json _client_emails.json; do
-  [ -f "$f" ] && (jq empty "$f" 2>/dev/null && echo "$f OK" || echo "$f CORROTTO")
+for f in *.json; do
+  python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" 2>/dev/null     && echo "$f OK" || echo "$f CORROTTO"
 done
 ```
 
@@ -1068,3 +1090,12 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
    **AZIONE RICHIESTA:** ruotare `ABM_S3_SECRET_KEY` dal pannello Cloudflare R2 e aggiornare
    l'`override.conf` di entrambi i server. Da fare al cutover, quando il servizio viene
    comunque riavviato (ruotarla prima significherebbe riavviare la produzione attuale).
+
+8. **Voucher creati via CLI a servizio attivo vengono persi.** `payment.py` carica `_vouchers`
+   in RAM all'avvio (`_load_vouchers`) e `_save_vouchers()` riscrive l'intero dizionario: un
+   voucher creato con `scripts/admin_voucher.py` mentre il processo gira sparisce al primo
+   salvataggio del servizio. Riscontrato in collaudo (il voucher `PROMO-NVNL-AP67-DL8C` è stato
+   sovrascritto). **Vale anche per la produzione attuale:** i voucher, inclusi quelli di rimborso,
+   vanno creati a servizio fermo, oppure dall'interfaccia admin. Difetto pre-esistente, fuori
+   dallo scope della migrazione — da valutare separatamente.
+
