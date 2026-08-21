@@ -102,23 +102,44 @@ dir di collaudo. A collaudo concluso: servizio fermato, `data_collaudo` rimossa.
 
 **T-7h:** TTL del record A di `audiobook-maker.com` e `www` abbassato da 21600s a **300s** su Aruba.
 
-**T-0:** verifica che non ci siano job in corso sul vecchio server (generazioni, ottimizzazioni
-LLM, traduzioni); report all'utente e **attesa del via libera esplicito**.
+**T-0 — drenaggio, non attesa.** La produzione ha statisticamente 35-40 job vivi in ogni istante:
+attendere che siano zero è impossibile. Il criterio è **zero job BLOCCANTI**, dove bloccante
+significa "interromperlo distrugge lavoro pagato che il recovery non sa riprendere": qualunque
+job Speechify (escluso da `chunk_reuse.REUSABLE_ENGINES`), i job PREMIUM non registrati in
+`_pending_jobs.json` (solo i batch con email hanno un descrittore di recovery) e i job con
+pagamento consumato e non concluso, anche senza chunk (ottimizzazione AI interattiva).
+I job batch con motore `edge`/`gemini`/`google` ripartono dai chunk già sintetizzati, perché il
+fingerprint di `chunk_reuse` è ancorato al contenuto e non ai path; gli interattivi free sono
+perdita accettabile (il browser regge comunque solo ~30 s di interruzione SSE).
+
+Il drenaggio si ottiene con `POST /api/admin/suspend`, che blocca i nuovi job **prima** del
+preflight di pagamento lasciando attivi i download, e si misura con
+`scripts/migration/migration_live_jobs.py` (exit code 2 finché ci sono bloccanti).
+Poi report all'utente e **attesa del via libera esplicito**.
 
 **Freeze (~10-20 min):**
-1. `systemctl stop` + `systemctl disable audiobook-maker` sul vecchio (deve restare giù anche
-   dopo un riavvio della macchina).
-2. Nginx del vecchio serve una pagina di manutenzione 503 per chi arriva prima della propagazione.
-3. rsync delta della data dir, degli `activity_*.log` e dei JSON di stato
+1. `systemctl stop` + `disable` + `mask` di `audiobook-maker` sul vecchio (deve restare giù
+   anche dopo un riavvio della macchina).
+2. Nginx del vecchio diventa un **proxy verso il nuovo** per chi arriva prima della propagazione
+   DNS (niente pagina 503): il nuovo va autorizzato con `set_real_ip_from` dell'IP vecchio,
+   altrimenti il rate limit tratta tutto il traffico proxato come un unico client.
+3. Sul nuovo, a servizio ancora fermo, `scripts/migration/migration_recover_prep.py --apply`
+   ripulisce il registro orfani (job già consegnati, input mancante, tentativi da azzerare)
+   prima che `_recover_orphan_jobs()` rilanci tutto al boot.
+4. rsync delta della data dir, degli `activity_*.log` e dei JSON di stato
    (`_download_tokens.json`, `_payments.json`, `_vouchers.json`, `google_tts_usage.json`,
    `_pending_jobs.json`, `_client_emails.json`).
-4. Verifica di integrità: conteggio job, dimensione totale, checksum dei JSON critici,
+5. Verifica di integrità: conteggio job, dimensione totale, checksum dei JSON critici,
    validazione sintattica di ciascun JSON.
-5. Sul nuovo: rimozione dell'override di collaudo → data dir reale, **R2 riattivato**,
-   servizio `enable` + `start`.
-6. Smoke test locale: `curl` su `127.0.0.1:5601`, download da un token preesistente.
-7. Switch DNS su Aruba: A `audiobook-maker.com` e `www` → `80.211.137.33`.
-8. Rimozione della riga dal file hosts e verifica dal browser reale.
+6. Sul nuovo: rimozione dell'override di collaudo → data dir reale, **R2 riattivato**,
+   segreti esposti ruotati (`ABM_S3_SECRET_KEY`, `ABM_ADMIN_TOKEN`), servizio `enable` + `start`,
+   con osservazione del recovery dei job interrotti e verifica che il riuso dei chunk sia attivo.
+7. Smoke test locale: `curl` su `127.0.0.1:5601`, download da un token preesistente.
+8. Switch DNS su Aruba: A `audiobook-maker.com` e `www` → `80.211.137.33`.
+9. Rimozione della riga dal file hosts e verifica dal browser reale.
+10. Ripristino del cron `abm-cleanup-stale`, sospeso durante la preparazione.
+11. A T+2h: riconciliazione dei job interrotti (recuperati, rimborsati automaticamente, oppure
+    da rimborsare a mano).
 
 **Dopo lo switch:** `certbot renew --dry-run`, TTL riportato a 3600s (non 21600, per non
 zavorrare un eventuale rollback).
@@ -140,8 +161,9 @@ su `main`, altrimenti il deploy colpisce il vecchio server.
 - `ABM_MAX_CONCURRENT_ASSEMBLY` non è impostato: il default è `cpu_count()-1`, quindi passando
   da 2 a 4 vCPU passerebbe **da 1 a 3** encode FFmpeg finali in parallelo, automaticamente.
   Al cutover viene **pinnato a 2**, da alzare a 3 dopo qualche giorno di osservazione.
-- `ABM_MAX_CONCURRENT_GLOBAL` resta **6** (invariato): tarato per non saturare RAM+swap.
-  Rivalutabile con 8 GB, ma dopo la migrazione, con dati alla mano.
+- `ABM_MAX_CONCURRENT_GLOBAL` viene pinnato a **35**, il valore con cui la produzione gira
+  davvero (l'`override.conf` del vecchio dice 50, ma quelle righe non sono mai entrate in
+  vigore dopo l'ultimo restart). Rivalutabile con 8 GB, ma dopo la migrazione, con dati alla mano.
 
 **Checklist post-cutover:** servizio stabile · job standard end-to-end · job PREMIUM · email di
 consegna · download da token **preesistente** (prova della migrazione dati) · download da cold
@@ -164,7 +186,8 @@ server sarebbero orfani e si corregge in avanti.
 |---|---|
 | Doppio processo attivo → cancellazioni incrociate su R2 | Servizio nuovo disabilitato fino al cutover; vecchio `disable` dopo il freeze; collaudo con R2 off |
 | Propagazione DNS lenta | TTL a 300s con 7h di anticipo; pagina 503 sul vecchio |
-| Job in corso persi al freeze | Verifica assenza job attivi prima del via libera |
+| Lavoro pagato perso al freeze | Drenaggio con `/api/admin/suspend` fino a zero job BLOCCANTI (`migration_live_jobs.py`); i batch riprendono dai chunk grazie a `chunk_reuse` |
+| Recovery al boot che duplica email o rimborsa job sani | `migration_recover_prep.py --apply` prima dello start: job consegnati e senza input a `failed`, tentativi azzerati |
 | Deriva delle dipendenze Python | Installazione da `pip freeze` del vecchio + diff di verifica |
 | Deploy su server sbagliato | `SERVER_HOST` aggiornato prima del primo push |
 | Rinnovo certificati fallito dopo lo switch | `certbot renew --dry-run` subito dopo il cutover |
