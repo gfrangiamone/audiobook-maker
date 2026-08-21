@@ -714,12 +714,30 @@ Attendere che il TTL riportato sia ≤300 prima di procedere al freeze.
 
 - [ ] **Step 2: Portare gli strumenti di migrazione sui due server**
 
-Dal PC (PowerShell, dalla cartella del repo):
+Dal PC (PowerShell, dalla cartella del repo). **Niente `-pw` e niente `-batch`**: la password
+digitata al prompt di `pscp` non entra nella history di PowerShell, mentre `-pw "<password>"`
+la lascerebbe in chiaro in `ConsoleHost_history.txt` (e in `Get-History`) per sempre.
 
 ```powershell
-pscp -batch -pw "<password root>" scripts\migration\migration_live_jobs.py root@80.211.136.211:/root/
-pscp -batch -pw "<password root>" scripts\migration\migration_recover_prep.py root@80.211.137.33:/root/
+pscp scripts\migration\migration_live_jobs.py scripts\migration\migration_recover_prep.py root@80.211.136.211:/root/
 ```
+
+Una sola copia dal PC, verso il **vecchio** server. Il secondo file viaggia poi da server a
+server con la chiave `id_migrate` gia' autorizzata al Task 2, senza password in gioco:
+
+```bash
+scp -i /root/.ssh/id_migrate /root/migration_recover_prep.py root@80.211.137.33:/root/
+ssh -i /root/.ssh/id_migrate root@80.211.137.33 'ls -l /root/migration_recover_prep.py'
+```
+
+> Se per qualunque motivo si e' usato `-pw`, ripulire subito la history del terminale:
+>
+> ```powershell
+> Clear-History
+> Remove-Item (Get-PSReadlineOption).HistorySavePath -ErrorAction SilentlyContinue
+> ```
+>
+> e riaprire PowerShell.
 
 `migration_live_jobs.py` è **sola lettura**: classifica i job vivi e restituisce exit code
 `0` se non ci sono bloccanti, `2` se ce ne sono. `migration_recover_prep.py` gira **solo sul
@@ -827,14 +845,16 @@ STAMP=$(date +%Y%m%d-%H%M)
 python3 /root/migration_live_jobs.py --data-dir /opt/audiobook-maker/data --window-min 25 \
   > /root/migration_snapshot_$STAMP.txt 2>&1
 cp /opt/audiobook-maker/data/_pending_jobs.json /root/migration_pending_$STAMP.json
+date +%s > /root/migration_freeze_ts        # istante del freeze, in epoch: lo usa lo Step 24
 wc -l /root/migration_snapshot_$STAMP.txt
+cat /root/migration_freeze_ts
 ```
 
-Copiarlo sul nuovo server (sopravvive alla dismissione del vecchio):
+Copiare tutto sul nuovo server (sopravvive alla dismissione del vecchio):
 
 ```bash
 rsync -a -e "ssh -i /root/.ssh/id_migrate" /root/migration_snapshot_*.txt \
-  /root/migration_pending_*.json root@80.211.137.33:/root/
+  /root/migration_pending_*.json /root/migration_freeze_ts root@80.211.137.33:/root/
 ```
 
 - [ ] **Step 7: STOP — attendere il via libera esplicito dell'utente**
@@ -999,12 +1019,53 @@ Sul **nuovo** server, nel blocco `http` di `/etc/nginx/nginx.conf`, subito dopo 
 
 ```bash
 cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.precutover
+grep -c 'set_real_ip_from 2c0f:f248::/32;' /etc/nginx/nginx.conf
+```
+
+Atteso: **1**. Se fosse `0` il `sed` seguente non farebbe nulla in silenzio; se fosse `>1`
+inserirebbe piu' righe. In entrambi i casi fermarsi e inserire la riga a mano dentro il blocco
+`http`.
+
+```bash
 sed -i '/set_real_ip_from 2c0f:f248::\/32;/a\    set_real_ip_from 80.211.136.211;   # proxy temporaneo dal vecchio server (rimuovere alla dismissione)' /etc/nginx/nginx.conf
 grep -n 'set_real_ip_from 80.211' /etc/nginx/nginx.conf
+```
+
+L'ancora e' un `set_real_ip_from` dei range Cloudflare, che nel file attuale sta dentro `http { … }`;
+ma `sed` non conosce i blocchi, quindi la posizione va **verificata**, non data per scontata:
+una direttiva `set_real_ip_from` fuori da `http`/`server`/`location` fa fallire `nginx -t`, e una
+finita dentro un `server` sbagliato passerebbe il test senza avere effetto dove serve.
+
+```bash
+python3 - <<'PY'
+import re
+lines = open("/etc/nginx/nginx.conf", encoding="utf-8").read().splitlines()
+target = [i + 1 for i, l in enumerate(lines) if "set_real_ip_from 80.211.136.211" in l]
+print("riga inserita:", target)
+ctx, ok = [], False
+for i, l in enumerate(lines, 1):
+    code = re.sub(r"#.*", "", l)
+    if i in target:
+        print("  contesto:", " > ".join(ctx) or "(livello top - ERRORE)")
+        ok = (ctx == ["http"])
+    for ch in code:
+        if ch == "{":
+            m = re.match(r"\s*([A-Za-z_]\S*)", code)
+            ctx.append(m.group(1) if m else "?")
+        elif ch == "}" and ctx:
+            ctx.pop()
+print("ESITO:", "OK - dentro http {}" if (len(target) == 1 and ok) else "ERRORE - correggere a mano")
+PY
+```
+
+Atteso: `riga inserita: [N]` con un solo numero, `contesto: http` e `ESITO: OK - dentro http {}`.
+Solo allora:
+
+```bash
 nginx -t && systemctl reload nginx
 ```
 
-Atteso: una riga trovata, `nginx -t` OK. Questa riga va rimossa al Task 10, quando il vecchio
+Atteso: `nginx -t` OK. Questa riga va rimossa al Task 10, quando il vecchio
 server viene dismesso: finché c'è, quell'IP è autorizzato a dichiarare l'IP dei client.
 
 - [ ] **Step 11: Chiudere il collaudo (pre-condizione) ed eseguire la delta**
@@ -1014,6 +1075,8 @@ server viene dismesso: finché c'è, quell'IP è autorizzato a dichiarare l'IP d
 > sincronizzazione:
 >
 > ```bash
+> # >>> NUOVO SERVER (80.211.137.33) <<<
+> hostname -I | grep -q 80.211.137.33 || echo "!! SERVER SBAGLIATO - fermarsi"
 > systemctl is-active audiobook-maker || echo "fermo"
 > ls -d /opt/audiobook-maker/data_collaudo 2>/dev/null && echo "RESIDUO DA RIMUOVERE"
 > test -f /etc/systemd/system/audiobook-maker.service.d/zz-collaudo.conf && echo "OVERRIDE COLLAUDO ANCORA PRESENTE"
@@ -1021,9 +1084,13 @@ server viene dismesso: finché c'è, quell'IP è autorizzato a dichiarare l'IP d
 >
 > Atteso: `fermo` e nessuna delle due segnalazioni (chiuso al Task 7, Step 8).
 
-Sul **vecchio** server:
+Poi, e **solo** dopo aver visto quell'esito, la delta. Questi due comandi girano sul
+**vecchio** server (80.211.136.211): eseguirli sul nuovo copierebbe i dati nella direzione
+sbagliata, sovrascrivendo la produzione con la copia.
 
 ```bash
+# >>> VECCHIO SERVER (80.211.136.211) <<<
+hostname -I | grep -q 80.211.136.211 || echo "!! SERVER SBAGLIATO - fermarsi"
 rsync -aHAX --numeric-ids --delete --info=progress2 \
   -e "ssh -i /root/.ssh/id_migrate" \
   /opt/audiobook-maker/data/ root@80.211.137.33:/opt/audiobook-maker/data/ \
@@ -1248,15 +1315,55 @@ Atteso: `{"suspended":false}`.
 È la prova che i job ripresi non stanno risintetizzando (e ri-pagando) da zero:
 
 ```bash
-journalctl -u audiobook-maker --since "10 min ago" --no-pager \
-  | grep -iE "riuso|reuse|chunk riusat|manifest" | head -20
+journalctl -u audiobook-maker --since "30 min ago" --no-pager \
+  | grep -iE "Chunk reuse" | head -20
 ```
 
-Atteso: righe di riuso con un numero di chunk > 0 per i job batch ripresi. Se il riuso risulta
-**zero ovunque**, fermarsi e indagare prima che i job PREMIUM ri-consumino budget: il sospetto
-è un `plan_sha` diverso (piano di chunk ricostruito con parametri diversi da quelli originali —
-tipicamente `ABM_GEMINI_CHUNK_CHARS`, che in produzione vale **450** e sta nell'unit systemd,
-non nella shell).
+**Un grep vuoto non è di per sé un allarme, e non è nemmeno una conferma.** La riga
+`Chunk reuse: N/M chunk …` viene stampata solo quando `N > 0` (`generation_engine.py:4091`):
+il silenzio copre tre casi diversi — riuso rotto, job non ancora arrivato alla sintesi, job
+senza chunk pregressi. Va quindi confrontato con ciò che c'è **su disco**: elencare i job del
+registro che hanno chunk già sintetizzati e verificare che ciascuno abbia la sua riga di riuso.
+
+```bash
+python3 - <<'PY' > /root/chunk_owners.txt
+import json, glob, os
+d = "/opt/audiobook-maker/data"
+reg = json.load(open(os.path.join(d, "_pending_jobs.json")))
+for r in reg.get("items", []):
+    if str(r.get("state")) == "failed":
+        continue
+    j = str(r.get("id") or "")
+    wd = os.path.join(d, j)
+    n = len(glob.glob(wd + "/chunk_*.pcm")) + len(glob.glob(wd + "/chunk_*.mp3"))
+    if n:
+        print("%s %d" % (j, n))
+PY
+cat /root/chunk_owners.txt
+
+while read -r J N; do
+  if journalctl -u audiobook-maker --since "30 min ago" --no-pager | grep -q "\[$J\] Chunk reuse:"; then
+    echo "OK       $J ($N chunk su disco)"
+  elif journalctl -u audiobook-maker --since "30 min ago" --no-pager | grep -q "\[$J\]"; then
+    echo "SOSPETTO $J ($N chunk su disco, il job è ripartito ma non ha riusato nulla)"
+  else
+    echo "attesa   $J ($N chunk su disco, sintesi non ancora iniziata)"
+  fi
+done < /root/chunk_owners.txt
+```
+
+Atteso: `OK` per ogni job già ripartito, `attesa` per quelli ancora in coda. Un solo
+**`SOSPETTO`** basta a fermarsi, prima che i job PREMIUM ri-consumino budget: significa che il
+fingerprint non combacia, cioè un `plan_sha` diverso (piano di chunk ricostruito con parametri
+diversi da quelli originali — tipicamente `ABM_GEMINI_CHUNK_CHARS`, che in produzione vale
+**450** e sta nell'unit systemd, non nella shell). Controllare anche gli errori di scansione,
+che non sono fatali per il codice ma lo sono per noi:
+
+```bash
+journalctl -u audiobook-maker --since "30 min ago" --no-pager | grep -i "Chunk reuse scan error"
+```
+
+Atteso: nessuna riga.
 
 ```bash
 PID=$(systemctl show audiobook-maker -p MainPID --value)
@@ -1430,26 +1537,47 @@ Tre controlli:
 3. **I sacrificati non avevano pagamenti pendenti.** Per costruzione il classificatore lo
    esclude, ma è un controllo che costa poco:
 
+L'elenco grezzo dei pagamenti consumati senza record di completamento è **inutilizzabile così
+com'è**: contiene un arretrato preesistente di mesi (vedi
+`project_incident_unused_capture_false_positive`) e l'ordine del dizionario è quello di
+inserimento, non quello temporale, quindi un `[-10:]` non seleziona affatto "gli ultimi dieci".
+Vanno isolate le righe **successive al freeze**, e vanno stampate tutte:
+
 ```bash
-python3 - <<'PY'
-import json
+FREEZE=$(cat /root/migration_freeze_ts)
+date -d "@$FREEZE"                      # controllo: deve essere l'ora del freeze di oggi
+python3 - "$FREEZE" <<'PY'
+import json, sys, time
+freeze = float(sys.argv[1])
 d = "/opt/audiobook-maker/data/"
 pay = json.load(open(d + "_payments.json"))
 done = {r.get("job_id") for r in json.load(open(d + "_paid_jobs_done.json"))
         if isinstance(r, dict)}
-pend = [(o, r.get("job_id"), r.get("amount_eur"), r.get("email"))
-        for o, r in pay.items()
-        if r.get("used") and r.get("job_id") and r.get("job_id") not in done]
-print(len(pend), "pagamenti consumati senza record di completamento")
-for row in pend[-10:]:
-    print(row)
+rows = []
+for o, r in pay.items():
+    if not (r.get("used") and r.get("job_id")) or r["job_id"] in done:
+        continue
+    # used_at = istante del consumo; captured_at = ripiego per i record piu' vecchi
+    ts = float(r.get("used_at") or r.get("captured_at") or 0)
+    rows.append((ts, o, r["job_id"], r.get("amount_eur"), r.get("email")))
+rows.sort()
+recenti = [x for x in rows if x[0] >= freeze]
+print(len(rows), "pagamenti consumati senza completamento in totale (arretrato incluso)")
+print(len(recenti), "successivi al freeze -> DA VERIFICARE UNO A UNO:")
+for ts, o, j, amt, em in recenti:
+    print("  ", time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)), o, j, amt, em)
 PY
 ```
 
-Le righe più vecchie del cutover sono preesistenti (arretrato noto, vedi
-`project_incident_unused_capture_false_positive`); vanno guardate solo quelle con timestamp
-successivo al freeze. Qualunque riga nuova è un rimborso da fare a mano, con voucher
-maggiorato del 10% se il pagamento era PayPal.
+Atteso: **zero** righe successive al freeze. Ognuna di quelle righe è un pagamento incassato per
+un servizio che il cutover potrebbe non aver erogato: va verificata singolarmente (il job è stato
+consegnato? esiste il file di output o un token di download?) e, se il servizio non è stato
+erogato, rimborsata a mano — con voucher maggiorato del 10% se il pagamento era PayPal, con
+riaccredito silenzioso sul voucher originale se era un voucher.
+
+Un record con `ts = 0` (nessun `used_at` né `captured_at`) finisce fra i più vecchi e non fra i
+recenti: se il totale cresce rispetto allo snapshot pre-freeze ma i "successivi al freeze" sono
+zero, riguardare la lista completa senza filtro prima di archiviare il controllo.
 
 ---
 
@@ -1817,9 +1945,12 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
     durante il cutover (servono al doppio hop, scostamento 13) e vengono rimosse insieme al proxy
     al Task 10, Step 5.
 
-    Non recepiti, perché minori: il log `Chunk reuse:` è emesso solo quando il riuso è > 0
-    (`generation_engine.py:4091`), quindi la verifica dello Step 17 non distingue "riuso rotto"
-    da "sintesi non ancora iniziata"; lo script dello Step 24 non filtra i pagamenti pendenti per
-    data e ne stampa solo dieci; il `sed -i` dello Step 10 non verifica di aver inserito la riga
-    dentro il blocco `http`; `pscp -pw` lascia la password root nella history di PowerShell; lo
-    Step 11 non etichetta per comando l'host di esecuzione.
+    Recepiti in un secondo giro anche i cinque difetti minori della stessa revisione:
+
+    | # | Difetto | Dove è stato corretto |
+    |---|---|---|
+    | 11 | Il log `Chunk reuse:` è emesso solo quando il riuso è > 0 (`generation_engine.py:4091`): un grep vuoto non distingue "riuso rotto" da "sintesi non ancora iniziata" | Step 17: elenco dei job con chunk su disco, poi confronto job per job con il journal (`OK` / `SOSPETTO` / `attesa`) + controllo di `Chunk reuse scan error` |
+    | 12 | Lo script dei pagamenti pendenti non filtrava per data e usava `pend[-10:]`, che sull'ordine di inserimento di un dizionario non seleziona "gli ultimi dieci" | Step 6: `date +%s > /root/migration_freeze_ts`; Step 24: filtro su `used_at`/`captured_at` ≥ freeze, ordinamento temporale, stampa integrale |
+    | 13 | Il `sed -i` ancorato a un `set_real_ip_from` Cloudflare poteva inserire la riga fuori dal blocco `http` senza che il `grep -n` se ne accorgesse | Step 10: conteggio preventivo dell'ancora + parser dei blocchi che stampa il contesto della riga inserita (`ESITO: OK - dentro http {}`) |
+    | 14 | `pscp -batch -pw "<password root>"` lasciava la password root nella history di PowerShell | Step 2: `pscp` senza `-pw`/`-batch` (password al prompt), una sola copia verso il vecchio server e propagazione al nuovo con la chiave `id_migrate`; istruzioni di pulizia della history |
+    | 15 | Lo Step 11 mescolava comandi da eseguire sul nuovo server (pre-condizione) e sul vecchio (`rsync`), senza etichetta per comando | Step 11: intestazioni `>>> NUOVO SERVER <<<` / `>>> VECCHIO SERVER <<<` e verifica `hostname -I` prima di ciascun blocco |
