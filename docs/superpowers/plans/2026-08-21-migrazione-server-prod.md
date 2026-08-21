@@ -38,7 +38,7 @@
 - Consumes: niente (primo task).
 - Produces: sistema con ffmpeg, python3, nginx, certbot, rsync, fail2ban, ufw installati; swap 4 GB attivo; timezone `Europe/Rome`.
 
-- [ ] **Step 1: Aggiornare il sistema e installare i pacchetti**
+- [x] **Step 1: Aggiornare il sistema e installare i pacchetti**
 
 ```bash
 apt-get update
@@ -50,7 +50,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
 
 Nota: l'installazione di `postfix` apre un dialogo di configurazione — con `DEBIAN_FRONTEND=noninteractive` viene scelto il default (`Internet Site`), coerente con il vecchio server (nessun relay, solo consegna locale per i cron).
 
-- [ ] **Step 2: Allineare timezone e verificare le versioni**
+- [x] **Step 2: Allineare timezone e verificare le versioni**
 
 ```bash
 timedatectl set-timezone Europe/Rome
@@ -62,7 +62,7 @@ nginx -v
 
 Atteso: `Europe/Rome`, `Python 3.12.3`, `ffmpeg 6.1.1`, `nginx 1.30.x`. Se Python o ffmpeg differiscono in modo sostanziale (minor version diversa), **fermarsi e segnalare**: il runtime non sarebbe più equivalente a quello collaudato in produzione.
 
-- [ ] **Step 3: Creare lo swap da 4 GB**
+- [x] **Step 3: Creare lo swap da 4 GB**
 
 Il vecchio server ha 512 MB di swap saturi al 100%; il nuovo non ne ha affatto. Senza swap, un picco di RAM provoca OOM-kill del servizio invece di un rallentamento.
 
@@ -76,7 +76,7 @@ printf 'vm.swappiness=10\n' > /etc/sysctl.d/99-abm-swap.conf
 sysctl -p /etc/sysctl.d/99-abm-swap.conf
 ```
 
-- [ ] **Step 4: Verificare lo swap**
+- [x] **Step 4: Verificare lo swap**
 
 ```bash
 swapon --show
@@ -85,7 +85,7 @@ free -h
 
 Atteso: `/swapfile` da 4 GB, `Swap: 4.0Gi`. Verificare anche che `/etc/fstab` contenga la riga (un reboot senza di essa perderebbe lo swap silenziosamente).
 
-- [ ] **Step 5: Configurare il firewall**
+- [x] **Step 5: Configurare il firewall**
 
 ```bash
 ufw allow 22/tcp
@@ -97,7 +97,7 @@ ufw status verbose
 
 Atteso: `Status: active`, tre regole ALLOW. **Verificare di non aver perso la sessione SSH** prima di proseguire (la 22 è aperta, quindi non dovrebbe accadere).
 
-- [ ] **Step 6: Configurare la retention di journald**
+- [x] **Step 6: Configurare la retention di journald**
 
 ```bash
 mkdir -p /etc/systemd/journald.conf.d
@@ -127,14 +127,14 @@ Atteso: journald riavviato senza errori.
 - Consumes: Task 1 (rsync installato su NEW).
 - Produces: `ssh -i ~/.ssh/id_migrate root@80.211.137.33` funzionante dal vecchio server senza password. È il canale usato da tutti i task successivi per copiare dati e segreti.
 
-- [ ] **Step 1: Generare la chiave dedicata sul vecchio server**
+- [x] **Step 1: Generare la chiave dedicata sul vecchio server**
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C 'migrate-2026-08' -f /root/.ssh/id_migrate
 cat /root/.ssh/id_migrate.pub
 ```
 
-- [ ] **Step 2: Autorizzare la chiave sul nuovo server**
+- [x] **Step 2: Autorizzare la chiave sul nuovo server**
 
 Copiare l'output di `id_migrate.pub` e, **sul nuovo server**:
 
@@ -145,7 +145,7 @@ echo '<CONTENUTO_ID_MIGRATE_PUB>' >> /root/.ssh/authorized_keys
 chmod 600 /root/.ssh/authorized_keys
 ```
 
-- [ ] **Step 3: Verificare il canale dal vecchio server**
+- [x] **Step 3: Verificare il canale dal vecchio server**
 
 ```bash
 ssh -i /root/.ssh/id_migrate -o StrictHostKeyChecking=accept-new \
@@ -154,7 +154,7 @@ ssh -i /root/.ssh/id_migrate -o StrictHostKeyChecking=accept-new \
 
 Atteso: `MiniLinux2` e la riga del filesystem. Se chiede una password, la chiave non è stata autorizzata correttamente: **fermarsi**, non proseguire con password in chiaro negli script.
 
-- [ ] **Step 4: Misurare la banda disponibile fra i due server**
+- [x] **Step 4: Misurare la banda disponibile fra i due server**
 
 ```bash
 dd if=/dev/zero bs=1M count=512 2>/dev/null | \
@@ -175,7 +175,7 @@ Cronometrare: serve a stimare la durata del rsync dei 23 GB e, soprattutto, quel
 - Consumes: Task 2 (canale SSH).
 - Produces: `/opt/audiobook-maker` al commit `d6a7992` con tutte le dipendenze Python installate alle stesse versioni della produzione.
 
-- [ ] **Step 1: Congelare l'elenco pacchetti del vecchio server**
+- [x] **Step 1: Congelare l'elenco pacchetti del vecchio server**
 
 Sul vecchio:
 
@@ -187,7 +187,7 @@ scp -i /root/.ssh/id_migrate /root/pip_freeze_old.txt root@80.211.137.33:/root/
 
 Atteso: ~158 righe.
 
-- [ ] **Step 2: Clonare il repository sul nuovo server e allinearlo al commit di produzione**
+- [x] **Step 2: Clonare il repository sul nuovo server e allinearlo al commit di produzione**
 
 ```bash
 git clone https://github.com/gfrangiamone/audiobook-maker.git /opt/audiobook-maker
@@ -198,7 +198,7 @@ git rev-parse --short HEAD
 
 Atteso: `d6a7992`. Se il commit non esiste sul remoto, **fermarsi**: significa che la produzione gira su codice non pushato e va indagato prima di migrare.
 
-- [ ] **Step 3: Installare le dipendenze Python alle versioni di produzione**
+- [x] **Step 3: Installare le dipendenze Python alle versioni di produzione**
 
 ```bash
 pip install --break-system-packages -r /root/pip_freeze_old.txt 2>&1 | tail -20
@@ -206,7 +206,7 @@ pip install --break-system-packages -r /root/pip_freeze_old.txt 2>&1 | tail -20
 
 Se alcuni pacchetti falliscono perché installati via apt sul vecchio (es. `python3-*` di sistema), installarli con apt e rilanciare. Non forzare versioni non disponibili: annotare ogni divergenza.
 
-- [ ] **Step 4: Verificare la parità delle dipendenze**
+- [x] **Step 4: Verificare la parità delle dipendenze**
 
 Sul nuovo:
 
@@ -219,7 +219,7 @@ cat /root/pip_diff.txt
 
 Atteso: diff vuoto o limitato a pacchetti irrilevanti per l'app. Verificare esplicitamente che coincidano: `edge-tts 7.2.8`, `boto3 1.34.46`, `google-genai 2.3.0`, `google-cloud-texttospeech 2.36.0`, `PyMuPDF 1.27.2.2`, `Flask 3.1.3`, `EbookLib 0.20`, `openai 2.32.0`. **Qualsiasi differenza su questi otto è bloccante.**
 
-- [ ] **Step 5: Verificare che il codice compili**
+- [x] **Step 5: Verificare che il codice compili**
 
 **Non** usare `python3 -c "import audiobook_app"`: importare l'entry-point lo **riesegue** (incidente noto: doppio avvio del modulo con cleanup e recovery duplicati). Usare il solo controllo di sintassi:
 
@@ -243,7 +243,7 @@ Atteso: `compile OK` senza traceback. **Non lanciare l'app in questo task.**
 - Consumes: Task 2 (canale SSH), Task 3 (codice presente).
 - Produces: servizio `audiobook-maker` installato, configurato con le ~60 variabili `ABM_*` della produzione, ma **disabilitato e fermo**.
 
-- [ ] **Step 1: Ricreare gli utenti sul nuovo server**
+- [x] **Step 1: Ricreare gli utenti sul nuovo server**
 
 ```bash
 id ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu
@@ -254,7 +254,7 @@ awk -F: '$3>=1000 && $3<65000 {print $1, $3, $6, $7}' /etc/passwd
 
 Atteso: i tre utenti con gli stessi UID del vecchio server (rilevanti perché `rsync --numeric-ids` preserverà gli owner numerici dei file).
 
-- [ ] **Step 2: Copiare le `authorized_keys` dal vecchio server**
+- [x] **Step 2: Copiare le `authorized_keys` dal vecchio server**
 
 Dal vecchio:
 
@@ -285,7 +285,7 @@ grep -c . /root/.ssh/authorized_keys
 
 **Verifica critica:** la chiave privata di deploy di GitHub Actions corrisponde a una chiave pubblica in `/root/.ssh/authorized_keys`. Se manca, dopo il cutover il deploy fallirà con `Permission denied`.
 
-- [ ] **Step 3: Copiare le credenziali Google**
+- [x] **Step 3: Copiare le credenziali Google**
 
 Dal vecchio:
 
@@ -308,7 +308,7 @@ rsync -a -e "ssh -i /root/.ssh/id_migrate" /opt/audiobook-maker/credentials/ \
   root@80.211.137.33:/opt/audiobook-maker/credentials/
 ```
 
-- [ ] **Step 4: Copiare unit systemd e override con le variabili d'ambiente**
+- [x] **Step 4: Copiare unit systemd e override con le variabili d'ambiente**
 
 Preparare prima la directory sul nuovo server (rsync su un percorso-file non la crea):
 
@@ -330,7 +330,7 @@ rsync -a -e "ssh -i /root/.ssh/id_migrate" \
 
 (Non copiare `override.conf.bak`: è uno scarto storico.)
 
-- [ ] **Step 5: Verificare che le variabili siano arrivate integre**
+- [x] **Step 5: Verificare che le variabili siano arrivate integre**
 
 Sul nuovo, **senza stampare i valori**:
 
@@ -355,7 +355,7 @@ diff /root/env_keys_old.txt /root/env_keys_new.txt && echo "ENV KEYS OK"
 
 Atteso: `ENV KEYS OK`.
 
-- [ ] **Step 6: Ricaricare systemd lasciando il servizio fermo e disabilitato**
+- [x] **Step 6: Ricaricare systemd lasciando il servizio fermo e disabilitato**
 
 ```bash
 systemctl daemon-reload
@@ -377,7 +377,7 @@ Atteso: fermo e disabilitato. **Non avviare il servizio in questo task** — gir
 - Consumes: Task 1 (nginx, certbot, fail2ban installati), Task 2 (canale SSH).
 - Produces: nginx che risponde in HTTPS con il certificato valido di `audiobook-maker.com`; cron e fail2ban allineati (con il bug del cron disco corretto).
 
-- [ ] **Step 1: Copiare configurazione nginx e certificati**
+- [x] **Step 1: Copiare configurazione nginx e certificati**
 
 Dal vecchio:
 
@@ -394,7 +394,7 @@ Nota: `-L` risolve i symlink di `live/` in file reali. Dopo la copia, sul nuovo 
 
 Il vhost `test.audiobook-maker.com` **non** va copiato (fuori scope).
 
-- [ ] **Step 2: Confrontare `nginx.conf` globale e recepire le differenze**
+- [x] **Step 2: Confrontare `nginx.conf` globale e recepire le differenze**
 
 ```bash
 diff /root/nginx.conf.from_old /etc/nginx/nginx.conf
@@ -402,7 +402,7 @@ diff /root/nginx.conf.from_old /etc/nginx/nginx.conf
 
 Se il vecchio ha personalizzazioni (worker, `client_max_body_size` globale, gzip, log format), riportarle. Le `limit_req_zone` di `app_limit`/`upload_limit` stanno in cima al vhost del sito, quindi arrivano già con il file del Step 1.
 
-- [ ] **Step 3: Abilitare il sito e validare la configurazione**
+- [x] **Step 3: Abilitare il sito e validare la configurazione**
 
 ```bash
 ln -sf /etc/nginx/sites-available/audiobook-maker /etc/nginx/sites-enabled/audiobook-maker
@@ -413,7 +413,7 @@ systemctl reload nginx
 
 Atteso: `syntax is ok` / `test is successful`. Se `nginx -t` lamenta certificati mancanti, verificare i percorsi in `ssl_certificate` rispetto a quanto copiato in `/etc/letsencrypt/live/audiobook-maker.com/`.
 
-- [ ] **Step 4: Verificare il certificato servito dal nuovo server**
+- [x] **Step 4: Verificare il certificato servito dal nuovo server**
 
 Dal PC locale (PowerShell o bash), forzando la risoluzione senza toccare il DNS:
 
@@ -423,7 +423,7 @@ curl -sv --resolve audiobook-maker.com:443:80.211.137.33 https://audiobook-maker
 
 Atteso: subject `CN=audiobook-maker.com`, issuer Let's Encrypt, data di scadenza valida. Il codice HTTP sarà 502 (backend fermo): **è corretto in questa fase**.
 
-- [ ] **Step 5: Copiare gli script di ops e correggere il cron del controllo disco**
+- [x] **Step 5: Copiare gli script di ops e correggere il cron del controllo disco**
 
 Dal vecchio:
 
@@ -447,7 +447,7 @@ crontab -l
 chmod +x /opt/backup_ABM.sh /opt/check_disk_space.sh
 ```
 
-- [ ] **Step 6: Verificare che lo script disco funzioni davvero**
+- [x] **Step 6: Verificare che lo script disco funzioni davvero**
 
 ```bash
 bash /opt/check_disk_space.sh; echo "exit=$?"
@@ -455,7 +455,7 @@ bash /opt/check_disk_space.sh; echo "exit=$?"
 
 Atteso: esecuzione senza errori (exit 0). Se lo script invia email, verificare che non fallisca per postfix non configurato; in tal caso annotare e proseguire — non è bloccante per il cutover.
 
-- [ ] **Step 7: Replicare fail2ban**
+- [x] **Step 7: Replicare fail2ban**
 
 Dal vecchio:
 
@@ -475,7 +475,7 @@ fail2ban-client status
 
 Atteso: jail `sshd` e `nginx-badbots` attive. La `ignoreip` include l'IP dell'ufficio: verificarlo, altrimenti un errore di digitazione della password può bannare l'operatore durante il cutover.
 
-- [ ] **Step 8: Verificare rsyslog**
+- [x] **Step 8: Verificare rsyslog**
 
 ```bash
 systemctl is-active rsyslog
@@ -495,7 +495,7 @@ Atteso: `active` e file presente. È la fonte forense principale (retention 3-4 
 - Consumes: Task 2 (canale SSH), Task 3 (`/opt/audiobook-maker` esistente).
 - Produces: copia completa dei dati di produzione al tempo T, da aggiornare con la passata delta del Task 8.
 
-- [ ] **Step 1: Verificare lo spazio disponibile sul nuovo server**
+- [x] **Step 1: Verificare lo spazio disponibile sul nuovo server**
 
 ```bash
 df -h /opt
@@ -504,7 +504,7 @@ du -sh /opt/audiobook-maker/data 2>/dev/null || echo "data non ancora presente"
 
 Atteso: almeno 30 GB liberi su NEW (servono 23 GB più margine di crescita).
 
-- [ ] **Step 2: Lanciare la copia dei dati in sessione persistente**
+- [x] **Step 2: Lanciare la copia dei dati in sessione persistente**
 
 Dal vecchio, dentro `screen`/`nohup` perché la copia dura a lungo:
 
@@ -516,7 +516,7 @@ nohup rsync -aHAX --numeric-ids --info=progress2 \
 echo $!
 ```
 
-- [ ] **Step 3: Seguire l'avanzamento**
+- [x] **Step 3: Seguire l'avanzamento**
 
 ```bash
 tail -f /root/rsync_data_pass1.log
@@ -529,7 +529,7 @@ grep -iE "error|failed|denied" /root/rsync_data_pass1.log | head -20
 tail -3 /root/rsync_data_pass1.log
 ```
 
-- [ ] **Step 4: Copiare log di attività, backup e script di ops**
+- [x] **Step 4: Copiare log di attività, backup e script di ops**
 
 ```bash
 rsync -a -e "ssh -i /root/.ssh/id_migrate" /opt/audiobook-maker/activity_*.log \
@@ -538,7 +538,7 @@ rsync -a -e "ssh -i /root/.ssh/id_migrate" /opt/backup/ \
   root@80.211.137.33:/opt/backup/
 ```
 
-- [ ] **Step 5: Confrontare i due lati**
+- [x] **Step 5: Confrontare i due lati**
 
 Sul vecchio:
 
@@ -1025,3 +1025,46 @@ Fermarsi e chiedere all'utente se si verifica una di queste condizioni:
 6. `certbot renew --dry-run` fallisce dopo lo switch.
 7. Il download di un token preesistente non funziona dopo il cutover.
 8. Compaiono job attivi sul vecchio server al momento del freeze.
+
+---
+
+## Scostamenti registrati durante l'esecuzione (2026-08-21)
+
+Fatti emersi in corso d'opera, non previsti dal piano originale. Ognuno è già stato gestito;
+sono elencati perché cambiano l'inventario della spec o richiedono un'azione al cutover.
+
+1. **`ABM_MAX_CONCURRENT_GLOBAL` è 35, non 6** (e `ABM_MAX_CONCURRENT_ASSEMBLY` è già pinnato
+   a `2` nell'`override.conf`, non "non impostato"). La spec riportava i default del codice;
+   i valori reali di produzione vengono dall'override. Nessuna azione: l'override migrato li
+   porta con sé, quindi la capacità resta identica anche con 4 vCPU.
+
+2. **Credenziali Google — falso allarme.** L'env con `/opt/audiobook-maker-test/...` apparteneva
+   al processo del servizio *test*, non alla produzione. La prod usa
+   `/opt/audiobook-maker/credentials/vertex-sa.json` (md5 `42099af7…`, identico alla copia del
+   test). Nessuna dipendenza dall'ambiente test.
+
+3. **`nginx.conf` globale adottato dal vecchio server.** Il pacchetto nginx.org non include
+   `sites-enabled/*` (usa solo `conf.d/`): senza il file del vecchio il vhost non verrebbe
+   caricato. Il vecchio aggiunge anche il blocco Cloudflare `set_real_ip_from` +
+   `real_ip_header CF-Connecting-IP`. Il file del pacchetto è conservato in
+   `/etc/nginx/nginx.conf.pkg-default`.
+
+4. **Filtro fail2ban `nginx-badbots` è custom**, non fa parte del pacchetto: va copiato
+   `/etc/fail2ban/filter.d/nginx-badbots.conf` oltre alla jail, altrimenti fail2ban avvia
+   la sola jail `sshd`.
+
+5. **Cron `abm-cleanup-stale` sospeso fino al cutover.** Cancella ogni ora, alla cieca, ogni
+   job dir con mtime > 25 h. Poiché `rsync -a` preserva gli mtime, se restasse attivo
+   cancellerebbe i dati appena migrati *prima* del cutover. Spostato in
+   `/root/abm-cleanup-stale.DEFERRED_UNTIL_CUTOVER`.
+   **AZIONE AL CUTOVER:** ripristinarlo in `/etc/cron.d/` subito dopo lo start del servizio.
+
+6. **Bucket R2 condiviso con l'ambiente test — verificato sicuro.** Prod e test usano lo stesso
+   bucket `audiobook-maker` senza `ABM_S3_KEY_PREFIX`, ma il cold delete agisce solo su
+   `delete_prefix("<job_id>/")` e `list_keys` non ha chiamanti: nessuno sweep globale, job id
+   UUID, nessuna collisione. Il test può restare acceso sul vecchio server dopo il cutover.
+
+7. **Secret key R2 esposta in chat** durante una lettura di env con mascheramento difettoso.
+   **AZIONE RICHIESTA:** ruotare `ABM_S3_SECRET_KEY` dal pannello Cloudflare R2 e aggiornare
+   l'`override.conf` di entrambi i server. Da fare al cutover, quando il servizio viene
+   comunque riavviato (ruotarla prima significherebbe riavviare la produzione attuale).
