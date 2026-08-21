@@ -637,6 +637,97 @@ def _free_quota_log(job_id, decision, charged=False):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Price lock (D1): il prezzo quotato al create dell'ordine PayPal e' il prezzo
+# dovuto alla conferma.
+# ---------------------------------------------------------------------------
+# La stima TTS PREMIUM non e' deterministica nel tempo: estimate_audio_seconds
+# divide i caratteri per una media mobile empirica (gemini_tts_rate_log.json)
+# alimentata in tempo reale dalle generazioni di TUTTI i client. Fra il momento
+# in cui l'utente paga e il momento in cui conferma passano secondi o minuti, e
+# in quella finestra il prezzo si muove da solo. Il consumo del token confronta
+# `pagato + 0.05 >= dovuto_ricalcolato_ora`: quando la deriva supera i 5 cent il
+# token viene rifiutato con 402, il job non parte e la capture PayPal resta
+# orfana (nessun path pre-consumo emette refund) finche' il job non viene
+# purgato come "stale analyzed" -> alert di rimborso manuale.
+#
+# Incidente 21/08/2026, job N-RUN2qrc2blK82lRX_NdA: ordine creato alle 08:45:51
+# per 5,86€, capture alle 08:46:26, conferma alle 08:46:31 con dovuto
+# ricalcolato a 6,00€ (+2,4%: tre campioni nuovi nel rate log, due molto lenti,
+# avevano abbassato la media mobile del 2,34%). Stessa firma sull'orfano del
+# 14/08 (4,08€ pagati vs 4,17€ pretesi, +2,2%).
+#
+# Il lock e' registrato per order_id (non per job): con piu' ordini creati sullo
+# stesso job — succede col doppio click sul bottone di pagamento — ognuno porta
+# l'importo effettivamente quotato per quell'ordine. La firma degli input di
+# prezzo (voce, capitoli, velocita', lingua, AI on/off) e' registrata insieme
+# all'importo: se l'utente cambia qualcosa fra pagamento e conferma la firma non
+# combacia, il lock non si applica e il ricalcolo torna a essere quello vivo.
+_PRICE_LOCK_TTL_SEC = int(os.environ.get("ABM_PRICE_LOCK_TTL_SEC", "1800") or 1800)
+_PRICE_LOCK_MAX_PER_JOB = 8
+
+
+def _pricing_signature(voice_id, chapter_indexes, rate, lang, ai_opt):
+    """Firma canonica degli input che determinano il prezzo combinato.
+
+    `chapter_indexes` sono gli indici dei capitoli EFFETTIVI su cui e' calcolata
+    la stima (non la lista grezza del client): "nessuna selezione" e "tutti i
+    capitoli selezionati" devono produrre la stessa firma, altrimenti il lock
+    non si applicherebbe mai nel caso piu' comune.
+    """
+    try:
+        _sel = ",".join(str(int(i)) for i in sorted(chapter_indexes or []))
+    except (TypeError, ValueError):
+        _sel = ""
+    return "|".join([
+        (voice_id or "").strip(),
+        _sel,
+        str(rate or "+0%").strip(),
+        (lang or "").strip().lower(),
+        "1" if ai_opt else "0",
+    ])
+
+
+def _price_lock_store(job, order_id, sig, total_eur):
+    """Congela l'importo quotato per `order_id` sul job (in memoria)."""
+    if not isinstance(job, dict) or not order_id:
+        return
+    now = time.time()
+    locks = job.get("price_locks")
+    if not isinstance(locks, dict):
+        locks = {}
+    for _oid in [k for k, v in locks.items()
+                 if now - float((v or {}).get("ts", 0) or 0) > _PRICE_LOCK_TTL_SEC]:
+        locks.pop(_oid, None)
+    while len(locks) >= _PRICE_LOCK_MAX_PER_JOB:
+        locks.pop(next(iter(locks)), None)  # dict ordinato: esce il piu' vecchio
+    locks[order_id] = {"sig": sig, "total_eur": round(float(total_eur), 2), "ts": now}
+    job["price_locks"] = locks
+
+
+def _price_lock_lookup(job, token, sig):
+    """Importo lockato al create per questo token, o None se non applicabile.
+
+    None (-> si usa il ricalcolo vivo) quando: il token non e' un ordine creato
+    per questo job, gli input di prezzo sono cambiati, oppure il lock e' oltre
+    TTL (a quel punto il prezzo di ore prima non e' piu' difendibile).
+    """
+    if not isinstance(job, dict) or not token:
+        return None
+    rec = (job.get("price_locks") or {}).get(token)
+    if not isinstance(rec, dict) or rec.get("sig") != sig:
+        return None
+    try:
+        if time.time() - float(rec.get("ts", 0) or 0) > _PRICE_LOCK_TTL_SEC:
+            return None
+        _tot = round(float(rec.get("total_eur", 0) or 0), 2)
+        # Un lock a zero non esiste (nessun ordine PayPal viene creato per un
+        # importo nullo): trattalo come assente invece di azzerare il dovuto.
+        return _tot if _tot > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 _PLATFORM_HEADER = "X-ABM-Platform"
 _PLATFORM_RE = re.compile(r"^(android|ios)$")
 
@@ -9126,6 +9217,21 @@ def api_generate():
         )
         total_eur_pre = _quota_dec["due_eur"]
         threshold_pre = _quota_dec["threshold_eur"]
+        # Price lock (D1): stesso principio del flusso combinato in
+        # /api/optimize. Qui passa il percorso "voce PREMIUM senza
+        # ottimizzazione AI": paga -> conferma -> /api/generate ricalcola.
+        if not _quota_dec["is_free"] and payment_token:
+            _locked_pre = _price_lock_lookup(
+                job, payment_token,
+                _pricing_signature(voice,
+                                   [getattr(ch, "index", None) for ch in chs_pre],
+                                   rate, lang_pre, bool(data.get("ai_opt_enabled"))),
+            )
+            if _locked_pre is not None and abs(_locked_pre - total_eur_pre) > 0.005:
+                print(f"[{job_id}] price lock: dovuto {total_eur_pre:.2f}€ -> "
+                      f"{_locked_pre:.2f}€ (quotato al create dell'ordine "
+                      f"{payment_token[:12]}...)", flush=True)
+                total_eur_pre = _locked_pre
         _free_quota_log(job_id, _quota_dec)
         if _quota_dec["is_free"]:
             # Consumo differito al claim atomico dello stato (vedi sotto): un
@@ -11334,6 +11440,18 @@ def api_paypal_create_order_gemini():
         print(f"[paypal] gemini create_order failed: {e}")
         return jsonify({"error": f"paypal create failed: {e}"}), 500
 
+    # Price lock (D1): l'importo appena quotato resta il dovuto per questo
+    # ordine anche se la stima empirica si muove prima della conferma. Vedi
+    # _price_lock_store per il razionale completo.
+    _order_id = (order.get("id") or "").strip()
+    if _order_id:
+        _price_lock_store(
+            job, _order_id,
+            _pricing_signature(voice_id, [getattr(ch, "index", None) for ch in chs],
+                               rate, lang, ai_opt),
+            server_total,
+        )
+
     return jsonify({
         "order_id": order.get("id"),
         "amount": server_total,
@@ -11622,6 +11740,23 @@ def api_optimize():
         )
         _expected_total = _quota_dec["due_eur"]
         _threshold_combined = _quota_dec["threshold_eur"]
+        # Price lock (D1): se il token e' un ordine PayPal creato per QUESTO
+        # job con gli stessi input di prezzo, il dovuto e' l'importo quotato al
+        # create, non quello ricalcolato adesso. Senza lock la deriva della
+        # media mobile empirica fra pagamento e conferma manda in 402 un utente
+        # che ha gia' pagato, lasciando la capture orfana.
+        if not _quota_dec["is_free"] and _combined_token:
+            _locked = _price_lock_lookup(
+                job, _combined_token,
+                _pricing_signature(_voice_for_est,
+                                   [getattr(ch, "index", None) for ch in _chs_for_est],
+                                   _rate_for_est, _lang_for_est, True),
+            )
+            if _locked is not None and abs(_locked - _expected_total) > 0.005:
+                print(f"[{job_id}] price lock: dovuto {_expected_total:.2f}€ -> "
+                      f"{_locked:.2f}€ (quotato al create dell'ordine "
+                      f"{_combined_token[:12]}...)", flush=True)
+                _expected_total = _locked
         # Consumo immediato (qui il job parte davvero) e SOLO a quota attiva:
         # con ABM_FREE_QUOTA_EUR_PER_MONTH=0 riempire il contatore in silenzio
         # esaurirebbe i client il giorno in cui il limite viene alzato.
