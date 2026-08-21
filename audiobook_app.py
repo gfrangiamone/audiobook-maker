@@ -1013,12 +1013,41 @@ def _build_job_descriptor(job, phase):
     }
 
 
+def _sniff_input_kind(path):
+    """Tipo del file dai magic bytes: 'pdf' | 'epub' | 'abm' | 'txt'.
+    Serve ai descrittori legacy con input_path privo di estensione (upload con
+    nome interamente non-ASCII salvati come '<jobdir>/pdf'): senza sniffing il
+    dispatch per suffisso li mandava tutti a parse_txt e il recovery falliva."""
+    import zipfile
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4)
+    except OSError:
+        return "txt"
+    if head[:4] == b"%PDF":
+        return "pdf"
+    if head[:2] == b"PK" and zipfile.is_zipfile(str(path)):
+        try:
+            with zipfile.ZipFile(str(path), "r") as zf:
+                names = set(zf.namelist())
+        except Exception:
+            return "txt"
+        if "manifest.json" in names:
+            return "abm"
+        if "mimetype" in names or any(n.lower().endswith(".opf") for n in names):
+            return "epub"
+    return "txt"
+
+
 def _parse_book(path):
     """Ri-parsa un file su disco nello stesso modo di /api/analyze, ritornando
-    il BookInfo. Dispatch per estensione. Usato dal recupero job orfani.
+    il BookInfo. Dispatch per estensione, con fallback sui magic bytes quando
+    l'estensione manca. Usato dal recupero job orfani.
     parse_abm ritorna (info, cover_info): qui si scarta la cover."""
     import os
     ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext not in ("epub", "pdf", "abm", "txt"):
+        ext = _sniff_input_kind(path)
     if ext == "epub":
         return parse_epub(path)
     if ext == "pdf":
@@ -8143,6 +8172,29 @@ def _file_hash(path):
     return h.hexdigest()
 
 
+def _safe_upload_name(original_name, ext):
+    """Nome sicuro per il salvataggio dell'upload, con l'estensione GARANTITA.
+
+    secure_filename() su nomi interamente non-ASCII (es. '姑妄言.pdf') non
+    restituisce stringa vuota ma la sola estensione senza punto ('pdf'): il
+    vecchio fallback non scattava e il file finiva su disco come '<jobdir>/pdf'.
+    Da lì, ogni descrittore di recovery nasceva con input_path troncato e
+    _parse_book, che smista per suffisso, cadeva sul parser sbagliato.
+    """
+    from werkzeug.utils import secure_filename
+    ext = (ext or "").lower().lstrip(".")
+    safe = secure_filename(original_name or "")
+    root, dot, suffix = safe.rpartition(".")
+    if not dot:
+        root, suffix = safe, ""
+    if suffix.lower() != ext and root.lower() == ext:
+        # secure_filename ha eroso tutto lo stem lasciando la sola estensione
+        root = ""
+    if not root:
+        root = uuid.uuid4().hex[:8]
+    return f"{root}.{ext}" if ext else root
+
+
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
     # Rate-limit IP-based: previene spam upload / DoS.
@@ -8170,11 +8222,8 @@ def api_analyze():
         return jsonify({"error": "PDF support not available. Install pymupdf: pip install pymupdf"}), 400
 
     # Sanitize filename for disk storage (Security: prevent Path Traversal)
-    from werkzeug.utils import secure_filename
-    safe_name = secure_filename(file.filename)
-    if not safe_name:
-        # Fallback if secure_filename results in empty string (e.g. only non-ascii chars)
-        safe_name = str(uuid.uuid4())[:8] + "_" + fname_lower
+    ext = fname_lower.rsplit(".", 1)[-1]
+    safe_name = _safe_upload_name(file.filename, ext)
 
     job_id = _new_job_id()
     work_dir = UPLOAD_DIR / job_id
@@ -14416,6 +14465,83 @@ CLEANUP_INTERVAL_SEC = 60                   # check every 60 seconds
 CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimosse
 
 
+# Quiete richiesta prima di considerare "finito" un file locale rigenerato dopo
+# l'offload (stesso valore usato dall'offload in generation_engine).
+EVICT_REGEN_QUIET_SEC = int(os.environ.get("ABM_OFFLOAD_QUIET_SEC", "180"))
+# Dedup dei log di mismatch sospetto: la condizione persiste per tutta la
+# retention e senza dedup riempirebbe syslog con una riga ogni 60s per file.
+_EVICT_MISMATCH_LOGGED = {}
+
+
+def _local_output_intact(path):
+    """Verifica strutturale LOCALE di un output rigenerato.
+    True = integro, False = corrotto/troncato, None = formato per cui non
+    esiste un check economico (il chiamante lo tratta come NON verificato)."""
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return False
+    if size <= 0:
+        return False
+    suf = p.suffix.lower()
+    if suf in (".abm", ".zip"):
+        import zipfile
+        try:
+            if not zipfile.is_zipfile(str(p)):
+                return False
+            with zipfile.ZipFile(str(p), "r") as zf:
+                return zf.testzip() is None
+        except Exception:
+            return False
+    if suf in (".m4b", ".m4a", ".mp4"):
+        # Stessa camminata atom di _cold_m4b_valid, ma sul file locale: un m4b
+        # senza 'moov' è un output interrotto, mai autoritativo.
+        try:
+            with open(str(p), "rb") as fh:
+                offset = 0
+                guard = 0
+                while offset < size:
+                    guard += 1
+                    if guard > 64:
+                        return False
+                    fh.seek(offset)
+                    hdr = fh.read(16)
+                    if len(hdr) < 8:
+                        return False
+                    boxsize = int.from_bytes(hdr[0:4], "big")
+                    boxtype = hdr[4:8]
+                    header = 8
+                    if boxsize == 1:
+                        if len(hdr) < 16:
+                            return False
+                        boxsize = int.from_bytes(hdr[8:16], "big")
+                        header = 16
+                    elif boxsize == 0:
+                        boxsize = size - offset
+                    if boxtype == b"moov":
+                        return True
+                    if boxsize < header:
+                        return False
+                    offset += boxsize
+            return False
+        except OSError:
+            return False
+    return None
+
+
+def _evict_mismatch_should_log(key, cold_size, local_size):
+    """True solo la prima volta che si osserva questa coppia di dimensioni per
+    la chiave: evita il loop di log a ogni sweep sullo stesso mismatch."""
+    sig = (cold_size, local_size)
+    if _EVICT_MISMATCH_LOGGED.get(key) == sig:
+        return False
+    if len(_EVICT_MISMATCH_LOGGED) > 500:
+        _EVICT_MISMATCH_LOGGED.clear()
+    _EVICT_MISMATCH_LOGGED[key] = sig
+    return True
+
+
 def _evict_hot_local():
     """Cancella i file di output LOCALI dei job la cui finestra calda è scaduta
     e che risultano già su cold storage. Preserva dir + marker .cloud_uploaded
@@ -14477,12 +14603,33 @@ def _evict_hot_local():
                                 # NB: una re-gen legittima con output diverso
                                 # aggiorna il cold gia' al COMPLETE (offload
                                 # idempotente per size), quindi non passa di qui.
+                                # ECCEZIONE (2026-08): un locale SCRITTO DOPO il
+                                # marker .cloud_uploaded è una RIgenerazione
+                                # post-offload (es. lo snapshot .abm ricostruito
+                                # da /api/download?type=abm), non garbage: lo
+                                # zip nuovo può essere di pochi byte più piccolo
+                                # del cold e senza questa eccezione il guard B
+                                # bloccava l'evict per sempre, ri-loggando a ogni
+                                # sweep. Si promuove solo se il file è ormai
+                                # quiescente (non mid-write) e supera il check
+                                # strutturale locale.
                                 if cold_size is not None and cold_size > local_size:
-                                    print(f"[hot-evict] MISMATCH SOSPETTO "
-                                          f"(cold={cold_size} > local={local_size}): "
-                                          f"NO overwrite, NO evict — ispezione "
-                                          f"manuale richiesta: {f}")
-                                    continue
+                                    local_mtime = f.stat().st_mtime
+                                    regenerated = (
+                                        local_mtime > uploaded_at
+                                        and (now - local_mtime) >= EVICT_REGEN_QUIET_SEC
+                                        and _local_output_intact(f) is True
+                                    )
+                                    if not regenerated:
+                                        if _evict_mismatch_should_log(key, cold_size, local_size):
+                                            print(f"[hot-evict] MISMATCH SOSPETTO "
+                                                  f"(cold={cold_size} > local={local_size}): "
+                                                  f"NO overwrite, NO evict — ispezione "
+                                                  f"manuale richiesta: {f}")
+                                        continue
+                                    print(f"[hot-evict] locale RIGENERATO dopo l'offload "
+                                          f"(mtime +{int(local_mtime - uploaded_at)}s, integro): "
+                                          f"cold={cold_size} → local={local_size}, re-upload: {f}")
                                 print(f"[hot-evict] cold copy MISSING/TRUNCATED "
                                       f"(cold={cold_size} vs local={local_size}) — "
                                       f"re-upload before evict: {f}")
@@ -14494,6 +14641,7 @@ def _evict_hot_local():
                                     print(f"[hot-evict] upload-before-evict failed for {f}: {e}")
                                     cold_ok = False
                             if cold_ok:
+                                _EVICT_MISMATCH_LOGGED.pop(key, None)
                                 f.unlink()
                                 print(f"[hot-evict] Local removed (cold copy ok, {local_size}B): {f}")
                             else:

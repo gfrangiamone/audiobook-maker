@@ -138,6 +138,126 @@ def test_no_overwrite_when_cold_larger_than_local(aa, monkeypatch, tmp_path):
     assert audio.exists(), "il locale NON va evictato su mismatch sospetto"
 
 
+def _zip_bytes(payload="x"):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", payload)
+    return buf.getvalue()
+
+
+def test_promotes_regenerated_local_over_larger_cold(aa, monkeypatch, tmp_path):
+    """Loop infinito (incidente 2026-08): il download .abm RIGENERA lo snapshot
+    locale DOPO l'offload; lo zip nuovo è di pochi byte più piccolo del cold e
+    il guard B lo bloccava per sempre, ri-loggando a ogni sweep. Se il locale è
+    stato scritto dopo il marker, è quiescente ed è strutturalmente integro,
+    allora è LUI l'autoritativo: re-upload + evict."""
+    import os as _os
+    import time as _time
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobREGEN" / "output_1"
+    out.mkdir(parents=True)
+    snap = out / "book.abm"
+    snap.write_bytes(_zip_bytes("regenerated"))
+    now = _time.time()
+    storage_tiering.mark_cloud_uploaded(out, when=now - 10800)
+    # rigenerato dopo l'offload ma ormai fermo da un'ora
+    _os.utime(snap, (now - 3600, now - 3600))
+
+    uploaded = []
+    cold = {"size": snap.stat().st_size + 1}  # cold PIU' GRANDE di 1 byte
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+
+    def _upload(p, k):
+        uploaded.append(k)
+        cold["size"] = snap.stat().st_size
+    monkeypatch.setattr(storage_backend, "upload_file", _upload)
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: cold["size"])
+    audiobook_app.jobs["jobREGEN"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert uploaded, "il locale rigenerato doveva essere ri-caricato"
+    assert not snap.exists(), "e poi evictato"
+
+
+def test_no_promote_when_regenerated_local_is_corrupt(aa, monkeypatch, tmp_path):
+    """Stessa geometria del test precedente ma lo snapshot locale non è uno zip
+    valido: resta il comportamento del guard B (nessun overwrite, nessun evict)."""
+    import os as _os
+    import time as _time
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobCORR" / "output_1"
+    out.mkdir(parents=True)
+    snap = out / "book.abm"
+    snap.write_bytes(b"not-a-zip")
+    now = _time.time()
+    storage_tiering.mark_cloud_uploaded(out, when=now - 10800)
+    _os.utime(snap, (now - 3600, now - 3600))
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: uploaded.append(k))
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: 999999)
+    audiobook_app.jobs["jobCORR"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert not uploaded
+    assert snap.exists()
+
+
+def test_no_promote_when_local_is_older_than_offload(aa, monkeypatch, tmp_path):
+    """Locale antecedente al marker .cloud_uploaded = scenario B3 originale
+    (garbage da run fallito): nessuna promozione, anche se lo zip è valido."""
+    import os as _os
+    import time as _time
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobOLD" / "output_1"
+    out.mkdir(parents=True)
+    snap = out / "book.abm"
+    snap.write_bytes(_zip_bytes("stale"))
+    now = _time.time()
+    storage_tiering.mark_cloud_uploaded(out, when=now - 10800)
+    _os.utime(snap, (now - 20000, now - 20000))  # più vecchio dell'offload
+
+    uploaded = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: uploaded.append(k))
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: 999999)
+    audiobook_app.jobs["jobOLD"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    assert not uploaded
+    assert snap.exists()
+
+
+def test_mismatch_logged_once_across_sweeps(aa, monkeypatch, tmp_path, capsys):
+    """Il mismatch sospetto persiste per tutta la retention: va loggato una
+    volta sola per (file, size), non a ogni sweep da 60s."""
+    audiobook_app, storage_tiering = aa
+    import storage_backend
+    out = tmp_path / "jobLOG" / "output_1"
+    out.mkdir(parents=True)
+    audio = out / "book.m4b"
+    audio.write_bytes(b"x")
+    storage_tiering.mark_cloud_uploaded(out, when=__import__("time").time() - 10800)
+
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "upload_file", lambda p, k: None)
+    monkeypatch.setattr(storage_backend, "object_size", lambda k: 15394949)
+    audiobook_app.jobs["jobLOG"] = {"voice": "it-IT-IsabellaNeural"}
+
+    audiobook_app._evict_hot_local()
+    audiobook_app._evict_hot_local()
+    audiobook_app._evict_hot_local()
+    lines = [l for l in capsys.readouterr().out.splitlines()
+             if "MISMATCH SOSPETTO" in l]
+    assert len(lines) == 1, lines
+
+
 def test_no_evict_for_error_job(aa, monkeypatch, tmp_path):
     """B3 guard A: job in stato error -> output locale non autoritativo,
     niente eviction ne' upload per l'intera job dir."""

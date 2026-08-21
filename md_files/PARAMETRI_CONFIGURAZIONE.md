@@ -693,7 +693,7 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 | `ABM_S3_PRESIGN_TTL_SEC` | Validità presigned URL (s) | `21600` (6h) | storage_backend.py |
 | `ABM_HOT_WINDOW_SEC` | Finestra calda locale, voci standard (s) | `64800` (18h) | storage_tiering.py |
 | `ABM_HOT_WINDOW_GEMINI_SEC` | Finestra calda locale, voci PREMIUM (s) | `172800` (48h) | storage_tiering.py |
-| `ABM_OFFLOAD_QUIET_SEC` | Finestra di quiete (s): un output senza marker `.generation_complete` i cui file sono stati scritti da meno di N secondi è considerato in conversione e NON viene offloadato (gate anti race mid-write, vedi F1) | `180` | generation_engine.py |
+| `ABM_OFFLOAD_QUIET_SEC` | Finestra di quiete (s): un output senza marker `.generation_complete` i cui file sono stati scritti da meno di N secondi è considerato in conversione e NON viene offloadato (gate anti race mid-write, vedi F1) | `180` | generation_engine.py, audiobook_app.py (`EVICT_REGEN_QUIET_SEC`, vedi F5) |
 
 **Default voluti:** la finestra calda parte uguale alla retention attuale (18h/48h),
 così all'inizio i file vivono in locale esattamente come oggi; nessuna eviction
@@ -725,6 +725,7 @@ delete cold a fine retention totale (escluso per job sotto retention forense).
 **Invarianti anti-corruzione cold (post-incidente 2026-06):**
 - **F1 — offload gated sul completamento generazione.** Lo sweep `_reconcile_cold_offload` e `_offload_to_cloud` NON caricano un `output*` mentre la conversione M4B è in corso (un m4b mid-write non ha ancora l'atom `moov` finale). Gate: marker `.generation_complete` (scritto a COMPLETE dopo l'assemblaggio) **oppure**, per output pre-marker, nessuna scrittura sui file da almeno `ABM_OFFLOAD_QUIET_SEC`. Il reconcile salta inoltre i job ancora `generating`.
 - **F3 — eviction copy-verify by size.** `_evict_hot_local` cancella il file locale solo se `storage_backend.object_size(key) == size(locale)`; un cold troncato (size diversa) esiste ma NON autorizza la cancellazione → ri-upload del locale completo, ri-verifica size, poi delete.
+- **F5 — promozione del locale rigenerato dopo l'offload (2026-08).** Se il cold è PIÙ GRANDE del locale, il guard B (nessun overwrite, nessun evict) resta la regola, ma NON si applica quando il file locale è stato scritto DOPO il marker `.cloud_uploaded` (rigenerazione legittima, es. snapshot `.abm` ricostruito da `/api/download?type=abm`), è quiescente da almeno `ABM_OFFLOAD_QUIET_SEC` e supera il check strutturale locale (`_local_output_intact`: zip valido per `.abm`/`.zip`, atom `moov` per `.m4b`). In quel caso il locale è l'autoritativo: re-upload + evict. Senza questa eccezione un `.abm` rigenerato più piccolo di 1 byte bloccava l'eviction per sempre, con una riga di log a ogni sweep da 60s; i mismatch che restano sospetti sono ora loggati una sola volta per (file, coppia di dimensioni).
 
 ---
 
