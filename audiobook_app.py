@@ -10666,6 +10666,25 @@ def api_paypal_capture_order():
                       "PAYMENT_DUPLICATE_REFUSED", "", "", "", str(e))
         return jsonify({"error": "already_paid_for_job",
                         "detail": "This audiobook has already been paid."}), 409
+    except payment.UnfundedCaptureError as e:
+        # Capture PENDING non finanziata (tipicamente eCheck: addebito su conto
+        # bancario che la banca del pagante puo' respingere giorni dopo). Il
+        # denaro non e' sul conto e ABM eroga il servizio contestualmente al
+        # pagamento: il token NON viene emesso. `retryable`: il frontend riapre
+        # il checkout PayPal per far scegliere un altro strumento.
+        print(f"[paypal] capture UNFUNDED order={order_id} job={job_id} "
+              f"reason={e.reason or '-'} amount={e.amount_eur:.2f}")
+        _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
+                      "PAYMENT_UNFUNDED_PENDING", "", "", "",
+                      f"order={order_id} reason={e.reason or '-'} "
+                      f"amount={e.amount_eur:.2f}")
+        return jsonify({
+            "error": "Payment not settled yet — please choose another payment "
+                     "method (card or PayPal balance)",
+            "paypal_issue": "UNFUNDED_PENDING",
+            "paypal_pending_reason": e.reason,
+            "retryable": True,
+        }), 402
     except payment.PayPalCaptureRefusedError as e:
         # Ordine approvato ma capture rifiutata da PayPal (tipicamente rifiuto
         # dell'emittente della carta). L'issue e il debug_id finiscono nel log

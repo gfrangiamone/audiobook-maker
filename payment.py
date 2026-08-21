@@ -263,6 +263,33 @@ PENDING_ORDER_TTL_SEC = 60 * 60  # 1 ora
 # la frequenza ridotta dei capture.
 _capture_lock = threading.Lock()
 
+# Capture PayPal con status PENDING: il denaro NON e' ancora sul conto.
+# Alcuni reason si risolvono quasi sempre in COMPLETED (PENDING_REVIEW =
+# revisione antifrode PayPal); altri significano "fondi mai trasferiti" e
+# possono diventare "Annullato" giorni dopo -- tipicamente ECHECK, addebito su
+# conto bancario che la banca del pagante puo' respingere.
+# ABM eroga il servizio in modo CONTESTUALE al pagamento: accettare un PENDING
+# non finanziato significa consegnare l'audiolibro contro denaro che puo' non
+# arrivare mai. Vedi cliente ricorrente 2026-08 (4 eCheck annullati, 12,93 EUR
+# di servizio gia' erogato e mai incassato).
+# Override via env (CSV) per sbloccare senza deploy se un reason legittimo
+# finisse per errore in lista.
+_DEFAULT_UNFUNDED_PENDING_REASONS = (
+    "ECHECK",
+    "TRANSACTION_APPROVED_AWAITING_FUNDING",
+    "INTERNATIONAL_WITHDRAWAL",
+    "RECEIVING_PREFERENCE_MANDATES_MANUAL_ACTION",
+    "UNILATERAL",
+    "VERIFICATION_REQUIRED",
+)
+UNFUNDED_PENDING_REASONS = {
+    r.strip().upper()
+    for r in os.environ.get(
+        "ABM_PAYPAL_UNFUNDED_PENDING_REASONS",
+        ",".join(_DEFAULT_UNFUNDED_PENDING_REASONS)).split(",")
+    if r.strip()
+}
+
 # Rate limit voucher_validate
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
@@ -863,6 +890,8 @@ def _paypal_amount_matches(token: str, amount_eur: float, tolerance: float = 0.0
     pay = _payments.get(token)
     if not pay:
         return False
+    if pay.get("pending_unfunded"):
+        return False  # capture PENDING non finanziata: denaro non incassato
     return float(pay.get("amount_eur", 0) or 0) + tolerance >= float(amount_eur)
 
 
@@ -893,7 +922,11 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
     # to prevent double-spend under concurrent requests.
     with _payments_lock:
         pay = _payments.get(token)
-        if pay and not pay.get("used", False):
+        # `pending_unfunded`: capture eseguita ma denaro non trasferito (eCheck
+        # & co.). Il record esiste per tracciabilita' ma NON e' spendibile:
+        # senza questo guard il client potrebbe usare l'order_id come
+        # payment_token e ottenere il servizio gratis.
+        if pay and not pay.get("used", False) and not pay.get("pending_unfunded"):
             if not _paypal_amount_matches(token, amount_eur):
                 raise ValueError("paypal amount mismatch")
             # Mark order as used INSIDE the lock so other threads see used=True
@@ -1023,6 +1056,26 @@ class DuplicateJobCaptureError(ValueError):
     K1Rpn-x0fmaylsjKYGdftg (2026-07)."""
 
 
+class UnfundedCaptureError(ValueError):
+    """Capture riuscita ma in stato PENDING non finanziato (eCheck & simili):
+    il denaro non e' sul conto e puo' non arrivarci mai. Il servizio NON va
+    erogato.
+
+    Il record resta in ``_payments`` con ``pending_unfunded=True``: NON
+    consumabile come payment token, NON rimborsabile in automatico (rimborsare
+    denaro mai ricevuto sarebbe una seconda perdita), ma visibile per la
+    riconciliazione manuale quando l'eCheck si compensa o viene annullato.
+    """
+
+    def __init__(self, message, reason="", order_id="", amount_eur=0.0,
+                 capture_id=""):
+        super().__init__(message)
+        self.reason = (reason or "").upper()
+        self.order_id = order_id or ""
+        self.amount_eur = float(amount_eur or 0)
+        self.capture_id = capture_id or ""
+
+
 def capture_and_store_order(order_id: str, job_id: str = "",
                             amount_tolerance: float = 0.01):
     """Cattura un ordine PayPal in modo atomico con amount reconciliation.
@@ -1037,6 +1090,8 @@ def capture_and_store_order(order_id: str, job_id: str = "",
       - ``ValueError`` su input invalido o capture rifiutata da PayPal
       - ``CaptureAmountMismatchError`` se l'amount catturato differisce da quello
         registrato al create oltre la tolleranza (price tampering defense).
+      - ``UnfundedCaptureError`` se la capture torna PENDING con un reason di
+        mancato trasferimento fondi (``UNFUNDED_PENDING_REASONS``).
     """
     if not order_id:
         raise ValueError("missing order_id")
@@ -1046,6 +1101,15 @@ def capture_and_store_order(order_id: str, job_id: str = "",
         with _payments_lock:
             pay = _payments.get(order_id)
         if pay:
+            if pay.get("pending_unfunded"):
+                # Ordine gia' catturato ma non finanziato: ri-tentare non
+                # cambia nulla lato PayPal, e il servizio resta non erogabile.
+                raise UnfundedCaptureError(
+                    "PayPal capture pending/unfunded "
+                    f"({pay.get('pending_reason') or 'PENDING'})",
+                    reason=pay.get("pending_reason", ""), order_id=order_id,
+                    amount_eur=pay.get("amount_eur", 0),
+                    capture_id=pay.get("capture_id", ""))
             return {
                 "order_id": order_id,
                 "amount_eur": pay.get("amount_eur", 0),
@@ -1072,7 +1136,8 @@ def capture_and_store_order(order_id: str, job_id: str = "",
                 for oid, p in _payments.items():
                     if (isinstance(p, dict) and oid != order_id
                             and (p.get("job_id", "") or "") == job_id
-                            and p.get("captured_at")):
+                            and p.get("captured_at")
+                            and not p.get("pending_unfunded")):
                         existing = (oid, p)
                         if not p.get("used"):
                             break  # preferisci un capture ancora consumabile
@@ -1105,6 +1170,17 @@ def capture_and_store_order(order_id: str, job_id: str = "",
         if not captures or captures[0].get("status") not in ("COMPLETED", "PENDING"):
             raise ValueError("payment not completed")
         cap = captures[0]
+        pending_reason = ""
+        if (cap.get("status") or "").upper() == "PENDING":
+            pending_reason = (
+                (cap.get("status_details") or {}).get("reason") or "").upper()
+        unfunded = bool(pending_reason) and pending_reason in UNFUNDED_PENDING_REASONS
+        if pending_reason and not unfunded:
+            # Non in blocklist (es. PENDING_REVIEW): accettato, ma il denaro non
+            # e' ancora sul conto. Log esplicito per capire cosa arriva davvero
+            # in produzione ed eventualmente estendere la lista.
+            print(f"[paypal] WARN capture PENDING accettata order={order_id} "
+                  f"job={job_id or '-'} reason={pending_reason or '(nessuno)'}")
         try:
             amount_eur = float(cap.get("amount", {}).get("value", "0"))
         except (TypeError, ValueError):
@@ -1132,6 +1208,14 @@ def capture_and_store_order(order_id: str, job_id: str = "",
             # gia' serializza, ma garantiamo coerenza completa con altri reader)
             if order_id in _payments:
                 pay = _payments[order_id]
+                if pay.get("pending_unfunded"):
+                    raise UnfundedCaptureError(
+                        "PayPal capture pending/unfunded "
+                        f"({pay.get('pending_reason') or 'PENDING'})",
+                        reason=pay.get("pending_reason", ""),
+                        order_id=order_id,
+                        amount_eur=pay.get("amount_eur", 0),
+                        capture_id=pay.get("capture_id", ""))
                 return {
                     "amount_eur": pay.get("amount_eur", 0),
                     "email": pay.get("email", ""),
@@ -1140,7 +1224,7 @@ def capture_and_store_order(order_id: str, job_id: str = "",
                     "already_captured": True,
                 }
             now = time.time()
-            _payments[order_id] = {
+            rec = {
                 "order_id": order_id,
                 "amount_eur": amount_eur,
                 "amount_requested_eur": expected if expected is not None else amount_eur,
@@ -1151,12 +1235,28 @@ def capture_and_store_order(order_id: str, job_id: str = "",
                 "used_at": None,
                 "capture_id": cap.get("id", ""),
             }
+            if pending_reason:
+                rec["pending_reason"] = pending_reason
+            if unfunded:
+                # Registrato comunque: se l'eCheck si compensa il denaro arriva
+                # davvero e serve la traccia per la riconciliazione manuale.
+                rec["pending_unfunded"] = True
+            _payments[order_id] = rec
             try:
                 _save_payments()
             except Exception as e:
                 print(f"[paypal] save_payments failed (post-capture): {e}")
 
         _consume_pending_order(order_id)
+
+        if unfunded:
+            print(f"[paypal] UNFUNDED capture order={order_id} "
+                  f"job={job_id or '-'} reason={pending_reason} "
+                  f"amount={amount_eur:.2f} -> servizio NON erogato")
+            raise UnfundedCaptureError(
+                f"PayPal capture pending/unfunded ({pending_reason})",
+                reason=pending_reason, order_id=order_id,
+                amount_eur=amount_eur, capture_id=cap.get("id", ""))
 
         return {
             "order_id": order_id,
@@ -1198,6 +1298,10 @@ def iter_unused_captures(min_age_sec=0, now=None):
         if not isinstance(pay, dict):
             continue
         if pay.get("used"):
+            continue
+        if pay.get("pending_unfunded"):
+            # Denaro mai arrivato: non e' un capture orfano da rimborsare, e
+            # rimborsarlo (voucher) sarebbe una seconda perdita.
             continue
         cap_at = pay.get("captured_at")
         if not cap_at:
@@ -1241,6 +1345,9 @@ def refund_unused_capture(order_id, reason="", force=False):
         if not pay or not isinstance(pay, dict):
             return None
         if pay.get("used"):
+            return None
+        if pay.get("pending_unfunded"):
+            # Mai incassato: nessun rimborso dovuto (ne' voucher ne' manuale).
             return None
         amount = float(pay.get("amount_eur", 0) or 0)
         email = (pay.get("email") or "").strip().lower()
@@ -1316,6 +1423,7 @@ def refund_unused_captures_for_job(job_id, reason=""):
             if isinstance(pay, dict) and not pay.get("used")
             and (pay.get("job_id", "") or "") == job_id
             and pay.get("captured_at")
+            and not pay.get("pending_unfunded")
         ]
     results = []
     for oid in order_ids:
@@ -1348,6 +1456,11 @@ def settle_capture_consumed(order_id, job_id="", reason=""):
         if pay.get("used"):
             return None
         if not pay.get("captured_at"):
+            return None
+        if pay.get("pending_unfunded"):
+            # Il servizio non e' stato erogato contro questo ordine (la capture
+            # e' stata rifiutata a monte): incassarlo come "dovuto" darebbe per
+            # buono denaro mai ricevuto.
             return None
         pay["used"] = True
         pay["used_at"] = time.time()
@@ -1395,6 +1508,7 @@ def settle_delivered_captures_for_job(job_id, reason=""):
             if isinstance(pay, dict)
             and (pay.get("job_id", "") or "") == job_id
             and pay.get("captured_at")
+            and not pay.get("pending_unfunded")
         ]
     has_consumed = any(pay.get("used") for _, pay in job_orders)
     unused = [oid for oid, pay in job_orders if not pay.get("used")]

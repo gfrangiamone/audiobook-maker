@@ -1735,7 +1735,9 @@ async function renderPaypalGeminiButtons(){
           // Capture rifiutata dall'emittente (INSTRUMENT_DECLINED): flusso
           // ufficiale PayPal -> actions.restart() riapre il checkout così
           // l'utente sceglie un'altra carta/metodo invece di restare bloccato.
-          if(d.retryable&&d.paypal_issue==='INSTRUMENT_DECLINED'&&actions&&typeof actions.restart==='function'){
+          // UNFUNDED_PENDING: capture accettata da PayPal ma non finanziata
+          // (eCheck) -> stesso trattamento del rifiuto emittente.
+          if(d.retryable&&(d.paypal_issue==='INSTRUMENT_DECLINED'||d.paypal_issue==='UNFUNDED_PENDING')&&actions&&typeof actions.restart==='function'){
             _payPaypalErr((typeof t==='function'&&t('pay_paypal_declined'))||'Payment declined — choose another card or payment method');
             return actions.restart();
           }
