@@ -1182,8 +1182,82 @@ def _send_interrupted_email(rec, refund_code=None):
         print(f"[{rec.get('id')}] interrupted email failed (non-fatal): {e}")
 
 
+_delivered_ids_lock = threading.Lock()
+_delivered_ids_cache = {"value": None, "expires": 0.0}
+
+
+def _delivered_job_ids(months=3):
+    """Set dei job_id con COMPLETE / OPT_COMPLETE negli ultimi `months` log
+    mensili di attività. È la sola traccia persistente di "consegnato": il dict
+    jobs è in RAM e al boot è vuoto. Cache 5 minuti (il recovery interroga molti
+    descrittori in sequenza)."""
+    now = time.time()
+    with _delivered_ids_lock:
+        cached = _delivered_ids_cache["value"]
+        if cached is not None and now < _delivered_ids_cache["expires"]:
+            return cached
+    complete_ids, opt_ids = set(), set()
+    d = datetime.now()
+    year, month = d.year, d.month
+    for _ in range(max(1, int(months))):
+        log_path = SCRIPT_DIR / f"activity_{year:04d}-{month:02d}.log"
+        if log_path.exists():
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        parts = line.rstrip("\n").split(" # ")
+                        if len(parts) < 4:
+                            continue
+                        op = parts[3].strip()
+                        if op == "COMPLETE":
+                            complete_ids.add(parts[0].strip())
+                        elif op == "OPT_COMPLETE":
+                            opt_ids.add(parts[0].strip())
+            except OSError as e:
+                print(f"[recover] lettura {log_path.name} fallita: {e}")
+        month -= 1
+        if month == 0:
+            month, year = 12, year - 1
+    value = {"complete": complete_ids, "opt_complete": opt_ids}
+    with _delivered_ids_lock:
+        _delivered_ids_cache["value"] = value
+        _delivered_ids_cache["expires"] = time.time() + 300
+    return value
+
+
+def _orphan_job_delivered(job_id, rec):
+    """True se l'activity log dimostra che questo job è stato portato a termine.
+    Per la fase 'optimize' basta OPT_COMPLETE; per 'generate' serve COMPLETE
+    (un OPT_COMPLETE senza COMPLETE significa audio mai prodotto)."""
+    try:
+        idx = _delivered_job_ids()
+    except Exception as e:
+        print(f"[recover] {job_id}: check consegna fallito, procedo col rimborso: {e}")
+        return False
+    if job_id in idx["complete"]:
+        return True
+    return rec.get("phase") == "optimize" and job_id in idx["opt_complete"]
+
+
 def _orphan_fallback(job_id, rec):
-    """Dopo il cap tentativi: rimborso secondo policy + mail interrotto + mark failed."""
+    """Dopo il cap tentativi: rimborso secondo policy + mail interrotto + mark failed.
+
+    Se però l'activity log dice che il job era già stato consegnato, il
+    descrittore è rimasto aperto per un buco di finalize (job senza
+    notify_email, o SMTP fallito), non per un'elaborazione andata persa:
+    niente rimborso e niente email "interrotto", si chiude e basta."""
+    if _orphan_job_delivered(job_id, rec):
+        print(f"[recover] {job_id}: job già consegnato (COMPLETE nell'activity log) "
+              f"→ nessun rimborso, chiudo il descrittore")
+        try:
+            pending_jobs.finalize(job_id)
+        except Exception as e:
+            print(f"[recover] finalize {job_id} failed: {e}")
+            try:
+                pending_jobs.mark_failed(job_id)
+            except Exception:
+                pass
+        return
     job_like = {"payment": rec.get("payment"),
                 "client_id": rec.get("client_id", ""),
                 "client_ip": rec.get("client_ip", "")}
@@ -5021,6 +5095,12 @@ def admin_vouchers_page():
       <div><label>Validità (giorni)</label><input id="cDays" type="number" min="1" value="180"></div>
       <div><label>&nbsp;</label><button onclick="createVoucher()" style="width:100%">Crea voucher</button></div>
     </div>
+    <div class="row">
+      <div><label>Job ID d'origine (solo refund)</label><input id="cJobId" placeholder="es. 9dmJT_I3lHSeD2Vwz0Bu1A">
+        <div class="hint">Collega il rimborso al job: evita che il rimborso automatico ne emetta un secondo. Se vuoto, viene cercato nella nota.</div>
+      </div>
+      <div><label>Order ID PayPal (opzionale)</label><input id="cOrderId" placeholder="ricavato dal job se vuoto"></div>
+    </div>
     <label>Nota (causale interna)</label>
     <textarea id="cNote" rows="2" placeholder="Es: campagna lancio, influencer X, compenso collaboratore..."></textarea>
     <div id="createMsg"></div>
@@ -5152,12 +5232,16 @@ async function createVoucher(){
   var days=parseInt(document.getElementById('cDays').value||'180');
   var kind=document.getElementById('cKind').value;
   var note=document.getElementById('cNote').value.trim();
+  var jobId=document.getElementById('cJobId').value.trim();
+  var orderId=document.getElementById('cOrderId').value.trim();
   if(!email||!amount||amount<=0){msg('createMsg','Email e importo > 0 obbligatori','err');return}
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)){msg('createMsg','Indirizzo email non valido','err');return}
   try{
-    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note}});
-    msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)','ok');
+    var j=await api('/admin/api/vouchers',{method:'POST',body:{email:email,amount_eur:amount,days:days,kind:kind,note:note,job_id:jobId,order_id:orderId}});
+    var origin=j.origin_job_id?(' - collegato al job '+escapeHtml(j.origin_job_id)):(kind==='refund'?' - <b>nessun job collegato</b>':'');
+    msg('createMsg','Creato <code>'+j.code+'</code> per '+escapeHtml(email)+' ('+j.amount_eur.toFixed(2)+' EUR)'+origin,'ok');
     document.getElementById('cEmail').value='';document.getElementById('cAmount').value='';document.getElementById('cNote').value='';
+    document.getElementById('cJobId').value='';document.getElementById('cOrderId').value='';
     await loadList();
   }catch(e){msg('createMsg','Errore: '+e.message,'err')}
 }
@@ -5240,6 +5324,8 @@ def admin_api_vouchers():
         days = 180
     kind = (data.get("kind") or "promo").strip().lower()
     note = (data.get("note") or "").strip()
+    origin_job_id = (data.get("job_id") or "").strip()
+    origin_order_id = (data.get("order_id") or "").strip()
     if not email or not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$', email):
         return jsonify({"error": "invalid email"}), 400
     if amount <= 0:
@@ -5248,6 +5334,23 @@ def admin_api_vouchers():
         return jsonify({"error": "days out of range (1..3650)"}), 400
     if kind not in ("promo", "gift", "refund"):
         return jsonify({"error": "invalid kind"}), 400
+
+    # Rimborsi manuali: devono restare tracciabili al job d'origine, altrimenti
+    # payment.has_refund_for_job() non li vede e il rimborso automatico (recovery
+    # orfani, refund Gemini) ne emette un secondo sullo stesso job.
+    if kind == "refund":
+        if not origin_job_id:
+            # Fallback: job id (22 char base64url) citato nella causale interna.
+            m_job = re.search(r'\b([A-Za-z0-9_-]{22})\b', note)
+            if m_job:
+                origin_job_id = m_job.group(1)
+        if origin_job_id and not origin_order_id:
+            for _oid, _pay in payment._payments.items():
+                if origin_job_id in (_pay.get("used_for_job"), _pay.get("job_id")):
+                    origin_order_id = _oid
+                    break
+    else:
+        origin_job_id = origin_order_id = ""
 
     # Codice con prefisso a seconda del tipo
     prefix = "PROMO-" if kind == "promo" else ("GIFT-" if kind == "gift" else "")
@@ -5267,6 +5370,8 @@ def admin_api_vouchers():
 
     code, bonus_amount = _create_voucher(
         email, amount,
+        origin_order_id=origin_order_id or None,
+        origin_job_id=origin_job_id or None,
         kind=kind,
         note=note,
         created_by="admin",
@@ -5275,12 +5380,16 @@ def admin_api_vouchers():
         code=custom_code,
     )
     _log_activity("", "", f"ADMIN_VOUCHER_CREATE:{kind}", "", ip, code[:8] + "...", email)
-    print(f"[admin] voucher created via UI: {code} kind={kind} email={email} amount={amount:.2f} days={days} ip={ip}")
+    print(f"[admin] voucher created via UI: {code} kind={kind} email={email} "
+          f"amount={amount:.2f} days={days} job={origin_job_id or '-'} "
+          f"order={origin_order_id or '-'} ip={ip}")
     return jsonify({
         "code": code,
         "amount_eur": bonus_amount,
         "expires_at": payment._vouchers[code].get("expires_at"),
         "kind": kind,
+        "origin_job_id": origin_job_id or None,
+        "origin_order_id": origin_order_id or None,
     })
 
 

@@ -2812,6 +2812,14 @@ def run_optimization(job_id, selected_chapters=None):
             except Exception as e:
                 print(f"[{job_id}] Optimization email error: {e}")
                 _emit_finalization_progress("Optimization complete (email error, retry manually).", 1.0)
+            # Optimize-only batch: il lavoro pagato è finito qui. Chiudi il
+            # descrittore anche se l'email non è partita, altrimenti il job
+            # risulta orfano ai riavvii successivi e finisce in rimborso.
+            try:
+                pending_jobs.finalize(job_id)
+            except Exception as _e_fin:
+                print(f"[{job_id}] pending_jobs.finalize (OPT_COMPLETE) failed "
+                      f"(non-fatal): {_e_fin}", flush=True)
             _set_job_status(job, "optimized")
         else:
             # Interactive mode: just mark as optimized
@@ -5410,6 +5418,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                               job.get("voice", ""), job.get("browser_lang", ""))
             except Exception:
                 pass
+
+        # Il descrittore di recovery si chiude sul COMPLETE, non sull'invio mail.
+        # _send_completion_email chiama finalize solo nel ramo "email inviata":
+        # i job senza notify_email (mobile/batch) e quelli con SMTP fallito
+        # restavano orfani per sempre → a ogni riavvio _recover_orphan_jobs
+        # bumpava attempts e, superato il cap, emetteva un rimborso automatico
+        # su un audiolibro in realtà già consegnato. Qui il job è completo:
+        # chiudiamo il descrittore in tutti i rami.
+        try:
+            pending_jobs.finalize(job_id)
+        except Exception as _e_fin:
+            print(f"[{job_id}] pending_jobs.finalize (post-COMPLETE) failed "
+                  f"(non-fatal): {_e_fin}", flush=True)
 
         # Copie amministrative agganciate mentre il job era in corso: ora che è
         # completato, materializza i download token admin-owned (indagine).
