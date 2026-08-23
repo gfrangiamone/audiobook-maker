@@ -15325,6 +15325,55 @@ def _log_memory_stats(now, force=False):
         print(line)
 
 
+MALLOC_TRIM_INTERVAL_SEC = int(os.environ.get("ABM_MALLOC_TRIM_INTERVAL_SEC", "1800"))
+_last_malloc_trim = [0.0]
+_libc_trim = []      # [] = non ancora risolto, [None] = non disponibile
+
+
+def _malloc_trim(now, force=False):
+    """Restituisce al sistema operativo l'heap glibc gia' libero.
+
+    Ogni generazione tiene il testo del libro in RAM due volte (i capitoli di
+    BookInfo e il piano dei chunk): un picco di alcuni MB per job che CPython
+    libera regolarmente ma che glibc trattiene nell'heap del processo invece di
+    restituirlo al kernel. Il risultato e' una RSS che cresce in modo monotono
+    (~12 MB per job misurati in produzione il 21-23/08/2026) mentre i dati vivi
+    restano pochi: i job spillati tengono in vita qualche decina di KB, non
+    megabyte. malloc_trim(0) ricompatta le arene e restituisce le pagine libere.
+
+    Complementare — non alternativo — a MALLOC_MMAP_THRESHOLD_/MALLOC_ARENA_MAX
+    nell'unit systemd, che agiscono a monte impedendo che quelle pagine finiscano
+    nell'heap non restituibile. No-op fuori da glibc (Windows, musl).
+    """
+    if not force and (now - _last_malloc_trim[0]) < MALLOC_TRIM_INTERVAL_SEC:
+        return
+    _last_malloc_trim[0] = now
+    if not _libc_trim:
+        fn = None
+        if sys.platform.startswith("linux"):
+            try:
+                import ctypes
+                fn = ctypes.CDLL("libc.so.6").malloc_trim
+                fn.argtypes = [ctypes.c_size_t]
+                fn.restype = ctypes.c_int
+            except Exception as e:
+                print(f"[mem] malloc_trim non disponibile ({e}): trim disattivato")
+                fn = None
+        _libc_trim.append(fn)
+    fn = _libc_trim[0]
+    if fn is None:
+        return
+    before = _read_proc_kv("/proc/self/status").get("VmRSS", 0) / 1024.0
+    try:
+        released = fn(0)
+    except Exception as e:
+        print(f"[mem] malloc_trim error (non-fatal): {e}")
+        return
+    after = _read_proc_kv("/proc/self/status").get("VmRSS", 0) / 1024.0
+    print(f"[mem] malloc_trim: rss {before:.0f}MB -> {after:.0f}MB "
+          f"(liberati {before - after:.0f}MB, released={released})")
+
+
 def _cleanup_supervisor():
     """Mantiene vivo _cleanup_loop a ogni costo.
 
@@ -15604,6 +15653,13 @@ def _cleanup_loop():
 
         # Flush pending admin digest (rate-limited: max 1/hour)
         _try_send_admin_digest()
+
+        # Ultimo passo del ciclo: restituisce al SO l'heap liberato dalla purga
+        # appena fatta (rate-limited a MALLOC_TRIM_INTERVAL_SEC).
+        try:
+            _malloc_trim(time.time())
+        except Exception as e:
+            print(f"[mem] malloc_trim skipped (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------

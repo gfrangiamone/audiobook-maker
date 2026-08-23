@@ -29,6 +29,16 @@ import uuid
 # Windows: evita che ffmpeg/ffprobe apra finestre console nascoste
 _SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
+# Decodifica dell'output dei processi esterni (ffmpeg/ffprobe). ffmpeg tronca a
+# lunghezza fissa i nomi file e i tag che stampa nei log: su un titolo CJK il
+# taglio cade a meta' di un carattere multibyte e produce UTF-8 non valido, che
+# con la decodifica stretta implicita in text=True fa fallire l'intera
+# conversione (incidente 23/08/2026: M4B di un audiolibro cinese perso con
+# "'utf-8' codec can't decode byte 0xe4 ... invalid continuation byte").
+# L'output di un processo esterno e' materiale di log: non deve mai poter far
+# fallire la conversione.
+_TEXT_UTF8_LENIENT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 
 def _check_audio_dependencies():
     """Verifica la presenza di ffmpeg e ffprobe nel PATH di sistema.
@@ -414,7 +424,7 @@ def _generate_silence_mp3(output_path, duration_sec=3):
              f"anullsrc=r=24000:cl=mono",
              "-t", str(duration_sec), "-c:a", "libmp3lame",
              "-b:a", "48k", "-q:a", "9", output_path],
-            capture_output=True, text=True, **_SUBPROCESS_FLAGS
+            capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
         )
         if result.returncode == 0 and os.path.exists(output_path):
             return True
@@ -443,7 +453,7 @@ def _concatenate_mp3(parts, output):
         result = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
              "-i", list_file, "-c", "copy", output],
-            capture_output=True, text=True, **_SUBPROCESS_FLAGS
+            capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
         )
         os.remove(list_file)
         if result.returncode == 0:
@@ -464,7 +474,7 @@ def _get_audio_duration_ms(file_path):
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, **_SUBPROCESS_FLAGS)
+        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=10, **_SUBPROCESS_FLAGS)
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip()) * 1000
     except Exception as e:
@@ -486,7 +496,7 @@ def _get_audio_bitrate(file_path):
             "ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, **_SUBPROCESS_FLAGS)
+        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=10, **_SUBPROCESS_FLAGS)
         if result.returncode == 0 and result.stdout.strip():
             bps = int(float(result.stdout.strip()))
             # Converti bps → kbps, clampa a range ragionevole [32, 320]
@@ -531,7 +541,7 @@ def _validate_m4b_file(file_path):
             "-of", "default=noprint_wrappers=1",
             file_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, **_SUBPROCESS_FLAGS)
+        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=15, **_SUBPROCESS_FLAGS)
         if result.returncode != 0:
             print(f"[_validate_m4b_file] ffprobe rc={result.returncode}: "
                   f"{result.stderr[-300:] if result.stderr else '(no output)'}")
@@ -839,7 +849,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
 
         # Tentativo 1: con cover art
         cmd = _build_cmd(use_cover=True)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
+        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
 
         # Fallback: se la conversione con cover fallisce, riprova senza cover
         if result.returncode != 0 and cover_path and os.path.exists(cover_path):
@@ -851,7 +861,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
                 except OSError:
                     pass
             cmd = _build_cmd(use_cover=False)
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
+            result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
 
         if metadata_file and os.path.exists(metadata_file):
             os.remove(metadata_file)
@@ -1209,7 +1219,7 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
             r = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
-                capture_output=True, text=True, **_SUBPROCESS_FLAGS
+                capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
             )
             if r.returncode == 0 and r.stdout.strip():
                 return int(float(r.stdout.strip()))
