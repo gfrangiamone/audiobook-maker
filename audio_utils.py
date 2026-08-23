@@ -759,8 +759,9 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
     MP3 originali (AAC è leggermente più efficiente di MP3 a parità di bitrate).
     Fallback bitrate: 48 kbps (default edge-tts: audio-24khz-48kbitrate-mono-mp3).
 
-    Timeout aumentato a 3600s per supportare audiolibri lunghi (post-ottimizzazione AI il
-    testo può espandersi significativamente, aumentando la durata della codifica AAC).
+    L'encode non ha un tetto a tempo fisso: è sorvegliato da `_run_ffmpeg_encode`,
+    che uccide ffmpeg solo quando smette di scrivere l'output (stallo reale) e non
+    quando scade un cronometro cieco alla lunghezza del libro.
     Fallback automatico senza cover se l'embedding cover fallisce.
     I capitoli con durata zero (ffprobe non disponibile) vengono filtrati per evitare
     metadati invalidi che causerebbero il fallimento di ffmpeg.
@@ -843,17 +844,29 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             c += ["-c:a", "aac", "-b:a", aac_bitrate, "-f", "ipod", m4b_path]
             return c
 
-        # Timeout elevato: la codifica AAC di audiolibri lunghi (post-ottimizzazione AI)
-        # può richiedere molti minuti su server modesti.
-        M4B_TIMEOUT = 3600  # 1 ora
+        # Nessun tetto a tempo fisso sull'encode: si sorveglia lo STALLO dell'output.
+        # Un cronometro non sa quanto dura il libro e uccide a meta' opera le
+        # conversioni legittime (incidente 23/08/2026: audiolibro di ~98 ore, MP3
+        # sorgente da 2,1 GB, ffmpeg ucciso a 3600 s dopo aver scritto il 90%
+        # dell'M4B, poi ritentato identico per un'altra ora — due ore di CPU
+        # bruciate su 4 vCPU e nessun M4B). _run_ffmpeg_encode concede a ffmpeg
+        # tutto il tempo che serve finche' il file cresce, e lo termina solo
+        # quando smette davvero di scrivere. La durata attesa alimenta il tetto
+        # assoluto, che resta come rete di sicurezza proporzionata all'opera.
+        expected_sec = (_get_audio_duration_ms(mp3_path) or 0) / 1000.0
 
         # Tentativo 1: con cover art
         cmd = _build_cmd(use_cover=True)
-        result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
+        ok, stderr_tail, reason = _run_ffmpeg_encode(
+            cmd, m4b_path, "_convert_mp3_to_m4b", expected_sec=expected_sec)
 
-        # Fallback: se la conversione con cover fallisce, riprova senza cover
-        if result.returncode != 0 and cover_path and os.path.exists(cover_path):
-            print(f"[_convert_mp3_to_m4b] cover fallita (rc={result.returncode}), "
+        # Fallback: se la conversione con cover fallisce, riprova senza cover.
+        # Solo su errore vero di ffmpeg (rc=N): uno stallo o il tetto assoluto non
+        # dipendono dalla cover, e ripartire da zero brucerebbe una seconda volta
+        # lo stesso tempo per finire allo stesso modo.
+        if (not ok and reason.startswith("rc=") and cover_path
+                and os.path.exists(cover_path)):
+            print(f"[_convert_mp3_to_m4b] cover fallita ({reason}), "
                   f"riprovo senza cover")
             if os.path.exists(m4b_path):
                 try:
@@ -861,14 +874,15 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
                 except OSError:
                     pass
             cmd = _build_cmd(use_cover=False)
-            result = subprocess.run(cmd, capture_output=True, **_TEXT_UTF8_LENIENT, timeout=M4B_TIMEOUT, **_SUBPROCESS_FLAGS)
+            ok, stderr_tail, reason = _run_ffmpeg_encode(
+                cmd, m4b_path, "_convert_mp3_to_m4b", expected_sec=expected_sec)
 
         if metadata_file and os.path.exists(metadata_file):
             os.remove(metadata_file)
 
-        if result.returncode != 0:
-            print(f"[_convert_mp3_to_m4b] ffmpeg error (rc={result.returncode}): "
-                  f"{result.stderr[-500:] if result.stderr else '(no output)'}")
+        if not ok:
+            print(f"[_convert_mp3_to_m4b] ffmpeg fallito ({reason}): "
+                  f"{stderr_tail[-500:] if stderr_tail else '(no output)'}")
             # Rimuovi eventuale file parziale lasciato da ffmpeg
             if os.path.exists(m4b_path):
                 try:
@@ -897,7 +911,9 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             return True
         return False
     except subprocess.TimeoutExpired:
-        print(f"[_convert_mp3_to_m4b] timeout dopo {M4B_TIMEOUT}s — file troppo grande?")
+        # Residuo: puo' arrivare solo dagli ffprobe ausiliari (bitrate, durata),
+        # non piu' dall'encode, che ora non ha un tetto a tempo fisso.
+        print("[_convert_mp3_to_m4b] timeout di un sotto-comando ffprobe")
         # Rimuovi file parziale lasciato dal subprocess killato
         if os.path.exists(m4b_path):
             try:
