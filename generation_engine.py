@@ -54,6 +54,7 @@ from audio_utils import (
     _prepare_m4b_cover_path,
     _generate_podcast_rss,
     pcm_size_to_seconds,
+    truncate_filename,
     pcm_to_mp3,
     # pcm_to_aac_m4b / _convert_mp3_to_m4b: il runtime usa le varianti _monitored,
     # ma i test patchano questi nomi nel namespace del modulo (monkeypatch.setattr
@@ -2973,7 +2974,10 @@ def run_translation(job_id):
         # Scrittura output nella job dir (pattern output_<epoch> esistente)
         out_dir = Path(_upload_dir) / job_id / f"output_{int(start_time)}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        safe = translation_core._safe_filename(out_name)[:80] or "translated"
+        # truncate_filename: _safe_filename di translation_core non tronca, e
+        # [:80] conta caratteri -> un titolo CJK/emoji supererebbe i 255 byte.
+        safe = truncate_filename(
+            translation_core._safe_filename(out_name)[:80]) or "translated"
         filename = f"{safe}.{out_format}"
         out_path = out_dir / filename
         manifest_src = {

@@ -1343,6 +1343,27 @@ def _generate_podcast_rss(info, mp3_files, output_path, base_url="", cover_filen
 # Filename sanitization
 # ---------------------------------------------------------------------------
 
+# Limite di lunghezza dei nomi file generati, in BYTE UTF-8. I filesystem
+# (ext4: 255 byte per componente del path) contano byte, non caratteri: un
+# titolo CJK (3 byte/carattere) o con emoji (4 byte) supera i 255 byte molto
+# prima dei 255 caratteri e fa fallire l'apertura del file con
+# OSError [Errno 36] File name too long, uccidendo il thread del job. Il
+# margine rispetto ai 255 byte copre estensione e suffissi aggiunti dai
+# chiamanti (numerazione capitoli, _podcast.xml, ...).
+MAX_FILENAME_BYTES = 150
+
+
+def truncate_filename(name, max_bytes=MAX_FILENAME_BYTES):
+    """Tronca un nome file a max_bytes in UTF-8 senza spezzare i caratteri."""
+    if not name:
+        return name
+    raw = name.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return name
+    # errors='ignore' scarta l'eventuale carattere multibyte tagliato a meta'.
+    return raw[:max_bytes].decode("utf-8", "ignore")
+
+
 def _safe_filename(name):
     """Sanitizza un nome file rimuovendo caratteri non consentiti."""
     import re
@@ -1353,7 +1374,8 @@ def _safe_filename(name):
     # Security: prevent filename starting with '-' to avoid CLI argument injection
     if name.startswith('-'):
         name = '_' + name
-    return name[:100]
+    # Doppio limite: 100 caratteri (storico) e MAX_FILENAME_BYTES byte UTF-8.
+    return truncate_filename(name[:100])
 
 
 # ---------------------------------------------------------------------------
