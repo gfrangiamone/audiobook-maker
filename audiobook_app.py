@@ -119,6 +119,7 @@ from tts_split import (
 )
 
 import assembly_queue
+import load_metrics
 import email_service
 import push_service
 import metrics_store
@@ -884,7 +885,7 @@ def _server_at_capacity():
     return active >= cap, active, cap
 
 
-def _server_busy_response(job_id="", where=""):
+def _server_busy_response(job_id="", where="", premium=False):
     """429 server_busy se l'istanza e' al tetto globale, altrimenti None.
 
     Va invocata PRIMA di chiedere un pagamento: l'utente deve sapere che il
@@ -895,6 +896,7 @@ def _server_busy_response(job_id="", where=""):
     at_capacity, active, cap = _server_at_capacity()
     if not at_capacity:
         return None
+    load_metrics.incr("rej_busy_p" if premium else "rej_busy")
     print(f"[{job_id or '-'}] {where or 'richiesta'} rifiutata: tetto globale "
           f"raggiunto ({active}/{cap})", flush=True)
     return jsonify({
@@ -9169,7 +9171,9 @@ def api_generate():
     # server e' saturo l'utente viene avvisato subito ("server sovraccarico"),
     # senza che gli venga chiesto alcun pagamento. La verifica dentro il blocco
     # atomico piu' sotto resta come guardia sulla race.
-    _busy = _server_busy_response(job_id, "/api/generate")
+    _busy = _server_busy_response(
+        job_id, "/api/generate",
+        premium=generation_engine.is_premium_job(jobs.get(job_id) or {}))
     if _busy is not None:
         return _busy
 
@@ -9657,6 +9661,8 @@ def api_generate():
         if MAX_CONCURRENT_GLOBAL > 0:
             _active_total = _active_generating_total_unlocked()
             if _active_total >= MAX_CONCURRENT_GLOBAL:
+                load_metrics.incr(
+                    "rej_busy_p" if generation_engine.is_premium_job(job) else "rej_busy")
                 _refund_payment_on_orphan(job_id, job, "server_busy")
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
@@ -11499,7 +11505,8 @@ def api_paypal_create_order_gemini():
     # Server saturo: nessun ordine PayPal viene creato. Il gate esiste anche in
     # /api/generate prima del preflight, ma la capacita` puo` esaurirsi mentre
     # il modale di pagamento e` gia` aperto.
-    _busy = _server_busy_response(job_id, "/api/paypal_create_order_gemini")
+    _busy = _server_busy_response(job_id, "/api/paypal_create_order_gemini",
+                                  premium=True)
     if _busy is not None:
         return _busy
 
@@ -15345,8 +15352,145 @@ def _log_memory_stats(now, force=False):
             _log_activity("system", line, "MEMORY_PRESSURE")
         except Exception:
             pass
+        load_metrics.incr("memp")
     else:
         print(line)
+
+
+# ----------------------------------------------------------------------
+# TELEMETRIA DI CARICO — campionatore
+# ----------------------------------------------------------------------
+# Heartbeat del cleanup loop: [epoch dell'ultimo giro completato]. L'eta' di
+# questo valore e' il segnale che mancava quando il thread mori' silenziosamente
+# (incidente 2026-06-15: 17h senza retention, disco al 100%).
+_cleanup_heartbeat = [time.time()]
+_cpu_prev = [None]          # (total, idle, iowait) della lettura precedente
+
+
+def _cpu_percent():
+    """(cpu%, iowait%) dal delta di /proc/stat. (None, None) fuori da Linux."""
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as fh:
+            fields = fh.readline().split()
+        if not fields or fields[0] != "cpu":
+            return None, None
+        vals = [int(v) for v in fields[1:11]]
+    except (OSError, ValueError, IndexError):
+        return None, None
+    total = sum(vals)
+    idle = vals[3] + vals[4]        # idle + iowait
+    iowait = vals[4]
+    prev = _cpu_prev[0]
+    _cpu_prev[0] = (total, idle, iowait)
+    if prev is None:
+        return None, None           # serve un delta: il primo giro non conta
+    d_total = total - prev[0]
+    if d_total <= 0:
+        return None, None
+    d_idle = idle - prev[1]
+    d_iow = iowait - prev[2]
+    return (round(100.0 * (d_total - d_idle) / d_total, 1),
+            round(100.0 * d_iow / d_total, 1))
+
+
+def _collect_load_sample():
+    """Gauge di un giro di campionamento, pronti per load_metrics.sample()."""
+    g = {}
+    with _jobs_lock:
+        snapshot = list(jobs.values())
+    gen = gen_p = 0
+    for j in snapshot:
+        if j.get("status") == "generating":
+            gen += 1
+            try:
+                if generation_engine.is_premium_job(j):
+                    gen_p += 1
+            except Exception:
+                pass
+    g["gen"] = gen
+    g["gen_p"] = gen_p
+    g["jobs"] = len(snapshot)
+    try:
+        asm = assembly_queue.stats()
+        g["asm_h"] = asm["held"]
+        g["asm_q"] = asm["waiting"]
+        g["asm_qp"] = asm["waiting_premium"]
+    except Exception:
+        pass
+    status = _read_proc_kv("/proc/self/status")
+    if status:
+        g["rss"] = round(status.get("VmRSS", 0) / 1024.0, 1)
+        g["threads"] = status.get("Threads", 0)
+    meminfo = _read_proc_kv("/proc/meminfo")
+    if meminfo:
+        total = meminfo.get("MemTotal", 0)
+        if total:
+            g["ram"] = round(100.0 * (total - meminfo.get("MemAvailable", 0)) / total, 1)
+        swap_total = meminfo.get("SwapTotal", 0)
+        if swap_total:
+            g["swap"] = round(100.0 * (swap_total - meminfo.get("SwapFree", 0)) / swap_total, 1)
+    cpu, iowait = _cpu_percent()
+    if cpu is not None:
+        g["cpu"] = cpu
+        g["iowait"] = iowait
+    try:
+        load1 = os.getloadavg()[0]
+        g["load"] = round(load1 / max(1, os.cpu_count() or 1), 2)
+    except (OSError, AttributeError):
+        pass
+    try:
+        usage = shutil.disk_usage(str(UPLOAD_DIR))
+        g["disk"] = round(100.0 * usage.used / usage.total, 1)
+        g["disk_free_gb"] = round(usage.free / (1024 ** 3), 2)
+    except Exception:
+        pass
+    g["hb"] = round(max(0.0, time.time() - _cleanup_heartbeat[0]), 1)
+    return g
+
+
+def _assembly_metrics_observer(event, job_id, priority, waited, held):
+    """Ponte fra la coda di assembly (modulo foglia) e la telemetria."""
+    premium = priority >= assembly_queue.PRIORITY_PREMIUM
+    if event == "timeout":
+        load_metrics.observe("asm_wait", waited, premium=premium)
+        load_metrics.incr("asm_timeout")
+        return
+    load_metrics.observe("asm_wait", waited, premium=premium)
+    load_metrics.observe("enc", held)
+
+
+def _load_metrics_sampler():
+    """Campiona il carico ogni SAMPLE_SEC, scrive i bucket chiusi, fa retention.
+
+    Thread PROPRIO e non un innesto nel _cleanup_loop: il cleanup fa lavoro
+    pesante a cadenza variabile ed e' gia' morto una volta in produzione. Una
+    telemetria che muore insieme al componente che deve sorvegliare non serve
+    a niente.
+    """
+    last_purge = [0.0]
+    while True:
+        time.sleep(load_metrics.SAMPLE_SEC)
+        try:
+            load_metrics.sample(**_collect_load_sample())
+            load_metrics.flush()
+            now = time.time()
+            if now - last_purge[0] > 86400:
+                last_purge[0] = now
+                load_metrics.purge()
+        except Exception as e:
+            print(f"[load-metrics] errore di campionamento (non fatale): {e}")
+
+
+def _load_metrics_supervisor():
+    """Mantiene vivo il campionatore, come _cleanup_supervisor fa col cleanup."""
+    import traceback
+    while True:
+        try:
+            _load_metrics_sampler()
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[load-metrics] sampler crashed, restarting: {type(e).__name__}: {e}")
+            time.sleep(5)
 
 
 MALLOC_TRIM_INTERVAL_SEC = int(os.environ.get("ABM_MALLOC_TRIM_INTERVAL_SEC", "1800"))
@@ -15415,6 +15559,7 @@ def _cleanup_supervisor():
             _cleanup_loop()
         except Exception as e:
             traceback.print_exc()
+            load_metrics.incr("cl_restart")
             print(f"[cleanup] loop crashed, restarting: {type(e).__name__}: {e}")
             time.sleep(5)
 
@@ -15692,6 +15837,11 @@ def _cleanup_loop():
         except Exception as e:
             print(f"[mem] malloc_trim skipped (non-fatal): {e}")
 
+        # Heartbeat: il giro e' arrivato in fondo. L'eta' di questo timestamp
+        # e' cio' che il campionatore pubblica come metrica "hb": un cleanup
+        # morto diventa visibile in pochi minuti invece che in 17 ore.
+        _cleanup_heartbeat[0] = time.time()
+
 
 # ----------------------------------------------------------------------
 # ENTRY POINT
@@ -15767,6 +15917,11 @@ def _ensure_background_threads():
     if _cleanup_started:
         return
     _cleanup_started = True
+    load_metrics.configure(_DATA_DIR)
+    load_metrics.incr("boot")
+    assembly_queue.set_observer(_assembly_metrics_observer)
+    if load_metrics.ENABLED:
+        threading.Thread(target=_load_metrics_supervisor, daemon=True).start()
     threading.Thread(target=get_voices, daemon=True).start()
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
@@ -15792,6 +15947,10 @@ def _ensure_background_threads():
     print(f"[startup] Max concurrent LLM per client: {MAX_CONCURRENT_LLM_PER_CLIENT}")
     print(f"[startup] Max concurrent assembly (encode FFmpeg): "
           f"{assembly_queue.MAX_CONCURRENT_ASSEMBLY}")
+    print(f"[startup] Load metrics: "
+          f"{'on' if load_metrics.ENABLED else 'off'} "
+          f"(sample {load_metrics.SAMPLE_SEC}s, bucket {load_metrics.BUCKET_SEC}s, "
+          f"retention {load_metrics.RETENTION_MONTHS} mesi)")
     if _llm_available():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
