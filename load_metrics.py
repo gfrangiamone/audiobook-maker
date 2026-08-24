@@ -493,3 +493,35 @@ def query(window, now=None, global_cap=0, assembly_slots=0):
                          "first_sample_ts": None, "error": "aggregation failed"},
                 "job": {}, "ffmpeg": {}, "machine": {}, "quality": {},
                 "reliability": {}, "timeline": []}
+
+
+def purge(now=None):
+    """Elimina i file mensili oltre la retention. Ritorna quanti ne ha rimossi.
+
+    RETENTION_MONTHS conta i mesi da conservare incluso quello corrente: con 4
+    la finestra a 28 giorni e' sempre coperta, con margine per un mese corto.
+    """
+    try:
+        now = time.time() if now is None else now
+        if _data_dir is None:
+            return 0
+        d = datetime.fromtimestamp(now, timezone.utc)
+        keep = set()
+        year, month = d.year, d.month
+        for _ in range(max(1, RETENTION_MONTHS)):
+            keep.add(f"{year:04d}-{month:02d}")
+            month -= 1
+            if month == 0:
+                month, year = 12, year - 1
+        removed = 0
+        for path in Path(_data_dir).glob(f"{_FILE_PREFIX}*.jsonl"):
+            tag = path.stem[len(_FILE_PREFIX):]
+            if tag and tag not in keep:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+    except Exception:
+        return 0
