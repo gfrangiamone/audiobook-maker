@@ -1954,3 +1954,50 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
     | 13 | Il `sed -i` ancorato a un `set_real_ip_from` Cloudflare poteva inserire la riga fuori dal blocco `http` senza che il `grep -n` se ne accorgesse | Step 10: conteggio preventivo dell'ancora + parser dei blocchi che stampa il contesto della riga inserita (`ESITO: OK - dentro http {}`) |
     | 14 | `pscp -batch -pw "<password root>"` lasciava la password root nella history di PowerShell | Step 2: `pscp` senza `-pw`/`-batch` (password al prompt), una sola copia verso il vecchio server e propagazione al nuovo con la chiave `id_migrate`; istruzioni di pulizia della history |
     | 15 | Lo Step 11 mescolava comandi da eseguire sul nuovo server (pre-condizione) e sul vecchio (`rsync`), senza etichetta per comando | Step 11: intestazioni `>>> NUOVO SERVER <<<` / `>>> VECCHIO SERVER <<<` e verifica `hostname -I` prima di ciascun blocco |
+
+15. **Analisi di sicurezza post-cutover (2026-08-24) — quattro interventi applicati, tre rimandati.**
+    Ricognizione sul nuovo server rispetto alle minacce esterne. Applicato **senza toccare il
+    servizio** (PID invariato, nessun riavvio):
+
+    - **Range Cloudflare rimossi da `nginx.conf`** e `real_ip_header` passato da
+      `CF-Connecting-IP` a `X-Forwarded-For`. Nessun CDN sta davanti a questo origin, quindi i
+      22 range erano fidati a vuoto: chi usciva da un IP Cloudflare (un Worker sul piano
+      gratuito basta) poteva dichiarare un `CF-Connecting-IP` arbitrario e falsificare l'IP del
+      client in log, `limit_req` e ban fail2ban. Anticipa in parte il Task 10, Step 5; resta da
+      rimuovere **solo** `set_real_ip_from 80.211.136.211` alla dismissione. Backup:
+      `/etc/nginx/nginx.conf.bak-20260824-sec`. Verificato: uno spoof di prova non viene più
+      creduto, il traffico proxato continua a risolvere l'IP reale via `X-Forwarded-For`.
+    - **Permessi dei segreti**: `override.conf` e `credentials/vertex-sa.json` da `644` a `600`,
+      data dir da `755` a `750`. Erano leggibili dai tre utenti con shell (`ubuntu`,
+      `backupuser`, `frangiamone`) insieme a `_payments.json` e `_vouchers.json`.
+    - **Jail fail2ban `abm-admin-auth`** sui `401` di `POST /admin/login` (5 tentativi / 10 min
+      → ban 1 h). L'endpoint non ha lockout applicativo: l'unico freno era `limit_req` a 10 r/s,
+      cioè nessuna rilevazione del tentativo. Come `nginx-badbots`, richiede `backend = polling`:
+      il default in `jail.local` è `systemd` e la jail non leggerebbe alcun file.
+    - **Drop-in `hardening.conf`** (`NoNewPrivileges`, `PrivateTmp`, `ProtectHome`,
+      `ProtectSystem=full`): installato con `daemon-reload`, **entra in vigore al prossimo
+      restart** (deploy o reboot). Validato prima dell'installazione con `systemd-run` su un
+      probe che esegue le stesse operazioni dell'app (scrittura data dir, FFmpeg, lettura del
+      service account, DNS + HTTPS): tutte ok. Conseguenza forense annotata in
+      `docs/FORENSICS_PLAYBOOK.md`: i temporanei della sintesi migrano in
+      `/tmp/systemd-private-*/tmp/` e spariscono a ogni stop.
+
+    Rimandati per scelta dell'utente, con la relativa esposizione:
+
+    - **Kernel `6.8.0-36` in esecuzione contro `6.8.0-138` installato**, riavvio pendente. Da
+      accorpare alla dismissione del vecchio server (30/08).
+    - **SSH con `PermitRootLogin yes` + `PasswordAuthentication yes`** verso internet (202
+      tentativi falliti in 24 h da 58 IP, 44 IP bannati). Chiusura al Task 10, insieme al cambio
+      della password root: caricare prima la chiave pubblica dell'operatore, altrimenti
+      `PasswordAuthentication no` chiude fuori.
+    - **Servizio come `root`**: l'hardening sopra riduce il danno di una RCE ma non cambia
+      l'utente; il passaggio a utente non privilegiato richiede il re-chown della data dir.
+
+    **Falso allarme chiuso: `81.56.92.38` (Free SAS, FR), 216 login root con password in 7
+    giorni.** È la postazione dell'operatore con l'IP precedente, non un intruso. Prove: i due
+    IP non si sovrappongono mai (`176.107.155.86` compare solo dal 24/08 09:18, l'ultima
+    sessione dell'altro si chiude alle 08:38); `/root/.ssh/authorized_keys` e gli script
+    `step*.sh`, `migration_*` in `/root` sono stati creati dentro quelle finestre e sono i
+    nostri; nessuna persistenza sospetta (cron, unit systemd, utenti, SUID recenti, connessioni
+    in uscita: tutto pulito). Il pattern — raffiche di 1-3 connessioni al minuto in orario di
+    lavoro — è quello di `plink -batch`, non di un accesso umano ostile.
