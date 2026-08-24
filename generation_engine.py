@@ -32,6 +32,7 @@ from pathlib import Path
 
 import assembly_queue
 import email_service
+import load_metrics
 import payment
 import pending_jobs
 import cancel_policy
@@ -411,6 +412,29 @@ def _set_job_status(job, status):
                 spill_job_texts(jid, job)
         except Exception as e:
             print(f"[spill] errore non fatale su status={status}: {e}")
+
+    # Telemetria di carico: esito e durata della generazione TTS. Il marker
+    # `_lm_gen_t0` viene posato da run_generation e consumato qui con pop(),
+    # cosi' ogni generazione conta esattamente una volta e i terminali che non
+    # vengono dalla sintesi (ottimizzazione, traduzione) restano fuori.
+    if status in _TERMINAL_STATUSES and isinstance(job, dict):
+        t0 = job.pop("_lm_gen_t0", None)
+        if t0:
+            try:
+                premium = is_premium_job(job)
+                load_metrics.observe("job", max(0.0, time.time() - t0),
+                                     premium=premium)
+                if status in ("done", "partial"):
+                    load_metrics.incr("done_p" if premium else "done")
+                elif status == "error":
+                    load_metrics.incr("err_p" if premium else "err")
+                else:
+                    load_metrics.incr("cancel")
+                failed = int(job.get("failed_chunks") or 0)
+                if failed:
+                    load_metrics.incr("chunk_fail", failed)
+            except Exception:
+                pass
 
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
@@ -3940,6 +3964,30 @@ def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info
         print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
 
 
+def is_premium_job(job):
+    """True se il job e' PREMIUM: voce a pagamento o pagamento incassato.
+
+    Definizione unica, condivisa da priorita' di assembly e telemetria di
+    carico: due criteri divergenti renderebbero i grafici free/premium
+    incoerenti con le decisioni effettive della coda.
+    """
+    if not isinstance(job, dict):
+        return False
+    voice = (job.get("voice") or job.get("opt_voice") or "").strip()
+    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
+        return True
+    if (job.get("payment_token") or "").strip():
+        return True
+    try:
+        if float(job.get("payment_amount_eur") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if (job.get("payment") or {}).get("token"):
+        return True
+    return False
+
+
 def _assembly_priority(job):
     """PREMIUM o NORMAL nella coda degli encode FFmpeg.
 
@@ -3951,21 +3999,11 @@ def _assembly_priority(job):
     job free e' spiacevole, perderlo su uno pagato costa due volte.
 
     Premium = voce a pagamento (Gemini/Speechify) OPPURE job con un pagamento
-    incassato (ottimizzazione AI sopra la soglia gratuita, o voucher speso).
+    incassato (ottimizzazione AI sopra la soglia gratuita, o voucher speso):
+    vedi `is_premium_job`, definizione unica per coda e telemetria.
     """
-    voice = (job.get("voice") or job.get("opt_voice") or "").strip()
-    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
-        return assembly_queue.PRIORITY_PREMIUM
-    if (job.get("payment_token") or "").strip():
-        return assembly_queue.PRIORITY_PREMIUM
-    try:
-        if float(job.get("payment_amount_eur") or 0) > 0:
-            return assembly_queue.PRIORITY_PREMIUM
-    except (TypeError, ValueError):
-        pass
-    if (job.get("payment") or {}).get("token"):
-        return assembly_queue.PRIORITY_PREMIUM
-    return assembly_queue.PRIORITY_NORMAL
+    return (assembly_queue.PRIORITY_PREMIUM if is_premium_job(job)
+            else assembly_queue.PRIORITY_NORMAL)
 
 
 def _assembly_stale_reason(job_id, job, my_epoch, work_dir):
@@ -4068,6 +4106,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # disco per liberare RAM → vanno rimessi in memoria prima del chunking.
     rehydrate_job_texts(job_id, job)
     _set_job_status(job, "generating")
+    # Marker per la telemetria di carico: _set_job_status lo consuma sul
+    # terminale per misurare durata ed esito di QUESTA generazione.
+    job["_lm_gen_t0"] = time.time()
     job["cancelled"] = False
     my_epoch = job.get("gen_epoch", 0)
     job["last_poll"] = time.time()
