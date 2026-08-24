@@ -8267,6 +8267,29 @@ def api_admin_google_tts_status():
     return jsonify(response)
 
 
+@app.route("/api/admin/load_stats")
+def api_admin_load_stats():
+    """Statistiche di CARICO aggregate sulla finestra richiesta.
+
+    Alimenta il pannello Stats di /admin/log-activity. Richiede admin token:
+    espone la capacita' residua e lo stato di salute dell'istanza, che non
+    devono essere leggibili dall'esterno.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
+    window = (request.args.get("window") or "24h").strip()
+    try:
+        slots = assembly_queue.MAX_CONCURRENT_ASSEMBLY
+    except Exception:
+        slots = 0
+    data = load_metrics.query(window,
+                              global_cap=MAX_CONCURRENT_GLOBAL,
+                              assembly_slots=slots)
+    data["meta"]["global_cap"] = MAX_CONCURRENT_GLOBAL
+    data["meta"]["assembly_slots"] = slots
+    return jsonify(data)
+
+
 def _file_hash(path):
     """Return MD5 hex digest of a file, streaming in chunks."""
     import hashlib
