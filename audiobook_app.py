@@ -4108,53 +4108,76 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 </div>
 
 <div id="statsModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>📊 Carico sistema</h2>
-            <button class="modal-close" onclick="hideStats()">&times;</button>
+    <div class="modal-content ls-modal">
+        <div class="ls-head">
+            <div class="modal-header">
+                <h2>📊 Carico sistema</h2>
+                <button class="modal-close" onclick="hideStats()">&times;</button>
+            </div>
+            <div class="lsw-bar">
+                <button class="lsw-btn active" data-window="24h" onclick="loadStats('24h',this)">24 ore</button>
+                <button class="lsw-btn" data-window="7d" onclick="loadStats('7d',this)">7 giorni</button>
+                <button class="lsw-btn" data-window="28d" onclick="loadStats('28d',this)">28 giorni</button>
+                <button class="lsw-btn" data-window="month" onclick="loadStats('month',this)">Mese corrente</button>
+                <button class="lsw-btn lsw-refresh" onclick="loadStats(lsWindow,null)" title="Ricarica">⟳</button>
+            </div>
+            <div class="lst-bar">
+                <button class="lst-btn active" data-tab="job" onclick="lsTab('job',this)">Job &amp; code</button>
+                <button class="lst-btn" data-tab="machine" onclick="lsTab('machine',this)">Macchina</button>
+                <button class="lst-btn" data-tab="quality" onclick="lsTab('quality',this)">Qualità</button>
+                <button class="lst-btn" data-tab="reliability" onclick="lsTab('reliability',this)">Affidabilità</button>
+            </div>
         </div>
-        <div class="lsw-bar">
-            <button class="lsw-btn active" data-window="24h" onclick="loadStats('24h',this)">24 ore</button>
-            <button class="lsw-btn" data-window="7d" onclick="loadStats('7d',this)">7 giorni</button>
-            <button class="lsw-btn" data-window="28d" onclick="loadStats('28d',this)">28 giorni</button>
-            <button class="lsw-btn" data-window="month" onclick="loadStats('month',this)">Mese corrente</button>
-            <button class="lsw-btn lsw-refresh" onclick="loadStats(lsWindow,null)" title="Ricarica">⟳</button>
+        <div class="ls-body">
+            <div id="lsCoverage" class="ls-coverage"></div>
+            <div id="lsCards" class="ls-cards"></div>
+            <div id="lsTimeline" class="ls-timeline"></div>
         </div>
-        <div id="lsCoverage" class="ls-coverage"></div>
-        <div id="lsCards" class="ls-cards"></div>
-        <div id="lsTimeline" class="ls-timeline"></div>
     </div>
 </div>
 
 <style>
-.modal {{ display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px); }}
+.modal {{ display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px);  overflow-y:auto; }}
 .modal-content {{ background:var(--surface); margin:10% auto; padding:24px; border:1px solid var(--border); border-radius:16px; width:90%; max-width:850px; box-shadow:0 20px 50px rgba(0,0,0,0.5); }}
 .modal-header {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }}
 .modal-header h2 {{ font-size:1.1rem; color:var(--accent); }}
 .modal-close {{ background:none; border:none; color:var(--text-dim); font-size:2rem; cursor:pointer; line-height:1; }}
 .modal-close:hover {{ color:var(--text); }}
 
-.lsw-bar {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }}
+.ls-modal {{ margin:4vh auto; max-height:92vh; padding:0; display:flex; flex-direction:column; overflow:hidden; }}
+.ls-head {{ padding:18px 22px 0; background:var(--surface); border-bottom:1px solid var(--border); flex:none; }}
+.ls-body {{ padding:14px 22px 22px; overflow-y:auto; flex:1; }}
+.lsw-bar {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }}
 .lsw-btn {{ background:var(--surface2); color:var(--text-dim); border:1px solid var(--border);
            border-radius:8px; padding:6px 14px; font-size:.78rem; cursor:pointer; }}
 .lsw-btn:hover {{ color:var(--text); }}
 .lsw-btn.active {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
 .lsw-refresh {{ margin-left:auto; }}
+.lst-bar {{ display:flex; gap:2px; flex-wrap:wrap; }}
+.lst-btn {{ background:none; border:none; border-bottom:2px solid transparent; color:var(--text-dim);
+           padding:8px 12px; font-size:.78rem; cursor:pointer; }}
+.lst-btn:hover {{ color:var(--text); }}
+.lst-btn.active {{ color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }}
 .ls-coverage {{ font-size:.7rem; color:var(--orange); margin-bottom:10px; min-height:1em; }}
 .ls-cards {{ display:flex; flex-direction:column; gap:14px; }}
+.ls-sec + .ls-sec {{ margin-top:4px; }}
 .ls-sec h3 {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.8px;
              color:var(--text-dim); margin-bottom:6px; font-weight:600; }}
-.ls-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }}
-.ls-card {{ background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }}
-.ls-card .v {{ font-size:1.25rem; font-weight:700; color:var(--text); }}
-.ls-card .l {{ font-size:.62rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; }}
-.ls-card .s {{ font-size:.68rem; color:var(--text-dim); margin-top:3px; }}
-.ls-card.warn .v {{ color:var(--orange); }}
-.ls-card.crit .v {{ color:var(--red,#ef4444); }}
-.ls-card.ok .v {{ color:var(--green); }}
-.ls-badge {{ display:inline-block; font-size:.55rem; padding:1px 5px; border-radius:4px;
-            border:1px solid var(--border); margin-right:4px; }}
-.ls-badge.p {{ color:var(--accent2,#a78bfa); border-color:rgba(167,139,250,.4); }}
+.ls-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:8px; }}
+.ls-card {{ background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 12px; }}
+.ls-card .l {{ font-size:.62rem; color:var(--text-dim); text-transform:uppercase;
+              letter-spacing:.5px; margin-bottom:4px; }}
+.ls-row {{ display:flex; align-items:baseline; gap:8px; padding:1px 0; }}
+.ls-row + .ls-row {{ border-top:1px dashed var(--border); margin-top:4px; padding-top:5px; }}
+.ls-row .k {{ font-size:.6rem; color:var(--text-dim); text-transform:uppercase;
+             letter-spacing:.4px; width:52px; flex:none; }}
+.ls-row .k:empty {{ display:none; }}
+.ls-row.prem .k {{ color:var(--accent2,#a78bfa); }}
+.ls-row .v {{ font-size:1.1rem; font-weight:700; color:var(--text); }}
+.ls-row .s {{ font-size:.66rem; color:var(--text-dim); margin-left:auto; text-align:right; }}
+.ls-row.warn .v {{ color:var(--orange); }}
+.ls-row.crit .v {{ color:var(--red,#ef4444); }}
+.ls-row.ok .v {{ color:var(--green); }}
 .ls-timeline {{ margin-top:18px; border-left:2px solid var(--border);
                border-bottom:2px solid var(--border); padding:14px 6px 0 6px;
                height:170px; display:flex; align-items:flex-end; gap:2px; position:relative; }}
@@ -4222,6 +4245,7 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 
 <script>
 let lsWindow = '24h';
+let lsTabName = 'job';
 let lsLoaded = false;
 
 function showStats() {{
@@ -4241,10 +4265,31 @@ function lsFmtSec(s) {{
     return r ? m + 'm' + String(r).padStart(2, '0') + 's' : m + 'm';
 }}
 
-function lsCard(label, value, sub, level) {{
-    return '<div class="ls-card ' + (level || '') + '"><div class="l">' + label +
-           '</div><div class="v">' + value + '</div>' +
-           (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+function lsRow(key, value, sub, level, premium) {{
+    return '<div class="ls-row ' + (level || '') + (premium ? ' prem' : '') + '">' +
+           '<span class="k">' + (key || '') + '</span>' +
+           '<span class="v">' + value + '</span>' +
+           '<span class="s">' + (sub || '') + '</span></div>';
+}}
+
+function lsCard(label, rows) {{
+    return '<div class="ls-card"><div class="l">' + label + '</div>' + rows.join('') + '</div>';
+}}
+
+function lsOne(label, value, sub, level) {{
+    return lsCard(label, [lsRow('', value, sub, level, false)]);
+}}
+
+function lsSplit(label, all, prem) {{
+    return lsCard(label, [
+        lsRow('Tutti', all[0], all[1], all[2], false),
+        lsRow('Premium', prem[0], prem[1], prem[2], true),
+    ]);
+}}
+
+function lsSec(title, cards) {{
+    return '<div class="ls-sec"><h3>' + title + '</h3><div class="ls-grid">' +
+           cards.join('') + '</div></div>';
 }}
 
 function lsLevel(v, warn, crit) {{
@@ -4253,72 +4298,85 @@ function lsLevel(v, warn, crit) {{
     return 'ok';
 }}
 
+function lsPane(name, html) {{
+    return '<div class="ls-pane" data-pane="' + name + '">' + html + '</div>';
+}}
+
 function lsRender(d) {{
     const j = d.job || {{}}, f = d.ffmpeg || {{}}, m = d.machine || {{}},
           q = d.quality || {{}}, r = d.reliability || {{}};
-    const sec = (title, cards) =>
-        '<div class="ls-sec"><h3>' + title + '</h3><div class="ls-grid">' + cards.join('') + '</div></div>';
+    const rejTot = (j.rejected_free || 0) + (j.rejected_premium || 0);
 
-    let html = '';
-    html += sec('Job', [
-        lsCard('In elaborazione (picco)', j.gen_peak || 0, 'media ' + (j.gen_avg || 0)),
-        lsCard('<span class="ls-badge p">PREMIUM</span> picco', j.gen_premium_peak || 0,
-               'media ' + (j.gen_premium_avg || 0)),
-        lsCard('Job in RAM (picco)', j.in_ram_peak || 0, 'media ' + (j.in_ram_avg || 0)),
-        lsCard('Rifiutati per carico', (j.rejected_free || 0) + (j.rejected_premium || 0),
-               'di cui premium ' + (j.rejected_premium || 0),
-               (j.rejected_free || 0) + (j.rejected_premium || 0) > 0 ? 'warn' : 'ok'),
-        lsCard('Tempo al tetto globale', (j.saturation_pct || 0) + '%',
-               'cap ' + (d.meta.global_cap || 0), lsLevel(j.saturation_pct || 0, 5, 20)),
+    const paneJob = lsSec('Job', [
+        lsSplit('Job in elaborazione',
+                [j.gen_peak || 0, 'media ' + (j.gen_avg || 0), ''],
+                [j.gen_premium_peak || 0, 'media ' + (j.gen_premium_avg || 0), '']),
+        lsSplit('Rifiutati per carico',
+                [rejTot, '', rejTot > 0 ? 'warn' : 'ok'],
+                [j.rejected_premium || 0, '', (j.rejected_premium || 0) > 0 ? 'crit' : 'ok']),
+        lsOne('Job in RAM (picco)', j.in_ram_peak || 0, 'media ' + (j.in_ram_avg || 0)),
+        lsOne('Tempo al tetto globale', (j.saturation_pct || 0) + '%',
+              'cap ' + (d.meta.global_cap || 0), lsLevel(j.saturation_pct || 0, 5, 20)),
+    ]) + lsSec('FFmpeg / assembly', [
+        lsSplit('Attesa in coda',
+                [lsFmtSec(f.wait_avg),
+                 'p50 ' + lsFmtSec(f.wait_p50) + ' &middot; p95 ' + lsFmtSec(f.wait_p95),
+                 lsLevel(f.wait_p95 || 0, 300, 900)],
+                [lsFmtSec(f.wait_premium_avg), 'p95 ' + lsFmtSec(f.wait_premium_p95), '']),
+        lsOne('In assembly (picco)', f.asm_peak || 0, 'media ' + (f.asm_avg || 0)),
+        lsOne('In coda (picco)', f.queue_peak || 0, ''),
+        lsOne('Durata encode', lsFmtSec(f.encode_p50), 'p95 ' + lsFmtSec(f.encode_p95)),
+        lsOne('Timeout coda', f.timeouts || 0, '', (f.timeouts || 0) > 0 ? 'crit' : 'ok'),
+        lsOne('Slot tutti occupati', (f.slots_full_pct || 0) + '%',
+              (d.meta.assembly_slots || 0) + ' slot', lsLevel(f.slots_full_pct || 0, 20, 50)),
     ]);
-    html += sec('FFmpeg / assembly', [
-        lsCard('In assembly (picco)', f.asm_peak || 0, 'media ' + (f.asm_avg || 0)),
-        lsCard('In coda (picco)', f.queue_peak || 0, ''),
-        lsCard('Attesa media', lsFmtSec(f.wait_avg),
-               'p50 ' + lsFmtSec(f.wait_p50) + ' · p95 ' + lsFmtSec(f.wait_p95),
-               lsLevel(f.wait_p95 || 0, 300, 900)),
-        lsCard('<span class="ls-badge p">PREMIUM</span> attesa', lsFmtSec(f.wait_premium_avg),
-               'p95 ' + lsFmtSec(f.wait_premium_p95)),
-        lsCard('Durata encode', lsFmtSec(f.encode_p50), 'p95 ' + lsFmtSec(f.encode_p95)),
-        lsCard('Timeout coda', f.timeouts || 0, '', (f.timeouts || 0) > 0 ? 'crit' : 'ok'),
-        lsCard('Slot tutti occupati', (f.slots_full_pct || 0) + '%',
-               (d.meta.assembly_slots || 0) + ' slot', lsLevel(f.slots_full_pct || 0, 20, 50)),
+
+    const paneMachine = lsSec('Macchina', [
+        lsOne('RAM picco', (m.ram_peak || 0) + '%', 'media ' + (m.ram_avg || 0) + '%',
+              lsLevel(m.ram_peak || 0, 80, 92)),
+        lsOne('Swap picco', (m.swap_peak || 0) + '%', '', lsLevel(m.swap_peak || 0, 20, 60)),
+        lsOne('RSS processo', (m.rss_peak || 0) + ' MB', 'media ' + (m.rss_avg || 0) + ' MB'),
+        lsOne('CPU picco', (m.cpu_peak || 0) + '%', 'media ' + (m.cpu_avg || 0) + '%',
+              lsLevel(m.cpu_peak || 0, 85, 97)),
+        lsOne('IOwait picco', (m.iowait_peak || 0) + '%', '', lsLevel(m.iowait_peak || 0, 15, 35)),
+        lsOne('Load per core', m.load_peak || 0, '', lsLevel(m.load_peak || 0, 1.5, 3)),
+        lsOne('Thread picco', m.threads_peak || 0, ''),
+        lsOne('Disco max', (m.disk_peak || 0) + '%',
+              'liberi min ' + (m.disk_free_gb_min || 0) + ' GB',
+              lsLevel(m.disk_peak || 0, 75, 90)),
     ]);
-    html += sec('Macchina', [
-        lsCard('RAM picco', (m.ram_peak || 0) + '%', 'media ' + (m.ram_avg || 0) + '%',
-               lsLevel(m.ram_peak || 0, 80, 92)),
-        lsCard('Swap picco', (m.swap_peak || 0) + '%', '', lsLevel(m.swap_peak || 0, 20, 60)),
-        lsCard('RSS processo', (m.rss_peak || 0) + ' MB', 'media ' + (m.rss_avg || 0) + ' MB'),
-        lsCard('CPU picco', (m.cpu_peak || 0) + '%', 'media ' + (m.cpu_avg || 0) + '%',
-               lsLevel(m.cpu_peak || 0, 85, 97)),
-        lsCard('IOwait picco', (m.iowait_peak || 0) + '%', '', lsLevel(m.iowait_peak || 0, 15, 35)),
-        lsCard('Load per core', m.load_peak || 0, '', lsLevel(m.load_peak || 0, 1.5, 3)),
-        lsCard('Thread picco', m.threads_peak || 0, ''),
-        lsCard('Disco max', (m.disk_peak || 0) + '%',
-               'liberi min ' + (m.disk_free_gb_min || 0) + ' GB',
-               lsLevel(m.disk_peak || 0, 75, 90)),
+
+    const errFree = Math.max(0, (q.errors || 0) - (q.errors_premium || 0));
+    const paneQuality = lsSec('Qualità del servizio', [
+        lsSplit('Job completati',
+                [q.completed || 0, '', ''],
+                [q.completed_premium || 0, '', '']),
+        lsSplit('Job in errore',
+                [q.errors || 0, (q.error_pct || 0) + '% dei job',
+                 lsLevel(q.error_pct || 0, 5, 15)],
+                [q.errors_premium || 0, 'free ' + errFree,
+                 (q.errors_premium || 0) > 0 ? 'crit' : 'ok']),
+        lsSplit('Durata job (p50)',
+                [lsFmtSec(q.job_p50), 'p95 ' + lsFmtSec(q.job_p95), ''],
+                [lsFmtSec(q.job_premium_p50), 'p95 ' + lsFmtSec(q.job_premium_p95), '']),
+        lsOne('Annullati', q.cancelled || 0, ''),
+        lsOne('Chunk TTS falliti', q.chunk_failed || 0, '',
+              (q.chunk_failed || 0) > 0 ? 'warn' : 'ok'),
     ]);
-    html += sec('Qualità servizio', [
-        lsCard('Completati', q.completed || 0, 'premium ' + (q.completed_premium || 0)),
-        lsCard('Errori', q.errors || 0, (q.error_pct || 0) + '% dei job',
-               lsLevel(q.error_pct || 0, 5, 15)),
-        lsCard('Annullati', q.cancelled || 0, ''),
-        lsCard('Durata job', lsFmtSec(q.job_p50), 'p95 ' + lsFmtSec(q.job_p95)),
-        lsCard('<span class="ls-badge p">PREMIUM</span> durata', lsFmtSec(q.job_premium_p50),
-               'p95 ' + lsFmtSec(q.job_premium_p95)),
-        lsCard('Chunk TTS falliti', q.chunk_failed || 0, '',
-               (q.chunk_failed || 0) > 0 ? 'warn' : 'ok'),
+
+    const paneReliability = lsSec('Affidabilità', [
+        lsOne('Riavvii processo', r.boots || 0, '', (r.boots || 0) > 1 ? 'warn' : 'ok'),
+        lsOne('Restart cleanup', r.cleanup_restarts || 0, '',
+              (r.cleanup_restarts || 0) > 0 ? 'crit' : 'ok'),
+        lsOne('Heartbeat cleanup max', lsFmtSec(r.cleanup_hb_max_sec),
+              'atteso < 2m', lsLevel(r.cleanup_hb_max_sec || 0, 300, 900)),
+        lsOne('Memory pressure', r.memory_pressure || 0, '',
+              (r.memory_pressure || 0) > 0 ? 'crit' : 'ok'),
     ]);
-    html += sec('Affidabilità', [
-        lsCard('Riavvii processo', r.boots || 0, '', (r.boots || 0) > 1 ? 'warn' : 'ok'),
-        lsCard('Restart cleanup', r.cleanup_restarts || 0, '',
-               (r.cleanup_restarts || 0) > 0 ? 'crit' : 'ok'),
-        lsCard('Heartbeat cleanup max', lsFmtSec(r.cleanup_hb_max_sec),
-               'atteso < 2m', lsLevel(r.cleanup_hb_max_sec || 0, 300, 900)),
-        lsCard('Memory pressure', r.memory_pressure || 0, '',
-               (r.memory_pressure || 0) > 0 ? 'crit' : 'ok'),
-    ]);
-    document.getElementById('lsCards').innerHTML = html;
+
+    document.getElementById('lsCards').innerHTML =
+        lsPane('job', paneJob) + lsPane('machine', paneMachine) +
+        lsPane('quality', paneQuality) + lsPane('reliability', paneReliability);
 
     const cov = document.getElementById('lsCoverage');
     if ((d.meta.coverage_pct || 0) < 100) {{
@@ -4326,7 +4384,7 @@ function lsRender(d) {{
             ? new Date(d.meta.first_sample_ts * 1000).toLocaleString('it-IT')
             : 'mai';
         cov.textContent = 'Dati parziali (' + (d.meta.coverage_pct || 0) +
-                          '% della finestra) — raccolta iniziata il ' + since;
+                          '% della finestra) - raccolta iniziata il ' + since;
     }} else {{
         cov.textContent = '';
     }}
@@ -4335,23 +4393,39 @@ function lsRender(d) {{
     const pts = d.timeline || [];
     if (!pts.length) {{
         tl.innerHTML = '<div class="ls-empty">Nessun dato nella finestra selezionata.</div>';
-        return;
+    }} else {{
+        const maxGen = Math.max(1, ...pts.map(p => p.gen));
+        tl.innerHTML = pts.map(p => {{
+            const prem = Math.min(p.gen_p, p.gen);
+            const free = Math.max(0, p.gen - prem);
+            const when = new Date(p.t * 1000).toLocaleString('it-IT',
+                {{day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}});
+            const label = when + ' - job ' + p.gen + ' (prem ' + prem + ') - RAM ' + p.ram +
+                          '%' + (p.rej ? ' - rifiuti ' + p.rej : '');
+            return '<div class="ls-tl-wrap" data-label="' + label + '">' +
+                   (p.rej ? '<div class="ls-tl-rej"></div>' : '') +
+                   (p.ram ? '<div class="ls-tl-ram" style="bottom:' + p.ram + '%"></div>' : '') +
+                   '<div class="ls-tl-seg prem" style="height:' + (prem / maxGen * 100) + '%"></div>' +
+                   '<div class="ls-tl-seg free" style="height:' + (free / maxGen * 100) + '%"></div>' +
+                   '</div>';
+        }}).join('');
     }}
-    const maxGen = Math.max(1, ...pts.map(p => p.gen));
-    tl.innerHTML = pts.map(p => {{
-        const prem = Math.min(p.gen_p, p.gen);
-        const free = Math.max(0, p.gen - prem);
-        const when = new Date(p.t * 1000).toLocaleString('it-IT',
-            {{day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}});
-        const label = when + ' · job ' + p.gen + ' (prem ' + prem + ') · RAM ' + p.ram +
-                      '%' + (p.rej ? ' · rifiuti ' + p.rej : '');
-        return '<div class="ls-tl-wrap" data-label="' + label + '">' +
-               (p.rej ? '<div class="ls-tl-rej"></div>' : '') +
-               (p.ram ? '<div class="ls-tl-ram" style="bottom:' + p.ram + '%"></div>' : '') +
-               '<div class="ls-tl-seg prem" style="height:' + (prem / maxGen * 100) + '%"></div>' +
-               '<div class="ls-tl-seg free" style="height:' + (free / maxGen * 100) + '%"></div>' +
-               '</div>';
-    }}).join('');
+
+    lsTab(lsTabName, null);
+}}
+
+function lsTab(name, btn) {{
+    lsTabName = name;
+    document.querySelectorAll('.lst-btn[data-tab]').forEach(b => b.classList.remove('active'));
+    const target = btn || document.querySelector('.lst-btn[data-tab="' + name + '"]');
+    if (target) target.classList.add('active');
+    document.querySelectorAll('#lsCards .ls-pane').forEach(p => {{
+        p.style.display = (p.dataset.pane === name) ? '' : 'none';
+    }});
+    const tl = document.getElementById('lsTimeline');
+    if (tl) tl.style.display = (name === 'job') ? '' : 'none';
+    const body = document.querySelector('.ls-body');
+    if (body) body.scrollTop = 0;
 }}
 
 function loadStats(win, btn) {{
@@ -4360,7 +4434,7 @@ function loadStats(win, btn) {{
     document.querySelectorAll('.lsw-btn[data-window]').forEach(b => b.classList.remove('active'));
     const target = btn || document.querySelector('.lsw-btn[data-window="' + win + '"]');
     if (target) target.classList.add('active');
-    document.getElementById('lsCards').innerHTML = '<div class="ls-empty">Caricamento…</div>';
+    document.getElementById('lsCards').innerHTML = '<div class="ls-empty">Caricamento...</div>';
     document.getElementById('lsTimeline').innerHTML = '';
     fetch('/api/admin/load_stats?window=' + encodeURIComponent(win), {{credentials: 'same-origin'}})
         .then(r => r.ok ? r.json() : Promise.reject(r.status))

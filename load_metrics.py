@@ -425,8 +425,9 @@ def query(window, now=None, global_cap=0, assembly_slots=0):
         h_enc = _hist(rows, "enc")
         h_job, h_job_p = _hist(rows, "job"), _hist(rows, "job_p")
         done, done_p = _sum(rows, "done"), _sum(rows, "done_p")
-        err, cancel = _sum(rows, "err"), _sum(rows, "cancel")
-        total_jobs = done + done_p + err + cancel
+        err, err_p = _sum(rows, "err"), _sum(rows, "err_p")
+        cancel = _sum(rows, "cancel")
+        total_jobs = done + done_p + err + err_p + cancel
 
         return {
             "meta": {
@@ -473,8 +474,10 @@ def query(window, now=None, global_cap=0, assembly_slots=0):
             },
             "quality": {
                 "completed": done + done_p, "completed_premium": done_p,
-                "errors": err, "cancelled": cancel,
-                "error_pct": round(100.0 * err / total_jobs, 1) if total_jobs else 0.0,
+                "errors": err + err_p, "errors_premium": err_p,
+                "cancelled": cancel,
+                "error_pct": (round(100.0 * (err + err_p) / total_jobs, 1)
+                              if total_jobs else 0.0),
                 "chunk_failed": _sum(rows, "chunk_fail"),
                 "job_p50": _percentile(h_job, 50), "job_p95": _percentile(h_job, 95),
                 "job_premium_p50": _percentile(h_job_p, 50),

@@ -113,3 +113,13 @@ def test_timeline_point_carries_peaks_and_rejections(tmp_path):
 def test_unknown_window_falls_back_to_24h(tmp_path):
     now = lm._bucket_start(1756000000.0)
     assert lm.query("qualunque", now=now)["meta"]["window"] == "24h"
+
+
+def test_premium_errors_are_counted_and_exposed(tmp_path):
+    now = lm._bucket_start(1756000000.0) + lm.BUCKET_SEC
+    _write(tmp_path, now - 300, c={"done": 6, "done_p": 2, "err": 1, "err_p": 1})
+    q = lm.query("24h", now=now)["quality"]
+    assert q["errors"] == 2
+    assert q["errors_premium"] == 1
+    # 2 errori su 10 job terminati
+    assert q["error_pct"] == pytest.approx(20.0, abs=0.1)

@@ -41,3 +41,29 @@ def test_cards_and_timeline_containers_present():
     assert 'id="lsCards"' in html
     assert 'id="lsTimeline"' in html
     assert 'id="lsCoverage"' in html
+
+
+def test_four_tabs_are_present_with_job_active():
+    html = _page()
+    for tab in ("job", "machine", "quality", "reliability"):
+        assert f'data-tab="{tab}"' in html
+    assert 'class="lst-btn active" data-tab="job"' in html
+
+
+def test_body_is_scrollable_and_header_is_outside_it():
+    html = _page()
+    assert 'class="ls-body"' in html
+    assert ".ls-body { padding:14px 22px 22px; overflow-y:auto; flex:1; }" in html
+    # il selettore di finestra sta nell'intestazione fissa, non nel corpo scrollabile
+    head = html.index('class="ls-head"')
+    body = html.index('class="ls-body"')
+    assert head < html.index('data-window="24h"') < body
+
+
+def test_split_rows_render_all_and_premium_in_one_card():
+    html = _page()
+    assert "function lsSplit(" in html
+    assert "lsRow('Tutti'" in html
+    assert "lsRow('Premium'" in html
+    # niente piu' card separate con badge PREMIUM nel titolo
+    assert 'ls-badge' not in html
