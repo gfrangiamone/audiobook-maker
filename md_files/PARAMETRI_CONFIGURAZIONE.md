@@ -834,6 +834,46 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 
 ---
 
+## 16. Telemetria di carico (`load_metrics.py`)
+
+Modulo foglia (nessun import di moduli di progetto) che alimenta il pannello **Stats** di `/admin/log-activity`.
+Campiona lo stato del processo e della macchina ogni `SAMPLE_SEC`, aggrega in bucket da `BUCKET_SEC` e scrive
+in append su `ABM_DATA_DIR/load_metrics_YYYY-MM.jsonl` (una riga JSON per bucket chiuso).
+Le durate (attesa in coda assembly, encode FFmpeg, durata job) sono in istogrammi logaritmici
+`_BINS = (10, 30, 60, 120, 300, 600, 1200)` — 8 bin — da cui i percentili sono stimati per interpolazione lineare.
+
+### 16.1 Variabili d'ambiente
+
+| Variabile | Default | Descrizione | File | Riga |
+|-----------|---------|-------------|------|------|
+| `ABM_LOAD_METRICS_ENABLED` | `true` | Abilita il campionatore di carico. Se `false` il thread non parte e `/api/admin/load_stats` restituisce i soli bucket già su disco. | `load_metrics.py` | 37 |
+| `ABM_LOAD_METRICS_SAMPLE_SEC` | `30` | Periodo di campionamento dei gauge (job in elaborazione, RAM, CPU, swap, disco, coda assembly). | `load_metrics.py` | 39 |
+| `ABM_LOAD_METRICS_BUCKET_SEC` | `300` | Ampiezza del bucket di aggregazione (5 minuti): un bucket chiuso = una riga JSONL. | `load_metrics.py` | 40 |
+| `ABM_LOAD_METRICS_RETENTION_MONTHS` | `4` | Mesi di file `load_metrics_YYYY-MM.jsonl` conservati; i più vecchi vengono rimossi da `purge()`. | `load_metrics.py` | 41 |
+
+### 16.2 API del modulo
+
+`configure(data_dir)` (chiamata in `_ensure_background_threads`), `sample(now=None, **gauges)`, `incr(counter, n=1, now=None)`,
+`observe(hist, seconds, premium=False, now=None)`, `flush(now=None)`, `query(window, now=None, global_cap=0, assembly_slots=0)`,
+`purge(now=None)`, `reset_for_tests()`.
+
+`query()` accetta le finestre `24h`, `7d`, `28d`, `month` (default `24h` su valore non riconosciuto) e restituisce
+`{meta, job, ffmpeg, machine, quality, reliability, timeline}`.
+
+### 16.3 Punti di raccolta
+
+| Sorgente | Cosa registra |
+|----------|---------------|
+| `audiobook_app._load_metrics_sampler` | Thread di campionamento (con supervisore `_load_metrics_supervisor`): job in elaborazione free/premium, job in RAM, slot assembly occupati/in coda, RAM/swap/RSS/CPU/iowait/load/thread/disco letti da `/proc` e `shutil.disk_usage`, età dell'heartbeat del cleanup loop. Fuori da Linux le metriche di macchina mancano e le card corrispondenti leggono zero. |
+| `audiobook_app._assembly_metrics_observer` | Osservatore iniettato in `assembly_queue.set_observer()`: attesa in coda (`asm_wait`), durata encode (`enc`), timeout di coda (`asm_timeout`). |
+| `audiobook_app._server_busy_response` | Contatori `rej_busy` / `rej_busy_p` (job rifiutati al raggiungimento di `ABM_MAX_CONCURRENT_GLOBAL`). |
+| `generation_engine._set_job_status` | Alla terminazione di una generazione: durata job (`job`), esiti `done`/`err`/`cancel` (varianti `_p` per i premium), chunk TTS falliti. Il premium è deciso da `generation_engine.is_premium_job()`. |
+| `audiobook_app` (varie) | `boot` (avvii processo), `cl_restart` (restart del cleanup loop), `memp` (memory pressure rilevata da `_log_memory_stats`). |
+
+Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede autenticazione admin, `403` altrimenti).
+
+---
+
 ## Link store app mobile (pagina /get-app)
 - `ABM_PLAY_STORE_URL`: URL Play Store dell'app. Se vuoto, il bottone Play è
   mostrato ma disabilitato. Valore al rilascio:
@@ -866,4 +906,5 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 | SEO Content (`seo_content.py`) | 2 |
 | Nuovi moduli v3.8.0 | 6 |
 | Push FCM app mobile (`push_service.py`) | 5 |
-| **Totale** | **117** |
+| Telemetria di carico (`load_metrics.py`) | 4 |
+| **Totale** | **121** |
