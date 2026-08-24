@@ -83,7 +83,7 @@ API pubblica:
 
 | Funzione | Ruolo |
 |---|---|
-| `sample(**gauges)` | registra i valori istantanei nel bucket corrente; per ogni gauge tiene `min`, `max`, somma e conteggio |
+| `sample(**gauges)` | registra i valori istantanei nel bucket corrente; per ogni gauge tiene `min`, `max`, somma e conteggio (i gauge assenti dalla chiamata non falsano ne' la media ne' il minimo) |
 | `incr(counter, n=1)` | incrementa un contatore del bucket corrente |
 | `observe(hist_name, seconds, premium=False)` | inserisce una durata nell'istogramma a bin logaritmici, ramo free o premium |
 | `flush()` | chiude e scrive su file i bucket il cui intervallo è concluso |
@@ -171,11 +171,11 @@ bucket chiuso di **5 minuti**, in append.
 
 ```json
 {"t":1756000000,"n":10,
- "g":{"gen":[0,3,1.4],"gen_p":[0,2,0.8],"jobs":[5,12,8.1],
-      "asm_h":[0,2,0.6],"asm_q":[0,5,1.1],"asm_qp":[0,2,0.3],
-      "ram":[41,88,63.2],"swap":[0,12,2.1],"rss":[380,520,455],"threads":[22,31,25.0],
-      "cpu":[3,97,44.0],"iowait":[0,31,4.2],"load":[0.2,3.8,1.1],
-      "disk":[44,44,44.0],"disk_free_gb":[12.1,12.4,12.2],"hb":[0,35,12.0]},
+ "g":{"gen":[0,3,1.4,10],"gen_p":[0,2,0.8,10],"jobs":[5,12,8.1,10],
+      "asm_h":[0,2,0.6,10],"asm_q":[0,5,1.1,10],"asm_qp":[0,2,0.3,10],
+      "ram":[41,88,63.2,10],"swap":[0,12,2.1,10],"rss":[380,520,455,10],"threads":[22,31,25.0,10],
+      "cpu":[3,97,44.0,9],"iowait":[0,31,4.2,9],"load":[0.2,3.8,1.1,10],
+      "disk":[44,44,44.0,10],"disk_free_gb":[12.1,12.4,12.2,10],"hb":[0,35,12.0,10]},
  "c":{"rej_busy":2,"rej_busy_p":0,"asm_timeout":0,"boot":0,"cl_restart":0,
       "memp":0,"done":4,"done_p":1,"err":0,"err_p":0,"cancel":1,"chunk_fail":3},
  "h":{"asm_wait":[4,2,1,0,0,0,0,0],"asm_wait_p":[3,0,0,0,0,0,0,0],
@@ -185,7 +185,11 @@ bucket chiuso di **5 minuti**, in append.
 - `t` — epoch di inizio bucket, allineato a multipli di 300 s
 - `n` — numero di campioni confluiti (10 attesi a 30 s di passo; meno se il
   processo è ripartito a metà bucket)
-- `g` — gauge come `[min, max, media]`
+- `g` — gauge come `[min, max, media, n_campioni]`. Il conteggio per gauge e'
+  necessario perche' non tutti i gauge sono presenti in ogni campione (CPU
+  richiede due letture consecutive di `/proc/stat`, le metriche di macchina
+  mancano fuori da Linux): la media di finestra e' la media pesata
+  `somma(media_bucket * n_bucket) / somma(n_bucket)`
 - `c` — contatori sommati nel bucket
 - `h` — istogrammi, 8 bin
 
