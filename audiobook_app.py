@@ -3924,37 +3924,8 @@ def admin_logs():
 """
         cards_html += "</div></div>\n"
 
-    # Hourly stats for chart
-    hourly_counts = [0] * 24
-    for sid, s in sessions.items():
-        if "first_dt" in s:
-            hourly_counts[s["first_dt"].hour] += 1
-    hourly_json = json.dumps(hourly_counts)
-
-    # Hourly stats with language breakdown
-    from collections import Counter
-    all_langs = [s.get("browser_lang", "??") for s in sessions.values()]
-    top_langs = [l for l, _ in Counter(all_langs).most_common(3)]
-    
-    # hourly_lang_data[hour][lang] = count
-    hourly_lang_data = []
-    for h in range(24):
-        # Initialize with top 3 + "Other"
-        row = {l: 0 for l in top_langs}
-        row["Other"] = 0
-        hourly_lang_data.append(row)
-        
-    for sid, s in sessions.items():
-        if "first_dt" in s:
-            h = s["first_dt"].hour
-            l = s.get("browser_lang", "??")
-            if l in top_langs:
-                hourly_lang_data[h][l] += 1
-            else:
-                hourly_lang_data[h]["Other"] += 1
-    
-    hourly_json = json.dumps(hourly_lang_data)
-    lang_labels_json = json.dumps(top_langs + ["Other"])
+    # Il vecchio istogramma orario per lingua e' stato sostituito dal pannello
+    # di carico (/api/admin/load_stats): niente piu' aggregazione qui.
 
     available_months = []
     try:
@@ -4139,18 +4110,19 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 <div id="statsModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>📊 Job Distribution (24h)</h2>
+            <h2>📊 Carico sistema</h2>
             <button class="modal-close" onclick="hideStats()">&times;</button>
         </div>
-        <div id="chartLegend" class="chart-legend"></div>
-        <div class="chart-container">
-            <div class="chart-y-axis">
-                <div id="yMax"></div>
-                <div>0</div>
-            </div>
-            <div class="chart-area" id="chartArea"></div>
+        <div class="lsw-bar">
+            <button class="lsw-btn active" data-window="24h" onclick="loadStats('24h',this)">24 ore</button>
+            <button class="lsw-btn" data-window="7d" onclick="loadStats('7d',this)">7 giorni</button>
+            <button class="lsw-btn" data-window="28d" onclick="loadStats('28d',this)">28 giorni</button>
+            <button class="lsw-btn" data-window="month" onclick="loadStats('month',this)">Mese corrente</button>
+            <button class="lsw-btn lsw-refresh" onclick="loadStats(lsWindow,null)" title="Ricarica">⟳</button>
         </div>
-        <div class="chart-x-axis" id="chartXAxis"></div>
+        <div id="lsCoverage" class="ls-coverage"></div>
+        <div id="lsCards" class="ls-cards"></div>
+        <div id="lsTimeline" class="ls-timeline"></div>
     </div>
 </div>
 
@@ -4162,22 +4134,42 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .modal-close {{ background:none; border:none; color:var(--text-dim); font-size:2rem; cursor:pointer; line-height:1; }}
 .modal-close:hover {{ color:var(--text); }}
 
-.chart-legend {{ display:flex; gap:16px; margin-bottom:20px; justify-content:center; flex-wrap:wrap; }}
-.legend-item {{ display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-dim); }}
-.legend-color {{ width:12px; height:12px; border-radius:3px; }}
-
-.chart-container {{ display:flex; height:300px; gap:10px; margin-bottom:10px; border-left:2px solid var(--border); border-bottom:2px solid var(--border); padding:20px 10px 0 10px; }}
-.chart-y-axis {{ display:flex; flex-direction:column; justify-content:space-between; color:var(--text-dim); font-size:0.7rem; padding-right:5px; margin-left:-35px; width:30px; text-align:right; }}
-.chart-area {{ flex:1; display:flex; align-items:flex-end; gap:4px; }}
-
-.chart-bar-wrap {{ flex:1; display:flex; flex-direction:column; align-items:center; height:100%; justify-content:flex-end; position:relative; }}
-.chart-bar-seg {{ width:100%; min-height:0px; transition:height 0.5s ease; position:relative; }}
-.chart-bar-seg:first-child {{ border-radius:4px 4px 0 0; }}
-.chart-bar-seg:hover {{ filter:brightness(1.2); }}
-.chart-bar-seg:hover::after {{ content:attr(data-label); position:absolute; top:-25px; left:50%; transform:translateX(-50%); background:var(--surface2); color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; white-space:nowrap; z-index:10; pointer-events:none; }}
-
-.chart-x-axis {{ display:flex; padding-left:45px; gap:4px; }}
-.chart-x-label {{ flex:1; text-align:center; font-size:0.6rem; color:var(--text-dim); }}
+.lsw-bar {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }}
+.lsw-btn {{ background:var(--surface2); color:var(--text-dim); border:1px solid var(--border);
+           border-radius:8px; padding:6px 14px; font-size:.78rem; cursor:pointer; }}
+.lsw-btn:hover {{ color:var(--text); }}
+.lsw-btn.active {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
+.lsw-refresh {{ margin-left:auto; }}
+.ls-coverage {{ font-size:.7rem; color:var(--orange); margin-bottom:10px; min-height:1em; }}
+.ls-cards {{ display:flex; flex-direction:column; gap:14px; }}
+.ls-sec h3 {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.8px;
+             color:var(--text-dim); margin-bottom:6px; font-weight:600; }}
+.ls-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }}
+.ls-card {{ background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }}
+.ls-card .v {{ font-size:1.25rem; font-weight:700; color:var(--text); }}
+.ls-card .l {{ font-size:.62rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.5px; }}
+.ls-card .s {{ font-size:.68rem; color:var(--text-dim); margin-top:3px; }}
+.ls-card.warn .v {{ color:var(--orange); }}
+.ls-card.crit .v {{ color:var(--red,#ef4444); }}
+.ls-card.ok .v {{ color:var(--green); }}
+.ls-badge {{ display:inline-block; font-size:.55rem; padding:1px 5px; border-radius:4px;
+            border:1px solid var(--border); margin-right:4px; }}
+.ls-badge.p {{ color:var(--accent2,#a78bfa); border-color:rgba(167,139,250,.4); }}
+.ls-timeline {{ margin-top:18px; border-left:2px solid var(--border);
+               border-bottom:2px solid var(--border); padding:14px 6px 0 6px;
+               height:170px; display:flex; align-items:flex-end; gap:2px; position:relative; }}
+.ls-tl-wrap {{ flex:1; height:100%; display:flex; flex-direction:column;
+              justify-content:flex-end; position:relative; }}
+.ls-tl-seg {{ width:100%; }}
+.ls-tl-seg.free {{ background:var(--accent); }}
+.ls-tl-seg.prem {{ background:var(--accent2,#a78bfa); }}
+.ls-tl-wrap:hover::after {{ content:attr(data-label); position:absolute; bottom:100%; left:50%;
+    transform:translateX(-50%); background:var(--surface2); color:var(--text); padding:3px 7px;
+    border-radius:4px; font-size:.65rem; white-space:nowrap; z-index:10; border:1px solid var(--border); }}
+.ls-tl-rej {{ position:absolute; top:2px; left:50%; transform:translateX(-50%);
+             width:6px; height:6px; border-radius:50%; background:var(--red,#ef4444); }}
+.ls-tl-ram {{ position:absolute; left:0; right:0; height:1px; background:var(--orange); opacity:.55; }}
+.ls-empty {{ color:var(--text-dim); font-size:.8rem; text-align:center; padding:30px; }}
 </style>
 
 <!-- Modale conferma interruzione job (admin). Deve precedere lo <script>:
@@ -4229,74 +4221,154 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 <div class="ktoast" id="ktoast"></div>
 
 <script>
-const hourlyData = {hourly_json};
-const langLabels = {lang_labels_json};
-const langColors = ['var(--accent)', 'var(--accent2)', 'var(--green)', '#94a3b8'];
+let lsWindow = '24h';
+let lsLoaded = false;
 
 function showStats() {{
-    const modal = document.getElementById('statsModal');
-    const area = document.getElementById('chartArea');
-    const xAxis = document.getElementById('chartXAxis');
-    const yMax = document.getElementById('yMax');
-    const legend = document.getElementById('chartLegend');
-    
-    area.innerHTML = '';
-    xAxis.innerHTML = '';
-    legend.innerHTML = '';
-    
-    // Legend
-    langLabels.forEach((l, i) => {{
-        const item = document.createElement('div');
-        item.className = 'legend-item';
-        item.innerHTML = `<div class="legend-color" style="background:${{langColors[i]}}"></div><span>${{l.toUpperCase()}}</span>`;
-        legend.appendChild(item);
-    }});
-    
-    const totals = hourlyData.map(h => Object.values(h).reduce((a, b) => a + b, 0));
-    const maxVal = Math.max(...totals, 5);
-    yMax.textContent = maxVal;
-    
-    hourlyData.forEach((hData, hour) => {{
-        const wrap = document.createElement('div');
-        wrap.className = 'chart-bar-wrap';
-        
-        // Reverse labels for stacking order (top to bottom)
-        [...langLabels].reverse().forEach((lang) => {{
-            const val = hData[lang] || 0;
-            if (val > 0) {{
-                const seg = document.createElement('div');
-                seg.className = 'chart-bar-seg';
-                const langIdx = langLabels.indexOf(lang);
-                seg.style.backgroundColor = langColors[langIdx];
-                seg.style.height = (val / maxVal * 100) + '%';
-                seg.dataset.label = lang.toUpperCase() + ': ' + val;
-                wrap.appendChild(seg);
-            }}
-        }});
-        
-        if (totals[hour] === 0) {{
-            const stub = document.createElement('div');
-            stub.className = 'chart-bar-seg';
-            stub.style.height = '2px';
-            stub.style.backgroundColor = 'var(--border)';
-            stub.style.opacity = '0.2';
-            wrap.appendChild(stub);
-        }}
-        
-        area.appendChild(wrap);
-        
-        const label = document.createElement('div');
-        label.className = 'chart-x-label';
-        label.textContent = hour.toString().padStart(2, '0');
-        xAxis.appendChild(label);
-    }});
-    
-    modal.style.display = 'block';
+    document.getElementById('statsModal').style.display = 'block';
+    if (!lsLoaded) loadStats('24h', document.querySelector('.lsw-btn[data-window="24h"]'));
 }}
-
 
 function hideStats() {{
     document.getElementById('statsModal').style.display = 'none';
+}}
+
+function lsFmtSec(s) {{
+    if (!s) return '0s';
+    if (s >= 1200) return '> 20m';
+    if (s < 60) return Math.round(s) + 's';
+    const m = Math.floor(s / 60), r = Math.round(s % 60);
+    return r ? m + 'm' + String(r).padStart(2, '0') + 's' : m + 'm';
+}}
+
+function lsCard(label, value, sub, level) {{
+    return '<div class="ls-card ' + (level || '') + '"><div class="l">' + label +
+           '</div><div class="v">' + value + '</div>' +
+           (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+}}
+
+function lsLevel(v, warn, crit) {{
+    if (v >= crit) return 'crit';
+    if (v >= warn) return 'warn';
+    return 'ok';
+}}
+
+function lsRender(d) {{
+    const j = d.job || {{}}, f = d.ffmpeg || {{}}, m = d.machine || {{}},
+          q = d.quality || {{}}, r = d.reliability || {{}};
+    const sec = (title, cards) =>
+        '<div class="ls-sec"><h3>' + title + '</h3><div class="ls-grid">' + cards.join('') + '</div></div>';
+
+    let html = '';
+    html += sec('Job', [
+        lsCard('In elaborazione (picco)', j.gen_peak || 0, 'media ' + (j.gen_avg || 0)),
+        lsCard('<span class="ls-badge p">PREMIUM</span> picco', j.gen_premium_peak || 0,
+               'media ' + (j.gen_premium_avg || 0)),
+        lsCard('Job in RAM (picco)', j.in_ram_peak || 0, 'media ' + (j.in_ram_avg || 0)),
+        lsCard('Rifiutati per carico', (j.rejected_free || 0) + (j.rejected_premium || 0),
+               'di cui premium ' + (j.rejected_premium || 0),
+               (j.rejected_free || 0) + (j.rejected_premium || 0) > 0 ? 'warn' : 'ok'),
+        lsCard('Tempo al tetto globale', (j.saturation_pct || 0) + '%',
+               'cap ' + (d.meta.global_cap || 0), lsLevel(j.saturation_pct || 0, 5, 20)),
+    ]);
+    html += sec('FFmpeg / assembly', [
+        lsCard('In assembly (picco)', f.asm_peak || 0, 'media ' + (f.asm_avg || 0)),
+        lsCard('In coda (picco)', f.queue_peak || 0, ''),
+        lsCard('Attesa media', lsFmtSec(f.wait_avg),
+               'p50 ' + lsFmtSec(f.wait_p50) + ' · p95 ' + lsFmtSec(f.wait_p95),
+               lsLevel(f.wait_p95 || 0, 300, 900)),
+        lsCard('<span class="ls-badge p">PREMIUM</span> attesa', lsFmtSec(f.wait_premium_avg),
+               'p95 ' + lsFmtSec(f.wait_premium_p95)),
+        lsCard('Durata encode', lsFmtSec(f.encode_p50), 'p95 ' + lsFmtSec(f.encode_p95)),
+        lsCard('Timeout coda', f.timeouts || 0, '', (f.timeouts || 0) > 0 ? 'crit' : 'ok'),
+        lsCard('Slot tutti occupati', (f.slots_full_pct || 0) + '%',
+               (d.meta.assembly_slots || 0) + ' slot', lsLevel(f.slots_full_pct || 0, 20, 50)),
+    ]);
+    html += sec('Macchina', [
+        lsCard('RAM picco', (m.ram_peak || 0) + '%', 'media ' + (m.ram_avg || 0) + '%',
+               lsLevel(m.ram_peak || 0, 80, 92)),
+        lsCard('Swap picco', (m.swap_peak || 0) + '%', '', lsLevel(m.swap_peak || 0, 20, 60)),
+        lsCard('RSS processo', (m.rss_peak || 0) + ' MB', 'media ' + (m.rss_avg || 0) + ' MB'),
+        lsCard('CPU picco', (m.cpu_peak || 0) + '%', 'media ' + (m.cpu_avg || 0) + '%',
+               lsLevel(m.cpu_peak || 0, 85, 97)),
+        lsCard('IOwait picco', (m.iowait_peak || 0) + '%', '', lsLevel(m.iowait_peak || 0, 15, 35)),
+        lsCard('Load per core', m.load_peak || 0, '', lsLevel(m.load_peak || 0, 1.5, 3)),
+        lsCard('Thread picco', m.threads_peak || 0, ''),
+        lsCard('Disco max', (m.disk_peak || 0) + '%',
+               'liberi min ' + (m.disk_free_gb_min || 0) + ' GB',
+               lsLevel(m.disk_peak || 0, 75, 90)),
+    ]);
+    html += sec('Qualità servizio', [
+        lsCard('Completati', q.completed || 0, 'premium ' + (q.completed_premium || 0)),
+        lsCard('Errori', q.errors || 0, (q.error_pct || 0) + '% dei job',
+               lsLevel(q.error_pct || 0, 5, 15)),
+        lsCard('Annullati', q.cancelled || 0, ''),
+        lsCard('Durata job', lsFmtSec(q.job_p50), 'p95 ' + lsFmtSec(q.job_p95)),
+        lsCard('<span class="ls-badge p">PREMIUM</span> durata', lsFmtSec(q.job_premium_p50),
+               'p95 ' + lsFmtSec(q.job_premium_p95)),
+        lsCard('Chunk TTS falliti', q.chunk_failed || 0, '',
+               (q.chunk_failed || 0) > 0 ? 'warn' : 'ok'),
+    ]);
+    html += sec('Affidabilità', [
+        lsCard('Riavvii processo', r.boots || 0, '', (r.boots || 0) > 1 ? 'warn' : 'ok'),
+        lsCard('Restart cleanup', r.cleanup_restarts || 0, '',
+               (r.cleanup_restarts || 0) > 0 ? 'crit' : 'ok'),
+        lsCard('Heartbeat cleanup max', lsFmtSec(r.cleanup_hb_max_sec),
+               'atteso < 2m', lsLevel(r.cleanup_hb_max_sec || 0, 300, 900)),
+        lsCard('Memory pressure', r.memory_pressure || 0, '',
+               (r.memory_pressure || 0) > 0 ? 'crit' : 'ok'),
+    ]);
+    document.getElementById('lsCards').innerHTML = html;
+
+    const cov = document.getElementById('lsCoverage');
+    if ((d.meta.coverage_pct || 0) < 100) {{
+        const since = d.meta.first_sample_ts
+            ? new Date(d.meta.first_sample_ts * 1000).toLocaleString('it-IT')
+            : 'mai';
+        cov.textContent = 'Dati parziali (' + (d.meta.coverage_pct || 0) +
+                          '% della finestra) — raccolta iniziata il ' + since;
+    }} else {{
+        cov.textContent = '';
+    }}
+
+    const tl = document.getElementById('lsTimeline');
+    const pts = d.timeline || [];
+    if (!pts.length) {{
+        tl.innerHTML = '<div class="ls-empty">Nessun dato nella finestra selezionata.</div>';
+        return;
+    }}
+    const maxGen = Math.max(1, ...pts.map(p => p.gen));
+    tl.innerHTML = pts.map(p => {{
+        const prem = Math.min(p.gen_p, p.gen);
+        const free = Math.max(0, p.gen - prem);
+        const when = new Date(p.t * 1000).toLocaleString('it-IT',
+            {{day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}});
+        const label = when + ' · job ' + p.gen + ' (prem ' + prem + ') · RAM ' + p.ram +
+                      '%' + (p.rej ? ' · rifiuti ' + p.rej : '');
+        return '<div class="ls-tl-wrap" data-label="' + label + '">' +
+               (p.rej ? '<div class="ls-tl-rej"></div>' : '') +
+               (p.ram ? '<div class="ls-tl-ram" style="bottom:' + p.ram + '%"></div>' : '') +
+               '<div class="ls-tl-seg prem" style="height:' + (prem / maxGen * 100) + '%"></div>' +
+               '<div class="ls-tl-seg free" style="height:' + (free / maxGen * 100) + '%"></div>' +
+               '</div>';
+    }}).join('');
+}}
+
+function loadStats(win, btn) {{
+    lsWindow = win;
+    lsLoaded = true;
+    document.querySelectorAll('.lsw-btn[data-window]').forEach(b => b.classList.remove('active'));
+    const target = btn || document.querySelector('.lsw-btn[data-window="' + win + '"]');
+    if (target) target.classList.add('active');
+    document.getElementById('lsCards').innerHTML = '<div class="ls-empty">Caricamento…</div>';
+    document.getElementById('lsTimeline').innerHTML = '';
+    fetch('/api/admin/load_stats?window=' + encodeURIComponent(win), {{credentials: 'same-origin'}})
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(lsRender)
+        .catch(e => {{
+            document.getElementById('lsCards').innerHTML =
+                '<div class="ls-empty">Errore nel caricamento delle statistiche (' + e + ').</div>';
+        }});
 }}
 
 window.onclick = function(event) {{
