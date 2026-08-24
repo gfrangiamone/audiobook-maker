@@ -3262,6 +3262,7 @@ function _showGeminiOverloadModal(d){
 
 function _showWizProgress(){
   _stopAnalyzedHeartbeat();
+  _clearPErr();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='';
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='none';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='flex';
@@ -3283,22 +3284,30 @@ function _showWizProgress(){
 
 function _listenOptProgressWiz(){
   var myJobId=jobId;
+  // Retry sulla caduta dello stream: senza, la prima interruzione di rete
+  // congelava la pagina a 0% per sempre (barra ferma, nessun errore visibile)
+  // mentre il job proseguiva lato server. Stessa politica di listenProgress().
+  var retries=0;
+  var maxRetries=5;
+  var finished=false;   // stato terminale raggiunto: non riconnettere
   _ensureEmailAreaVisible();
   _updateGenNoticeWarning();
   _autoRegisterEmailFromStorage(myJobId);
+  function connect(){
   var es=new EventSource('/api/optimize_progress/'+myJobId);
   es.onmessage=function(ev){
+    retries=0;
     var d=JSON.parse(ev.data);
     if(d.status==='error'){
-      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
+      finished=true;es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');showPErr(d.error||'Optimization error');unlockUI();return;
     }
     if(d.status==='cancelled'){
-      es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
+      finished=true;es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
       document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
       unlockUI();return;
     }
     if(d.status==='optimized'){
-      es.close();
+      finished=true;es.close();
       _setCancelButtonMode('gen');
       (async()=>{try{const est=await fetch('/api/optimize_estimate/'+jobId).then(r=>r.json());if(est.optimized_chapters)optimizedChapters=est.optimized_chapters;}catch(e){}})();
       aiOptEnabled=false;
@@ -3331,7 +3340,7 @@ function _listenOptProgressWiz(){
       unlockUI();return;
     }
     if(d.auto_generate_started){
-      es.close();
+      finished=true;es.close();
       _setCancelButtonMode('gen');
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('s4_title')||'Generation';
       _showTransferQr(jobId, 'transferStartImg', 'transferStartArea');
@@ -3366,7 +3375,17 @@ function _listenOptProgressWiz(){
     }
     if(workedChars>0){var xSzEl=document.getElementById('xSz');if(xSzEl){xSzEl.textContent=workedChars.toLocaleString(cl||'it')+' char';xSzEl.closest('.ps').style.display=''}}
   };
-  es.onerror=function(){es.close()};
+  es.onerror=function(){
+    es.close();
+    if(finished)return;
+    if(retries<maxRetries){retries++;setTimeout(connect,retries*2000);return}
+    // Esauriti i tentativi: il job prosegue lato server (e con l'email
+    // registrata la consegna e' garantita), ma questa pagina non ha piu' un
+    // canale di avanzamento. Dirlo, invece di restare muti a 0%.
+    showPErr(t('sse_lost')||'Connection to the server was lost. Reload the page to see the progress: processing continues anyway.');
+  };
+  }
+  connect();
 }
 
 function showS3Err(msg){
@@ -3686,20 +3705,46 @@ function _bindTransferButtonForMobile(boxId, token){
   }
 }
 
-async function _showTransferQr(jobId, imgId, boxId){
+// Il QR/bottone di trasferimento sull'app viene chiesto subito dopo l'avvio del
+// job. Prima questa fetch era "best-effort" senza ritentativi: una singola
+// caduta di rete in quell'istante (o un blip del server sotto carico) faceva
+// sparire il bottone per TUTTA la durata del job, in silenzio. Ora si riprova
+// con backoff sugli errori transitori (rete, 5xx); sui 4xx e sulle risposte
+// valide ma senza QR ci si ferma subito, perche' ritentare non cambierebbe
+// l'esito.
+async function _showTransferQr(jobId, imgId, boxId, _attempt){
   if(!jobId) return;
-  try{
-    const r = await fetch('/api/transfer_qr/' + encodeURIComponent(jobId));
-    if(!r.ok) return;
-    const d = await r.json();
-    if(d && d.qr){
-      const img = document.getElementById(imgId);
-      const box = document.getElementById(boxId);
-      if(img){ img.src = d.qr; }
-      if(box){ box.hidden = false; }
-      if(d.token){ _bindTransferButtonForMobile(boxId, d.token); }
+  const attempt = _attempt || 0;
+  const MAX_ATTEMPTS = 4;   // backoff 1s, 2s, 4s, 8s
+  function _retry(err){
+    if(attempt < MAX_ATTEMPTS){
+      setTimeout(function(){ _showTransferQr(jobId, imgId, boxId, attempt+1); }, Math.pow(2, attempt)*1000);
+      return;
     }
-  }catch(e){ /* best-effort: nessun QR, nessun errore visibile */ }
+    try{ console.warn('[transfer] QR non ottenuto dopo '+(MAX_ATTEMPTS+1)+' tentativi:', err); }catch(_e){}
+  }
+  let r;
+  try{
+    r = await fetch('/api/transfer_qr/' + encodeURIComponent(jobId));
+  }catch(e){ _retry(e); return; }
+  if(!r.ok){
+    if(r.status < 500){ try{ console.warn('[transfer] QR non disponibile: HTTP '+r.status); }catch(_e){} return; }
+    _retry(new Error('HTTP '+r.status));
+    return;
+  }
+  let d;
+  try{ d = await r.json(); }catch(e){ _retry(e); return; }
+  if(!d || !d.qr){
+    // Risposta valida ma senza QR: problema lato server (es. libreria qrcode
+    // assente). Ritentare non serve, ma lasciarne traccia in console si'.
+    try{ console.warn('[transfer] QR vuoto nella risposta del server'); }catch(_e){}
+    return;
+  }
+  const img = document.getElementById(imgId);
+  const box = document.getElementById(boxId);
+  if(img){ img.src = d.qr; }
+  if(box){ box.hidden = false; }
+  if(d.token){ _bindTransferButtonForMobile(boxId, d.token); }
 }
 
 // Popup col QR ingrandito, aperto dal bottone "Trasferisci sull'app". Il QR e`
@@ -4558,6 +4603,7 @@ async function goBackToChapters(){
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent='—';
+  _clearPErr();
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
   const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='';
@@ -4655,6 +4701,7 @@ function resetAll(){
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent='—';
+  _clearPErr();
   // Reset book info
   document.getElementById('bkT').textContent='';document.getElementById('bkA').textContent='';
   const bookChCount=document.getElementById('bookChCount');if(bookChCount)bookChCount.textContent='—';
@@ -4810,7 +4857,24 @@ function fmtTime(s){if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;i
 function fmtBytes(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(0)+' KB';return(b/1048576).toFixed(1)+' MB'}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function showErr(id,m){document.getElementById(id).innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
-function showPErr(m){document.getElementById('pra').innerHTML='<div class="al al-e fi">'+esc(m)+'</div>'}
+function _elVisible(el){ if(!el) return false; try{ return el.offsetParent!==null || el.getClientRects().length>0; }catch(_e){ return false } }
+// showPErr scriveva SOLO in #pra, che sta dentro un blocco display:none (residuo
+// del layout pre-wizard): in pratica nessun errore di generazione o di download
+// era visibile all'utente (pagina apparentemente ferma e muta). Ora l'alert va
+// nel primo contenitore effettivamente visibile del wizard; #pra resta popolato
+// per retrocompatibilita'.
+function showPErr(m){
+  const html='<div class="al al-e fi">'+esc(m)+'</div>';
+  const pra=document.getElementById('pra');if(pra)pra.innerHTML=html;
+  let target=null;
+  const ids=['progressErr','panel5Err','s3err'];
+  for(let i=0;i<ids.length;i++){const el=document.getElementById(ids[i]);if(_elVisible(el)){target=el;break}}
+  if(!target)target=document.getElementById('s3err');
+  if(!target)return;
+  target.innerHTML=html;
+  try{target.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_e){}
+}
+function _clearPErr(){['progressErr','panel5Err'].forEach(function(id){const el=document.getElementById(id);if(el)el.innerHTML=''})}
 
 function showDlLastWarning(){
   const el=document.getElementById('dlLastNotice');

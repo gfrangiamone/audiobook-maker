@@ -613,6 +613,10 @@ __REVIEWS_LD__
           <span class="phase" id="progressPhase">—</span>
           <span class="pct" id="progressPct">0%</span>
         </div>
+        <!-- Contenitore VISIBILE degli errori di avanzamento: showPErr() scriveva
+             solo in #pra, che vive nel blocco display:none qui sotto, quindi
+             nessun errore di generazione arrivava mai all'utente. -->
+        <div id="progressErr" role="alert" aria-live="assertive"></div>
         <!-- Old progress elements (hidden, kept for JS compatibility) -->
         <div style="display:none">
           <div class="pa" id="pra">
@@ -720,6 +724,9 @@ __REVIEWS_LD__
             <span class="dot" aria-hidden="true"></span>
             <span id="expiryInfo"></span>
           </div>
+          <!-- Errori del pannello finale (download scaduto/cooldown/410...):
+               stessa ragione di #progressErr. -->
+          <div id="panel5Err" role="alert" aria-live="assertive"></div>
         </div>
 
         <div class="actions-row">

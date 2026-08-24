@@ -700,6 +700,13 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .email-transfer-row>#transferStartArea:not([hidden]){display:flex}
 .email-transfer-row>#transferStartArea .btn{white-space:normal;text-align:center}
 
+/* Alert di errore dentro l'area di avanzamento / pannello finale: nessun
+   ingombro quando vuoti. */
+/* NB: mai display:none quando vuoti — showPErr() sceglie il contenitore in base
+   alla visibilita' effettiva, e un contenitore nascosto non verrebbe mai usato. */
+#progressErr:not(:empty){margin-top:14px;text-align:left}
+#panel5Err:not(:empty){margin-top:12px;text-align:left}
+
 /* ═══ PANEL FOOTER ═══ */
 .panel-footer{display:flex;justify-content:space-between;align-items:center;margin-top:34px;padding-top:22px;border-top:1px solid var(--brd);gap:14px}
 .panel-footer .left{display:flex;gap:10px;align-items:center;flex:1;min-width:0}
