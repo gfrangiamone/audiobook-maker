@@ -884,6 +884,23 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .news-modal-body strong{color:var(--tx);font-weight:700}
 .news-modal-footer{display:flex;justify-content:flex-end}
 
+/* ─── APP DOWNLOAD CTA (sopra il widget recensioni, stessa altezza) ─── */
+.appdl-row{display:flex;justify-content:center;max-width:840px;margin:0 auto 14px;padding:0 8px}
+.appdl-card{flex:1 1 100%;min-width:0;margin:0;padding:6px 18px;min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.appdl-title{font-size:1rem;color:var(--tx)}
+.appdl-badges{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.appdl-badges .store-badge{display:inline-block;line-height:0;border-radius:6px;transition:filter .2s,transform .15s}
+.appdl-badges .store-badge:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.appdl-badges .store-badge:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.appdl-badges .store-badge svg{display:block;height:34px;width:auto}
+@media(max-width:760px){
+  .appdl-row{max-width:760px}
+  .appdl-card{justify-content:center;text-align:center}
+}
+@media(max-width:420px){
+  .appdl-badges .store-badge svg{height:30px}
+}
+
 /* ─── FEEDBACK WIDGET + WHATSAPP COMMUNITY ROW ─── */
 .fbw{padding:0;overflow:hidden}
 #fbWidget{width:100%;max-width:760px;margin:0 auto 24px}

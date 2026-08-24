@@ -206,6 +206,12 @@ function applyI18n(){
     const k=e.getAttribute('data-t-title'), v=t(k);
     if(v) e.title=v;
   });
+  // data-t-html: stringhe di UI che contengono markup inline (es. il nome
+  // dell'app in grassetto). Valori interni al progetto, mai input utente.
+  document.querySelectorAll('[data-t-html]').forEach(e=>{
+    const v=t(e.getAttribute('data-t-html'));
+    if(v) e.innerHTML=v;
+  });
   document.querySelectorAll('.lsw button').forEach(b=>b.classList.toggle('on',b.dataset.l===cl));
   document.documentElement.lang=cl;
   const btnExp=document.getElementById('btnExport');
