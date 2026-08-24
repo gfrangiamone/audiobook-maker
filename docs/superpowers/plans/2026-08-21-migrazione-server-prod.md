@@ -2001,3 +2001,28 @@ sono elencati perché cambiano l'inventario della spec o richiedono un'azione al
     nostri; nessuna persistenza sospetta (cron, unit systemd, utenti, SUID recenti, connessioni
     in uscita: tutto pulito). Il pattern — raffiche di 1-3 connessioni al minuto in orario di
     lavoro — è quello di `plink -batch`, non di un accesso umano ostile.
+
+### Scostamento 16 — analisi del carico post-cutover e limite descrittori (24/08/2026)
+
+Rilievo a regime, con 38 generazioni in parallelo (picco 24 h: 43): load 1,76 su 4 core
+(PSI `cpu some` 9,3%), memoria realmente occupata 632 MB su 8 GB con swap allo 0,7%
+(massimo 3% in 24 h) e 22-25 job col testo spillato su disco, `PSI io` a zero, disco al 32%
+(15 GB di data dir su 393 job dir), latenza della home 15-24 ms. Nessun rifiuto per
+sovraccarico nelle 24 h contro un tetto `ABM_MAX_CONCURRENT_GLOBAL=50`. La macchina è
+dimensionata con ampio margine: il fattore lento è edge-tts (~3 chunk/minuto per job), non
+il server.
+
+Unico reperto azionabile: il **limite soft di descrittori era 1024** (198 in uso), con hard
+limit già a 524288. Al tetto di 50 job concorrenti — websocket edge-tts, chunk MP3, pipe di
+FFmpeg — il margine si assottiglia, e l'esaurimento dei descrittori non degrada le
+prestazioni: fa fallire le generazioni a raffica. Aggiunto `LimitNOFILE=65536` al drop-in
+`hardening.conf` già installato; `daemon-reload` eseguito, PID invariato, **attivo al
+prossimo restart** insieme alle quattro protezioni. Backup del drop-in precedente in
+`/root/hardening.conf.bak-20260824`.
+
+Osservazione aperta, non indagata: ~3 `Traceback` ogni 30 minuti, tutti della stessa
+famiglia — scritture su job dir sparite sotto i piedi del thread di sintesi
+(`FileNotFoundError` su `chunk_NNNNNN.mp3` e su `_silence.mp3` in fase di concat finale), con
+contorno di `epoch mismatch` da rigenerazione. Un caso (`Wne3EQMNT0f5tFLL5zHHKA`) ha perso
+l'assemblaggio dopo la sintesi completa. Non è legato alla sandbox: la data dir non è toccata
+dalle protezioni.

@@ -8,7 +8,7 @@ Playbook to diagnose a job incident (lost file, "link scaduto in anticipo", miss
 - **`ABM_DATA_DIR = /opt/audiobook-maker/data`** (NOT `/var/lib/...`). Job dir = `data/<job_id>/output_<epoch>/...`.
 - Env vars live in the systemd unit/EnvironmentFile, **not** visible via `grep ABM_ ...service`. Read the *actual* runtime env from `/proc/$(pgrep -f audiobook_app.py | head -1)/environ` (`tr '\0' '\n'`).
 - **Cold storage is ENABLED**: Cloudflare R2 (`ABM_S3_*`, bucket `audiobook-maker`). boto3 is installed → can list/serve cold directly.
-- **Sandbox (drop-in `hardening.conf`, installed 2026-08-24, in effect from the next service restart)**: `NoNewPrivileges`, `PrivateTmp`, `ProtectHome`, `ProtectSystem=full`. Two consequences when investigating:
+- **Sandbox (drop-in `hardening.conf`, installed 2026-08-24, in effect from the next service restart)**: `NoNewPrivileges`, `PrivateTmp`, `ProtectHome`, `ProtectSystem=full`, plus `LimitNOFILE=65536` (the inherited soft limit was 1024, ~200 fds in use at 38 concurrent generations — an fd exhaustion shows up as a burst of failed generations, not as a slowdown). Two consequences when investigating:
   - The synthesis scratch dirs (`abmtts_*`) and FFmpeg `.err` files are **no longer in `/tmp`** but in `/tmp/systemd-private-*-audiobook-maker.service-*/tmp/`, and are **wiped on every service stop**. No job payload lives there (persistent chunks are in the job dir), but a leaked `abmtts_*` is no longer evidence you can find after a restart.
   - `/root` and `/home` are invisible to the process, and `/usr` `/boot` `/etc` are read-only for it. `/opt` (code + data dir) is untouched.
 
