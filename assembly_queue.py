@@ -95,6 +95,28 @@ _waiters = []   # _Waiter in attesa di uno slot
 _held = 0       # slot attualmente occupati
 _seq = 0        # progressivo di arrivo, per il FIFO a parita' di priorita'
 
+# Observer opzionale per la telemetria. Iniettato allo startup invece che
+# importato: questo modulo resta foglia (CLAUDE.md §1) e i test della coda
+# non tirano dentro il resto dell'app.
+_observer = None
+
+
+def set_observer(fn):
+    """Registra fn(event, job_id, priority, waited_sec, held_sec) o None."""
+    global _observer
+    _observer = fn
+
+
+def _notify(event, job_id, priority, waited, held):
+    """Best-effort: un observer rotto non deve mai fermare un encode."""
+    fn = _observer
+    if fn is None:
+        return
+    try:
+        fn(event, job_id, priority, float(waited), float(held))
+    except Exception:
+        pass
+
 
 class _Waiter:
     """Un chiamante in coda, con l'Event su cui viene svegliato."""
@@ -175,13 +197,17 @@ def configure(max_slots):
 class Slot:
     """Permesso di assembly. `release()` e' idempotente e no-op se non tenuto."""
 
-    __slots__ = ("job_id", "held", "timed_out", "waited_sec", "_lock")
+    __slots__ = ("job_id", "held", "timed_out", "waited_sec", "priority",
+                 "t_acquired", "_lock")
 
-    def __init__(self, job_id, held, timed_out, waited_sec):
+    def __init__(self, job_id, held, timed_out, waited_sec,
+                 priority=PRIORITY_NORMAL):
         self.job_id = job_id
         self.held = held
         self.timed_out = timed_out
         self.waited_sec = waited_sec
+        self.priority = priority
+        self.t_acquired = time.time()
         self._lock = threading.Lock()
 
     def release(self):
@@ -190,6 +216,8 @@ class Slot:
             if not self.held:
                 return  # mai acquisito (timeout) o gia' rilasciato
             self.held = False
+        _notify("release", self.job_id, self.priority, self.waited_sec,
+                time.time() - self.t_acquired)
         with _state_lock:
             w = _next_waiter_locked()
             if w is not None:
@@ -231,7 +259,7 @@ def acquire(job_id="", priority=PRIORITY_NORMAL, on_wait=None, timeout=None):
         # priorita' varrebbe solo fra chi e' gia' in attesa.
         if _held < MAX_CONCURRENT_ASSEMBLY and not _waiters:
             _held += 1
-            return Slot(job_id, True, False, 0.0)
+            return Slot(job_id, True, False, 0.0, priority)
         _seq += 1
         w = _Waiter(priority, _seq, time.time(), job_id)
         _waiters.append(w)
@@ -266,11 +294,12 @@ def acquire(job_id="", priority=PRIORITY_NORMAL, on_wait=None, timeout=None):
     if not granted:
         print(f"[{job_id or '-'}] assembly: timeout dopo {waited:.0f}s in coda "
               f"— procedo comunque senza slot", flush=True)
-        return Slot(job_id, False, True, waited)
+        _notify("timeout", job_id, priority, waited, 0.0)
+        return Slot(job_id, False, True, waited, priority)
 
     print(f"[{job_id or '-'}] assembly: {tag}slot ottenuto dopo {waited:.0f}s "
           f"in coda", flush=True)
-    return Slot(job_id, True, False, waited)
+    return Slot(job_id, True, False, waited, priority)
 
 
 def slot(job_id="", priority=PRIORITY_NORMAL, on_wait=None, timeout=None):
