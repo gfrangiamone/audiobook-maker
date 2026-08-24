@@ -3926,6 +3926,34 @@ def _record_gemini_chunk_failure(job, job_id, work_dir, idx, block, failure_info
         print(f"[{job_id}] persist gemini_failures.jsonl failed (non-fatal): {_e}")
 
 
+def _assembly_priority(job):
+    """PREMIUM o NORMAL nella coda degli encode FFmpeg.
+
+    La CPU e' l'unica risorsa satura della macchina e la coda di assembly e'
+    dove si accumula l'attesa (nel picco: mediana ~5 min, coda oltre i 20).
+    Un job PREMIUM ha gia' consumato denaro dell'utente e credito del servizio
+    presso il provider TTS: farlo aspettare dietro a una fila di conversioni
+    gratuite e' il peggior uso possibile di quei minuti. Perdere tempo su un
+    job free e' spiacevole, perderlo su uno pagato costa due volte.
+
+    Premium = voce a pagamento (Gemini/Speechify) OPPURE job con un pagamento
+    incassato (ottimizzazione AI sopra la soglia gratuita, o voucher speso).
+    """
+    voice = (job.get("voice") or job.get("opt_voice") or "").strip()
+    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
+        return assembly_queue.PRIORITY_PREMIUM
+    if (job.get("payment_token") or "").strip():
+        return assembly_queue.PRIORITY_PREMIUM
+    try:
+        if float(job.get("payment_amount_eur") or 0) > 0:
+            return assembly_queue.PRIORITY_PREMIUM
+    except (TypeError, ValueError):
+        pass
+    if (job.get("payment") or {}).get("token"):
+        return assembly_queue.PRIORITY_PREMIUM
+    return assembly_queue.PRIORITY_NORMAL
+
+
 def _acquire_assembly_slot(job_id, job, phase):
     """Occupa uno slot di assembly, mostrando l'attesa nella barra di avanzamento.
 
@@ -3933,6 +3961,8 @@ def _acquire_assembly_slot(job_id, job, phase):
     sintesi TTS e' remota): oltre `ABM_MAX_CONCURRENT_ASSEMBLY` in parallelo si
     ottengono solo encode piu' lenti e job vivi in RAM piu' a lungo. Senza
     questo messaggio la barra sembrerebbe piantata durante l'attesa.
+
+    I job pagati scavalcano i gratuiti in coda (vedi `_assembly_priority`).
     """
     _prev_msg = job.get("progress_message", "")
 
@@ -3940,7 +3970,8 @@ def _acquire_assembly_slot(job_id, job, phase):
         job["progress_message"] = (
             f"Server busy — queued for final assembly (position {position})…")
 
-    _slot = assembly_queue.acquire(job_id, on_wait=_on_wait)
+    _slot = assembly_queue.acquire(job_id, priority=_assembly_priority(job),
+                                   on_wait=_on_wait)
     if _slot.waited_sec:
         print(f"[{job_id}] assembly ({phase}): avviato dopo "
               f"{_slot.waited_sec:.0f}s in coda", flush=True)

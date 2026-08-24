@@ -24,6 +24,7 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_MAX_CONCURRENT_GLOBAL` | `6` (tetto GLOBALE d'istanza di generazioni simultanee, tutti i client; `0` = illimitato). Superato, `/api/generate` e `/api/paypal_create_order_gemini` rispondono `429` con `error_code: server_busy` **prima** di chiedere qualunque pagamento | `audiobook_app.py` | 588 |
 | `ABM_MAX_CONCURRENT_ASSEMBLY` | `max(1, cpu_count() - 1)` (encode FFmpeg finali ammessi in parallelo: PCM→AAC/MP3, MP3→M4B, ZIP). Non rifiuta job: li mette in coda | `assembly_queue.py` | 50 |
 | `ABM_ASSEMBLY_WAIT_TIMEOUT_SEC` | `1800` (attesa massima di uno slot di assembly; scaduta, il job procede comunque senza slot) | `assembly_queue.py` | 37 |
+| `ABM_ASSEMBLY_STARVE_SEC` | `900` (secondi in coda oltre i quali un job pesa quanto un PREMIUM: anti-starvation dei job gratuiti scavalcati dai pagati. `0` = priorita' pura, nessuna promozione) | `assembly_queue.py` | 87 |
 | `ABM_MEM_LOG_INTERVAL_SEC` | `300` (intervallo della riga `[mem]` nel cleanup loop) | `audiobook_app.py` | 15013 |
 | `ABM_MEM_WARN_AVAIL_MB` | `300` (sotto questa `MemAvailable` scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15014 |
 | `ABM_MEM_WARN_SWAP_PCT` | `80` (sopra questa percentuale di swap usata scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15015 |
@@ -115,6 +116,7 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 | `MAX_CONCURRENT_LLM_PER_CLIENT` | da `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` (default `1`) | `audiobook_app.py` | 152 |
 | `MAX_CONCURRENT_GLOBAL` | da `ABM_MAX_CONCURRENT_GLOBAL` (default `6`) | `audiobook_app.py` | 588 |
 | `assembly_queue.MAX_CONCURRENT_ASSEMBLY` | da `ABM_MAX_CONCURRENT_ASSEMBLY` (default `max(1, cpu_count() - 1)`) | `assembly_queue.py` | 50 |
+| `assembly_queue.PRIORITY_NORMAL` / `PRIORITY_PREMIUM` | `0` / `10` (peso in coda di assembly; premium = voce Gemini/Speechify o job con pagamento incassato, vedi `generation_engine._assembly_priority`) | `assembly_queue.py` | 82-83 |
 | `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 115 |
 | `_CLIENT_COOKIE_MAX_AGE` | `31536000` (1 anno in secondi) | `audiobook_app.py` | 116 |
 | `_ANALYZE_RL_PER_MIN` | `5` upload `/api/analyze` / IP / minuto (sliding window) | `audiobook_app.py` | — |

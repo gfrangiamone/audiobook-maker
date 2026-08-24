@@ -15309,7 +15309,12 @@ def _log_memory_stats(now, force=False):
         n_spilled = sum(1 for j in jobs.values() if j.get("_texts_spilled"))
     try:
         _asm = assembly_queue.stats()
-        asm_part = f" asm={_asm['held']}/{_asm['max']}+{_asm['waiting']}q"
+        # "+5q(2p)": 5 in coda per l'assembly, di cui 2 PREMIUM (che passano
+        # davanti). Serve a leggere dal log se la coda sta trattenendo job
+        # pagati o solo gratuiti.
+        _asm_prem = _asm.get("waiting_premium", 0)
+        asm_part = (f" asm={_asm['held']}/{_asm['max']}+{_asm['waiting']}q"
+                    + (f"({_asm_prem}p)" if _asm_prem else ""))
     except Exception:
         asm_part = ""
     line = (f"[mem] rss={rss_mb:.0f}MB avail={avail_mb:.0f}MB "
