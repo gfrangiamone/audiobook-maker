@@ -67,3 +67,19 @@ def test_split_rows_render_all_and_premium_in_one_card():
     assert "lsRow('Premium'" in html
     # niente piu' card separate con badge PREMIUM nel titolo
     assert 'ls-badge' not in html
+
+
+def test_timeline_has_title_legend_and_axis():
+    html = _page()
+    assert 'id="lsTlWrap"' in html
+    assert "Andamento nel tempo" in html
+    assert 'class="ls-tl-legend"' in html
+    assert 'id="lsTlAxis"' in html
+    # la timeline si nasconde con il suo contenitore (titolo e legenda inclusi)
+    assert "tlw.style.display = (name === 'job') ? '' : 'none'" in html
+
+
+def test_timeline_shows_an_empty_state_when_no_job_ran():
+    html = _page()
+    assert "Nessun job in elaborazione nella finestra selezionata." in html
+    assert "const busy = pts.some(" in html

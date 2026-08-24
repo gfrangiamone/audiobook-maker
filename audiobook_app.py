@@ -4131,7 +4131,17 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
         <div class="ls-body">
             <div id="lsCoverage" class="ls-coverage"></div>
             <div id="lsCards" class="ls-cards"></div>
-            <div id="lsTimeline" class="ls-timeline"></div>
+            <div id="lsTlWrap" class="ls-tlwrap">
+                <h3>Andamento nel tempo <span id="lsTlStep"></span></h3>
+                <div class="ls-tl-legend">
+                    <span><i class="sw free"></i>job free</span>
+                    <span><i class="sw prem"></i>job premium</span>
+                    <span><i class="sw ram"></i>RAM %</span>
+                    <span><i class="sw rej"></i>rifiuti per carico</span>
+                </div>
+                <div id="lsTimeline" class="ls-timeline"></div>
+                <div id="lsTlAxis" class="ls-tl-axis"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -4178,7 +4188,19 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .ls-row.warn .v {{ color:var(--orange); }}
 .ls-row.crit .v {{ color:var(--red,#ef4444); }}
 .ls-row.ok .v {{ color:var(--green); }}
-.ls-timeline {{ margin-top:18px; border-left:2px solid var(--border);
+.ls-tlwrap {{ margin-top:18px; }}
+.ls-tlwrap h3 {{ font-size:.68rem; text-transform:uppercase; letter-spacing:.8px;
+                color:var(--text-dim); font-weight:600; margin-bottom:4px; }}
+.ls-tlwrap h3 span {{ text-transform:none; letter-spacing:0; font-weight:400; }}
+.ls-tl-legend {{ display:flex; gap:14px; flex-wrap:wrap; font-size:.65rem;
+                color:var(--text-dim); margin-bottom:6px; }}
+.ls-tl-legend i {{ display:inline-block; width:9px; height:9px; border-radius:2px;
+                  margin-right:4px; vertical-align:middle; }}
+.ls-tl-legend i.free {{ background:var(--accent); }}
+.ls-tl-legend i.prem {{ background:var(--accent2,#a78bfa); }}
+.ls-tl-legend i.ram {{ background:var(--orange); height:2px; border-radius:0; }}
+.ls-tl-legend i.rej {{ background:var(--red,#ef4444); border-radius:50%; }}
+.ls-timeline {{ border-left:2px solid var(--border);
                border-bottom:2px solid var(--border); padding:14px 6px 0 6px;
                height:170px; display:flex; align-items:flex-end; gap:2px; position:relative; }}
 .ls-tl-wrap {{ flex:1; height:100%; display:flex; flex-direction:column;
@@ -4192,6 +4214,11 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
 .ls-tl-rej {{ position:absolute; top:2px; left:50%; transform:translateX(-50%);
              width:6px; height:6px; border-radius:50%; background:var(--red,#ef4444); }}
 .ls-tl-ram {{ position:absolute; left:0; right:0; height:1px; background:var(--orange); opacity:.55; }}
+.ls-tl-axis {{ display:flex; justify-content:space-between; font-size:.6rem;
+              color:var(--text-dim); padding:4px 6px 0 8px; }}
+.ls-tl-axis:empty {{ display:none; }}
+.ls-timeline.empty {{ border:1px dashed var(--border); height:auto; padding:0;
+                     display:block; border-radius:8px; }}
 .ls-empty {{ color:var(--text-dim); font-size:.8rem; text-align:center; padding:30px; }}
 </style>
 
@@ -4391,9 +4418,35 @@ function lsRender(d) {{
 
     const tl = document.getElementById('lsTimeline');
     const pts = d.timeline || [];
-    if (!pts.length) {{
-        tl.innerHTML = '<div class="ls-empty">Nessun dato nella finestra selezionata.</div>';
+    const busy = pts.some(p => (p.gen || 0) > 0 || (p.rej || 0) > 0 || (p.ram || 0) > 0);
+    const stepLbl = document.getElementById('lsTlStep');
+    if (stepLbl) {{
+        const st = d.meta.timeline_step_sec || 0;
+        stepLbl.textContent = st
+            ? '(un punto ogni ' + (st >= 3600 ? Math.round(st / 3600) + 'h' : Math.round(st / 60) + 'm') + ')'
+            : '';
+    }}
+    const axis = document.getElementById('lsTlAxis');
+    if (axis) {{
+        const f = d.meta.from || 0, t = d.meta.to || 0;
+        if (!pts.length || !f || !t) {{
+            axis.innerHTML = '';
+        }} else {{
+            const long = (d.meta.window !== '24h');
+            const fmt = ts => new Date(ts * 1000).toLocaleString('it-IT', long
+                ? {{day: '2-digit', month: '2-digit'}}
+                : {{hour: '2-digit', minute: '2-digit'}});
+            axis.innerHTML = [0, 0.25, 0.5, 0.75, 1]
+                .map(k => '<span>' + fmt(f + (t - f) * k) + '</span>').join('');
+        }}
+    }}
+    if (!pts.length || !busy) {{
+        tl.classList.add('empty');
+        tl.innerHTML = '<div class="ls-empty">' + (pts.length
+            ? 'Nessun job in elaborazione nella finestra selezionata.'
+            : 'Nessun dato nella finestra selezionata.') + '</div>';
     }} else {{
+        tl.classList.remove('empty');
         const maxGen = Math.max(1, ...pts.map(p => p.gen));
         tl.innerHTML = pts.map(p => {{
             const prem = Math.min(p.gen_p, p.gen);
@@ -4422,8 +4475,8 @@ function lsTab(name, btn) {{
     document.querySelectorAll('#lsCards .ls-pane').forEach(p => {{
         p.style.display = (p.dataset.pane === name) ? '' : 'none';
     }});
-    const tl = document.getElementById('lsTimeline');
-    if (tl) tl.style.display = (name === 'job') ? '' : 'none';
+    const tlw = document.getElementById('lsTlWrap');
+    if (tlw) tlw.style.display = (name === 'job') ? '' : 'none';
     const body = document.querySelector('.ls-body');
     if (body) body.scrollTop = 0;
 }}
