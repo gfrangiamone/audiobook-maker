@@ -40,10 +40,13 @@ Nota: gli encode per-capitolo del ramo multi-file restano fuori dalla coda.
 Sono interlacciati con la sintesi (uno per capitolo, gia' spalmati nel tempo):
 metterli sotto semaforo serializzerebbe l'intera generazione, non l'assembly.
 
-Nota: l'attesa NON e' interrompibile dalla cancellazione. E' voluto: oggi
-l'assembly non e' un punto di cancellazione (dopo la sintesi non esiste alcun
-check), quindi rendere abortibile la coda cambierebbe la semantica e potrebbe
-buttare via un audiolibro gia' sintetizzato e pagato.
+Nota: l'attesa NON e' interrompibile dalla cancellazione, e non lo diventera':
+svegliare i waiter su cancel butterebbe via audiolibri gia' sintetizzati (e
+pagati) per il solo fatto che un browser ha smesso di pollare. Il controllo sta
+a valle: chi ottiene lo slot rivaluta la situazione (`_assembly_stale_reason` in
+generation_engine) e si ritira in silenzio se nel frattempo il job e' passato a
+un'altra epoch o la sua dir e' sparita. Prima di quel controllo, un assembly
+obsoleto declassava a `error` un job gia' consegnato (23/08/2026).
 """
 import os
 import threading

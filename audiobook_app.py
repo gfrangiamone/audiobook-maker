@@ -14569,6 +14569,28 @@ CLEANUP_GRACE_AFTER_DOWNLOAD_SEC = 5 * 60  # 5 min grazia dopo download diretto
 CLEANUP_HEARTBEAT_TIMEOUT_SEC = 60          # heartbeat perso per 60s = browser chiuso
 CLEANUP_INTERVAL_SEC = 60                   # check every 60 seconds
 CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimosse
+# Finestra in cui il purge per heartbeat perso resta sospeso perche' il job e'
+# nella fase di assembly (in coda per uno slot FFmpeg, o gia' sotto encode).
+# Copre il timeout della coda (ABM_ASSEMBLY_WAIT_TIMEOUT_SEC, 1800s) piu'
+# l'encode: oltre, il job torna purgabile e non puo' restare vivo per sempre.
+CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
+
+
+def _assembly_purge_hold(job, now):
+    """True se il job va risparmiato dal purge perche' e' in fase di assembly.
+
+    `assembly_started_at` viene messo da `generation_engine._acquire_assembly_slot`
+    all'ingresso in coda e tolto al rilascio dello slot. Un timestamp assurdo o
+    troppo vecchio non deve rendere il job immortale: oltre la finestra di
+    grazia il purge riprende normalmente.
+    """
+    ts = job.get("assembly_started_at")
+    if not ts:
+        return False
+    try:
+        return (now - float(ts)) < CLEANUP_ASSEMBLY_GRACE_SEC
+    except (TypeError, ValueError):
+        return False
 
 
 # Quiete richiesta prima di considerare "finito" un file locale rigenerato dopo
@@ -15470,6 +15492,13 @@ def _cleanup_loop():
 
                 if status == "generating":
                     if has_email:
+                        continue
+                    # Sintesi finita, job in coda per uno slot di assembly (o
+                    # gia' sotto encode): il thread non aggiorna piu' nulla di
+                    # visibile e le attese osservate arrivano a 10 minuti.
+                    # Cancellare qui la job dir fa morire l'encode su ENOENT
+                    # quando lo slot arriva, buttando via una sintesi completa.
+                    if _assembly_purge_hold(job, now):
                         continue
                     last_poll = job.get("last_poll", job.get("start_time", now))
                     if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC:

@@ -3816,6 +3816,20 @@ class _AssemblyError(Exception):
     """
 
 
+class _StaleAssemblyError(Exception):
+    """L'assembly di questa epoch non ha piu' titolarita' sul job.
+
+    L'attesa in coda degli encode finali puo' durare minuti (osservati 618s con
+    9 job in fila): in quella finestra il job puo' essere rigenerato dall'utente
+    (bump di `gen_epoch`) o la sua entry puo' essere rimossa dal cleanup. Il
+    thread che ottiene lo slot dopo non deve piu' scrivere nulla, ne' toccare lo
+    stato del job: nel caso reale del 23/08/2026 un assembly di una epoch
+    cancellata ha ottenuto lo slot due secondi DOPO il COMPLETE della epoch
+    successiva, e' morto su ENOENT ed ha declassato a `error` un audiolibro gia'
+    prodotto — l'utente ha ricevuto tre 404 sul download.
+    """
+
+
 def _early_abort_params():
     """(ratio, min_chunks) per l'early-abort Gemini. ratio>1 disabilita."""
     try:
@@ -3954,7 +3968,37 @@ def _assembly_priority(job):
     return assembly_queue.PRIORITY_NORMAL
 
 
-def _acquire_assembly_slot(job_id, job, phase):
+def _assembly_stale_reason(job_id, job, my_epoch, work_dir):
+    """Motivo per cui questo assembly non e' piu' titolare del job, o None.
+
+    Da valutare DOPO l'attesa in coda: durante quei minuti il mondo cambia.
+    Tre condizioni, tutte oggettive (mai l'heartbeat: un utente che ha chiuso
+    la scheda non e' un buon motivo per buttare via una sintesi gia' fatta):
+
+      - la entry nel registro non e' piu' questa (job purgato e/o ricreato);
+      - `gen_epoch` e' avanzata: l'utente ha rigenerato, ed e' la epoch nuova
+        a possedere lo stato del job e a doverlo consegnare;
+      - la work_dir e' sparita sotto (purge per heartbeat perso): non c'e'
+        piu' nulla da montare.
+
+    Eccezione sull'ultimo punto: se il job ha un pagamento incassato ed e'
+    ancora la epoch corrente, NON lo dichiariamo stale. Deve percorrere il
+    path di errore normale, che rimborsa e notifica l'utente; uscire in
+    silenzio lascerebbe un pagamento senza contropartita.
+    """
+    if _jobs.get(job_id) is not job:
+        return "entry rimossa dal registro job"
+    if job.get("gen_epoch", 0) != my_epoch:
+        return (f"epoch superata (job={job.get('gen_epoch')}, mia={my_epoch}): "
+                f"un'altra generazione possiede il job")
+    if not os.path.isdir(str(work_dir)):
+        if _assembly_priority(job) >= assembly_queue.PRIORITY_PREMIUM:
+            return None
+        return "work_dir rimossa durante l'attesa in coda"
+    return None
+
+
+def _acquire_assembly_slot(job_id, job, phase, my_epoch=None, work_dir=None):
     """Occupa uno slot di assembly, mostrando l'attesa nella barra di avanzamento.
 
     Gli encode FFmpeg finali sono l'unico lavoro davvero CPU-bound del job (la
@@ -3963,6 +4007,15 @@ def _acquire_assembly_slot(job_id, job, phase):
     questo messaggio la barra sembrerebbe piantata durante l'attesa.
 
     I job pagati scavalcano i gratuiti in coda (vedi `_assembly_priority`).
+
+    `assembly_started_at` marca l'intera fase (attesa + encode) e sospende il
+    purge per heartbeat perso: senza, il cleanup cancella la job dir mentre il
+    thread e' fermo in fila e l'encode muore su ENOENT a slot ottenuto.
+    Il flag viene tolto dal release (vedi `_release_assembly_slot`).
+
+    Al ritorno dalla coda lo scenario viene rivalidato: se il job non e' piu'
+    nostro si solleva `_StaleAssemblyError` invece di scrivere in una dir che
+    appartiene a qualcun altro (o non esiste piu').
     """
     _prev_msg = job.get("progress_message", "")
 
@@ -3970,13 +4023,35 @@ def _acquire_assembly_slot(job_id, job, phase):
         job["progress_message"] = (
             f"Server busy — queued for final assembly (position {position})…")
 
+    job["assembly_started_at"] = time.time()
     _slot = assembly_queue.acquire(job_id, priority=_assembly_priority(job),
                                    on_wait=_on_wait)
     if _slot.waited_sec:
         print(f"[{job_id}] assembly ({phase}): avviato dopo "
               f"{_slot.waited_sec:.0f}s in coda", flush=True)
+
+    if my_epoch is not None and work_dir is not None:
+        _stale = _assembly_stale_reason(job_id, job, my_epoch, work_dir)
+        if _stale:
+            try:
+                _slot.release()
+            except Exception:
+                pass
+            job.pop("assembly_started_at", None)
+            raise _StaleAssemblyError(f"assembly ({phase}) obsoleto: {_stale}")
+
     job["progress_message"] = _prev_msg
     return _slot
+
+
+def _release_assembly_slot(job, slot):
+    """Restituisce lo slot e chiude la finestra di sospensione del purge."""
+    try:
+        job.pop("assembly_started_at", None)
+    except Exception:
+        pass
+    if slot is not None:
+        slot.release()
 
 
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None, speechify_emotion=None):
@@ -4630,7 +4705,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # Da qui in poi il lavoro e' CPU-bound locale (encode FFmpeg): passa
             # dalla coda di ammissione. Rilascio esplicito a fine assembly + rete
             # di sicurezza nel finally della funzione.
-            _asm_slot = _acquire_assembly_slot(job_id, job, "single-file")
+            _asm_slot = _acquire_assembly_slot(job_id, job, "single-file",
+                                               my_epoch=my_epoch, work_dir=work_dir)
 
             if use_pcm:
                 # Gemini/Speechify: tutto PCM. Assembly diretto in base a output_format.
@@ -4823,7 +4899,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         elapsed_s=round(time.time() - job.get("m4b_started_at", time.time()), 1),
                     )
 
-            _asm_slot.release()
+            _release_assembly_slot(job, _asm_slot)
             _asm_slot = None
 
             for p in all_parts:
@@ -5002,7 +5078,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # multi-file (deflate dello ZIP + concat + encode M4B). Gli encode
             # per-capitolo sopra restano fuori: sono interlacciati con la
             # sintesi e metterli sotto semaforo serializzerebbe l'intero job.
-            _asm_slot = _acquire_assembly_slot(job_id, job, "multi-file")
+            _asm_slot = _acquire_assembly_slot(job_id, job, "multi-file",
+                                               my_epoch=my_epoch, work_dir=work_dir)
 
             job["progress_message"] = "Creating ZIP..."
             safe_name = _safe_filename(info.title) or "audiolibro"
@@ -5144,7 +5221,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     print(f"[{job_id}] Background M4B generation failed: {e}")
                     job["m4b_failed"] = True
 
-            _asm_slot.release()
+            _release_assembly_slot(job, _asm_slot)
             _asm_slot = None
 
             # Flag: podcast available (RSS included in ZIP for zip_rss; downloadable separately)
@@ -5652,6 +5729,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if isinstance(e, (SystemExit, KeyboardInterrupt)):
             raise
 
+        if isinstance(e, _StaleAssemblyError):
+            # Uscita pulita: questo thread non possiede piu' il job. Nessun
+            # marker forense, nessuno stato toccato, nessun rimborso — lo stato
+            # appartiene alla epoch corrente, che sta consegnando o ha gia'
+            # consegnato. Marcare `error` qui e' il bug che ha prodotto i 404
+            # sul download del 23/08/2026. Lo slot lo restituisce il finally.
+            print(f"[{job_id}] {e} — thread terminato senza toccare lo stato")
+            return
+
         # Marker forense: preserva la work_dir per analisi post-mortem
         # anche se il codice di cleanup successivo dovesse fallire.
         _write_forensic_marker(
@@ -5809,9 +5895,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Rete di sicurezza: un'eccezione o una cancellazione a meta' encode non
         # deve lasciare uno slot di assembly occupato per sempre. release() e'
         # idempotente e no-op se lo slot e' gia' stato restituito.
+        # Il flag va tolto anche quando lo slot non e' mai stato assegnato
+        # (abort stale sollevato dentro l'acquire): altrimenti resterebbe a
+        # sospendere il purge del job per l'intera finestra di grazia.
+        try:
+            job.pop("assembly_started_at", None)
+        except Exception:
+            pass
         if _asm_slot is not None:
             try:
-                _asm_slot.release()
+                _release_assembly_slot(job, _asm_slot)
             except Exception as _e_slot:
                 print(f"[{job_id}] assembly slot release error (non-fatale): {_e_slot}")
         loop.close()
