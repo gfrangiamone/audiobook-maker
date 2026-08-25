@@ -181,6 +181,9 @@ class FakeSession:
                                "timeout": timeout})
             return self._responses.pop(0)
 
+    def mount(self, prefix, adapter):
+        """No-op: _build_session monta un HTTPAdapter reale che qui non serve."""
+
 
 def _ok_response(seconds=1.0):
     import base64
@@ -1036,3 +1039,209 @@ def test_main_cap_di_spesa_produce_report_parziale(tmp_path, monkeypatch):
                            [d for d in os.listdir(tmp_path)][0])
     assert "PARZIALE" in open(os.path.join(run_dir, "report.md"),
                               encoding="utf-8").read()
+
+
+# --- Fix round 1: crash su anomaly="error", CFAuthError a main, --max-attempts,
+# --compare vertex wired/rejected, niente credenziali in output -------------
+
+def test_run_smoke_anomaly_error_non_solleva_typeerror(tmp_path):
+    """Regressione critica: audio_seconds/ratio sono None quando call_cf
+    esaurisce i tentativi (anomaly="error"). Prima del fix, la formattazione
+    "{:.1f}"/"{:.2f}" sollevava TypeError e main() non arrivava mai a
+    scrivere report.md, pur avendo gia' speso in tentativi HTTP falliti.
+    """
+    s = FakeSession([FakeResponse(500)] * 4)
+    ctx = _ctx(tmp_path, s)
+    res = bench.run_smoke(ctx, "it", "Zephyr", "+0%", None, "Testo di prova.")
+    assert res == 1
+    ctx.writer.close()
+
+
+def test_main_cfautherror_produce_report_parziale_e_rc_1(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([FakeResponse(401)]))
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "PARZIALE" in report
+
+
+def test_main_eccezione_non_gestita_produce_comunque_un_report(tmp_path, monkeypatch):
+    """Il catch-all di main() deve marcare il run parziale e scrivere il
+    report anche per un'eccezione non prevista, senza rilanciarla."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session", lambda: FakeSession([]))
+
+    def _boom(*a, **k):
+        raise RuntimeError("bug non previsto")
+
+    monkeypatch.setattr(bench, "run_smoke", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "PARZIALE" in report
+    assert "bug non previsto" in report
+
+
+def test_main_dispatch_matrix_report_parziale_su_cfautherror(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([FakeResponse(403)]))
+    rc = bench.main(["--level", "matrix", "--langs", "it", "--voices", "Zephyr",
+                     "--rates", "+0%", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(
+        str(tmp_path),
+        [d for d in os.listdir(tmp_path) if d.endswith("_matrix")][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "PARZIALE" in report
+
+
+def test_main_dispatch_book_report_parziale_su_cfautherror(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([FakeResponse(403)]))
+    book_path = tmp_path / "libro.txt"
+    book_path.write_text("Testo breve per il test del livello book.",
+                         encoding="utf-8")
+    rc = bench.main(["--level", "book", "--book", str(book_path),
+                     "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(
+        str(tmp_path),
+        [d for d in os.listdir(tmp_path) if d.endswith("_book")][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "PARZIALE" in report
+
+
+def test_ctx_max_attempts_arriva_a_call_cf(tmp_path):
+    """Prova che BenchContext.max_attempts sia davvero letto da _one_call.
+
+    Prima del fix round 1 il campo esisteva sulla CLI (--max-attempts) ma
+    _one_call chiamava call_cf senza passarlo: il default interno di
+    call_cf (4) restava sempre in vigore.
+    """
+    s = FakeSession([FakeResponse(500)])
+    run_dir = bench.new_run_dir(str(tmp_path), "test")
+    ctx = bench.BenchContext(
+        session=s, account_id="acc", api_token="tok", run_dir=run_dir,
+        writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(10.0),
+        run_id="run-test", temperature=0.3, backend="cloudflare",
+        sleep=lambda _: None, max_attempts=1)
+    record, seconds, path = bench._one_call(
+        ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
+        os.path.join(run_dir, "x.pcm"), 0)
+    assert record["anomaly"] == "error"
+    assert record["attempt"] == 1
+    assert len(s.calls) == 1
+    ctx.writer.close()
+
+
+def test_main_max_attempts_limita_i_tentativi_http_end_to_end(tmp_path, monkeypatch):
+    """Stessa prova end-to-end, dalla CLI: con --max-attempts 1 e una sola
+    risposta 500 in coda, la sessione finta non deve mai ricevere una
+    seconda POST (altrimenti FakeSession solleverebbe IndexError su una
+    coda vuota, segno che il default di call_cf non e' stato sovrascritto).
+    """
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    s = FakeSession([FakeResponse(500)])
+    monkeypatch.setattr(bench.requests, "Session", lambda: s)
+    rc = bench.main(["--level", "smoke", "--max-attempts", "1",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 1
+    assert len(s.calls) == 1
+
+
+def _fake_vertex_synthesize_factory(seconds):
+    def _fake(text, voice_ref, rate=None, output_path=None,
+             style_instruction=None):
+        audio_bytes = (int(seconds) * bench.EXPECTED_RATE
+                      * bench.EXPECTED_CHANNELS * bench.EXPECTED_WIDTH)
+        with open(output_path, "wb") as fh:
+            fh.write(b"\x00" * audio_bytes)
+        return {"bytes_written": audio_bytes, "input_tokens": 100,
+                "output_tokens": 50, "attempts_used": 1}
+    return _fake
+
+
+def test_main_compare_vertex_wired_a_smoke(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: True)
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=14.0)]))
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(14))
+    rc = bench.main(["--level", "smoke", "--compare", "vertex",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(
+        str(tmp_path),
+        [d for d in os.listdir(tmp_path) if d.endswith("_smoke")][0])
+    righe = open(os.path.join(run_dir, "metrics.jsonl"),
+                encoding="utf-8").read().splitlines()
+    backends = {bench.json.loads(r)["backend"] for r in righe}
+    assert backends == {"cloudflare", "vertex"}
+
+
+def test_main_compare_vertex_wired_a_matrix(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: True)
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9))
+    rc = bench.main(["--level", "matrix", "--langs", "it", "--voices", "Zephyr",
+                     "--rates", "+0%", "--compare", "vertex",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(
+        str(tmp_path),
+        [d for d in os.listdir(tmp_path) if d.endswith("_matrix")][0])
+    righe = open(os.path.join(run_dir, "metrics.jsonl"),
+                encoding="utf-8").read().splitlines()
+    backends = {bench.json.loads(r)["backend"] for r in righe}
+    assert backends == {"cloudflare", "vertex"}
+
+
+def test_main_compare_vertex_rifiutato_a_livello_book(tmp_path, monkeypatch):
+    """Il raddoppio di costo del confronto A/B non e' accettabile su un
+    libro intero: va rifiutato esplicitamente, anche se le credenziali
+    Vertex sono disponibili, prima di qualunque spesa Cloudflare."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: True)
+    chiamate = []
+    monkeypatch.setattr(bench, "call_cf", lambda *a, **k: chiamate.append(1))
+    book_path = tmp_path / "libro.txt"
+    book_path.write_text("Testo di prova per il libro.", encoding="utf-8")
+    rc = bench.main(["--level", "book", "--book", str(book_path),
+                     "--compare", "vertex", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    assert chiamate == []
+
+
+def test_main_non_rivela_credenziali_in_stdout_ne_nel_report(tmp_path, monkeypatch,
+                                                              capsys):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "SENTINELLA_ACCOUNT_ID_XYZ")
+    monkeypatch.setenv("CF_API_TOKEN", "SENTINELLA_API_TOKEN_XYZ")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([FakeResponse(401)]))
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "SENTINELLA_ACCOUNT_ID_XYZ" not in captured.out
+    assert "SENTINELLA_API_TOKEN_XYZ" not in captured.out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "SENTINELLA_ACCOUNT_ID_XYZ" not in report
+    assert "SENTINELLA_API_TOKEN_XYZ" not in report

@@ -405,7 +405,7 @@ class BenchContext:
 
     def __init__(self, session, account_id, api_token, run_dir, writer, guard,
                  run_id, temperature=DEFAULT_TEMPERATURE, backend="cloudflare",
-                 sleep=time.sleep):
+                 sleep=time.sleep, max_attempts=4):
         self.session = session
         self.account_id = account_id
         self.api_token = api_token
@@ -416,6 +416,10 @@ class BenchContext:
         self.temperature = temperature
         self.backend = backend
         self.sleep = sleep
+        # Tentativi per chiamata su 429/5xx, passati a call_cf da _one_call.
+        # Default 4, identico al default di call_cf: senza wiring esplicito
+        # --max-attempts della CLI non avrebbe alcun effetto (fix round 1).
+        self.max_attempts = max_attempts
 
 
 def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
@@ -431,7 +435,13 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     reserved = ctx.guard.reserve(predict_call_usd(chars, lang))
     try:
         res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
-                      voice, ctx.temperature, sleep=ctx.sleep)
+                      voice, ctx.temperature, max_attempts=ctx.max_attempts,
+                      sleep=ctx.sleep)
+    except CFAuthError:
+        # 401/403: nessun audio prodotto, la prenotazione va liberata prima
+        # che l'eccezione risalga e interrompa il run (fix round 1).
+        ctx.guard.settle(reserved, 0.0)
+        raise
     except CFCallError as exc:
         # Un tentativo fallito non produce audio: la prenotazione va
         # liberata, non contabilizzata (decisione del Task 6).
@@ -516,13 +526,35 @@ def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
             "audio_seconds": seconds, "anomaly": anomaly}
 
 
-def run_smoke(ctx, lang, voice, rate, style, text):
-    """Un solo chunk: verifica auth, schema di risposta e decodifica WAV."""
+def run_smoke(ctx, lang, voice, rate, style, text, compare_vertex=False):
+    """Un solo chunk: verifica auth, schema di risposta e decodifica WAV.
+
+    Se il chunk finisce con anomaly == "error" (CFCallError esaurita dentro
+    call_cf), `audio_seconds`/`record['ratio']` sono None: la formattazione
+    deve tollerarlo invece di sollevare TypeError (fix round 1, regressione
+    critica: un run che ha gia' speso denaro deve comunque produrre un
+    report).
+    """
     pcm_path = os.path.join(ctx.run_dir, "audio", "0000.pcm")
     res = synth_chunk(ctx, text, 0, lang, voice, rate, style, pcm_path)
-    print(f"[smoke] {lang}/{voice}: {res['audio_seconds']:.1f}s audio, "
-          f"ratio {res['record']['ratio']:.2f}, "
+    seconds_txt = f"{res['audio_seconds']:.1f}s" if res["audio_seconds"] is not None else "n/d"
+    ratio_txt = f"{res['record']['ratio']:.2f}" if res["record"]["ratio"] is not None else "n/d"
+    print(f"[smoke] {lang}/{voice}: {seconds_txt} audio, "
+          f"ratio {ratio_txt}, "
           f"anomalia {res['anomaly'] or 'nessuna'}")
+    if compare_vertex and res["pcm_path"]:
+        # Il confronto A/B e' un side-effect informativo: non altera
+        # l'anomalia/residuo Cloudflare restituito da questa funzione.
+        vertex_path = os.path.join(ctx.run_dir, "audio", "0000_vertex.pcm")
+        try:
+            v_res = synth_chunk_vertex(ctx, text, 0, lang, voice, rate, style,
+                                       vertex_path)
+            if v_res.get("pcm_path"):
+                cmp = compare_metrics(res["pcm_path"], v_res["pcm_path"])
+                print(f"[smoke][vertex] delta_seconds={cmp['delta_seconds']:.2f} "
+                      f"rms_cf={cmp['rms_cf']:.1f} rms_vertex={cmp['rms_vertex']:.1f}")
+        except Exception as exc:  # noqa: BLE001 - side-effect diagnostico
+            print(f"[smoke][vertex] confronto non disponibile: {exc}")
     return 1 if res["anomaly"] else 0
 
 
@@ -709,7 +741,7 @@ def fixture_for(lang):
     return FIXTURES.get((lang or "")[:2].lower(), FIXTURES["default"])
 
 
-def run_matrix(ctx, combos, concurrency=1):
+def run_matrix(ctx, combos, concurrency=1, compare_vertex=False):
     """Esegue tutte le combinazioni; ritorna il numero di anomalie residue.
 
     Il cap di spesa si applica all'intero run: se scatta (SpendCapExceeded) o
@@ -718,13 +750,25 @@ def run_matrix(ctx, combos, concurrency=1):
     Sotto concorrenza l'arresto non e' istantaneo: i task gia' avviati (al
     massimo `concurrency`) arrivano comunque a completamento, i task non
     ancora avviati vengono saltati o cancellati.
+
+    `compare_vertex` e' un side-effect informativo (righe extra backend
+    "vertex" in metrics.jsonl): non tocca ne' il cap di spesa Cloudflare ne'
+    il conteggio di anomalie residue ritornato da questa funzione.
     """
     def _one(i_combo):
         i, combo = i_combo
         text = fixture_for(combo["lang"])
         pcm_path = os.path.join(ctx.run_dir, "audio", f"{i:04d}.pcm")
-        return synth_chunk(ctx, text, i, combo["lang"], combo["voice"],
-                           combo["rate"], combo["style"], pcm_path)
+        res = synth_chunk(ctx, text, i, combo["lang"], combo["voice"],
+                          combo["rate"], combo["style"], pcm_path)
+        if compare_vertex and res["pcm_path"]:
+            vertex_path = os.path.join(ctx.run_dir, "audio", f"{i:04d}_vertex.pcm")
+            try:
+                synth_chunk_vertex(ctx, text, i, combo["lang"], combo["voice"],
+                                   combo["rate"], combo["style"], vertex_path)
+            except Exception as exc:  # noqa: BLE001 - side-effect diagnostico
+                print(f"[matrix][vertex] chunk {i} confronto non disponibile: {exc}")
+        return res
 
     if int(concurrency) <= 1:
         residue = 0
@@ -894,14 +938,20 @@ def _run_chunk_jobs(jobs, worker, concurrency):
     return results
 
 
-def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
+def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b,
+             lang=None):
     """Genera l'intero libro e ne assembla l'M4B. Ritorna (anomalie, path|None).
 
     Un chunk fallito (anomaly="error", vedi synth_chunk/_one_call) non ha
     pcm_path: viene contato fra le anomalie residue ma escluso dall'assembly,
     cosi' un singolo guasto HTTP non ferma la generazione dell'intero libro.
+
+    `lang`, se passato esplicitamente (es. da --langs sulla CLI), sovrascrive
+    la lingua dichiarata nei metadati del libro; altrimenti i metadati del
+    libro restano il fallback (fix round 1: prima il parametro non esisteva e
+    --langs veniva ignorato a livello book).
     """
-    lang = (book.get("language") or "en")[:2].lower()
+    lang = (lang or book.get("language") or "en")[:2].lower()
     residue = 0
     chapter_pcms = []
     chapter_titles = []
@@ -1129,17 +1179,49 @@ def _build_session(concurrency):
     il pool di connessioni va in thrashing: connessioni scartate e riaperte
     di continuo (Minor rimandato dal Task 8). L'adapter viene dimensionato
     sulla concorrenza effettiva del run, con un minimo di 10 per non ridurre
-    la size di default quando la concorrenza e' bassa. Difensivo su sessioni
-    finte prive di `mount` (i test sostituiscono `requests.Session`).
+    la size di default quando la concorrenza e' bassa.
     """
     session = requests.Session()
-    if hasattr(session, "mount"):
-        pool_size = max(10, int(concurrency))
-        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size,
-                                                pool_maxsize=pool_size)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+    pool_size = max(10, int(concurrency))
+    adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size,
+                                            pool_maxsize=pool_size)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     return session
+
+
+def _flag_present(argv_list, flag):
+    """True se `flag` (es. "--langs") compare esplicitamente in argv.
+
+    argparse non distingue da solo un default implicito da un valore passato
+    apposta dall'utente (il default di --langs e' una stringa non-None, non
+    un sentinel): per sapere se l'utente ha davvero chiesto una lingua a
+    livello book bisogna guardare gli argomenti grezzi. Riconosce sia la
+    forma "--flag valore" sia "--flag=valore".
+    """
+    prefix = flag + "="
+    return any(a == flag or a.startswith(prefix) for a in argv_list)
+
+
+def _residual_anomalies(records):
+    """Conta le anomalie residue, un chunk = una riga, dedup per chunk_index.
+
+    Un chunk ritentato (`synth_chunk`) scrive due righe con lo stesso
+    chunk_index: contare le righe grezze conterebbe due volte un'anomalia
+    gia' corretta dal retry. `MetricsWriter` scrive in append rigorosamente
+    in ordine di produzione, quindi l'ultima riga vista per un dato
+    chunk_index e' sempre l'esito finale di quel chunk (fix round 1).
+    """
+    last_by_index = {}
+    senza_indice = []
+    for r in records:
+        idx = r.get("chunk_index")
+        if idx is None:
+            senza_indice.append(r)
+        else:
+            last_by_index[idx] = r
+    finali = list(last_by_index.values()) + senza_indice
+    return sum(1 for r in finali if r.get("anomaly"))
 
 
 def main(argv=None):
@@ -1150,9 +1232,19 @@ def main(argv=None):
     valore stampato in output (help, header di run, report o messaggi
     d'errore compresi).
     """
-    args = build_arg_parser().parse_args(argv)
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    args = build_arg_parser().parse_args(argv_list)
     if args.level == "book" and not args.book:
         print("[errore] --level book richiede --book <file.abm|file.txt>")
+        return 1
+    if args.level == "book" and args.compare == "vertex":
+        # Un libro intero puo' gia' costare parecchio: raddoppiarlo con il
+        # gemello Vertex per errore non e' accettabile. Il confronto A/B va
+        # fatto a --level matrix, dove il costo resta contenuto e la
+        # combinazione lingua/voce/stile e' comunque confrontabile.
+        print("[errore] --compare vertex non e' supportato a --level book "
+              "(raddoppierebbe il costo di un run lungo). Usa --level "
+              "matrix per il confronto A/B.")
         return 1
     if args.compare == "vertex" and not vertex_available():
         # Fallire qui, prima di spendere su Cloudflare, e' il punto: un A/B
@@ -1170,12 +1262,13 @@ def main(argv=None):
         api_token=api_token, run_dir=run_dir, writer=writer,
         guard=SpendGuard(args.max_spend_eur),
         run_id=os.path.basename(run_dir), temperature=args.temperature,
-        backend="cloudflare")
+        backend="cloudflare", max_attempts=args.max_attempts)
 
     langs = split_csv(args.langs) or ["en"]
     voices = split_csv(args.voices) or ["Zephyr"]
     rates = split_csv(args.rates) or ["+0%"]
     styles = split_csv(args.styles)
+    compare_vertex = (args.compare == "vertex")
     notes = []
     partial = False
     residue = 0
@@ -1184,22 +1277,24 @@ def main(argv=None):
         if args.level == "smoke":
             residue = run_smoke(ctx, langs[0], voices[0], rates[0],
                                 styles[0] if styles else None,
-                                fixture_for(langs[0]))
+                                fixture_for(langs[0]),
+                                compare_vertex=compare_vertex)
         elif args.level == "matrix":
             combos = matrix_combinations(langs, voices, rates, styles, args.runs)
             print(f"[matrix] {len(combos)} combinazioni, "
                   f"concorrenza {args.concurrency}")
-            residue = run_matrix(ctx, combos, args.concurrency)
+            residue = run_matrix(ctx, combos, args.concurrency,
+                                 compare_vertex=compare_vertex)
         else:
             book = parse_book(args.book)
             out_m4b = os.path.join(run_dir, "audio", "cloudflare.m4b")
+            # --langs esplicito sovrascrive la lingua del libro; altrimenti
+            # i metadati del libro restano il fallback (vedi run_book).
+            book_lang = langs[0] if _flag_present(argv_list, "--langs") else None
             residue, m4b_path = run_book(
                 ctx, book, voices[0], rates[0],
                 styles[0] if styles else None, args.chunk_chars,
-                args.concurrency, out_m4b)
-            if args.compare == "vertex":
-                notes.append("A/B Vertex: confronta i PCM `*_vertex.pcm` con i "
-                             "corrispondenti Cloudflare in audio/.")
+                args.concurrency, out_m4b, lang=book_lang)
     except SpendCapExceeded as exc:
         partial = True
         notes.append(f"cap di spesa raggiunto: {exc}")
@@ -1208,11 +1303,15 @@ def main(argv=None):
         partial = True
         notes.append(str(exc))
         print(f"[stop] {exc}")
-    except CFCallError as exc:
-        # Tentativi esauriti: il run e' parziale, ma i record gia' scritti
-        # restano validi e vanno comunque riepilogati nel report.
+    except Exception as exc:  # noqa: BLE001 - garantisce sempre un report
+        # Qualunque altro errore non gia' assorbito a monte (CFCallError
+        # residua, bug non previsto) non deve lasciare un run che ha gia'
+        # speso denaro senza un report.md: il run e' marcato parziale e
+        # l'eccezione viene solo annotata, mai rilanciata (fix round 1,
+        # regressione critica: prima un chunk anomaly="error" a --level
+        # smoke faceva sollevare TypeError qui sopra, senza alcun report).
         partial = True
-        notes.append(f"chiamata fallita definitivamente: {exc}")
+        notes.append(f"errore non gestito: {exc}")
         print(f"[stop] {exc}")
     finally:
         writer.close()
@@ -1223,23 +1322,25 @@ def main(argv=None):
             line = line.strip()
             if line:
                 records.append(json.loads(line))
-    # Task 10 review (Carry-forward A): summarize()/render_report() non
-    # separano le righe per backend. Questo runner scrive solo record
-    # "cloudflare" su ctx.writer (synth_chunk_vertex non e' ancora invocato
-    # da main), ma il filtro resta qui a guardia: se un domani il ramo
-    # --compare vertex scrivesse anche righe "vertex" sullo stesso
-    # metrics.jsonl, report e riconciliazione (che cita esplicitamente la
-    # Cloudflare Dashboard) continuerebbero a riepilogare solo la spesa
-    # Cloudflare, senza sommare costi di provider diversi in un totale senza
-    # senso.
+    # Carry-forward A (Task 10 review): summarize()/render_report() non
+    # separano le righe per backend. Con --compare vertex synth_chunk_vertex
+    # scrive anche righe "vertex" sullo stesso metrics.jsonl: il filtro qui
+    # garantisce che report e riconciliazione (che cita esplicitamente la
+    # Cloudflare Dashboard) restino scoped alla sola spesa Cloudflare, senza
+    # sommare costi di provider diversi in un totale senza senso.
     cf_records = [r for r in records if r.get("backend") == ctx.backend]
-    report = render_report(run_dir, cf_records, residue, partial, notes)
+    cf_residue = _residual_anomalies(cf_records)
+    notes.append(f"report e riconciliazione sopra coprono solo il backend "
+                 f"'{ctx.backend}'; eventuali righe di altri backend in "
+                 f"metrics.jsonl (es. 'vertex' con --compare) non sono "
+                 f"incluse nei totali.")
+    report = render_report(run_dir, cf_records, cf_residue, partial, notes)
     print(reconciliation_block(cf_records))
     print(f"[fine] report: {report}")
     if m4b_path:
         print(f"[fine] M4B: {m4b_path}")
     print(f"[fine] spesa stimata: EUR {ctx.guard.spent_eur():.4f}")
-    return 1 if (residue or partial) else 0
+    return 1 if (cf_residue or partial) else 0
 
 
 if __name__ == "__main__":
