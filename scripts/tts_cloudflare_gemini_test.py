@@ -225,6 +225,34 @@ def evaluate_format(fmt):
     return None
 
 
+class PaidCallCounter:
+    """Conta i POST che hanno gia' ricevuto un HTTP 200, cioe' quelli che
+    Cloudflare ha fatturato, in modo INDIPENDENTE da `metrics.jsonl`.
+
+    Fra la risposta 200 e la scrittura del record c'e' una finestra (decodifica
+    del WAV, valutazione del gate): un'interruzione li' dentro fa sparire dal
+    conteggio una chiamata gia' pagata, e la riconciliazione finisce per
+    dichiarare "nessuna chiamata" su un run che invece ha speso (fix round 4,
+    difetto 1). Il contatore vive in memoria e serve solo a contraddire i
+    totali calcolati sui record, mai a sostituirli.
+
+    Thread-safe: il livello matrix incrementa da piu' worker.
+    """
+
+    def __init__(self):
+        self._n = 0
+        self._lock = threading.Lock()
+
+    def bump(self):
+        with self._lock:
+            self._n += 1
+
+    @property
+    def count(self):
+        with self._lock:
+            return self._n
+
+
 class CFAuthError(Exception):
     """Credenziali rifiutate da Cloudflare (401/403): nessun retry ha senso."""
 
@@ -262,8 +290,14 @@ def _retry_after_seconds(resp, attempt):
 
 
 def call_cf(session, account_id, api_token, text, voice, temperature,
-            max_attempts=4, timeout=HTTP_TIMEOUT_SEC, sleep=time.sleep):
+            max_attempts=4, timeout=HTTP_TIMEOUT_SEC, sleep=time.sleep,
+            on_billed=None):
     """Una sintesi su Cloudflare, con retry su 429/5xx e su timeout di rete.
+
+    `on_billed` (opzionale) viene chiamata non appena la risposta e' un 200,
+    PRIMA di qualunque parsing: da quel momento il POST e' fatturato e non
+    deve poter sparire dai conteggi, qualunque cosa accada dopo (fix round 4,
+    difetto 1).
 
     Returns:
         {"wav": bytes, "latency_ms": float, "status": int, "attempts": int,
@@ -310,6 +344,11 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
         if resp.status_code != 200:
             raise CFCallError(f"HTTP {resp.status_code} non gestibile con retry",
                               status=resp.status_code, attempts=attempt)
+        if callable(on_billed):
+            # Da qui in poi la chiamata e' andata a buon fine lato Cloudflare:
+            # e' fatturata anche se il corpo risultera' inutilizzabile o se il
+            # processo viene interrotto durante la decodifica.
+            on_billed()
         try:
             body = resp.json()
         except Exception as exc:
@@ -420,6 +459,10 @@ class BenchContext:
         # Default 4, identico al default di call_cf: senza wiring esplicito
         # --max-attempts della CLI non avrebbe alcun effetto (fix round 1).
         self.max_attempts = max_attempts
+        # POST andati a 200 (quindi fatturati), contati fuori da metrics.jsonl:
+        # e' l'unico dato che sopravvive a un'interruzione fra la risposta e la
+        # scrittura del record (fix round 4, difetto 1).
+        self.paid_calls = PaidCallCounter()
 
 
 def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
@@ -434,11 +477,20 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     """
     reserved = ctx.guard.reserve(predict_call_usd(chars, lang))
     settled = False
+    billed = {"hit": False}
+
+    def _on_billed():
+        # Chiamata da call_cf appena arriva un 200: da quel momento il POST e'
+        # fatturato, e nessuna uscita successiva puo' farlo sparire dai
+        # conteggi (fix round 4, difetto 1).
+        billed["hit"] = True
+        ctx.paid_calls.bump()
+
     try:
         try:
             res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
                           voice, ctx.temperature, max_attempts=ctx.max_attempts,
-                          sleep=ctx.sleep)
+                          sleep=ctx.sleep, on_billed=_on_billed)
         except CFAuthError:
             # 401/403: nessun audio prodotto, la prenotazione va liberata prima
             # che l'eccezione risalga e interrompa il run (fix round 1).
@@ -506,7 +558,12 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
         # settle() gia' eseguito e' idempotente-safe da non ripetere: la
         # guardia `settled` lo garantisce.
         if not settled:
-            ctx.guard.settle(reserved, 0.0)
+            # Direzione conservativa (fix round 4, difetto 1): se il 200 e'
+            # gia' arrivato la chiamata e' fatturata, quindi la prenotazione
+            # resta contabilizzata al costo previsto invece di essere
+            # azzerata. Solo un'uscita PRIMA del 200 libera tutto: meglio
+            # dichiarare una spesa in piu' di quante ne siano fatturate.
+            ctx.guard.settle(reserved, reserved if billed["hit"] else 0.0)
 
 
 def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
@@ -595,8 +652,18 @@ def summarize(records):
         if r.get("anomaly"):
             anomalies[r["anomaly"]] = anomalies.get(r["anomaly"], 0) + 1
     cost_usd_tot = sum(float(r.get("cost_usd_est") or 0) for r in records)
+    # Costo dei soli chunk falliti: e' incluso in cost_usd (lo schema dei
+    # record non cambia) ma NON viene fatturato da Cloudflare, perche' una
+    # chiamata fallita non produce audio. Tenerlo separato permette di
+    # spiegare la divergenza fra report e footer invece di lasciarla
+    # indovinare (fix round 4, difetto 3).
+    falliti = [r for r in records if r.get("anomaly") == "error"]
+    cost_usd_failed = sum(float(r.get("cost_usd_est") or 0) for r in falliti)
     return {
         "calls": len(records),
+        "calls_failed": len(falliti),
+        "cost_usd_failed": cost_usd_failed,
+        "cost_eur_failed": cost_usd_failed * USD_EUR_RATE,
         "chars": sum(int(r.get("chars") or 0) for r in records),
         "audio_seconds": sum(float(r.get("audio_seconds") or 0) for r in records),
         "tokens_in": sum(int(r.get("tokens_in_est") or 0) for r in records),
@@ -611,14 +678,48 @@ def summarize(records):
     }
 
 
-def reconciliation_block(records):
+def unrecorded_calls_note(n):
+    """Testo unico (riconciliazione, report, stdout) per le chiamate pagate ma
+    non registrate: un 200 gia' fatturato non deve sparire dai conteggi.
+    """
+    return (f"{int(n)} chiamata/e ha ricevuto HTTP 200 da Cloudflare (quindi "
+            f"risulta fatturata) ma non compare in metrics.jsonl: il run e' "
+            f"stato interrotto fra la risposta e la scrittura del record. "
+            f"Ogni totale calcolato sui record e' sottostimato di altrettanto.")
+
+
+def not_billed_note(agg):
+    """Testo unico che spiega la divergenza fra il costo stimato dei chunk
+    falliti e la spesa del footer (fix round 4, difetto 3).
+
+    Non cambia alcun numero: dichiara solo che il footer, piu' basso, e' la
+    cifra corretta, perche' una chiamata fallita non viene fatturata.
+    """
+    return (f"chunk con anomaly=error: {agg['calls_failed']}. Il loro costo "
+            f"stimato (USD {agg['cost_usd_failed']:.4f} / "
+            f"EUR {agg['cost_eur_failed']:.4f}) e' compreso nei totali qui "
+            f"sopra, ma e' un costo NON fatturato da Cloudflare: una chiamata "
+            f"fallita non produce audio. La spesa del footer ([fine] spesa "
+            f"stimata Cloudflare) e' piu' bassa proprio per questo, ed e' la "
+            f"sola spesa effettivamente addebitata.")
+
+
+def reconciliation_block(records, unrecorded_paid_calls=0):
     """Blocco da confrontare con la fattura Cloudflare.
 
     Senza questo confronto il run misura il funzionamento, non il prezzo: il
     costo qui e' stimato, perche' l'API non restituisce i token consumati.
+
+    `unrecorded_paid_calls` sono i 200 gia' fatturati che non hanno lasciato un
+    record: se ce ne sono, il blocco lo dichiara invece di presentare i totali
+    dei record come completi (fix round 4, difetto 1).
     """
+    extra = ""
+    if int(unrecorded_paid_calls or 0) > 0:
+        extra = "\n  ATTENZIONE: " + unrecorded_calls_note(unrecorded_paid_calls)
     if not records:
-        return "RICONCILIAZIONE - nessuna chiamata effettuata."
+        return ("RICONCILIAZIONE - nessuna chiamata registrata in "
+                "metrics.jsonl." + extra)
     agg = summarize(records)
     ts = sorted(r["ts"] for r in records)
     return (
@@ -634,11 +735,19 @@ def reconciliation_block(records):
         "  -> AI -> Usage, selezionando esattamente la finestra qui sopra.\n"
         "  Nota: il costo e' STIMATO (l'API non restituisce i token). Finche'\n"
         "  non e' riconciliato, il risparmio atteso non e' dimostrato."
+        + (("\n  Nota: " + not_billed_note(agg)) if agg["calls_failed"] else "")
+        + extra
     )
 
 
-def render_report(run_dir, records, residual_anomalies, partial, notes):
-    """Scrive `report.md` e ne ritorna il path."""
+def render_report(run_dir, records, residual_anomalies, partial, notes,
+                  unrecorded_paid_calls=0):
+    """Scrive `report.md` e ne ritorna il path.
+
+    `unrecorded_paid_calls` sono i POST gia' andati a 200 (quindi fatturati)
+    che non hanno lasciato un record: senza dichiararli, un report con
+    "Chiamate 0" mentirebbe su un run che ha speso (fix round 4, difetto 1).
+    """
     agg = summarize(records)
     lines = []
     lines.append("# Report banco di prova Cloudflare Gemini TTS")
@@ -647,6 +756,10 @@ def render_report(run_dir, records, residual_anomalies, partial, notes):
     if partial:
         lines.append("")
         lines.append("**RUN PARZIALE** - interrotto prima del completamento.")
+    if int(unrecorded_paid_calls or 0) > 0:
+        lines.append("")
+        lines.append("**ATTENZIONE** - "
+                     + unrecorded_calls_note(unrecorded_paid_calls))
     lines.append("")
     lines.append("## Volumi e costo")
     lines.append("")
@@ -659,7 +772,17 @@ def render_report(run_dir, records, residual_anomalies, partial, notes):
     lines.append(f"| Token output (stima) | {agg['tokens_out']} |")
     lines.append(f"| Costo stimato | USD {agg['cost_usd']:.4f} / "
                  f"EUR {agg['cost_eur']:.4f} |")
+    if agg["calls_failed"]:
+        # Difetto 3 (round 4): la riga sopra include il costo dei chunk
+        # falliti, il footer del run no. Le due cifre restano quelle che
+        # sono; qui si dichiara quale parte non e' fatturata e perche'.
+        lines.append(f"| di cui costo stimato NON fatturato (chunk falliti) | "
+                     f"USD {agg['cost_usd_failed']:.4f} / "
+                     f"EUR {agg['cost_eur_failed']:.4f} |")
     lines.append("")
+    if agg["calls_failed"]:
+        lines.append(not_billed_note(agg))
+        lines.append("")
     lines.append("## Latenza e affidabilita'")
     lines.append("")
     lines.append("| Metrica | Valore |")
@@ -699,7 +822,8 @@ def render_report(run_dir, records, residual_anomalies, partial, notes):
     lines.append("## Riconciliazione")
     lines.append("")
     lines.append("```")
-    lines.append(reconciliation_block(records))
+    lines.append(reconciliation_block(
+        records, unrecorded_paid_calls=unrecorded_paid_calls))
     lines.append("```")
     if notes:
         lines.append("")
@@ -1371,6 +1495,15 @@ def main(argv=None):
     cf_residue = 0
     vertex_cost_eur = 0.0
     report = None
+    # Difetto 1 (round 4): i POST gia' andati a 200 sono fatturati anche se il
+    # record corrispondente non e' mai stato scritto. Il contatore e' l'unica
+    # fonte che sopravvive a un'interruzione dentro quella finestra.
+    paid_calls = ctx.paid_calls.count
+    unrecorded_paid = 0
+    # Difetto 4 (round 4): distingue "metrics.jsonl non letto" da "render_report
+    # fallito", due cause con conseguenze opposte sulla riconciliazione.
+    records_read = False
+    post_error = None
     try:
         malformed = 0
         with open(writer.path, encoding="utf-8") as fh:
@@ -1395,6 +1528,17 @@ def main(argv=None):
         cf_records = [r for r in records if r.get("backend") == ctx.backend]
         vertex_records = [r for r in records if r.get("backend") == "vertex"]
         cf_residue = _residual_anomalies(cf_records)
+        records_read = True
+        # Difetto 1 (round 4): confronto fra i 200 osservati dal processo e i
+        # 200 finiti in metrics.jsonl. Un record in piu' non e' possibile (il
+        # contatore scatta prima di qualunque scrittura), uno in meno si': e'
+        # una chiamata fatturata che i totali dei record non vedono.
+        recorded_paid = sum(1 for r in cf_records
+                            if r.get("http_status") == 200)
+        unrecorded_paid = max(0, paid_calls - recorded_paid)
+        if unrecorded_paid:
+            partial = True
+            notes.append(unrecorded_calls_note(unrecorded_paid))
         if malformed:
             notes.append(f"{malformed} riga/e di metrics.jsonl scartate "
                          f"perche' malformate (JSON non valido).")
@@ -1416,7 +1560,8 @@ def main(argv=None):
                 f"spesa Vertex stimata (fuori dal cap --max-spend-eur, che "
                 f"copre solo Cloudflare): USD {vertex_cost_usd:.4f} / "
                 f"EUR {vertex_cost_eur:.4f}.")
-        report = render_report(run_dir, cf_records, cf_residue, partial, notes)
+        report = render_report(run_dir, cf_records, cf_residue, partial, notes,
+                               unrecorded_paid_calls=unrecorded_paid)
         report_ok = True
         records_reliable = True
     except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001
@@ -1430,23 +1575,38 @@ def main(argv=None):
         notes.append(f"generazione del report normale fallita: {exc}")
         report = os.path.join(run_dir, "report.md")
         report_ok = False
-        # Finding D (fix round 3): cf_records/cf_residue potrebbero essere
-        # rimasti ai valori di default (vuoti) perche' il cedimento e'
-        # avvenuto prima di popolarli davvero: non sono piu' affidabili per
-        # la riconciliazione, anche se il report minimo sotto viene scritto.
-        records_reliable = False
+        post_error = exc
+        # Finding D (fix round 3) + difetto 4 (round 4): i record restano
+        # affidabili se il cedimento e' avvenuto DOPO averli letti (tipico:
+        # render_report che solleva). Solo un cedimento precedente alla
+        # lettura li rende inutilizzabili per la riconciliazione.
+        records_reliable = records_read
         try:
+            righe = ["# Report banco di prova Cloudflare Gemini TTS", "",
+                     "**RUN PARZIALE** - report minimo, generazione "
+                     f"normale fallita: {exc}", ""]
+            if records_read:
+                righe.append(f"Chiamate Cloudflare registrate: {len(cf_records)}")
+                righe.append(f"Anomalie residue: {cf_residue}")
+            else:
+                # Difetto 4 (round 4): senza lettura non si conosce il numero
+                # di record; scrivere "0" sarebbe una dichiarazione falsa.
+                righe.append("Chiamate Cloudflare registrate: n/d "
+                             "(metrics.jsonl non letto in modo affidabile)")
+                righe.append("Anomalie residue: n/d")
+            if paid_calls:
+                # Difetto 1 (round 4): dato indipendente dai record, l'unico
+                # che resta valido anche qui.
+                righe.append(f"Risposte HTTP 200 osservate dal processo "
+                             f"(quindi fatturate): {paid_calls}")
+            righe += ["", "## Note", ""]
+            righe += [f"- {n}" for n in notes]
+            # Una sola write: riduce al minimo la finestra in cui un secondo
+            # Ctrl-C puo' lasciare un report troncato a meta'.
             with open(report, "w", encoding="utf-8") as fh:
-                fh.write("# Report banco di prova Cloudflare Gemini TTS\n\n")
-                fh.write("**RUN PARZIALE** - report minimo, generazione "
-                        f"normale fallita: {exc}\n\n")
-                fh.write(f"Chiamate Cloudflare registrate: {len(cf_records)}\n")
-                fh.write(f"Anomalie residue: {cf_residue}\n\n")
-                fh.write("## Note\n\n")
-                for n in notes:
-                    fh.write(f"- {n}\n")
+                fh.write("\n".join(righe) + "\n")
             report_ok = True
-        except OSError as write_exc:
+        except (Exception, KeyboardInterrupt, SystemExit) as write_exc:  # noqa: BLE001
             # Finding B (fix round 3): anche il report minimo non e'
             # scrivibile (es. disco pieno). Prima questo era un
             # `except OSError: pass` silenzioso e il footer sotto annunciava
@@ -1454,23 +1614,38 @@ def main(argv=None):
             # mentendo all'operatore. Ora il fallimento e' esplicito su
             # stdout e nessun percorso inesistente viene presentato come
             # valido.
+            # Difetto 2 (round 4): la clausola era `except OSError`, quindi
+            # un Ctrl-C proprio su questa open (il "secondo Ctrl-C" che il
+            # commento del blocco esterno prometteva di coprire) usciva con
+            # traceback grezzo e senza alcun report, su un run gia' pagato.
             report_ok = False
+            resto = (" - un file parziale potrebbe essere rimasto su disco"
+                     if os.path.exists(report) else "")
             print(f"[errore] impossibile scrivere anche il report minimo "
-                  f"({report}): {write_exc}")
+                  f"({report}{resto}): {write_exc!r}")
 
     if records_reliable:
-        print(reconciliation_block(cf_records))
+        # Difetto 4 (round 4): i record letti restano validi anche se e' stato
+        # render_report a cedere. Nasconderli attribuiva una causa falsa
+        # ("fallita prima di poter leggere metrics.jsonl") mentre il report
+        # minimo dello stesso run ne dichiarava il numero.
+        print(reconciliation_block(cf_records,
+                                   unrecorded_paid_calls=unrecorded_paid))
     else:
-        # Finding D (fix round 3): quando metrics.jsonl e' illeggibile (o il
-        # blocco sopra e' fallito prima di popolare cf_records), stampare la
-        # riconciliazione calcolata su una lista vuota direbbe "nessuna
-        # chiamata effettuata" anche se una chiamata pagata e' effettivamente
-        # partita. Il report (minimo o di fallback) resta comunque su disco
-        # quando possibile (regola vincolante rispettata); qui si evita solo
-        # di mentire su stdout dichiarando i dati non disponibili.
-        print("[riconciliazione] non disponibile: la generazione del report "
-              "e' fallita prima di poter leggere metrics.jsonl in modo "
-              "affidabile.")
+        # Finding D (fix round 3): quando metrics.jsonl e' illeggibile,
+        # stampare la riconciliazione calcolata su una lista vuota direbbe
+        # "nessuna chiamata registrata" anche se una chiamata pagata e'
+        # effettivamente partita. Il report (minimo o di fallback) resta
+        # comunque su disco quando possibile (regola vincolante rispettata);
+        # qui si evita solo di mentire su stdout dichiarando i dati non
+        # disponibili, con la causa reale.
+        print(f"[riconciliazione] non disponibile: metrics.jsonl non e' stato "
+              f"letto in modo affidabile (la post-elaborazione e' fallita "
+              f"prima della lettura: {post_error!r}).")
+        if paid_calls:
+            print(f"[riconciliazione] questo processo ha comunque ricevuto "
+                  f"{paid_calls} risposta/e HTTP 200 da Cloudflare, quindi "
+                  f"fatturate: il run NON e' a costo zero.")
     if report_ok:
         print(f"[fine] report: {report}")
     else:

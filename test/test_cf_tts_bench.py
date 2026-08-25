@@ -1615,22 +1615,37 @@ def test_main_fallback_report_non_scrivibile_lo_dichiara_e_non_mente(tmp_path,
 
 def test_one_call_libera_la_prenotazione_su_keyboardinterrupt(tmp_path,
                                                                monkeypatch):
-    """Copertura Finding C (fix round 3): un'interruzione fra reserve() e
-    uno dei settle() espliciti (qui simulata durante la decodifica del WAV,
-    dopo che call_cf e' gia' tornato con successo) non deve lasciare la
-    prenotazione agganciata a SpendGuard per sempre."""
-    s = FakeSession([_ok_response(seconds=9.0)])
-    ctx = _ctx(tmp_path, s)
-
+    """Copertura Finding C (fix round 3), aggiornata dal round 4 (difetto 1):
+    un'interruzione fra reserve() e uno dei settle() espliciti non deve
+    lasciare la prenotazione agganciata a SpendGuard per sempre. La
+    liquidazione pero' e' conservativa: se il 200 e' gia' arrivato la chiamata
+    e' fatturata, quindi la prenotazione resta contabilizzata al costo
+    previsto (azzerarla dichiarerebbe gratis una chiamata pagata); solo
+    un'interruzione PRIMA del 200 riporta la spesa a zero."""
     def _boom(*a, **k):
         raise KeyboardInterrupt()
 
+    # Caso A: interruzione dopo il 200, durante la decodifica del WAV.
+    ctx = _ctx(tmp_path / "a", FakeSession([_ok_response(seconds=9.0)]))
     monkeypatch.setattr(bench, "wav_bytes_to_pcm", _boom)
     with pytest.raises(KeyboardInterrupt):
         bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "x.pcm"), 0)
-    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    atteso = bench.predict_call_usd(20, "it") * bench.USD_EUR_RATE
+    assert ctx.guard.spent_eur() == pytest.approx(atteso)
+    assert atteso > 0.0
+    assert ctx.paid_calls.count == 1
     ctx.writer.close()
+
+    # Caso B: interruzione PRIMA del 200 (sulla POST): nulla di fatturato,
+    # la prenotazione va liberata del tutto.
+    ctx_b = _ctx(tmp_path / "b", _KeyboardInterruptSession())
+    with pytest.raises(KeyboardInterrupt):
+        bench._one_call(ctx_b, "testo finale", 20, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx_b.run_dir, "x.pcm"), 0)
+    assert ctx_b.guard.spent_eur() == pytest.approx(0.0)
+    assert ctx_b.paid_calls.count == 0
+    ctx_b.writer.close()
 
 
 def test_main_riconciliazione_dichiarata_non_disponibile_se_metrics_illeggibile(
@@ -1664,3 +1679,127 @@ def test_main_riconciliazione_dichiarata_non_disponibile_se_metrics_illeggibile(
     assert "RICONCILIAZIONE - finestra" not in out
     run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
     assert os.path.exists(os.path.join(run_dir, "report.md"))
+
+
+# --- Fix round 4: chiamate pagate invisibili, Ctrl-C sul report di fallback,
+# costo non fatturato etichettato, causa reale della riconciliazione mancante --
+
+def test_main_200_gia_fatturato_perso_prima_del_record_resta_visibile(
+        tmp_path, monkeypatch, capsys):
+    """Difetto 1 (round 4): fra la risposta HTTP 200 (gia' fatturata da
+    Cloudflare) e la scrittura del record c'e' una finestra. Se il run viene
+    interrotto li' dentro non esiste alcun record, e prima di questo fix
+    l'output dichiarava il falso: "nessuna chiamata effettuata", spesa
+    EUR 0.0000 e report con Chiamate 0. Un contatore dei POST andati a 200,
+    indipendente dai record, deve contraddire quelle righe."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom(*a, **k):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, "wav_bytes_to_pcm", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "non compare in metrics.jsonl" in out
+    assert "nessuna chiamata effettuata" not in out
+    # La spesa non puo' essere azzerata: il POST e' stato fatturato.
+    assert "spesa stimata Cloudflare (soggetta al cap --max-spend-eur): EUR 0.0000" not in out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "non compare in metrics.jsonl" in report
+
+
+def test_main_ctrl_c_durante_il_report_di_fallback_non_esce_grezzo(
+        tmp_path, monkeypatch, capsys):
+    """Difetto 2 (round 4): l'unico handler attorno alla scrittura del report
+    minimo era `except OSError`. Un Ctrl-C proprio su quella open faceva
+    uscire main con traceback grezzo e senza alcun report, mentre
+    metrics.jsonl provava la chiamata gia' pagata."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom_render(*a, **k):
+        raise OSError("disco pieno (simulato)")
+
+    monkeypatch.setattr(bench, "render_report", _boom_render)
+
+    real_open = open
+
+    def _open_interrotto_sul_report(path, mode="r", *a, **k):
+        if os.path.basename(str(path)) == "report.md" and "w" in mode:
+            raise KeyboardInterrupt()
+        return real_open(path, mode, *a, **k)
+
+    monkeypatch.setattr(bench, "open", _open_interrotto_sul_report,
+                        raising=False)
+    try:
+        rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    except BaseException as exc:  # noqa: BLE001 - il punto del test
+        pytest.fail(f"main() non deve propagare {exc!r}: il run e' gia' stato "
+                    f"pagato e l'uscita va dichiarata, non lasciata a un "
+                    f"traceback grezzo")
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "impossibile scrivere anche il report minimo" in out
+    assert "nessun report scritto su disco" in out
+    assert "[fine] report:" not in out
+
+
+def test_report_e_riconciliazione_etichettano_il_costo_non_fatturato(tmp_path):
+    """Difetto 3 (round 4): il record di un chunk fallito porta comunque
+    cost_usd_est valorizzato, mentre il footer del run mostra spesa zero
+    (una chiamata fallita non viene fatturata). Le due cifre divergenti
+    devono essere spiegate, non lasciate indovinare."""
+    records = [
+        _rec(chunk_index=0),
+        _rec(chunk_index=1, anomaly="error", http_status=500, attempt=4,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+    ]
+    blocco = bench.reconciliation_block(records)
+    assert "NON fatturato" in blocco
+    assert "0.0091" in blocco  # 0.00909 USD del solo record fallito
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, records, residual_anomalies=1,
+                               partial=False, notes=[])
+    testo = open(path, encoding="utf-8").read()
+    assert "NON fatturato" in testo
+    assert "0.0091" in testo
+
+
+def test_report_senza_chunk_falliti_non_parla_di_costo_non_fatturato(tmp_path):
+    """Contro-prova del difetto 3: la nota deve comparire solo quando esiste
+    davvero un record anomaly="error", altrimenti e' rumore."""
+    assert "NON fatturato" not in bench.reconciliation_block([_rec()])
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, [_rec()], residual_anomalies=0,
+                               partial=False, notes=[])
+    assert "NON fatturato" not in open(path, encoding="utf-8").read()
+
+
+def test_main_render_report_fallito_non_nasconde_la_riconciliazione(
+        tmp_path, monkeypatch, capsys):
+    """Difetto 4 (round 4): quando a fallire e' render_report (non la lettura
+    di metrics.jsonl), stdout attribuiva una causa falsa ("fallita prima di
+    poter leggere metrics.jsonl") mentre i record erano stati letti benissimo
+    — tanto che il report minimo dello stesso run ne dichiarava il numero.
+    Con i record disponibili la riconciliazione va stampata, non nascosta."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom(*a, **k):
+        raise OSError("disco pieno (simulato)")
+
+    monkeypatch.setattr(bench, "render_report", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "RICONCILIAZIONE - finestra" in out
+    assert "prima di poter leggere metrics.jsonl" not in out
