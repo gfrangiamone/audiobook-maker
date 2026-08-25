@@ -10,6 +10,7 @@ database JSON.
 
 Spec: docs/superpowers/specs/2026-08-25-cloudflare-gemini-tts-bench-design.md
 """
+import array
 import base64
 import binascii
 import hashlib
@@ -959,3 +960,105 @@ def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
         title=book.get("title"), author=book.get("author"),
         cover_path=cover_path, language=book.get("language"))
     return residue, (out_m4b if ok else None)
+
+
+# --- Ramo A/B contro Vertex --------------------------------------------------
+def vertex_available():
+    """True se le credenziali Vertex di produzione sono configurate."""
+    try:
+        return gemini_tts._resolve_backend() == "vertex"
+    except Exception:
+        return False
+
+
+def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
+                       pcm_path):
+    """Gemello Vertex di `synth_chunk`, per l'A/B.
+
+    `gemini_tts.synthesize` costruisce internamente il prompt con
+    build_final_text: qui va passato il testo grezzo, non quello gia' composto,
+    altrimenti il blocco [style: ...] verrebbe applicato due volte.
+
+    Un guasto Vertex marca il chunk (anomaly="error") senza interrompere il
+    confronto: stessa disciplina del ramo Cloudflare (_one_call).
+    """
+    os.makedirs(os.path.dirname(pcm_path), exist_ok=True)
+    t0 = time.time()
+    try:
+        res = gemini_tts.synthesize(
+            text, f"gemini:flash31:{voice_name}", rate=rate,
+            output_path=pcm_path, style_instruction=style)
+    except Exception as exc:
+        latency_ms = (time.time() - t0) * 1000.0
+        expected_seconds = float(len(text) or 0) / gemini_tts.baseline_rate(lang)
+        record = make_record(
+            run_id=ctx.run_id, backend="vertex", lang=lang, voice=voice_name,
+            rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
+            chars=len(text),
+            prompt_bytes=len(gemini_tts.build_final_text(
+                text, style_instruction=style, rate=rate).encode("utf-8")),
+            http_status=None, latency_ms=latency_ms, attempt=1,
+            audio_bytes=None, audio_seconds=None,
+            expected_seconds=expected_seconds, ratio=None,
+            tokens_in_est=0, tokens_out_est=0, cost_usd_est=0.0,
+            anomaly="error",
+        )
+        ctx.writer.write(record)
+        return {"record": record, "retry_record": None, "pcm_path": None,
+                "audio_seconds": None, "anomaly": "error"}
+    latency_ms = (time.time() - t0) * 1000.0
+    audio_bytes = int(res.get("bytes_written") or 0)
+    seconds = audio_utils.pcm_size_to_seconds(
+        audio_bytes, sample_rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
+        sample_width=EXPECTED_WIDTH)
+    dur = evaluate_duration(len(text), lang, seconds)
+    record = make_record(
+        run_id=ctx.run_id, backend="vertex", lang=lang, voice=voice_name,
+        rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
+        chars=len(text),
+        prompt_bytes=len(gemini_tts.build_final_text(
+            text, style_instruction=style, rate=rate).encode("utf-8")),
+        http_status=200, latency_ms=latency_ms,
+        attempt=int(res.get("attempts_used") or 1), audio_bytes=audio_bytes,
+        audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
+        ratio=dur["ratio"],
+        tokens_in_est=int(res.get("input_tokens") or 0),
+        tokens_out_est=int(res.get("output_tokens") or 0),
+        cost_usd_est=0.0,  # il costo Vertex non entra nel cap Cloudflare
+        anomaly=dur["anomaly"],
+    )
+    ctx.writer.write(record)
+    return {"record": record, "retry_record": None, "pcm_path": pcm_path,
+            "audio_seconds": seconds, "anomaly": dur["anomaly"]}
+
+
+def _pcm_rms(path):
+    """RMS dei campioni 16 bit di un PCM. 0.0 se il file non e' leggibile."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0.0
+    if len(raw) < 2:
+        return 0.0
+    samples = array.array("h")
+    samples.frombytes(raw[:len(raw) - (len(raw) % 2)])
+    if not samples:
+        return 0.0
+    return (sum(float(s) * float(s) for s in samples) / len(samples)) ** 0.5
+
+
+def compare_metrics(pcm_cf, pcm_vertex):
+    """Metriche oggettive dell'A/B. Il giudizio sulla resa resta l'ascolto."""
+    def _sec(p):
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            return 0.0
+        return audio_utils.pcm_size_to_seconds(
+            size, sample_rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
+            sample_width=EXPECTED_WIDTH)
+    s_cf, s_vx = _sec(pcm_cf), _sec(pcm_vertex)
+    return {"seconds_cf": s_cf, "seconds_vertex": s_vx,
+            "delta_seconds": s_cf - s_vx,
+            "rms_cf": _pcm_rms(pcm_cf), "rms_vertex": _pcm_rms(pcm_vertex)}

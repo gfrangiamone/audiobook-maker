@@ -893,3 +893,44 @@ def test_run_book_cf_auth_error_si_propaga_sotto_concorrenza(tmp_path):
     # qui e' la propagazione dell'eccezione, non un tetto sul numero di
     # chiamate (stesso comportamento di run_matrix, vedi
     # test_run_matrix_cf_auth_error_si_propaga_sotto_concorrenza).
+
+
+def test_compare_metrics_confronta_durate_e_rms(tmp_path):
+    import struct
+    cf = tmp_path / "cf.pcm"
+    vx = tmp_path / "vx.pcm"
+    cf.write_bytes(b"\x00" * (24000 * 2))                       # 1 s, silenzio
+    vx.write_bytes(struct.pack("<h", 1000) * (24000 * 2))       # 2 s, tono
+    got = bench.compare_metrics(str(cf), str(vx))
+    assert got["seconds_cf"] == pytest.approx(1.0)
+    assert got["seconds_vertex"] == pytest.approx(2.0)
+    assert got["delta_seconds"] == pytest.approx(-1.0)
+    assert got["rms_cf"] == pytest.approx(0.0)
+    assert got["rms_vertex"] == pytest.approx(1000.0, rel=0.01)
+
+
+def test_synth_chunk_vertex_usa_lo_stesso_prompt(tmp_path, monkeypatch):
+    import gemini_tts
+    visti = {}
+
+    def fake_synthesize(text, voice_id, rate="+0%", output_path="output.pcm",
+                        style_instruction=None, **kw):
+        visti["text"] = text
+        visti["voice_id"] = voice_id
+        with open(output_path, "wb") as fh:
+            fh.write(b"\x00" * (24000 * 2 * 9))  # 9 s
+        return {"success": True, "bytes_written": 24000 * 2 * 9,
+                "input_tokens": 10, "output_tokens": 225,
+                "model_key": "flash31", "voice_name": "Zephyr",
+                "attempts_used": 1}
+
+    monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
+    ctx = _ctx(tmp_path, FakeSession([]))
+    res = bench.synth_chunk_vertex(ctx, "a" * 146, 0, "it", "Zephyr", "+0%",
+                                   None, os.path.join(ctx.run_dir, "v.pcm"))
+    # build_final_text riceve il testo grezzo: su Vertex lo applica synthesize
+    assert visti["text"] == "a" * 146
+    assert visti["voice_id"] == "gemini:flash31:Zephyr"
+    assert res["record"]["backend"] == "vertex"
+    assert res["anomaly"] is None
+    ctx.writer.close()
