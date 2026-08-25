@@ -275,8 +275,10 @@ questo file e non il report.
 
 Prima di ogni chiamata il bench somma il costo stimato del chunk al totale del
 run; superato `-MaxSpendEur` interrompe, scrive comunque `report.md` con i dati
-raccolti fino a quel punto e lo marca come parziale. Il cap si applica alla
-somma dei due backend quando `-Compare` è attivo.
+raccolti fino a quel punto e lo marca come parziale. Il cap governa la sola
+spesa Cloudflare: con `-Compare` attivo la spesa Vertex del gemello A/B è
+calcolata e riportata a parte, ma non consuma il tetto. Footer e report
+espongono sempre le due cifre separate ed etichettate.
 
 Credenziali: `CF_ACCOUNT_ID` e `CF_API_TOKEN` solo da variabili d'ambiente,
 mai valori hardcoded nello script (a differenza di `tts_speechify_test.py`, che
