@@ -838,6 +838,60 @@ def chapter_markers(pcm_paths, titles):
     return out
 
 
+def _run_chunk_jobs(jobs, worker, concurrency):
+    """Esegue `jobs` con `worker`, in ordine di sottomissione (non di completamento).
+
+    Stesso pattern anti-spreco di `run_matrix` (Task 8): un `threading.Event`
+    di stop controllato PRIMA di ogni chiamata pagata, e la cancellazione dei
+    future non ancora partiti appena scatta un errore fatale
+    (`SpendCapExceeded`/`CFAuthError`). `Executor.map` da solo non basta,
+    perche' mette in coda tutti i job subito: un chunk fallito a meta' lista
+    lascerebbe comunque partire (e pagare) tutti quelli gia' accodati prima
+    che l'eccezione risalga da `shutdown(wait=True)`.
+
+    A differenza di `run_matrix`, qui l'ordine dei risultati conta: `run_book`
+    concatena il PCM in sequenza, quindi i risultati sono indicizzati sulla
+    posizione di sottomissione e non sull'ordine di `as_completed`. Se scatta
+    un errore fatale la funzione non ritorna mai una lista parziale: rilancia
+    l'eccezione, quindi eventuali `None` residui nello slot non sono mai
+    osservati dal chiamante.
+    """
+    if int(concurrency) <= 1:
+        return [worker(job) for job in jobs]
+
+    stop = threading.Event()
+
+    def _guarded(job):
+        if stop.is_set():
+            return None
+        try:
+            return worker(job)
+        except (SpendCapExceeded, CFAuthError):
+            stop.set()
+            raise
+
+    results = [None] * len(jobs)
+    fatal = None
+    with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
+        futures = {pool.submit(_guarded, job): i for i, job in enumerate(jobs)}
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                results[i] = fut.result()
+            except (SpendCapExceeded, CFAuthError) as exc:
+                if fatal is None:
+                    fatal = exc
+                stop.set()
+                for f in futures:
+                    f.cancel()
+                continue
+            except CancelledError:
+                continue
+    if fatal is not None:
+        raise fatal
+    return results
+
+
 def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
     """Genera l'intero libro e ne assembla l'M4B. Ritorna (anomalie, path|None).
 
@@ -850,7 +904,7 @@ def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
     chapter_pcms = []
     chapter_titles = []
     index = 0
-    for ch_idx, ch_title, ch_text in book["chapters"]:
+    for ch_pos, (ch_idx, ch_title, ch_text) in enumerate(book["chapters"]):
         chunks = tts_split.split_text_into_chunks(ch_text, max_chars=int(chunk_chars))
         parts = []
         jobs = []
@@ -863,19 +917,22 @@ def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
             i, chunk, pcm_path = job
             return synth_chunk(ctx, chunk, i, lang, voice, rate, style, pcm_path)
 
-        if int(concurrency) <= 1:
-            results = [_one(j) for j in jobs]
-        else:
-            with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
-                results = list(pool.map(_one, jobs))
+        results = _run_chunk_jobs(jobs, _one, concurrency)
         for res in results:
             if res["anomaly"]:
                 residue += 1
             if res["pcm_path"]:
                 parts.append(res["pcm_path"])
         if not parts:
+            # Capitolo interamente fallito (tutti i chunk in errore): niente
+            # PCM da concatenare. Decisione esplicita: il capitolo viene
+            # scartato dall'M4B finale, il libro prosegue con gli altri.
             continue
-        ch_pcm = os.path.join(ctx.run_dir, "audio", f"cap{ch_idx:03d}.pcm")
+        # Il nome file usa la posizione nel ciclo (ch_pos), MAI l'indice del
+        # manifest (ch_idx): un .abm malformato con index duplicati o
+        # mancanti farebbe collidere due capitoli sullo stesso path PCM,
+        # sovrascrivendo silenziosamente l'audio del primo.
+        ch_pcm = os.path.join(ctx.run_dir, "audio", f"cap{ch_pos:03d}.pcm")
         audio_utils.pcm_concat(parts, ch_pcm, skip_missing=True,
                                sample_rate=EXPECTED_RATE,
                                channels=EXPECTED_CHANNELS,

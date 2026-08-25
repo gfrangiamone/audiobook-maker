@@ -704,3 +704,192 @@ def test_run_book_sintetizza_ogni_chunk(tmp_path, monkeypatch):
     assert len(s.calls) == attesi
     assert m4b == str(tmp_path / "out.m4b")
     ctx.writer.close()
+
+
+# --- Fix round 1: abort concorrenza, esiti misti, multi-capitolo, path -----
+
+def test_run_book_esclude_chunk_falliti_dall_assembly(tmp_path, monkeypatch):
+    import tts_split
+    testo = ("Questa e' una frase di prova. " * 40)
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap 1", testo)], "cover_bytes": None}
+    attesi = len(tts_split.split_text_into_chunks(testo, max_chars=450))
+    assert attesi >= 2
+    # Il primo chunk esaurisce i 4 tentativi HTTP (anomaly="error", niente
+    # retry applicativo: vedi synth_chunk); i restanti vanno a buon fine.
+    responses = ([FakeResponse(500)] * 4
+                + [_ok_response(seconds=30.0) for _ in range(attesi - 1)])
+    s = FakeSession(responses)
+    ctx = _ctx(tmp_path, s)
+
+    concat_calls = []
+
+    def _fake_concat(parts, out_path, **kw):
+        concat_calls.append(list(parts))
+        with open(out_path, "wb") as fh:
+            fh.write(b"")
+
+    monkeypatch.setattr(bench.audio_utils, "pcm_concat", _fake_concat)
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b", lambda *a, **k: True)
+
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 1
+    assert len(s.calls) == 4 + (attesi - 1)
+    assert len(concat_calls) == 1
+    parts = concat_calls[0]
+    assert len(parts) == attesi - 1
+    failed_pcm = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    assert failed_pcm not in parts
+    assert m4b == str(tmp_path / "out.m4b")
+    ctx.writer.close()
+
+
+def test_run_book_multi_capitolo_accumula_pcm_e_titoli(tmp_path, monkeypatch):
+    # Testi dimensionati per restare nella banda di durata attesa (RATIO_LOW-
+    # RATIO_HIGH) alle durate finte sotto: un testo troppo corto per l'audio
+    # dichiarato farebbe scattare "overlong" e un retry imprevisto.
+    c1 = "Il primo capitolo racconta una storia semplice e chiara per il test."
+    c2 = "Il secondo capitolo prosegue la storia con qualche dettaglio in piu qui."
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap 1", c1), (2, "Cap 2", c2)],
+            "cover_bytes": None}
+    s = FakeSession([_ok_response(seconds=5.0), _ok_response(seconds=7.0)])
+    ctx = _ctx(tmp_path, s)
+
+    captured = {}
+
+    def _fake_m4b(pcm_paths, out_path, **kw):
+        captured["pcm_paths"] = list(pcm_paths)
+        captured["chapters"] = kw.get("chapters")
+        return True
+
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b", _fake_m4b)
+
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 0
+    assert len(s.calls) == 2
+    assert len(captured["pcm_paths"]) == 2
+    assert captured["chapters"] == [
+        {"title": "Cap 1", "start": 0.0, "end": 5000.0},
+        {"title": "Cap 2", "start": 5000.0, "end": 12000.0},
+    ]
+    assert m4b == str(tmp_path / "out.m4b")
+    ctx.writer.close()
+
+
+def test_run_book_capitolo_completamente_fallito_viene_scartato(tmp_path, monkeypatch):
+    # Cap 1: tutti i chunk falliscono -> parts vuoto -> capitolo scartato di
+    # proposito (decisione esplicita), il libro prosegue con gli altri.
+    ch2_text = "Il capitolo due va a buon fine con questo testo di prova qui."
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap Vuoto", "Frase unica."),
+                         (2, "Cap Ok", ch2_text)],
+            "cover_bytes": None}
+    s = FakeSession([FakeResponse(500)] * 4 + [_ok_response(seconds=3.0)])
+    ctx = _ctx(tmp_path, s)
+
+    captured = {}
+
+    def _fake_m4b(pcm_paths, out_path, **kw):
+        captured["pcm_paths"] = list(pcm_paths)
+        captured["chapters"] = kw.get("chapters")
+        return True
+
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b", _fake_m4b)
+
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 1
+    assert m4b == str(tmp_path / "out.m4b")
+    assert len(captured["pcm_paths"]) == 1
+    assert [c["title"] for c in captured["chapters"]] == ["Cap Ok"]
+    ctx.writer.close()
+
+
+def test_run_book_libro_interamente_fallito_ritorna_none(tmp_path):
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap Vuoto", "Frase unica.")],
+            "cover_bytes": None}
+    s = FakeSession([FakeResponse(500)] * 4)
+    ctx = _ctx(tmp_path, s)
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 1
+    assert m4b is None
+    ctx.writer.close()
+
+
+def test_run_book_indici_capitolo_duplicati_non_si_sovrascrivono(tmp_path, monkeypatch):
+    # Manifest .abm malformato: index duplicato. Il path PCM di capitolo deve
+    # restare univoco (usa la posizione nel ciclo, non l'index del manifest).
+    d1 = "Prima frase di prova per il capitolo A."
+    d2 = "Seconda frase di prova per il capitolo B."
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap A", d1), (1, "Cap B", d2)],
+            "cover_bytes": None}
+    s = FakeSession([_ok_response(seconds=2.0), _ok_response(seconds=3.0)])
+    ctx = _ctx(tmp_path, s)
+
+    captured = {}
+
+    def _fake_m4b(pcm_paths, out_path, **kw):
+        captured["pcm_paths"] = list(pcm_paths)
+        return True
+
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b", _fake_m4b)
+
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 0
+    assert len(captured["pcm_paths"]) == len(set(captured["pcm_paths"])) == 2
+    for p in captured["pcm_paths"]:
+        assert os.path.getsize(p) > 0
+    ctx.writer.close()
+
+
+def test_run_book_cap_di_spesa_ferma_il_run_sotto_concorrenza(tmp_path):
+    import tts_split
+    testo = ("Questa e' una frase di prova. " * 40)
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap 1", testo)], "cover_bytes": None}
+    attesi = len(tts_split.split_text_into_chunks(testo, max_chars=450))
+    assert attesi >= 2
+    s = FakeSession([_ok_response(seconds=30.0) for _ in range(attesi)])
+    # cap cosi' minuscolo che anche la prima prenotazione lo sfonda: nessuna
+    # chiamata HTTP deve partire.
+    ctx = _ctx(tmp_path, s, max_eur=1e-9)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                       chunk_chars=450, concurrency=4,
+                       out_m4b=str(tmp_path / "out.m4b"))
+    ctx.writer.close()
+    assert len(s.calls) < attesi
+
+
+def test_run_book_cf_auth_error_si_propaga_sotto_concorrenza(tmp_path):
+    import tts_split
+    testo = ("Questa e' una frase di prova. " * 40)
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap 1", testo)], "cover_bytes": None}
+    attesi = len(tts_split.split_text_into_chunks(testo, max_chars=450))
+    s = FakeSession([FakeResponse(403) for _ in range(attesi)])
+    ctx = _ctx(tmp_path, s)
+    with pytest.raises(bench.CFAuthError):
+        bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                       chunk_chars=450, concurrency=4,
+                       out_m4b=str(tmp_path / "out.m4b"))
+    ctx.writer.close()
+    # Nota: a differenza del cap di spesa (bloccato PRIMA della chiamata HTTP,
+    # in modo sincrono), 401/403 arrivano solo DOPO la risposta: con
+    # concurrency >= job totali tutti possono gia' essere partiti prima che
+    # lo stop flag sia visibile agli altri thread. L'invariante verificato
+    # qui e' la propagazione dell'eccezione, non un tetto sul numero di
+    # chiamate (stesso comportamento di run_matrix, vedi
+    # test_run_matrix_cf_auth_error_si_propaga_sotto_concorrenza).
