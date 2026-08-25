@@ -148,3 +148,97 @@ def test_evaluate_format_riconosce_il_formato_atteso():
 def test_evaluate_format_segnala_divergenze():
     assert bench.evaluate_format({"rate": 16000, "channels": 1, "width": 2}) == "format"
     assert bench.evaluate_format({"rate": 24000, "channels": 2, "width": 2}) == "format"
+
+
+class FakeResponse:
+    def __init__(self, status_code, payload=None, headers=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.headers = headers or {}
+        self.text = "corpo di risposta finto"
+
+    def json(self):
+        return self._payload
+
+
+class FakeSession:
+    """Sessione HTTP finta: restituisce le risposte in coda, una per chiamata."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.calls.append({"url": url, "json": json, "headers": headers,
+                           "timeout": timeout})
+        return self._responses.pop(0)
+
+
+def _ok_response(seconds=1.0):
+    import base64
+    return FakeResponse(200, {"result": {
+        "audio": base64.b64encode(make_wav(seconds=seconds)).decode("ascii")}})
+
+
+def test_build_payload_ha_modello_e_input():
+    p = bench.build_payload("ciao", "Zephyr", 0.3)
+    assert p["model"] == "google/gemini-3.1-flash-tts"
+    assert p["input"]["text"] == "ciao"
+    assert p["input"]["voice"] == "Zephyr"
+    assert p["input"]["temperature"] == 0.3
+
+
+def test_call_cf_successo_al_primo_tentativo():
+    s = FakeSession([_ok_response()])
+    got = bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
+    assert got["status"] == 200
+    assert got["attempts"] == 1
+    assert got["wav"].startswith(b"RIFF")
+    assert s.calls[0]["url"].endswith("/accounts/acc/ai/run")
+    assert s.calls[0]["headers"]["Authorization"] == "Bearer tok"
+    assert s.calls[0]["timeout"] == 60
+
+
+def test_call_cf_ritenta_su_429_e_registra_gli_stati():
+    s = FakeSession([FakeResponse(429, headers={"retry-after": "0"}), _ok_response()])
+    got = bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
+    assert got["attempts"] == 2
+    assert got["retry_statuses"] == [429]
+
+
+def test_call_cf_ritenta_su_5xx():
+    s = FakeSession([FakeResponse(503), FakeResponse(500), _ok_response()])
+    got = bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
+    assert got["attempts"] == 3
+    assert got["retry_statuses"] == [503, 500]
+
+
+def test_call_cf_401_non_ritenta():
+    s = FakeSession([FakeResponse(401)])
+    with pytest.raises(bench.CFAuthError):
+        bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
+    assert len(s.calls) == 1
+
+
+def test_call_cf_esaurisce_i_tentativi():
+    s = FakeSession([FakeResponse(500)] * 4)
+    with pytest.raises(bench.CFCallError) as exc:
+        bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3,
+                      max_attempts=4, sleep=lambda _: None)
+    assert exc.value.status == 500
+    assert exc.value.attempts == 4
+
+
+def test_call_cf_risposta_200_senza_audio_e_errore():
+    s = FakeSession([FakeResponse(200, {"result": {}})])
+    with pytest.raises(bench.CFCallError):
+        bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3,
+                      max_attempts=1, sleep=lambda _: None)
+
+
+def test_call_cf_non_stampa_il_token_negli_errori():
+    s = FakeSession([FakeResponse(403)])
+    with pytest.raises(bench.CFAuthError) as exc:
+        bench.call_cf(s, "acc", "tok-super-segreto", "ciao", "Zephyr", 0.3,
+                      sleep=lambda _: None)
+    assert "tok-super-segreto" not in str(exc.value)

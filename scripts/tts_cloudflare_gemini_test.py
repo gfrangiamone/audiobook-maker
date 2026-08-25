@@ -10,10 +10,14 @@ database JSON.
 
 Spec: docs/superpowers/specs/2026-08-25-cloudflare-gemini-tts-bench-design.md
 """
+import base64
 import io
 import os
 import sys
+import time
 import wave
+
+import requests
 
 # Il bench vive in scripts/: la root del progetto va in sys.path per importare
 # gli helper puri (gemini_tts, tts_split, audio_utils).
@@ -176,3 +180,109 @@ def evaluate_format(fmt):
             or fmt.get("width") != EXPECTED_WIDTH):
         return "format"
     return None
+
+
+class CFAuthError(Exception):
+    """Credenziali rifiutate da Cloudflare (401/403): nessun retry ha senso."""
+
+
+class CFCallError(Exception):
+    """Chiamata fallita dopo tutti i tentativi."""
+
+    def __init__(self, message, status=None, attempts=0):
+        super().__init__(message)
+        self.status = status
+        self.attempts = attempts
+
+
+def build_payload(text, voice, temperature):
+    """Corpo della richiesta /ai/run per il modello TTS."""
+    return {
+        "model": CF_MODEL,
+        "input": {
+            "text": text,
+            "voice": voice,
+            "temperature": float(temperature),
+        },
+    }
+
+
+def _retry_after_seconds(resp, attempt):
+    """Attesa prima del prossimo tentativo: header se presente, altrimenti 2^n."""
+    raw = (resp.headers or {}).get("retry-after") if resp is not None else None
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    return float(2 ** attempt)
+
+
+def call_cf(session, account_id, api_token, text, voice, temperature,
+            max_attempts=4, timeout=HTTP_TIMEOUT_SEC, sleep=time.sleep):
+    """Una sintesi su Cloudflare, con retry su 429/5xx e su timeout di rete.
+
+    Returns:
+        {"wav": bytes, "latency_ms": float, "status": int, "attempts": int,
+         "retry_statuses": [int, ...]}
+    Raises:
+        CFAuthError: 401/403.
+        CFCallError: tentativi esauriti o risposta 200 senza audio.
+    """
+    url = f"{CF_API_BASE}/{account_id}/ai/run"
+    headers = {"Authorization": f"Bearer {api_token}",
+               "Content-Type": "application/json"}
+    payload = build_payload(text, voice, temperature)
+    retry_statuses = []
+    last_status = None
+    for attempt in range(1, int(max_attempts) + 1):
+        t0 = time.time()
+        try:
+            resp = session.post(url, json=payload, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:
+            latency_ms = (time.time() - t0) * 1000.0
+            last_status = None
+            retry_statuses.append(0)
+            if attempt >= max_attempts:
+                raise CFCallError(f"errore di rete dopo {attempt} tentativi: {exc}",
+                                  status=None, attempts=attempt) from exc
+            sleep(float(2 ** attempt))
+            continue
+        latency_ms = (time.time() - t0) * 1000.0
+        last_status = resp.status_code
+        if resp.status_code in (401, 403):
+            # Il token non entra mai nel messaggio.
+            raise CFAuthError(
+                f"Cloudflare ha rifiutato le credenziali (HTTP {resp.status_code}): "
+                f"verifica CF_ACCOUNT_ID e CF_API_TOKEN."
+            )
+        if resp.status_code == 429 or resp.status_code >= 500:
+            retry_statuses.append(resp.status_code)
+            if attempt >= max_attempts:
+                raise CFCallError(
+                    f"HTTP {resp.status_code} dopo {attempt} tentativi",
+                    status=resp.status_code, attempts=attempt)
+            sleep(_retry_after_seconds(resp, attempt))
+            continue
+        if resp.status_code != 200:
+            raise CFCallError(f"HTTP {resp.status_code} non gestibile con retry",
+                              status=resp.status_code, attempts=attempt)
+        try:
+            body = resp.json()
+        except Exception as exc:
+            raise CFCallError(f"risposta non JSON: {exc}",
+                              status=resp.status_code, attempts=attempt) from exc
+        audio_b64 = ((body.get("result") or {}).get("audio")
+                     if isinstance(body, dict) else None)
+        if not audio_b64:
+            raise CFCallError("risposta 200 senza campo audio",
+                              status=resp.status_code, attempts=attempt)
+        return {
+            "wav": base64.b64decode(audio_b64),
+            "latency_ms": latency_ms,
+            "status": resp.status_code,
+            "attempts": attempt,
+            "retry_statuses": retry_statuses,
+        }
+    raise CFCallError("tentativi esauriti", status=last_status,
+                      attempts=int(max_attempts))
