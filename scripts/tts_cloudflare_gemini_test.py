@@ -27,6 +27,7 @@ import requests
 # gli helper puri (gemini_tts, tts_split, audio_utils).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import audio_utils
 import gemini_tts
 
 # --- Costanti del banco di prova -------------------------------------------
@@ -358,3 +359,98 @@ def new_run_dir(out_root, level):
     for sub in ("audio", "prompts"):
         os.makedirs(os.path.join(run_dir, sub), exist_ok=True)
     return run_dir
+
+
+# --- Sintesi di un chunk end-to-end + livello smoke -------------------------
+class BenchContext:
+    """Stato condiviso di un run: connessione, cartelle, metriche, budget."""
+
+    def __init__(self, session, account_id, api_token, run_dir, writer, guard,
+                 run_id, temperature=DEFAULT_TEMPERATURE, backend="cloudflare"):
+        self.session = session
+        self.account_id = account_id
+        self.api_token = api_token
+        self.run_dir = run_dir
+        self.writer = writer
+        self.guard = guard
+        self.run_id = run_id
+        self.temperature = temperature
+        self.backend = backend
+
+
+def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
+              chunk_index):
+    """Una chiamata + decodifica + valutazione. Ritorna (record, seconds, path)."""
+    ctx.guard.check(predict_call_usd(chars, lang))
+    res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text, voice,
+                  ctx.temperature)
+    anomaly = None
+    seconds = 0.0
+    audio_bytes = 0
+    try:
+        fmt = wav_bytes_to_pcm(res["wav"], pcm_path)
+        audio_bytes = fmt["bytes"]
+        anomaly = evaluate_format(fmt)
+        seconds = audio_utils.pcm_size_to_seconds(
+            audio_bytes, sample_rate=fmt["rate"], channels=fmt["channels"],
+            sample_width=fmt["width"])
+    except WavFormatError:
+        anomaly = "format"
+        pcm_path = None
+    dur = evaluate_duration(chars, lang, seconds)
+    if anomaly is None:
+        anomaly = dur["anomaly"]
+    tok = estimate_tokens(chars, seconds, lang)
+    usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
+    ctx.guard.add(usd)
+    record = make_record(
+        run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
+        rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
+        chars=chars, prompt_bytes=len(final_text.encode("utf-8")),
+        http_status=res["status"], latency_ms=res["latency_ms"],
+        attempt=res["attempts"], audio_bytes=audio_bytes,
+        audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
+        ratio=dur["ratio"], tokens_in_est=tok["tokens_in"],
+        tokens_out_est=tok["tokens_out"], cost_usd_est=usd, anomaly=anomaly,
+    )
+    ctx.writer.write(record)
+    return record, seconds, pcm_path
+
+
+def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
+    """Sintetizza un chunk; se il gate segnala un'anomalia, ritenta una volta.
+
+    Il retry non e' un meccanismo di resilienza: serve a distinguere un guasto
+    occasionale da un difetto sistematico del modello, e il report riporta
+    entrambi gli esiti.
+    """
+    final_text = gemini_tts.build_final_text(text, style_instruction=style,
+                                             rate=rate)
+    os.makedirs(os.path.dirname(pcm_path), exist_ok=True)
+    prompt_path = os.path.join(ctx.run_dir, "prompts", f"{chunk_index:04d}.txt")
+    with open(prompt_path, "w", encoding="utf-8") as fh:
+        fh.write(final_text)
+    chars = len(text)
+    record, seconds, path = _one_call(ctx, final_text, chars, lang, voice, rate,
+                                      style, pcm_path, chunk_index)
+    retry_record = None
+    if record["anomaly"]:
+        retry_path = pcm_path + ".retry.pcm"
+        retry_record, r_seconds, r_path = _one_call(
+            ctx, final_text, chars, lang, voice, rate, style, retry_path,
+            chunk_index)
+        if not retry_record["anomaly"]:
+            path, seconds = r_path, r_seconds
+    anomaly = retry_record["anomaly"] if retry_record else record["anomaly"]
+    return {"record": record, "retry_record": retry_record, "pcm_path": path,
+            "audio_seconds": seconds, "anomaly": anomaly}
+
+
+def run_smoke(ctx, lang, voice, rate, style, text):
+    """Un solo chunk: verifica auth, schema di risposta e decodifica WAV."""
+    pcm_path = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    res = synth_chunk(ctx, text, 0, lang, voice, rate, style, pcm_path)
+    print(f"[smoke] {lang}/{voice}: {res['audio_seconds']:.1f}s audio, "
+          f"ratio {res['record']['ratio']:.2f}, "
+          f"anomalia {res['anomaly'] or 'nessuna'}")
+    return 1 if res["anomaly"] else 0

@@ -310,3 +310,67 @@ def test_new_run_dir_crea_sottocartelle(tmp_path):
     assert os.path.isdir(os.path.join(run_dir, "audio"))
     assert os.path.isdir(os.path.join(run_dir, "prompts"))
     assert os.path.basename(run_dir).endswith("_smoke")
+
+
+def _ctx(tmp_path, session, max_eur=10.0):
+    run_dir = bench.new_run_dir(str(tmp_path), "test")
+    return bench.BenchContext(
+        session=session, account_id="acc", api_token="tok", run_dir=run_dir,
+        writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(max_eur),
+        run_id="run-test", temperature=0.3, backend="cloudflare",
+    )
+
+
+def test_synth_chunk_scrive_pcm_e_record(tmp_path):
+    # 146 char it -> 10 s attesi; il WAV finto dura 9 s: ratio 0.9, nessuna anomalia
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]))
+    got = bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                            os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    assert got["anomaly"] is None
+    assert got["retry_record"] is None
+    assert got["record"]["audio_seconds"] == pytest.approx(9.0)
+    assert got["record"]["chunk_index"] == 0
+    assert got["record"]["backend"] == "cloudflare"
+    assert os.path.getsize(got["pcm_path"]) == 9 * 24000 * 2
+    ctx.writer.close()
+
+
+def test_synth_chunk_ritenta_una_volta_l_anomalia(tmp_path):
+    # primo WAV 2 s (ratio 0.2 -> truncated), secondo 9 s: il retry corregge
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=2.0),
+                                      _ok_response(seconds=9.0)]))
+    got = bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                            os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    assert got["record"]["anomaly"] == "truncated"
+    assert got["retry_record"]["anomaly"] is None
+    assert got["anomaly"] is None
+    ctx.writer.close()
+
+
+def test_synth_chunk_anomalia_persistente_resta(tmp_path):
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=2.0),
+                                      _ok_response(seconds=2.0)]))
+    got = bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                            os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    assert got["anomaly"] == "truncated"
+    ctx.writer.close()
+
+
+def test_synth_chunk_usa_il_prompt_di_produzione(tmp_path):
+    import gemini_tts
+    s = FakeSession([_ok_response(seconds=9.0)])
+    ctx = _ctx(tmp_path, s)
+    bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+20%", "tono calmo",
+                      os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    atteso = gemini_tts.build_final_text("a" * 146, style_instruction="tono calmo",
+                                         rate="+20%")
+    assert s.calls[0]["json"]["input"]["text"] == atteso
+    ctx.writer.close()
+
+
+def test_synth_chunk_rispetta_il_cap_di_spesa(tmp_path):
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]), max_eur=0.000001)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                          os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    ctx.writer.close()
