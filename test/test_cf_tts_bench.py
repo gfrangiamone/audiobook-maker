@@ -242,3 +242,31 @@ def test_call_cf_non_stampa_il_token_negli_errori():
         bench.call_cf(s, "acc", "tok-super-segreto", "ciao", "Zephyr", 0.3,
                       sleep=lambda _: None)
     assert "tok-super-segreto" not in str(exc.value)
+
+
+def test_call_cf_audio_non_base64_valido_e_errore():
+    s = FakeSession([FakeResponse(200, {"result": {"audio": "not-valid-base64!!!"}})])
+    with pytest.raises(bench.CFCallError):
+        bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3,
+                      max_attempts=1, sleep=lambda _: None)
+
+
+def test_call_cf_ritenta_su_errore_di_rete_poi_successo():
+    class FlakySession:
+        def __init__(self, fail_times, ok_response):
+            self._fail_times = fail_times
+            self._ok_response = ok_response
+            self.calls = []
+
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append({"url": url, "json": json, "headers": headers,
+                               "timeout": timeout})
+            if len(self.calls) <= self._fail_times:
+                raise bench.requests.RequestException("errore di rete simulato")
+            return self._ok_response
+
+    s = FlakySession(fail_times=2, ok_response=_ok_response())
+    got = bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
+    assert got["attempts"] == 3
+    assert got["retry_statuses"] == [0, 0]
+    assert len(s.calls) == 3

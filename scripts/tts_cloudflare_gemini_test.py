@@ -11,6 +11,7 @@ database JSON.
 Spec: docs/superpowers/specs/2026-08-25-cloudflare-gemini-tts-bench-design.md
 """
 import base64
+import binascii
 import io
 import os
 import sys
@@ -277,8 +278,13 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
         if not audio_b64:
             raise CFCallError("risposta 200 senza campo audio",
                               status=resp.status_code, attempts=attempt)
+        try:
+            wav_bytes = base64.b64decode(audio_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise CFCallError("campo audio non decodificabile da base64",
+                              status=resp.status_code, attempts=attempt) from exc
         return {
-            "wav": base64.b64decode(audio_b64),
+            "wav": wav_bytes,
             "latency_ms": latency_ms,
             "status": resp.status_code,
             "attempts": attempt,
