@@ -79,6 +79,11 @@ if ($Styles.Count -gt 0) { $cliArgs += @('--styles', ($Styles -join ',')) }
 if ($Book) { $cliArgs += @('--book', $Book) }
 if ($Compare) { $cliArgs += @('--compare', $Compare) }
 
-Write-Host "[run] python $($cliArgs -join ' ')"
+# Il log serve a riprodurre a mano un run che spende denaro: gli argomenti
+# vanno quotati, altrimenti un percorso con spazi produce una riga di
+# comando che sembra corretta ma non lo e' (rilievo Minor, review Task 12).
+Write-Host "[run] python $(($cliArgs | ForEach-Object {
+    if ($_ -match '\s') { "'" + $_ + "'" } else { $_ }
+}) -join ' ')"
 & python @cliArgs
 exit $LASTEXITCODE
