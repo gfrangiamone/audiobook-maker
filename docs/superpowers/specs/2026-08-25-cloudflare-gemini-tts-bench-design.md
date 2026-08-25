@@ -265,11 +265,20 @@ out/<run_id>/
 {"ts","run_id","backend","lang","voice","rate","style_hash","chunk_index",
  "chars","prompt_bytes","http_status","latency_ms","attempt",
  "audio_bytes","audio_seconds","expected_seconds","ratio",
- "tokens_in_est","tokens_out_est","cost_usd_est","anomaly"}
+ "tokens_in_est","tokens_out_est","cost_usd_est","anomaly",
+ "retry_statuses"}
 ```
 
-Schema stabile: le analisi successive (confronto fra run, grafici) leggono
-questo file e non il report.
+`retry_statuses` elenca gli status di **tutti** i tentativi della chiamata, non
+solo dell'ultimo. Senza, i 429 e i 5xx assorbiti dal retry sono invisibili: lo
+stato finale di una chiamata riuscita non e' mai 429, quindi il criterio di GO
+sul throughput (§6.3, "nessun 429 a concorrenza pari a quella di prod") non
+sarebbe misurabile. `latency_ms` e' la latenza **cumulativa** dei tentativi,
+per la stessa ragione.
+
+Schema in sola aggiunta: i campi nuovi vanno in coda, i vecchi non cambiano
+significato. Le analisi successive (confronto fra run, grafici) leggono questo
+file e non il report, e devono restare capaci di leggere i run precedenti.
 
 ## 8. Cap di spesa e sicurezza
 
