@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import requests
@@ -624,3 +625,69 @@ def render_report(run_dir, records, residual_anomalies, partial, notes):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     return path
+
+
+# --- Livello matrix: lingua x voce x velocita' x stile -----------------------
+# Fixture brevi per il livello matrix: ~200 char, frasi complete, punteggiatura
+# varia. Servono a confrontare voci e stili a parita' di testo, non a misurare
+# la resa su testo lungo (per quello c'e' il livello book).
+FIXTURES = {
+    "it": ("Il vento della sera attraversava la valle, e con esso arrivava "
+           "l'odore della pioggia. Nessuno parlava. In fondo al sentiero, "
+           "una luce si accese: qualcuno stava ancora aspettando."),
+    "en": ("The evening wind moved across the valley, carrying the smell of "
+           "rain with it. Nobody spoke. At the end of the path a light came "
+           "on: someone was still waiting."),
+    "fr": ("Le vent du soir traversait la vallee, apportant avec lui l'odeur "
+           "de la pluie. Personne ne parlait. Au bout du sentier, une lumiere "
+           "s'alluma: quelqu'un attendait encore."),
+    "es": ("El viento de la tarde cruzaba el valle, y con el llegaba el olor "
+           "de la lluvia. Nadie hablaba. Al final del sendero se encendio una "
+           "luz: alguien seguia esperando."),
+    "de": ("Der Abendwind zog durch das Tal und brachte den Geruch von Regen "
+           "mit sich. Niemand sprach. Am Ende des Weges ging ein Licht an: "
+           "jemand wartete noch."),
+}
+FIXTURES["default"] = FIXTURES["en"]
+
+
+def matrix_combinations(langs, voices, rates, styles, runs=1):
+    """Prodotto cartesiano delle dimensioni del livello matrix."""
+    styles = list(styles) if styles else [None]
+    combos = []
+    for lang in langs:
+        for voice in voices:
+            for rate in rates:
+                for style in styles:
+                    for n in range(1, int(runs) + 1):
+                        combos.append({"lang": lang, "voice": voice,
+                                       "rate": rate, "style": style, "run": n})
+    return combos
+
+
+def fixture_for(lang):
+    return FIXTURES.get((lang or "")[:2].lower(), FIXTURES["default"])
+
+
+def run_matrix(ctx, combos, concurrency=1):
+    """Esegue tutte le combinazioni; ritorna il numero di anomalie residue.
+
+    Il cap di spesa si applica all'intero run: se scatta, i task ancora in coda
+    falliscono con SpendCapExceeded e il chiamante scrive un report parziale.
+    """
+    def _one(i_combo):
+        i, combo = i_combo
+        text = fixture_for(combo["lang"])
+        pcm_path = os.path.join(ctx.run_dir, "audio", f"{i:04d}.pcm")
+        return synth_chunk(ctx, text, i, combo["lang"], combo["voice"],
+                           combo["rate"], combo["style"], pcm_path)
+
+    residue = 0
+    if int(concurrency) <= 1:
+        for item in enumerate(combos):
+            residue += 1 if _one(item)["anomaly"] else 0
+        return residue
+    with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
+        for res in pool.map(_one, list(enumerate(combos))):
+            residue += 1 if res["anomaly"] else 0
+    return residue

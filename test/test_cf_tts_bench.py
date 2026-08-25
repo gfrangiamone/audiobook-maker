@@ -513,3 +513,43 @@ def test_summarize_tollera_i_record_error(tmp_path):
     run_dir = bench.new_run_dir(str(tmp_path), "matrix")
     bench.render_report(run_dir, records, residual_anomalies=1, partial=False,
                         notes=[])
+
+
+def test_matrix_combinations_prodotto_cartesiano():
+    combos = bench.matrix_combinations(["it", "en"], ["Zephyr", "Puck"],
+                                       ["+0%"], [], runs=1)
+    assert len(combos) == 4
+    assert combos[0] == {"lang": "it", "voice": "Zephyr", "rate": "+0%",
+                         "style": None, "run": 1}
+
+
+def test_matrix_combinations_moltiplica_per_runs():
+    combos = bench.matrix_combinations(["it"], ["Zephyr"], ["+0%"], ["calmo"],
+                                       runs=3)
+    assert len(combos) == 3
+    assert [c["run"] for c in combos] == [1, 2, 3]
+
+
+def test_fixtures_coprono_le_lingue_richieste():
+    for lang in ("it", "en", "fr", "es", "de", "default"):
+        assert bench.FIXTURES[lang].strip()
+
+
+def test_run_matrix_esegue_tutte_le_combinazioni(tmp_path):
+    combos = bench.matrix_combinations(["it", "en"], ["Zephyr"], ["+0%"], [],
+                                       runs=1)
+    s = FakeSession([_ok_response(seconds=9.0) for _ in combos])
+    ctx = _ctx(tmp_path, s)
+    residue = bench.run_matrix(ctx, combos, concurrency=1)
+    assert residue == 0
+    assert len(s.calls) == 2
+    ctx.writer.close()
+
+
+def test_run_matrix_conta_le_anomalie_residue(tmp_path):
+    combos = bench.matrix_combinations(["it"], ["Zephyr"], ["+0%"], [], runs=1)
+    # prima chiamata troncata, retry ancora troncato
+    s = FakeSession([_ok_response(seconds=0.2), _ok_response(seconds=0.2)])
+    ctx = _ctx(tmp_path, s)
+    assert bench.run_matrix(ctx, combos, concurrency=1) == 1
+    ctx.writer.close()
