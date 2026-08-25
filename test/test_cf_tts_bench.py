@@ -3135,3 +3135,18 @@ def test_e2e_i3_i_wav_esistono_e_si_aprono(tmp_path):
     with wave.open(os.path.join(audio_dir, wavs[0]), "rb") as wf:
         assert wf.getframerate() == 24000
         assert wf.getnframes() == 9 * 24000
+
+
+def test_report_dichiara_che_il_cap_e_un_freno_non_un_tetto(tmp_path):
+    """Il cap sfora in proporzione alla concorrenza: il report deve dirlo.
+
+    Chi lancia gli sweep di saturazione (concorrenza 2/4/8) spende soldi
+    veri: uno sforamento fino a ~12x non puo' restare implicito.
+    """
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, [_rec()], residual_anomalies=0,
+                               partial=False, notes=[])
+    testo = open(path, encoding="utf-8").read()
+    assert "freno, non un tetto duro" in testo
+    assert "--concurrency" in testo
+    assert "gia' in volo" in testo

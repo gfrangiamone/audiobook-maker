@@ -1116,6 +1116,24 @@ def reconciliation_block(records, unrecorded_paid_calls=0):
     )
 
 
+def spend_cap_note():
+    """Nota sul significato reale di `--max-spend-eur`.
+
+    Il cap e' un freno, non un tetto duro: `settle()` ferma il run DOPO che
+    lo sforamento e' avvenuto, e le chiamate gia' in volo arrivano comunque
+    a 200 e vengono fatturate. Lo sforamento cresce con la concorrenza -
+    misurato ~1,9x in sequenziale e fino a ~12x a concorrenza 8. Chi manda
+    gli sweep di saturazione deve dimensionare il tetto di conseguenza.
+    """
+    return ("`--max-spend-eur` e' un freno, non un tetto duro: il run si "
+            "ferma alla prima liquidazione che supera il tetto, ma la "
+            "chiamata che l'ha fatto scattare e quelle gia' in volo sono "
+            "gia' fatturate. Lo sforamento cresce con `--concurrency` "
+            "(misurato ~1,9x in sequenziale, fino a ~12x a concorrenza 8): "
+            "per gli sweep di saturazione imposta il tetto a circa "
+            "tetto_voluto / concurrency.")
+
+
 def render_report(run_dir, records, residual_anomalies, partial, notes,
                   unrecorded_paid_calls=0):
     """Scrive `report.md` e ne ritorna il path.
@@ -1155,6 +1173,8 @@ def render_report(run_dir, records, residual_anomalies, partial, notes,
         lines.append(f"| di cui costo stimato NON fatturato (chiamate senza "
                      f"HTTP 200) | USD {agg['cost_usd_not_billed']:.4f} / "
                      f"EUR {agg['cost_eur_not_billed']:.4f} |")
+    lines.append("")
+    lines.append(spend_cap_note())
     lines.append("")
     if agg["calls_not_billed"]:
         lines.append(not_billed_note(agg))
@@ -1787,7 +1807,10 @@ def build_arg_parser():
                     help=f"Temperature (default {DEFAULT_TEMPERATURE})")
     ap.add_argument("--max-spend-eur", type=float, default=DEFAULT_MAX_SPEND_EUR,
                     help=f"Tetto di spesa stimata (default "
-                         f"{DEFAULT_MAX_SPEND_EUR:.2f}; 0 disattiva)")
+                         f"{DEFAULT_MAX_SPEND_EUR:.2f}; 0 disattiva). Freno, "
+                         f"non tetto duro: le chiamate gia' in volo restano "
+                         f"fatturate, quindi con --concurrency N imposta "
+                         f"circa tetto_voluto/N")
     ap.add_argument("--compare", choices=("vertex",), default=None,
                     help="Genera anche il gemello Vertex per l'A/B")
     ap.add_argument("--out-dir", default="./out", help="Radice degli artefatti")
