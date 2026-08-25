@@ -97,9 +97,14 @@ scripts/cf_tts_bench.env.ps1            # credenziali locali (mai committato)
 test/test_cf_tts_bench.py               # test del bench, HTTP mockata
 ```
 
-`scripts/` è già escluso da `.gitignore` (riga 14): il bench resta locale, come
-gli altri banchi di prova provider (`tts_speechify_test.py`, `tts_qwen_test.py`,
-`tts_supertonic_test.py`). Solo il file di test in `test/` è tracciato.
+`scripts/` è escluso in blocco da `.gitignore` (riga 14), ma 12 file al suo
+interno sono tracciati con `git add -f`. Il bench rientra in questa eccezione,
+a differenza degli altri banchi provider (`tts_speechify_test.py`,
+`tts_qwen_test.py`, `tts_supertonic_test.py`) che restano locali: qui il gate
+anti-troncamento è l'implementazione di riferimento di un controllo destinato
+alla produzione, e ha un test tracciato in `test/` che senza il modulo non
+avrebbe nulla da importare. `cf_tts_bench.env.ps1` resta invece non tracciato
+in ogni caso.
 
 ### 4.2 Riuso
 
