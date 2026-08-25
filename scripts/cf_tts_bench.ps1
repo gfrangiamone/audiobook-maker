@@ -7,6 +7,10 @@ Wrapper parametrico: carica le credenziali da cf_tts_bench.env.ps1 (se
 presente) e invoca scripts/tts_cloudflare_gemini_test.py. Nessuna logica di
 misura vive qui.
 
+Solo i parametri passati esplicitamente vengono inoltrati allo script Python:
+i default del wrapper non devono mai sovrascrivere un valore dedotto dal
+libro (es. la lingua dichiarata nell'.abm). Vedi il commento su -Langs.
+
 .EXAMPLE
 .\scripts\cf_tts_bench.ps1 -Level smoke
 
@@ -22,9 +26,19 @@ param(
     [string]$Level = 'smoke',
 
     [string]$Book,
+
+    # Se omesso, a -Level book lo script Python usa la lingua dichiarata nel
+    # libro. Passarlo sempre (com'era prima) scartava quella lingua e
+    # cambiava sia il gate anti-troncamento sia la stima dei token.
     [string[]]$Langs = @('it', 'en'),
+
     [string[]]$Voices = @('Zephyr'),
     [string[]]$Rates = @('+0%'),
+
+    # ATTENZIONE: gli stili sono passati a Python come lista separata da
+    # virgole, quindi uno stile che CONTIENE una virgola viene spezzato in
+    # due stili distinti. Limite noto e accettato del formato della CLI:
+    # evita le virgole dentro il testo dello stile.
     [string[]]$Styles = @(),
 
     [int]$ChunkChars = 450,
@@ -53,7 +67,7 @@ else {
 }
 
 if ($Level -eq 'book' -and -not $Book) {
-    throw "-Level book richiede -Book <percorso .abm|.txt>"
+    throw "-Level book richiede -Book <percorso .abm|.txt|.epub>"
 }
 if ($Book -and -not (Test-Path $Book)) {
     throw "File non trovato: $Book"
@@ -61,20 +75,25 @@ if ($Book -and -not (Test-Path $Book)) {
 
 $inv = [System.Globalization.CultureInfo]::InvariantCulture
 $py = Join-Path $scriptDir 'tts_cloudflare_gemini_test.py'
+
+# -Level ha sempre un significato (il default 'smoke' e' anche il default
+# dello script Python) e --out-dir non puo' essere dedotto dal libro: questi
+# due si passano sempre. Tutti gli altri solo se l'utente li ha scritti,
+# altrimenti il default del wrapper mascherebbe la logica di Python.
 $cliArgs = @(
     $py,
     '--level', $Level,
-    '--langs', ($Langs -join ','),
-    '--voices', ($Voices -join ','),
-    '--rates', ($Rates -join ','),
-    '--chunk-chars', $ChunkChars.ToString($inv),
-    '--concurrency', $Concurrency.ToString($inv),
-    '--runs', $Runs.ToString($inv),
-    '--temperature', $Temperature.ToString($inv),
-    '--max-spend-eur', $MaxSpendEur.ToString($inv),
-    '--max-attempts', $MaxAttempts.ToString($inv),
     '--out-dir', $OutDir
 )
+if ($PSBoundParameters.ContainsKey('Langs')) { $cliArgs += @('--langs', ($Langs -join ',')) }
+if ($PSBoundParameters.ContainsKey('Voices')) { $cliArgs += @('--voices', ($Voices -join ',')) }
+if ($PSBoundParameters.ContainsKey('Rates')) { $cliArgs += @('--rates', ($Rates -join ',')) }
+if ($PSBoundParameters.ContainsKey('ChunkChars')) { $cliArgs += @('--chunk-chars', $ChunkChars.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('Concurrency')) { $cliArgs += @('--concurrency', $Concurrency.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('Runs')) { $cliArgs += @('--runs', $Runs.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('Temperature')) { $cliArgs += @('--temperature', $Temperature.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('MaxSpendEur')) { $cliArgs += @('--max-spend-eur', $MaxSpendEur.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('MaxAttempts')) { $cliArgs += @('--max-attempts', $MaxAttempts.ToString($inv)) }
 if ($Styles.Count -gt 0) { $cliArgs += @('--styles', ($Styles -join ',')) }
 if ($Book) { $cliArgs += @('--book', $Book) }
 if ($Compare) { $cliArgs += @('--compare', $Compare) }
