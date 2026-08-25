@@ -919,6 +919,11 @@ def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
 
         results = _run_chunk_jobs(jobs, _one, concurrency)
         for res in results:
+            if res is None:
+                # Job saltato o cancellato da un abort fatale: _run_chunk_jobs
+                # rilancia comunque l'eccezione, ma la guardia tiene la
+                # lettura difensiva come in run_matrix.
+                continue
             if res["anomaly"]:
                 residue += 1
             if res["pcm_path"]:
