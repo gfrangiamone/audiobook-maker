@@ -19,6 +19,8 @@ import wave
 # gli helper puri (gemini_tts, tts_split, audio_utils).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import gemini_tts
+
 # --- Costanti del banco di prova -------------------------------------------
 CF_MODEL = "google/gemini-3.1-flash-tts"
 CF_API_BASE = "https://api.cloudflare.com/client/v4/accounts"
@@ -91,3 +93,58 @@ def wav_bytes_to_pcm(wav_bytes, out_path):
         fh.write(frames)
     return {"rate": rate, "channels": channels, "width": width,
             "bytes": len(frames)}
+
+
+class SpendCapExceeded(Exception):
+    """Il cap di spesa del run e' stato raggiunto."""
+
+
+def estimate_tokens(chars, audio_seconds, language):
+    """Token input/output stimati per una chiamata.
+
+    L'output usa i secondi audio REALI quando disponibili (dai byte PCM), non
+    una previsione: l'unica approssimazione residua e' il rapporto
+    token/secondo, che Cloudflare non espone in risposta.
+    """
+    return {
+        "tokens_in": int(gemini_tts.estimate_input_tokens("x" * int(chars), language)),
+        "tokens_out": int(round(float(audio_seconds) * AUDIO_TOKENS_PER_SECOND)),
+    }
+
+
+def cost_usd(tokens_in, tokens_out):
+    """Costo USD di una chiamata alle tariffe Cloudflare."""
+    return (tokens_in * CF_INPUT_USD_PER_MTOK / 1e6
+            + tokens_out * CF_OUTPUT_USD_PER_MTOK / 1e6)
+
+
+def predict_call_usd(chars, language):
+    """Costo previsto PRIMA della chiamata, dal baseline char/sec della lingua."""
+    seconds = float(chars) / gemini_tts.baseline_rate(language)
+    tok = estimate_tokens(chars, seconds, language)
+    return cost_usd(tok["tokens_in"], tok["tokens_out"])
+
+
+class SpendGuard:
+    """Accumulatore di spesa con tetto in euro. `max_eur=0` disattiva il tetto."""
+
+    def __init__(self, max_eur=DEFAULT_MAX_SPEND_EUR):
+        self.max_eur = float(max_eur or 0)
+        self.spent_usd = 0.0
+
+    def spent_eur(self):
+        return self.spent_usd * USD_EUR_RATE
+
+    def check(self, projected_usd):
+        """Solleva SpendCapExceeded se aggiungere `projected_usd` sfonda il cap."""
+        if self.max_eur <= 0:
+            return
+        proiettato = (self.spent_usd + float(projected_usd)) * USD_EUR_RATE
+        if proiettato > self.max_eur:
+            raise SpendCapExceeded(
+                f"cap di spesa raggiunto: {proiettato:.4f} EUR previsti "
+                f"contro un tetto di {self.max_eur:.2f} EUR"
+            )
+
+    def add(self, usd):
+        self.spent_usd += float(usd)

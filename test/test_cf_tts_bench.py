@@ -66,3 +66,42 @@ def test_resolve_credentials_manca_token_e_non_lo_stampa(monkeypatch):
     msg = str(exc.value)
     assert "CF_API_TOKEN" in msg
     assert "tok-super-segreto" not in msg
+
+
+def test_estimate_tokens_usa_25_token_al_secondo():
+    got = bench.estimate_tokens(chars=400, audio_seconds=40.0, language="it")
+    # 400 char it / 4.0 char-per-token = 100 token input; 40 s * 25 = 1000 output
+    assert got == {"tokens_in": 100, "tokens_out": 1000}
+
+
+def test_cost_usd_tariffe_cloudflare():
+    assert bench.cost_usd(1000, 100000) == pytest.approx(1.20075)
+
+
+def test_predict_call_usd_da_baseline_lingua():
+    # 1460 char it / 14.6 char-sec = 100 s -> 2500 token out; 365 token in
+    atteso = 365 * 0.75 / 1e6 + 2500 * 12.0 / 1e6
+    assert bench.predict_call_usd(1460, "it") == pytest.approx(atteso)
+
+
+def test_spend_guard_accumula_e_converte_in_euro():
+    guard = bench.SpendGuard(max_eur=1.0)
+    guard.add(0.5)
+    guard.add(0.25)
+    assert guard.spent_usd == pytest.approx(0.75)
+    assert guard.spent_eur() == pytest.approx(0.645)
+
+
+def test_spend_guard_blocca_oltre_il_cap():
+    guard = bench.SpendGuard(max_eur=1.0)
+    guard.add(1.10)  # 0.946 EUR
+    guard.check(0.05)  # 0.989 EUR: ancora sotto, non solleva
+    guard.add(0.05)
+    with pytest.raises(bench.SpendCapExceeded):
+        guard.check(0.10)
+
+
+def test_spend_guard_cap_zero_disattiva_il_controllo():
+    guard = bench.SpendGuard(max_eur=0)
+    guard.add(999.0)
+    guard.check(999.0)  # nessuna eccezione
