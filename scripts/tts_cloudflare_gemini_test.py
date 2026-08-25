@@ -989,6 +989,12 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
             text, f"gemini:flash31:{voice_name}", rate=rate,
             output_path=pcm_path, style_instruction=style)
     except Exception as exc:
+        # Diagnostica limitata: e' un messaggio d'eccezione, mai il payload
+        # della richiesta ne' un header, quindi non puo' contenere credenziali.
+        # Il record resta a schema fisso (21 chiavi): la distinzione fra
+        # GeminiUnavailable/quota/payload-cap/RuntimeError vive solo nel log,
+        # stessa convenzione di gemini_tts.py (retry loop di `synthesize`).
+        print(f"[bench-vertex] chunk {chunk_index} fallito: {str(exc)[:200]}")
         latency_ms = (time.time() - t0) * 1000.0
         expected_seconds = float(len(text) or 0) / gemini_tts.baseline_rate(lang)
         record = make_record(
@@ -1000,6 +1006,8 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
             http_status=None, latency_ms=latency_ms, attempt=1,
             audio_bytes=None, audio_seconds=None,
             expected_seconds=expected_seconds, ratio=None,
+            # Nessun token disponibile: la chiamata e' fallita prima di
+            # ritornare bytes_written/input_tokens/output_tokens.
             tokens_in_est=0, tokens_out_est=0, cost_usd_est=0.0,
             anomaly="error",
         )
@@ -1012,6 +1020,14 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
         audio_bytes, sample_rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
         sample_width=EXPECTED_WIDTH)
     dur = evaluate_duration(len(text), lang, seconds)
+    tokens_in = int(res.get("input_tokens") or 0)
+    tokens_out = int(res.get("output_tokens") or 0)
+    # Costo Google reale, solo per la colonna del record: il ramo Vertex non
+    # tocca mai ctx.guard (SpendGuard resta il cap sulla sola spesa
+    # Cloudflare). Senza questo calcolo il confronto A/B mostrerebbe sempre
+    # EUR 0.00 su Vertex, vanificando lo scopo del bench.
+    cost_usd_est = gemini_tts.google_cost_breakdown(
+        tokens_in, tokens_out, "flash31")["total_usd"]
     record = make_record(
         run_id=ctx.run_id, backend="vertex", lang=lang, voice=voice_name,
         rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
@@ -1022,9 +1038,8 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
         attempt=int(res.get("attempts_used") or 1), audio_bytes=audio_bytes,
         audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
         ratio=dur["ratio"],
-        tokens_in_est=int(res.get("input_tokens") or 0),
-        tokens_out_est=int(res.get("output_tokens") or 0),
-        cost_usd_est=0.0,  # il costo Vertex non entra nel cap Cloudflare
+        tokens_in_est=tokens_in, tokens_out_est=tokens_out,
+        cost_usd_est=cost_usd_est,
         anomaly=dur["anomaly"],
     )
     ctx.writer.write(record)

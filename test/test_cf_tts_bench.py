@@ -933,4 +933,29 @@ def test_synth_chunk_vertex_usa_lo_stesso_prompt(tmp_path, monkeypatch):
     assert visti["voice_id"] == "gemini:flash31:Zephyr"
     assert res["record"]["backend"] == "vertex"
     assert res["anomaly"] is None
+    # Il costo Vertex deve riflettere i token reali, non restare a zero
+    # (altrimenti il confronto A/B mostrerebbe sempre EUR 0.00 su Vertex).
+    assert res["record"]["cost_usd_est"] > 0.0
+    ctx.writer.close()
+
+
+def test_synth_chunk_vertex_fallimento_marca_il_chunk_senza_propagare(tmp_path, monkeypatch):
+    import gemini_tts
+
+    def fake_synthesize_boom(text, voice_id, rate="+0%", output_path="output.pcm",
+                             style_instruction=None, **kw):
+        raise RuntimeError("Gemini TTS failed after 3 attempts: quota exceeded")
+
+    monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize_boom)
+    ctx = _ctx(tmp_path, FakeSession([]))
+    res = bench.synth_chunk_vertex(ctx, "a" * 146, 0, "it", "Zephyr", "+0%",
+                                   None, os.path.join(ctx.run_dir, "v.pcm"))
+    assert res["anomaly"] == "error"
+    assert res["pcm_path"] is None
+    assert res["audio_seconds"] is None
+    record = res["record"]
+    assert record["http_status"] is None
+    assert record["backend"] == "vertex"
+    assert set(record.keys()) == set(bench._RECORD_KEYS)
+    assert len(record) == 21
     ctx.writer.close()
