@@ -1961,7 +1961,13 @@ def test_main_residual_anomalies_che_rompe_non_nasconde_i_record_letti(
     run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
     report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
     assert "Chiamate Cloudflare registrate: 1" in report
-    assert "n/d" not in report
+    assert "metrics.jsonl non letto in modo affidabile" not in report
+    # Aggiudicazione round 5 (NUOVO-1): il conteggio delle anomalie NON e'
+    # mai arrivato in fondo, quindi il report deve dichiararlo n/d. La
+    # versione precedente di questo test asseriva "n/d" not in report, che
+    # imponeva di scrivere "Anomalie residue: 0" - una cifra inventata.
+    assert "Anomalie residue: n/d" in report
+    assert "Anomalie residue: 0" not in report
 
 
 def test_main_riga_json_non_dict_in_metrics_non_e_fatale(tmp_path, monkeypatch,
@@ -2017,3 +2023,130 @@ def test_report_minimo_non_dichiara_zero_chiamate_se_i_record_non_sono_letti(
     assert "Chiamate Cloudflare registrate: n/d" in report
     assert "Chiamate Cloudflare registrate: 0" not in report
     assert "Anomalie residue: n/d" in report
+
+
+# ---------------------------------------------------------------------------
+# Aggiudicazione round 5 (breaker scattato): i quattro difetti chiusi a mano.
+# ---------------------------------------------------------------------------
+
+
+def test_200_non_decodificabile_ha_token_coerenti_col_costo(tmp_path):
+    """NUOVO-2: con `usd = reserved` i token restavano stimati sui secondi
+    reali (zero), quindi il record dichiarava "token output 0" accanto a un
+    costo pieno. Il blocco di riconciliazione - che la spec designa per il
+    confronto riga per riga con la dashboard Cloudflare - risultava
+    internamente incoerente di ~112x."""
+    import base64 as _b64
+    audio = _b64.b64encode(b"questo non e' un WAV").decode("ascii")
+    s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
+    ctx = _ctx(tmp_path, s)
+    rec, _, _ = bench._one_call(ctx, "testo finale", 300, "it", "Zephyr",
+                                "+0%", None,
+                                os.path.join(ctx.run_dir, "x.pcm"), 0)
+    ctx.writer.close()
+    assert rec["anomaly"] == "format"
+    assert rec["tokens_out_est"] > 0
+    # I token del record devono ricostruire il costo del record.
+    assert bench.cost_usd(rec["tokens_in_est"], rec["tokens_out_est"]) == \
+        pytest.approx(rec["cost_usd_est"], rel=1e-9)
+
+
+def test_200_non_decodificabile_stessi_token_dei_due_rami(tmp_path):
+    """NUOVO-2, lato coerenza: il ramo CFCallError (200 senza campo audio) e
+    il ramo di successo con audio non decodificabile descrivono la stessa
+    situazione - un 200 fatturato senza audio usabile - e devono stimare gli
+    stessi token."""
+    import base64 as _b64
+    ok = FakeSession([FakeResponse(200, {"result": {"audio":
+                                                    _b64.b64encode(b"non wav")
+                                                    .decode("ascii")}})])
+    ctx_ok = _ctx(tmp_path / "a", ok)
+    rec_ok, _, _ = bench._one_call(ctx_ok, "t", 300, "it", "Zephyr", "+0%",
+                                   None, os.path.join(ctx_ok.run_dir, "x.pcm"),
+                                   0)
+    ctx_ok.writer.close()
+    vuoto = FakeSession([FakeResponse(200, {"result": {}})])
+    ctx_ko = _ctx(tmp_path / "b", vuoto)
+    rec_ko, _, _ = bench._one_call(ctx_ko, "t", 300, "it", "Zephyr", "+0%",
+                                   None, os.path.join(ctx_ko.run_dir, "x.pcm"),
+                                   0)
+    ctx_ko.writer.close()
+    assert rec_ko["anomaly"] == "error"
+    assert rec_ok["tokens_out_est"] == rec_ko["tokens_out_est"]
+    assert rec_ok["tokens_in_est"] == rec_ko["tokens_in_est"]
+
+
+def test_residual_anomalies_che_rompe_non_silenzia_le_chiamate_pagate(
+        tmp_path, monkeypatch, capsys):
+    """NUOVO-1: `unrecorded_paid` va calcolato PRIMA di _residual_anomalies.
+    Calcolato dopo, un cedimento nel conteggio delle anomalie cancellava
+    l'allarme sulle chiamate fatturate ma non registrate - cioe' il report
+    di un run degradato taceva proprio sul denaro speso."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    # Il 200 arriva (paid_calls sale) ma il record non viene mai scritto.
+    monkeypatch.setattr(bench.MetricsWriter, "write",
+                        lambda self, record: None)
+
+    def _boom(*a, **k):
+        raise RuntimeError("residuo non calcolabile (simulato)")
+
+    monkeypatch.setattr(bench, "_residual_anomalies", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "Risposte HTTP 200 osservate dal processo (quindi fatturate): 1" \
+        in report
+    assert "ma non compare in metrics.jsonl" in report
+    assert "sottostimato" in report
+    assert "Anomalie residue: n/d" in report
+
+
+def test_record_senza_ts_non_uccide_il_footer(tmp_path, monkeypatch, capsys):
+    """NUOVO-3: `print(reconciliation_block(...))` e il `sorted(r["ts"] ...)`
+    stavano fuori da qualunque protezione. Un record senza "ts" faceva morire
+    main() con un traceback DOPO aver speso denaro: niente footer di spesa e
+    nessuna disclosure delle chiamate pagate."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    original_write = bench.MetricsWriter.write
+
+    def _write_senza_ts(self, record):
+        senza = {k: v for k, v in record.items() if k != "ts"}
+        original_write(self, senza)
+
+    monkeypatch.setattr(bench.MetricsWriter, "write", _write_senza_ts)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert isinstance(rc, int)
+    assert "spesa stimata Cloudflare" in out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    assert os.path.exists(os.path.join(run_dir, "report.md"))
+
+
+def test_nota_righe_scartate_copre_anche_il_json_valido_non_dict(
+        tmp_path, monkeypatch):
+    """NUOVO-4: la nota diceva "JSON non valido", causa sbagliata per una
+    riga JSON valida ma non-dict, che finisce nello stesso contatore."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    original_write = bench.MetricsWriter.write
+
+    def _write_con_riga_non_dict(self, record):
+        original_write(self, record)
+        self._fh.write('["json valido ma non un oggetto"]\n')
+        self._fh.flush()
+
+    monkeypatch.setattr(bench.MetricsWriter, "write", _write_con_riga_non_dict)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "valido ma non un oggetto" in report

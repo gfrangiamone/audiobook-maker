@@ -575,6 +575,15 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # mostrava EUR 0.0000 su una chiamata realmente pagata. La stima
             # piena prenotata prima della chiamata e' il numero disponibile e
             # onesto, e finisce sia nel record sia nella spesa.
+            #
+            # I token stimati vanno riportati sulla stessa base del costo
+            # (round 5, difetto NUOVO-2): lasciarli sui secondi reali (zero)
+            # faceva dichiarare "token output (stima) 0" accanto a un costo
+            # pieno nel blocco di riconciliazione, cioe' due numeri
+            # incoerenti fra loro proprio dove la spec chiede il confronto
+            # riga per riga con la dashboard Cloudflare. Stessa base usata
+            # dal ramo CFCallError per il medesimo caso.
+            tok = estimate_tokens(chars, dur["expected_seconds"], lang)
             usd = reserved
         ctx.guard.settle(reserved, usd)
         settled = True
@@ -768,7 +777,11 @@ def reconciliation_block(records, unrecorded_paid_calls=0):
         return ("RICONCILIAZIONE - nessuna chiamata registrata in "
                 "metrics.jsonl." + extra)
     agg = summarize(records)
-    ts = sorted(r["ts"] for r in records)
+    # `r.get`, non `r["ts"]` (round 5, difetto NUOVO-3): questo blocco viene
+    # stampato fuori dalla protezione del post-run, quindi un record privo di
+    # "ts" - una riga corrotta a meta' scrittura - faceva morire main() con un
+    # traceback su un run gia' pagato, senza report e senza footer di spesa.
+    ts = sorted(str(r.get("ts") or "?") for r in records)
     return (
         f"RICONCILIAZIONE - finestra UTC {ts[0]} -> {ts[-1]}\n"
         f"  richieste           {agg['calls']}\n"
@@ -1540,7 +1553,7 @@ def main(argv=None):
     records = []
     cf_records = []
     vertex_records = []
-    cf_residue = 0
+    cf_residue = None
     vertex_cost_eur = 0.0
     report = None
     # Difetto 1 (round 4): i POST gia' andati a 200 sono fatturati anche se il
@@ -1590,20 +1603,29 @@ def main(argv=None):
         # perfettamente - faceva dichiarare "non letto in modo affidabile" e
         # scrivere n/d nel report minimo, nascondendo dati disponibili.
         records_read = True
-        cf_residue = _residual_anomalies(cf_records)
         # Difetto 1 (round 4): confronto fra i 200 osservati dal processo e i
         # 200 finiti in metrics.jsonl. Un record in piu' non e' possibile (il
         # contatore scatta prima di qualunque scrittura), uno in meno si': e'
         # una chiamata fatturata che i totali dei record non vedono.
+        #
+        # Va calcolato PRIMA di _residual_anomalies (round 5, difetto
+        # NUOVO-1): e' l'allarme sulle chiamate pagate perse, e un cedimento
+        # nel conteggio delle anomalie non deve poterlo silenziare.
         recorded_paid = sum(1 for r in cf_records
                             if r.get("http_status") == 200)
         unrecorded_paid = max(0, paid_calls - recorded_paid)
         if unrecorded_paid:
             partial = True
             notes.append(unrecorded_calls_note(unrecorded_paid))
+        # `None` finche' non e' stato davvero calcolato: se _residual_anomalies
+        # solleva, il report minimo deve scrivere n/d invece dello zero
+        # dell'inizializzatore, che sarebbe una dichiarazione falsa sull'unica
+        # metrica di qualita' del banco (round 5, difetto NUOVO-1).
+        cf_residue = _residual_anomalies(cf_records)
         if malformed:
             notes.append(f"{malformed} riga/e di metrics.jsonl scartate "
-                         f"perche' malformate (JSON non valido).")
+                         f"perche' malformate (JSON non valido, oppure "
+                         f"valido ma non un oggetto).")
         notes.append(
             f"report e riconciliazione sopra coprono solo il backend "
             f"'{ctx.backend}'; eventuali righe di altri backend in "
@@ -1649,7 +1671,13 @@ def main(argv=None):
                      f"normale fallita: {exc}", ""]
             if records_read:
                 righe.append(f"Chiamate Cloudflare registrate: {len(cf_records)}")
-                righe.append(f"Anomalie residue: {cf_residue}")
+                if cf_residue is None:
+                    # Record letti, ma il conteggio delle anomalie non e' mai
+                    # arrivato in fondo: "0" sarebbe falso (round 5, NUOVO-1).
+                    righe.append("Anomalie residue: n/d (conteggio non "
+                                 "completato)")
+                else:
+                    righe.append(f"Anomalie residue: {cf_residue}")
             else:
                 # Difetto 4 (round 4): senza lettura non si conosce il numero
                 # di record; scrivere "0" sarebbe una dichiarazione falsa.
@@ -1691,8 +1719,22 @@ def main(argv=None):
         # render_report a cedere. Nasconderli attribuiva una causa falsa
         # ("fallita prima di poter leggere metrics.jsonl") mentre il report
         # minimo dello stesso run ne dichiarava il numero.
-        print(reconciliation_block(cf_records,
-                                   unrecorded_paid_calls=unrecorded_paid))
+        try:
+            print(reconciliation_block(cf_records,
+                                       unrecorded_paid_calls=unrecorded_paid))
+        except Exception as rec_exc:  # noqa: BLE001
+            # Round 5, difetto NUOVO-3: questa stampa vive fuori dal blocco
+            # protetto sopra (il report e' gia' su disco a questo punto), ma
+            # un record malformato che facesse cedere summarize() qui
+            # ucciderebbe main() con un traceback, portandosi via anche il
+            # footer della spesa di un run gia' pagato.
+            print(f"[riconciliazione] non disponibile: calcolo fallito sui "
+                  f"record letti ({rec_exc!r}).")
+            if paid_calls:
+                print(f"[riconciliazione] questo processo ha comunque "
+                      f"ricevuto {paid_calls} risposta/e HTTP 200 da "
+                      f"Cloudflare, quindi fatturate: il run NON e' a costo "
+                      f"zero.")
     else:
         # Finding D (fix round 3): quando metrics.jsonl e' illeggibile,
         # stampare la riconciliazione calcolata su una lista vuota direbbe
