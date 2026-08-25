@@ -105,3 +105,46 @@ def test_spend_guard_cap_zero_disattiva_il_controllo():
     guard = bench.SpendGuard(max_eur=0)
     guard.add(999.0)
     guard.check(999.0)  # nessuna eccezione
+
+
+def test_evaluate_duration_nella_banda_nessuna_anomalia():
+    got = bench.evaluate_duration(chars=1460, language="it", audio_seconds=90.0)
+    assert got["expected_seconds"] == pytest.approx(100.0)
+    assert got["ratio"] == pytest.approx(0.9)
+    assert got["anomaly"] is None
+
+
+def test_evaluate_duration_troncato():
+    got = bench.evaluate_duration(chars=1460, language="it", audio_seconds=55.0)
+    assert got["anomaly"] == "truncated"
+
+
+def test_evaluate_duration_troppo_lungo():
+    got = bench.evaluate_duration(chars=1460, language="it", audio_seconds=170.0)
+    assert got["anomaly"] == "overlong"
+
+
+def test_evaluate_duration_audio_vuoto():
+    got = bench.evaluate_duration(chars=1460, language="it", audio_seconds=0.0)
+    assert got["anomaly"] == "empty"
+    assert got["ratio"] == 0.0
+
+
+def test_evaluate_duration_testo_vuoto_non_divide_per_zero():
+    got = bench.evaluate_duration(chars=0, language="it", audio_seconds=0.0)
+    assert got["anomaly"] == "empty"
+
+
+def test_evaluate_duration_estremi_della_banda_sono_accettati():
+    # ratio esattamente 0.6 e 1.6 non sono anomalie: la banda e' inclusiva
+    assert bench.evaluate_duration(1460, "it", 60.0)["anomaly"] is None
+    assert bench.evaluate_duration(1460, "it", 160.0)["anomaly"] is None
+
+
+def test_evaluate_format_riconosce_il_formato_atteso():
+    assert bench.evaluate_format({"rate": 24000, "channels": 1, "width": 2}) is None
+
+
+def test_evaluate_format_segnala_divergenze():
+    assert bench.evaluate_format({"rate": 16000, "channels": 1, "width": 2}) == "format"
+    assert bench.evaluate_format({"rate": 24000, "channels": 2, "width": 2}) == "format"

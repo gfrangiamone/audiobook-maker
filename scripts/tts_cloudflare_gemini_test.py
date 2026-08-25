@@ -148,3 +148,31 @@ class SpendGuard:
 
     def add(self, usd):
         self.spent_usd += float(usd)
+
+
+def evaluate_duration(chars, language, audio_seconds):
+    """Confronta la durata reale dell'audio con quella attesa per il testo.
+
+    Sostituisce il finish_reason che l'API Cloudflare non restituisce: senza
+    questo controllo un chunk troncato e' indistinguibile da uno completo.
+    """
+    seconds = float(audio_seconds or 0.0)
+    expected = float(chars or 0) / gemini_tts.baseline_rate(language)
+    if seconds <= 0.0 or expected <= 0.0:
+        return {"expected_seconds": expected, "ratio": 0.0, "anomaly": "empty"}
+    ratio = seconds / expected
+    anomaly = None
+    if ratio < RATIO_LOW:
+        anomaly = "truncated"
+    elif ratio > RATIO_HIGH:
+        anomaly = "overlong"
+    return {"expected_seconds": expected, "ratio": ratio, "anomaly": anomaly}
+
+
+def evaluate_format(fmt):
+    """Ritorna "format" se il PCM decodificato non e' 24 kHz mono 16 bit."""
+    if (fmt.get("rate") != EXPECTED_RATE
+            or fmt.get("channels") != EXPECTED_CHANNELS
+            or fmt.get("width") != EXPECTED_WIDTH):
+        return "format"
+    return None
