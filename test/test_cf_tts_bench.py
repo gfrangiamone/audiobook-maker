@@ -414,3 +414,62 @@ def test_synth_chunk_cf_auth_error_si_propaga(tmp_path):
     ctx.writer.close()
     righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
     assert len(righe) == 0
+
+
+def _rec(**kw):
+    base = dict(run_id="r", backend="cloudflare", lang="it", voice="Zephyr",
+                rate="+0%", style_hash="0" * 8, chunk_index=0, chars=450,
+                prompt_bytes=460, http_status=200, latency_ms=1000.0, attempt=1,
+                audio_bytes=96000, audio_seconds=30.0, expected_seconds=30.8,
+                ratio=0.97, tokens_in_est=112, tokens_out_est=750,
+                cost_usd_est=0.00909, anomaly=None)
+    base.update(kw)
+    return bench.make_record(**base)
+
+
+def test_percentiles_su_lista_nota():
+    vals = [float(n) for n in range(1, 101)]
+    got = bench.percentiles(vals)
+    assert got["p50"] == pytest.approx(50.0, abs=1.0)
+    assert got["p95"] == pytest.approx(95.0, abs=1.0)
+    assert got["p99"] == pytest.approx(99.0, abs=1.0)
+
+
+def test_percentiles_lista_vuota():
+    assert bench.percentiles([]) == {"p50": 0.0, "p95": 0.0, "p99": 0.0}
+
+
+def test_summarize_aggrega_costi_e_anomalie():
+    got = bench.summarize([_rec(), _rec(anomaly="truncated"),
+                           _rec(http_status=429, attempt=2)])
+    assert got["calls"] == 3
+    assert got["chars"] == 1350
+    assert got["audio_seconds"] == pytest.approx(90.0)
+    assert got["tokens_out"] == 2250
+    assert got["cost_usd"] == pytest.approx(0.02727)
+    assert got["cost_eur"] == pytest.approx(0.02727 * 0.86)
+    assert got["anomalies"] == {"truncated": 1}
+    assert got["http_429"] == 1
+
+
+def test_reconciliation_block_riporta_la_finestra_e_i_totali():
+    txt = bench.reconciliation_block([_rec(), _rec()])
+    assert "RICONCILIAZIONE" in txt
+    assert "richieste" in txt and "2" in txt
+    assert "EUR" in txt
+
+
+def test_render_report_marca_il_run_parziale(tmp_path):
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, [_rec()], residual_anomalies=0,
+                               partial=True, notes=["cap di spesa raggiunto"])
+    testo = open(path, encoding="utf-8").read()
+    assert "PARZIALE" in testo
+    assert "cap di spesa raggiunto" in testo
+
+
+def test_render_report_dichiara_le_anomalie_residue(tmp_path):
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, [_rec(anomaly="truncated")],
+                               residual_anomalies=1, partial=False, notes=[])
+    assert "anomalie residue: 1" in open(path, encoding="utf-8").read()

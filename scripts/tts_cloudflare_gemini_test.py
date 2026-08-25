@@ -483,3 +483,141 @@ def run_smoke(ctx, lang, voice, rate, style, text):
           f"ratio {res['record']['ratio']:.2f}, "
           f"anomalia {res['anomaly'] or 'nessuna'}")
     return 1 if res["anomaly"] else 0
+
+
+# --- Aggregazione e report ----------------------------------------------------
+def percentiles(values):
+    """p50/p95/p99 per interpolazione lineare. Lista vuota -> zeri."""
+    vals = sorted(float(v) for v in values if v is not None)
+    if not vals:
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0}
+    def _p(q):
+        if len(vals) == 1:
+            return vals[0]
+        pos = q * (len(vals) - 1)
+        lo = int(pos)
+        hi = min(lo + 1, len(vals) - 1)
+        return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo)
+    return {"p50": _p(0.50), "p95": _p(0.95), "p99": _p(0.99)}
+
+
+def summarize(records):
+    """Aggregati del run: volumi, costi, latenze, esiti HTTP, anomalie."""
+    anomalies = {}
+    for r in records:
+        if r.get("anomaly"):
+            anomalies[r["anomaly"]] = anomalies.get(r["anomaly"], 0) + 1
+    cost_usd_tot = sum(float(r.get("cost_usd_est") or 0) for r in records)
+    return {
+        "calls": len(records),
+        "chars": sum(int(r.get("chars") or 0) for r in records),
+        "audio_seconds": sum(float(r.get("audio_seconds") or 0) for r in records),
+        "tokens_in": sum(int(r.get("tokens_in_est") or 0) for r in records),
+        "tokens_out": sum(int(r.get("tokens_out_est") or 0) for r in records),
+        "cost_usd": cost_usd_tot,
+        "cost_eur": cost_usd_tot * USD_EUR_RATE,
+        "latency": percentiles([r.get("latency_ms") for r in records]),
+        "http_429": sum(1 for r in records if r.get("http_status") == 429),
+        "http_5xx": sum(1 for r in records
+                        if (r.get("http_status") or 0) >= 500),
+        "anomalies": anomalies,
+    }
+
+
+def reconciliation_block(records):
+    """Blocco da confrontare con la fattura Cloudflare.
+
+    Senza questo confronto il run misura il funzionamento, non il prezzo: il
+    costo qui e' stimato, perche' l'API non restituisce i token consumati.
+    """
+    if not records:
+        return "RICONCILIAZIONE - nessuna chiamata effettuata."
+    agg = summarize(records)
+    ts = sorted(r["ts"] for r in records)
+    return (
+        f"RICONCILIAZIONE - finestra UTC {ts[0]} -> {ts[-1]}\n"
+        f"  richieste           {agg['calls']}\n"
+        f"  caratteri inviati   {agg['chars']}\n"
+        f"  secondi audio       {agg['audio_seconds']:.0f}\n"
+        f"  token input (stima)   {agg['tokens_in']}\n"
+        f"  token output (stima)  {agg['tokens_out']}\n"
+        f"  costo atteso        USD {agg['cost_usd']:.4f}   "
+        f"EUR {agg['cost_eur']:.4f}\n"
+        "  Confronta questi numeri con Cloudflare Dashboard -> Workers & Pages\n"
+        "  -> AI -> Usage, selezionando esattamente la finestra qui sopra.\n"
+        "  Nota: il costo e' STIMATO (l'API non restituisce i token). Finche'\n"
+        "  non e' riconciliato, il risparmio atteso non e' dimostrato."
+    )
+
+
+def render_report(run_dir, records, residual_anomalies, partial, notes):
+    """Scrive `report.md` e ne ritorna il path."""
+    agg = summarize(records)
+    lines = []
+    lines.append("# Report banco di prova Cloudflare Gemini TTS")
+    lines.append("")
+    lines.append(f"Run: `{os.path.basename(run_dir)}`")
+    if partial:
+        lines.append("")
+        lines.append("**RUN PARZIALE** - interrotto prima del completamento.")
+    lines.append("")
+    lines.append("## Volumi e costo")
+    lines.append("")
+    lines.append("| Metrica | Valore |")
+    lines.append("|---|---|")
+    lines.append(f"| Chiamate | {agg['calls']} |")
+    lines.append(f"| Caratteri | {agg['chars']} |")
+    lines.append(f"| Audio (s) | {agg['audio_seconds']:.1f} |")
+    lines.append(f"| Token input (stima) | {agg['tokens_in']} |")
+    lines.append(f"| Token output (stima) | {agg['tokens_out']} |")
+    lines.append(f"| Costo stimato | USD {agg['cost_usd']:.4f} / "
+                 f"EUR {agg['cost_eur']:.4f} |")
+    lines.append("")
+    lines.append("## Latenza e affidabilita'")
+    lines.append("")
+    lines.append("| Metrica | Valore |")
+    lines.append("|---|---|")
+    lines.append(f"| Latenza p50 (ms) | {agg['latency']['p50']:.0f} |")
+    lines.append(f"| Latenza p95 (ms) | {agg['latency']['p95']:.0f} |")
+    lines.append(f"| Latenza p99 (ms) | {agg['latency']['p99']:.0f} |")
+    lines.append(f"| Risposte 429 | {agg['http_429']} |")
+    lines.append(f"| Risposte 5xx | {agg['http_5xx']} |")
+    lines.append("")
+    lines.append("## Anomalie")
+    lines.append("")
+    lines.append(f"anomalie residue: {residual_anomalies}")
+    lines.append("")
+    failed = [r for r in records if r.get("anomaly") == "error"]
+    lines.append(f"chunk falliti (anomaly=error): {len(failed)}")
+    if failed:
+        lines.append("")
+        lines.append("| chunk_index | http_status | attempt |")
+        lines.append("|---|---|---|")
+        for r in sorted(failed, key=lambda r: (r.get("chunk_index") is None,
+                                                r.get("chunk_index"))):
+            lines.append(f"| {r.get('chunk_index')} | {r.get('http_status')} "
+                         f"| {r.get('attempt')} |")
+    lines.append("")
+    if agg["anomalies"]:
+        lines.append("| Tipo | Occorrenze (incluse quelle corrette dal retry) |")
+        lines.append("|---|---|")
+        for tipo, n in sorted(agg["anomalies"].items()):
+            lines.append(f"| {tipo} | {n} |")
+    else:
+        lines.append("Nessuna anomalia rilevata.")
+    lines.append("")
+    lines.append("## Riconciliazione")
+    lines.append("")
+    lines.append("```")
+    lines.append(reconciliation_block(records))
+    lines.append("```")
+    if notes:
+        lines.append("")
+        lines.append("## Note")
+        lines.append("")
+        for n in notes:
+            lines.append(f"- {n}")
+    path = os.path.join(run_dir, "report.md")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return path
