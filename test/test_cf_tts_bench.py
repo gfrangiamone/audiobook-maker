@@ -633,3 +633,74 @@ def test_spend_guard_reserve_concorrenza_produce_esattamente_k_successi():
 
     assert len(successes) == k
     assert guard.spent_usd == pytest.approx(k * usd)
+
+
+# --- Livello book: parsing, chunking di produzione, assembly M4B -----------
+
+def test_parse_book_txt(tmp_path):
+    p = tmp_path / "libro.txt"
+    p.write_text("Prima riga.\n\nSeconda riga.", encoding="utf-8")
+    book = bench.parse_book(str(p))
+    assert book["title"] == "libro"
+    assert len(book["chapters"]) == 1
+    assert "Seconda riga." in book["chapters"][0][2]
+
+
+def test_parse_book_abm(tmp_path):
+    import json as _json
+    import zipfile
+    p = tmp_path / "libro.abm"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("manifest.json", _json.dumps({
+            "format": "audiobook-maker-project",
+            "title": "Titolo", "author": "Autore", "language": "it",
+            "chapters": [{"index": 1, "title": "Cap 1", "file": "chapters/1.txt"}],
+        }))
+        zf.writestr("chapters/1.txt", "Testo del capitolo.")
+    book = bench.parse_book(str(p))
+    assert book["title"] == "Titolo"
+    assert book["language"] == "it"
+    assert book["chapters"] == [(1, "Cap 1", "Testo del capitolo.")]
+
+
+def test_parse_book_abm_rifiuta_manifest_estraneo(tmp_path):
+    import json as _json
+    import zipfile
+    p = tmp_path / "falso.abm"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("manifest.json", _json.dumps({"format": "altro"}))
+    with pytest.raises(ValueError):
+        bench.parse_book(str(p))
+
+
+def test_chapter_markers_in_millisecondi(tmp_path):
+    a = tmp_path / "a.pcm"
+    b = tmp_path / "b.pcm"
+    a.write_bytes(b"\x00" * (24000 * 2))       # 1 s
+    b.write_bytes(b"\x00" * (24000 * 2 * 2))   # 2 s
+    got = bench.chapter_markers([str(a), str(b)], ["Uno", "Due"])
+    assert got == [
+        {"title": "Uno", "start": 0.0, "end": 1000.0},
+        {"title": "Due", "start": 1000.0, "end": 3000.0},
+    ]
+
+
+def test_run_book_sintetizza_ogni_chunk(tmp_path, monkeypatch):
+    import tts_split
+    testo = ("Questa e' una frase di prova. " * 40)  # ~1200 char, frasi complete
+    book = {"title": "T", "author": "A", "language": "it",
+            "chapters": [(1, "Cap 1", testo)], "cover_bytes": None}
+    # Il numero di chunk lo decide lo splitter di produzione: non va indovinato.
+    attesi = len(tts_split.split_text_into_chunks(testo, max_chars=450))
+    assert attesi >= 2
+    s = FakeSession([_ok_response(seconds=30.0) for _ in range(attesi)])
+    ctx = _ctx(tmp_path, s)
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b",
+                        lambda *a, **k: True)
+    residue, m4b = bench.run_book(ctx, book, "Zephyr", "+0%", None,
+                                  chunk_chars=450, concurrency=1,
+                                  out_m4b=str(tmp_path / "out.m4b"))
+    assert residue == 0
+    assert len(s.calls) == attesi
+    assert m4b == str(tmp_path / "out.m4b")
+    ctx.writer.close()

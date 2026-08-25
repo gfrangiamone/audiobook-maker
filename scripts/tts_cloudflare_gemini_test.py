@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import wave
+import zipfile
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -31,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import audio_utils
 import gemini_tts
+import tts_split
 
 # --- Costanti del banco di prova -------------------------------------------
 CF_MODEL = "google/gemini-3.1-flash-tts"
@@ -760,3 +762,138 @@ def run_matrix(ctx, combos, concurrency=1):
     if fatal is not None:
         raise fatal
     return residue
+
+
+# --- Livello book: parsing, chunking di produzione e assembly M4B -----------
+def _abm_safe_name(name):
+    """Guardia zip-slip minimale sui nomi interni all'archivio."""
+    norm = os.path.normpath(name).replace("\\", "/")
+    if norm.startswith("/") or norm.startswith(".."):
+        raise ValueError(f"nome di archivio non sicuro: {name!r}")
+    return norm
+
+
+def parse_book(path):
+    """Legge un .abm o un .txt.
+
+    Returns:
+        {"title", "author", "language", "chapters": [(idx, titolo, testo)],
+         "cover_bytes": bytes|None}
+    """
+    if path.lower().endswith(".abm"):
+        with zipfile.ZipFile(path, "r") as zf:
+            names = set(zf.namelist())
+            if "manifest.json" not in names:
+                raise ValueError("File .abm non valido: manifest.json assente")
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            if manifest.get("format") != "audiobook-maker-project":
+                raise ValueError("File .abm non valido: formato sconosciuto")
+            chapters = []
+            for cm in manifest.get("chapters", []):
+                fname = cm.get("file") or ""
+                raw = fname if fname.startswith("chapters/") else f"chapters/{fname}"
+                raw = _abm_safe_name(raw)
+                if raw not in names:
+                    continue
+                text = zf.read(raw).decode("utf-8", errors="replace")
+                chapters.append((cm.get("index", len(chapters) + 1),
+                                 cm.get("title") or f"Capitolo {len(chapters) + 1}",
+                                 text))
+            if not chapters:
+                raise ValueError("File .abm senza capitoli leggibili")
+            cover = None
+            if manifest.get("has_cover") and manifest.get("cover_file"):
+                cf = _abm_safe_name(manifest["cover_file"])
+                if cf in names:
+                    cover = zf.read(cf)
+            return {
+                "title": manifest.get("title")
+                         or os.path.splitext(os.path.basename(path))[0],
+                "author": manifest.get("author", ""),
+                "language": manifest.get("language", ""),
+                "chapters": chapters,
+                "cover_bytes": cover,
+            }
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    title = os.path.splitext(os.path.basename(path))[0]
+    return {"title": title, "author": "", "language": "",
+            "chapters": [(1, title, text)], "cover_bytes": None}
+
+
+def chapter_markers(pcm_paths, titles):
+    """Marker capitoli in millisecondi, dalla dimensione dei PCM."""
+    out = []
+    cursor = 0.0
+    for path, title in zip(pcm_paths, titles):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        dur_ms = audio_utils.pcm_size_to_seconds(
+            size, sample_rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
+            sample_width=EXPECTED_WIDTH) * 1000.0
+        out.append({"title": title, "start": cursor, "end": cursor + dur_ms})
+        cursor += dur_ms
+    return out
+
+
+def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b):
+    """Genera l'intero libro e ne assembla l'M4B. Ritorna (anomalie, path|None).
+
+    Un chunk fallito (anomaly="error", vedi synth_chunk/_one_call) non ha
+    pcm_path: viene contato fra le anomalie residue ma escluso dall'assembly,
+    cosi' un singolo guasto HTTP non ferma la generazione dell'intero libro.
+    """
+    lang = (book.get("language") or "en")[:2].lower()
+    residue = 0
+    chapter_pcms = []
+    chapter_titles = []
+    index = 0
+    for ch_idx, ch_title, ch_text in book["chapters"]:
+        chunks = tts_split.split_text_into_chunks(ch_text, max_chars=int(chunk_chars))
+        parts = []
+        jobs = []
+        for chunk in chunks:
+            pcm_path = os.path.join(ctx.run_dir, "audio", f"{index:04d}.pcm")
+            jobs.append((index, chunk, pcm_path))
+            index += 1
+
+        def _one(job):
+            i, chunk, pcm_path = job
+            return synth_chunk(ctx, chunk, i, lang, voice, rate, style, pcm_path)
+
+        if int(concurrency) <= 1:
+            results = [_one(j) for j in jobs]
+        else:
+            with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
+                results = list(pool.map(_one, jobs))
+        for res in results:
+            if res["anomaly"]:
+                residue += 1
+            if res["pcm_path"]:
+                parts.append(res["pcm_path"])
+        if not parts:
+            continue
+        ch_pcm = os.path.join(ctx.run_dir, "audio", f"cap{ch_idx:03d}.pcm")
+        audio_utils.pcm_concat(parts, ch_pcm, skip_missing=True,
+                               sample_rate=EXPECTED_RATE,
+                               channels=EXPECTED_CHANNELS,
+                               sample_width=EXPECTED_WIDTH)
+        chapter_pcms.append(ch_pcm)
+        chapter_titles.append(ch_title)
+
+    if not chapter_pcms:
+        return residue, None
+    cover_path = None
+    if book.get("cover_bytes"):
+        cover_path = os.path.join(ctx.run_dir, "cover.jpg")
+        with open(cover_path, "wb") as fh:
+            fh.write(book["cover_bytes"])
+    ok = audio_utils.pcm_to_aac_m4b(
+        chapter_pcms, out_m4b, sample_rate=EXPECTED_RATE,
+        channels=EXPECTED_CHANNELS, sample_width=EXPECTED_WIDTH,
+        chapters=chapter_markers(chapter_pcms, chapter_titles),
+        title=book.get("title"), author=book.get("author"),
+        cover_path=cover_path, language=book.get("language"))
+    return residue, (out_m4b if ok else None)
