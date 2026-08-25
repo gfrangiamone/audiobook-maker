@@ -12,11 +12,14 @@ Spec: docs/superpowers/specs/2026-08-25-cloudflare-gemini-tts-bench-design.md
 """
 import base64
 import binascii
+import hashlib
 import io
+import json
 import os
 import sys
 import time
 import wave
+from datetime import datetime, timezone
 
 import requests
 
@@ -292,3 +295,66 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
         }
     raise CFCallError("tentativi esauriti", status=last_status,
                       attempts=int(max_attempts))
+
+
+# --- Metriche: record, writer, run dir --------------------------------------
+_RECORD_KEYS = (
+    "ts", "run_id", "backend", "lang", "voice", "rate", "style_hash",
+    "chunk_index", "chars", "prompt_bytes", "http_status", "latency_ms",
+    "attempt", "audio_bytes", "audio_seconds", "expected_seconds", "ratio",
+    "tokens_in_est", "tokens_out_est", "cost_usd_est", "anomaly",
+)
+
+
+def _utc_now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def style_hash(style_instruction):
+    """Firma corta dello stile: tiene le righe di metrica leggibili."""
+    raw = (style_instruction or "").encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:8]
+
+
+def make_record(**kwargs):
+    """Riga di `metrics.jsonl`. Schema fisso: le analisi leggono questo file."""
+    rec = {"ts": _utc_now_iso()}
+    for key in _RECORD_KEYS:
+        if key == "ts":
+            continue
+        rec[key] = kwargs.get(key)
+    extra = set(kwargs) - set(_RECORD_KEYS)
+    if extra:
+        raise ValueError(f"chiavi fuori schema in make_record: {sorted(extra)}")
+    return rec
+
+
+class MetricsWriter:
+    """Append su `metrics.jsonl`, una riga JSON per chiamata."""
+
+    def __init__(self, run_dir):
+        self._path = os.path.join(run_dir, "metrics.jsonl")
+        self._fh = open(self._path, "a", encoding="utf-8")
+
+    @property
+    def path(self):
+        return self._path
+
+    def write(self, record):
+        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._fh.flush()
+
+    def close(self):
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
+def new_run_dir(out_root, level):
+    """Crea e ritorna `out_root/<timestamp UTC>_<level>/` con audio/ e prompts/."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = os.path.join(out_root, f"{stamp}_{level}")
+    for sub in ("audio", "prompts"):
+        os.makedirs(os.path.join(run_dir, sub), exist_ok=True)
+    return run_dir

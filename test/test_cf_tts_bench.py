@@ -270,3 +270,43 @@ def test_call_cf_ritenta_su_errore_di_rete_poi_successo():
     assert got["attempts"] == 3
     assert got["retry_statuses"] == [0, 0]
     assert len(s.calls) == 3
+
+
+SCHEMA_KEYS = {
+    "ts", "run_id", "backend", "lang", "voice", "rate", "style_hash",
+    "chunk_index", "chars", "prompt_bytes", "http_status", "latency_ms",
+    "attempt", "audio_bytes", "audio_seconds", "expected_seconds", "ratio",
+    "tokens_in_est", "tokens_out_est", "cost_usd_est", "anomaly",
+}
+
+
+def test_make_record_ha_esattamente_le_chiavi_di_schema():
+    rec = bench.make_record(
+        run_id="r1", backend="cloudflare", lang="it", voice="Zephyr",
+        rate="+0%", style_hash="abc123", chunk_index=0, chars=450,
+        prompt_bytes=460, http_status=200, latency_ms=1234.5, attempt=1,
+        audio_bytes=96000, audio_seconds=2.0, expected_seconds=30.8,
+        ratio=0.065, tokens_in_est=112, tokens_out_est=50,
+        cost_usd_est=0.0007, anomaly="truncated",
+    )
+    assert set(rec) == SCHEMA_KEYS
+    assert rec["ts"].endswith("Z")
+
+
+def test_metrics_writer_scrive_una_riga_per_record(tmp_path):
+    import json
+    run_dir = str(tmp_path / "run")
+    os.makedirs(run_dir)
+    w = bench.MetricsWriter(run_dir)
+    w.write({"a": 1})
+    w.write({"a": 2})
+    w.close()
+    righe = open(os.path.join(run_dir, "metrics.jsonl"), encoding="utf-8").read().splitlines()
+    assert [json.loads(r)["a"] for r in righe] == [1, 2]
+
+
+def test_new_run_dir_crea_sottocartelle(tmp_path):
+    run_dir = bench.new_run_dir(str(tmp_path), "smoke")
+    assert os.path.isdir(os.path.join(run_dir, "audio"))
+    assert os.path.isdir(os.path.join(run_dir, "prompts"))
+    assert os.path.basename(run_dir).endswith("_smoke")
