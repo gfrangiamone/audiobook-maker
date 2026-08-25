@@ -473,3 +473,43 @@ def test_render_report_dichiara_le_anomalie_residue(tmp_path):
     path = bench.render_report(run_dir, [_rec(anomaly="truncated")],
                                residual_anomalies=1, partial=False, notes=[])
     assert "anomalie residue: 1" in open(path, encoding="utf-8").read()
+
+
+def test_render_report_elenca_i_chunk_falliti(tmp_path):
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    records = [
+        _rec(chunk_index=0),
+        _rec(chunk_index=1, anomaly="error", http_status=500, attempt=4,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+        _rec(chunk_index=2, anomaly="error", http_status=None, attempt=None,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+    ]
+    path = bench.render_report(run_dir, records, residual_anomalies=2,
+                               partial=False, notes=[])
+    testo = open(path, encoding="utf-8").read()
+    assert "chunk falliti (anomaly=error): 2" in testo
+    assert "| 1 | 500 | 4 |" in testo
+    assert "| 2 | - | - |" in testo
+
+
+def test_render_report_senza_chunk_falliti_non_stampa_la_tabella(tmp_path):
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, [_rec()], residual_anomalies=0,
+                               partial=False, notes=[])
+    testo = open(path, encoding="utf-8").read()
+    assert "chunk falliti (anomaly=error): 0" in testo
+    assert "| chunk_index | http_status | attempt |" not in testo
+
+
+def test_summarize_tollera_i_record_error(tmp_path):
+    records = [
+        _rec(chunk_index=0),
+        _rec(chunk_index=1, anomaly="error", http_status=None, attempt=None,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+    ]
+    agg = bench.summarize(records)
+    assert agg["calls"] == 2
+    assert agg["audio_seconds"] == pytest.approx(30.0)
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    bench.render_report(run_dir, records, residual_anomalies=1, partial=False,
+                        notes=[])

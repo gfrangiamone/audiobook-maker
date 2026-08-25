@@ -595,8 +595,11 @@ def render_report(run_dir, records, residual_anomalies, partial, notes):
         lines.append("|---|---|---|")
         for r in sorted(failed, key=lambda r: (r.get("chunk_index") is None,
                                                 r.get("chunk_index"))):
-            lines.append(f"| {r.get('chunk_index')} | {r.get('http_status')} "
-                         f"| {r.get('attempt')} |")
+            status = r.get("http_status")
+            attempt = r.get("attempt")
+            lines.append(f"| {r.get('chunk_index')} "
+                         f"| {'-' if status is None else status} "
+                         f"| {'-' if attempt is None else attempt} |")
     lines.append("")
     if agg["anomalies"]:
         lines.append("| Tipo | Occorrenze (incluse quelle corrette dal retry) |")
