@@ -333,6 +333,8 @@ def test_synth_chunk_scrive_pcm_e_record(tmp_path):
     assert got["record"]["backend"] == "cloudflare"
     assert os.path.getsize(got["pcm_path"]) == 9 * 24000 * 2
     ctx.writer.close()
+    righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == 1
 
 
 def test_synth_chunk_ritenta_una_volta_l_anomalia(tmp_path):
@@ -345,6 +347,8 @@ def test_synth_chunk_ritenta_una_volta_l_anomalia(tmp_path):
     assert got["retry_record"]["anomaly"] is None
     assert got["anomaly"] is None
     ctx.writer.close()
+    righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == 2
 
 
 def test_synth_chunk_anomalia_persistente_resta(tmp_path):
@@ -374,3 +378,38 @@ def test_synth_chunk_rispetta_il_cap_di_spesa(tmp_path):
         bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
                           os.path.join(ctx.run_dir, "audio", "000.pcm"))
     ctx.writer.close()
+
+
+def test_synth_chunk_cf_call_error_non_interrompe_il_run(tmp_path):
+    # 4x 500: call_cf esaurisce i propri tentativi e solleva CFCallError.
+    # synth_chunk non deve propagarla: una riga "error", nessun secondo giro.
+    import json
+    s = FakeSession([FakeResponse(500)] * 4)
+    ctx = _ctx(tmp_path, s)
+    got = bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                            os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    assert got["anomaly"] == "error"
+    assert got["retry_record"] is None
+    assert got["pcm_path"] is None
+    assert got["audio_seconds"] is None
+    assert got["record"]["anomaly"] == "error"
+    assert got["record"]["http_status"] == 500
+    assert got["record"]["latency_ms"] is None
+    assert got["record"]["audio_bytes"] is None
+    assert got["record"]["ratio"] is None
+    ctx.writer.close()
+    righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == 1
+    assert json.loads(righe[0])["anomaly"] == "error"
+
+
+def test_synth_chunk_cf_auth_error_si_propaga(tmp_path):
+    # 401/403 e' abort immediato per spec: nessuna riga, l'eccezione esce.
+    s = FakeSession([FakeResponse(403)])
+    ctx = _ctx(tmp_path, s)
+    with pytest.raises(bench.CFAuthError):
+        bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                          os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    ctx.writer.close()
+    righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == 0

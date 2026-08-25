@@ -380,10 +380,35 @@ class BenchContext:
 
 def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
               chunk_index):
-    """Una chiamata + decodifica + valutazione. Ritorna (record, seconds, path)."""
+    """Una chiamata + decodifica + valutazione. Ritorna (record, seconds, path).
+
+    Un `CFCallError` (tentativi HTTP esauriti, 4xx non ritentabile, audio non
+    decodificabile) non interrompe il run: la spec impone che solo 401/403
+    (CFAuthError, non catturata qui) provochi un abort immediato. Un chunk
+    fallito dopo i retry di `call_cf` viene marcato "error" e riportato con
+    una sola riga di metriche.
+    """
     ctx.guard.check(predict_call_usd(chars, lang))
-    res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text, voice,
-                  ctx.temperature)
+    try:
+        res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
+                      voice, ctx.temperature)
+    except CFCallError as exc:
+        expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
+        tok = estimate_tokens(chars, expected_seconds, lang)
+        usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
+        record = make_record(
+            run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
+            rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
+            chars=chars, prompt_bytes=len(final_text.encode("utf-8")),
+            http_status=exc.status, latency_ms=None,
+            attempt=exc.attempts, audio_bytes=None,
+            audio_seconds=None, expected_seconds=expected_seconds,
+            ratio=None, tokens_in_est=tok["tokens_in"],
+            tokens_out_est=tok["tokens_out"], cost_usd_est=usd,
+            anomaly="error",
+        )
+        ctx.writer.write(record)
+        return record, None, None
     anomaly = None
     seconds = 0.0
     audio_bytes = 0
@@ -434,7 +459,9 @@ def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
     record, seconds, path = _one_call(ctx, final_text, chars, lang, voice, rate,
                                       style, pcm_path, chunk_index)
     retry_record = None
-    if record["anomaly"]:
+    if record["anomaly"] and record["anomaly"] != "error":
+        # "error" e' gia' l'esito di call_cf dopo i suoi tentativi HTTP
+        # interni: non ha senso richiamare l'API una seconda volta qui.
         retry_path = pcm_path + ".retry.pcm"
         retry_record, r_seconds, r_path = _one_call(
             ctx, final_text, chars, lang, voice, rate, style, retry_path,
