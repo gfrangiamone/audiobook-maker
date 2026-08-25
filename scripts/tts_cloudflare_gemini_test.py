@@ -17,9 +17,10 @@ import io
 import json
 import os
 import sys
+import threading
 import time
 import wave
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import requests
@@ -136,17 +137,31 @@ def predict_call_usd(chars, language):
 
 
 class SpendGuard:
-    """Accumulatore di spesa con tetto in euro. `max_eur=0` disattiva il tetto."""
+    """Accumulatore di spesa con tetto in euro. `max_eur=0` disattiva il tetto.
+
+    Thread-safe: `reserve`/`settle` sono l'idioma di prenotazione atomica
+    (lo stesso di `google_tts.reserve_chars`) usato dal livello matrix per
+    evitare lo sforamento del cap sotto concorrenza. Il pattern check-poi-add
+    non e' atomico: fra il controllo e la contabilizzazione la chiamata HTTP
+    rilascia il GIL, e piu' thread vicini al cap possono superarlo tutti
+    insieme. `check`/`add` restano disponibili per i chiamanti non
+    concorrenti e sono anch'essi protetti dallo stesso lock.
+    """
 
     def __init__(self, max_eur=DEFAULT_MAX_SPEND_EUR):
         self.max_eur = float(max_eur or 0)
         self.spent_usd = 0.0
+        self._lock = threading.Lock()
 
     def spent_eur(self):
         return self.spent_usd * USD_EUR_RATE
 
     def check(self, projected_usd):
         """Solleva SpendCapExceeded se aggiungere `projected_usd` sfonda il cap."""
+        with self._lock:
+            self._check_locked(projected_usd)
+
+    def _check_locked(self, projected_usd):
         if self.max_eur <= 0:
             return
         proiettato = (self.spent_usd + float(projected_usd)) * USD_EUR_RATE
@@ -157,7 +172,25 @@ class SpendGuard:
             )
 
     def add(self, usd):
-        self.spent_usd += float(usd)
+        with self._lock:
+            self.spent_usd += float(usd)
+
+    def reserve(self, usd):
+        """Prenota atomicamente `usd`: solleva SpendCapExceeded se sfonda il cap.
+
+        Sotto lock il controllo e la contabilizzazione avvengono insieme,
+        cosi' due thread non possono superare entrambi il controllo prima
+        che uno dei due abbia gia' sommato la propria prenotazione.
+        """
+        with self._lock:
+            self._check_locked(usd)
+            self.spent_usd += float(usd)
+            return float(usd)
+
+    def settle(self, reserved, actual):
+        """Corregge una prenotazione precedente con il costo effettivo."""
+        with self._lock:
+            self.spent_usd += float(actual) - float(reserved)
 
 
 def evaluate_duration(chars, language, audio_seconds):
@@ -391,11 +424,14 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     fallito dopo i retry di `call_cf` viene marcato "error" e riportato con
     una sola riga di metriche.
     """
-    ctx.guard.check(predict_call_usd(chars, lang))
+    reserved = ctx.guard.reserve(predict_call_usd(chars, lang))
     try:
         res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
                       voice, ctx.temperature, sleep=ctx.sleep)
     except CFCallError as exc:
+        # Un tentativo fallito non produce audio: la prenotazione va
+        # liberata, non contabilizzata (decisione del Task 6).
+        ctx.guard.settle(reserved, 0.0)
         expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
         tok = estimate_tokens(chars, expected_seconds, lang)
         usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
@@ -430,7 +466,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
         anomaly = dur["anomaly"]
     tok = estimate_tokens(chars, seconds, lang)
     usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
-    ctx.guard.add(usd)
+    ctx.guard.settle(reserved, usd)
     record = make_record(
         run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
         rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
@@ -672,8 +708,12 @@ def fixture_for(lang):
 def run_matrix(ctx, combos, concurrency=1):
     """Esegue tutte le combinazioni; ritorna il numero di anomalie residue.
 
-    Il cap di spesa si applica all'intero run: se scatta, i task ancora in coda
-    falliscono con SpendCapExceeded e il chiamante scrive un report parziale.
+    Il cap di spesa si applica all'intero run: se scatta (SpendCapExceeded) o
+    se le credenziali vengono rifiutate (CFAuthError), il run si ferma e
+    l'eccezione si propaga al chiamante, che scrive un report parziale.
+    Sotto concorrenza l'arresto non e' istantaneo: i task gia' avviati (al
+    massimo `concurrency`) arrivano comunque a completamento, i task non
+    ancora avviati vengono saltati o cancellati.
     """
     def _one(i_combo):
         i, combo = i_combo
@@ -682,12 +722,41 @@ def run_matrix(ctx, combos, concurrency=1):
         return synth_chunk(ctx, text, i, combo["lang"], combo["voice"],
                            combo["rate"], combo["style"], pcm_path)
 
-    residue = 0
     if int(concurrency) <= 1:
+        residue = 0
         for item in enumerate(combos):
             residue += 1 if _one(item)["anomaly"] else 0
         return residue
+
+    stop = threading.Event()
+
+    def _guarded(i_combo):
+        if stop.is_set():
+            return None
+        try:
+            return _one(i_combo)
+        except (SpendCapExceeded, CFAuthError):
+            stop.set()
+            raise
+
+    residue = 0
+    fatal = None
     with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
-        for res in pool.map(_one, list(enumerate(combos))):
-            residue += 1 if res["anomaly"] else 0
+        futures = [pool.submit(_guarded, item) for item in enumerate(combos)]
+        for fut in as_completed(futures):
+            try:
+                res = fut.result()
+            except (SpendCapExceeded, CFAuthError) as exc:
+                if fatal is None:
+                    fatal = exc
+                stop.set()
+                for f in futures:
+                    f.cancel()
+                continue
+            except CancelledError:
+                continue
+            if res is not None and res["anomaly"]:
+                residue += 1
+    if fatal is not None:
+        raise fatal
     return residue

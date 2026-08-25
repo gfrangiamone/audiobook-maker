@@ -5,6 +5,7 @@ Nessuna chiamata di rete: la sessione HTTP e' sempre mockata.
 import importlib.util
 import io
 import os
+import threading
 import wave
 
 import pytest
@@ -162,16 +163,23 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Sessione HTTP finta: restituisce le risposte in coda, una per chiamata."""
+    """Sessione HTTP finta: restituisce le risposte in coda, una per chiamata.
+
+    Thread-safe: un lock protegge l'avanzamento della coda di risposte e
+    l'accodamento delle chiamate, cosi' i test di concorrenza del livello
+    matrix non producono falsi fallimenti per interleaving fra thread.
+    """
 
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = []
+        self._lock = threading.Lock()
 
     def post(self, url, json=None, headers=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "headers": headers,
-                           "timeout": timeout})
-        return self._responses.pop(0)
+        with self._lock:
+            self.calls.append({"url": url, "json": json, "headers": headers,
+                               "timeout": timeout})
+            return self._responses.pop(0)
 
 
 def _ok_response(seconds=1.0):
@@ -553,3 +561,75 @@ def test_run_matrix_conta_le_anomalie_residue(tmp_path):
     ctx = _ctx(tmp_path, s)
     assert bench.run_matrix(ctx, combos, concurrency=1) == 1
     ctx.writer.close()
+
+
+# --- Fix round 1: cap di spesa atomico e arresto reale sotto concorrenza ----
+
+def test_run_matrix_concorrenza_scrive_tutte_le_righe_e_conta_come_seriale(tmp_path):
+    combos = bench.matrix_combinations(["it", "en"], ["Zephyr", "Puck"],
+                                       ["+0%"], [], runs=1)
+    s_serial = FakeSession([_ok_response(seconds=9.0) for _ in combos])
+    ctx_serial = _ctx(tmp_path / "serial", s_serial)
+    residue_serial = bench.run_matrix(ctx_serial, combos, concurrency=1)
+    ctx_serial.writer.close()
+
+    s_conc = FakeSession([_ok_response(seconds=9.0) for _ in combos])
+    ctx_conc = _ctx(tmp_path / "conc", s_conc)
+    residue_conc = bench.run_matrix(ctx_conc, combos, concurrency=4)
+    ctx_conc.writer.close()
+
+    assert residue_conc == residue_serial
+    assert len(s_conc.calls) == len(combos)
+    righe = open(ctx_conc.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == len(combos)
+
+
+def test_run_matrix_cap_di_spesa_ferma_il_run_sotto_concorrenza(tmp_path):
+    combos = bench.matrix_combinations(["it", "en"], ["Zephyr", "Puck"],
+                                       ["+0%"], [], runs=1)
+    s = FakeSession([_ok_response(seconds=9.0) for _ in combos])
+    # cap cosi' minuscolo che anche la prima prenotazione lo sfonda: nessuna
+    # chiamata HTTP deve partire.
+    ctx = _ctx(tmp_path, s, max_eur=1e-9)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench.run_matrix(ctx, combos, concurrency=4)
+    ctx.writer.close()
+    assert len(s.calls) < len(combos)
+
+
+def test_run_matrix_cf_auth_error_si_propaga_sotto_concorrenza(tmp_path):
+    combos = bench.matrix_combinations(["it", "en"], ["Zephyr", "Puck"],
+                                       ["+0%"], [], runs=1)
+    s = FakeSession([FakeResponse(403) for _ in combos])
+    ctx = _ctx(tmp_path, s)
+    with pytest.raises(bench.CFAuthError):
+        bench.run_matrix(ctx, combos, concurrency=4)
+    ctx.writer.close()
+
+
+def test_spend_guard_reserve_concorrenza_produce_esattamente_k_successi():
+    k = 3
+    n = 10
+    usd = 1.0
+    guard = bench.SpendGuard(max_eur=k * usd * bench.USD_EUR_RATE)
+    barrier = threading.Barrier(n)
+    successes = []
+    lock = threading.Lock()
+
+    def worker():
+        barrier.wait()
+        try:
+            guard.reserve(usd)
+        except bench.SpendCapExceeded:
+            return
+        with lock:
+            successes.append(1)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(successes) == k
+    assert guard.spent_usd == pytest.approx(k * usd)
