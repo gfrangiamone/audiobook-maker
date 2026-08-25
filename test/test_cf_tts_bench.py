@@ -318,6 +318,7 @@ def _ctx(tmp_path, session, max_eur=10.0):
         session=session, account_id="acc", api_token="tok", run_dir=run_dir,
         writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(max_eur),
         run_id="run-test", temperature=0.3, backend="cloudflare",
+        sleep=lambda _: None,
     )
 
 

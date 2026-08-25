@@ -366,7 +366,8 @@ class BenchContext:
     """Stato condiviso di un run: connessione, cartelle, metriche, budget."""
 
     def __init__(self, session, account_id, api_token, run_dir, writer, guard,
-                 run_id, temperature=DEFAULT_TEMPERATURE, backend="cloudflare"):
+                 run_id, temperature=DEFAULT_TEMPERATURE, backend="cloudflare",
+                 sleep=time.sleep):
         self.session = session
         self.account_id = account_id
         self.api_token = api_token
@@ -376,6 +377,7 @@ class BenchContext:
         self.run_id = run_id
         self.temperature = temperature
         self.backend = backend
+        self.sleep = sleep
 
 
 def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
@@ -391,7 +393,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     ctx.guard.check(predict_call_usd(chars, lang))
     try:
         res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
-                      voice, ctx.temperature)
+                      voice, ctx.temperature, sleep=ctx.sleep)
     except CFCallError as exc:
         expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
         tok = estimate_tokens(chars, expected_seconds, lang)
