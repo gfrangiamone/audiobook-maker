@@ -10,6 +10,7 @@ database JSON.
 
 Spec: docs/superpowers/specs/2026-08-25-cloudflare-gemini-tts-bench-design.md
 """
+import argparse
 import array
 import base64
 import binascii
@@ -1077,3 +1078,169 @@ def compare_metrics(pcm_cf, pcm_vertex):
     return {"seconds_cf": s_cf, "seconds_vertex": s_vx,
             "delta_seconds": s_cf - s_vx,
             "rms_cf": _pcm_rms(pcm_cf), "rms_vertex": _pcm_rms(pcm_vertex)}
+
+
+# --- CLI e orchestrazione del run --------------------------------------------
+def split_csv(value):
+    """'it, en ,fr' -> ['it','en','fr']. Vuoto o None -> []."""
+    if not value:
+        return []
+    return [p.strip() for p in str(value).split(",") if p.strip()]
+
+
+def build_arg_parser():
+    ap = argparse.ArgumentParser(
+        description="Banco di prova Gemini 3.1 Flash TTS su Cloudflare Workers AI")
+    ap.add_argument("--level", choices=("smoke", "matrix", "book"),
+                    default="smoke",
+                    help="smoke: un chunk. matrix: prodotto cartesiano su "
+                         "fixture corte. book: libro reale fino all'M4B.")
+    ap.add_argument("--book", default=None,
+                    help="File .abm o .txt (obbligatorio con --level book)")
+    ap.add_argument("--langs", default="it,en", help="Lingue separate da virgola")
+    ap.add_argument("--voices", default="Zephyr", help="Voci separate da virgola")
+    ap.add_argument("--rates", default="+0%", help="Velocita' separate da virgola")
+    ap.add_argument("--styles", default="",
+                    help="Istruzioni di stile separate da virgola (max 200 char)")
+    ap.add_argument("--chunk-chars", type=int, default=DEFAULT_CHUNK_CHARS,
+                    help=f"Caratteri per chunk (default {DEFAULT_CHUNK_CHARS}, "
+                         "pari a ABM_GEMINI_CHUNK_CHARS di produzione)")
+    ap.add_argument("--concurrency", type=int, default=1,
+                    help="Chiamate parallele")
+    ap.add_argument("--runs", type=int, default=1,
+                    help="Ripetizioni della stessa combinazione (varianza)")
+    ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE,
+                    help=f"Temperature (default {DEFAULT_TEMPERATURE})")
+    ap.add_argument("--max-spend-eur", type=float, default=DEFAULT_MAX_SPEND_EUR,
+                    help=f"Tetto di spesa stimata (default "
+                         f"{DEFAULT_MAX_SPEND_EUR:.2f}; 0 disattiva)")
+    ap.add_argument("--compare", choices=("vertex",), default=None,
+                    help="Genera anche il gemello Vertex per l'A/B")
+    ap.add_argument("--out-dir", default="./out", help="Radice degli artefatti")
+    ap.add_argument("--max-attempts", type=int, default=4,
+                    help="Tentativi per chiamata su 429/5xx")
+    return ap
+
+
+def _build_session(concurrency):
+    """Crea la Session HTTP con il pool dimensionato sulla concorrenza.
+
+    Con `pool_maxsize` di default (10 in requests) e --concurrency oltre 10
+    il pool di connessioni va in thrashing: connessioni scartate e riaperte
+    di continuo (Minor rimandato dal Task 8). L'adapter viene dimensionato
+    sulla concorrenza effettiva del run, con un minimo di 10 per non ridurre
+    la size di default quando la concorrenza e' bassa. Difensivo su sessioni
+    finte prive di `mount` (i test sostituiscono `requests.Session`).
+    """
+    session = requests.Session()
+    if hasattr(session, "mount"):
+        pool_size = max(10, int(concurrency))
+        adapter = requests.adapters.HTTPAdapter(pool_connections=pool_size,
+                                                pool_maxsize=pool_size)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+    return session
+
+
+def main(argv=None):
+    """Punto d'ingresso della CLI.
+
+    Le credenziali (CF_ACCOUNT_ID/CF_API_TOKEN, e per Vertex quelle lette da
+    gemini_tts) arrivano SOLO dall'ambiente: mai un argomento CLI, mai un
+    valore stampato in output (help, header di run, report o messaggi
+    d'errore compresi).
+    """
+    args = build_arg_parser().parse_args(argv)
+    if args.level == "book" and not args.book:
+        print("[errore] --level book richiede --book <file.abm|file.txt>")
+        return 1
+    if args.compare == "vertex" and not vertex_available():
+        # Fallire qui, prima di spendere su Cloudflare, e' il punto: un A/B
+        # a meta' non serve a nulla ma costa comunque.
+        print("[errore] --compare vertex richiede le credenziali Vertex "
+              "(ABM_GEMINI_BACKEND, ABM_GCP_PROJECT_ID, "
+              "ABM_GOOGLE_CREDENTIALS_FILE). Nessuna chiamata effettuata.")
+        return 1
+    account_id, api_token = resolve_credentials()
+
+    run_dir = new_run_dir(args.out_dir, args.level)
+    writer = MetricsWriter(run_dir)
+    ctx = BenchContext(
+        session=_build_session(args.concurrency), account_id=account_id,
+        api_token=api_token, run_dir=run_dir, writer=writer,
+        guard=SpendGuard(args.max_spend_eur),
+        run_id=os.path.basename(run_dir), temperature=args.temperature,
+        backend="cloudflare")
+
+    langs = split_csv(args.langs) or ["en"]
+    voices = split_csv(args.voices) or ["Zephyr"]
+    rates = split_csv(args.rates) or ["+0%"]
+    styles = split_csv(args.styles)
+    notes = []
+    partial = False
+    residue = 0
+    m4b_path = None
+    try:
+        if args.level == "smoke":
+            residue = run_smoke(ctx, langs[0], voices[0], rates[0],
+                                styles[0] if styles else None,
+                                fixture_for(langs[0]))
+        elif args.level == "matrix":
+            combos = matrix_combinations(langs, voices, rates, styles, args.runs)
+            print(f"[matrix] {len(combos)} combinazioni, "
+                  f"concorrenza {args.concurrency}")
+            residue = run_matrix(ctx, combos, args.concurrency)
+        else:
+            book = parse_book(args.book)
+            out_m4b = os.path.join(run_dir, "audio", "cloudflare.m4b")
+            residue, m4b_path = run_book(
+                ctx, book, voices[0], rates[0],
+                styles[0] if styles else None, args.chunk_chars,
+                args.concurrency, out_m4b)
+            if args.compare == "vertex":
+                notes.append("A/B Vertex: confronta i PCM `*_vertex.pcm` con i "
+                             "corrispondenti Cloudflare in audio/.")
+    except SpendCapExceeded as exc:
+        partial = True
+        notes.append(f"cap di spesa raggiunto: {exc}")
+        print(f"[stop] {exc}")
+    except CFAuthError as exc:
+        partial = True
+        notes.append(str(exc))
+        print(f"[stop] {exc}")
+    except CFCallError as exc:
+        # Tentativi esauriti: il run e' parziale, ma i record gia' scritti
+        # restano validi e vanno comunque riepilogati nel report.
+        partial = True
+        notes.append(f"chiamata fallita definitivamente: {exc}")
+        print(f"[stop] {exc}")
+    finally:
+        writer.close()
+
+    records = []
+    with open(writer.path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    # Task 10 review (Carry-forward A): summarize()/render_report() non
+    # separano le righe per backend. Questo runner scrive solo record
+    # "cloudflare" su ctx.writer (synth_chunk_vertex non e' ancora invocato
+    # da main), ma il filtro resta qui a guardia: se un domani il ramo
+    # --compare vertex scrivesse anche righe "vertex" sullo stesso
+    # metrics.jsonl, report e riconciliazione (che cita esplicitamente la
+    # Cloudflare Dashboard) continuerebbero a riepilogare solo la spesa
+    # Cloudflare, senza sommare costi di provider diversi in un totale senza
+    # senso.
+    cf_records = [r for r in records if r.get("backend") == ctx.backend]
+    report = render_report(run_dir, cf_records, residue, partial, notes)
+    print(reconciliation_block(cf_records))
+    print(f"[fine] report: {report}")
+    if m4b_path:
+        print(f"[fine] M4B: {m4b_path}")
+    print(f"[fine] spesa stimata: EUR {ctx.guard.spent_eur():.4f}")
+    return 1 if (residue or partial) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

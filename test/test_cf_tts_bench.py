@@ -959,3 +959,80 @@ def test_synth_chunk_vertex_fallimento_marca_il_chunk_senza_propagare(tmp_path, 
     assert set(record.keys()) == set(bench._RECORD_KEYS)
     assert len(record) == 21
     ctx.writer.close()
+
+
+def test_split_csv():
+    assert bench.split_csv("it, en ,fr") == ["it", "en", "fr"]
+    assert bench.split_csv("") == []
+    assert bench.split_csv(None) == []
+
+
+def test_arg_parser_default_allineati_a_produzione():
+    ns = bench.build_arg_parser().parse_args([])
+    assert ns.level == "smoke"
+    assert ns.chunk_chars == 450
+    assert ns.temperature == 0.3
+    assert ns.max_spend_eur == 2.00
+    assert ns.langs == "it,en"
+    assert ns.voices == "Zephyr"
+    assert ns.rates == "+0%"
+    assert ns.concurrency == 1
+    assert ns.runs == 1
+    assert ns.compare is None
+
+
+def test_main_book_richiede_il_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    rc = bench.main(["--level", "book", "--out-dir", str(tmp_path)])
+    assert rc == 1
+
+
+def test_main_compare_senza_vertex_esce_prima_di_spendere(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: False)
+    chiamate = []
+    monkeypatch.setattr(bench, "call_cf",
+                        lambda *a, **k: chiamate.append(1))
+    rc = bench.main(["--level", "smoke", "--compare", "vertex",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 1
+    assert chiamate == []
+
+
+def test_main_smoke_scrive_report_e_metriche(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=14.0)]))
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dirs = [d for d in os.listdir(tmp_path) if d.endswith("_smoke")]
+    assert len(run_dirs) == 1
+    run_dir = os.path.join(str(tmp_path), run_dirs[0])
+    assert os.path.exists(os.path.join(run_dir, "report.md"))
+    assert os.path.exists(os.path.join(run_dir, "metrics.jsonl"))
+
+
+def test_main_esce_1_su_anomalia_residua(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=0.2),
+                                             _ok_response(seconds=0.2)]))
+    assert bench.main(["--level", "smoke", "--out-dir", str(tmp_path)]) == 1
+
+
+def test_main_cap_di_spesa_produce_report_parziale(tmp_path, monkeypatch):
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=14.0)]))
+    rc = bench.main(["--level", "smoke", "--max-spend-eur", "0.0000001",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path),
+                           [d for d in os.listdir(tmp_path)][0])
+    assert "PARZIALE" in open(os.path.join(run_dir, "report.md"),
+                              encoding="utf-8").read()
