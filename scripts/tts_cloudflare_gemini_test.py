@@ -433,66 +433,80 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     una sola riga di metriche.
     """
     reserved = ctx.guard.reserve(predict_call_usd(chars, lang))
+    settled = False
     try:
-        res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
-                      voice, ctx.temperature, max_attempts=ctx.max_attempts,
-                      sleep=ctx.sleep)
-    except CFAuthError:
-        # 401/403: nessun audio prodotto, la prenotazione va liberata prima
-        # che l'eccezione risalga e interrompa il run (fix round 1).
-        ctx.guard.settle(reserved, 0.0)
-        raise
-    except CFCallError as exc:
-        # Un tentativo fallito non produce audio: la prenotazione va
-        # liberata, non contabilizzata (decisione del Task 6).
-        ctx.guard.settle(reserved, 0.0)
-        expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
-        tok = estimate_tokens(chars, expected_seconds, lang)
+        try:
+            res = call_cf(ctx.session, ctx.account_id, ctx.api_token, final_text,
+                          voice, ctx.temperature, max_attempts=ctx.max_attempts,
+                          sleep=ctx.sleep)
+        except CFAuthError:
+            # 401/403: nessun audio prodotto, la prenotazione va liberata prima
+            # che l'eccezione risalga e interrompa il run (fix round 1).
+            ctx.guard.settle(reserved, 0.0)
+            settled = True
+            raise
+        except CFCallError as exc:
+            # Un tentativo fallito non produce audio: la prenotazione va
+            # liberata, non contabilizzata (decisione del Task 6).
+            ctx.guard.settle(reserved, 0.0)
+            settled = True
+            expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
+            tok = estimate_tokens(chars, expected_seconds, lang)
+            usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
+            record = make_record(
+                run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
+                rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
+                chars=chars, prompt_bytes=len(final_text.encode("utf-8")),
+                http_status=exc.status, latency_ms=None,
+                attempt=exc.attempts, audio_bytes=None,
+                audio_seconds=None, expected_seconds=expected_seconds,
+                ratio=None, tokens_in_est=tok["tokens_in"],
+                tokens_out_est=tok["tokens_out"], cost_usd_est=usd,
+                anomaly="error",
+            )
+            ctx.writer.write(record)
+            return record, None, None
+        anomaly = None
+        seconds = 0.0
+        audio_bytes = 0
+        try:
+            fmt = wav_bytes_to_pcm(res["wav"], pcm_path)
+            audio_bytes = fmt["bytes"]
+            anomaly = evaluate_format(fmt)
+            seconds = audio_utils.pcm_size_to_seconds(
+                audio_bytes, sample_rate=fmt["rate"], channels=fmt["channels"],
+                sample_width=fmt["width"])
+        except WavFormatError:
+            anomaly = "format"
+            pcm_path = None
+        dur = evaluate_duration(chars, lang, seconds)
+        if anomaly is None:
+            anomaly = dur["anomaly"]
+        tok = estimate_tokens(chars, seconds, lang)
         usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
+        ctx.guard.settle(reserved, usd)
+        settled = True
         record = make_record(
             run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
             rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
             chars=chars, prompt_bytes=len(final_text.encode("utf-8")),
-            http_status=exc.status, latency_ms=None,
-            attempt=exc.attempts, audio_bytes=None,
-            audio_seconds=None, expected_seconds=expected_seconds,
-            ratio=None, tokens_in_est=tok["tokens_in"],
-            tokens_out_est=tok["tokens_out"], cost_usd_est=usd,
-            anomaly="error",
+            http_status=res["status"], latency_ms=res["latency_ms"],
+            attempt=res["attempts"], audio_bytes=audio_bytes,
+            audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
+            ratio=dur["ratio"], tokens_in_est=tok["tokens_in"],
+            tokens_out_est=tok["tokens_out"], cost_usd_est=usd, anomaly=anomaly,
         )
         ctx.writer.write(record)
-        return record, None, None
-    anomaly = None
-    seconds = 0.0
-    audio_bytes = 0
-    try:
-        fmt = wav_bytes_to_pcm(res["wav"], pcm_path)
-        audio_bytes = fmt["bytes"]
-        anomaly = evaluate_format(fmt)
-        seconds = audio_utils.pcm_size_to_seconds(
-            audio_bytes, sample_rate=fmt["rate"], channels=fmt["channels"],
-            sample_width=fmt["width"])
-    except WavFormatError:
-        anomaly = "format"
-        pcm_path = None
-    dur = evaluate_duration(chars, lang, seconds)
-    if anomaly is None:
-        anomaly = dur["anomaly"]
-    tok = estimate_tokens(chars, seconds, lang)
-    usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
-    ctx.guard.settle(reserved, usd)
-    record = make_record(
-        run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
-        rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
-        chars=chars, prompt_bytes=len(final_text.encode("utf-8")),
-        http_status=res["status"], latency_ms=res["latency_ms"],
-        attempt=res["attempts"], audio_bytes=audio_bytes,
-        audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
-        ratio=dur["ratio"], tokens_in_est=tok["tokens_in"],
-        tokens_out_est=tok["tokens_out"], cost_usd_est=usd, anomaly=anomaly,
-    )
-    ctx.writer.write(record)
-    return record, seconds, pcm_path
+        return record, seconds, pcm_path
+    finally:
+        # Finding C (fix round 3): qualunque uscita non ancora liquidata sopra
+        # (KeyboardInterrupt o un'eccezione imprevista fra reserve() e uno dei
+        # settle() espliciti, es. durante la decodifica del WAV) non deve
+        # lasciare la prenotazione agganciata a SpendGuard per sempre. Un
+        # settle() gia' eseguito e' idempotente-safe da non ripetere: la
+        # guardia `settled` lo garantisce.
+        if not settled:
+            ctx.guard.settle(reserved, 0.0)
 
 
 def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
@@ -1313,6 +1327,16 @@ def main(argv=None):
         partial = True
         notes.append(str(exc))
         print(f"[stop] {exc}")
+    except SystemExit as exc:
+        # Nessun percorso interno solleva SystemExit dopo che si e' gia'
+        # speso (solo resolve_credentials(), pre-spesa, e' fuori da questo
+        # try): ma se una dipendenza terza lo facesse, non deve lasciare un
+        # run pagato senza report.md ne' un traceback grezzo su stderr
+        # (fix round 3, Finding A: stessa disciplina di KeyboardInterrupt).
+        partial = True
+        notes.append(f"uscita anticipata (SystemExit codice {exc.code!r}) "
+                     "durante il run.")
+        print(f"[stop] SystemExit codice {exc.code!r} durante il run")
     except KeyboardInterrupt:
         # Ctrl-C su un run lungo (--level book) dopo che si e' gia' speso:
         # non va inghiottito in silenzio, ma nemmeno lasciato propagare senza
@@ -1393,14 +1417,24 @@ def main(argv=None):
                 f"copre solo Cloudflare): USD {vertex_cost_usd:.4f} / "
                 f"EUR {vertex_cost_eur:.4f}.")
         report = render_report(run_dir, cf_records, cf_residue, partial, notes)
-    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001
+        report_ok = True
+        records_reliable = True
+    except (Exception, KeyboardInterrupt, SystemExit) as exc:  # noqa: BLE001
         # Qualunque cedimento qui sotto (metrics.jsonl illeggibile,
-        # render_report che solleva, un secondo Ctrl-C) non deve far
-        # sparire un run che ha gia' speso denaro: si scrive un report
-        # minimo con quel che si sa, invece di non scrivere nulla.
+        # render_report che solleva, un secondo Ctrl-C, un SystemExit) non
+        # deve far sparire un run che ha gia' speso denaro: si scrive un
+        # report minimo con quel che si sa, invece di non scrivere nulla
+        # (fix round 3, Finding A: SystemExit aggiunto a Exception/
+        # KeyboardInterrupt del round 2).
         partial = True
         notes.append(f"generazione del report normale fallita: {exc}")
         report = os.path.join(run_dir, "report.md")
+        report_ok = False
+        # Finding D (fix round 3): cf_records/cf_residue potrebbero essere
+        # rimasti ai valori di default (vuoti) perche' il cedimento e'
+        # avvenuto prima di popolarli davvero: non sono piu' affidabili per
+        # la riconciliazione, anche se il report minimo sotto viene scritto.
+        records_reliable = False
         try:
             with open(report, "w", encoding="utf-8") as fh:
                 fh.write("# Report banco di prova Cloudflare Gemini TTS\n\n")
@@ -1411,14 +1445,37 @@ def main(argv=None):
                 fh.write("## Note\n\n")
                 for n in notes:
                     fh.write(f"- {n}\n")
-        except OSError:
-            # Anche il report minimo non e' scrivibile (es. disco pieno):
-            # non c'e' altro da fare, il codice di uscita segnala comunque
-            # il run come parziale.
-            pass
+            report_ok = True
+        except OSError as write_exc:
+            # Finding B (fix round 3): anche il report minimo non e'
+            # scrivibile (es. disco pieno). Prima questo era un
+            # `except OSError: pass` silenzioso e il footer sotto annunciava
+            # comunque "[fine] report: <path>" per un file inesistente,
+            # mentendo all'operatore. Ora il fallimento e' esplicito su
+            # stdout e nessun percorso inesistente viene presentato come
+            # valido.
+            report_ok = False
+            print(f"[errore] impossibile scrivere anche il report minimo "
+                  f"({report}): {write_exc}")
 
-    print(reconciliation_block(cf_records))
-    print(f"[fine] report: {report}")
+    if records_reliable:
+        print(reconciliation_block(cf_records))
+    else:
+        # Finding D (fix round 3): quando metrics.jsonl e' illeggibile (o il
+        # blocco sopra e' fallito prima di popolare cf_records), stampare la
+        # riconciliazione calcolata su una lista vuota direbbe "nessuna
+        # chiamata effettuata" anche se una chiamata pagata e' effettivamente
+        # partita. Il report (minimo o di fallback) resta comunque su disco
+        # quando possibile (regola vincolante rispettata); qui si evita solo
+        # di mentire su stdout dichiarando i dati non disponibili.
+        print("[riconciliazione] non disponibile: la generazione del report "
+              "e' fallita prima di poter leggere metrics.jsonl in modo "
+              "affidabile.")
+    if report_ok:
+        print(f"[fine] report: {report}")
+    else:
+        print(f"[fine] nessun report scritto su disco (tentativo fallito: "
+              f"{report})")
     if m4b_path:
         print(f"[fine] M4B: {m4b_path}")
     print(f"[fine] spesa stimata Cloudflare (soggetta al cap --max-spend-eur): "
@@ -1426,7 +1483,7 @@ def main(argv=None):
     if vertex_records:
         print(f"[fine] spesa stimata Vertex (fuori dal cap, solo A/B): "
               f"EUR {vertex_cost_eur:.4f}")
-    return 1 if (cf_residue or partial) else 0
+    return 1 if (cf_residue or partial or not report_ok) else 0
 
 
 if __name__ == "__main__":

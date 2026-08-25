@@ -1400,3 +1400,267 @@ def test_run_matrix_compare_vertex_calcola_le_metriche_di_confronto(tmp_path,
     bench.run_matrix(ctx, combos, concurrency=1, compare_vertex=True)
     ctx.writer.close()
     assert len(chiamate) == 1
+
+
+# --- Fix round 3 --------------------------------------------------------------
+
+def test_main_book_langs_flag_cablato_correttamente(tmp_path, monkeypatch):
+    """Mutation guard round 3 (Finding E.1): il cablaggio di --langs a
+    --level book vive in main (`book_lang = langs[0] if _flag_present(...)
+    else None`), non solo nella meta' interna a run_book gia' coperta da
+    `test_run_book_lang_override_si_applica_a_ogni_chunk`. Due mutazioni
+    lasciavano la suite verde: forzare `book_lang` sempre a None (--langs
+    smette di avere effetto) o sempre a langs[0] (i metadati del libro,
+    quando l'utente non ha chiesto un override, vengono ignorati lo stesso).
+    Un solo scenario non basta a smascherare entrambe: servono due run."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    testo = "Testo breve per il test."
+    book_path = tmp_path / "libro.txt"
+    book_path.write_text(testo, encoding="utf-8")
+
+    # I secondi finti devono centrare esattamente il rapporto atteso per la
+    # lingua realmente usata (baseline_rate varia per lingua): altrimenti
+    # evaluate_duration segnala un'anomalia e synth_chunk ritenta con una
+    # seconda chiamata HTTP, un dettaglio del gate di qualita' indipendente
+    # da cio' che questo test vuole verificare (il cablaggio di --langs).
+    def _seconds_senza_anomalie(lang):
+        return len(testo) / bench.gemini_tts.baseline_rate(lang)
+
+    # Scenario 1: --langs esplicito -> deve raggiungere run_book (smaschera
+    # la mutazione "forzato sempre a None").
+    out1 = tmp_path / "out1"
+    monkeypatch.setattr(
+        bench.requests, "Session",
+        lambda: FakeSession([_ok_response(seconds=_seconds_senza_anomalie("de"))]))
+    rc1 = bench.main(["--level", "book", "--book", str(book_path),
+                      "--langs", "de", "--out-dir", str(out1)])
+    assert rc1 == 0
+    run_dir1 = os.path.join(str(out1), [d for d in os.listdir(out1)][0])
+    righe1 = open(os.path.join(run_dir1, "metrics.jsonl"),
+                 encoding="utf-8").read().splitlines()
+    assert {bench.json.loads(r)["lang"] for r in righe1} == {"de"}
+
+    # Scenario 2: nessun --langs esplicito -> il default della CLI ("it,en")
+    # NON deve sovrascrivere i metadati del libro (qui vuoti -> fallback
+    # "en" in run_book): smaschera la mutazione "forzato sempre a langs[0]".
+    out2 = tmp_path / "out2"
+    monkeypatch.setattr(
+        bench.requests, "Session",
+        lambda: FakeSession([_ok_response(seconds=_seconds_senza_anomalie("en"))]))
+    rc2 = bench.main(["--level", "book", "--book", str(book_path),
+                      "--out-dir", str(out2)])
+    assert rc2 == 0
+    run_dir2 = os.path.join(str(out2), [d for d in os.listdir(out2)][0])
+    righe2 = open(os.path.join(run_dir2, "metrics.jsonl"),
+                 encoding="utf-8").read().splitlines()
+    assert {bench.json.loads(r)["lang"] for r in righe2} == {"en"}
+
+
+class _KeyboardInterruptSession:
+    """Sessione finta che interrompe la chiamata HTTP come farebbe Ctrl-C."""
+
+    def mount(self, prefix, adapter):
+        pass
+
+    def post(self, *a, **k):
+        raise KeyboardInterrupt()
+
+
+def test_main_intercetta_keyboardinterrupt_e_scrive_report(tmp_path, monkeypatch):
+    """Mutation guard round 3 (Finding E.2): senza `except KeyboardInterrupt`
+    nel dispatch di main, un Ctrl-C durante una chiamata pagata risale non
+    gestito invece di produrre un report parziale con uscita non-zero."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: _KeyboardInterruptSession())
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "interrotto" in report or "Ctrl-C" in report
+
+
+def test_main_riga_malformata_in_metrics_non_e_fatale(tmp_path, monkeypatch):
+    """Mutation guard round 3 (Finding E.3): senza il try/except attorno a
+    `json.loads` nel blocco di post-elaborazione, una riga corrotta in
+    metrics.jsonl fa cadere main() nel fallback generico (senza la nota
+    dedicata "malformate") invece di essere scartata e disclosata."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    original_write = bench.MetricsWriter.write
+
+    def _write_con_riga_corrotta(self, record):
+        original_write(self, record)
+        self._fh.write("questo non e' json valido\n")
+        self._fh.flush()
+
+    monkeypatch.setattr(bench.MetricsWriter, "write", _write_con_riga_corrotta)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "malformate" in report
+
+
+def test_main_footer_stampa_spesa_cloudflare_e_vertex_separate(tmp_path,
+                                                                monkeypatch,
+                                                                capsys):
+    """Mutation guard round 3 (Finding E.4): il test del round 2
+    (`test_main_mostra_spesa_cloudflare_e_vertex_separate`) verifica solo il
+    report.md; i due print separati del footer su stdout restavano senza
+    copertura propria."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: True)
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9))
+    rc = bench.main(["--level", "smoke", "--compare", "vertex",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "spesa stimata Cloudflare" in out
+    assert "spesa stimata Vertex" in out
+
+
+def test_main_systemexit_durante_il_run_produce_comunque_un_report(tmp_path,
+                                                                    monkeypatch):
+    """Copertura Finding A (fix round 3): un SystemExit sollevato durante il
+    dispatch (es. da una dipendenza terza) non deve lasciare il run senza
+    report.md ne' propagare un'uscita non gestita: va trattato come
+    KeyboardInterrupt/Exception, run marcato parziale, uscita non-zero."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session", lambda: FakeSession([]))
+
+    def _boom(*a, **k):
+        raise SystemExit(3)
+
+    monkeypatch.setattr(bench, "run_smoke", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report_path = os.path.join(run_dir, "report.md")
+    assert os.path.exists(report_path)
+    testo = open(report_path, encoding="utf-8").read()
+    assert "PARZIALE" in testo
+
+
+def test_main_systemexit_nel_post_run_produce_comunque_un_report(tmp_path,
+                                                                  monkeypatch):
+    """Copertura Finding A (fix round 3), seconda meta': SystemExit e'
+    aggiunto anche alla tupla except del blocco di post-elaborazione (righe
+    ~1422), un punto distinto dalla clausola di dispatch coperta dal test
+    precedente. Qui il run va a buon fine (nessuna eccezione nel dispatch),
+    ma render_report solleva SystemExit: senza SystemExit nella tupla del
+    blocco protetto, l'eccezione risalirebbe non gestita nonostante la
+    chiamata pagata sia gia' avvenuta."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom(*a, **k):
+        raise SystemExit(2)
+
+    monkeypatch.setattr(bench, "render_report", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report_path = os.path.join(run_dir, "report.md")
+    assert os.path.exists(report_path)
+    testo = open(report_path, encoding="utf-8").read()
+    assert "PARZIALE" in testo
+
+
+def test_main_fallback_report_non_scrivibile_lo_dichiara_e_non_mente(tmp_path,
+                                                                      monkeypatch,
+                                                                      capsys):
+    """Copertura Finding B (fix round 3): se render_report fallisce E anche
+    il tentativo di scrivere il report minimo fallisce, main() non deve piu'
+    inghiottire il secondo errore in silenzio ne' annunciare
+    "[fine] report: <path>" per un file che non esiste su disco."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom_render(*a, **k):
+        raise OSError("disco pieno (simulato)")
+
+    monkeypatch.setattr(bench, "render_report", _boom_render)
+
+    real_open = open
+
+    def _open_che_rifiuta_il_report(path, mode="r", *a, **k):
+        if os.path.basename(str(path)) == "report.md" and "w" in mode:
+            raise OSError("disco pieno anche per il fallback (simulato)")
+        return real_open(path, mode, *a, **k)
+
+    monkeypatch.setattr(bench, "open", _open_che_rifiuta_il_report, raising=False)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    assert not os.path.exists(os.path.join(run_dir, "report.md"))
+    out = capsys.readouterr().out
+    assert "impossibile scrivere anche il report minimo" in out
+    assert "nessun report scritto su disco" in out
+    assert "[fine] report:" not in out
+
+
+def test_one_call_libera_la_prenotazione_su_keyboardinterrupt(tmp_path,
+                                                               monkeypatch):
+    """Copertura Finding C (fix round 3): un'interruzione fra reserve() e
+    uno dei settle() espliciti (qui simulata durante la decodifica del WAV,
+    dopo che call_cf e' gia' tornato con successo) non deve lasciare la
+    prenotazione agganciata a SpendGuard per sempre."""
+    s = FakeSession([_ok_response(seconds=9.0)])
+    ctx = _ctx(tmp_path, s)
+
+    def _boom(*a, **k):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, "wav_bytes_to_pcm", _boom)
+    with pytest.raises(KeyboardInterrupt):
+        bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    ctx.writer.close()
+
+
+def test_main_riconciliazione_dichiarata_non_disponibile_se_metrics_illeggibile(
+        tmp_path, monkeypatch, capsys):
+    """Copertura Finding D (fix round 3): quando metrics.jsonl non e'
+    leggibile in modo affidabile dopo che una chiamata e' gia' stata
+    pagata, la riconciliazione non deve stampare un conteggio a zero
+    presentato come reale ("nessuna chiamata effettuata"): deve dichiarare
+    esplicitamente che i dati non sono disponibili."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    real_open = open
+
+    def _open_che_rompe_metrics(path, mode="r", *a, **k):
+        # Solo la lettura in modalita' "r" di default (in main, dopo la
+        # chiamata pagata) deve fallire: la scrittura in "a" di
+        # MetricsWriter deve restare intatta, altrimenti la chiamata pagata
+        # non verrebbe nemmeno registrata su disco.
+        if os.path.basename(str(path)) == "metrics.jsonl" and mode == "r":
+            raise OSError("metrics.jsonl illeggibile (simulato)")
+        return real_open(path, mode, *a, **k)
+
+    monkeypatch.setattr(bench, "open", _open_che_rompe_metrics, raising=False)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "non disponibile" in out
+    assert "RICONCILIAZIONE - finestra" not in out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    assert os.path.exists(os.path.join(run_dir, "report.md"))
