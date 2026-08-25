@@ -764,8 +764,20 @@ def run_matrix(ctx, combos, concurrency=1, compare_vertex=False):
         if compare_vertex and res["pcm_path"]:
             vertex_path = os.path.join(ctx.run_dir, "audio", f"{i:04d}_vertex.pcm")
             try:
-                synth_chunk_vertex(ctx, text, i, combo["lang"], combo["voice"],
-                                   combo["rate"], combo["style"], vertex_path)
+                v_res = synth_chunk_vertex(ctx, text, i, combo["lang"],
+                                           combo["voice"], combo["rate"],
+                                           combo["style"], vertex_path)
+                if v_res.get("pcm_path"):
+                    # Stessa disciplina di run_smoke (fix round 2): il
+                    # confronto A/B a matrix scriveva solo le righe "vertex"
+                    # in metrics.jsonl, senza mai calcolare le metriche di
+                    # confronto (delta_seconds/RMS) richieste dalla
+                    # decisione vincolante del coordinatore.
+                    cmp = compare_metrics(res["pcm_path"], v_res["pcm_path"])
+                    print(f"[matrix][vertex] chunk {i}: "
+                          f"delta_seconds={cmp['delta_seconds']:.2f} "
+                          f"rms_cf={cmp['rms_cf']:.1f} "
+                          f"rms_vertex={cmp['rms_vertex']:.1f}")
             except Exception as exc:  # noqa: BLE001 - side-effect diagnostico
                 print(f"[matrix][vertex] chunk {i} confronto non disponibile: {exc}")
         return res
@@ -1271,27 +1283,25 @@ def main(argv=None):
     compare_vertex = (args.compare == "vertex")
     notes = []
     partial = False
-    residue = 0
     m4b_path = None
     try:
         if args.level == "smoke":
-            residue = run_smoke(ctx, langs[0], voices[0], rates[0],
-                                styles[0] if styles else None,
-                                fixture_for(langs[0]),
-                                compare_vertex=compare_vertex)
+            run_smoke(ctx, langs[0], voices[0], rates[0],
+                     styles[0] if styles else None, fixture_for(langs[0]),
+                     compare_vertex=compare_vertex)
         elif args.level == "matrix":
             combos = matrix_combinations(langs, voices, rates, styles, args.runs)
             print(f"[matrix] {len(combos)} combinazioni, "
                   f"concorrenza {args.concurrency}")
-            residue = run_matrix(ctx, combos, args.concurrency,
-                                 compare_vertex=compare_vertex)
+            run_matrix(ctx, combos, args.concurrency,
+                      compare_vertex=compare_vertex)
         else:
             book = parse_book(args.book)
             out_m4b = os.path.join(run_dir, "audio", "cloudflare.m4b")
             # --langs esplicito sovrascrive la lingua del libro; altrimenti
             # i metadati del libro restano il fallback (vedi run_book).
             book_lang = langs[0] if _flag_present(argv_list, "--langs") else None
-            residue, m4b_path = run_book(
+            _, m4b_path = run_book(
                 ctx, book, voices[0], rates[0],
                 styles[0] if styles else None, args.chunk_chars,
                 args.concurrency, out_m4b, lang=book_lang)
@@ -1303,6 +1313,15 @@ def main(argv=None):
         partial = True
         notes.append(str(exc))
         print(f"[stop] {exc}")
+    except KeyboardInterrupt:
+        # Ctrl-C su un run lungo (--level book) dopo che si e' gia' speso:
+        # non va inghiottito in silenzio, ma nemmeno lasciato propagare senza
+        # lasciare traccia. Il run e' marcato parziale, il report viene
+        # comunque scritto sotto, e l'uscita resta non-zero (fix round 2).
+        partial = True
+        notes.append("run interrotto manualmente (Ctrl-C) prima del "
+                     "completamento.")
+        print("[stop] interrotto manualmente (Ctrl-C)")
     except Exception as exc:  # noqa: BLE001 - garantisce sempre un report
         # Qualunque altro errore non gia' assorbito a monte (CFCallError
         # residua, bug non previsto) non deve lasciare un run che ha gia'
@@ -1316,30 +1335,97 @@ def main(argv=None):
     finally:
         writer.close()
 
+    # Dal primo momento in cui una chiamata pagata puo' essere partita (sopra)
+    # fino a qui, NESSUN percorso d'uscita deve lasciare il run senza un
+    # report.md: fix round 2 estende la stessa regola vincolante del round 1
+    # al blocco di post-elaborazione, che prima viveva fuori da qualunque
+    # protezione (una riga corrotta in metrics.jsonl o un OSError dentro
+    # render_report facevano morire main() con un traceback e nessun report).
     records = []
-    with open(writer.path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    # Carry-forward A (Task 10 review): summarize()/render_report() non
-    # separano le righe per backend. Con --compare vertex synth_chunk_vertex
-    # scrive anche righe "vertex" sullo stesso metrics.jsonl: il filtro qui
-    # garantisce che report e riconciliazione (che cita esplicitamente la
-    # Cloudflare Dashboard) restino scoped alla sola spesa Cloudflare, senza
-    # sommare costi di provider diversi in un totale senza senso.
-    cf_records = [r for r in records if r.get("backend") == ctx.backend]
-    cf_residue = _residual_anomalies(cf_records)
-    notes.append(f"report e riconciliazione sopra coprono solo il backend "
-                 f"'{ctx.backend}'; eventuali righe di altri backend in "
-                 f"metrics.jsonl (es. 'vertex' con --compare) non sono "
-                 f"incluse nei totali.")
-    report = render_report(run_dir, cf_records, cf_residue, partial, notes)
+    cf_records = []
+    vertex_records = []
+    cf_residue = 0
+    vertex_cost_eur = 0.0
+    report = None
+    try:
+        malformed = 0
+        with open(writer.path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except (json.JSONDecodeError, ValueError):
+                    # Riga corrotta (es. scrittura interrotta a meta' da un
+                    # crash): scartata, non fatale. Il conteggio finisce nel
+                    # report invece di sparire in silenzio.
+                    malformed += 1
+        # Carry-forward A (Task 10 review): summarize()/render_report() non
+        # separano le righe per backend. Con --compare vertex
+        # synth_chunk_vertex scrive anche righe "vertex" sullo stesso
+        # metrics.jsonl: il filtro qui garantisce che report e
+        # riconciliazione (che cita esplicitamente la Cloudflare Dashboard)
+        # restino scoped alla sola spesa Cloudflare, senza sommare costi di
+        # provider diversi in un totale senza senso.
+        cf_records = [r for r in records if r.get("backend") == ctx.backend]
+        vertex_records = [r for r in records if r.get("backend") == "vertex"]
+        cf_residue = _residual_anomalies(cf_records)
+        if malformed:
+            notes.append(f"{malformed} riga/e di metrics.jsonl scartate "
+                         f"perche' malformate (JSON non valido).")
+        notes.append(
+            f"report e riconciliazione sopra coprono solo il backend "
+            f"'{ctx.backend}'; eventuali righe di altri backend in "
+            f"metrics.jsonl (es. 'vertex' con --compare) non sono incluse "
+            f"nei totali.")
+        vertex_cost_usd = sum(float(r.get("cost_usd_est") or 0)
+                              for r in vertex_records)
+        vertex_cost_eur = vertex_cost_usd * USD_EUR_RATE
+        if vertex_records:
+            # Il gemello Vertex non tocca mai ctx.guard (--max-spend-eur e'
+            # il cap della sola spesa Cloudflare by design): senza questa
+            # nota un operatore che lancia --compare vertex vede solo meta'
+            # della spesa reale, e con --runs N il divario raddoppia in
+            # silenzio (fix round 2).
+            notes.append(
+                f"spesa Vertex stimata (fuori dal cap --max-spend-eur, che "
+                f"copre solo Cloudflare): USD {vertex_cost_usd:.4f} / "
+                f"EUR {vertex_cost_eur:.4f}.")
+        report = render_report(run_dir, cf_records, cf_residue, partial, notes)
+    except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001
+        # Qualunque cedimento qui sotto (metrics.jsonl illeggibile,
+        # render_report che solleva, un secondo Ctrl-C) non deve far
+        # sparire un run che ha gia' speso denaro: si scrive un report
+        # minimo con quel che si sa, invece di non scrivere nulla.
+        partial = True
+        notes.append(f"generazione del report normale fallita: {exc}")
+        report = os.path.join(run_dir, "report.md")
+        try:
+            with open(report, "w", encoding="utf-8") as fh:
+                fh.write("# Report banco di prova Cloudflare Gemini TTS\n\n")
+                fh.write("**RUN PARZIALE** - report minimo, generazione "
+                        f"normale fallita: {exc}\n\n")
+                fh.write(f"Chiamate Cloudflare registrate: {len(cf_records)}\n")
+                fh.write(f"Anomalie residue: {cf_residue}\n\n")
+                fh.write("## Note\n\n")
+                for n in notes:
+                    fh.write(f"- {n}\n")
+        except OSError:
+            # Anche il report minimo non e' scrivibile (es. disco pieno):
+            # non c'e' altro da fare, il codice di uscita segnala comunque
+            # il run come parziale.
+            pass
+
     print(reconciliation_block(cf_records))
     print(f"[fine] report: {report}")
     if m4b_path:
         print(f"[fine] M4B: {m4b_path}")
-    print(f"[fine] spesa stimata: EUR {ctx.guard.spent_eur():.4f}")
+    print(f"[fine] spesa stimata Cloudflare (soggetta al cap --max-spend-eur): "
+          f"EUR {ctx.guard.spent_eur():.4f}")
+    if vertex_records:
+        print(f"[fine] spesa stimata Vertex (fuori dal cap, solo A/B): "
+              f"EUR {vertex_cost_eur:.4f}")
     return 1 if (cf_residue or partial) else 0
 
 

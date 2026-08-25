@@ -1245,3 +1245,158 @@ def test_main_non_rivela_credenziali_in_stdout_ne_nel_report(tmp_path, monkeypat
     report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
     assert "SENTINELLA_ACCOUNT_ID_XYZ" not in report
     assert "SENTINELLA_API_TOKEN_XYZ" not in report
+
+
+# --- Fix round 2: protezione del blocco di post-elaborazione, spesa Vertex
+# mostrata separatamente, compare_metrics anche a matrix ------------------
+
+def test_main_render_report_che_fallisce_lascia_comunque_un_report(tmp_path,
+                                                                    monkeypatch):
+    """Regressione Important del round 2: prima la lettura di metrics.jsonl,
+    _residual_anomalies e render_report vivevano fuori da qualunque
+    protezione. Un run che ha gia' pagato (chiamata HTTP riuscita) e che
+    fallisce durante render_report non deve morire con un traceback senza
+    lasciare report.md."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom(*a, **k):
+        raise OSError("disco pieno (simulato)")
+
+    monkeypatch.setattr(bench, "render_report", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report_path = os.path.join(run_dir, "report.md")
+    assert os.path.exists(report_path)
+    testo = open(report_path, encoding="utf-8").read()
+    assert "PARZIALE" in testo
+    assert "disco pieno (simulato)" in testo
+
+
+def test_one_call_cfautherror_libera_la_prenotazione(tmp_path):
+    """Mutation guard: senza `except CFAuthError` in _one_call, un 401
+    lascia la prenotazione agganciata a SpendGuard per sempre invece di
+    liberarla a zero."""
+    s = FakeSession([FakeResponse(401)])
+    ctx = _ctx(tmp_path, s)
+    with pytest.raises(bench.CFAuthError):
+        bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    ctx.writer.close()
+
+
+def test_main_cf_residue_deduplica_i_retry_corretti(tmp_path, monkeypatch):
+    """Mutation guard: se il residuo tornasse a contare le righe grezze di
+    metrics.jsonl senza deduplicare per chunk_index (ultima riga vince), un
+    chunk anomalo al primo tentativo ma corretto dal retry risulterebbe
+    ancora anomalo nel report e nel codice di uscita."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=0.2),
+                                             _ok_response(seconds=9.0)]))
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "anomalie residue: 0" in report
+
+
+def test_main_report_contiene_la_nota_di_scope_backend(tmp_path, monkeypatch):
+    """Mutation guard: la nota che dichiara a quale backend si riferiscono
+    report e riconciliazione deve comparire sempre nel report."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "coprono solo il backend" in report
+    assert "'cloudflare'" in report
+
+
+def test_run_book_lang_override_si_applica_a_ogni_chunk(tmp_path, monkeypatch):
+    """Mutation guard: --langs a --level book deve raggiungere OGNI chunk
+    del libro (non solo il primo, non nessuno): la lingua di ogni riga
+    scritta in metrics.jsonl deve essere quella passata a run_book, mai
+    quella (diversa) dei metadati del libro."""
+    import tts_split
+    testo = ("Questa e' una frase di prova. " * 40)
+    book = {"title": "T", "author": "A", "language": "en",
+            "chapters": [(1, "Cap 1", testo)], "cover_bytes": None}
+    attesi = len(tts_split.split_text_into_chunks(testo, max_chars=450))
+    assert attesi >= 2
+    s = FakeSession([_ok_response(seconds=30.0) for _ in range(attesi)])
+    ctx = _ctx(tmp_path, s)
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b", lambda *a, **k: True)
+    bench.run_book(ctx, book, "Zephyr", "+0%", None, chunk_chars=450,
+                   concurrency=1, out_m4b=str(tmp_path / "out.m4b"), lang="de")
+    ctx.writer.close()
+    righe = open(ctx.writer.path, encoding="utf-8").read().splitlines()
+    assert len(righe) == attesi
+    langs_usate = {bench.json.loads(r)["lang"] for r in righe}
+    assert langs_usate == {"de"}
+
+
+def test_build_session_dimensiona_il_pool_sulla_concorrenza():
+    """Mutation guard: _build_session deve montare davvero un HTTPAdapter
+    dimensionato su `concurrency`, non limitarsi a restituire una Session
+    di default (pool_maxsize=10 sempre)."""
+    session = bench._build_session(32)
+    try:
+        adapter = session.get_adapter("https://example.com")
+        assert adapter._pool_maxsize == 32
+        assert adapter._pool_connections == 32
+    finally:
+        session.close()
+
+
+def test_main_mostra_spesa_cloudflare_e_vertex_separate(tmp_path, monkeypatch):
+    """Con --compare vertex il footer/report devono riportare le due spese
+    separate ed etichettate: la spesa Vertex non passa mai da ctx.guard, e
+    presentare solo quella Cloudflare farebbe vedere a un operatore circa
+    meta' di quanto ha davvero speso."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench, "vertex_available", lambda: True)
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9))
+    rc = bench.main(["--level", "smoke", "--compare", "vertex",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 0
+    run_dir = os.path.join(
+        str(tmp_path),
+        [d for d in os.listdir(tmp_path) if d.endswith("_smoke")][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "spesa Vertex stimata" in report
+    assert "fuori dal cap" in report
+
+
+def test_run_matrix_compare_vertex_calcola_le_metriche_di_confronto(tmp_path,
+                                                                     monkeypatch):
+    """Il ramo A/B a --level matrix deve chiamare compare_metrics per ogni
+    combinazione, non limitarsi a scrivere le righe backend='vertex'."""
+    combos = bench.matrix_combinations(["it"], ["Zephyr"], ["+0%"], [], runs=1)
+    s = FakeSession([_ok_response(seconds=9.0)])
+    ctx = _ctx(tmp_path, s)
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9))
+    chiamate = []
+    originale = bench.compare_metrics
+
+    def _spia(pcm_cf, pcm_vertex):
+        chiamate.append((pcm_cf, pcm_vertex))
+        return originale(pcm_cf, pcm_vertex)
+
+    monkeypatch.setattr(bench, "compare_metrics", _spia)
+    bench.run_matrix(ctx, combos, concurrency=1, compare_vertex=True)
+    ctx.writer.close()
+    assert len(chiamate) == 1
