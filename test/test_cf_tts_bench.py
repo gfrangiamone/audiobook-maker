@@ -1803,3 +1803,217 @@ def test_main_render_report_fallito_non_nasconde_la_riconciliazione(
     out = capsys.readouterr().out
     assert "RICONCILIAZIONE - finestra" in out
     assert "prima di poter leggere metrics.jsonl" not in out
+
+
+# --- Fix round 5: un 200 e' sempre fatturato, run dir per-run, causa reale
+# della riconciliazione mancante, report minimo che non inventa zeri ----------
+
+def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
+    """Difetto 1 (round 5): un HTTP 200 con corpo inutilizzabile e' comunque
+    fatturato da Cloudflare, ma `except CFCallError` liquidava la prenotazione
+    a zero. Conseguenza dimostrata: spesa EUR 0.0000 e cap che non scatta mai,
+    cioe' un run difettoso puo' bruciare denaro senza alcun limite."""
+    previsto = bench.predict_call_usd(20, "it")
+    s = FakeSession([FakeResponse(200, {"result": {}}),
+                     FakeResponse(200, {"result": {}})])
+    # Cap appena sopra una chiamata: la seconda deve essere rifiutata.
+    ctx = _ctx(tmp_path, s, max_eur=previsto * bench.USD_EUR_RATE * 1.5)
+    rec, seconds, path = bench._one_call(ctx, "testo finale", 20, "it",
+                                         "Zephyr", "+0%", None,
+                                         os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["http_status"] == 200
+    assert rec["anomaly"] == "error"
+    assert ctx.paid_calls.count == 1
+    assert ctx.guard.spent_eur() == pytest.approx(previsto * bench.USD_EUR_RATE)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "y.pcm"), 0)
+    ctx.writer.close()
+
+
+def test_chiamata_senza_200_resta_non_fatturata(tmp_path):
+    """Contro-prova del difetto 1: solo un 200 e' fatturato. Un 500 esaurito
+    dai retry non deve consumare ne' spesa ne' cap."""
+    s = FakeSession([FakeResponse(500), FakeResponse(500), FakeResponse(500),
+                     FakeResponse(500)])
+    ctx = _ctx(tmp_path, s)
+    rec, seconds, path = bench._one_call(ctx, "testo finale", 20, "it",
+                                         "Zephyr", "+0%", None,
+                                         os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["http_status"] == 500
+    assert ctx.paid_calls.count == 0
+    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    ctx.writer.close()
+
+
+def test_200_con_audio_non_decodificabile_costa_la_stima_piena(tmp_path):
+    """Difetto 5 (round 5): il prezzo era calcolato sulla durata decodificata.
+    Con un 200 il cui audio non e' un WAV valido la durata e' zero, quindi il
+    costo scendeva a ~3e-05 USD e il footer mostrava EUR 0.0000 su una
+    chiamata realmente fatturata. La stima piena prenotata e' il numero
+    disponibile e onesto."""
+    import base64 as _b64
+    previsto = bench.predict_call_usd(20, "it")
+    audio = _b64.b64encode(b"questo non e' un WAV").decode("ascii")
+    s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
+    ctx = _ctx(tmp_path, s)
+    rec, seconds, path = bench._one_call(ctx, "testo finale", 20, "it",
+                                         "Zephyr", "+0%", None,
+                                         os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["anomaly"] == "format"
+    assert rec["cost_usd_est"] == pytest.approx(previsto)
+    assert ctx.paid_calls.count == 1
+    assert ctx.guard.spent_eur() == pytest.approx(previsto * bench.USD_EUR_RATE)
+    ctx.writer.close()
+
+
+def test_non_fatturato_riguarda_solo_le_chiamate_senza_200(tmp_path):
+    """Difetto 1 (round 5), lato testi: report e riconciliazione dichiaravano
+    "NON fatturato" ogni record anomaly=error, incluso un 200 con corpo rotto
+    che Cloudflare ha addebitato davvero. La distinzione giusta e'
+    http_status == 200, non l'anomalia."""
+    records = [
+        _rec(chunk_index=0),
+        _rec(chunk_index=1, anomaly="error", http_status=200, attempt=1,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+        _rec(chunk_index=2, anomaly="error", http_status=500, attempt=4,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+    ]
+    agg = bench.summarize(records)
+    assert agg["calls_not_billed"] == 1
+    blocco = bench.reconciliation_block(records)
+    assert "NON fatturato" in blocco
+    assert "0.0091" in blocco    # il solo record senza 200
+    assert "0.0182" not in blocco
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, records, residual_anomalies=2,
+                               partial=False, notes=[])
+    testo = open(path, encoding="utf-8").read()
+    assert "0.0091" in testo
+    assert "0.0182" not in testo
+
+
+def test_un_200_fallito_da_solo_non_genera_la_nota_di_costo_non_fatturato(tmp_path):
+    """Contro-prova: se tutte le chiamate hanno avuto un 200, nessuna quota e'
+    non fatturata e la nota non deve comparire, nemmeno con anomaly=error."""
+    records = [
+        _rec(chunk_index=0),
+        _rec(chunk_index=1, anomaly="error", http_status=200, attempt=1,
+             latency_ms=None, audio_bytes=None, audio_seconds=None, ratio=None),
+    ]
+    assert "NON fatturato" not in bench.reconciliation_block(records)
+    run_dir = bench.new_run_dir(str(tmp_path), "matrix")
+    path = bench.render_report(run_dir, records, residual_anomalies=1,
+                               partial=False, notes=[])
+    assert "NON fatturato" not in open(path, encoding="utf-8").read()
+
+
+def test_new_run_dir_non_condivide_la_cartella_fra_run_nello_stesso_secondo(
+        tmp_path, monkeypatch):
+    """Difetto 2 (round 5): timestamp a granularita' di secondo +
+    makedirs(exist_ok=True) + MetricsWriter in append. Due run avviati nello
+    stesso secondo UTC condividevano metrics.jsonl e report.md: il secondo
+    leggeva i record del primo (quindi nessuna ATTENZIONE sulle chiamate non
+    registrate) e ne sovrascriveva il report."""
+    vero_datetime = bench.datetime
+
+    class _OrologioFermo:
+        @staticmethod
+        def now(tz=None):
+            return vero_datetime(2026, 8, 25, 12, 0, 0,
+                                 tzinfo=bench.timezone.utc)
+
+    monkeypatch.setattr(bench, "datetime", _OrologioFermo)
+    a = bench.new_run_dir(str(tmp_path), "smoke")
+    b = bench.new_run_dir(str(tmp_path), "smoke")
+    assert a != b
+    assert "smoke" in os.path.basename(b)
+    assert os.path.isdir(os.path.join(b, "audio"))
+    assert os.path.isdir(os.path.join(b, "prompts"))
+    wa = bench.MetricsWriter(a)
+    wb = bench.MetricsWriter(b)
+    assert wa.path != wb.path
+    wa.close()
+    wb.close()
+
+
+def test_main_residual_anomalies_che_rompe_non_nasconde_i_record_letti(
+        tmp_path, monkeypatch, capsys):
+    """Difetto 3 (round 5): `records_read` era impostato DOPO
+    _residual_anomalies. Se cedeva li', metrics.jsonl era stato letto
+    perfettamente ma stdout dichiarava "non e' stato letto in modo
+    affidabile" e il report minimo scriveva n/d, nascondendo dati
+    disponibili."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom(*a, **k):
+        raise RuntimeError("residuo non calcolabile (simulato)")
+
+    monkeypatch.setattr(bench, "_residual_anomalies", _boom)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "RICONCILIAZIONE - finestra" in out
+    assert "[riconciliazione] non disponibile" not in out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "Chiamate Cloudflare registrate: 1" in report
+    assert "n/d" not in report
+
+
+def test_main_riga_json_non_dict_in_metrics_non_e_fatale(tmp_path, monkeypatch,
+                                                         capsys):
+    """Difetto 3 (round 5), nota collegata: il loop di lettura accettava
+    qualunque JSON valido, anche non-dict, e il filtro per backend esplodeva
+    su r.get(...) proprio dentro la finestra in cui la causa dell'errore
+    veniva raccontata male."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+    original_write = bench.MetricsWriter.write
+
+    def _write_con_riga_non_dict(self, record):
+        original_write(self, record)
+        self._fh.write('["lista", "non", "dict"]\n')
+        self._fh.flush()
+
+    monkeypatch.setattr(bench.MetricsWriter, "write", _write_con_riga_non_dict)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "RICONCILIAZIONE - finestra" in out
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
+    assert "malformate" in report
+
+
+def test_report_minimo_non_dichiara_zero_chiamate_se_i_record_non_sono_letti(
+        tmp_path, monkeypatch):
+    """Difetto 4 (round 5): mutazione M9 rimasta verde. Quando metrics.jsonl
+    non e' leggibile, il report minimo deve scrivere n/d: una cifra (0) sarebbe
+    una dichiarazione falsa su un run che ha gia' pagato."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+    monkeypatch.setattr(bench.requests, "Session",
+                        lambda: FakeSession([_ok_response(seconds=9.0)]))
+
+    real_open = open
+
+    def _open_che_rompe_metrics(path, mode="r", *a, **k):
+        if os.path.basename(str(path)) == "metrics.jsonl" and mode == "r":
+            raise OSError("metrics.jsonl illeggibile (simulato)")
+        return real_open(path, mode, *a, **k)
+
+    monkeypatch.setattr(bench, "open", _open_che_rompe_metrics, raising=False)
+    rc = bench.main(["--level", "smoke", "--out-dir", str(tmp_path)])
+    assert rc == 1
+    run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
+    report = real_open(os.path.join(run_dir, "report.md"),
+                       encoding="utf-8").read()
+    assert "Chiamate Cloudflare registrate: n/d" in report
+    assert "Chiamate Cloudflare registrate: 0" not in report
+    assert "Anomalie residue: n/d" in report
