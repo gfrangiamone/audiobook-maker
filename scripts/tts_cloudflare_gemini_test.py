@@ -40,13 +40,33 @@ import tts_split
 CF_MODEL = "google/gemini-3.1-flash-tts"
 CF_API_BASE = "https://api.cloudflare.com/client/v4/accounts"
 
+
+def _env_float(name, default):
+    """Legge una env numerica accettando la virgola decimale, come in prod."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw.replace(",", "."))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 # Tariffe Cloudflare per il modello (USD per milione di token).
 CF_INPUT_USD_PER_MTOK = 0.75
 CF_OUTPUT_USD_PER_MTOK = 12.00
-USD_EUR_RATE = 0.86
+
+# Cambio e token/secondo NON sono costanti del banco: il ramo Vertex dell'A/B
+# li prende da `gemini_tts`, che li legge dalle stesse env. Se il banco li
+# tenesse hardcoded, con quelle env impostate i due lati dello stesso report
+# userebbero basi diverse. Stessi nomi e stessi default della produzione
+# (gemini_tts.USD_EUR_RATE, gemini_tts._audio_tokens_per_second("flash31")).
+USD_EUR_RATE = _env_float("ABM_GEMINI_USD_EUR_RATE", 0.86)
 
 # Token audio output per secondo. Sull'audit di produzione vale costantemente 25.
-AUDIO_TOKENS_PER_SECOND = 25.0
+AUDIO_TOKENS_PER_SECOND = _env_float(
+    "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31",
+    _env_float("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND", 25.0))
 
 # Formato PCM atteso da Gemini TTS: 24 kHz mono 16 bit.
 EXPECTED_RATE = 24000
@@ -58,6 +78,11 @@ EXPECTED_WIDTH = 2
 # grossolani, non a calibrare un preventivo.
 RATIO_LOW = 0.6
 RATIO_HIGH = 1.6
+
+# Estensioni ammesse per --book (spec 5.2). Tutto il resto e' rifiutato PRIMA
+# di qualunque POST: leggere un binario come testo e spedirlo all'API
+# significa pagare per sintetizzare i byte di un archivio.
+BOOK_EXTENSIONS = (".abm", ".txt", ".epub")
 
 DEFAULT_CHUNK_CHARS = 450
 DEFAULT_TEMPERATURE = 0.3
@@ -110,19 +135,75 @@ def wav_bytes_to_pcm(wav_bytes, out_path):
             "bytes": len(frames)}
 
 
+def wav_path_for(pcm_path, suffix="_cf"):
+    """Percorso del WAV affiancato a un PCM (spec 7: NNN_cf.wav/NNN_vertex.wav)."""
+    base = pcm_path
+    if base.lower().endswith(".pcm"):
+        base = base[:-4]
+    return base + suffix + ".wav"
+
+
+def save_wav_bytes(wav_bytes, wav_path):
+    """Salva il WAV COSI' COM'E' RICEVUTO. Ritorna il percorso, None se fallisce.
+
+    Va scritto anche quando la decodifica fallisce (anomaly "format"): e'
+    l'unico materiale su cui un umano puo' capire cosa ha risposto il
+    fornitore, e l'asse qualita' e' per design deciso dall'ascolto.
+    """
+    try:
+        os.makedirs(os.path.dirname(wav_path) or ".", exist_ok=True)
+        with open(wav_path, "wb") as fh:
+            fh.write(wav_bytes)
+        return wav_path
+    except OSError as exc:
+        print(f"[bench] WAV non salvato ({os.path.basename(wav_path)}): {exc}")
+        return None
+
+
+def pcm_to_wav(pcm_path, wav_path, rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
+               width=EXPECTED_WIDTH):
+    """Riavvolge un PCM grezzo in un WAV ascoltabile. None se non riesce.
+
+    Il ramo Vertex produce PCM 24 kHz s16le, che nessun player comune apre:
+    senza questo passaggio l'A/B non consegna nulla di ascoltabile.
+    """
+    try:
+        with open(pcm_path, "rb") as fh:
+            frames = fh.read()
+        if not frames:
+            return None
+        os.makedirs(os.path.dirname(wav_path) or ".", exist_ok=True)
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(int(channels))
+            wf.setsampwidth(int(width))
+            wf.setframerate(int(rate))
+            wf.writeframes(frames)
+        return wav_path
+    except (OSError, wave.Error) as exc:
+        print(f"[bench] WAV Vertex non prodotto "
+              f"({os.path.basename(wav_path)}): {exc}")
+        return None
+
+
 class SpendCapExceeded(Exception):
     """Il cap di spesa del run e' stato raggiunto."""
 
 
-def estimate_tokens(chars, audio_seconds, language):
+def estimate_tokens(chars, audio_seconds, language, prompt_chars=None):
     """Token input/output stimati per una chiamata.
 
     L'output usa i secondi audio REALI quando disponibili (dai byte PCM), non
     una previsione: l'unica approssimazione residua e' il rapporto
     token/secondo, che Cloudflare non espone in risposta.
+
+    `prompt_chars` sono i caratteri del prompt REALMENTE inviato (testo +
+    blocco "[style: ...]"): Cloudflare fattura quelli, non il chunk grezzo.
+    Quando manca si ripiega su `chars` (comportamento storico), ma i
+    chiamanti che hanno il prompt in mano devono passarlo.
     """
+    n_in = int(prompt_chars if prompt_chars is not None else chars)
     return {
-        "tokens_in": int(gemini_tts.estimate_input_tokens("x" * int(chars), language)),
+        "tokens_in": int(gemini_tts.estimate_input_tokens("x" * n_in, language)),
         "tokens_out": int(round(float(audio_seconds) * AUDIO_TOKENS_PER_SECOND)),
     }
 
@@ -133,10 +214,14 @@ def cost_usd(tokens_in, tokens_out):
             + tokens_out * CF_OUTPUT_USD_PER_MTOK / 1e6)
 
 
-def predict_call_usd(chars, language):
-    """Costo previsto PRIMA della chiamata, dal baseline char/sec della lingua."""
+def predict_call_usd(chars, language, prompt_chars=None):
+    """Costo previsto PRIMA della chiamata, dal baseline char/sec della lingua.
+
+    La durata attesa dipende dal solo testo da leggere (`chars`); i token di
+    input dal prompt effettivo (`prompt_chars`, vedi `estimate_tokens`).
+    """
     seconds = float(chars) / gemini_tts.baseline_rate(language)
-    tok = estimate_tokens(chars, seconds, language)
+    tok = estimate_tokens(chars, seconds, language, prompt_chars=prompt_chars)
     return cost_usd(tok["tokens_in"], tok["tokens_out"])
 
 
@@ -155,6 +240,11 @@ class SpendGuard:
     def __init__(self, max_eur=DEFAULT_MAX_SPEND_EUR):
         self.max_eur = float(max_eur or 0)
         self.spent_usd = 0.0
+        # Sticky: una volta che il tetto e' stato sfondato da una
+        # liquidazione (settle) il run non deve poter effettuare altre
+        # chiamate, nemmeno se una liquidazione successiva riportasse la
+        # spesa sotto il tetto.
+        self.breached = False
         self._lock = threading.Lock()
 
     def spent_eur(self):
@@ -168,6 +258,12 @@ class SpendGuard:
     def _check_locked(self, projected_usd):
         if self.max_eur <= 0:
             return
+        if self.breached:
+            raise SpendCapExceeded(
+                f"cap di spesa gia' sfondato da una liquidazione precedente: "
+                f"{self.spent_usd * USD_EUR_RATE:.4f} EUR contabilizzati "
+                f"contro un tetto di {self.max_eur:.2f} EUR"
+            )
         proiettato = (self.spent_usd + float(projected_usd)) * USD_EUR_RATE
         if proiettato > self.max_eur:
             raise SpendCapExceeded(
@@ -192,9 +288,28 @@ class SpendGuard:
             return float(usd)
 
     def settle(self, reserved, actual):
-        """Corregge una prenotazione precedente con il costo effettivo."""
+        """Corregge una prenotazione precedente con il costo effettivo.
+
+        Ricontrolla il tetto DOPO l'aggiornamento: `reserve()` prenota sulla
+        baseline char/sec della lingua, ma l'audio realmente prodotto puo'
+        essere molto piu' lungo del previsto (il gate ammette fino a 1.6x, e
+        un `overlong` grave viene comunque contabilizzato). Senza questo
+        controllo il run proseguiva oltre `--max-spend-eur`: osservato un
+        footer a 1.9x il tetto.
+
+        La correzione resta contabilizzata - la chiamata e' gia' stata
+        fatturata da Cloudflare - e l'eccezione ferma le chiamate
+        SUCCESSIVE, non annulla questa.
+        """
         with self._lock:
             self.spent_usd += float(actual) - float(reserved)
+            if self.max_eur > 0 and self.spent_usd * USD_EUR_RATE > self.max_eur:
+                self.breached = True
+                raise SpendCapExceeded(
+                    f"cap di spesa superato dalla liquidazione: "
+                    f"{self.spent_usd * USD_EUR_RATE:.4f} EUR spesi contro un "
+                    f"tetto di {self.max_eur:.2f} EUR"
+                )
 
 
 def evaluate_duration(chars, language, audio_seconds):
@@ -260,10 +375,15 @@ class CFAuthError(Exception):
 class CFCallError(Exception):
     """Chiamata fallita dopo tutti i tentativi."""
 
-    def __init__(self, message, status=None, attempts=0):
+    def __init__(self, message, status=None, attempts=0, retry_statuses=None):
         super().__init__(message)
         self.status = status
         self.attempts = attempts
+        # Stati dei tentativi assorbiti prima dell'esito finale (429, 5xx, 0 =
+        # timeout/errore di rete lato client). Senza propagarli anche sul ramo
+        # d'errore, un chunk andato a 429 quattro volte dichiarava "1 risposta
+        # 429" invece di quattro.
+        self.retry_statuses = list(retry_statuses or [])
 
 
 def build_payload(text, voice, temperature):
@@ -299,6 +419,11 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
     deve poter sparire dai conteggi, qualunque cosa accada dopo (fix round 4,
     difetto 1).
 
+    `latency_ms` e' CUMULATIVA sui tentativi HTTP (somma del tempo di ogni
+    POST, escluse le attese di backoff): la latenza del solo ultimo tentativo
+    nascondeva il costo reale dei 429 assorbiti dal retry e sottostimava il
+    p95 su cui si decide la soglia di throughput (spec 6.3).
+
     Returns:
         {"wav": bytes, "latency_ms": float, "status": int, "attempts": int,
          "retry_statuses": [int, ...]}
@@ -312,20 +437,22 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
     payload = build_payload(text, voice, temperature)
     retry_statuses = []
     last_status = None
+    total_latency_ms = 0.0
     for attempt in range(1, int(max_attempts) + 1):
         t0 = time.time()
         try:
             resp = session.post(url, json=payload, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
-            latency_ms = (time.time() - t0) * 1000.0
+            total_latency_ms += (time.time() - t0) * 1000.0
             last_status = None
             retry_statuses.append(0)
             if attempt >= max_attempts:
                 raise CFCallError(f"errore di rete dopo {attempt} tentativi: {exc}",
-                                  status=None, attempts=attempt) from exc
+                                  status=None, attempts=attempt,
+                                  retry_statuses=retry_statuses) from exc
             sleep(float(2 ** attempt))
             continue
-        latency_ms = (time.time() - t0) * 1000.0
+        total_latency_ms += (time.time() - t0) * 1000.0
         last_status = resp.status_code
         if resp.status_code in (401, 403):
             # Il token non entra mai nel messaggio.
@@ -338,12 +465,14 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
             if attempt >= max_attempts:
                 raise CFCallError(
                     f"HTTP {resp.status_code} dopo {attempt} tentativi",
-                    status=resp.status_code, attempts=attempt)
+                    status=resp.status_code, attempts=attempt,
+                    retry_statuses=retry_statuses)
             sleep(_retry_after_seconds(resp, attempt))
             continue
         if resp.status_code != 200:
             raise CFCallError(f"HTTP {resp.status_code} non gestibile con retry",
-                              status=resp.status_code, attempts=attempt)
+                              status=resp.status_code, attempts=attempt,
+                              retry_statuses=retry_statuses)
         if callable(on_billed):
             # Da qui in poi la chiamata e' andata a buon fine lato Cloudflare:
             # e' fatturata anche se il corpo risultera' inutilizzabile o se il
@@ -353,26 +482,30 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
             body = resp.json()
         except Exception as exc:
             raise CFCallError(f"risposta non JSON: {exc}",
-                              status=resp.status_code, attempts=attempt) from exc
+                              status=resp.status_code, attempts=attempt,
+                              retry_statuses=retry_statuses) from exc
         audio_b64 = ((body.get("result") or {}).get("audio")
                      if isinstance(body, dict) else None)
         if not audio_b64:
             raise CFCallError("risposta 200 senza campo audio",
-                              status=resp.status_code, attempts=attempt)
+                              status=resp.status_code, attempts=attempt,
+                              retry_statuses=retry_statuses)
         try:
             wav_bytes = base64.b64decode(audio_b64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise CFCallError("campo audio non decodificabile da base64",
-                              status=resp.status_code, attempts=attempt) from exc
+                              status=resp.status_code, attempts=attempt,
+                              retry_statuses=retry_statuses) from exc
         return {
             "wav": wav_bytes,
-            "latency_ms": latency_ms,
+            "latency_ms": total_latency_ms,
             "status": resp.status_code,
             "attempts": attempt,
             "retry_statuses": retry_statuses,
         }
     raise CFCallError("tentativi esauriti", status=last_status,
-                      attempts=int(max_attempts))
+                      attempts=int(max_attempts),
+                      retry_statuses=retry_statuses)
 
 
 # --- Metriche: record, writer, run dir --------------------------------------
@@ -381,6 +514,12 @@ _RECORD_KEYS = (
     "chunk_index", "chars", "prompt_bytes", "http_status", "latency_ms",
     "attempt", "audio_bytes", "audio_seconds", "expected_seconds", "ratio",
     "tokens_in_est", "tokens_out_est", "cost_usd_est", "anomaly",
+    # Scostamento dichiarato dalla spec 7 (che congela 21 campi): campo 22,
+    # aggiunto IN CODA per non spostare nulla di esistente. Contiene lo stato
+    # HTTP di ogni tentativo assorbito dal retry (429, 5xx, 0 = timeout/errore
+    # di rete). Senza, i 429 corretti dal retry sparivano dai totali e il punto
+    # di saturazione cercato dalla spec 6.3 restava invisibile.
+    "retry_statuses",
 )
 
 
@@ -408,23 +547,33 @@ def make_record(**kwargs):
 
 
 class MetricsWriter:
-    """Append su `metrics.jsonl`, una riga JSON per chiamata."""
+    """Append su `metrics.jsonl`, una riga JSON per chiamata.
+
+    Thread-safe: matrix e book scrivono da N thread (`--concurrency`), e
+    write+flush senza lock possono interlacciare due righe sullo stesso
+    file. Una riga corrotta e' peggio di una riga mancante: il file e' la
+    fonte primaria delle analisi (spec 7) e viene letto riga per riga.
+    """
 
     def __init__(self, run_dir):
         self._path = os.path.join(run_dir, "metrics.jsonl")
         self._fh = open(self._path, "a", encoding="utf-8")
+        self._lock = threading.Lock()
 
     @property
     def path(self):
         return self._path
 
     def write(self, record):
-        self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._fh.flush()
+        riga = json.dumps(record, ensure_ascii=False) + "\n"
+        with self._lock:
+            self._fh.write(riga)
+            self._fh.flush()
 
     def close(self):
         try:
-            self._fh.close()
+            with self._lock:
+                self._fh.close()
         except Exception:
             pass
 
@@ -469,7 +618,7 @@ class BenchContext:
 
     def __init__(self, session, account_id, api_token, run_dir, writer, guard,
                  run_id, temperature=DEFAULT_TEMPERATURE, backend="cloudflare",
-                 sleep=time.sleep, max_attempts=4):
+                 sleep=time.sleep, max_attempts=4, accent_code=None):
         self.session = session
         self.account_id = account_id
         self.api_token = api_token
@@ -488,6 +637,59 @@ class BenchContext:
         # e' l'unico dato che sopravvive a un'interruzione fra la risposta e la
         # scrittura del record (fix round 4, difetto 1).
         self.paid_calls = PaidCallCounter()
+        # Direttiva d'accento: costruita una volta per lingua e riusata su
+        # ogni chunk, come fa la produzione con job["gemini_accent"].
+        # `accent_code` None = variante di default della lingua, che e' il
+        # comportamento di prod quando l'utente non ne sceglie una.
+        self.accent_code = accent_code
+        self._accent_cache = {}
+        self._accent_lock = threading.Lock()
+
+    def accent_directive(self, lang):
+        """Direttiva d'accento per `lang`, costruita una volta e memorizzata.
+
+        La produzione la inietta SEMPRE e PER PRIMA dentro il blocco
+        [style: ...] di ogni chunk (generation_engine: build_accent_directive
+        una volta per job, poi accent_directive= su ogni synthesize). Serve a
+        impedire che ogni chiamata stateless scelga una variante regionale
+        diversa: senza, il banco misurerebbe il regime NON ancorato mentre uno
+        dei criteri di GO e' "nessuna deriva di voce fra chunk" (spec 2).
+
+        La cache e' per lingua perche' il livello matrix ne attraversa piu'
+        d'una nello stesso run; il costo di costruzione e' comunque nullo, ma
+        cosi' la direttiva e' letteralmente la stessa stringa per tutti i
+        chunk della stessa lingua.
+        """
+        key = (lang or "")[:2].lower()
+        with self._accent_lock:
+            if key in self._accent_cache:
+                return self._accent_cache[key]
+        try:
+            directive = gemini_tts.build_accent_directive(
+                key, self.accent_code) or ""
+        except Exception as exc:  # noqa: BLE001 - non fatale, come in prod
+            print(f"[bench] direttiva d'accento non disponibile per "
+                  f"{key!r}: {exc}")
+            directive = ""
+        with self._accent_lock:
+            self._accent_cache[key] = directive
+        return directive
+
+
+def _settle_quiet(guard, reserved, actual):
+    """`settle` che non puo' propagare SpendCapExceeded.
+
+    Serve sui percorsi d'uscita gia' eccezionali (CFAuthError, CFCallError,
+    il `finally` di `_one_call`): un'eccezione sollevata li' mangerebbe
+    l'eccezione originale e nasconderebbe la vera causa dell'abort. Il cap
+    resta comunque segnato (flag sticky su SpendGuard), quindi la prossima
+    `reserve()` fermera' il run. Nessuna prenotazione resta appesa: la
+    liquidazione e' gia' avvenuta quando l'eccezione viene sollevata.
+    """
+    try:
+        guard.settle(reserved, actual)
+    except SpendCapExceeded:
+        pass
 
 
 def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
@@ -500,7 +702,12 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     fallito dopo i retry di `call_cf` viene marcato "error" e riportato con
     una sola riga di metriche.
     """
-    reserved = ctx.guard.reserve(predict_call_usd(chars, lang))
+    # I token di input si pagano sul prompt effettivamente spedito (testo +
+    # blocco "[style: ...]"), non sul chunk grezzo: sul banco la differenza
+    # osservata era chars=178 contro prompt_bytes=263.
+    prompt_chars = len(final_text)
+    reserved = ctx.guard.reserve(
+        predict_call_usd(chars, lang, prompt_chars=prompt_chars))
     settled = False
     billed = {"hit": False}
 
@@ -519,7 +726,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
         except CFAuthError:
             # 401/403: nessun audio prodotto, la prenotazione va liberata prima
             # che l'eccezione risalga e interrompa il run (fix round 1).
-            ctx.guard.settle(reserved, 0.0)
+            _settle_quiet(ctx.guard, reserved, 0.0)
             settled = True
             raise
         except CFCallError as exc:
@@ -531,10 +738,12 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # consumava il cap, cioe' un run difettoso poteva bruciare denaro
             # senza limite. Restano a costo zero le sole chiamate senza 200
             # (timeout, 4xx, 5xx dopo i retry).
-            ctx.guard.settle(reserved, reserved if billed["hit"] else 0.0)
+            _settle_quiet(ctx.guard, reserved,
+                          reserved if billed["hit"] else 0.0)
             settled = True
             expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
-            tok = estimate_tokens(chars, expected_seconds, lang)
+            tok = estimate_tokens(chars, expected_seconds, lang,
+                                  prompt_chars=prompt_chars)
             usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
             record = make_record(
                 run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
@@ -546,12 +755,18 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
                 ratio=None, tokens_in_est=tok["tokens_in"],
                 tokens_out_est=tok["tokens_out"], cost_usd_est=usd,
                 anomaly="error",
+                retry_statuses=list(getattr(exc, "retry_statuses", None) or []),
             )
             ctx.writer.write(record)
             return record, None, None
         anomaly = None
         seconds = 0.0
         audio_bytes = 0
+        # Il WAV va su disco PRIMA della decodifica e a prescindere dal suo
+        # esito: e' la risposta cosi' com'e' arrivata, l'unico materiale
+        # ascoltabile (il PCM grezzo non lo apre nessun player comune) e
+        # l'unico modo di capire a orecchio cosa ha risposto il fornitore.
+        save_wav_bytes(res["wav"], wav_path_for(pcm_path))
         try:
             fmt = wav_bytes_to_pcm(res["wav"], pcm_path)
             audio_bytes = fmt["bytes"]
@@ -565,7 +780,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
         dur = evaluate_duration(chars, lang, seconds)
         if anomaly is None:
             anomaly = dur["anomaly"]
-        tok = estimate_tokens(chars, seconds, lang)
+        tok = estimate_tokens(chars, seconds, lang, prompt_chars=prompt_chars)
         usd = cost_usd(tok["tokens_in"], tok["tokens_out"])
         if seconds <= 0.0 and usd < reserved:
             # Difetto 5 (round 5): il prezzo qui e' calcolato sulla durata
@@ -583,10 +798,9 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # incoerenti fra loro proprio dove la spec chiede il confronto
             # riga per riga con la dashboard Cloudflare. Stessa base usata
             # dal ramo CFCallError per il medesimo caso.
-            tok = estimate_tokens(chars, dur["expected_seconds"], lang)
+            tok = estimate_tokens(chars, dur["expected_seconds"], lang,
+                                  prompt_chars=prompt_chars)
             usd = reserved
-        ctx.guard.settle(reserved, usd)
-        settled = True
         record = make_record(
             run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
             rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
@@ -596,8 +810,17 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
             ratio=dur["ratio"], tokens_in_est=tok["tokens_in"],
             tokens_out_est=tok["tokens_out"], cost_usd_est=usd, anomaly=anomaly,
+            retry_statuses=list(res.get("retry_statuses") or []),
         )
         ctx.writer.write(record)
+        # La liquidazione viene DOPO la scrittura del record: settle() puo'
+        # sollevare SpendCapExceeded (audio molto piu' lungo del previsto) e
+        # una chiamata gia' fatturata non deve sparire dalle metriche a causa
+        # dell'abort che essa stessa provoca.
+        try:
+            ctx.guard.settle(reserved, usd)
+        finally:
+            settled = True
         return record, seconds, pcm_path
     finally:
         # Finding C (fix round 3): qualunque uscita non ancora liquidata sopra
@@ -612,7 +835,8 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # resta contabilizzata al costo previsto invece di essere
             # azzerata. Solo un'uscita PRIMA del 200 libera tutto: meglio
             # dichiarare una spesa in piu' di quante ne siano fatturate.
-            ctx.guard.settle(reserved, reserved if billed["hit"] else 0.0)
+            _settle_quiet(ctx.guard, reserved,
+                          reserved if billed["hit"] else 0.0)
 
 
 def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
@@ -622,8 +846,12 @@ def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
     occasionale da un difetto sistematico del modello, e il report riporta
     entrambi gli esiti.
     """
-    final_text = gemini_tts.build_final_text(text, style_instruction=style,
-                                             rate=rate)
+    # Stesso prompt della produzione, byte per byte: la direttiva d'accento
+    # va PRIMA dello stile utente dentro [style: ...] (ci pensa
+    # build_final_text), e non e' opzionale in prod.
+    final_text = gemini_tts.build_final_text(
+        text, style_instruction=style, rate=rate,
+        accent_directive=ctx.accent_directive(lang) or None)
     os.makedirs(os.path.dirname(pcm_path), exist_ok=True)
     prompt_path = os.path.join(ctx.run_dir, "prompts", f"{chunk_index:04d}.txt")
     with open(prompt_path, "w", encoding="utf-8") as fh:
@@ -646,36 +874,51 @@ def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):
             "audio_seconds": seconds, "anomaly": anomaly}
 
 
-def run_smoke(ctx, lang, voice, rate, style, text, compare_vertex=False):
-    """Un solo chunk: verifica auth, schema di risposta e decodifica WAV.
+def run_smoke(ctx, lang, voice, rate, style, text, compare_vertex=False,
+              runs=1):
+    """Un chunk per ripetizione: verifica auth, schema di risposta, decodifica.
 
     Se il chunk finisce con anomaly == "error" (CFCallError esaurita dentro
     call_cf), `audio_seconds`/`record['ratio']` sono None: la formattazione
     deve tollerarlo invece di sollevare TypeError (fix round 1, regressione
     critica: un run che ha gia' speso denaro deve comunque produrre un
     report).
+
+    `runs` era ignorato: con `--runs 3` il banco effettuava comunque una sola
+    chiamata, cioe' dichiarava una ripetibilita' che non aveva misurato. Con
+    temperature 0.3 due chiamate identiche NON danno lo stesso audio, quindi
+    la ripetizione e' l'unico modo di distinguere la varianza intrinseca da
+    un difetto sistematico.
     """
-    pcm_path = os.path.join(ctx.run_dir, "audio", "0000.pcm")
-    res = synth_chunk(ctx, text, 0, lang, voice, rate, style, pcm_path)
-    seconds_txt = f"{res['audio_seconds']:.1f}s" if res["audio_seconds"] is not None else "n/d"
-    ratio_txt = f"{res['record']['ratio']:.2f}" if res["record"]["ratio"] is not None else "n/d"
-    print(f"[smoke] {lang}/{voice}: {seconds_txt} audio, "
-          f"ratio {ratio_txt}, "
-          f"anomalia {res['anomaly'] or 'nessuna'}")
-    if compare_vertex and res["pcm_path"]:
-        # Il confronto A/B e' un side-effect informativo: non altera
-        # l'anomalia/residuo Cloudflare restituito da questa funzione.
-        vertex_path = os.path.join(ctx.run_dir, "audio", "0000_vertex.pcm")
-        try:
-            v_res = synth_chunk_vertex(ctx, text, 0, lang, voice, rate, style,
-                                       vertex_path)
-            if v_res.get("pcm_path"):
-                cmp = compare_metrics(res["pcm_path"], v_res["pcm_path"])
-                print(f"[smoke][vertex] delta_seconds={cmp['delta_seconds']:.2f} "
-                      f"rms_cf={cmp['rms_cf']:.1f} rms_vertex={cmp['rms_vertex']:.1f}")
-        except Exception as exc:  # noqa: BLE001 - side-effect diagnostico
-            print(f"[smoke][vertex] confronto non disponibile: {exc}")
-    return 1 if res["anomaly"] else 0
+    residue = 0
+    for i in range(max(1, int(runs or 1))):
+        pcm_path = os.path.join(ctx.run_dir, "audio", f"{i:04d}.pcm")
+        res = synth_chunk(ctx, text, i, lang, voice, rate, style, pcm_path)
+        seconds_txt = (f"{res['audio_seconds']:.1f}s"
+                       if res["audio_seconds"] is not None else "n/d")
+        ratio_txt = (f"{res['record']['ratio']:.2f}"
+                     if res["record"]["ratio"] is not None else "n/d")
+        print(f"[smoke] {lang}/{voice} #{i + 1}: {seconds_txt} audio, "
+              f"ratio {ratio_txt}, "
+              f"anomalia {res['anomaly'] or 'nessuna'}")
+        if compare_vertex and res["pcm_path"]:
+            # Il confronto A/B e' un side-effect informativo: non altera
+            # l'anomalia/residuo Cloudflare restituito da questa funzione.
+            vertex_path = os.path.join(ctx.run_dir, "audio",
+                                       f"{i:04d}_vertex.pcm")
+            try:
+                v_res = synth_chunk_vertex(ctx, text, i, lang, voice, rate,
+                                           style, vertex_path)
+                if v_res.get("pcm_path"):
+                    cmp = compare_metrics(res["pcm_path"], v_res["pcm_path"])
+                    print(f"[smoke][vertex] #{i + 1} "
+                          f"delta_seconds={cmp['delta_seconds']:.2f} "
+                          f"rms_cf={cmp['rms_cf']:.1f} "
+                          f"rms_vertex={cmp['rms_vertex']:.1f}")
+            except Exception as exc:  # noqa: BLE001 - side-effect diagnostico
+                print(f"[smoke][vertex] #{i + 1} confronto non disponibile: {exc}")
+        residue += 1 if res["anomaly"] else 0
+    return residue
 
 
 # --- Aggregazione e report ----------------------------------------------------
@@ -694,8 +937,33 @@ def percentiles(values):
     return {"p50": _p(0.50), "p95": _p(0.95), "p99": _p(0.99)}
 
 
+def attempt_statuses(record):
+    """Stati HTTP di TUTTI i tentativi assorbiti dal retry, per un record.
+
+    `retry_statuses` contiene ogni tentativo che non ha prodotto l'esito
+    finale: i 429/5xx ritentati e - quando i tentativi si esauriscono - anche
+    l'ultimo, perche' `call_cf` lo accoda prima di sollevare. Un 429 o un 5xx
+    non e' mai lo stato finale di una chiamata riuscita, quindi contarli qui
+    li conta tutti e una volta sola.
+
+    Fallback su `http_status` per i record privi del campo (schema
+    precedente, o record costruiti a mano): meglio contarne uno che zero.
+    """
+    raw = record.get("retry_statuses")
+    if isinstance(raw, (list, tuple)):
+        return [int(s or 0) for s in raw]
+    status = record.get("http_status")
+    return [int(status)] if status else []
+
+
 def summarize(records):
-    """Aggregati del run: volumi, costi, latenze, esiti HTTP, anomalie."""
+    """Aggregati del run: volumi, costi, latenze, esiti HTTP, anomalie.
+
+    I 429 e i 5xx sono contati su OGNI tentativo, non sullo stato finale:
+    prima, una chiamata andata a 429 due volte e poi a 200 dichiarava zero
+    429, cioe' esattamente il segnale di saturazione che il bench esiste per
+    misurare (spec 6.3) spariva dal report.
+    """
     anomalies = {}
     for r in records:
         if r.get("anomaly"):
@@ -711,6 +979,7 @@ def summarize(records):
     # ma e' stato pagato, e non va mai descritto come non fatturato.
     non_fatturate = [r for r in records if r.get("http_status") != 200]
     cost_usd_nb = sum(float(r.get("cost_usd_est") or 0) for r in non_fatturate)
+    tentativi = [attempt_statuses(r) for r in records]
     return {
         "calls": len(records),
         "calls_not_billed": len(non_fatturate),
@@ -723,9 +992,15 @@ def summarize(records):
         "cost_usd": cost_usd_tot,
         "cost_eur": cost_usd_tot * USD_EUR_RATE,
         "latency": percentiles([r.get("latency_ms") for r in records]),
-        "http_429": sum(1 for r in records if r.get("http_status") == 429),
-        "http_5xx": sum(1 for r in records
-                        if (r.get("http_status") or 0) >= 500),
+        "http_429": sum(sum(1 for s in st if s == 429) for st in tentativi),
+        "http_5xx": sum(sum(1 for s in st if s >= 500) for st in tentativi),
+        # Chiamate (non tentativi) che hanno subito almeno un timeout/errore
+        # di rete lato client e sono state ritentate. La spec 8 le considera a
+        # costo zero perche' non hanno mai visto un 200, ma Cloudflare puo'
+        # avere generato - e fatturato - l'audio comunque: l'operatore deve
+        # almeno vedere il numero (rilievo M4).
+        "client_timeouts": sum(1 for st in tentativi if any(s == 0 for s in st)),
+        "attempts_total": sum(int(r.get("attempt") or 0) for r in records),
         "anomalies": anomalies,
     }
 
@@ -738,6 +1013,44 @@ def unrecorded_calls_note(n):
             f"risulta fatturata) ma non compare in metrics.jsonl: il run e' "
             f"stato interrotto fra la risposta e la scrittura del record. "
             f"Ogni totale calcolato sui record e' sottostimato di altrettanto.")
+
+
+def client_timeout_note(n):
+    """Testo unico per le chiamate ritentate dopo un timeout/errore di rete.
+
+    La spec 8 le tratta come chiamate a costo zero perche' non hanno mai
+    ricevuto un 200, ed e' cosi' che il banco le contabilizza. Ma il timeout
+    e' lato client: Cloudflare puo' avere generato l'audio e averlo fatturato
+    lo stesso. Il banco non inventa un costo che non sa calcolare - dichiara
+    il numero, perche' l'operatore possa cercarlo in dashboard.
+    """
+    return (f"{int(n)} chiamata/e e' stata ritentata dopo un timeout o un "
+            f"errore di rete lato client. Il banco le conta a costo zero "
+            f"(nessuna risposta 200 ricevuta, spec 8), ma il timeout e' lato "
+            f"client: Cloudflare puo' avere generato e fatturato l'audio "
+            f"comunque. Verificalo in dashboard prima di considerare esatto "
+            f"il totale.")
+
+
+def chunking_divergence_note():
+    """Divergenze residue fra il chunking del banco e `_plan_chunks` di prod.
+
+    Il banco usa `tts_split.split_text_into_chunks` con gli stessi cap di
+    prod (max_chars, max_bytes = gemini_tts.MAX_BYTES_PER_CALL), ma non
+    replica l'intera pipeline di preparazione del testo. Una divergenza
+    dichiarata e' accettabile, una silenziosa no: chi legge il report deve
+    sapere che i chunk misurati non sono identici a quelli che la
+    produzione spedirebbe sullo stesso libro.
+    """
+    return (
+        "Chunking: stessi cap della produzione (max_chars da --chunk-chars, "
+        "max_bytes = gemini_tts.MAX_BYTES_PER_CALL). Divergenze residue da "
+        "`_plan_chunks` di prod, non replicate qui: nessuna rimozione del "
+        "testo fra parentesi (_strip_parenthetical), nessuna pausa dopo i "
+        "titoli (_ensure_heading_pause), titolo del capitolo non anteposto "
+        "al primo chunk. I chunk misurati possono quindi differire da quelli "
+        "che la produzione spedirebbe sullo stesso libro."
+    )
 
 
 def not_billed_note(agg):
@@ -797,6 +1110,8 @@ def reconciliation_block(records, unrecorded_paid_calls=0):
         "  non e' riconciliato, il risparmio atteso non e' dimostrato."
         + (("\n  Nota: " + not_billed_note(agg))
            if agg["calls_not_billed"] else "")
+        + (("\n  Nota: " + client_timeout_note(agg["client_timeouts"]))
+           if agg["client_timeouts"] else "")
         + extra
     )
 
@@ -848,12 +1163,28 @@ def render_report(run_dir, records, residual_anomalies, partial, notes,
     lines.append("")
     lines.append("| Metrica | Valore |")
     lines.append("|---|---|")
-    lines.append(f"| Latenza p50 (ms) | {agg['latency']['p50']:.0f} |")
-    lines.append(f"| Latenza p95 (ms) | {agg['latency']['p95']:.0f} |")
-    lines.append(f"| Latenza p99 (ms) | {agg['latency']['p99']:.0f} |")
-    lines.append(f"| Risposte 429 | {agg['http_429']} |")
-    lines.append(f"| Risposte 5xx | {agg['http_5xx']} |")
+    lines.append(f"| Latenza p50 (ms, cumulativa sui tentativi) | "
+                 f"{agg['latency']['p50']:.0f} |")
+    lines.append(f"| Latenza p95 (ms, cumulativa sui tentativi) | "
+                 f"{agg['latency']['p95']:.0f} |")
+    lines.append(f"| Latenza p99 (ms, cumulativa sui tentativi) | "
+                 f"{agg['latency']['p99']:.0f} |")
+    lines.append(f"| Tentativi HTTP totali | {agg['attempts_total']} |")
+    lines.append(f"| Risposte 429 (su tutti i tentativi) | {agg['http_429']} |")
+    lines.append(f"| Risposte 5xx (su tutti i tentativi) | {agg['http_5xx']} |")
+    lines.append(f"| Chiamate ritentate dopo un timeout client | "
+                 f"{agg['client_timeouts']} |")
     lines.append("")
+    lines.append("Latenza cumulativa: somma del tempo di ogni tentativo HTTP "
+                 "della stessa chiamata (escluse le attese di backoff). I 429 "
+                 "e i 5xx sono contati su ogni tentativo, non solo sull'esito "
+                 "finale: il criterio di GO della spec 6.3 e' 'nessun 429 a "
+                 "concorrenza pari a quella di prod', e un 429 corretto dal "
+                 "retry resta un 429.")
+    lines.append("")
+    if agg["client_timeouts"]:
+        lines.append(client_timeout_note(agg["client_timeouts"]))
+        lines.append("")
     lines.append("## Anomalie")
     lines.append("")
     lines.append(f"anomalie residue: {residual_anomalies}")
@@ -1030,14 +1361,74 @@ def _abm_safe_name(name):
     return norm
 
 
+def _parse_epub_book(path):
+    """Instrada un EPUB sul parser di produzione (`epub_to_tts.parse_epub`).
+
+    L'import e' locale: ebooklib/BeautifulSoup servono solo a questo ramo, e un
+    run su .abm/.txt non deve fallire per una dipendenza che non usa.
+    """
+    try:
+        import epub_to_tts
+    except ImportError as exc:  # pragma: no cover - dipendenza di progetto
+        raise ValueError(
+            f"parsing EPUB non disponibile (manca una dipendenza): {exc}"
+        ) from exc
+    info = epub_to_tts.parse_epub(path)
+    chapters = []
+    for pos, ch in enumerate(getattr(info, "chapters", None) or []):
+        testo = getattr(ch, "text", "") or ""
+        if not testo.strip():
+            # Capitolo senza testo: nulla da sintetizzare, e un chunk vuoto
+            # sarebbe comunque una chiamata pagata.
+            continue
+        chapters.append((getattr(ch, "index", pos + 1),
+                         getattr(ch, "title", "") or f"Capitolo {pos + 1}",
+                         testo))
+    if not chapters:
+        raise ValueError("File .epub senza capitoli di testo leggibili")
+    return {
+        "title": (getattr(info, "title", "") or
+                  os.path.splitext(os.path.basename(path))[0]),
+        "author": getattr(info, "author", "") or "",
+        "language": getattr(info, "language", "") or "",
+        "chapters": chapters,
+        # La copertina dell'EPUB richiede il ramo cover di audio_utils, che non
+        # e' un helper puro: l'M4B del banco resta senza copertina, l'audio -
+        # cioe' cio' che il banco misura - e' identico.
+        "cover_bytes": None,
+    }
+
+
 def parse_book(path):
-    """Legge un .abm o un .txt.
+    """Legge un .abm, un .epub o un .txt (UTF-8 strict).
+
+    Ogni altra estensione e' RIFIUTATA: prima, il ramo di fallback apriva
+    qualunque file come testo con `errors="replace"`, quindi `--book
+    libro.epub` spediva all'API a pagamento i byte dello ZIP
+    (`PK\\x03\\x04...mimetypeapplication/epub+zip...`) e produceva M4B e
+    report come se il run fosse legittimo. Nessun POST deve partire su un
+    input non riconosciuto.
+
+    Anche il .txt e' decodificato in UTF-8 **strict**: un testo silenziosamente
+    corrotto da `errors="replace"` verrebbe sintetizzato - e pagato - com'e'.
 
     Returns:
         {"title", "author", "language", "chapters": [(idx, titolo, testo)],
          "cover_bytes": bytes|None}
+    Raises:
+        ValueError: estensione non ammessa, o file senza capitoli leggibili.
+        UnicodeDecodeError: .txt non decodificabile in UTF-8.
     """
-    if path.lower().endswith(".abm"):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".epub":
+        return _parse_epub_book(path)
+    if ext == ".txt":
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        title = os.path.splitext(os.path.basename(path))[0]
+        return {"title": title, "author": "", "language": "",
+                "chapters": [(1, title, text)], "cover_bytes": None}
+    if ext == ".abm":
         with zipfile.ZipFile(path, "r") as zf:
             names = set(zf.namelist())
             if "manifest.json" not in names:
@@ -1071,11 +1462,10 @@ def parse_book(path):
                 "chapters": chapters,
                 "cover_bytes": cover,
             }
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        text = fh.read()
-    title = os.path.splitext(os.path.basename(path))[0]
-    return {"title": title, "author": "", "language": "",
-            "chapters": [(1, title, text)], "cover_bytes": None}
+    raise ValueError(
+        f"estensione non ammessa per --book: "
+        f"{ext or '(nessuna estensione)'}. Ammesse: "
+        f"{', '.join(BOOK_EXTENSIONS)}.")
 
 
 def chapter_markers(pcm_paths, titles):
@@ -1168,7 +1558,13 @@ def run_book(ctx, book, voice, rate, style, chunk_chars, concurrency, out_m4b,
     chapter_titles = []
     index = 0
     for ch_pos, (ch_idx, ch_title, ch_text) in enumerate(book["chapters"]):
-        chunks = tts_split.split_text_into_chunks(ch_text, max_chars=int(chunk_chars))
+        # `max_bytes` come in prod per le voci Gemini (tts_split
+        # _pick_chunk_max_bytes -> gemini_tts.MAX_BYTES_PER_CALL): senza, su
+        # CJK il banco produrrebbe payload che la produzione spezzerebbe,
+        # cioe' misurerebbe un regime che in prod non esiste.
+        chunks = tts_split.split_text_into_chunks(
+            ch_text, max_chars=int(chunk_chars),
+            max_bytes=int(gemini_tts.MAX_BYTES_PER_CALL))
         parts = []
         jobs = []
         for chunk in chunks:
@@ -1245,11 +1641,16 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
     confronto: stessa disciplina del ramo Cloudflare (_one_call).
     """
     os.makedirs(os.path.dirname(pcm_path), exist_ok=True)
+    # Stessa direttiva d'accento del ramo Cloudflare: i due lati dell'A/B
+    # devono differire solo per il fornitore, e entrambi devono coincidere
+    # con il prompt di produzione.
+    accent = ctx.accent_directive(lang) or None
     t0 = time.time()
     try:
         res = gemini_tts.synthesize(
             text, f"gemini:flash31:{voice_name}", rate=rate,
-            output_path=pcm_path, style_instruction=style)
+            output_path=pcm_path, style_instruction=style,
+            accent_directive=accent)
     except Exception as exc:
         # Diagnostica limitata: e' un messaggio d'eccezione, mai il payload
         # della richiesta ne' un header, quindi non puo' contenere credenziali.
@@ -1264,7 +1665,8 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
             rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
             chars=len(text),
             prompt_bytes=len(gemini_tts.build_final_text(
-                text, style_instruction=style, rate=rate).encode("utf-8")),
+                text, style_instruction=style, rate=rate,
+                accent_directive=accent).encode("utf-8")),
             http_status=None, latency_ms=latency_ms, attempt=1,
             audio_bytes=None, audio_seconds=None,
             expected_seconds=expected_seconds, ratio=None,
@@ -1272,11 +1674,18 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
             # ritornare bytes_written/input_tokens/output_tokens.
             tokens_in_est=0, tokens_out_est=0, cost_usd_est=0.0,
             anomaly="error",
+            # Il ramo Vertex non passa da call_cf: nessuno stato HTTP
+            # intermedio da dichiarare (i retry vivono dentro synthesize).
+            retry_statuses=[],
         )
         ctx.writer.write(record)
         return {"record": record, "retry_record": None, "pcm_path": None,
                 "audio_seconds": None, "anomaly": "error"}
     latency_ms = (time.time() - t0) * 1000.0
+    # Il PCM Vertex va riavvolto in WAV: la spec 6.4 chiede coppie
+    # NNN_cf.wav / NNN_vertex.wav, e il giudizio di qualita' e' l'ascolto.
+    # Il nome del PCM porta gia' il suffisso _vertex, quindi suffix="".
+    pcm_to_wav(pcm_path, wav_path_for(pcm_path, ""))
     audio_bytes = int(res.get("bytes_written") or 0)
     seconds = audio_utils.pcm_size_to_seconds(
         audio_bytes, sample_rate=EXPECTED_RATE, channels=EXPECTED_CHANNELS,
@@ -1295,7 +1704,8 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
         rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
         chars=len(text),
         prompt_bytes=len(gemini_tts.build_final_text(
-            text, style_instruction=style, rate=rate).encode("utf-8")),
+            text, style_instruction=style, rate=rate,
+            accent_directive=accent).encode("utf-8")),
         http_status=200, latency_ms=latency_ms,
         attempt=int(res.get("attempts_used") or 1), audio_bytes=audio_bytes,
         audio_seconds=seconds, expected_seconds=dur["expected_seconds"],
@@ -1303,6 +1713,7 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
         tokens_in_est=tokens_in, tokens_out_est=tokens_out,
         cost_usd_est=cost_usd_est,
         anomaly=dur["anomaly"],
+        retry_statuses=[],
     )
     ctx.writer.write(record)
     return {"record": record, "retry_record": None, "pcm_path": pcm_path,
@@ -1357,7 +1768,9 @@ def build_arg_parser():
                     help="smoke: un chunk. matrix: prodotto cartesiano su "
                          "fixture corte. book: libro reale fino all'M4B.")
     ap.add_argument("--book", default=None,
-                    help="File .abm o .txt (obbligatorio con --level book)")
+                    help="File .abm, .txt o .epub (obbligatorio con "
+                         "--level book). Ogni altra estensione e' rifiutata "
+                         "senza effettuare alcuna chiamata.")
     ap.add_argument("--langs", default="it,en", help="Lingue separate da virgola")
     ap.add_argument("--voices", default="Zephyr", help="Voci separate da virgola")
     ap.add_argument("--rates", default="+0%", help="Velocita' separate da virgola")
@@ -1445,9 +1858,26 @@ def main(argv=None):
     """
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     args = build_arg_parser().parse_args(argv_list)
-    if args.level == "book" and not args.book:
-        print("[errore] --level book richiede --book <file.abm|file.txt>")
+    if args.max_spend_eur < 0:
+        # Un valore negativo rendeva `max_eur <= 0` vero, cioe' disattivava
+        # il tetto in silenzio: l'esatto contrario di quello che chiede chi
+        # scrive un numero piccolo. Solo 0 disattiva, e in modo esplicito.
+        print("[errore] --max-spend-eur non puo' essere negativo "
+              "(usa 0 per disattivare il tetto). Nessuna chiamata effettuata.")
         return 1
+    if args.level == "book" and not args.book:
+        print("[errore] --level book richiede --book "
+              "<file.abm|file.txt|file.epub>")
+        return 1
+    if args.level == "book":
+        ext = os.path.splitext(args.book)[1].lower()
+        if ext not in BOOK_EXTENSIONS:
+            # Guardia prima di new_run_dir e di qualunque chiamata: un input non
+            # riconosciuto non deve produrre ne' spesa ne' artefatti.
+            print(f"[errore] --book: estensione "
+                  f"{ext or '(nessuna estensione)'} non supportata. Ammesse: "
+                  f"{', '.join(BOOK_EXTENSIONS)}. Nessuna chiamata effettuata.")
+            return 1
     if args.level == "book" and args.compare == "vertex":
         # Un libro intero puo' gia' costare parecchio: raddoppiarlo con il
         # gemello Vertex per errore non e' accettabile. Il confronto A/B va
@@ -1487,7 +1917,7 @@ def main(argv=None):
         if args.level == "smoke":
             run_smoke(ctx, langs[0], voices[0], rates[0],
                      styles[0] if styles else None, fixture_for(langs[0]),
-                     compare_vertex=compare_vertex)
+                     compare_vertex=compare_vertex, runs=args.runs)
         elif args.level == "matrix":
             combos = matrix_combinations(langs, voices, rates, styles, args.runs)
             print(f"[matrix] {len(combos)} combinazioni, "
@@ -1496,6 +1926,7 @@ def main(argv=None):
                       compare_vertex=compare_vertex)
         else:
             book = parse_book(args.book)
+            notes.append(chunking_divergence_note())
             out_m4b = os.path.join(run_dir, "audio", "cloudflare.m4b")
             # --langs esplicito sovrascrive la lingua del libro; altrimenti
             # i metadati del libro restano il fallback (vedi run_book).

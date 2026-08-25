@@ -5,6 +5,8 @@ Nessuna chiamata di rete: la sessione HTTP e' sempre mockata.
 import importlib.util
 import io
 import os
+import shutil
+import sys
 import threading
 import wave
 
@@ -288,6 +290,10 @@ SCHEMA_KEYS = {
     "chunk_index", "chars", "prompt_bytes", "http_status", "latency_ms",
     "attempt", "audio_bytes", "audio_seconds", "expected_seconds", "ratio",
     "tokens_in_est", "tokens_out_est", "cost_usd_est", "anomaly",
+    # Campo 22, scostamento dichiarato dalla spec 7 (21 campi congelati):
+    # aggiunto in coda per i 429/5xx assorbiti dal retry, che senza di esso
+    # sparivano dai totali del report.
+    "retry_statuses",
 }
 
 
@@ -373,14 +379,28 @@ def test_synth_chunk_anomalia_persistente_resta(tmp_path):
 
 
 def test_synth_chunk_usa_il_prompt_di_produzione(tmp_path):
+    """C3: il prompt spedito deve essere byte-identico a quello di prod, cioe'
+    comprendere la direttiva d'accento, che la produzione inietta SEMPRE e per
+    prima dentro il blocco [style: ...] (generation_engine: build_accent_directive
+    una volta per job, poi accent_directive= su ogni synthesize). Senza, il banco
+    misura il regime NON ancorato, mentre uno dei criteri di GO e' "nessuna
+    deriva di voce fra chunk"."""
     import gemini_tts
     s = FakeSession([_ok_response(seconds=9.0)])
     ctx = _ctx(tmp_path, s)
     bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+20%", "tono calmo",
                       os.path.join(ctx.run_dir, "audio", "000.pcm"))
+    direttiva = gemini_tts.build_accent_directive("it", None)
+    assert direttiva, "la fixture presuppone una direttiva d'accento per 'it'"
     atteso = gemini_tts.build_final_text("a" * 146, style_instruction="tono calmo",
-                                         rate="+20%")
-    assert s.calls[0]["json"]["input"]["text"] == atteso
+                                         rate="+20%",
+                                         accent_directive=direttiva)
+    inviato = s.calls[0]["json"]["input"]["text"]
+    assert inviato == atteso
+    # Ridondante per costruzione, ma e' l'asserzione che diventa rossa se la
+    # direttiva smette di essere passata: il confronto sopra da solo
+    # resterebbe verde se anche `atteso` perdesse la direttiva.
+    assert direttiva in inviato
     ctx.writer.close()
 
 
@@ -960,7 +980,7 @@ def test_synth_chunk_vertex_fallimento_marca_il_chunk_senza_propagare(tmp_path, 
     assert record["http_status"] is None
     assert record["backend"] == "vertex"
     assert set(record.keys()) == set(bench._RECORD_KEYS)
-    assert len(record) == 21
+    assert len(record) == 22
     ctx.writer.close()
 
 
@@ -1160,9 +1180,12 @@ def test_main_max_attempts_limita_i_tentativi_http_end_to_end(tmp_path, monkeypa
     assert len(s.calls) == 1
 
 
-def _fake_vertex_synthesize_factory(seconds):
+def _fake_vertex_synthesize_factory(seconds, spia=None):
     def _fake(text, voice_ref, rate=None, output_path=None,
-             style_instruction=None):
+             style_instruction=None, accent_directive=None):
+        if spia is not None:
+            spia.append({"text": text, "style_instruction": style_instruction,
+                         "rate": rate, "accent_directive": accent_directive})
         audio_bytes = (int(seconds) * bench.EXPECTED_RATE
                       * bench.EXPECTED_CHANNELS * bench.EXPECTED_WIDTH)
         with open(output_path, "wb") as fh:
@@ -1631,7 +1654,10 @@ def test_one_call_libera_la_prenotazione_su_keyboardinterrupt(tmp_path,
     with pytest.raises(KeyboardInterrupt):
         bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "x.pcm"), 0)
-    atteso = bench.predict_call_usd(20, "it") * bench.USD_EUR_RATE
+    # I token di input si stimano sul prompt realmente inviato (M2), quindi
+    # la previsione di riferimento va calcolata sulla stessa base.
+    atteso = (bench.predict_call_usd(20, "it", prompt_chars=len("testo finale"))
+              * bench.USD_EUR_RATE)
     assert ctx.guard.spent_eur() == pytest.approx(atteso)
     assert atteso > 0.0
     assert ctx.paid_calls.count == 1
@@ -1813,7 +1839,8 @@ def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     fatturato da Cloudflare, ma `except CFCallError` liquidava la prenotazione
     a zero. Conseguenza dimostrata: spesa EUR 0.0000 e cap che non scatta mai,
     cioe' un run difettoso puo' bruciare denaro senza alcun limite."""
-    previsto = bench.predict_call_usd(20, "it")
+    previsto = bench.predict_call_usd(20, "it",
+                                      prompt_chars=len("testo finale"))
     s = FakeSession([FakeResponse(200, {"result": {}}),
                      FakeResponse(200, {"result": {}})])
     # Cap appena sopra una chiamata: la seconda deve essere rifiutata.
@@ -1853,7 +1880,8 @@ def test_200_con_audio_non_decodificabile_costa_la_stima_piena(tmp_path):
     chiamata realmente fatturata. La stima piena prenotata e' il numero
     disponibile e onesto."""
     import base64 as _b64
-    previsto = bench.predict_call_usd(20, "it")
+    previsto = bench.predict_call_usd(20, "it",
+                                      prompt_chars=len("testo finale"))
     audio = _b64.b64encode(b"questo non e' un WAV").decode("ascii")
     s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
     ctx = _ctx(tmp_path, s)
@@ -2150,3 +2178,960 @@ def test_nota_righe_scartate_copre_anche_il_json_valido_non_dict(
     run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
     report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
     assert "valido ma non un oggetto" in report
+
+
+# ============================================================================
+# Fix round finale: C1 (input non riconosciuti), C2 (429 assorbiti), C3
+# (prompt di produzione), I1 (wrapper), I2 (cap in liquidazione), I3 (WAV
+# ascoltabili), minor M2/M3/M5/M6 e trivia.
+# ============================================================================
+
+# --- C1: --book accetta solo .abm/.txt/.epub --------------------------------
+
+def test_parse_book_rifiuta_le_estensioni_non_ammesse(tmp_path):
+    """C1: un .epub finiva su open(..., errors='replace') e i byte dello ZIP
+    venivano spediti all'API a pagamento (osservati 13 POST fatturati, primo
+    prompt 'PK\\x03\\x04...mimetypeapplication/epub+zip'). Ogni estensione
+    fuori elenco va rifiutata, elencando quelle ammesse."""
+    p = tmp_path / "libro.pdf"
+    p.write_bytes(b"%PDF-1.4 non sono testo")
+    with pytest.raises(ValueError) as exc:
+        bench.parse_book(str(p))
+    msg = str(exc.value)
+    assert ".pdf" in msg
+    for ext in bench.BOOK_EXTENSIONS:
+        assert ext in msg
+
+
+def test_parse_book_rifiuta_il_file_senza_estensione(tmp_path):
+    p = tmp_path / "libro"
+    p.write_bytes(b"testo qualsiasi")
+    with pytest.raises(ValueError) as exc:
+        bench.parse_book(str(p))
+    assert "nessuna estensione" in str(exc.value)
+
+
+def test_parse_book_txt_decodifica_utf8_strict(tmp_path):
+    """C1: errors='replace' trasformava byte non-UTF8 in U+FFFD e li spediva
+    all'API. Meglio fallire prima di spendere."""
+    p = tmp_path / "libro.txt"
+    p.write_bytes(b"testo valido \xff\xfe poi spazzatura")
+    with pytest.raises(UnicodeDecodeError):
+        bench.parse_book(str(p))
+
+
+def test_parse_book_txt_valido_resta_un_capitolo(tmp_path):
+    p = tmp_path / "romanzo.txt"
+    p.write_text("Prima riga.\nSeconda riga.", encoding="utf-8")
+    book = bench.parse_book(str(p))
+    assert book["title"] == "romanzo"
+    assert len(book["chapters"]) == 1
+    assert "Seconda riga." in book["chapters"][0][2]
+
+
+def test_parse_book_epub_usa_il_parser_di_produzione(tmp_path, monkeypatch):
+    """C1: .epub va instradato su epub_to_tts.parse_epub, l'unico parser che
+    il progetto usa in produzione."""
+    import epub_to_tts
+
+    class _Ch:
+        def __init__(self, index, title, text):
+            self.index, self.title, self.text = index, title, text
+
+    class _Info:
+        title = "Il titolo vero"
+        author = "Autore"
+        language = "en"
+        chapters = [_Ch(1, "Capitolo uno", "Testo del primo capitolo."),
+                    _Ch(2, "Vuoto", "   "),
+                    _Ch(3, "Capitolo tre", "Testo del terzo capitolo.")]
+
+    visti = []
+
+    def _fake_parse_epub(path, **kw):
+        visti.append(path)
+        return _Info()
+
+    monkeypatch.setattr(epub_to_tts, "parse_epub", _fake_parse_epub)
+    p = tmp_path / "libro.epub"
+    p.write_bytes(b"PK\x03\x04 finto")
+    book = bench.parse_book(str(p))
+    assert visti == [str(p)]
+    assert book["title"] == "Il titolo vero"
+    assert book["language"] == "en"
+    # Il capitolo di soli spazi non genera chiamate: sarebbe un POST pagato
+    # per sintetizzare nulla.
+    assert [c[1] for c in book["chapters"]] == ["Capitolo uno", "Capitolo tre"]
+
+
+def test_parse_book_epub_senza_capitoli_leggibili(tmp_path, monkeypatch):
+    import epub_to_tts
+
+    class _Info:
+        title = "x"
+        author = ""
+        language = "it"
+        chapters = []
+
+    monkeypatch.setattr(epub_to_tts, "parse_epub", lambda path, **kw: _Info())
+    p = tmp_path / "vuoto.epub"
+    p.write_bytes(b"PK\x03\x04 finto")
+    with pytest.raises(ValueError) as exc:
+        bench.parse_book(str(p))
+    assert "senza capitoli" in str(exc.value)
+
+
+def test_main_rifiuta_book_con_estensione_non_ammessa_senza_chiamare(
+        tmp_path, monkeypatch, capsys):
+    """C1, guardia in main: il rifiuto deve arrivare PRIMA di new_run_dir e di
+    qualunque POST. Nessuna cartella di run, nessuna sessione HTTP creata."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+
+    def _mai(*a, **k):
+        raise AssertionError("nessuna sessione HTTP deve essere creata")
+
+    monkeypatch.setattr(bench.requests, "Session", _mai)
+    out_dir = tmp_path / "out"
+    libro = tmp_path / "libro.pdf"
+    libro.write_bytes(b"%PDF-1.4 non sono testo")
+    rc = bench.main(["--level", "book", "--book", str(libro),
+                     "--out-dir", str(out_dir)])
+    assert rc == 1
+    assert not os.path.exists(str(out_dir))
+    out = capsys.readouterr().out
+    assert "Nessuna chiamata effettuata" in out
+
+
+# --- C2: i 429/5xx assorbiti dal retry devono comparire nel report ----------
+
+def test_one_call_propaga_gli_stati_dei_tentativi_nel_record(tmp_path):
+    """C2: `call_cf` costruiva retry_statuses ma `_one_call` lo scartava,
+    quindi i 429 corretti dal retry sparivano dai totali."""
+    s = FakeSession([FakeResponse(429, {}, {"retry-after": "0"}),
+                     FakeResponse(503, {}, {"retry-after": "0"}),
+                     _ok_response(seconds=9.0)])
+    ctx = _ctx(tmp_path, s)
+    rec, seconds, path = bench._one_call(ctx, "testo finale", 146, "it",
+                                         "Zephyr", "+0%", None,
+                                         os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["http_status"] == 200
+    assert rec["retry_statuses"] == [429, 503]
+    ctx.writer.close()
+
+
+def test_one_call_latenza_cumulativa_sui_tentativi(tmp_path, monkeypatch):
+    """C2: `latency_ms` era quella del solo ultimo tentativo, quindi il p95
+    del report ignorava il tempo bruciato dai retry."""
+    orologio = {"t": 1000.0}
+    risposte = [FakeResponse(429, {}, {"retry-after": "0"}),
+                FakeResponse(429, {}, {"retry-after": "0"}),
+                _ok_response(seconds=9.0)]
+
+    class _S:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append(url)
+            orologio["t"] += 2.0  # ogni POST "dura" 2 s
+            return risposte.pop(0)
+
+        def mount(self, prefix, adapter):
+            pass
+
+    ctx = _ctx(tmp_path, _S())
+    monkeypatch.setattr(bench.time, "time", lambda: orologio["t"])
+    rec, _, _ = bench._one_call(ctx, "testo finale", 146, "it", "Zephyr",
+                                "+0%", None,
+                                os.path.join(ctx.run_dir, "x.pcm"), 0)
+    # 3 tentativi da 2 s: la latenza dichiarata e' la somma, non 2000 ms.
+    assert rec["latency_ms"] == pytest.approx(6000.0)
+    ctx.writer.close()
+
+
+def test_cf_call_error_porta_con_se_gli_stati_dei_tentativi(tmp_path):
+    """C2: anche una chiamata mai riuscita deve dichiarare i propri 429/5xx."""
+    s = FakeSession([FakeResponse(429, {}, {"retry-after": "0"}),
+                     FakeResponse(429, {}, {"retry-after": "0"}),
+                     FakeResponse(500, {}, {"retry-after": "0"}),
+                     FakeResponse(500, {}, {"retry-after": "0"})])
+    ctx = _ctx(tmp_path, s)
+    rec, _, _ = bench._one_call(ctx, "testo finale", 146, "it", "Zephyr",
+                                "+0%", None,
+                                os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["anomaly"] == "error"
+    assert rec["retry_statuses"] == [429, 429, 500, 500]
+    ctx.writer.close()
+
+
+def test_attempt_statuses_ripiega_su_http_status():
+    """Record storici (o del ramo Vertex) senza il campo 22 non devono
+    sparire dai conteggi."""
+    assert bench.attempt_statuses({"http_status": 429}) == [429]
+    assert bench.attempt_statuses({"http_status": None}) == []
+    assert bench.attempt_statuses({"retry_statuses": [429, 0],
+                                   "http_status": 200}) == [429, 0]
+
+
+def test_summarize_conta_i_429_su_tutti_i_tentativi():
+    """C2: il conteggio su http_status del solo record finale dichiarava
+    '0 risposte 429' su un run che ne aveva prese 4."""
+    records = [_rec(http_status=200, retry_statuses=[429, 429]),
+               _rec(http_status=200, retry_statuses=[503]),
+               _rec(http_status=200, retry_statuses=[])]
+    agg = bench.summarize(records)
+    assert agg["http_429"] == 2
+    assert agg["http_5xx"] == 1
+    assert agg["attempts_total"] == 3
+
+
+def test_summarize_conta_i_timeout_client():
+    """Rilievo M4: un tentativo con stato 0 e' un timeout client. La spec 8 lo
+    considera a costo zero, ma Cloudflare puo' aver gia' generato e fatturato
+    l'audio: l'operatore deve almeno vederne il numero."""
+    records = [_rec(retry_statuses=[0, 0]), _rec(retry_statuses=[429]),
+               _rec(retry_statuses=[])]
+    agg = bench.summarize(records)
+    assert agg["client_timeouts"] == 1
+
+
+def test_render_report_dichiara_i_429_assorbiti_e_i_timeout(tmp_path):
+    """C2: il report deve mostrare i 429 assorbiti dal retry e il numero di
+    chiamate ritentate dopo un timeout client."""
+    run_dir = str(tmp_path / "run")
+    os.makedirs(run_dir)
+    records = [_rec(http_status=200, retry_statuses=[429, 429]),
+               _rec(http_status=200, retry_statuses=[0])]
+    path = bench.render_report(run_dir, records, 0, False, [])
+    testo = open(path, encoding="utf-8").read()
+    assert "Risposte 429 (su tutti i tentativi) | 2" in testo
+    assert "Chiamate ritentate dopo un timeout client | 1" in testo
+
+
+# --- C3: il prompt deve essere quello di produzione -------------------------
+
+def test_bench_context_costruisce_la_direttiva_una_volta_per_lingua(
+        tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeSession([]))
+    chiamate = []
+    originale = bench.gemini_tts.build_accent_directive
+
+    def _spia(lang, accent):
+        chiamate.append((lang, accent))
+        return originale(lang, accent)
+
+    monkeypatch.setattr(bench.gemini_tts, "build_accent_directive", _spia)
+    primo = ctx.accent_directive("it")
+    secondo = ctx.accent_directive("it-IT")
+    assert primo == secondo and primo
+    assert chiamate == [("it", None)]
+    ctx.writer.close()
+
+
+def test_accent_directive_non_fatale_se_il_builder_solleva(
+        tmp_path, monkeypatch, capsys):
+    """Come in prod, l'assenza di direttiva non deve uccidere il run."""
+    ctx = _ctx(tmp_path, FakeSession([]))
+
+    def _boom(lang, accent):
+        raise RuntimeError("catalogo accenti non disponibile")
+
+    monkeypatch.setattr(bench.gemini_tts, "build_accent_directive", _boom)
+    assert ctx.accent_directive("it") == ""
+    assert "direttiva d'accento non disponibile" in capsys.readouterr().out
+    ctx.writer.close()
+
+
+def test_synth_chunk_vertex_passa_la_direttiva_a_synthesize(tmp_path,
+                                                            monkeypatch):
+    """C3, lato Vertex: i due lati dell'A/B devono differire solo per il
+    fornitore, e entrambi coincidere con il prompt di produzione."""
+    spia = []
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9, spia=spia))
+    ctx = _ctx(tmp_path, FakeSession([]))
+    bench.synth_chunk_vertex(
+        ctx, "a" * 146, 0, "it", "Zephyr", "+0%", "tono calmo",
+        os.path.join(ctx.run_dir, "audio", "0000_vertex.pcm"))
+    attesa = bench.gemini_tts.build_accent_directive("it", None)
+    assert attesa
+    assert spia[0]["accent_directive"] == attesa
+    ctx.writer.close()
+
+
+# --- I1: il wrapper PowerShell non deve mascherare i valori dedotti ---------
+
+_PS1_PATH = os.path.join(os.path.dirname(_BENCH_PATH), "cf_tts_bench.ps1")
+
+
+@pytest.mark.skipif(not os.path.exists(_PS1_PATH),
+                    reason="wrapper PowerShell non presente")
+def test_wrapper_passa_langs_solo_se_richiesto_esplicitamente():
+    """I1: `--langs` passato incondizionatamente rendeva `_flag_present`
+    sempre vero attraverso l'entry point documentato, quindi la lingua
+    dichiarata nell'.abm veniva sempre scartata (osservato: lang=en senza
+    wrapper, lang=it col wrapper, con expected_seconds diverso)."""
+    src = open(_PS1_PATH, encoding="utf-8").read()
+    assert "$PSBoundParameters.ContainsKey('Langs')" in src
+    # Nessun ramo incondizionato che accodi --langs.
+    for riga in src.splitlines():
+        if "'--langs'" in riga:
+            assert "PSBoundParameters" in riga, riga
+
+
+@pytest.mark.skipif(not os.path.exists(_PS1_PATH),
+                    reason="wrapper PowerShell non presente")
+def test_wrapper_non_forza_gli_altri_default_del_banco():
+    """Stesso trattamento per ogni parametro il cui default del wrapper possa
+    mascherare un valore dedotto o il default di Python."""
+    src = open(_PS1_PATH, encoding="utf-8").read()
+    for nome in ("Voices", "Rates", "ChunkChars", "Concurrency", "Runs",
+                 "Temperature", "MaxSpendEur", "MaxAttempts"):
+        assert "$PSBoundParameters.ContainsKey('%s')" % nome in src, nome
+
+
+@pytest.mark.skipif(not os.path.exists(_PS1_PATH),
+                    reason="wrapper PowerShell non presente")
+def test_wrapper_documenta_il_limite_della_virgola_negli_stili():
+    """Trivia parcheggiata: il formato CLI non cambia, ma il limite va
+    dichiarato nel commento del parametro."""
+    src = open(_PS1_PATH, encoding="utf-8").read()
+    assert "virgola" in src and "Styles" in src
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None,
+                    reason="pwsh non disponibile in questo ambiente")
+@pytest.mark.skipif(not os.path.exists(_PS1_PATH),
+                    reason="wrapper PowerShell non presente")
+def test_wrapper_eseguito_davvero_non_inietta_langs(tmp_path):
+    """Verifica empirica di I1: il wrapper viene eseguito per davvero, con un
+    finto `python` sul PATH che registra gli argomenti ricevuti."""
+    import subprocess
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    args_file = tmp_path / "args.txt"
+    (stub_dir / "python.bat").write_text(
+        "@echo off\r\n@echo %*>\"%BENCH_ARGS_OUT%\"\r\n", encoding="ascii")
+    libro = tmp_path / "libro.abm"
+    libro.write_bytes(b"PK\x03\x04 finto")
+    env = dict(os.environ)
+    env["PATH"] = str(stub_dir) + os.pathsep + env.get("PATH", "")
+    env["BENCH_ARGS_OUT"] = str(args_file)
+
+    def _run(extra):
+        if args_file.exists():
+            args_file.unlink()
+        res = subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-File", _PS1_PATH,
+             "-Level", "book", "-Book", str(libro)] + extra,
+            env=env, capture_output=True, text=True, timeout=180)
+        assert args_file.exists(), res.stdout + res.stderr
+        return args_file.read_text(encoding="ascii", errors="replace")
+
+    senza = _run([])
+    assert "--langs" not in senza
+    assert "--book" in senza
+    con = _run(["-Langs", "it"])
+    assert "--langs it" in con
+
+
+# --- I2: il cap non puo' essere superato in liquidazione --------------------
+
+def test_settle_solleva_se_la_liquidazione_sfonda_il_cap():
+    """I2: settle() sommava actual-reserved senza ricontrollare il tetto.
+    Con audio molto piu' lungo del previsto il run continuava a spendere
+    (osservato EUR 0.0387 contro un cap di 0.02, cioe' 1.9x)."""
+    guard = bench.SpendGuard(max_eur=0.02)
+    reserved = guard.reserve(0.004)  # ~0.0034 EUR: sotto il cap
+    with pytest.raises(bench.SpendCapExceeded):
+        guard.settle(reserved, 0.045)  # ~0.0387 EUR: sopra il cap
+    # La spesa resta contabilizzata: la chiamata e' gia' stata fatturata.
+    assert guard.spent_eur() == pytest.approx(0.045 * bench.USD_EUR_RATE)
+
+
+def test_settle_oltre_il_cap_blocca_le_chiamate_successive():
+    guard = bench.SpendGuard(max_eur=0.02)
+    reserved = guard.reserve(0.004)
+    with pytest.raises(bench.SpendCapExceeded):
+        guard.settle(reserved, 0.045)
+    assert guard.breached is True
+    with pytest.raises(bench.SpendCapExceeded):
+        guard.reserve(0.000001)
+
+
+def test_settle_sotto_il_cap_non_solleva():
+    guard = bench.SpendGuard(max_eur=1.0)
+    reserved = guard.reserve(0.5)
+    guard.settle(reserved, 0.6)
+    assert guard.spent_usd == pytest.approx(0.6)
+    assert guard.breached is False
+
+
+def test_settle_cap_zero_non_solleva_mai():
+    guard = bench.SpendGuard(max_eur=0)
+    reserved = guard.reserve(1.0)
+    guard.settle(reserved, 999.0)
+    assert guard.spent_usd == pytest.approx(999.0)
+
+
+def test_one_call_scrive_il_record_anche_se_il_cap_scatta_in_liquidazione(
+        tmp_path):
+    """I2: una chiamata gia' fatturata non deve sparire da metrics.jsonl a
+    causa dell'abort che essa stessa provoca."""
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=150.0)]),
+               max_eur=0.02)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench._one_call(ctx, "testo finale", 146, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "audio", "0000.pcm"), 0)
+    ctx.writer.close()
+    righe = [r for r in open(ctx.writer.path,
+                             encoding="utf-8").read().splitlines() if r]
+    assert len(righe) == 1
+    rec = bench.json.loads(righe[0])
+    assert rec["http_status"] == 200
+    assert rec["audio_seconds"] == pytest.approx(150.0)
+    assert ctx.paid_calls.count == 1
+
+
+def test_settle_nel_finally_non_mangia_l_eccezione_originale(tmp_path,
+                                                             monkeypatch):
+    """I2, avvertenza del brief: settle() e' chiamata anche dal finally di
+    _one_call (e dai rami d'errore). Un'eccezione sollevata li' nasconderebbe
+    la causa reale dell'abort, e la prenotazione deve comunque risultare
+    liquidata."""
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]))
+
+    def _boom_decode(*a, **k):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, "wav_bytes_to_pcm", _boom_decode)
+    originale = ctx.guard.settle
+
+    def _settle_che_solleva(reserved, actual):
+        originale(reserved, actual)
+        raise bench.SpendCapExceeded("cap sfondato da un altro thread")
+
+    monkeypatch.setattr(ctx.guard, "settle", _settle_che_solleva)
+    with pytest.raises(KeyboardInterrupt):
+        bench._one_call(ctx, "testo finale", 146, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "audio", "0000.pcm"), 0)
+    atteso = bench.predict_call_usd(146, "it",
+                                    prompt_chars=len("testo finale"))
+    assert ctx.guard.spent_usd == pytest.approx(atteso)
+    ctx.writer.close()
+
+
+def test_liquidazione_oltre_cap_non_maschera_l_errore_di_auth(tmp_path,
+                                                              monkeypatch):
+    """I2 sul ramo 401/403: se un altro thread ha gia' sfondato il cap, la
+    liquidazione della prenotazione non deve trasformare un errore di
+    credenziali in un SpendCapExceeded, che porterebbe a cercare il guasto
+    dalla parte sbagliata."""
+    ctx = _ctx(tmp_path, FakeSession([FakeResponse(401, {})]))
+    originale = ctx.guard.settle
+
+    def _settle_che_solleva(reserved, actual):
+        originale(reserved, actual)
+        raise bench.SpendCapExceeded("cap sfondato da un altro thread")
+
+    monkeypatch.setattr(ctx.guard, "settle", _settle_che_solleva)
+    with pytest.raises(bench.CFAuthError):
+        bench._one_call(ctx, "testo finale", 146, "it", "Zephyr", "+0%", None,
+                        os.path.join(ctx.run_dir, "audio", "0000.pcm"), 0)
+    ctx.writer.close()
+
+
+def test_liquidazione_oltre_cap_non_maschera_l_errore_di_chiamata(tmp_path,
+                                                                  monkeypatch):
+    """I2 sul ramo CFCallError: la chiamata fallita deve restare un record con
+    anomaly='error', non far esplodere il chunk con un'eccezione di cap."""
+    ctx = _ctx(tmp_path, FakeSession([FakeResponse(400, {})]))
+    originale = ctx.guard.settle
+
+    def _settle_che_solleva(reserved, actual):
+        originale(reserved, actual)
+        raise bench.SpendCapExceeded("cap sfondato da un altro thread")
+
+    monkeypatch.setattr(ctx.guard, "settle", _settle_che_solleva)
+    rec, seconds, path = bench._one_call(
+        ctx, "testo finale", 146, "it", "Zephyr", "+0%", None,
+        os.path.join(ctx.run_dir, "audio", "0000.pcm"), 0)
+    assert rec["anomaly"] == "error"
+    assert seconds is None and path is None
+    ctx.writer.close()
+
+
+def test_run_matrix_si_ferma_alla_prima_liquidazione_oltre_il_cap(tmp_path):
+    """I2 sotto esecuzione reale: il cap sfondato in liquidazione deve
+    fermare il run, non solo essere annotato."""
+    combos = bench.matrix_combinations(["it"], ["Zephyr"], ["+0%"], [], runs=4)
+    s = FakeSession([_ok_response(seconds=150.0)] * 4)
+    ctx = _ctx(tmp_path, s, max_eur=0.02)
+    with pytest.raises(bench.SpendCapExceeded):
+        bench.run_matrix(ctx, combos, concurrency=1)
+    ctx.writer.close()
+    assert len(s.calls) == 1
+
+
+def test_main_rifiuta_max_spend_negativo(tmp_path, monkeypatch, capsys):
+    """Trivia: un cap negativo rendeva `max_eur <= 0` vero, cioe' disattivava
+    il tetto in silenzio."""
+    monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("CF_API_TOKEN", "tok")
+
+    def _mai(*a, **k):
+        raise AssertionError("nessuna sessione HTTP deve essere creata")
+
+    monkeypatch.setattr(bench.requests, "Session", _mai)
+    rc = bench.main(["--level", "smoke", "--max-spend-eur", "-1",
+                     "--out-dir", str(tmp_path)])
+    assert rc == 1
+    assert "non puo' essere negativo" in capsys.readouterr().out
+    assert os.listdir(str(tmp_path)) == []
+
+
+# --- I3: WAV ascoltabili accanto ai PCM ------------------------------------
+
+def test_wav_path_for_segue_i_nomi_della_spec():
+    assert bench.wav_path_for("/x/audio/0007.pcm") == "/x/audio/0007_cf.wav"
+    assert (bench.wav_path_for("/x/audio/0007_vertex.pcm", "")
+            == "/x/audio/0007_vertex.wav")
+
+
+def test_synth_chunk_salva_il_wav_cloudflare(tmp_path):
+    """I3: `audio/` conteneva solo PCM 24 kHz s16le, che nessun player comune
+    apre. L'asse qualita' e' per design deciso dall'ascolto umano."""
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]))
+    pcm = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None, pcm)
+    wav = os.path.join(ctx.run_dir, "audio", "0000_cf.wav")
+    assert os.path.exists(wav)
+    with wave.open(wav, "rb") as wf:
+        assert wf.getframerate() == 24000
+        assert wf.getnframes() == 9 * 24000
+    ctx.writer.close()
+
+
+def test_wav_salvato_anche_se_il_payload_non_e_decodificabile(tmp_path):
+    """Il WAV va scritto com'e' arrivato anche quando la decodifica fallisce:
+    e' l'unico materiale per capire cosa ha risposto il fornitore."""
+    import base64 as _b64
+    audio = _b64.b64encode(b"questo non e' un WAV").decode("ascii")
+    ctx = _ctx(tmp_path,
+               FakeSession([FakeResponse(200, {"result": {"audio": audio}})]))
+    pcm = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    rec, _, _ = bench._one_call(ctx, "testo finale", 146, "it", "Zephyr",
+                                "+0%", None, pcm, 0)
+    assert rec["anomaly"] == "format"
+    salvato = os.path.join(ctx.run_dir, "audio", "0000_cf.wav")
+    assert open(salvato, "rb").read() == b"questo non e' un WAV"
+    ctx.writer.close()
+
+
+def test_pcm_to_wav_riavvolge_il_pcm_vertex(tmp_path):
+    pcm = tmp_path / "0000_vertex.pcm"
+    pcm.write_bytes(b"\x00" * (24000 * 2 * 3))
+    out = bench.pcm_to_wav(str(pcm), bench.wav_path_for(str(pcm), ""))
+    assert out.endswith("0000_vertex.wav")
+    with wave.open(out, "rb") as wf:
+        assert wf.getnchannels() == 1
+        assert wf.getsampwidth() == 2
+        assert wf.getframerate() == 24000
+        assert wf.getnframes() == 24000 * 3
+
+
+def test_pcm_to_wav_su_pcm_vuoto_non_produce_nulla(tmp_path):
+    pcm = tmp_path / "vuoto.pcm"
+    pcm.write_bytes(b"")
+    assert bench.pcm_to_wav(str(pcm), str(tmp_path / "vuoto.wav")) is None
+
+
+def test_synth_chunk_vertex_produce_il_wav(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench.gemini_tts, "synthesize",
+                        _fake_vertex_synthesize_factory(9))
+    ctx = _ctx(tmp_path, FakeSession([]))
+    pcm = os.path.join(ctx.run_dir, "audio", "0000_vertex.pcm")
+    bench.synth_chunk_vertex(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
+                             pcm)
+    wav = os.path.join(ctx.run_dir, "audio", "0000_vertex.wav")
+    assert os.path.exists(wav)
+    with wave.open(wav, "rb") as wf:
+        assert wf.getnframes() == 9 * 24000
+    ctx.writer.close()
+
+
+# --- M2/M3/M5/M6 e trivia ---------------------------------------------------
+
+def test_tokens_in_stimati_sul_prompt_non_sul_chunk_grezzo(tmp_path):
+    """M2: `tokens_in_est` era calcolato sui caratteri del chunk grezzo, non
+    sul prompt realmente spedito (osservato chars=178, prompt_bytes=263)."""
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]))
+    pcm = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    got = bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%",
+                            "tono calmo", pcm)
+    rec = got["record"]
+    prompt = open(os.path.join(ctx.run_dir, "prompts", "0000.txt"),
+                  encoding="utf-8").read()
+    assert len(prompt) > rec["chars"]
+    atteso = bench.estimate_tokens(rec["chars"], rec["audio_seconds"], "it",
+                                   prompt_chars=len(prompt))["tokens_in"]
+    assert rec["tokens_in_est"] == atteso
+    assert atteso > bench.estimate_tokens(rec["chars"], rec["audio_seconds"],
+                                          "it")["tokens_in"]
+    ctx.writer.close()
+
+
+def _bench_constants_in_subprocess(env_extra):
+    """Rilegge il banco in un processo nuovo con le env date: le costanti
+    sono lette all'import, quindi il monkeypatch in-process non basta."""
+    import json as _json
+    import subprocess
+    code = (
+        "import importlib.util, json, sys;"
+        "spec = importlib.util.spec_from_file_location('b', sys.argv[1]);"
+        "m = importlib.util.module_from_spec(spec);"
+        "spec.loader.exec_module(m);"
+        "print(json.dumps([m.USD_EUR_RATE, m.AUDIO_TOKENS_PER_SECOND]))"
+    )
+    env = dict(os.environ)
+    for chiave in ("ABM_GEMINI_USD_EUR_RATE",
+                   "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND",
+                   "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31"):
+        env.pop(chiave, None)
+    env.update(env_extra)
+    res = subprocess.run([sys.executable, "-c", code, _BENCH_PATH],
+                         capture_output=True, text=True, env=env, timeout=180)
+    assert res.returncode == 0, res.stderr
+    return _json.loads(res.stdout.strip().splitlines()[-1])
+
+
+def test_env_cambio_e_token_al_secondo_sono_letti_dall_ambiente():
+    """M3: USD_EUR_RATE e AUDIO_TOKENS_PER_SECOND erano hardcoded e ignoravano
+    le env che il ramo Vertex onora attraverso gemini_tts: con quelle env
+    impostate i due lati dell'A/B usavano basi diverse nello stesso report."""
+    rate, tps = _bench_constants_in_subprocess({
+        "ABM_GEMINI_USD_EUR_RATE": "0,91",
+        "ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_FLASH31": "31.5",
+    })
+    assert rate == pytest.approx(0.91)
+    assert tps == pytest.approx(31.5)
+
+
+def test_env_token_al_secondo_fallback_globale_e_default_invariati():
+    rate, tps = _bench_constants_in_subprocess(
+        {"ABM_GEMINI_AUDIO_TOKENS_PER_SECOND": "27"})
+    assert rate == pytest.approx(0.86)   # default di prod invariato
+    assert tps == pytest.approx(27.0)
+    rate, tps = _bench_constants_in_subprocess({})
+    assert (rate, tps) == (pytest.approx(0.86), pytest.approx(25.0))
+
+
+def test_metrics_writer_serializza_le_scritture_concorrenti(tmp_path):
+    """M5: `write` non aveva lock mentre matrix/book scrivono da N thread.
+    Una riga corrotta e' peggio di una riga mancante: metrics.jsonl e' la
+    fonte primaria delle analisi (spec 7)."""
+    import time as _time
+    run_dir = str(tmp_path / "run")
+    os.makedirs(run_dir)
+    writer = bench.MetricsWriter(run_dir)
+
+    class _Fh:
+        def __init__(self):
+            self.dentro = 0
+            self.max_dentro = 0
+            self.righe = []
+
+        def write(self, s):
+            self.dentro += 1
+            self.max_dentro = max(self.max_dentro, self.dentro)
+            _time.sleep(0.01)
+            self.righe.append(s)
+            self.dentro -= 1
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    spia = _Fh()
+    writer._fh.close()
+    writer._fh = spia
+    threads = [threading.Thread(target=writer.write,
+                                args=(_rec(chunk_index=i),))
+               for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert spia.max_dentro == 1
+    assert len(spia.righe) == 8
+    writer.close()
+
+
+def test_run_book_passa_max_bytes_come_in_produzione(tmp_path, monkeypatch):
+    """M6: il chunking del banco ignorava il cap byte che prod applica alle
+    voci Gemini: su CJK il banco produrrebbe payload che prod spezzerebbe."""
+    visti = []
+    originale = bench.tts_split.split_text_into_chunks
+
+    def _spia(text, max_chars=None, max_bytes=None):
+        visti.append({"max_chars": max_chars, "max_bytes": max_bytes})
+        return originale(text, max_chars=max_chars, max_bytes=max_bytes)
+
+    monkeypatch.setattr(bench.tts_split, "split_text_into_chunks", _spia)
+    monkeypatch.setattr(bench.audio_utils, "pcm_to_aac_m4b",
+                        lambda *a, **k: False)
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]))
+    book = {"title": "t", "author": "", "language": "it",
+            "chapters": [(1, "Uno", "a" * 146)], "cover_bytes": None}
+    bench.run_book(ctx, book, "Zephyr", "+0%", None, 450, 1,
+                   os.path.join(ctx.run_dir, "audio", "cloudflare.m4b"))
+    ctx.writer.close()
+    assert visti
+    assert visti[0]["max_bytes"] == int(bench.gemini_tts.MAX_BYTES_PER_CALL)
+    assert visti[0]["max_chars"] == 450
+
+
+def test_nota_divergenze_di_chunking_elenca_le_omissioni():
+    nota = bench.chunking_divergence_note()
+    for atteso in ("_strip_parenthetical", "_ensure_heading_pause",
+                   "MAX_BYTES_PER_CALL"):
+        assert atteso in nota
+
+
+def test_run_smoke_onora_runs(tmp_path):
+    """Trivia: `--runs 3` a livello smoke effettuava comunque una sola
+    chiamata, cioe' dichiarava una ripetibilita' mai misurata."""
+    s = FakeSession([_ok_response(seconds=9.0) for _ in range(3)])
+    ctx = _ctx(tmp_path, s)
+    bench.run_smoke(ctx, "it", "Zephyr", "+0%", None, "a" * 146, runs=3)
+    ctx.writer.close()
+    assert len(s.calls) == 3
+    righe = [r for r in open(ctx.writer.path,
+                             encoding="utf-8").read().splitlines() if r]
+    assert len(righe) == 3
+    assert {bench.json.loads(r)["chunk_index"] for r in righe} == {0, 1, 2}
+
+
+# ============================================================================
+# Verifiche empiriche end-to-end: `main()` guidato in SOTTOPROCESSI REALI con
+# una sessione HTTP finta. Servono a provare i difetti sul percorso davvero
+# percorso dall'operatore (CLI -> main -> report.md), non solo sulle funzioni
+# interne: C1, C2, C3, I2 e I3 sono stati osservati proprio li'.
+# ============================================================================
+
+_E2E_DRIVER = r'''
+import base64, importlib.util, io, json, os, sys, wave
+
+bench_path, cfg_path = sys.argv[1], sys.argv[2]
+with open(cfg_path, encoding="utf-8") as fh:
+    cfg = json.load(fh)
+
+spec = importlib.util.spec_from_file_location("cf_bench_e2e", bench_path)
+bench = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bench)
+
+
+def _wav(seconds):
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(b"\x00" * (int(24000 * seconds) * 2))
+    return buf.getvalue()
+
+
+class _Resp(object):
+    def __init__(self, spec_):
+        self.status_code = int(spec_["status"])
+        # retry-after 0: il retry e' reale ma non dorme, cosi' il test non
+        # paga i backoff.
+        self.headers = {"retry-after": "0"}
+        self.text = "corpo di risposta finto"
+        self._spec = spec_
+
+    def json(self):
+        if self.status_code != 200:
+            return {}
+        audio = base64.b64encode(_wav(self._spec.get("seconds", 1.0)))
+        return {"result": {"audio": audio.decode("ascii")}}
+
+
+POSTS = []
+
+
+class _Sess(object):
+    def post(self, url, json=None, headers=None, timeout=None):
+        payload = json or {}
+        POSTS.append({
+            "url": url,
+            "text": (payload.get("input") or {}).get("text"),
+        })
+        risposte = cfg["responses"]
+        i = len(POSTS) - 1
+        return _Resp(risposte[i] if i < len(risposte) else risposte[-1])
+
+    def mount(self, prefix, adapter):
+        pass
+
+    def close(self):
+        pass
+
+
+bench.requests.Session = lambda *a, **k: _Sess()
+
+rc = None
+errore = None
+try:
+    rc = bench.main(cfg["argv"])
+except BaseException as exc:  # il driver deve sempre lasciare un esito
+    errore = "%s: %s" % (type(exc).__name__, exc)
+
+with open(cfg["out"], "w", encoding="utf-8") as fh:
+    json.dump({"rc": rc, "errore": errore, "posts": POSTS}, fh)
+'''
+
+
+def _run_e2e(tmp_path, argv, responses, nome="e2e"):
+    """Esegue `main()` in un processo nuovo con sessione HTTP finta.
+
+    Ritorna (esito, out_dir): `esito` ha rc, errore e l'elenco dei POST
+    realmente partiti, cioe' delle chiamate che Cloudflare avrebbe fatturato.
+    """
+    import json as _json
+    import subprocess
+    lavoro = tmp_path / nome
+    lavoro.mkdir(parents=True, exist_ok=True)
+    driver = lavoro / "driver.py"
+    driver.write_text(_E2E_DRIVER, encoding="utf-8")
+    out_dir = lavoro / "out"
+    esito_path = lavoro / "esito.json"
+    cfg = {"argv": list(argv) + ["--out-dir", str(out_dir)],
+           "responses": responses, "out": str(esito_path)}
+    (lavoro / "cfg.json").write_text(_json.dumps(cfg), encoding="utf-8")
+    env = dict(os.environ)
+    env["CF_ACCOUNT_ID"] = "acc-di-prova"
+    env["CF_API_TOKEN"] = "tok-di-prova-mai-stampato"
+    res = subprocess.run(
+        [sys.executable, str(driver), _BENCH_PATH, str(lavoro / "cfg.json")],
+        capture_output=True, text=True, env=env, timeout=300,
+        cwd=os.path.dirname(_BENCH_PATH))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert esito_path.exists(), res.stdout + res.stderr
+    esito = _json.loads(esito_path.read_text(encoding="utf-8"))
+    esito["stdout"] = res.stdout
+    return esito, out_dir
+
+
+def _run_dir_unico(out_dir):
+    voci = [os.path.join(str(out_dir), n) for n in os.listdir(str(out_dir))]
+    dirs = [v for v in voci if os.path.isdir(v)]
+    assert len(dirs) == 1, dirs
+    return dirs[0]
+
+
+def test_e2e_c1_epub_non_finisce_mai_sull_api_a_pagamento(tmp_path):
+    """C1 end-to-end: `--book libro.epub` produceva 13 POST fatturati con i
+    byte dello ZIP nel prompt. Ora nessuna chiamata parte."""
+    libro = tmp_path / "libro.epub"
+    libro.write_bytes(b"PK\x03\x04\x14\x00mimetypeapplication/epub+zip" +
+                      b"\x00" * 400)
+    esito, out_dir = _run_e2e(
+        tmp_path, ["--level", "book", "--book", str(libro)],
+        [{"status": 200, "seconds": 9.0}], nome="c1_epub")
+    assert esito["posts"] == []
+    assert esito["rc"] != 0
+
+
+def test_e2e_c1_estensione_non_ammessa_non_crea_nemmeno_la_cartella(tmp_path):
+    libro = tmp_path / "libro.pdf"
+    libro.write_bytes(b"%PDF-1.4 non sono testo")
+    esito, out_dir = _run_e2e(
+        tmp_path, ["--level", "book", "--book", str(libro)],
+        [{"status": 200, "seconds": 9.0}], nome="c1_pdf")
+    assert esito["posts"] == []
+    assert esito["rc"] == 1
+    assert not os.path.exists(str(out_dir))
+    assert "Nessuna chiamata effettuata" in esito["stdout"]
+
+
+def test_e2e_c1_txt_valido_arriva_all_api_come_testo(tmp_path):
+    """Controprova di C1: l'input ammesso deve continuare a funzionare, e il
+    prompt deve contenere il testo del libro, non byte binari."""
+    libro = tmp_path / "libro.txt"
+    libro.write_text("Il vento soffiava forte sulla collina. " * 4,
+                     encoding="utf-8")
+    esito, out_dir = _run_e2e(
+        tmp_path, ["--level", "book", "--book", str(libro)],
+        [{"status": 200, "seconds": 9.0}], nome="c1_txt")
+    assert len(esito["posts"]) >= 1
+    assert "Il vento soffiava forte" in esito["posts"][0]["text"]
+
+
+def test_e2e_c2_i_429_assorbiti_compaiono_nel_report(tmp_path):
+    """C2 end-to-end: con responder 429,429,200 il report dichiarava
+    '| Risposte 429 | 0 |' su un run che ne aveva presi due."""
+    esito, out_dir = _run_e2e(
+        tmp_path, ["--level", "smoke", "--langs", "it"],
+        [{"status": 429}, {"status": 429}, {"status": 200, "seconds": 9.0}],
+        nome="c2")
+    assert len(esito["posts"]) == 3
+    report = os.path.join(_run_dir_unico(out_dir), "report.md")
+    testo = open(report, encoding="utf-8").read()
+    assert "Risposte 429 (su tutti i tentativi) | 2" in testo
+    assert "Tentativi HTTP totali | 3" in testo
+    assert "timeout client" in testo
+
+
+def test_e2e_c3_il_prompt_e_identico_a_quello_di_produzione(tmp_path):
+    """C3 end-to-end: il testo realmente spedito viene catturato e confrontato
+    con quello che `generation_engine` comporrebbe in produzione, direttiva
+    d'accento inclusa (che prima mancava)."""
+    esito, out_dir = _run_e2e(
+        tmp_path,
+        ["--level", "smoke", "--langs", "it", "--styles", "voce calda",
+         "--rates", "+10%"],
+        [{"status": 200, "seconds": 9.0}], nome="c3")
+    assert len(esito["posts"]) == 1
+    inviato = esito["posts"][0]["text"]
+    direttiva = bench.gemini_tts.build_accent_directive("it", None)
+    assert direttiva
+    atteso = bench.gemini_tts.build_final_text(
+        bench.fixture_for("it"), style_instruction="voce calda", rate="+10%",
+        accent_directive=direttiva)
+    assert inviato == atteso
+    assert direttiva in inviato
+
+
+def test_e2e_i2_il_cap_ferma_il_run_invece_di_sforarlo(tmp_path):
+    """I2 end-to-end: con audio ~12x piu' lungo del previsto il run proseguiva
+    fino a EUR 0.0387 contro un cap di 0.02 (1,9x). Ora la prima liquidazione
+    oltre il tetto ferma tutto: una sola chiamata fatturata."""
+    esito, out_dir = _run_e2e(
+        tmp_path,
+        ["--level", "matrix", "--langs", "it", "--voices", "Zephyr",
+         "--runs", "6", "--concurrency", "1", "--max-spend-eur", "0.02"],
+        [{"status": 200, "seconds": 150.0}], nome="i2")
+    assert len(esito["posts"]) == 1
+    report = os.path.join(_run_dir_unico(out_dir), "report.md")
+    testo = open(report, encoding="utf-8").read()
+    assert "cap di spesa" in testo
+    # La spesa dichiarata resta onesta: la chiamata gia' fatturata e' contata.
+    assert "PARZIALE" in testo.upper() or "parziale" in testo
+
+
+def test_e2e_i3_i_wav_esistono_e_si_aprono(tmp_path):
+    """I3 end-to-end: `audio/` conteneva solo PCM grezzi, quindi l'asse
+    qualita' (deciso all'ascolto) non aveva materiale."""
+    esito, out_dir = _run_e2e(
+        tmp_path, ["--level", "smoke", "--langs", "it"],
+        [{"status": 200, "seconds": 9.0}], nome="i3")
+    audio_dir = os.path.join(_run_dir_unico(out_dir), "audio")
+    wavs = [n for n in os.listdir(audio_dir) if n.endswith(".wav")]
+    assert wavs == ["0000_cf.wav"]
+    with wave.open(os.path.join(audio_dir, wavs[0]), "rb") as wf:
+        assert wf.getframerate() == 24000
+        assert wf.getnframes() == 9 * 24000
