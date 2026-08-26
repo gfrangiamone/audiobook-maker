@@ -22,6 +22,7 @@ from voice_utils import is_gemini_voice as _is_gemini_voice
 # NB: set_admin_disabled (kill-switch) NON lo usa di proposito: ha un proprio
 # protocollo write+verifica+retry (hardening incidente 2026-06).
 from community_store import atomic_write_json as _atomic_write_json
+from gemini_transport import TransportError
 
 # Audio output constants
 #
@@ -2133,6 +2134,67 @@ def build_final_text(text, style_instruction=None, rate=None,
     return final_text
 
 
+def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
+                           timeout_ms, temperature):
+    """Adapter di trasporto Vertex / API key.
+
+    Estratto dal corpo del ciclo di retry di `synthesize()`: qui c'e' UNA
+    chiamata, senza retry e senza sleep. La politica di retry resta nel
+    chiamante, che e' l'unico a sapere quanti tentativi restano e se puo'
+    dirottare su un altro backend.
+
+    Conforme al contratto di `gemini_transport`: ritorna pcm + token, solleva
+    solo TransportError.
+    """
+    from google.genai import types as genai_types
+
+    config_kwargs = {
+        "response_modalities": ["AUDIO"],
+        "speech_config": genai_types.SpeechConfig(
+            voice_config=genai_types.VoiceConfig(
+                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                    voice_name=voice_name,
+                )
+            )
+        ),
+    }
+    if temperature is not None:
+        config_kwargs["temperature"] = temperature
+
+    client = _get_client(model_key)
+    try:
+        response = client.models.generate_content(
+            model=model_id,
+            contents=final_text,
+            config=genai_types.GenerateContentConfig(
+                **config_kwargs,
+                http_options=genai_types.HttpOptions(timeout=timeout_ms),
+            ),
+        )
+        pcm_data = _extract_audio_pcm(response, model_key)
+    except GeminiEmptyResponse as e:
+        # Il caller storico distingueva retryable da non-retryable: la
+        # distinzione sopravvive nel kind.
+        raise TransportError(
+            str(e),
+            kind="retryable" if e.retryable else "content_rejected",
+        ) from e
+    except Exception as e:
+        if _is_429(e):
+            retry_after = _parse_retry_after(e)
+            kind = "quota_daily" if _is_daily_quota_error(e) else "rate_limited"
+            raise TransportError(str(e), kind=kind,
+                                 retry_after_sec=retry_after) from e
+        raise TransportError(str(e), kind="retryable") from e
+
+    um = getattr(response, "usage_metadata", None)
+    return {
+        "pcm": pcm_data,
+        "input_tokens": (getattr(um, "prompt_token_count", 0) or 0) if um else 0,
+        "output_tokens": (getattr(um, "candidates_token_count", 0) or 0) if um else 0,
+    }
+
+
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
                debug_prompt_path=None, max_attempts=None, accent_directive=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
@@ -2209,14 +2271,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         except Exception as e:
             print(f"[gemini-tts] could not write debug prompt to {debug_prompt_path}: {e}")
 
-    from google.genai import types as genai_types
-
     # Guard pre-call: cap RPD locale + throttle RPM. Il cap RPD può sollevare
     # GeminiQuotaExhausted; il throttle invece blocca (sleep) finché c'è budget.
     _check_rpd_cap(model_key)
     _throttle_rpm(model_key)
 
-    client = _get_client(model_key)
     last_err = None
     pcm_data = None
     usage_input = 0
@@ -2236,75 +2295,51 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
     while attempt < max_attempts:
         attempt += 1
         try:
-            config_kwargs = {
-                "response_modalities": ["AUDIO"],
-                "speech_config": genai_types.SpeechConfig(
-                    voice_config=genai_types.VoiceConfig(
-                        prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                            voice_name=voice_name,
-                        )
-                    )
-                ),
-            }
-            # Temperature: in modalita` Premium (default 0.75) e tunable via env.
-            # Una temperature piu` bassa riduce la "deriva metallica" sui chunk
-            # lunghi e rende la prosodia piu` stabile job-su-job.
-            temp = _temperature()
-            if temp is not None:
-                config_kwargs["temperature"] = temp
-            # http_options per-call: override del timeout del client.
-            # flash31 ha bisogno di ~60s mentre flash25 sta sui 25s. Settare
-            # qui evita 504 DEADLINE_EXCEEDED in chain sui retry per flash31.
-            response = client.models.generate_content(
-                model=model_id,
-                contents=final_text,
-                config=genai_types.GenerateContentConfig(
-                    **config_kwargs,
-                    http_options=genai_types.HttpOptions(
-                        timeout=_http_timeout_ms(model_key)
-                    ),
-                ),
+            out = _vertex_transport_call(
+                final_text=final_text,
+                voice_name=voice_name,
+                model_key=model_key,
+                model_id=model_id,
+                timeout_ms=_http_timeout_ms(model_key),
+                temperature=_temperature(),
             )
-            pcm_data = _extract_audio_pcm(response, model_key)
-            um = getattr(response, "usage_metadata", None)
-            if um:
-                usage_input = getattr(um, "prompt_token_count", 0) or 0
-                usage_output = getattr(um, "candidates_token_count", 0) or 0
-            # Successo: conta nella quota RPD locale
+            pcm_data = out["pcm"]
+            usage_input = out["input_tokens"] or 0
+            usage_output = out["output_tokens"] or 0
             _rpd_increment(model_key)
             break
-        except Exception as e:
-            last_err = e
-            is_429 = _is_429(e)
-            is_daily = is_429 and _is_daily_quota_error(e)
-            retry_after = _parse_retry_after(e) if is_429 else None
+        except TransportError as te:
+            last_err = te.__cause__ or te
 
-            # Response vuota non-retryable (safety/prohibited/recitation):
-            # inutile riprovare lo stesso testo, abortire subito.
-            if isinstance(e, GeminiEmptyResponse) and not e.retryable:
+            # Contenuto rifiutato: riprovare lo stesso testo non aiuta.
+            if te.kind == "content_rejected":
+                cause = te.__cause__
                 print(f"[gemini-tts] Empty response non-retryable: "
-                      f"finish_reason={e.finish_reason} block={e.block_reason}. "
+                      f"finish_reason={getattr(cause, 'finish_reason', None)} "
+                      f"block={getattr(cause, 'block_reason', None)}. "
                       f"Aborting attempts.")
-                raise
+                raise cause if cause is not None else te
 
-            # Daily quota: inutile riprovare se il delay è ore.
-            if is_daily and abort_daily:
+            # Quota giornaliera: sospendere invece di dormire per ore.
+            if te.kind == "quota_daily" and abort_daily:
                 print(f"[gemini-tts] Daily quota exhausted ({model_key}). "
-                      f"retry_after={retry_after}s. Aborting (ABM_GEMINI_ABORT_ON_QUOTA=true).")
+                      f"retry_after={te.retry_after_sec}s. "
+                      f"Aborting (ABM_GEMINI_ABORT_ON_QUOTA=true).")
                 raise GeminiQuotaExhausted(
-                    f"Gemini daily quota exhausted: {e}",
-                    retry_after_sec=retry_after,
+                    f"Gemini daily quota exhausted: {last_err}",
+                    retry_after_sec=te.retry_after_sec,
                     reason="api_daily_quota",
                 )
 
-            # Decidi la wait: rispetta retry_after se presente e ragionevole,
-            # altrimenti fallback a backoff esponenziale (2/4/8/16 s).
+            is_429 = te.kind in ("rate_limited", "quota_daily")
+            retry_after = te.retry_after_sec
             if honor_delay and retry_after is not None:
                 if retry_after > max_wait:
-                    print(f"[gemini-tts] 429 retry_after={retry_after}s > max_wait={max_wait}s. "
-                          f"Suspending instead of sleeping ({model_key}).")
+                    print(f"[gemini-tts] 429 retry_after={retry_after}s > "
+                          f"max_wait={max_wait}s. Suspending instead of "
+                          f"sleeping ({model_key}).")
                     raise GeminiQuotaExhausted(
-                        f"Gemini 429 with long retry: {e}",
+                        f"Gemini 429 with long retry: {last_err}",
                         retry_after_sec=retry_after,
                         reason="retry_too_long",
                     )
@@ -2314,10 +2349,12 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
 
             if attempt < max_attempts:
                 print(f"[gemini-tts] Attempt {attempt}/{max_attempts} failed "
-                      f"({'429' if is_429 else 'other'}). Sleeping {wait:.1f}s. Err: {str(e)[:200]}")
+                      f"({'429' if is_429 else 'other'}). Sleeping {wait:.1f}s. "
+                      f"Err: {str(last_err)[:200]}")
                 time.sleep(wait)
             else:
-                raise RuntimeError(f"Gemini TTS failed after {max_attempts} attempts: {last_err}")
+                raise RuntimeError(
+                    f"Gemini TTS failed after {max_attempts} attempts: {last_err}")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
