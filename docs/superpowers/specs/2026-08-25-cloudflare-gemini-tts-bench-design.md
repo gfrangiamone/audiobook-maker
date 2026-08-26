@@ -51,14 +51,73 @@ Un harness locale, parametrico ed eseguibile a costo controllato, che produca un
 verdetto go/no-go documentato su quattro assi: **costo reale**, **robustezza**,
 **throughput**, **parità di qualità**.
 
-Criteri di go/no-go proposti (da confermare a valle del primo run completo):
+Criteri di go/no-go, con l'esito misurato sui run del 26/08/2026:
 
-| Asse | Soglia di GO |
+| Asse | Soglia di GO | Misurato | Esito |
+|---|---|---|---|
+| Costo | costo osservato entro il +10 % del costo stimato dal modello token; risparmio effettivo ≥ 30 % vs listino Google | scarto aggregato stima/addebito **−0,39 %**; € 17,83/Mchar (€ 18,72 con la commissione crediti del 5 %) | **GO** |
+| Robustezza | zero chunk troncati/vuoti non rilevati; ogni anomalia rilevata deve essere corretta dal retry | ogni anomalia è stata **rilevata** (nessun troncamento silenzioso), ma 8 chunk su 738 sono andati persi come buchi muti prima dei ritentativi; una classe di rifiuto resta non recuperabile | **NO-GO condizionato** |
+| Throughput | nessun 429 a concorrenza pari a quella di prod; p95 di latenza per chunk non oltre 1,5× Vertex | **0 × 429 e 0 × 5xx** su 1049 tentativi fino a concorrenza 8; p95 20.612 ms sotto carico sostenuto | GO sui 429; **p95 da confrontare con Vertex** (confronto non ancora eseguito) |
+| Qualità | parità di giudizio all'ascolto sull'A/B, nessuna deriva di voce fra chunk | giudizio all'ascolto: "qualità ottima"; A/B contro Vertex **non ancora eseguito** | **da completare** |
+
+### 2.1 Misure osservate (26/08/2026)
+
+Base: 4 sweep di saturazione, un libro da 738 chiamate (`L'Avversario`,
+273.397 char) e uno da 297 (`Volo di notte`, 112.734 char), tutti su
+`google/gemini-3.1-flash-tts` con voce Zephyr.
+
+**Costo.** $ 20,75 per 1M caratteri, cioè € 17,83 al cambio 0,86 usato dal
+banco. I crediti prepagati Cloudflare scontano una commissione d'acquisto del
+5 %, quindi il costo da portare a conto economico è **€ 18,72/Mchar**. La
+riconciliazione col saldo reale ($ 10,00 → $ 4,14) dà uno scarto di **−0,39 %**
+contro la stima del banco: il modello di costo è accurato entro l'1 % e
+conservativo per difetto. Il residuo non spiegato ($ 0,023) corrisponde a sonde
+manuali non registrate in `metrics.jsonl`.
+
+**Dottrina di fatturazione: verificata sul campo.** I registri AI Gateway
+mostrano token e costo **assenti** (`- in`, `- out`, `$ -`) su ogni risposta
+4xx, e presenti su ogni 200 — compresi i 200 con `result` privo di `audio`, che
+Cloudflare conta come successi. Regola confermata: **si paga il 200, non la
+sintesi**. Ne segue che ritentare un 4xx è gratuito e ritentare un
+200-senza-audio costa una seconda chiamata piena.
+
+**Latenza.** Piatta e dominata dalla sintesi, non dalla coda: p50 ~7,4 s sui run
+brevi a qualunque concorrenza fra 1 e 8. Sotto carico sostenuto sale a p50
+12,7-15,1 s e p95 17,7-20,6 s. Il throughput scala quasi linearmente (8 chiamate
+in 52 s a concorrenza 1, in 2 s a concorrenza 8). **Nessun punto di saturazione
+raggiunto fino a concorrenza 8**: il tetto va cercato più in alto.
+
+**Modalità di guasto osservate.** Tre classi distinte, da non confondere:
+
+| Guasto | Frequenza | Natura | Ritentabile |
+|---|---|---|---|
+| HTTP 200 con `result` privo di `audio` | 6 / 738, concentrate in una singola finestra | transitoria (stesso payload → 200 con audio) | sì, ma **ogni tentativo è fatturato** |
+| HTTP 400 `code 7003` "Model execution failed" | 1 / 738 | transitoria, malgrado l'etichetta "User Input Error" | sì, **gratis** |
+| HTTP 422 `code 2017` "Content moderation error" | 1 / 297 | **deterministica** | no |
+
+Il 422 è il guasto più insidioso perché l'etichetta è fuorviante. Il trigger
+non è contenuto sensibile: è **testo breve fatto in prevalenza di numerazione**.
+Isolato con sonde mirate:
+
+| Testo | Esito |
 |---|---|
-| Costo | costo osservato entro il +10 % del costo stimato dal modello token; risparmio effettivo ≥ 30 % vs listino Google |
-| Robustezza | zero chunk troncati/vuoti non rilevati; ogni anomalia rilevata deve essere corretta dal retry |
-| Throughput | nessun 429 a concorrenza pari a quella di prod; p95 di latenza per chunk non oltre 1,5× Vertex |
-| Qualità | parità di giudizio all'ascolto sull'A/B, nessuna deriva di voce fra chunk |
+| `XIV. XV. XVI. XVII. …` | 422 |
+| `14. 15. 16.` | 422 |
+| `Capitolo XX.` | **422** |
+| `AB. CD. EF.` | 200 |
+| `Nel capitolo XX si racconta la partenza.` | 200 |
+
+`Capitolo XX.` è un titolo di capitolo legittimo: in produzione il titolo viene
+anteposto al primo chunk, quindi un capitolo corto può finire in un chunk
+degenere e prendere 422 senza possibilità di recupero. **Prerequisito alla
+migrazione**: fondere i chunk privi di contenuto linguistico col testo adiacente,
+o saltarli senza contarli come guasto.
+
+**Perdita di testo.** Prima dei ritentativi, gli 8 chunk falliti del run su
+`L'Avversario` (1,08 % del libro) non hanno prodotto alcun PCM: il montaggio li
+salta e l'M4B non riporta nulla. È la stessa classe di guasto degli incidenti
+edge-tts e assembly PCM già subiti dal progetto. Il banco la rileva; la
+produzione, con questi tassi, la consegnerebbe all'utente.
 
 ## 3. Vincoli accertati dell'API Cloudflare
 
@@ -71,11 +130,22 @@ Verificati su `developers.cloudflare.com/ai/models/google/gemini-3.1-flash-tts`:
 - `text`: massimo 10.000 caratteri (prod usa chunk da 450, ampiamente sotto).
 - `voice`: enum di 30 nomi, coincidente con il catalogo Gemini (Zephyr, Puck,
   Kore, Fenrir, …).
-- Output: `{"audio": "<base64 WAV>", "gatewayMetadata": {...}}`. **Nessun campo
-  di usage/token, nessun `finish_reason`.**
+- Output **documentato**: `{"audio": "<base64 WAV>", "gatewayMetadata": {...}}`.
+  **Reale, verificato al primo run a pagamento**: `audio` è un *data URI*
+  `data:audio/l16;base64,…` il cui payload è **PCM grezzo s16le 24 kHz mono,
+  senza intestazione RIFF** — non un WAV. Endianness confermata per misura
+  (delta medio fra campioni consecutivi: 645,6 in little-endian contro 15.187,0
+  in big-endian). **Nessun campo di usage/token, nessun `finish_reason`**:
+  `gatewayMetadata` porta solo `keySource`. Il costo resta quindi stimato e la
+  riconciliazione a dashboard resta obbligatoria.
 - Zero data retention dichiarata.
-- Fatturazione: piano Workers Paid; i modelli partner sono fatturati a parte
-  rispetto ai Neuron ($0,011/1000, 10.000/giorno gratuiti).
+- Fatturazione **reale, verificata**: il modello partner non è coperto
+  dall'allocazione Workers AI del piano Workers Paid. Senza saldo prepagato
+  risponde `HTTP 402 code 2021 "Insufficient balance; add money to your gateway
+  or use BYOK"`, **anche con Workers Paid attivo**. L'accesso è sbloccato dai
+  **crediti prepagati AI Gateway** (commissione d'acquisto 5 %); BYOK
+  instraderebbe sulla fatturazione Google, annullando il vantaggio di costo.
+  Il piano Workers Paid non è quindi un prerequisito per questo modello.
 
 Conseguenze di design:
 
