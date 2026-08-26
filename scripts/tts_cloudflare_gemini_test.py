@@ -1576,7 +1576,9 @@ def parse_book(path):
                 raise ValueError("File .abm non valido: formato sconosciuto")
             chapters = []
             for cm in manifest.get("chapters", []):
-                fname = cm.get("file") or ""
+                # L'export dell'app scrive `filename` (generation_engine.py:700);
+                # `file` resta accettato per manifest di terze parti.
+                fname = cm.get("filename") or cm.get("file") or ""
                 raw = fname if fname.startswith("chapters/") else f"chapters/{fname}"
                 raw = _abm_safe_name(raw)
                 if raw not in names:

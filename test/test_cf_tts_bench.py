@@ -686,6 +686,41 @@ def test_parse_book_abm(tmp_path):
     assert book["chapters"] == [(1, "Cap 1", "Testo del capitolo.")]
 
 
+def test_parse_book_abm_legge_la_chiave_filename(tmp_path):
+    """Il manifest prodotto dall'app usa `filename`, non `file`.
+
+    Vedi generation_engine.py:700 (`cm.get("filename", "")`) e il ramo di
+    export che scrive `chapters/{ch_filename}`. Leggendo solo `file` il banco
+    scartava ogni capitolo e moriva con "senza capitoli leggibili" su qualunque
+    .abm reale.
+    """
+    import json as _json
+    import zipfile
+    p = tmp_path / "reale.abm"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("manifest.json", _json.dumps({
+            "format": "audiobook-maker-project",
+            "title": "Titolo", "author": "Autore", "language": "it",
+            "chapters": [{"index": 1, "title": "Cap 1",
+                          "filename": "001_Sezione_1.txt"}],
+        }))
+        zf.writestr("chapters/001_Sezione_1.txt", "Testo del capitolo.")
+    book = bench.parse_book(str(p))
+    assert book["chapters"] == [(1, "Cap 1", "Testo del capitolo.")]
+
+
+def test_parse_book_abm_su_file_reale_del_repo():
+    """Guardia contro fixture che assecondano il codice invece del formato."""
+    percorso = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            "test", "books", "L'Avversario_optimized.abm")
+    if not os.path.exists(percorso):
+        pytest.skip("libro di prova assente")
+    book = bench.parse_book(percorso)
+    assert len(book["chapters"]) == 15
+    assert book["language"] == "it"
+    assert all(testo.strip() for _, _, testo in book["chapters"])
+
+
 def test_parse_book_abm_rifiuta_manifest_estraneo(tmp_path):
     import json as _json
     import zipfile
