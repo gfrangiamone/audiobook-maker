@@ -409,6 +409,32 @@ def _retry_after_seconds(resp, attempt):
     return float(2 ** attempt)
 
 
+def _body_snippet(resp, limit=200):
+    """Estratto del corpo di una risposta d'errore, per la diagnosi.
+
+    Due run di smoke sono finiti con "anomalia error" senza dire perche':
+    il corpo diceva in una riga (`code 2021, Insufficient balance`) cio' che
+    lo stato HTTP da solo non dice. Il corpo di una risposta non contiene mai
+    il token, che viaggia solo nell'header della richiesta.
+    """
+    try:
+        testo = (resp.text or "").strip()
+    except Exception:
+        return ""
+    if not testo:
+        return ""
+    testo = " ".join(testo.split())
+    if len(testo) > limit:
+        testo = testo[:limit] + "..."
+    return testo
+
+
+def _with_body(msg, resp):
+    """Appende l'estratto del corpo al messaggio d'errore, se c'e'."""
+    frammento = _body_snippet(resp)
+    return f"{msg} - risposta: {frammento}" if frammento else msg
+
+
 def call_cf(session, account_id, api_token, text, voice, temperature,
             max_attempts=4, timeout=HTTP_TIMEOUT_SEC, sleep=time.sleep,
             on_billed=None):
@@ -456,21 +482,23 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
         last_status = resp.status_code
         if resp.status_code in (401, 403):
             # Il token non entra mai nel messaggio.
-            raise CFAuthError(
+            raise CFAuthError(_with_body(
                 f"Cloudflare ha rifiutato le credenziali (HTTP {resp.status_code}): "
-                f"verifica CF_ACCOUNT_ID e CF_API_TOKEN."
-            )
+                f"verifica CF_ACCOUNT_ID e CF_API_TOKEN.", resp))
         if resp.status_code == 429 or resp.status_code >= 500:
             retry_statuses.append(resp.status_code)
             if attempt >= max_attempts:
                 raise CFCallError(
-                    f"HTTP {resp.status_code} dopo {attempt} tentativi",
+                    _with_body(f"HTTP {resp.status_code} dopo {attempt} "
+                               f"tentativi", resp),
                     status=resp.status_code, attempts=attempt,
                     retry_statuses=retry_statuses)
             sleep(_retry_after_seconds(resp, attempt))
             continue
         if resp.status_code != 200:
-            raise CFCallError(f"HTTP {resp.status_code} non gestibile con retry",
+            raise CFCallError(_with_body(
+                                  f"HTTP {resp.status_code} non gestibile "
+                                  f"con retry", resp),
                               status=resp.status_code, attempts=attempt,
                               retry_statuses=retry_statuses)
         if callable(on_billed):
@@ -757,6 +785,11 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
                 anomaly="error",
                 retry_statuses=list(getattr(exc, "retry_statuses", None) or []),
             )
+            # Il messaggio dell'eccezione e' l'unico posto dove finisce la
+            # causa reale (stato HTTP + estratto del corpo): senza stamparlo,
+            # il run dichiara "anomalia error" e basta, e chi lo legge non sa
+            # se ha sbagliato le credenziali, il piano o il modello.
+            print(f"[errore] {lang}/{voice} chunk {chunk_index}: {exc}")
             ctx.writer.write(record)
             return record, None, None
         anomaly = None

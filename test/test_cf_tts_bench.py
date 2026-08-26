@@ -3150,3 +3150,44 @@ def test_report_dichiara_che_il_cap_e_un_freno_non_un_tetto(tmp_path):
     assert "freno, non un tetto duro" in testo
     assert "--concurrency" in testo
     assert "gia' in volo" in testo
+
+
+class _RespConCorpo:
+    """Risposta HTTP finta con un corpo d'errore leggibile."""
+
+    def __init__(self, status, testo):
+        self.status_code = status
+        self.text = testo
+        self.headers = {}
+
+    def json(self):
+        raise ValueError("non JSON")
+
+
+def test_errore_http_riporta_il_corpo_della_risposta():
+    """Lo stato HTTP da solo non basta a capire perche' il run e' fallito.
+
+    Osservato in campo: due smoke consecutivi con "anomalia error" e HTTP 402;
+    solo il corpo (`code 2021, Insufficient balance`) diceva che il modello
+    e' a saldo prepagato e non e' coperto dal piano Workers Paid.
+    """
+    corpo = ('{"errors":[{"message":"Insufficient balance; add money to your '
+             'gateway or use BYOK","code":2021}],"success":false}')
+
+    class _Sess:
+        def post(self, *a, **k):
+            return _RespConCorpo(402, corpo)
+
+    with pytest.raises(bench.CFCallError) as ei:
+        bench.call_cf(_Sess(), "acct", "tok", "Ciao.", "Zephyr", 1.0,
+                      max_attempts=1, sleep=lambda _s: None)
+    assert "Insufficient balance" in str(ei.value)
+    assert "2021" in str(ei.value)
+
+
+def test_estratto_del_corpo_e_troncato_e_su_una_riga():
+    resp = _RespConCorpo(500, "riga1\n" + "x" * 500)
+    frammento = bench._body_snippet(resp)
+    assert "\n" not in frammento
+    assert len(frammento) <= 203
+    assert frammento.endswith("...")
