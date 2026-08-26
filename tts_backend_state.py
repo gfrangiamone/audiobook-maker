@@ -24,19 +24,44 @@ stampato su stdout COSI' COM'E', troncato a 300 caratteri ma non altrimenti
 filtrato o redatto. Questo modulo non applica alcuna redazione: e' cura
 esclusiva del chiamante non passare qui header, token o altre credenziali.
 
-Forma su disco: `{"_credit": {...ledger...}, "models": {model_key: {...}}}`.
-Il ledger della spesa Cloudflare vive SEMPRE sotto la chiave riservata
-top-level `_credit`, mai dentro lo spazio dei `model_key` (`_CACHE` in
-memoria contiene solo voci di modello: il ledger e' un dict separato,
-`_CREDIT`). Questo rende impossibile, per costruzione, la collisione fra un
-`model_key` chiamato letteralmente `_credit` e il ledger: il primo vivrebbe
-sotto `models["_credit"]`, il secondo resta al top level - percorsi diversi,
-mai fusi. Retrocompatibilita': un file scritto dalle versioni precedenti
-(prima di questo modulo) ha i `model_key` mescolati al top level invece che
-sotto `models`; `_load()` lo riconosce (assenza della chiave `models`) e
-tratta ogni chiave diversa da `_credit` come voce di modello, esattamente
-come faceva il codice precedente. Da quel momento in poi il file viene
-riscritto nella forma nuova.
+Forma su disco: `{"version": 2, "_credit": {...ledger...}, "models":
+{model_key: {...}}}`. Il ledger della spesa Cloudflare vive SEMPRE sotto la
+chiave riservata top-level `_credit`, mai dentro lo spazio dei `model_key`
+(`_CACHE` in memoria contiene solo voci di modello: il ledger e' un dict
+separato, `_CREDIT`). Questo rende impossibile, per costruzione, la
+collisione fra un `model_key` chiamato letteralmente `_credit` e il ledger:
+il primo vivrebbe sotto `models["_credit"]`, il secondo resta al top level -
+percorsi diversi, mai fusi.
+
+Riconoscimento del formato: SOLO dal marcatore esplicito `version`, mai
+dalla forma dei dati. Un file scritto dalle versioni precedenti (prima di
+questo modulo, e prima di questo stesso giro di fix) non contiene mai la
+chiave `version`: nessun codice precedente l'ha mai scritta. Percio':
+
+- `version` ASSENTE dal file -> formato vecchio piatto: ogni chiave
+  top-level diversa da `_credit` e' una voce di modello, `models` e
+  `version` comprese se mai comparissero con quel nome (un `model_key`
+  chiamato letteralmente cosi' e' un dato legittimo del formato vecchio, non
+  un segnale). Migrato in memoria e riscritto nel formato nuovo alla
+  prossima `_save()`.
+- `version` presente e uguale esattamente all'intero 2 -> formato nuovo: le
+  voci di modello vivono SOLO sotto `models`; qualunque altra chiave
+  top-level (incluse `_credit` e `version` stesse) non e' mai una voce di
+  modello.
+- `version` presente ma diverso (tipo sbagliato, o valore intero
+  sconosciuto/futuro) -> dato illeggibile: stessa gravita' di un JSON
+  invalido, fail-safe sull'intero file. Non viene MAI interpretato come
+  formato vecchio: un formato futuro letto come piatto perderebbe di nuovo
+  dei trip in silenzio, esattamente il difetto che questo marcatore esiste
+  per escludere (in precedenza il segnale era la sola presenza/forma della
+  chiave `models`, ingannabile da un `model_key` vecchio chiamato
+  letteralmente `models`: l'intero file, non solo la voce collidente,
+  andava perso in silenzio).
+
+Una precedente versione di questo modulo usava la presenza/forma della
+chiave `models` come euristica di formato: si e' rivelata ambigua (un
+model_key del formato vecchio chiamato `models` viene scambiato per il
+contenitore) e sostituita da questo marcatore esplicito.
 
 File di stato: <data_dir>/_tts_backend_state.json
 """
@@ -65,6 +90,16 @@ _CACHE = {}
 # ledger ne' con il contenitore stesso.
 _CREDIT_KEY = "_credit"
 _MODELS_KEY = "models"
+_VERSION_KEY = "version"
+
+# Numero di formato scritto da questo modulo. L'UNICO segnale usato per
+# distinguere il formato nuovo (voci di modello sotto `_MODELS_KEY`) dal
+# formato vecchio piatto (voci di modello mescolate al top level): mai la
+# forma dei dati, vedi il docstring di modulo. Sentinella distinta da None
+# per poter distinguere "chiave assente" (formato vecchio) da "chiave
+# presente con valore null/di tipo sbagliato" (dato illeggibile).
+_STATE_VERSION = 2
+_VERSION_ABSENT = object()
 
 # Ledger della spesa Cloudflare: dict indipendente da _CACHE, mai annidato al
 # suo interno. Vedi _default_credit_ledger() per la forma.
@@ -136,11 +171,16 @@ def _load():
     PRIMA di interpretare le voci di modello, ed e' l'unica lettura che lo
     tocca: qualunque sia la sua forma (assente, corrotta, non-dict), non
     viene mai scambiato per un modello scattato, e non appare mai in
-    `_CACHE`. Le voci di modello vivono sotto la chiave `_MODELS_KEY` nel
-    formato nuovo; un file scritto da una versione precedente di questo
-    modulo non ha quella chiave e le ha mescolate al top level insieme al
-    ledger - riconosciuto e migrato qui in lettura, riscritto nel formato
-    nuovo alla prossima `_save()`.
+    `_CACHE`.
+
+    Formato riconosciuto SOLO dal marcatore esplicito `_VERSION_KEY`, mai
+    dalla forma dei dati (vedi il docstring di modulo per il perche'):
+    `version` assente -> formato vecchio piatto, ogni chiave diversa da
+    `_credit` e' una voce di modello; `version == _STATE_VERSION` (int,
+    valore esatto) -> formato nuovo, voci di modello SOLO sotto
+    `_MODELS_KEY`; qualunque altro valore di `version` (tipo sbagliato o
+    intero sconosciuto) -> dato illeggibile, stesso trattamento fail-safe di
+    un JSON invalido, MAI riletto come formato vecchio.
     """
     global _FAIL_SAFE, _CREDIT
     _FAIL_SAFE = False
@@ -161,22 +201,55 @@ def _load():
               f"path={_STATE_PATH}", flush=True)
         return {}
 
-    _CREDIT = _parse_credit_ledger(raw.get(_CREDIT_KEY))
+    version = raw.get(_VERSION_KEY, _VERSION_ABSENT)
 
-    models_raw = raw.get(_MODELS_KEY)
-    if isinstance(models_raw, dict):
+    if version is _VERSION_ABSENT:
+        # Formato vecchio piatto: nessuna chiave riservata per le voci di
+        # modello, che vivono mescolate al top level. Solo `_credit' e'
+        # riservata; QUALUNQUE altra chiave, "models" o "version" comprese
+        # se un domani comparissero con quel nome in un file di questo
+        # formato, e' una voce di modello vera - mai un segnale di formato
+        # (era esattamente questo, basato sulla forma di `models`, il difetto
+        # del giro precedente: un `model_key` reale chiamato `models`
+        # veniva scambiato per il contenitore nuovo, perdendo in silenzio
+        # ogni altro modello dello stesso file).
+        _CREDIT = _parse_credit_ledger(raw.get(_CREDIT_KEY))
+        model_items = [(k, v) for k, v in raw.items() if k != _CREDIT_KEY]
+    elif (isinstance(version, int) and not isinstance(version, bool)
+          and version == _STATE_VERSION):
+        # Formato nuovo, marcatore riconosciuto: le voci di modello vivono
+        # SOLO sotto `_MODELS_KEY`. Qualunque altra chiave top-level
+        # (`_credit` e `version` comprese) non e' mai una voce di modello.
+        models_raw = raw.get(_MODELS_KEY)
+        if not isinstance(models_raw, dict):
+            _FAIL_SAFE = True
+            print(f"[tts-backend-state] BOOT: stato PRESENTE, formato "
+                  f"nuovo ({_VERSION_KEY}={_STATE_VERSION}) ma "
+                  f"{_MODELS_KEY!r} non e' un dict "
+                  f"({type(models_raw).__name__}) - fail-safe attivo: "
+                  f"TUTTI i modelli sono considerati scattati (Cloudflare "
+                  f"disabilitato) finche' un reset esplicito dall'admin "
+                  f"non li riarma singolarmente. path={_STATE_PATH}",
+                  flush=True)
+            return {}
+        _CREDIT = _parse_credit_ledger(raw.get(_CREDIT_KEY))
         model_items = list(models_raw.items())
     else:
-        # Formato precedente (o "models" corrotto): ogni chiave diversa dalle
-        # due riservate e' una voce di modello, come faceva il codice prima
-        # di questo giro. Un `model_key` letterale uguale a una chiave
-        # riservata in un file di questo formato e' un'ambiguita' che il
-        # formato piatto porta gia' con se' (nessun percorso di produzione la
-        # crea): risolta a favore del ledger/contenitore, mai un crash, mai
-        # una fusione dei due schemi - e sparisce non appena il file viene
-        # riscritto nel formato nuovo.
-        model_items = [(k, v) for k, v in raw.items()
-                       if k not in (_CREDIT_KEY, _MODELS_KEY)]
+        # Marcatore `version` presente ma non riconosciuto (tipo sbagliato,
+        # o intero futuro/sconosciuto): NON viene mai interpretato come
+        # formato vecchio, altrimenti un formato futuro letto come piatto
+        # perderebbe di nuovo dei trip in silenzio. Stessa gravita' di un
+        # JSON invalido: fail-safe sull'intero file, ledger compreso (resta
+        # al default gia' assegnato sopra - non ci fidiamo nemmeno della sua
+        # posizione in un formato che non riconosciamo).
+        _FAIL_SAFE = True
+        print(f"[tts-backend-state] BOOT: stato PRESENTE con marcatore "
+              f"{_VERSION_KEY!r} non riconosciuto ({version!r}) - fail-safe "
+              f"attivo: TUTTI i modelli sono considerati scattati "
+              f"(Cloudflare disabilitato) finche' un reset esplicito "
+              f"dall'admin non li riarma singolarmente. "
+              f"path={_STATE_PATH}", flush=True)
+        return {}
 
     data = {}
     tripped_models = []
@@ -210,8 +283,8 @@ def _load():
 
 def _save():
     """Persiste _CACHE (voci di modello) e _CREDIT (ledger) su disco nella
-    forma nuova `{"_credit": {...}, "models": {...}}`, tmp + fsync +
-    os.replace, riusando il primitivo condiviso
+    forma nuova `{"version": 2, "_credit": {...}, "models": {...}}`, tmp +
+    fsync + os.replace, riusando il primitivo condiviso
     `community_store.atomic_write_json` (stesso usato da
     token/pagamenti/voucher/usage) invece di una seconda implementazione
     inline. Verifica rileggendo, con retry+backoff (3 tentativi) come
@@ -236,7 +309,11 @@ def _save():
     """
     if not _STATE_PATH:
         return False
-    snapshot = {_CREDIT_KEY: dict(_CREDIT), _MODELS_KEY: dict(_CACHE)}
+    snapshot = {
+        _VERSION_KEY: _STATE_VERSION,
+        _CREDIT_KEY: dict(_CREDIT),
+        _MODELS_KEY: dict(_CACHE),
+    }
     last_err = None
     for attempt in range(3):
         try:

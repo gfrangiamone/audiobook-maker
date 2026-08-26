@@ -306,3 +306,189 @@ def test_model_key_literally_credit_survives_a_reload(tmp_path):
     assert st.reset("_credit") is True
     assert st.is_tripped("_credit") is False
     assert st.credit_left_eur() == pytest.approx(40.0)
+
+
+# --- Fix round 3: marcatore di versione esplicito, non piu' euristica -------
+# Difetto trovato in re-review: un file vecchio con un modello reale chiamato
+# letteralmente "models" veniva scambiato per il contenitore del formato
+# nuovo, perdendo in silenzio ogni altro modello dello stesso file. Il
+# formato si riconosce ora SOLO dal marcatore "version", mai dalla forma dei
+# dati.
+
+def _model_entry(reason="cf_credit_exhausted", failures=0, notified=False):
+    return {
+        "active": "vertex", "tripped_at": "2026-01-01T00:00:00Z",
+        "trip_reason": reason, "trip_detail": "d", "trip_job_id": "j1",
+        "consecutive_failures": failures, "notified": notified,
+    }
+
+
+def test_old_format_model_literally_named_models_survives_migration(tmp_path):
+    # Il caso che ha originato questo giro: file VECCHIO (nessuna chiave
+    # "version") con due modelli reali, uno dei quali si chiama letteralmente
+    # "models". Prima del marcatore esplicito, la sua voce (un dict, come
+    # ogni voce di modello valida) veniva scambiata per il contenitore nuovo:
+    # "flash31" spariva in silenzio e "models" stesso veniva distrutto in
+    # sette voci fantasma. Con il marcatore, l'assenza di "version" basta da
+    # sola a riconoscere il formato vecchio: entrambi i modelli sopravvivono.
+    _write_raw(tmp_path, {
+        "flash31": _model_entry(failures=3, notified=True),
+        "models": _model_entry(reason="edge_tts_down"),
+        "_credit": {"spent_eur": 5.0, "alerted": False},
+    })
+    st.init(str(tmp_path))
+
+    assert st.is_tripped("flash31") is True
+    assert st.state("flash31")["consecutive_failures"] == 3
+    assert st.state("flash31")["notified"] is True
+
+    assert st.is_tripped("models") is True
+    assert st.state("models")["trip_reason"] == "edge_tts_down"
+
+    assert st.credit_left_eur() == pytest.approx(45.0)
+
+    # La migrazione diventa permanente alla prossima riscrittura (non alla
+    # sola lettura): un trip su un terzo modello forza _save() a riscrivere
+    # il file nel formato nuovo, e i due modelli originali devono restare
+    # intatti sia in memoria sia sul file appena riscritto.
+    assert st.trip("flash25", reason="r3", detail="d3", job_id="j3") is True
+    on_disk = _read_raw(tmp_path)
+    assert on_disk["version"] == 2
+    assert set(on_disk["models"].keys()) == {"flash31", "models", "flash25"}
+    assert "_credit" not in on_disk["models"]
+
+    st.init(str(tmp_path))  # riavvio simulato, ora leggendo il formato nuovo
+    assert st.is_tripped("flash31") is True
+    assert st.is_tripped("models") is True
+    assert st.is_tripped("flash25") is True
+
+
+def test_old_format_model_literally_named_version(tmp_path, capsys):
+    # File vecchio con un modello chiamato letteralmente "version": il suo
+    # valore (un dict) non e' mai l'intero esatto _STATE_VERSION, quindi la
+    # chiave "version" presente con un valore non riconosciuto attiva il
+    # fail-safe sull'intero file (mai riletto come formato vecchio, per non
+    # rischiare di reinterpretare in modo sbagliato un formato che non si
+    # capisce). E' l'esito sicuro: nessun crash, nessun riarmo silenzioso -
+    # "flash31" resta considerato scattato anche se sul disco non lo era.
+    _write_raw(tmp_path, {
+        "flash31": _model_entry(),
+        "version": _model_entry(reason="whatever"),
+    })
+    capsys.readouterr()
+    st.init(str(tmp_path))
+    out = capsys.readouterr().out
+    assert "non riconosciuto" in out
+
+    assert st.is_tripped("flash31") is True
+    assert st.is_tripped("version") is True
+    assert st.is_tripped("anything_else_never_seen_before") is True
+
+
+@pytest.mark.parametrize("bad_version", ["2", None, [2], 2.0, 0, 3])
+def test_new_format_with_wrong_type_version_is_fail_safe_not_old_format(
+        tmp_path, bad_version, capsys):
+    # Un marcatore "version" di tipo sbagliato, o un numero di versione
+    # sconosciuto/futuro, non deve MAI degradare a lettura "formato vecchio
+    # piatto": interpretare un formato che non si conosce come piatto
+    # perderebbe di nuovo dei trip in silenzio. Deve invece attivare il
+    # fail-safe sull'intero file, esattamente come un JSON invalido.
+    _write_raw(tmp_path, {
+        "version": bad_version,
+        "_credit": {"spent_eur": 1.0, "alerted": False},
+        "models": {"flash31": _model_entry()},
+    })
+    capsys.readouterr()
+    st.init(str(tmp_path))
+    out = capsys.readouterr().out
+    assert "non riconosciuto" in out
+
+    # Fail-safe globale: qualunque modello, anche uno mai visto, e'
+    # considerato scattato finche' un reset esplicito non lo smentisce.
+    assert st.is_tripped("flash31") is True
+    assert st.is_tripped("never_seen_before") is True
+    # Neanche il ledger viene letto da un file di cui non ci fidiamo.
+    assert st.credit_left_eur() == pytest.approx(50.0)
+
+
+def test_new_format_with_non_dict_models_is_fail_safe(tmp_path, capsys):
+    _write_raw(tmp_path, {
+        "version": 2,
+        "_credit": {"spent_eur": 3.0, "alerted": False},
+        "models": "not-a-dict",
+    })
+    capsys.readouterr()
+    st.init(str(tmp_path))
+    out = capsys.readouterr().out
+    assert "non e' un dict" in out
+
+    assert st.is_tripped("flash31") is True
+    assert st.credit_left_eur() == pytest.approx(50.0)
+
+
+def test_new_format_ignores_stray_top_level_keys(tmp_path):
+    # Formato nuovo valido: solo "models" contiene voci di modello. Una
+    # chiave top-level estranea (non "_credit", non "models", non
+    # "version") non e' mai un modello e non deve dare fastidio.
+    _write_raw(tmp_path, {
+        "version": 2,
+        "_credit": {"spent_eur": 0.0, "alerted": False},
+        "models": {"flash31": _model_entry()},
+        "some_future_field": {"whatever": True},
+    })
+    st.init(str(tmp_path))
+    assert st.is_tripped("flash31") is True
+    assert st.is_tripped("some_future_field") is False
+    assert st.state("some_future_field") == {}
+
+
+def test_migration_is_idempotent_across_multiple_reload_cycles(tmp_path):
+    # Il file resta nel formato vecchio finche' nessuna mutazione lo
+    # riscrive (la migrazione avviene "alla prossima _save()", non alla sola
+    # lettura): ogni ciclo qui sotto forza una riscrittura con una spesa
+    # nulla (add_spend(..., 0.0) chiama sempre _save() senza alterare il
+    # ledger) per verificare che formato nuovo -> nuovo resti stabile quanto
+    # vecchio -> nuovo, su piu' cicli consecutivi.
+    _write_raw(tmp_path, {
+        "flash31": _model_entry(failures=2),
+        "models": _model_entry(reason="edge_tts_down", failures=1),
+        "_credit": {"spent_eur": 7.0, "alerted": True},
+    })
+    for _ in range(3):
+        st.init(str(tmp_path))
+        assert st.is_tripped("flash31") is True
+        assert st.state("flash31")["consecutive_failures"] == 2
+        assert st.is_tripped("models") is True
+        assert st.state("models")["consecutive_failures"] == 1
+        assert st.state("models")["trip_reason"] == "edge_tts_down"
+        assert st.credit_left_eur() == pytest.approx(43.0)
+        assert st.credit_alert_pending() is False  # gia' segnalato ("alerted": True)
+        st.add_spend("flash31", 0.0)  # forza la riscrittura senza alterare il ledger
+
+    on_disk = _read_raw(tmp_path)
+    assert on_disk["version"] == 2
+    assert set(on_disk["models"].keys()) == {"flash31", "models"}
+    assert on_disk["_credit"]["spent_eur"] == pytest.approx(7.0)
+
+
+def test_credit_never_enumerable_as_a_model_in_either_format(tmp_path):
+    # Invariante ribadita dalla re-review: "_credit" resta al livello
+    # superiore in entrambe le forme e non compare mai fra i modelli
+    # resettabili (in _CACHE), ne' nel formato vecchio ne' in quello nuovo.
+    _write_raw(tmp_path, {
+        "flash31": _model_entry(),
+        "_credit": {"spent_eur": 9.0, "alerted": False},
+    })
+    st.init(str(tmp_path))
+    assert st.state("_credit") == {}
+    assert "_credit" not in st._CACHE
+
+    # Forza la riscrittura nel formato nuovo: il vincolo resta anche li'.
+    st.add_spend("flash31", 0.0)
+    on_disk = _read_raw(tmp_path)
+    assert on_disk["version"] == 2
+    assert "_credit" not in on_disk["models"]
+
+    st.init(str(tmp_path))
+    assert "_credit" not in st._CACHE
+    assert st.is_tripped("flash31") is True
