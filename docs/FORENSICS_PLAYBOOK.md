@@ -35,6 +35,24 @@ Playbook to diagnose a job incident (lost file, "link scaduto in anticipo", miss
 5. Process restarts: PID changes in syslog + `ps -o pid,lstart,etime -p <pid>` (a restart wipes in-memory `jobs{}` → `/dl` returns 410).
 6. Cold check: boto3 `list_objects_v2(Prefix="<jid>/")` using env from `/proc/<pid>/environ` → confirms if the file survives in R2.
 
+## `AccessDenied` on a presigned R2 URL (incident 2026-08-25, resolved)
+
+**Root cause, already paid for once: Client IP Address Filtering on the R2 API token**, narrowed to the server's IP (set during the 24/08 migration/hardening). A presigned URL carries the token's credentials but is executed **from the end user's IP**, so the filter kills it; every header-SigV4 call from the server keeps working. Result: `_try_cold_serve` → `object_exists()` (head_object, from the server) returns True, the app emits the 302, and the user hits a guaranteed 403. Fixed from the Cloudflare dashboard by removing the filter — no deploy.
+
+Decisive test, first thing: `curl` the presigned URL **from the server itself** — follow the real path with `curl -sS -o /dev/null -w '%{redirect_url}' https://audiobook-maker.com/dl/<token>/m4b`, then `curl -r 0-63` the redirect. **206 from the server + 403 for the user ⇒ IP filter on the token.** Stop there.
+
+Four facts, so nobody re-derives them:
+- A **302 is itself proof** that object and credentials were valid at that instant: `object_exists` re-raises on 403 (`storage_backend.py:74-83`), so without its True the redirect is never emitted. "Retention deleted it" and "GetObject permission lost" are both excluded by the code.
+- R2 returns a **byte-identical 110-byte `AccessDenied`** for a tampered signature, a nonexistent key and a denied IP. The body carries zero diagnostic signal, and a signature error never surfaces as AWS's `SignatureDoesNotMatch`.
+- The **public-bucket setting does not apply to the S3 API endpoint** (`<acct>.r2.cloudflarestorage.com`) — only to `pub-*.r2.dev` or a custom domain. Making the bucket public does not work around a signing problem without changing the URL-building code.
+- botocore is self-consistent on keys containing commas/spaces and on `ResponseContentDisposition` (canonical URI = the URL path). Don't burn time on encoding theories.
+
+Rule: never put an IP restriction on the R2 token used for presigning — scope it by bucket and permissions instead.
+
+Gaps still open after the incident: (1) **no alert** — every cold download was failing for every user with no detection; it surfaced only through two customer emails; (2) the 302 is fire-and-forget, so an unusable presign shows the user Cloudflare's raw XML instead of our error. Proposed: a cached presign health-check with fallback to direct serving (degrade into slowness, not into 403).
+
+Env note when checking cold objects with boto3: read the env from `/proc/<pid>/environ`; the vars are `ABM_S3_ACCESS_KEY` / `ABM_S3_SECRET_KEY` (not the AWS-style `*_ACCESS_KEY_ID` / `*_SECRET_ACCESS_KEY`).
+
 ## Retention model (don't re-derive)
 
 User-facing availability = base, **independent of cold storage**: EMAIL `ABM_JOB_RETENTION_SEC` (prod 86400=24h), Gemini `ABM_GEMINI_JOB_RETENTION_SEC` (172800=48h). Cold S3 only decides **where** the file is served (local during the hot window `ABM_HOT_WINDOW_SEC`/`ABM_HOT_WINDOW_GEMINI_SEC`, presigned URL after) — it does NOT extend the window. (Historical note: a blanket `COLD_RETENTION_MULTIPLIER=2` was removed 2026-06; pre-fix, S3-on jobs lived 2× longer.) The **only** extension is **×2 for PREMIUM/Gemini never-downloaded** (`GEMINI_NO_DOWNLOAD_RETENTION_MULTIPLIER`) ⇒ such a job lives **96h** (48h×2); standard and already-downloaded PREMIUM are never extended. Orphan-dir cleanup fires at **2h** (`CLEANUP_ORPHAN_DIR_AGE_SEC`). Orphan/token-orphan/orphan-output branches **respect** the `.email_sent` + `.forensic_retain.json` markers; **`_cleanup_job` (status error/cancel/done-retention) does NOT check the email marker** and calls `_delete_cold_for_job` (purges both tiers).
