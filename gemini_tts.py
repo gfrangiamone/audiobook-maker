@@ -146,6 +146,11 @@ GEMINI_MODELS = {
     "flash25": {
         "id": "gemini-2.5-flash-preview-tts",
         "id_vertex": "gemini-2.5-flash-tts",
+        # Nessuna verifica che Cloudflare ospiti questo modello: finche' non
+        # c'e', flash25 resta su Vertex anche con backend=cloudflare.
+        # Cloudflare non ospita alcuna variante TTS di Gemini 2.5
+        # (verificato 26/08/2026): questo modello vive su Vertex.
+        "id_cloudflare": None,
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH25,
         "label": "Gemini 2.5 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK", 0.50),
@@ -155,6 +160,9 @@ GEMINI_MODELS = {
     "flash31": {
         "id": "gemini-3.1-flash-tts-preview",
         "id_vertex": "gemini-3.1-flash-tts-preview",
+        # Verificato il 26/08/2026: 30/30 voci sintetizzate, enum voci
+        # coincidente con GEMINI_VOICE_NAMES (spec §10.1).
+        "id_cloudflare": "google/gemini-3.1-flash-tts",
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
@@ -163,57 +171,99 @@ GEMINI_MODELS = {
     },
 }
 
-# === Backend resolver (Vertex vs API key) ====================================
-# Cache module-level: il backend viene risolto al primo uso e congelato per
-# evitare flip-flop a runtime se un task cambia env tra una chiamata e l'altra.
-# Reset esplicito (per test): `gemini_tts._BACKEND = None`.
-_BACKEND = None  # None=unresolved, "vertex", "apikey", o False=DISABLED
+# === Backend resolver (Vertex vs API key vs Cloudflare) ======================
+# Cache per modello: il backend viene risolto al primo uso di quel modello e
+# congelato, per evitare flip-flop se un task cambia env fra due chiamate.
+# Muta solo per via esplicita, tramite `_set_backend` (failover del breaker).
+# Reset esplicito (per test): `gemini_tts._BACKEND = {}`.
+# Valori: "vertex" | "apikey" | "cloudflare" | False (DISABLED).
+_BACKEND = {}
 _BACKEND_LOCK = threading.Lock()
 
+_VALID_BACKENDS = ("vertex", "apikey", "cloudflare")
 
-def _resolve_backend():
-    """Risolve quale backend Gemini usare in base alle env var.
+
+def _set_backend(model_key, backend):
+    """Forza il backend attivo di un modello. Usato dal failover.
+
+    Non tocca l'ambiente: e' una decisione di runtime, e sopravvive solo per la
+    vita del processo. La persistenza dello stato di trip e' responsabilita' di
+    `tts_backend_state`.
+    """
+    if backend not in _VALID_BACKENDS and backend is not False:
+        raise ValueError(f"backend sconosciuto: {backend!r}")
+    with _BACKEND_LOCK:
+        _BACKEND[model_key or "_default"] = backend
+    print(f"[gemini-tts] Backend di {model_key} impostato su {backend}")
+
+
+def _resolve_backend(model_key=None):
+    """Risolve quale backend Gemini usare per un modello.
 
     Returns:
-        "vertex" | "apikey" | None (None = TTS disabilitato).
+        "vertex" | "apikey" | "cloudflare" | None (None = TTS disabilitato).
 
     Logica:
-    - ABM_GEMINI_BACKEND=vertex (esplicito): richiede ABM_GCP_PROJECT_ID +
+    - ABM_GEMINI_BACKEND=vertex: richiede ABM_GCP_PROJECT_ID +
       ABM_GOOGLE_CREDENTIALS_FILE leggibile. Se mancano -> DISABLED.
-    - ABM_GEMINI_BACKEND=apikey (esplicito): richiede ABM_GEMINI_API_KEY.
-    - ABM_GEMINI_BACKEND unset o "auto": Vertex se config completa, altrimenti
-      API key se presente, altrimenti DISABLED.
+    - ABM_GEMINI_BACKEND=apikey: richiede ABM_GEMINI_API_KEY.
+    - ABM_GEMINI_BACKEND=cloudflare: richiede ABM_CF_ACCOUNT_ID +
+      ABM_CF_API_TOKEN, E che il modello abbia un `id_cloudflare`. Un modello
+      non ospitato su Cloudflare ricade su Vertex, non va in errore.
+    - ABM_GEMINI_BACKEND unset o "auto": Vertex se la config e' completa,
+      altrimenti API key se presente, altrimenti DISABLED. **auto non seleziona
+      mai Cloudflare**: quel backend e' solo opt-in esplicito.
     """
-    global _BACKEND
-    if _BACKEND is not None:
-        return _BACKEND if _BACKEND else None
+    key = model_key or "_default"
+    cached = _BACKEND.get(key)
+    if cached is not None:
+        return cached if cached else None
     with _BACKEND_LOCK:
-        if _BACKEND is not None:
-            return _BACKEND if _BACKEND else None
+        cached = _BACKEND.get(key)
+        if cached is not None:
+            return cached if cached else None
 
         choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
         project = os.environ.get("ABM_GCP_PROJECT_ID", "").strip()
         creds = os.environ.get("ABM_GOOGLE_CREDENTIALS_FILE", "").strip()
         api_key = os.environ.get("ABM_GEMINI_API_KEY", "").strip()
+        cf_account = os.environ.get("ABM_CF_ACCOUNT_ID", "").strip()
+        cf_token = os.environ.get("ABM_CF_API_TOKEN", "").strip()
 
         vertex_ready = bool(project) and bool(creds) and os.path.isfile(creds)
         apikey_ready = bool(api_key)
+        model_on_cf = bool((GEMINI_MODELS.get(key) or {}).get("id_cloudflare"))
+        cf_ready = bool(cf_account) and bool(cf_token) and model_on_cf
 
         if choice == "vertex":
-            _BACKEND = "vertex" if vertex_ready else False
+            resolved = "vertex" if vertex_ready else False
         elif choice == "apikey":
-            _BACKEND = "apikey" if apikey_ready else False
-        else:  # auto / unknown
-            if vertex_ready:
-                _BACKEND = "vertex"
-            elif apikey_ready:
-                _BACKEND = "apikey"
+            resolved = "apikey" if apikey_ready else False
+        elif choice == "cloudflare":
+            if cf_ready:
+                resolved = "cloudflare"
+            elif model_on_cf:
+                # Credenziali Cloudflare assenti: e' un errore di
+                # configurazione, non un motivo per usare Vertex di nascosto.
+                resolved = False
+            elif vertex_ready:
+                # Il modello non e' ospitato su Cloudflare: Vertex e' la scelta
+                # corretta, non un ripiego.
+                resolved = "vertex"
             else:
-                _BACKEND = False
+                resolved = False
+        else:  # auto / sconosciuto
+            if vertex_ready:
+                resolved = "vertex"
+            elif apikey_ready:
+                resolved = "apikey"
+            else:
+                resolved = False
 
-        if _BACKEND:
-            print(f"[gemini-tts] Backend resolved: {_BACKEND}")
-        return _BACKEND if _BACKEND else None
+        _BACKEND[key] = resolved
+        if resolved:
+            print(f"[gemini-tts] Backend resolved ({key}): {resolved}")
+        return resolved if resolved else None
 
 
 def _vertex_project():
