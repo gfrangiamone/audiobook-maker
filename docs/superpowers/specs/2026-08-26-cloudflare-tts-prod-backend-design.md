@@ -482,6 +482,30 @@ default senza segnalare nulla. Due controlli lo escludono:
 l'ipotesi di una risoluzione backend *per voce*: la granularità per modello di
 §4.3 è sufficiente.
 
+### 10.3 Copertura dei modelli su Cloudflare (26/08/2026)
+
+Domanda: Cloudflare ospita anche **Gemini 2.5 Flash TTS**, il modello economico del listino?
+
+**No.** Metodo: `POST /ai/run` con voce deliberatamente invalida — se il modello esiste la risposta e' `400 / "Invalid value at voice"`, se non esiste e' `404 / "Model not found"`. In nessuno dei due casi viene generato audio, quindi la ricognizione e' a costo zero.
+
+| Modello interrogato | Esito |
+|---|---|
+| `google/gemini-3.1-flash-tts` | `400` con l'enum completo delle voci — **esiste** (controllo positivo) |
+| `google/gemini-2.5-flash-tts` | `404 Model not found` |
+| `google/gemini-2.5-flash-preview-tts` | `404 Model not found` |
+| `google/gemini-2.5-flash-tts-preview` | `404 Model not found` |
+| `google/gemini-2.5-pro-tts` | `404 Model not found` |
+| `google/gemini-2.5-flash` | `400 Required value missing: contents` — esiste, ma e' il modello **di testo**, non TTS |
+
+Il catalogo nativo (`/ai/models/search`, 64 modelli `@cf/*`) non elenca i modelli partner e non e' quindi autoritativo per `google/*`: solo il probe su `/ai/run` lo e'.
+
+**Conseguenze vincolanti:**
+
+1. **`flash25` resta su Vertex in modo permanente**, non provvisorio. `id_cloudflare = None` e' una decisione documentata, non un segnaposto in attesa di verifica.
+2. La risoluzione del backend **deve** essere per modello: con `ABM_GEMINI_BACKEND=cloudflare` attivo, `flash31` va su Cloudflare e `flash25` continua ad andare su Vertex nello stesso processo. Una cache globale del backend renderebbe impossibile questa asimmetria — ed e' la ragione per cui §4.3 esiste.
+3. Il modello economico **non** e' toccato dalla tariffa mista: `flash25` conserva le tariffe Google, il suo margine e il suo prezzo. Accendere Cloudflare non sposta flash25 e non ne cambia il listino.
+4. Un id di modello inesistente risponde `404` con **codice 7003**, lo stesso codice dell'overload transitorio. La tabella di §4.2 distingue i due casi sull'HTTP status: `404` -> `fatal`, `400 + 7003` -> `retryable` o `fatal` a seconda del messaggio. Senza quel ramo un id sbagliato verrebbe ritentato su ogni chunk di ogni job.
+
 ## 11. Fasi di lavoro
 
 | Fase | Contenuto | Esito |

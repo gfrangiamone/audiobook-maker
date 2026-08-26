@@ -1166,7 +1166,7 @@ Crea `docs/RUNBOOK_CLOUDFLARE_TTS.md` con queste sezioni:
 5. **Cosa osservare nelle prime 24 ore** — email di switch; latenza percepita sui job lunghi (G4, se non chiuso); il credito residuo nel pannello; eventuali errori 2017 nei log.
 6. **Rollback** — riportare `ABM_GEMINI_BACKEND=vertex` nell'unit, `daemon-reload`, `restart`. I job in corso al momento del restart seguono la sorte consueta di un restart: verifica il loro esito nell'activity log. Il rollback **non** richiede di toccare lo stato del breaker.
 7. **Failover: cosa fare quando arriva l'email** — diagnosi (di norma credito esaurito), ricarica, aggiornamento di `ABM_CF_CREDIT_BALANCE_EUR`, rientro dal pannello con la casella «Ho ricaricato il credito» spuntata. Ribadisci che il rientro non va fatto prima di aver risolto la causa.
-8. **Estensione a flash25** — resta su Vertex finché non è verificato che Cloudflare lo ospiti. La verifica è la stessa fatta per flash31 (§10.1 della spec); a esito positivo si valorizzano `id_cloudflare` e le due tariffe `cf_*` in `GEMINI_MODELS`.
+8. **flash25 resta su Vertex, in modo permanente.** Verificato il 26/08/2026: Cloudflare non ospita alcuna variante TTS di Gemini 2.5 — ogni candidato risponde `404 / "Model not found"`. Il modello economico del listino continua quindi a passare da Vertex, con le sue tariffe Google e il suo margine, e non è toccato né dal failover né dalla tariffa mista. Il runbook deve dirlo esplicitamente: accendere Cloudflare **non** sposta flash25 e non ne cambia il prezzo.
 
 - [ ] **Step 3: Commit**
 

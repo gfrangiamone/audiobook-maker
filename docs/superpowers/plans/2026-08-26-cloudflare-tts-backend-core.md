@@ -641,10 +641,11 @@ git commit -m "refactor(tts): estrae la chiamata Vertex dietro il contratto di t
 | 400 codice `7003` altrimenti | `retryable` | no |
 | 422 codice `2017` | `content_rejected` | no |
 | 402 codice `2021` | `backend_down` | no |
+| 404 (modello inesistente) | `fatal` | no |
 | 429 | `rate_limited` | no |
 | 5xx / timeout / errore di rete | `retryable` | no |
 
-Il criterio testuale `Invalid value at ` distingue il 7003 deterministico (parametro rifiutato: voce inesistente, campo sbagliato) da quello transitorio (*overloaded*). Se Cloudflare cambiasse il formato del messaggio, il degrado è qualche retry sprecato su un errore deterministico — non un comportamento scorretto.
+Il criterio testuale `Invalid value at ` distingue il 7003 deterministico (parametro rifiutato: voce inesistente, campo sbagliato) da quello transitorio (*overloaded*). Il 404 merita un ramo proprio perche' Cloudflare lo restituisce con lo **stesso** codice 7003 dell'overload (verificato il 26/08/2026: un id di modello sconosciuto risponde `404 / 7003 / "Model not found: ..."`): senza quel ramo un id sbagliato finirebbe nel catch-all `retryable` e verrebbe ritentato su ogni chunk di ogni job. Se Cloudflare cambiasse il formato del messaggio, il degrado è qualche retry sprecato su un errore deterministico — non un comportamento scorretto.
 
 - [ ] **Step 1: Scrivi i test che falliscono**
 
@@ -715,6 +716,17 @@ def test_400_7003_overloaded_is_retryable():
     with pytest.raises(TransportError) as ei:
         _interpret_cloudflare_response(_Resp(400, body))
     assert ei.value.kind == "retryable"
+
+
+def test_404_model_not_found_is_fatal():
+    # Cloudflare usa il codice 7003 anche qui: e' l'HTTP status a distinguere
+    # l'errore di configurazione dall'overload.
+    body = {"success": False, "errors": [
+        {"code": 7003, "message": "Model not found: google/gemini-2.5-flash-tts"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(404, body))
+    assert ei.value.kind == "fatal"
+    assert ei.value.billed is False
 
 
 def test_422_2017_is_content_rejected():
@@ -912,6 +924,14 @@ def _interpret_cloudflare_response(resp):
             f"Cloudflare rate limit: {message}",
             kind="rate_limited", http_status=status, provider_code=code)
 
+    if status == 404:
+        # Modello inesistente lato Cloudflare: errore di configurazione, non
+        # un guasto transitorio. Deve precedere il ramo 7003 perche' e' lo
+        # stesso codice dell'overload.
+        raise TransportError(
+            f"modello Cloudflare inesistente: {message}",
+            kind="fatal", http_status=status, provider_code=code)
+
     if status == 400 and code == 7003:
         if _CF_INVALID_VALUE_MARK in message:
             raise TransportError(
@@ -970,7 +990,7 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
 - [ ] **Step 4: Esegui i test e verifica che passino**
 
 Run: `python -m pytest test/test_gemini_transport_cloudflare.py -v`
-Expected: PASS (13 test)
+Expected: PASS (14 test)
 
 - [ ] **Step 5: Commit**
 
@@ -994,7 +1014,7 @@ git commit -m "feat(tts): adapter Cloudflare Workers AI per la sintesi Gemini"
   - `_resolve_backend(model_key=None) -> "vertex" | "apikey" | "cloudflare" | None`, con cache **per modello**.
   - `_set_backend(model_key, backend)` — imposta il backend attivo di un modello a runtime, sotto `_BACKEND_LOCK`. È il gancio che il Task 7 usa per il failover.
 
-**Perché per modello:** solo `flash31` è verificato su Cloudflare. `flash25` resta su Vertex finché non è confermato che Cloudflare lo ospiti (`id_cloudflare = None` significa esattamente questo). Una cache globale renderebbe impossibile questa asimmetria.
+**Perché per modello:** solo `flash31` esiste su Cloudflare. **Verificato il 26/08/2026**: interrogando `/ai/run` con voce invalida (400 non fatturato) sui candidati `google/gemini-2.5-flash-tts`, `google/gemini-2.5-flash-preview-tts`, `google/gemini-2.5-flash-tts-preview` e `google/gemini-2.5-pro-tts`, Cloudflare risponde a tutti `404 / "Model not found"`, mentre `google/gemini-3.1-flash-tts` risponde con l'enum delle voci e `google/gemini-2.5-flash` esiste ma è il modello **di testo** (chiede `contents`). Il catalogo Workers AI non ospita alcuna variante TTS di Gemini 2.5. **`flash25` resta quindi su Vertex in modo permanente**, non provvisorio: è il modello economico del listino e deve restare disponibile, quindi `id_cloudflare = None` è una decisione, non un segnaposto. Una cache globale del backend renderebbe impossibile questa asimmetria.
 
 **Perché mutabile:** il failover del Task 7 deve poter spostare `flash31` da `cloudflare` a `vertex` a processo vivo. La cache attuale è congelata al primo uso proprio per evitare flip-flop da env: la mutabilità va concessa solo alla via esplicita `_set_backend`, non alla rilettura dell'ambiente.
 
@@ -1108,6 +1128,8 @@ In `gemini_tts.py`, dentro `GEMINI_MODELS` (righe 144-163), aggiungi a `flash25`
 ```python
         # Nessuna verifica che Cloudflare ospiti questo modello: finche' non
         # c'e', flash25 resta su Vertex anche con backend=cloudflare.
+        # Cloudflare non ospita alcuna variante TTS di Gemini 2.5
+        # (verificato 26/08/2026): questo modello vive su Vertex.
         "id_cloudflare": None,
 ```
 
