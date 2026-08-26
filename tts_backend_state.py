@@ -8,16 +8,42 @@ Il rientro su Cloudflare avviene solo per azione manuale dell'admin
 (`reset`), mai automaticamente: un backend che e' andato giu' per credito
 esaurito tornerebbe a cadere subito, e ogni caduta costa un job.
 
+Fail-safe di lettura: un file ASSENTE e' un'installazione pulita (nessun
+trip e' mai avvenuto, {} e' corretto). Un file PRESENTE ma illeggibile (I/O,
+JSON invalido, radice non-dict, o una singola voce per-modello di forma
+sbagliata) e' un'altra cosa: lo stato precedente esiste e non sappiamo
+leggerlo. In quel caso NON si riparte puliti: si considera scattato ogni
+modello finche' un reset esplicito dall'admin non riscrive un valore
+concreto. Il motivo per cui questo stato e' persistito e' precisamente che
+un riavvio non possa rimettere in produzione un backend guasto senza che
+nessuno lo sappia; rispondere "pulito" a uno stato che non si riesce a
+leggere sarebbe il riarmo silenzioso che l'interruttore deve impedire.
+
+Igiene dei dati: `detail` (passato a `trip()`) viene persistito su disco e
+stampato su stdout COSI' COM'E', troncato a 300 caratteri ma non altrimenti
+filtrato o redatto. Questo modulo non applica alcuna redazione: e' cura
+esclusiva del chiamante non passare qui header, token o altre credenziali.
+
 File di stato: <data_dir>/_tts_backend_state.json
 """
 import json
 import os
 import threading
+import time
 from datetime import datetime, timezone
+
+import community_store
 
 _STATE_PATH = None
 _LOCK = threading.RLock()
 _CACHE = {}
+
+# True quando il file di stato ESISTEVA ma non e' stato letto correttamente
+# (I/O, JSON invalido, radice non-dict). Governa solo il fallback di
+# `state()`/`is_tripped()` per i model_key che non hanno (ancora) una voce
+# concreta in _CACHE: una volta che un modello riceve un valore esplicito
+# (trip o reset), quel valore concreto prevale sempre su questo flag.
+_FAIL_SAFE = False
 
 _FILENAME = "_tts_backend_state.json"
 
@@ -31,29 +57,115 @@ def init(data_dir):
 
 
 def _load():
+    """Carica lo stato da disco distinguendo i due casi che contano:
+
+    - File ASSENTE: installazione nuova, o nessun modello e' mai scattato.
+      {} e' la risposta corretta - non c'e' nulla da riarmare, e trattare
+      questo caso come "tutto scattato" spegnerebbe Cloudflare dal
+      primissimo avvio.
+    - File PRESENTE ma illeggibile: lo stato precedente ESISTE e non sappiamo
+      leggerlo. Attiva il fail-safe globale (`_FAIL_SAFE`): ogni modello
+      senza un valore concreto viene considerato scattato finche' un reset
+      esplicito dall'admin non lo smentisce singolarmente. Una singola voce
+      per-modello di forma sbagliata (JSON top-level valido, ma
+      `raw[model_key]` non e' un dict) riceve lo stesso trattamento, limitato
+      pero' a quel modello soltanto: viene materializzata in _CACHE come
+      trip concreto con motivo `state_entry_corrupt`, cosi' che il resto del
+      modulo veda sempre e solo dict ben formati e non possa mai sollevare
+      un'eccezione sul percorso caldo della sintesi.
+    """
+    global _FAIL_SAFE
+    _FAIL_SAFE = False
     if not _STATE_PATH or not os.path.isfile(_STATE_PATH):
         return {}
     try:
         with open(_STATE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError(f"radice e' {type(raw).__name__}, non un dict")
     except (OSError, ValueError) as e:
-        # Uno stato illeggibile non deve impedire la sintesi: si riparte
-        # puliti. Il caso peggiore e' un'email di trip in piu'.
-        print(f"[tts-backend-state] stato illeggibile, riparto vuoto: {e}")
+        _FAIL_SAFE = True
+        print(f"[tts-backend-state] BOOT: stato PRESENTE ma ILLEGGIBILE "
+              f"({e}) - fail-safe attivo: TUTTI i modelli sono considerati "
+              f"scattati (Cloudflare disabilitato) finche' un reset "
+              f"esplicito dall'admin non li riarma singolarmente. "
+              f"path={_STATE_PATH}", flush=True)
         return {}
+
+    data = {}
+    tripped_models = []
+    for model_key, entry in raw.items():
+        if isinstance(entry, dict):
+            data[model_key] = entry
+            if entry.get("tripped_at"):
+                tripped_models.append(model_key)
+        else:
+            # Voce per-modello non riconoscibile (schema diverso da quello
+            # atteso): stesso criterio del file illeggibile, applicato al
+            # singolo modello. Non e' leggibile, quindi vale "scattato", mai
+            # "pulito" - e mai un'eccezione propagata al chiamante.
+            print(f"[tts-backend-state] BOOT: voce di stato per "
+                  f"{model_key!r} non e' un dict ({type(entry).__name__}) - "
+                  f"trattata come scattata finche' un reset esplicito non la "
+                  f"riscrive.", flush=True)
+            data[model_key] = {
+                "active": "vertex",
+                "tripped_at": _now(),
+                "trip_reason": "state_entry_corrupt",
+                "trip_detail": f"voce di stato non e' un dict ({type(entry).__name__})",
+                "trip_job_id": None,
+                "consecutive_failures": 0,
+                "notified": False,
+            }
+            tripped_models.append(model_key)
+
+    if tripped_models:
+        print(f"[tts-backend-state] BOOT: stato ricaricato con backend gia' "
+              f"scattato per: {', '.join(sorted(tripped_models))}. "
+              f"Cloudflare resta disabilitato per questi modelli finche' un "
+              f"reset esplicito dall'admin.", flush=True)
+    return data
 
 
 def _save():
+    """Persiste _CACHE su disco: tmp + fsync + os.replace, riusando il
+    primitivo condiviso `community_store.atomic_write_json` (stesso usato da
+    token/pagamenti/voucher/usage) invece di una seconda implementazione
+    inline. Verifica rileggendo, con retry+backoff (3 tentativi) come
+    `gemini_tts.set_admin_disabled`: un trip() riuscito solo in memoria e mai
+    arrivato su disco e' il caso peggiore per un interruttore a senso unico,
+    perche' un riavvio del processo lo dimentica e rimette in produzione un
+    backend guasto senza che nessuno lo sappia. Il fallimento e' quindi
+    loggato in modo evidente, non un semplice print silenzioso.
+
+    Va sempre chiamata sotto `_LOCK` (dal chiamante): `_CACHE` non cambia
+    durante il retry. Ritorna True se persistito e verificato, False
+    altrimenti.
+    """
     if not _STATE_PATH:
-        return
-    tmp = _STATE_PATH + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_CACHE, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, _STATE_PATH)
-    except OSError as e:
-        print(f"[tts-backend-state] scrittura fallita: {e}")
+        return False
+    snapshot = dict(_CACHE)
+    last_err = None
+    for attempt in range(3):
+        try:
+            community_store.atomic_write_json(_STATE_PATH, snapshot,
+                                               fsync=True, indent=2)
+            with open(_STATE_PATH, "r", encoding="utf-8") as f:
+                check = json.load(f)
+            if check == snapshot:
+                return True
+            last_err = ValueError("rilettura post-scrittura non combacia")
+        except (OSError, ValueError) as e:
+            last_err = e
+        if attempt < 2:
+            time.sleep(0.2 * (attempt + 1))
+    print(f"[tts-backend-state] ERROR: stato NON persistito su disco dopo 3 "
+          f"tentativi ({last_err}) - lo stato in memoria e' aggiornato ma un "
+          f"riavvio del processo ripristinerebbe quello precedente da disco: "
+          f"se questo era un trip, Cloudflare potrebbe tornare attivo senza "
+          f"che nessuno lo sappia. Verificare spazio disco / permessi su "
+          f"{_STATE_PATH}.", flush=True)
+    return False
 
 
 def _now():
@@ -61,8 +173,28 @@ def _now():
 
 
 def state(model_key):
+    """Stato corrente del modello. Non solleva mai eccezioni: `_CACHE`
+    contiene solo dict ben formati (sanificati in `_load()`), e per i
+    model_key assenti applica il fallback fail-safe (vedi `_FAIL_SAFE`)."""
     with _LOCK:
-        return dict(_CACHE.get(model_key) or {})
+        entry = _CACHE.get(model_key)
+        if entry is not None:
+            return dict(entry)
+        if _FAIL_SAFE:
+            # Fail-safe globale attivo (file di stato illeggibile al boot) e
+            # questo modello non ha ancora un valore concreto (nessun reset
+            # esplicito ricevuto da allora): consideralo scattato, mai
+            # pulito.
+            return {
+                "active": "vertex",
+                "tripped_at": _now(),
+                "trip_reason": "state_file_unreadable",
+                "trip_detail": "stato precedente non ricostruibile dal disco al boot",
+                "trip_job_id": None,
+                "consecutive_failures": 0,
+                "notified": False,
+            }
+        return {}
 
 
 def is_tripped(model_key):
@@ -75,6 +207,11 @@ def trip(model_key, *, reason, detail, job_id):
     Con piu' job in corso, N thread scoprono l'avaria nello stesso istante:
     il ritorno booleano sotto lock e' cio' che permette di mandare una sola
     email all'admin senza un secondo meccanismo di deduplica.
+
+    Se il modello era gia' scattato solo "virtualmente" per fail-safe (nessun
+    valore concreto in _CACHE, vedi `state()`), questa chiamata lo
+    materializza con la causa reale e ritorna True: non e' un secondo trip,
+    prima d'ora non esisteva alcun record concreto per questo modello.
     """
     with _LOCK:
         entry = _CACHE.setdefault(model_key, {})
@@ -101,10 +238,12 @@ def mark_notified(model_key):
 
 
 def reset(model_key):
-    """Rientro manuale su Cloudflare. True se c'era davvero un trip."""
+    """Rientro manuale su Cloudflare. True se c'era davvero un trip da
+    azzerare - incluso il caso in cui il trip fosse solo virtuale (fail-safe,
+    nessun record concreto ancora presente)."""
     with _LOCK:
+        had_trip = is_tripped(model_key)
         entry = _CACHE.setdefault(model_key, {})
-        had_trip = bool(entry.get("tripped_at"))
         entry.update({
             "active": "cloudflare",
             "tripped_at": None,

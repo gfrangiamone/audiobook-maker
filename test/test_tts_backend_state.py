@@ -90,9 +90,20 @@ def test_state_survives_a_reload(tmp_path):
 def test_a_corrupt_file_does_not_crash_the_module(tmp_path):
     (tmp_path / "_tts_backend_state.json").write_text("{non json", encoding="utf-8")
     st.init(str(tmp_path))
-    # Uno stato illeggibile non deve impedire la sintesi: si riparte puliti.
-    assert st.state("flash31") == {}
+    # Fix round 1: un file PRESENTE ma illeggibile NON deve mai essere
+    # confuso con "nessun trip e' mai avvenuto" (riarmo silenzioso di un
+    # interruttore a senso unico). Fail-safe: si considera scattato finche'
+    # un reset esplicito non lo smentisce - mai un'eccezione propagata.
+    assert st.is_tripped("flash31") is True
+    assert st.state("flash31")["active"] == "vertex"
+    # Non e' un secondo trip "vero": prima d'ora non esisteva un record
+    # concreto per questo modello. trip() lo materializza con la causa reale
+    # e ritorna True al primo che lo fa (idempotente come sempre sotto lock).
     assert st.trip("flash31", reason="r", detail="d", job_id="j") is True
+    assert st.state("flash31")["trip_job_id"] == "j"
+    # Un reset esplicito lo riporta pulito, come qualunque altro trip.
+    assert st.reset("flash31") is True
+    assert st.is_tripped("flash31") is False
 
 
 def test_notified_flag_is_settable():
@@ -100,3 +111,58 @@ def test_notified_flag_is_settable():
     assert st.state("flash31")["notified"] is False
     st.mark_notified("flash31")
     assert st.state("flash31")["notified"] is True
+
+
+def test_per_model_entry_with_wrong_schema_is_treated_as_tripped(tmp_path):
+    # JSON valido a livello di file, ma la voce per-modello ha una forma
+    # diversa da quella attesa (schema diverso, non un dict). Riprodotto dal
+    # revisore come crash live (ValueError/AttributeError) nel round 1: qui
+    # deve degradare pulito, mai sollevare, e trattare il modello come
+    # scattato (mai "pulito" su una voce che non si sa leggere).
+    (tmp_path / "_tts_backend_state.json").write_text(
+        json.dumps({"flash31": "not-a-dict"}), encoding="utf-8")
+    st.init(str(tmp_path))
+    assert st.is_tripped("flash31") is True
+    assert st.state("flash31")["active"] == "vertex"
+    # Gia' scattato per schema corrotto: un trip() successivo non e' il primo.
+    assert st.trip("flash31", reason="r", detail="d", job_id="j") is False
+
+
+def test_reset_survives_a_reload(tmp_path):
+    st.trip("flash31", reason="r", detail="d", job_id="j1")
+    st.reset("flash31")
+    st.init(str(tmp_path))  # simula un riavvio del processo
+    assert st.is_tripped("flash31") is False
+    assert st.state("flash31")["active"] == "cloudflare"
+
+
+def test_save_failure_is_logged_loudly_and_does_not_break_in_memory_state(monkeypatch, capsys):
+    def _boom(*args, **kwargs):
+        raise OSError("disco pieno (simulato)")
+
+    monkeypatch.setattr(st.community_store, "atomic_write_json", _boom)
+    capsys.readouterr()  # scarta eventuale output precedente
+
+    # Anche se la persistenza fallisce, il primo chiamante deve comunque
+    # vincere: l'idempotenza durante la vita del processo non dipende dal
+    # disco. Il fallimento va pero' loggato in modo inequivocabile, perche'
+    # e' il caso peggiore per un interruttore a senso unico (un riavvio
+    # dimenticherebbe il trip).
+    assert st.trip("flash31", reason="r", detail="d", job_id="j1") is True
+    assert st.is_tripped("flash31") is True
+
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "tts-backend-state" in out
+
+
+def test_boot_log_is_loud_when_reloading_a_tripped_state(tmp_path, capsys):
+    st.trip("flash31", reason="cf_credit_exhausted", detail="d", job_id="j1")
+    capsys.readouterr()  # scarta l'output del trip
+    st.init(str(tmp_path))  # simula un riavvio: ricarica dal disco
+    out = capsys.readouterr().out
+    # Serve a distinguere, leggendo i log dopo un riavvio, "Cloudflare attivo
+    # perche' non era mai scattato" da "Cloudflare attivo perche' lo stato
+    # scattato non e' stato ricaricato" (allineato a gemini_tts._load_admin_state).
+    assert "BOOT" in out
+    assert "flash31" in out
