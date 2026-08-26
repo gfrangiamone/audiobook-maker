@@ -351,11 +351,26 @@ def _f_env(name, default):
         return float(default)
 
 
+def _safe_float(value, default=0.0):
+    """Converte in float senza mai sollevare. Stesso ruolo di `_safe_int`
+    (righe sopra) ma per i campi del ledger credito: un `spent_eur` di forma
+    inattesa letto da disco (stringa non numerica, `None`, lista, dict - file
+    modificato a mano, corruzione parziale, futura evoluzione di schema) vale
+    `default`, non un'eccezione. `add_spend` in particolare e' pensata per
+    essere chiamata a ogni chunk sintetizzato su Cloudflare: una singola voce
+    corrotta non deve poter uccidere ogni chiamata successiva sul percorso
+    caldo della sintesi."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def add_spend(model_key, eur):
     """Accumula la spesa stimata di una chiamata sul ledger locale."""
     with _LOCK:
         entry = _CACHE.setdefault(_CREDIT_KEY, {})
-        entry["spent_eur"] = float(entry.get("spent_eur", 0.0)) + float(eur or 0.0)
+        entry["spent_eur"] = _safe_float(entry.get("spent_eur")) + _safe_float(eur)
         _save()
 
 
@@ -374,7 +389,7 @@ def credit_left_eur():
     spec per l'esito della ricognizione sull'API del saldo.
     """
     with _LOCK:
-        spent = float((_CACHE.get(_CREDIT_KEY) or {}).get("spent_eur", 0.0))
+        spent = _safe_float((_CACHE.get(_CREDIT_KEY) or {}).get("spent_eur"))
     return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
 
 
@@ -383,17 +398,45 @@ def should_alert_credit():
 
     Con saldo dichiarato a 0 (default) l'allarme e' disattivato: sarebbe
     rumore costante su un'installazione che non usa Cloudflare.
+
+    Atomica, sullo stesso modello di `trip()`: la decisione "va segnalato" e
+    la registrazione "l'ho gia' segnalato" (`alerted=True`) avvengono nella
+    stessa sezione critica sotto `_LOCK`, quindi questa funzione ritorna
+    `True` a un solo chiamante anche sotto concorrenza reale - N chiamate
+    parallele (una per chunk sintetizzato) che controllano il credito nello
+    stesso istante non possono piu' generare N email admin duplicate. Un
+    check-poi-act con `mark_credit_alerted()` chiamata separatamente dal
+    chiamante, come nella prima versione, non garantiva questa proprieta':
+    un I/O reale (invio email) fra le due chiamate lascia una finestra in cui
+    tutti i chiamanti concorrenti leggono ancora `alerted=False`.
+
+    Il chiamante che riceve `True` e' quello (e l'unico) che deve mandare
+    l'email; non serve piu' invocare `mark_credit_alerted()` per ottenere la
+    deduplica, che e' gia' avvenuta qui - ma farlo comunque resta innocuo,
+    perche' `mark_credit_alerted()` e' idempotente.
     """
     balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
     if balance <= 0:
         return False
     with _LOCK:
-        if (_CACHE.get(_CREDIT_KEY) or {}).get("alerted"):
+        entry = _CACHE.setdefault(_CREDIT_KEY, {})
+        if entry.get("alerted"):
             return False
-    return credit_left_eur() < _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+        spent = _safe_float(entry.get("spent_eur"))
+        if (balance - spent) >= _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0):
+            return False
+        entry["alerted"] = True
+        _save()
+        return True
 
 
 def mark_credit_alerted():
+    """Marca l'allarme come gia' dato. Idempotente: `should_alert_credit()`
+    lo fa gia' internamente al momento in cui ritorna `True`, quindi questa
+    funzione resta per chi la richiami comunque (compatibilita' con l'uso
+    esplicito nel brief) o per marcare l'allarme senza essere passati da
+    `should_alert_credit()` - non fa mai scattare una seconda email da sola,
+    perche' non e' lei a decidere se allarmare."""
     with _LOCK:
         entry = _CACHE.setdefault(_CREDIT_KEY, {})
         entry["alerted"] = True
