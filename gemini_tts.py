@@ -218,6 +218,11 @@ def _resolve_backend(model_key=None):
     - ABM_GEMINI_BACKEND unset o "auto": Vertex se la config e' completa,
       altrimenti API key se presente, altrimenti DISABLED. **auto non seleziona
       mai Cloudflare**: quel backend e' solo opt-in esplicito.
+
+    Precedenza sul breaker: se `tts_backend_state.is_tripped(model_key)` e'
+    True, tutto quanto sopra viene bypassato e si forza "vertex" (None se
+    Vertex non e' pronto) — anche subito dopo un riavvio del processo, quando
+    `_BACKEND` e' vuoto ma lo stato del breaker e' sopravvissuto su disco.
     """
     key = model_key or _BACKEND_DEFAULT_KEY
     cached = _BACKEND.get(key)
@@ -239,6 +244,27 @@ def _resolve_backend(model_key=None):
         apikey_ready = bool(api_key)
         model_on_cf = bool((GEMINI_MODELS.get(key) or {}).get("id_cloudflare"))
         cf_ready = bool(cf_account) and bool(cf_token) and model_on_cf
+
+        # Rilievo B1 (fix-1): il breaker persiste su disco (tts_backend_state)
+        # precisamente perche' un riavvio del processo non possa rimettere un
+        # modello scattato su Cloudflare. _BACKEND invece e' solo in-process e
+        # riparte vuoto ad OGNI avvio (deploy, crash-restart, systemctl
+        # restart: eventi di routine, non rari) - senza questo controllo la
+        # prima risoluzione post-riavvio rivalutava da zero ABM_GEMINI_BACKEND
+        # e un modello gia' marcato scattato tornava silenziosamente su
+        # Cloudflare. is_tripped() legge la cache in-memory di
+        # tts_backend_state (popolata da init() all'avvio, non dal disco ad
+        # ogni chiamata): sicuro da interrogare per ogni chunk sul percorso
+        # caldo. Bypassa la scelta ABM_GEMINI_BACKEND di proposito: un trip
+        # vale per QUALSIASI configurazione finche' non arriva un reset
+        # esplicito (rientro manuale, mai automatico).
+        if model_key is not None and _backend_state.is_tripped(model_key):
+            resolved = "vertex" if vertex_ready else False
+            _BACKEND[key] = resolved
+            if resolved:
+                print(f"[gemini-tts] Backend di {key} forzato su vertex "
+                      f"(breaker gia' scattato, stato persistito)")
+            return resolved if resolved else None
 
         if choice == "vertex":
             resolved = "vertex" if vertex_ready else False
@@ -351,13 +377,21 @@ def _trip_to_vertex(model_key, *, reason, detail, job_id):
                                 job_id=job_id)
     _set_backend(model_key, "vertex")
     if first and _backend_switch_notifier is not None:
+        # `notified` deve riflettere che il tentativo c'e' stato, non che sia
+        # andato a buon fine (rilievo minor, fix-1): un notifier che fallisce
+        # non deve lasciare lo stato persistito com se nessuno avesse mai
+        # provato ad avvisare l'admin. Per questo mark_notified() e' fuori
+        # dal try che protegge la sola chiamata al notifier.
         try:
             _backend_switch_notifier(model_key, reason, detail, job_id)
-            _backend_state.mark_notified(model_key)
         except Exception as e:
             # Un guasto nella notifica non deve fermare il job: il failover
-            # e' gia' avvenuto, l'email e' un di piu'.
-            print(f"[gemini-tts] notifica di switch backend fallita: {e}")
+            # e' gia' avvenuto, l'email e' un di piu'. Ma va loggato in modo
+            # visibile: un'email admin che fallisce silenziosamente e'
+            # proprio il caso in cui l'osservabilita' conta di piu'.
+            print(f"[gemini-tts] ATTENZIONE: notifica di switch backend "
+                  f"fallita per model_key={model_key}: {e}")
+        _backend_state.mark_notified(model_key)
 
 
 USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
@@ -1246,7 +1280,11 @@ def is_capability_available():
         # Cloudflare-only senza Vertex/API-key configurati risulterebbe qui
         # "non disponibile" pur potendo sintetizzare: limite noto, accettato
         # perche' la vera decisione per-modello avviene in synthesize().
-        backend = _resolve_backend()
+        # _BACKEND_DEFAULT_KEY passato ESPLICITO (non omesso): la scelta deve
+        # essere grep-abile nel codice, non solo spiegata in un commento
+        # (rilievo M2, fix-1) — cosi' un futuro terzo chiamante model-unaware
+        # non puo' "dimenticarsi" di essere implicito.
+        backend = _resolve_backend(_BACKEND_DEFAULT_KEY)
         if backend is None:
             _available = False
             return False
@@ -1827,7 +1865,9 @@ def is_available():
         # incapace di vedere Cloudflare. synthesize() risolve il backend vero
         # per modello piu' avanti (_resolve_backend(model_key)); qui basta
         # sapere se ESISTE un modo di parlare con Gemini.
-        backend = _resolve_backend()
+        # _BACKEND_DEFAULT_KEY esplicito, non omesso (rilievo M2, fix-1): vedi
+        # commento gemello in is_capability_available().
+        backend = _resolve_backend(_BACKEND_DEFAULT_KEY)
         if backend is None:
             _available = False
             print("[gemini-tts] Disabled: no backend configured "
@@ -2387,7 +2427,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             f"(admin_disabled={bool(_admin_disabled)}, "
             "check ABM_GEMINI_API_KEY/kill-switch)")
 
-    model_key, model_id, voice_name = parse_voice_id(voice_id)
+    # Il model_id qui e' solo per validare voice_id: quello usato per la call
+    # API viene ricalcolato dentro il loop di retry (vedi call_model_id) per
+    # restare coerente col backend del tentativo corrente, non con quello
+    # visto al parsing (rilievo M1, fix-1).
+    model_key, _parsed_model_id, voice_name = parse_voice_id(voice_id)
 
     # Check 1: target QUALITA` sul TESTO PURO (escluso prefissi). Se lo splitter
     # ha lavorato correttamente questo non scatta; e` un warning di sicurezza che
@@ -2443,13 +2487,24 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         attempt += 1
         backend = _resolve_backend(model_key)
         transport = _transport_for(backend)
+        # model_id risolto AD OGNI TENTATIVO in base al backend corrente di
+        # QUESTO giro (rilievo M1, fix-1): il valore risolto da parse_voice_id
+        # prima del loop e' congelato sul backend visto all'inizio della
+        # chiamata. Se un failover scatta a meta' (Cloudflare -> Vertex), quel
+        # valore resta quello di Cloudflare (m["id"], nome legacy) invece di
+        # m["id_vertex"] (nome GA): oggi e' inerte solo perche' flash31 ha gli
+        # id coincidenti sui due backend, ma diverge appena un modello con
+        # id_cloudflare != id_vertex viene abilitato (es. un futuro flash25 su
+        # Cloudflare). _resolve_model_id rifa' la stessa risoluzione backend
+        # (cache, quindi a costo zero) e resta corretta per vertex/apikey.
+        call_model_id = (GEMINI_MODELS[model_key].get("id_cloudflare")
+                         if backend == "cloudflare" else _resolve_model_id(model_key))
         try:
             out = transport(
                 final_text=final_text,
                 voice_name=voice_name,
                 model_key=model_key,
-                model_id=(GEMINI_MODELS[model_key].get("id_cloudflare")
-                          if backend == "cloudflare" else model_id),
+                model_id=call_model_id,
                 timeout_ms=(_cf_timeout_ms() if backend == "cloudflare"
                             else _http_timeout_ms(model_key)),
                 temperature=_temperature(),

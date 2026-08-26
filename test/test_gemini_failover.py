@@ -166,3 +166,53 @@ def test_a_tripped_model_goes_straight_to_vertex(tmp_path, monkeypatch):
 
     _synth(tmp_path)
     assert cf_calls == []
+
+
+def test_resolve_backend_forces_vertex_after_restart_when_tripped(tmp_path):
+    """Rilievo B1 (fix-1): il breaker persiste su disco proprio perche' un
+    riavvio del processo non debba poter rimettere un modello scattato su
+    Cloudflare. Qui si riproduce esattamente lo scenario del review: stato
+    scattato su disco, cache in-process azzerata come farebbe un riavvio
+    reale (deploy, crash, systemctl restart), poi `init()` ricarica lo stato
+    persistito SENZA che nessuno rieseguisca il failover in-process. Prima
+    del fix, `_resolve_backend` rivalutava da zero ABM_GEMINI_BACKEND e
+    tornava silenziosamente "cloudflare".
+    """
+    st.trip("flash31", reason="cf_backend_down", detail="d", job_id="j0")
+
+    # Simula il riavvio: la cache in-process del backend riparte vuota, ma lo
+    # stato del breaker resta sullo stesso disco. init() lo ricarica.
+    gemini_tts._BACKEND = {}
+    st.init(str(tmp_path))
+
+    assert st.is_tripped("flash31") is True
+    assert gemini_tts._resolve_backend("flash31") == "vertex"
+
+
+def test_model_id_is_recomputed_for_the_backend_of_each_attempt(tmp_path, monkeypatch):
+    """Rilievo M1 (fix-1): il model_id usato per la chiamata deve seguire il
+    backend del tentativo CORRENTE, non quello congelato prima del loop di
+    retry. Riproduce lo scenario generale segnalato dal review con un
+    flash31 "finto" il cui id_vertex diverge da id_cloudflare/id legacy
+    (oggi coincidono per flash31, ma il codice non puo' contare su questo).
+    """
+    monkeypatch.setitem(gemini_tts.GEMINI_MODELS["flash31"],
+                        "id_vertex", "gemini-vertex-ga-name")
+
+    vertex_calls = []
+
+    def _cf(**kw):
+        raise TransportError("giu'", kind="backend_down")
+
+    def _vx(**kw):
+        vertex_calls.append(kw)
+        return _pcm()
+
+    monkeypatch.setattr(gemini_tts._transport, "cloudflare_call", _cf)
+    monkeypatch.setattr(gemini_tts, "_vertex_transport_call", _vx)
+
+    out = _synth(tmp_path, job_id="j-m1")
+
+    assert out["success"] is True
+    assert len(vertex_calls) == 1
+    assert vertex_calls[0]["model_id"] == "gemini-vertex-ga-name"
