@@ -51,6 +51,8 @@ Motivo: l'adapter Vertex dipende da `_get_client`, `_extract_audio_pcm`, `_is_42
 
 ### Task 1: Fase 0 — ricognizione del credito e chiusura di G4
 
+> **ESEGUITO il 26/08/2026.** Esito in spec §10.2: il saldo **non** e' leggibile via API (gli endpoint di credito non esistono, quelli di fatturazione rispondono 403 perche' il token e' ristretto a Workers AI di proposito); il gateway e' in modalita' `postpaid`; G4 resta **non chiuso**; G3 chiuso per giudizio dell'esercente. Il Task 8 usa quindi il ledger locale.
+
 **Files:**
 - Create: `scripts/cf_credit_probe.py`
 - Create: `docs/superpowers/specs/2026-08-26-cloudflare-tts-prod-backend-design.md` — sezione nuova `§10.2 Ricognizione credito e latenza` (append)
@@ -1953,7 +1955,9 @@ git commit -m "feat(tts): failover automatico da Cloudflare a Vertex con breaker
 
 **Perché serve:** il margine in failover su Vertex è **+1,9%** contro il +61,7% su Cloudflare (spec §4.7). Un failover prolungato non fa perdere soldi, ma azzera il guadagno. Il pre-allarme esiste perché l'admin ricarichi il credito *prima* che il breaker scatti, non dopo.
 
-**Se il Task 1 ha stabilito che il saldo è leggibile via API:** sostituisci il ledger locale con la lettura diretta e adegua i test — una misura vera batte una stima. Se non lo è, il ledger resta l'unica fonte e l'allarme va dichiarato come stima nel testo che l'admin riceve (piano gemello, Fase 6).
+**Esito del Task 1 (spec §10.2): il saldo non e' leggibile via API.** Il ledger locale e' quindi l'unica fonte, e l'allarme va dichiarato esplicitamente come **stima** nel testo che l'admin riceve e nel pannello (piano gemello, Fase 6).
+
+**Semantica in modalita' `postpaid`:** il gateway non ha un saldo prepagato che si esaurisce, ma una spesa che matura sulla fattura. `ABM_CF_CREDIT_BALANCE_EUR` non e' quindi un saldo reale bensi' un **budget che l'admin si autoimpone**, e `credit_left_eur()` e' quanto ne resta. La meccanica del codice non cambia di una riga; cambia il testo che l'accompagna, che non deve promettere una precisione che non ha. Con `ABM_CF_CREDIT_BALANCE_EUR = 0` (default) il pre-allarme resta disabilitato: chi non dichiara un budget non riceve allarmi su un numero inventato.
 
 - [ ] **Step 1: Scrivi i test che falliscono**
 

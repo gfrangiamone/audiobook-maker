@@ -482,6 +482,53 @@ default senza segnalare nulla. Due controlli lo escludono:
 l'ipotesi di una risoluzione backend *per voce*: la granularità per modello di
 §4.3 è sufficiente.
 
+### 10.2 Ricognizione credito e latenza (26/08/2026)
+
+#### Credito: il saldo NON e' leggibile via API
+
+Probe read-only (`scripts/cf_credit_probe.py`), nessuna inferenza, nessun addebito:
+
+| Endpoint | Esito |
+|---|---|
+| `/accounts/{id}/ai-gateway/credits` | `404 Route not found` — non esiste |
+| `/accounts/{id}/ai/credits` | `400 / 7000 No route for that URI` — non esiste |
+| `/accounts/{id}/ai-gateway/usage` | `404 Route not found` — non esiste |
+| `/accounts/{id}/ai-gateway/gateways/default/credits` | `404 Route not found` — non esiste |
+| `/accounts/{id}/billing/profile` | `403 Authentication error` |
+| `/accounts/{id}/billing/history` | `403 Authentication error` |
+| `/user/billing/profile` | `403 Authentication error` |
+| `/accounts/{id}` | `403 Unauthorized to access requested resource` |
+| `/accounts/{id}/ai-gateway/gateways/default` | **`200`** — l'unico che risponde |
+
+**Conclusione: il saldo non e' esposto.** Gli endpoint di credito non esistono affatto; quelli di fatturazione rispondono `403` perche' il token e' volutamente ristretto a Workers AI. Allargarne i permessi per leggere un saldo sarebbe un pessimo scambio: si darebbe a un token che vive su un server di produzione la visibilita' sulla fatturazione dell'account, per un numero che non e' operativamente necessario. **Il pre-allarme si basa quindi sul ledger locale ed e' una stima**, e va dichiarato tale all'admin nel testo dell'allarme e nel pannello.
+
+#### Modalita' di fatturazione: `postpaid`
+
+L'unico endpoint che risponde espone la configurazione del gateway, e contiene la riga che conta:
+
+```
+"workers_ai_billing_mode": "postpaid",
+"wholesale": true
+```
+
+Conseguenze:
+
+1. **Non c'e' un saldo prepagato che si esaurisce**, ma una spesa che matura sulla fattura. Il "credito residuo" del pannello e' quindi il residuo di un **budget che l'admin si autoimpone** (`ABM_CF_CREDIT_BALANCE_EUR`), non un saldo reale letto da Cloudflare. La meccanica del pre-allarme non cambia; cambia il significato, e il testo mostrato deve dirlo.
+2. **La commissione di ricarica del 5% (`ABM_CF_CREDIT_TOPUP_FEE`) va riverificata.** Ha senso su credito prepagato comprato in anticipo; in modalita' postpaid potrebbe non applicarsi affatto. Il parametro resta a `0.05` per prudenza — sovrastimare il costo Cloudflare rende il prezzo leggermente piu' alto e il margine reale migliore del previsto, mai il contrario. Portarlo a `0` e' una modifica di una variabile d'ambiente, senza rilascio.
+3. **L'errore `2021` (saldo insufficiente, `402`) resta gestito** come `backend_down`, ma in postpaid e' improbabile: la causa realistica di un blocco e' un problema di fatturazione sull'account, non un credito finito. Il trattamento e' comunque corretto — qualunque `402` e' un motivo per passare a Vertex e avvisare l'admin.
+
+#### G4 — latenza p95: **NON CHIUSO**
+
+Misurato sul banco Cloudflare: 30 chiamate su testi di ~200 caratteri, latenza per chiamata fra **6,9 e 9,6 s**. Non esiste una misura comparabile su Vertex: la produzione non registra oggi la latenza per chiamata, e i job reali usano chunk di dimensione diversa, con concorrenza diversa, in fasce orarie diverse. Confrontare quei 30 campioni con un'impressione della produzione sarebbe una misura finta.
+
+**Cosa servirebbe per chiuderlo:** una campagna A/B sullo stesso testo, con lo stesso piano di chunk e la stessa concorrenza, eseguita nella stessa finestra oraria contro i due backend. Circa un'ora di lavoro e pochi centesimi di spesa.
+
+**Decisione:** G4 resta aperto e non blocca l'accensione. La latenza per chiamata non e' un criterio di qualita' del prodotto ma di durata del job; il rischio e' contenuto perche' un rallentamento si osserva subito sui primi job reali e il rollback e' una variabile d'ambiente. Il runbook indica di sorvegliare la durata dei job nelle prime 24 ore.
+
+#### G3 — qualita' A/B: **CHIUSO**
+
+Verificato a orecchio dall'esercente su audio prodotti dai due backend con la stessa voce e lo stesso testo: risultati indistinguibili. E' un giudizio dell'esercente, non una misura strumentale — ed e' il criterio giusto, visto che il prodotto e' destinato all'orecchio umano. Il confronto e' ripetibile in qualunque momento col banco di prova.
+
 ### 10.3 Copertura dei modelli su Cloudflare (26/08/2026)
 
 Domanda: Cloudflare ospita anche **Gemini 2.5 Flash TTS**, il modello economico del listino?
