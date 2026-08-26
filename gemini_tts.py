@@ -177,6 +177,9 @@ GEMINI_MODELS = {
 # Muta solo per via esplicita, tramite `_set_backend` (failover del breaker).
 # Reset esplicito (per test): `gemini_tts._BACKEND = {}`.
 # Valori: "vertex" | "apikey" | "cloudflare" | False (DISABLED).
+# Chiave usata quando il chiamante non specifica il modello: quel percorso
+# non puo' selezionare Cloudflare, che e' sempre una scelta per modello.
+_BACKEND_DEFAULT_KEY = "_default"
 _BACKEND = {}
 _BACKEND_LOCK = threading.Lock()
 
@@ -193,7 +196,7 @@ def _set_backend(model_key, backend):
     if backend not in _VALID_BACKENDS and backend is not False:
         raise ValueError(f"backend sconosciuto: {backend!r}")
     with _BACKEND_LOCK:
-        _BACKEND[model_key or "_default"] = backend
+        _BACKEND[model_key or _BACKEND_DEFAULT_KEY] = backend
     print(f"[gemini-tts] Backend di {model_key} impostato su {backend}")
 
 
@@ -214,7 +217,7 @@ def _resolve_backend(model_key=None):
       altrimenti API key se presente, altrimenti DISABLED. **auto non seleziona
       mai Cloudflare**: quel backend e' solo opt-in esplicito.
     """
-    key = model_key or "_default"
+    key = model_key or _BACKEND_DEFAULT_KEY
     cached = _BACKEND.get(key)
     if cached is not None:
         return cached if cached else None
