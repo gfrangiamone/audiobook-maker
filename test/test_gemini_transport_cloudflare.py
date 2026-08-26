@@ -1,0 +1,173 @@
+"""Adapter Cloudflare: decodifica dell'audio e mappatura degli errori."""
+import base64
+import json
+
+import pytest
+
+from gemini_transport import TransportError, _interpret_cloudflare_response
+
+
+class _Resp:
+    """Doppio minimale di requests.Response."""
+
+    def __init__(self, status_code, payload=None, text=None):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text if text is not None else json.dumps(payload or {})
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("corpo non JSON")
+        return self._payload
+
+
+def _ok(pcm=b"\x01\x02\x03"):
+    b64 = base64.b64encode(pcm).decode("ascii")
+    return _Resp(200, {"result": {"audio": f"data:audio/l16;base64,{b64}"},
+                       "success": True})
+
+
+def test_decodes_the_data_uri_into_raw_pcm():
+    out = _interpret_cloudflare_response(_ok(b"\x00" * 32))
+    assert out["pcm"] == b"\x00" * 32
+
+
+def test_tokens_are_unknown_because_the_api_does_not_return_them():
+    out = _interpret_cloudflare_response(_ok())
+    assert out["input_tokens"] is None
+    assert out["output_tokens"] is None
+
+
+def test_200_without_audio_is_retryable_but_billed():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(200, {"result": {}, "success": True}))
+    assert ei.value.kind == "retryable"
+    assert ei.value.billed is True
+
+
+def test_400_7003_invalid_value_is_fatal():
+    body = {"success": False, "errors": [
+        {"code": 7003,
+         "message": "Invalid value at voice: Invalid option: expected one of Achernar, Achird"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(400, body))
+    assert ei.value.kind == "fatal"
+    assert ei.value.provider_code == 7003
+    assert ei.value.billed is False
+
+
+def test_400_7003_overloaded_is_retryable():
+    body = {"success": False,
+            "errors": [{"code": 7003, "message": "Model is overloaded"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(400, body))
+    assert ei.value.kind == "retryable"
+
+
+def test_404_model_not_found_is_fatal():
+    # Cloudflare usa il codice 7003 anche qui: e' l'HTTP status a distinguere
+    # l'errore di configurazione dall'overload.
+    body = {"success": False, "errors": [
+        {"code": 7003, "message": "Model not found: google/gemini-2.5-flash-tts"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(404, body))
+    assert ei.value.kind == "fatal"
+    assert ei.value.billed is False
+
+
+def test_422_2017_is_content_rejected():
+    body = {"success": False,
+            "errors": [{"code": 2017, "message": "content moderation"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(422, body))
+    assert ei.value.kind == "content_rejected"
+
+
+def test_402_2021_is_backend_down():
+    body = {"success": False,
+            "errors": [{"code": 2021, "message": "insufficient balance"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(402, body))
+    assert ei.value.kind == "backend_down"
+
+
+def test_429_is_rate_limited():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(429, {"success": False, "errors": []}))
+    assert ei.value.kind == "rate_limited"
+
+
+def test_5xx_is_retryable():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(503, None, text="upstream down"))
+    assert ei.value.kind == "retryable"
+
+
+def test_unparseable_body_does_not_crash():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(200, None, text="<html>nope"))
+    assert ei.value.kind == "retryable"
+    assert ei.value.billed is True
+
+
+def test_missing_credentials_are_fatal(monkeypatch):
+    import gemini_transport
+
+    monkeypatch.delenv("ABM_CF_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ABM_CF_API_TOKEN", raising=False)
+    with pytest.raises(TransportError) as ei:
+        gemini_transport.cloudflare_call(
+            final_text="ciao", voice_name="Kore", model_key="flash31",
+            model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
+            temperature=None)
+    assert ei.value.kind == "fatal"
+
+
+def test_the_token_never_appears_in_an_error_message(monkeypatch):
+    import gemini_transport
+
+    secret = "cf-token-che-non-deve-trapelare"
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", secret)
+
+    class _Boom(Exception):
+        pass
+
+    def _fake_post(url, **kw):
+        raise gemini_transport.requests.RequestException("rete giu'")
+
+    monkeypatch.setattr(gemini_transport.requests, "post", _fake_post)
+    with pytest.raises(TransportError) as ei:
+        gemini_transport.cloudflare_call(
+            final_text="ciao", voice_name="Kore", model_key="flash31",
+            model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
+            temperature=None)
+    assert secret not in str(ei.value)
+
+
+def test_payload_carries_text_voice_and_temperature(monkeypatch):
+    import gemini_transport
+
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
+    seen = {}
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        seen["url"] = url
+        seen["json"] = json
+        seen["timeout"] = timeout
+        return _ok()
+
+    monkeypatch.setattr(gemini_transport.requests, "post", _fake_post)
+    gemini_transport.cloudflare_call(
+        final_text="ciao", voice_name="Zephyr", model_key="flash31",
+        model_id="google/gemini-3.1-flash-tts", timeout_ms=45000,
+        temperature=0.75)
+
+    assert "acc" in seen["url"]
+    # Il campo si chiama "text", non "prompt": verificato sul banco.
+    assert seen["json"]["input"]["text"] == "ciao"
+    assert seen["json"]["input"]["voice"] == "Zephyr"
+    assert seen["json"]["input"]["temperature"] == 0.75
+    assert seen["json"]["model"] == "google/gemini-3.1-flash-tts"
+    assert seen["timeout"] == 45.0
