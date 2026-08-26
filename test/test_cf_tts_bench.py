@@ -206,7 +206,7 @@ def test_call_cf_successo_al_primo_tentativo():
     got = bench.call_cf(s, "acc", "tok", "ciao", "Zephyr", 0.3, sleep=lambda _: None)
     assert got["status"] == 200
     assert got["attempts"] == 1
-    assert got["wav"].startswith(b"RIFF")
+    assert got["audio"].startswith(b"RIFF")
     assert s.calls[0]["url"].endswith("/accounts/acc/ai/run")
     assert s.calls[0]["headers"]["Authorization"] == "Bearer tok"
     assert s.calls[0]["timeout"] == 60
@@ -3191,3 +3191,82 @@ def test_estratto_del_corpo_e_troncato_e_su_una_riga():
     assert "\n" not in frammento
     assert len(frammento) <= 203
     assert frammento.endswith("...")
+
+
+# --- Schema reale della risposta (osservato al primo run a pagamento) -------
+
+def test_decode_audio_field_accetta_il_data_uri_l16():
+    """Schema reale: `data:audio/l16;base64,...`, non base64 nudo di un WAV.
+
+    Con `b64decode(validate=True)` sul valore intero, i due punti del prefisso
+    facevano fallire ogni chiamata DOPO che era stata fatturata.
+    """
+    import base64 as _b64
+    grezzo = b"\x01\x02" * 16
+    valore = "data:audio/l16;base64," + _b64.b64encode(grezzo).decode("ascii")
+    payload, mime = bench.decode_audio_field(valore)
+    assert payload == grezzo
+    assert mime == "audio/l16"
+
+
+def test_decode_audio_field_accetta_ancora_il_base64_nudo():
+    import base64 as _b64
+    grezzo = b"RIFFxxxxWAVE"
+    payload, mime = bench.decode_audio_field(_b64.b64encode(grezzo).decode())
+    assert payload == grezzo
+    assert mime is None
+
+
+def test_pcm_grezzo_diventa_un_wav_ascoltabile(tmp_path):
+    """`audio/l16` e' PCM senza header: senza riavvolgerlo in WAV il run non
+    consegna nulla di ascoltabile, e l'asse qualita' e' deciso dall'ascolto."""
+    import base64 as _b64
+    import wave as _wave
+    secondi = 1.0
+    grezzo = b"\x00\x01" * int(bench.EXPECTED_RATE * secondi)
+    audio = "data:audio/l16;base64," + _b64.b64encode(grezzo).decode("ascii")
+    s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
+    ctx = _ctx(tmp_path, s)
+    pcm = os.path.join(ctx.run_dir, "audio", "0000.pcm")
+    rec, seconds, path = bench._one_call(ctx, "testo finale", 14, "it",
+                                         "Zephyr", "+0%", None, pcm, 0)
+    assert rec["anomaly"] is None
+    assert seconds == pytest.approx(secondi, abs=0.01)
+    wav = bench.wav_path_for(pcm)
+    with _wave.open(wav, "rb") as wf:
+        assert wf.getframerate() == bench.EXPECTED_RATE
+        assert wf.getnchannels() == bench.EXPECTED_CHANNELS
+        assert wf.getsampwidth() == bench.EXPECTED_WIDTH
+        assert wf.getnframes() == bench.EXPECTED_RATE
+    ctx.writer.close()
+
+
+def test_payload_troppo_corto_e_anomalia_di_formato(tmp_path):
+    """Un corpo rotto non deve passare per PCM validissimo e farsi declassare
+    a semplice `truncated` dal gate di durata."""
+    import base64 as _b64
+    audio = ("data:audio/l16;base64,"
+             + _b64.b64encode(b"\x00\x01" * 8).decode("ascii"))
+    s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
+    ctx = _ctx(tmp_path, s)
+    rec, _s, _p = bench._one_call(ctx, "testo finale", 20, "it", "Zephyr",
+                                  "+0%", None,
+                                  os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["anomaly"] == "format"
+    assert ctx.paid_calls.count == 1
+    ctx.writer.close()
+
+
+def test_wav_dichiarato_ma_non_riff_e_anomalia_di_formato(tmp_path):
+    """Se il mime dichiara un WAV e i byte non lo sono, non si reinterpreta il
+    payload come PCM grezzo: si dichiara l'anomalia."""
+    import base64 as _b64
+    audio = ("data:audio/wav;base64,"
+             + _b64.b64encode(b"\x00\x01" * 24000).decode("ascii"))
+    s = FakeSession([FakeResponse(200, {"result": {"audio": audio}})])
+    ctx = _ctx(tmp_path, s)
+    rec, _s, _p = bench._one_call(ctx, "testo finale", 20, "it", "Zephyr",
+                                  "+0%", None,
+                                  os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["anomaly"] == "format"
+    ctx.writer.close()

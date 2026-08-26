@@ -69,9 +69,13 @@ AUDIO_TOKENS_PER_SECOND = _env_float(
     _env_float("ABM_GEMINI_AUDIO_TOKENS_PER_SECOND", 25.0))
 
 # Formato PCM atteso da Gemini TTS: 24 kHz mono 16 bit.
+MIN_RAW_PCM_MS = 20
 EXPECTED_RATE = 24000
 EXPECTED_CHANNELS = 1
 EXPECTED_WIDTH = 2
+# Soglia minima per accettare un payload PCM grezzo come audio.
+MIN_RAW_PCM_BYTES = int(EXPECTED_RATE * EXPECTED_CHANNELS * EXPECTED_WIDTH
+                        * MIN_RAW_PCM_MS / 1000)
 
 # Banda del gate di durata (reale/attesa). Volutamente piu' larga della banda
 # empirica di prod (0.75-1.35): qui serve a intercettare troncamenti
@@ -133,6 +137,68 @@ def wav_bytes_to_pcm(wav_bytes, out_path):
         fh.write(frames)
     return {"rate": rate, "channels": channels, "width": width,
             "bytes": len(frames)}
+
+
+def decode_audio_field(value):
+    """Decodifica `result.audio` e ne ritorna `(bytes, mime)`.
+
+    Schema reale osservato al primo run a pagamento (26/08/2026): il campo
+    non e' base64 nudo di un WAV, ma un data URI
+    `data:audio/l16;base64,...` il cui payload e' PCM grezzo s16le, senza
+    header RIFF. La versione precedente lo passava tale e quale a
+    `b64decode(validate=True)`, che rifiutava i due punti del prefisso:
+    ogni chiamata finiva "campo audio non decodificabile da base64" DOPO
+    essere stata fatturata.
+
+    Il base64 nudo resta accettato: se il fornitore tornasse allo schema
+    documentato, il banco continua a funzionare.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("campo audio assente o non testuale")
+    mime = None
+    payload = value
+    if value.startswith("data:"):
+        intestazione, sep, payload = value.partition(",")
+        if not sep:
+            raise ValueError("data URI senza virgola separatrice")
+        mime = intestazione[len("data:"):].split(";")[0].strip().lower() or None
+        if "base64" not in intestazione.lower():
+            raise ValueError(f"data URI non base64: {intestazione[:60]}")
+    return base64.b64decode(payload, validate=True), mime
+
+
+def looks_like_wav(payload):
+    """True se il payload ha l'header RIFF/WAVE."""
+    return (isinstance(payload, (bytes, bytearray))
+            and payload[:4] == b"RIFF" and payload[8:12] == b"WAVE")
+
+
+def raw_pcm_to_pcm(payload, out_path):
+    """Scrive un payload PCM grezzo e ne ritorna il formato PRESUNTO.
+
+    `audio/l16` non dichiara ne' frequenza ne' canali: si assume il formato
+    nativo di Gemini TTS (24 kHz mono 16 bit), lo stesso che il ramo Vertex
+    produce. L'assunzione non e' cieca: se fosse sbagliata la durata reale
+    divergerebbe dalla durata attesa e il gate anti-troncamento
+    segnalerebbe `truncated`/`overlong`.
+    """
+    if not payload:
+        raise WavFormatError("payload audio vuoto")
+    if len(payload) % (EXPECTED_CHANNELS * EXPECTED_WIDTH):
+        raise WavFormatError(
+            f"payload di {len(payload)} byte non divisibile in frame da "
+            f"{EXPECTED_CHANNELS * EXPECTED_WIDTH} byte")
+    if len(payload) < MIN_RAW_PCM_BYTES:
+        # Meno di 20 ms non e' audio: e' un corpo di risposta rotto che, senza
+        # questo controllo, verrebbe scambiato per PCM validissimo e
+        # declassato a semplice "truncated" dal gate di durata.
+        raise WavFormatError(
+            f"payload di {len(payload)} byte: meno di "
+            f"{MIN_RAW_PCM_MS} ms di audio")
+    with open(out_path, "wb") as fh:
+        fh.write(payload)
+    return {"rate": EXPECTED_RATE, "channels": EXPECTED_CHANNELS,
+            "width": EXPECTED_WIDTH, "bytes": len(payload)}
 
 
 def wav_path_for(pcm_path, suffix="_cf"):
@@ -451,7 +517,8 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
     p95 su cui si decide la soglia di throughput (spec 6.3).
 
     Returns:
-        {"wav": bytes, "latency_ms": float, "status": int, "attempts": int,
+        {"audio": bytes, "mime": str|None, "latency_ms": float,
+         "status": int, "attempts": int,
          "retry_statuses": [int, ...]}
     Raises:
         CFAuthError: 401/403.
@@ -519,13 +586,14 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
                               status=resp.status_code, attempts=attempt,
                               retry_statuses=retry_statuses)
         try:
-            wav_bytes = base64.b64decode(audio_b64, validate=True)
+            audio_payload, audio_mime = decode_audio_field(audio_b64)
         except (binascii.Error, ValueError) as exc:
-            raise CFCallError("campo audio non decodificabile da base64",
+            raise CFCallError(f"campo audio non decodificabile: {exc}",
                               status=resp.status_code, attempts=attempt,
                               retry_statuses=retry_statuses) from exc
         return {
-            "wav": wav_bytes,
+            "audio": audio_payload,
+            "mime": audio_mime,
             "latency_ms": total_latency_ms,
             "status": resp.status_code,
             "attempts": attempt,
@@ -795,13 +863,30 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
         anomaly = None
         seconds = 0.0
         audio_bytes = 0
-        # Il WAV va su disco PRIMA della decodifica e a prescindere dal suo
-        # esito: e' la risposta cosi' com'e' arrivata, l'unico materiale
-        # ascoltabile (il PCM grezzo non lo apre nessun player comune) e
-        # l'unico modo di capire a orecchio cosa ha risposto il fornitore.
-        save_wav_bytes(res["wav"], wav_path_for(pcm_path))
+        # Il materiale ascoltabile va su disco PRIMA della decodifica e a
+        # prescindere dal suo esito: e' l'unico modo di capire a orecchio cosa
+        # ha risposto il fornitore, e l'asse qualita' e' per design deciso
+        # dall'ascolto. Se la risposta e' gia' un WAV la si salva com'e'; se e'
+        # PCM grezzo (schema reale `audio/l16`) la si riavvolge in un WAV dopo
+        # averla scritta, perche' il .pcm nessun player comune lo apre.
+        payload = res["audio"]
+        e_wav = looks_like_wav(payload)
+        mime = (res.get("mime") or "").lower()
+        # La risposta finisce su disco COM'E' ARRIVATA prima di qualunque
+        # decodifica: se la decodifica fallisce resta l'unico materiale su cui
+        # capire cosa ha risposto il fornitore. Sul ramo PCM grezzo questo file
+        # viene poi riscritto come WAV ascoltabile.
+        save_wav_bytes(payload, wav_path_for(pcm_path))
+        if not e_wav and mime in ("audio/wav", "audio/x-wav", "audio/wave"):
+            # Il fornitore dichiara un WAV e manda altro: non lo si reinterpreta
+            # come PCM grezzo, si dichiara l'anomalia di formato.
+            payload = b""
         try:
-            fmt = wav_bytes_to_pcm(res["wav"], pcm_path)
+            fmt = (wav_bytes_to_pcm(payload, pcm_path) if e_wav
+                   else raw_pcm_to_pcm(payload, pcm_path))
+            if not e_wav:
+                pcm_to_wav(pcm_path, wav_path_for(pcm_path), rate=fmt["rate"],
+                           channels=fmt["channels"], width=fmt["width"])
             audio_bytes = fmt["bytes"]
             anomaly = evaluate_format(fmt)
             seconds = audio_utils.pcm_size_to_seconds(
