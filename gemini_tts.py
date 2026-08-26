@@ -23,6 +23,8 @@ from voice_utils import is_gemini_voice as _is_gemini_voice
 # protocollo write+verifica+retry (hardening incidente 2026-06).
 from community_store import atomic_write_json as _atomic_write_json
 from gemini_transport import TransportError
+import gemini_transport as _transport
+import tts_backend_state as _backend_state
 
 # Audio output constants
 #
@@ -282,7 +284,11 @@ def _resolve_model_id(model_key):
     if model_key not in GEMINI_MODELS:
         raise ValueError(f"Unknown Gemini model: {model_key!r}")
     m = GEMINI_MODELS[model_key]
-    backend = _resolve_backend()
+    # model_key deve viaggiare fino a _resolve_backend: la cache e la logica
+    # cloudflare sono per-modello (id_cloudflare, model_on_cf). Risolvere qui
+    # senza model_key congelerebbe la decisione sotto _BACKEND_DEFAULT_KEY,
+    # che non puo' mai vedere Cloudflare (rilievo task-7).
+    backend = _resolve_backend(model_key)
     if backend == "vertex":
         return m["id_vertex"]
     return m["id"]
@@ -305,6 +311,54 @@ def _resolve_location(model_key):
     if override:
         return override
     return GEMINI_MODELS[model_key]["location_vertex"]
+
+
+# === Failover automatico Cloudflare -> Vertex (circuit breaker) ============
+
+# Callback invocata una sola volta, al primo scatto del breaker. Il piano
+# gemello (Fase 6) ci aggancia l'email all'admin; qui resta un gancio nudo per
+# non far dipendere gemini_tts da email_service.
+_backend_switch_notifier = None
+
+
+def set_backend_switch_notifier(fn):
+    """Registra la callback di trip: fn(model_key, reason, detail, job_id)."""
+    global _backend_switch_notifier
+    _backend_switch_notifier = fn
+
+
+def _cf_trip_failures():
+    try:
+        return max(1, int(os.environ.get("ABM_CF_TRIP_FAILURES", "3") or 3))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _transport_for(backend):
+    """Adapter di trasporto corrispondente al backend risolto."""
+    if backend == "cloudflare":
+        return _transport.cloudflare_call
+    return _vertex_transport_call
+
+
+def _trip_to_vertex(model_key, *, reason, detail, job_id):
+    """Fa scattare il breaker e sposta il modello su Vertex.
+
+    L'email parte solo al primo chiamante: con piu' job in corso N thread
+    scoprono l'avaria insieme, e `trip()` e' idempotente sotto lock.
+    """
+    first = _backend_state.trip(model_key, reason=reason, detail=detail,
+                                job_id=job_id)
+    _set_backend(model_key, "vertex")
+    if first and _backend_switch_notifier is not None:
+        try:
+            _backend_switch_notifier(model_key, reason, detail, job_id)
+            _backend_state.mark_notified(model_key)
+        except Exception as e:
+            # Un guasto nella notifica non deve fermare il job: il failover
+            # e' gia' avvenuto, l'email e' un di piu'.
+            print(f"[gemini-tts] notifica di switch backend fallita: {e}")
+
 
 USD_EUR_RATE = _f("ABM_GEMINI_USD_EUR_RATE", 0.86)
 PAYPAL_FIXED_FEE_EUR = _f("ABM_GEMINI_PAYPAL_FIXED_FEE_EUR", 0.34)
@@ -1185,6 +1239,13 @@ def is_capability_available():
     with _available_lock:
         if _available is not None:
             return _available
+        # Scelta deliberata (non una dimenticanza): questo e' un check GLOBALE
+        # "Gemini TTS e' configurato per almeno un modello?", non legato a una
+        # voce specifica. Risolve percio' sotto _BACKEND_DEFAULT_KEY, che non
+        # puo' mai selezionare Cloudflare (opt-in solo per modello). Un setup
+        # Cloudflare-only senza Vertex/API-key configurati risulterebbe qui
+        # "non disponibile" pur potendo sintetizzare: limite noto, accettato
+        # perche' la vera decisione per-modello avviene in synthesize().
         backend = _resolve_backend()
         if backend is None:
             _available = False
@@ -1761,6 +1822,11 @@ def is_available():
         if _available is not None:
             return _available
 
+        # Stesso limite deliberato di is_capability_available(): check globale
+        # non legato a un modello, quindi risolto sotto _BACKEND_DEFAULT_KEY e
+        # incapace di vedere Cloudflare. synthesize() risolve il backend vero
+        # per modello piu' avanti (_resolve_backend(model_key)); qui basta
+        # sapere se ESISTE un modo di parlare con Gemini.
         backend = _resolve_backend()
         if backend is None:
             _available = False
@@ -1794,6 +1860,14 @@ def _http_timeout_ms(model_key=None):
     return _i("ABM_GEMINI_HTTP_TIMEOUT_MS", 25000)
 
 
+def _cf_timeout_ms():
+    """Timeout HTTP (ms) per le call al backend Cloudflare Workers AI."""
+    try:
+        return max(1000, int(os.environ.get("ABM_CF_TIMEOUT_MS", "60000") or 60000))
+    except (TypeError, ValueError):
+        return 60000
+
+
 def _make_genai_client(**kwargs):
     """Wrapper attorno a genai.Client() — seam isolato per i test.
 
@@ -1811,7 +1885,11 @@ def _get_client(model_key=None):
     API key: location e' ignorato, una sola entry "_apikey" nella cache.
     """
     from google.genai import types as _gt
-    backend = _resolve_backend()
+    # model_key propagato (rilievo task-7): _get_client e' sempre chiamato con
+    # un modello noto (da _vertex_transport_call o dai test), quindi risolvere
+    # sotto _BACKEND_DEFAULT_KEY qui sarebbe un difetto silenzioso, non una
+    # scelta - il client Vertex creato dipende dalla location per-modello.
+    backend = _resolve_backend(model_key)
     if backend is None:
         raise RuntimeError("Gemini TTS not available (no backend configured)")
 
@@ -2214,7 +2292,17 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
     if temperature is not None:
         config_kwargs["temperature"] = temperature
 
-    client = _get_client(model_key)
+    # Client isolato dal try dell'API call (rilievo task-7): _get_client puo'
+    # sollevare per credenziali/progetto/location mancanti o illeggibili, cioe'
+    # un errore di CONFIGURAZIONE che ritentare non risolve mai. Prima di questo
+    # fix finiva nell'except-all sotto e usciva come kind="retryable",
+    # sprecando tutti i tentativi del job su un guasto che serve un operatore
+    # per essere risolto.
+    try:
+        client = _get_client(model_key)
+    except Exception as e:
+        raise TransportError(str(e), kind="fatal") from e
+
     try:
         response = client.models.generate_content(
             model=model_id,
@@ -2249,7 +2337,8 @@ def _vertex_transport_call(*, final_text, voice_name, model_key, model_id,
 
 
 def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instruction=None,
-               debug_prompt_path=None, max_attempts=None, accent_directive=None):
+               debug_prompt_path=None, max_attempts=None, accent_directive=None,
+               job_id=None):
     """Sintetizza testo in PCM raw 24kHz mono 16-bit usando Gemini TTS.
 
     Args:
@@ -2277,6 +2366,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
             [style: ...], prima dello stile utente e della directive rate. Ancora
             l'accento a tutti i chunk (vedi build_accent_directive). Capata a 160
             char: e' un prompt costante e bounded, non concorre al target qualita`.
+        job_id: opzionale, id del job in corso; viene registrato nello stato
+            di trip per rendere tracciabile quale job ha visto l'avaria del
+            backend (vedi tts_backend_state). Se assente lo stato registra
+            None e il failover funziona comunque: la tracciabilita' e' un
+            di piu', non una precondizione.
 
     Returns:
         dict con success, bytes_written, input_tokens, output_tokens, model_key,
@@ -2347,22 +2441,56 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
 
     while attempt < max_attempts:
         attempt += 1
+        backend = _resolve_backend(model_key)
+        transport = _transport_for(backend)
         try:
-            out = _vertex_transport_call(
+            out = transport(
                 final_text=final_text,
                 voice_name=voice_name,
                 model_key=model_key,
-                model_id=model_id,
-                timeout_ms=_http_timeout_ms(model_key),
+                model_id=(GEMINI_MODELS[model_key].get("id_cloudflare")
+                          if backend == "cloudflare" else model_id),
+                timeout_ms=(_cf_timeout_ms() if backend == "cloudflare"
+                            else _http_timeout_ms(model_key)),
                 temperature=_temperature(),
             )
             pcm_data = out["pcm"]
             usage_input = out["input_tokens"] or 0
             usage_output = out["output_tokens"] or 0
+            if backend == "cloudflare":
+                _backend_state.record_success(model_key)
             _rpd_increment(model_key)
             break
         except TransportError as te:
             last_err = te.__cause__ or te
+
+            # --- Circuit breaker: solo per Cloudflare, solo per guasti del
+            # backend. Un contenuto rifiutato o un parametro sbagliato sono
+            # difetti del payload: farebbero cadere il backend per colpa di un
+            # chunk (spec §4.4 punto 4).
+            if backend == "cloudflare" and te.kind in ("backend_down",
+                                                       "retryable",
+                                                       "rate_limited"):
+                if te.kind == "backend_down":
+                    _trip_to_vertex(model_key,
+                                    reason="cf_backend_down",
+                                    detail=f"HTTP {te.http_status} "
+                                           f"code {te.provider_code}",
+                                    job_id=job_id)
+                    # La stessa chiamata prosegue su Vertex con i tentativi
+                    # rimanenti: l'audio e' identico byte per byte, il job in
+                    # corso non si accorge del cambio.
+                    attempt -= 1
+                    continue
+                failures = _backend_state.record_failure(model_key)
+                if failures >= _cf_trip_failures():
+                    _trip_to_vertex(model_key,
+                                    reason="cf_consecutive_failures",
+                                    detail=f"{failures} fallimenti consecutivi; "
+                                           f"ultimo: {str(te)[:120]}",
+                                    job_id=job_id)
+                    attempt -= 1
+                    continue
 
             # Contenuto rifiutato: riprovare lo stesso testo non aiuta.
             if te.kind == "content_rejected":
@@ -2371,6 +2499,18 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
                       f"finish_reason={getattr(cause, 'finish_reason', None)} "
                       f"block={getattr(cause, 'block_reason', None)}. "
                       f"Aborting attempts.")
+                raise cause if cause is not None else te
+
+            # Errore fatale (config/parametro invalido, es. credenziali Vertex
+            # mancanti o voce inesistente su Cloudflare): ritentare lo stesso
+            # backend con lo stesso payload non risolve mai nulla, va solo a
+            # sprecare tutto il budget di retry del job (rilievo task-7 su
+            # _vertex_transport_call). Non fa scattare il breaker (punto 4):
+            # non e' un guasto del backend.
+            if te.kind == "fatal":
+                cause = te.__cause__
+                print(f"[gemini-tts] Fatal error ({model_key}, backend={backend}): "
+                      f"{te}. Aborting attempts.")
                 raise cause if cause is not None else te
 
             # Quota giornaliera: sospendere invece di dormire per ore.

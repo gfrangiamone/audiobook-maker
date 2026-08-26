@@ -4481,7 +4481,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                        accent_directive=gemini_accent_directive or None,
                                                        failure_info=_chunk_fi,
                                                        fallback_lang=gemini_fallback_lang or None,
-                                                       accent_code=gemini_fallback_accent or None)
+                                                       accent_code=gemini_fallback_accent or None,
+                                                       job_id=job_id)
                 except Exception as _quota_or_budget_err:
                     # GeminiQuotaExhausted / GeminiBudgetExceeded: meglio marcare
                     # il job paused/error che silenziare il resto del libro.

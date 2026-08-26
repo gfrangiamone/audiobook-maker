@@ -767,7 +767,8 @@ def _edge_fallback_to_pcm(text, fallback_lang, rate, output_path,
 
 
 def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instruction, max_retries,
-                                      debug_prompt_path=None, rate="+0%", accent_directive=None):
+                                      debug_prompt_path=None, rate="+0%", accent_directive=None,
+                                      job_id=None):
     """Sintetizza una lista di sotto-chunk con synthesize() e concatena i PCM
     raw nel file output_path. Aggrega i risultati metrici sommando token/byte.
 
@@ -814,6 +815,7 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                             rate=rate,
                             debug_prompt_path=piece_debug_path,
                             accent_directive=accent_directive,
+                            job_id=job_id,
                         )
                         piece_ok = True
                         aggregate["bytes_written"] += int(result.get("bytes_written", 0))
@@ -849,7 +851,8 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
 
 def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_instruction=None,
                               debug_prompt_path=None, rate="+0%", accent_directive=None,
-                              failure_info=None, fallback_lang=None, accent_code=None):
+                              failure_info=None, fallback_lang=None, accent_code=None,
+                              job_id=None):
     """Genera PCM 24kHz mono 16-bit da testo via Gemini TTS con retry e fallback.
 
     NOTE: il retry interno con backoff vive ora in `gemini_tts.synthesize()`
@@ -865,6 +868,9 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
         output_path: percorso file PCM in output.
         max_retries: numero di tentativi (default 1; il backoff vero è in synthesize).
         style_instruction: optional style/tone hint prepended to the prompt.
+        job_id: opzionale, id del job in corso; propagato a
+            gemini_tts.synthesize() per tracciare quale job ha visto
+            l'eventuale avaria del backend (vedi tts_backend_state).
 
     Returns:
         dict on success, False on total failure (silence PCM written).
@@ -902,7 +908,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
             agg = _synthesize_pcm_pieces_and_concat(
                 pieces, voice_id, output_path, style_instruction, max_retries,
                 debug_prompt_path=debug_prompt_path, rate=rate,
-                accent_directive=accent_directive,
+                accent_directive=accent_directive, job_id=job_id,
             )
             if agg is not False:
                 return agg
@@ -919,6 +925,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
                 rate=rate,
                 debug_prompt_path=debug_prompt_path,
                 accent_directive=accent_directive,
+                job_id=job_id,
             )
             return result
         except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
