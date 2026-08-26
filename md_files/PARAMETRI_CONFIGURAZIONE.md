@@ -647,6 +647,17 @@ Per ogni generazione TTS Premium completata, fallita o cancellata, viene scritto
 
 **Persistenza job pagati unificata:** dalla v3.13.x, sia i pagamenti per Ottimizzazione testo AI sia quelli per voci Premium sono tracciati in `<ABM_DATA_DIR>/_paid_jobs_done.json` (campo `purpose`: `"llm"` o `"gemini"`). La migrazione del vecchio `_paid_opt_done.json` è automatica all'avvio (backup `.pre_unify_bak`).
 
+### 7.8 Backend Cloudflare — ledger locale del credito e pre-allarme (`tts_backend_state.py`)
+
+Il credito Cloudflare AI Gateway è **prepagato** e non è leggibile via API (gli endpoint di fatturazione rispondono 403: il token è deliberatamente ristretto a Workers AI). Il saldo residuo è quindi una **stima**: `ABM_CF_CREDIT_BALANCE_EUR` è il saldo che l'admin dichiara dopo ogni ricarica, da cui `tts_backend_state.credit_left_eur()` sottrae la spesa cumulata nel ledger locale (`add_spend()`, chiave globale `_credit` nel file di stato — il credito è unico per l'account, non per modello).
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `ABM_CF_CREDIT_BALANCE_EUR` | `0` | Saldo Cloudflare dichiarato dall'admin dopo l'ultima ricarica. `0` (non dichiarato) disabilita il pre-allarme: evita rumore costante su installazioni che non usano Cloudflare o non hanno ancora eseguito la procedura di accensione. |
+| `ABM_CF_CREDIT_ALERT_EUR` | `5` | Soglia di residuo stimato sotto cui `should_alert_credit()` ritorna `True` (solo se non già segnalato via `mark_credit_alerted()`). |
+
+**API del modulo:** `add_spend(model_key, eur)`, `reset_spend()` (da chiamare alla ricarica, azzera il ledger e riarma l'allarme), `credit_left_eur()`, `should_alert_credit()`, `mark_credit_alerted()`. Persistenza: stesso file `<ABM_DATA_DIR>/_tts_backend_state.json` usato dal circuit breaker, sotto la chiave `_credit`.
+
 ---
 
 ## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)

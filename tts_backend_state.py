@@ -336,3 +336,65 @@ def record_success(model_key):
         if entry.get("consecutive_failures"):
             entry["consecutive_failures"] = 0
             _save()
+
+
+# --- Ledger della spesa Cloudflare -----------------------------------------
+# Il credito AI Gateway e' unico per l'account: la spesa di ogni modello lo
+# intacca, quindi il ledger e' globale e vive sotto la chiave "_credit".
+_CREDIT_KEY = "_credit"
+
+
+def _f_env(name, default):
+    try:
+        return float((os.environ.get(name, "") or "").replace(",", ".") or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def add_spend(model_key, eur):
+    """Accumula la spesa stimata di una chiamata sul ledger locale."""
+    with _LOCK:
+        entry = _CACHE.setdefault(_CREDIT_KEY, {})
+        entry["spent_eur"] = float(entry.get("spent_eur", 0.0)) + float(eur or 0.0)
+        _save()
+
+
+def reset_spend():
+    """Azzera il ledger: da chiamare quando l'admin ricarica il credito."""
+    with _LOCK:
+        _CACHE[_CREDIT_KEY] = {"spent_eur": 0.0, "alerted": False}
+        _save()
+
+
+def credit_left_eur():
+    """Residuo stimato: saldo dichiarato meno speso cumulato.
+
+    E' una STIMA: l'API Cloudflare non restituisce i token, quindi la spesa e'
+    calcolata dal chiamante sui secondi di audio prodotti. Vedi §10.2 della
+    spec per l'esito della ricognizione sull'API del saldo.
+    """
+    with _LOCK:
+        spent = float((_CACHE.get(_CREDIT_KEY) or {}).get("spent_eur", 0.0))
+    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
+
+
+def should_alert_credit():
+    """True quando il residuo scende sotto soglia e l'allarme non e' gia' dato.
+
+    Con saldo dichiarato a 0 (default) l'allarme e' disattivato: sarebbe
+    rumore costante su un'installazione che non usa Cloudflare.
+    """
+    balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    if balance <= 0:
+        return False
+    with _LOCK:
+        if (_CACHE.get(_CREDIT_KEY) or {}).get("alerted"):
+            return False
+    return credit_left_eur() < _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+
+
+def mark_credit_alerted():
+    with _LOCK:
+        entry = _CACHE.setdefault(_CREDIT_KEY, {})
+        entry["alerted"] = True
+        _save()
