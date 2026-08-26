@@ -106,7 +106,7 @@ def _interpret_cloudflare_response(resp):
         body = None
 
     if status == 200:
-        # Doctrine di fatturazione verificata sul campo: una 200 e' addebitata
+        # Dottrina di fatturazione verificata sul campo: una 200 e' addebitata
         # comunque, anche se il corpo non contiene audio.
         audio = None
         if isinstance(body, dict):
@@ -118,8 +118,8 @@ def _interpret_cloudflare_response(resp):
         idx = audio.find(_CF_AUDIO_PREFIX)
         raw = audio[idx + len(_CF_AUDIO_PREFIX):] if idx >= 0 else audio
         try:
-            # validate=True: rifiuta silenziosamente i caratteri fuori dall'alfabeto
-            # base64, invece di decodificare comunque un payload troncato/corrotto.
+            # validate=True: solleva sui caratteri fuori dall'alfabeto base64 invece
+            # di scartarli in silenzio decodificando un payload troncato/corrotto.
             # Incidenti passati: edge-tts troncato consegnato, PCM assembly troncato.
             pcm = base64.b64decode(raw, validate=True)
         except (ValueError, TypeError, binascii.Error) as e:
