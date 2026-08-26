@@ -108,15 +108,10 @@ def _load():
                   f"{model_key!r} non e' un dict ({type(entry).__name__}) - "
                   f"trattata come scattata finche' un reset esplicito non la "
                   f"riscrive.", flush=True)
-            data[model_key] = {
-                "active": "vertex",
-                "tripped_at": _now(),
-                "trip_reason": "state_entry_corrupt",
-                "trip_detail": f"voce di stato non e' un dict ({type(entry).__name__})",
-                "trip_job_id": None,
-                "consecutive_failures": 0,
-                "notified": False,
-            }
+            data[model_key] = _failsafe_placeholder(
+                "state_entry_corrupt",
+                f"voce di stato non e' un dict ({type(entry).__name__})",
+            )
             tripped_models.append(model_key)
 
     if tripped_models:
@@ -172,10 +167,29 @@ def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _failsafe_placeholder(trip_reason, trip_detail):
+    """Voce sintetica "gia' scattata" per un modello privo di un valore
+    concreto quando il fail-safe (globale o per-voce) e' attivo. Fattorizzata
+    per non far divergere le due forme (`state()` e `_load()` per lo schema
+    per-voce corrotto) e per essere l'unica sorgente usata anche da
+    `_entry_for_mutation()`."""
+    return {
+        "active": "vertex",
+        "tripped_at": _now(),
+        "trip_reason": trip_reason,
+        "trip_detail": trip_detail,
+        "trip_job_id": None,
+        "consecutive_failures": 0,
+        "notified": False,
+    }
+
+
 def state(model_key):
     """Stato corrente del modello. Non solleva mai eccezioni: `_CACHE`
     contiene solo dict ben formati (sanificati in `_load()`), e per i
-    model_key assenti applica il fallback fail-safe (vedi `_FAIL_SAFE`)."""
+    model_key assenti applica il fallback fail-safe (vedi `_FAIL_SAFE`).
+    Lettura pura: a differenza di `_entry_for_mutation()`, non scrive mai in
+    `_CACHE`."""
     with _LOCK:
         entry = _CACHE.get(model_key)
         if entry is not None:
@@ -185,20 +199,63 @@ def state(model_key):
             # questo modello non ha ancora un valore concreto (nessun reset
             # esplicito ricevuto da allora): consideralo scattato, mai
             # pulito.
-            return {
-                "active": "vertex",
-                "tripped_at": _now(),
-                "trip_reason": "state_file_unreadable",
-                "trip_detail": "stato precedente non ricostruibile dal disco al boot",
-                "trip_job_id": None,
-                "consecutive_failures": 0,
-                "notified": False,
-            }
+            return _failsafe_placeholder(
+                "state_file_unreadable",
+                "stato precedente non ricostruibile dal disco al boot",
+            )
         return {}
 
 
 def is_tripped(model_key):
     return bool(state(model_key).get("tripped_at"))
+
+
+def _entry_for_mutation(model_key):
+    """Restituisce `(entry, existed)` per `model_key`, l'UNICO punto in cui
+    un mutatore ottiene la voce da modificare. Chiamare sempre sotto `_LOCK`.
+
+    Se la voce esiste gia' in `_CACHE`, la ritorna cosi' com'e' (`existed`
+    True). Altrimenti la crea e la inserisce: se il fail-safe globale e'
+    attivo, la voce creata e' GIA' scattata (stessa causa del fallback di
+    `state()`), non un dict vuoto - senza questo, un mutatore che tocca un
+    solo campo (`record_failure`, `record_success`, `mark_notified`)
+    scriverebbe una voce "pulita per omissione" priva di `tripped_at`, che da
+    quel momento scavalcherebbe il fallback fail-safe in `state()` senza che
+    nessuno abbia mai chiamato `reset()`: esattamente il riarmo silenzioso
+    che questo modulo esiste per impedire. Difetto corretto in questo giro:
+    prima le tre funzioni costruivano ciascuna la propria voce vuota via
+    `_CACHE.setdefault(model_key, {})`, ignorando `_FAIL_SAFE`.
+
+    `existed=False` segnala che la voce e' stata appena creata da QUESTA
+    chiamata: serve a `trip()` per continuare a distinguere "gia' scattato
+    per un trip reale precedente" da "appena materializzato ora dal
+    fail-safe", perche' la prima `trip()` reale su un modello scattato solo
+    virtualmente deve comunque ritornare True e registrare la causa vera, non
+    essere scavalcata dalla propria materializzazione fail-safe.
+    """
+    entry = _CACHE.get(model_key)
+    if entry is not None:
+        return entry, True
+    entry = _failsafe_placeholder(
+        "state_file_unreadable",
+        "stato precedente non ricostruibile dal disco al boot",
+    ) if _FAIL_SAFE else {}
+    _CACHE[model_key] = entry
+    return entry, False
+
+
+def _safe_int(value, default=0):
+    """Converte in int senza mai sollevare. Un `consecutive_failures` non
+    numerico letto da disco (schema diverso di una versione precedente, o
+    corruzione parziale della singola voce) vale `default`, non un'eccezione
+    che ucciderebbe un job sul percorso caldo della sintesi: un contatore
+    illeggibile non e' evidenza di N fallimenti reali, e ripartire da 0 e' la
+    scelta piu' conservativa (non fa scattare nulla da solo - la soglia resta
+    decisa dal chiamante confrontando con ABM_CF_TRIP_FAILURES)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def trip(model_key, *, reason, detail, job_id):
@@ -209,13 +266,15 @@ def trip(model_key, *, reason, detail, job_id):
     email all'admin senza un secondo meccanismo di deduplica.
 
     Se il modello era gia' scattato solo "virtualmente" per fail-safe (nessun
-    valore concreto in _CACHE, vedi `state()`), questa chiamata lo
-    materializza con la causa reale e ritorna True: non e' un secondo trip,
-    prima d'ora non esisteva alcun record concreto per questo modello.
+    valore concreto in _CACHE), `_entry_for_mutation` la materializza qui
+    sotto con `existed=False`: il controllo idempotente ignora percio' il
+    `tripped_at` che il fail-safe vi ha appena scritto e procede a
+    sovrascriverlo con i dati reali. Non e' un secondo trip - prima d'ora non
+    esisteva alcun record concreto per questo modello.
     """
     with _LOCK:
-        entry = _CACHE.setdefault(model_key, {})
-        if entry.get("tripped_at"):
+        entry, existed = _entry_for_mutation(model_key)
+        if existed and entry.get("tripped_at"):
             return False
         entry.update({
             "active": "vertex",
@@ -232,7 +291,7 @@ def trip(model_key, *, reason, detail, job_id):
 
 def mark_notified(model_key):
     with _LOCK:
-        entry = _CACHE.setdefault(model_key, {})
+        entry, _existed = _entry_for_mutation(model_key)
         entry["notified"] = True
         _save()
 
@@ -243,7 +302,7 @@ def reset(model_key):
     nessun record concreto ancora presente)."""
     with _LOCK:
         had_trip = is_tripped(model_key)
-        entry = _CACHE.setdefault(model_key, {})
+        entry, _existed = _entry_for_mutation(model_key)
         entry.update({
             "active": "cloudflare",
             "tripped_at": None,
@@ -259,17 +318,21 @@ def reset(model_key):
 
 
 def record_failure(model_key):
-    """Incrementa e ritorna i fallimenti consecutivi. Non fa scattare nulla."""
+    """Incrementa e ritorna i fallimenti consecutivi. Non fa scattare nulla.
+
+    Vedi `_safe_int`: un `consecutive_failures` malformato letto da disco non
+    deve mai far sollevare questa funzione, dichiarata dal modulo come
+    chiamata per ogni fallimento di sintesi (percorso caldo)."""
     with _LOCK:
-        entry = _CACHE.setdefault(model_key, {})
-        entry["consecutive_failures"] = int(entry.get("consecutive_failures", 0)) + 1
+        entry, _existed = _entry_for_mutation(model_key)
+        entry["consecutive_failures"] = _safe_int(entry.get("consecutive_failures", 0)) + 1
         _save()
         return entry["consecutive_failures"]
 
 
 def record_success(model_key):
     with _LOCK:
-        entry = _CACHE.setdefault(model_key, {})
+        entry, _existed = _entry_for_mutation(model_key)
         if entry.get("consecutive_failures"):
             entry["consecutive_failures"] = 0
             _save()

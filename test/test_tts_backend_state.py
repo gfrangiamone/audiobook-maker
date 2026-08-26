@@ -166,3 +166,89 @@ def test_boot_log_is_loud_when_reloading_a_tripped_state(tmp_path, capsys):
     # scattato non e' stato ricaricato" (allineato a gemini_tts._load_admin_state).
     assert "BOOT" in out
     assert "flash31" in out
+
+
+def _make_failsafe(tmp_path):
+    """File PRESENTE ma illeggibile: attiva _FAIL_SAFE globale senza che
+    nessun modello abbia ancora una voce concreta in _CACHE."""
+    (tmp_path / "_tts_backend_state.json").write_text("{non json", encoding="utf-8")
+    st.init(str(tmp_path))
+
+
+def test_record_failure_does_not_silently_clear_a_failsafe_trip(tmp_path):
+    # Fix round 2 (Difetto 1): prima di questo fix, record_failure/success/
+    # mark_notified creavano una voce vuota via _CACHE.setdefault(k, {}),
+    # ignorando _FAIL_SAFE. Una voce vuota non ha tripped_at, quindi da quel
+    # momento is_tripped() la leggeva come "pulita" senza che nessuno avesse
+    # mai chiamato reset(): riarmo silenzioso del breaker.
+    _make_failsafe(tmp_path)
+    assert st.is_tripped("modelA") is True  # scattato solo virtualmente
+    st.record_failure("modelA")
+    assert st.is_tripped("modelA") is True  # deve restare scattato
+
+
+def test_record_success_does_not_silently_clear_a_failsafe_trip(tmp_path):
+    _make_failsafe(tmp_path)
+    assert st.is_tripped("modelB") is True
+    st.record_success("modelB")
+    assert st.is_tripped("modelB") is True
+
+
+def test_mark_notified_does_not_silently_clear_a_failsafe_trip(tmp_path):
+    _make_failsafe(tmp_path)
+    assert st.is_tripped("modelC") is True
+    st.mark_notified("modelC")
+    assert st.is_tripped("modelC") is True
+    assert st.state("modelC")["notified"] is True
+
+
+def test_first_real_trip_on_a_failsafe_model_records_the_real_cause(tmp_path):
+    _make_failsafe(tmp_path)
+    assert st.is_tripped("modelD") is True  # solo virtuale
+    assert st.trip("modelD", reason="real_reason", detail="real detail",
+                   job_id="jX") is True
+    s = st.state("modelD")
+    assert s["trip_reason"] == "real_reason"
+    assert s["trip_detail"] == "real detail"
+    assert s["trip_job_id"] == "jX"
+    # E' comunque idempotente da qui in avanti: un secondo trip non vince piu'.
+    assert st.trip("modelD", reason="other", detail="other",
+                   job_id="jY") is False
+    assert st.state("modelD")["trip_job_id"] == "jX"
+
+
+def test_first_real_trip_on_a_failsafe_model_under_concurrency(tmp_path):
+    _make_failsafe(tmp_path)
+    assert st.is_tripped("modelE") is True  # solo virtuale, nessun record concreto
+    winners = []
+    barrier = threading.Barrier(8)
+
+    def _worker(i):
+        barrier.wait()
+        if st.trip("modelE", reason="r", detail=f"d{i}", job_id=f"j{i}"):
+            winners.append(i)
+
+    threads = [threading.Thread(target=_worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # Esattamente un vincitore, anche partendo da uno stato scattato solo
+    # virtualmente: la materializzazione fail-safe non deve ne' far vincere
+    # piu' di un thread, ne' far perdere a tutti (0 vincitori sarebbe un trip
+    # reale mai registrato).
+    assert len(winners) == 1
+    winner_job = f"j{winners[0]}"
+    assert st.state("modelE")["trip_job_id"] == winner_job
+
+
+def test_record_failure_with_non_numeric_counter_does_not_raise():
+    # Difetto 2: consecutive_failures puo' essere una stringa (o altro tipo)
+    # in una voce altrimenti valida, senza che l'intero file sia illeggibile
+    # (quel caso e' gia' coperto da test_a_corrupt_file_does_not_crash_the_module).
+    # _safe_int deve degradare a 0, mai sollevare ValueError sul percorso
+    # caldo della sintesi.
+    st.trip("flash31", reason="r", detail="d", job_id="j1")
+    st._CACHE["flash31"]["consecutive_failures"] = "not-a-number"
+    assert st.record_failure("flash31") == 1
+    assert st.state("flash31")["consecutive_failures"] == 1
