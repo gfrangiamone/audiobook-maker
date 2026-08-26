@@ -1,5 +1,6 @@
 """Ledger locale della spesa Cloudflare e pre-allarme sul credito."""
 import json
+import math
 import os
 import threading
 import time
@@ -32,36 +33,64 @@ def test_spend_is_global_not_per_model():
 
 def test_no_alert_while_the_balance_is_comfortable():
     st.add_spend("flash31", 40.0)
-    assert st.should_alert_credit() is False
+    assert st.credit_alert_pending() is False
 
 
-def test_alert_fires_below_the_threshold():
+def test_pending_reports_true_below_threshold():
     st.add_spend("flash31", 46.0)
-    assert st.should_alert_credit() is True
+    assert st.credit_alert_pending() is True
 
 
-def test_alert_fires_only_once():
+def test_pending_is_pure_and_repeatable(tmp_path):
+    # Fix round 2: credit_alert_pending() non deve mutare nulla ne' scrivere
+    # su disco - una futura pagina di stato admin deve poterla chiamare N
+    # volte senza mai consumare l'unico allarme disponibile.
     st.add_spend("flash31", 46.0)
-    assert st.should_alert_credit() is True
-    st.mark_credit_alerted()
-    assert st.should_alert_credit() is False
+    state_path = tmp_path / "_tts_backend_state.json"
+    before = state_path.read_text("utf-8")
+    for _ in range(10):
+        assert st.credit_alert_pending() is True
+    after = state_path.read_text("utf-8")
+    assert before == after
+    # L'allarme e' ancora integro: claim_credit_alert() lo trova non ancora
+    # consumato e lo consegna al primo (e unico) chiamante reale.
+    assert st.claim_credit_alert() is True
+    # Da qui in poi anche la lettura pura riflette il consumo.
+    assert st.credit_alert_pending() is False
+
+
+def test_claim_fires_only_once():
+    st.add_spend("flash31", 46.0)
+    assert st.claim_credit_alert() is True
+    assert st.claim_credit_alert() is False
 
 
 def test_a_topup_rearms_the_alert(monkeypatch):
     st.add_spend("flash31", 46.0)
-    st.mark_credit_alerted()
+    assert st.claim_credit_alert() is True
     # L'admin ricarica: alza il saldo dichiarato e azzera il ledger.
     st.reset_spend()
     monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "100")
     assert st.credit_left_eur() == pytest.approx(100.0)
-    assert st.should_alert_credit() is False
+    assert st.credit_alert_pending() is False
+    assert st.claim_credit_alert() is False
 
 
 def test_a_zero_balance_disables_the_alert(monkeypatch):
     # Saldo non dichiarato (default 0): l'allarme sarebbe rumore costante.
     monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "0")
     st.add_spend("flash31", 5.0)
-    assert st.should_alert_credit() is False
+    assert st.credit_alert_pending() is False
+    assert st.claim_credit_alert() is False
+
+
+def test_mark_credit_alerted_is_idempotent_and_used_for_rearm_tests():
+    st.add_spend("flash31", 46.0)
+    st.mark_credit_alerted()
+    assert st.credit_alert_pending() is False
+    assert st.claim_credit_alert() is False
+    st.mark_credit_alerted()  # idempotente, nessun effetto aggiuntivo
+    assert st.claim_credit_alert() is False
 
 
 def test_the_ledger_survives_a_reload(tmp_path):
@@ -70,15 +99,24 @@ def test_the_ledger_survives_a_reload(tmp_path):
     assert st.credit_left_eur() == pytest.approx(38.0)
 
 
+def _read_raw(tmp_path):
+    with open(os.path.join(str(tmp_path), "_tts_backend_state.json"),
+               "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_raw(tmp_path, raw):
+    with open(os.path.join(str(tmp_path), "_tts_backend_state.json"),
+              "w", encoding="utf-8") as f:
+        json.dump(raw, f)
+
+
 def _corrupt_spent_eur(tmp_path, bad_value):
     """Scrive `bad_value` come `_credit.spent_eur` sul file di stato e
     ricarica, come farebbe un file modificato a mano o corrotto a meta'."""
-    path = os.path.join(str(tmp_path), "_tts_backend_state.json")
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
+    raw = _read_raw(tmp_path)
     raw.setdefault("_credit", {})["spent_eur"] = bad_value
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(raw, f)
+    _write_raw(tmp_path, raw)
     st.init(str(tmp_path))
 
 
@@ -91,13 +129,49 @@ def test_malformed_spent_eur_never_raises(tmp_path, bad_value):
     # Nessuna delle tre deve sollevare: un campo illeggibile vale 0, non
     # un'eccezione che ucciderebbe il percorso caldo della sintesi.
     assert st.credit_left_eur() == pytest.approx(50.0)
-    assert st.should_alert_credit() in (True, False)
+    assert st.credit_alert_pending() in (True, False)
     st.add_spend("flash31", 2.0)
     assert st.credit_left_eur() == pytest.approx(48.0)
 
 
-def test_should_alert_credit_is_atomic_under_real_concurrency():
-    # Residuo sotto soglia: ogni thread che chiama should_alert_credit()
+@pytest.mark.parametrize("bad_value", [math.nan, math.inf, -math.inf])
+def test_non_finite_spent_eur_never_raises_and_heals(tmp_path, bad_value, capsys):
+    # Fix round 2 (Decisione 1): un valore non finito e' float valido per
+    # Python/JSON e passava _safe_float senza filtro.
+    # -Infinity spegneva il pre-allarme per sempre (residuo = +Infinity);
+    # NaN, dopo un add_spend() reale, rompeva la rilettura di verifica di
+    # _save() per l'INTERO modulo (non solo il ledger), da quel momento in
+    # poi su qualunque trip/reset/record_failure di qualunque modello.
+    st.add_spend("flash31", 1.0)
+    _corrupt_spent_eur(tmp_path, bad_value)
+    capsys.readouterr()  # scarta l'eventuale log di BOOT sul ledger corrotto
+
+    # Un valore non finito degrada a 0 speso: mai un residuo infinito che
+    # spegnerebbe l'allarme per sempre, mai un'eccezione.
+    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_alert_pending() in (True, False)
+
+    # add_spend() reale successivo deve restare sano: il residuo torna
+    # finito e prevedibile.
+    st.add_spend("flash31", 2.0)
+    assert st.credit_left_eur() == pytest.approx(48.0)
+    out = capsys.readouterr().out
+    assert "ERROR" not in out
+
+    # La sanita' non e' limitata al ledger: un trip/reset su un modello
+    # completamente indifferente al ledger deve persistere pulito, senza il
+    # falso "stato NON persistito" che il NaN provocava su OGNI _save()
+    # successivo nel round precedente.
+    assert st.trip("some_other_model", reason="r", detail="d", job_id="j") is True
+    out2 = capsys.readouterr().out
+    assert "ERROR" not in out2
+    assert st.is_tripped("some_other_model") is True
+    st.init(str(tmp_path))  # simula un riavvio: il trip deve essere arrivato su disco
+    assert st.is_tripped("some_other_model") is True
+
+
+def test_claim_credit_alert_is_atomic_under_real_concurrency():
+    # Residuo sotto soglia: ogni thread che chiama claim_credit_alert()
     # vedrebbe le condizioni per allarmare, se non fosse per l'atomicita'.
     st.add_spend("flash31", 46.0)
 
@@ -109,14 +183,13 @@ def test_should_alert_credit_is_atomic_under_real_concurrency():
     def worker():
         nonlocal true_count
         barrier.wait()
-        if st.should_alert_credit():
+        if st.claim_credit_alert():
             # Simula l'invio email (I/O reale, rilascia il GIL) nella
             # finestra in cui una versione non atomica lascerebbe altri
             # thread vedere ancora "non ancora segnalato".
             time.sleep(0.01)
             with count_lock:
                 true_count += 1
-            st.mark_credit_alerted()
 
     threads = [threading.Thread(target=worker) for _ in range(n_threads)]
     for t in threads:
@@ -125,3 +198,111 @@ def test_should_alert_credit_is_atomic_under_real_concurrency():
         t.join()
 
     assert true_count == 1
+
+
+def test_pending_does_not_interfere_with_concurrent_claim():
+    # Chiamate concorrenti a credit_alert_pending() (una pagina di stato
+    # letta da piu' richieste) non devono mai rubare l'allarme a
+    # claim_credit_alert(): resta esattamente un vincitore.
+    st.add_spend("flash31", 46.0)
+    barrier = threading.Barrier(21)
+    results = []
+    lock = threading.Lock()
+
+    def pending_worker():
+        barrier.wait()
+        for _ in range(50):
+            st.credit_alert_pending()
+
+    def claim_worker():
+        barrier.wait()
+        won = st.claim_credit_alert()
+        with lock:
+            results.append(won)
+
+    threads = [threading.Thread(target=pending_worker) for _ in range(20)]
+    threads.append(threading.Thread(target=claim_worker))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results == [True]
+
+
+# --- Decisione 3: isolamento del ledger dallo spazio dei model_key ---------
+
+def test_old_flat_format_file_is_migrated_and_read_correctly(tmp_path):
+    # Formato scritto dai commit precedenti a questo giro: model_key e
+    # "_credit" mescolati al top level, nessuna chiave "models".
+    _write_raw(tmp_path, {
+        "flash31": {
+            "active": "vertex", "tripped_at": "2026-01-01T00:00:00Z",
+            "trip_reason": "cf_credit_exhausted", "trip_detail": "d",
+            "trip_job_id": "j1", "consecutive_failures": 0, "notified": False,
+        },
+        "_credit": {"spent_eur": 12.0, "alerted": False},
+    })
+    st.init(str(tmp_path))
+    assert st.is_tripped("flash31") is True
+    assert st.credit_left_eur() == pytest.approx(38.0)
+    # Il ledger non deve mai comparire come modello.
+    assert st.state("_credit") == {}
+    assert st.is_tripped("_credit") is False
+
+
+def test_malformed_credit_key_does_not_appear_as_a_model(tmp_path, capsys):
+    # Riprodotto in review: un "_credit" non-dict in testa al file veniva
+    # trattato dal ramo per-modello come "voce scattata", mescolando
+    # concettualmente il ledger nel circuit breaker.
+    _write_raw(tmp_path, {
+        "_credit": "not-a-dict",
+        "flash31": {
+            "active": "vertex", "tripped_at": "2026-01-01T00:00:00Z",
+            "trip_reason": "r", "trip_detail": "d", "trip_job_id": "j1",
+            "consecutive_failures": 0, "notified": False,
+        },
+    })
+    capsys.readouterr()
+    st.init(str(tmp_path))
+    out = capsys.readouterr().out
+    # La riga di BOOT che elenca i modelli scattati non deve mai citare
+    # "_credit": solo "flash31" (il ledger corrotto e' un log a parte, non
+    # una voce di modello).
+    tripped_lines = [line for line in out.splitlines()
+                      if "backend gia' scattato per" in line]
+    assert tripped_lines and "_credit" not in tripped_lines[0]
+    assert "flash31" in tripped_lines[0]
+    assert st.state("_credit") == {}
+    assert st.is_tripped("_credit") is False
+    # Il modello reale non e' toccato dalla corruzione del ledger.
+    assert st.is_tripped("flash31") is True
+    # Ledger degradato a 0 speso, mai un'eccezione.
+    assert st.credit_left_eur() == pytest.approx(50.0)
+
+
+def test_model_key_literally_credit_does_not_collide_with_the_ledger():
+    # Nel formato nuovo il ledger vive al top level sotto "_credit", le
+    # voci di modello sotto "models": un model_key letterale "_credit"
+    # finisce in models["_credit"], un percorso diverso dal ledger - mai
+    # una fusione silenziosa dei due schemi.
+    st.add_spend("flash31", 10.0)
+    assert st.trip("_credit", reason="r", detail="d", job_id="j1") is True
+
+    assert st.is_tripped("_credit") is True
+    assert st.state("_credit")["active"] == "vertex"
+    # Il ledger resta intatto e isolato dal trip sul model_key omonimo.
+    assert st.credit_left_eur() == pytest.approx(40.0)
+    assert st.credit_alert_pending() is False
+
+
+def test_model_key_literally_credit_survives_a_reload(tmp_path):
+    st.add_spend("flash31", 10.0)
+    st.trip("_credit", reason="r", detail="d", job_id="j1")
+    st.init(str(tmp_path))
+    assert st.is_tripped("_credit") is True
+    assert st.credit_left_eur() == pytest.approx(40.0)
+    # Un reset del modello "_credit" non deve toccare il ledger.
+    assert st.reset("_credit") is True
+    assert st.is_tripped("_credit") is False
+    assert st.credit_left_eur() == pytest.approx(40.0)

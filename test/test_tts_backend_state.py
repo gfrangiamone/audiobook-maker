@@ -30,7 +30,7 @@ def test_trip_marks_the_model_and_persists(tmp_path):
     assert st.is_tripped("flash31") is True
 
     on_disk = json.loads((tmp_path / "_tts_backend_state.json").read_text("utf-8"))
-    assert on_disk["flash31"]["active"] == "vertex"
+    assert on_disk["models"]["flash31"]["active"] == "vertex"
 
 
 def test_trip_is_idempotent_only_the_first_caller_gets_true():
@@ -250,5 +250,18 @@ def test_record_failure_with_non_numeric_counter_does_not_raise():
     # caldo della sintesi.
     st.trip("flash31", reason="r", detail="d", job_id="j1")
     st._CACHE["flash31"]["consecutive_failures"] = "not-a-number"
+    assert st.record_failure("flash31") == 1
+    assert st.state("flash31")["consecutive_failures"] == 1
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+def test_record_failure_with_non_finite_counter_does_not_raise(bad_value):
+    # Fix round 2 (Decisione 1): int(float('nan')) solleva ValueError (gia'
+    # catturata), ma int(float('inf'))/int(float('-inf')) sollevano
+    # OverflowError - il difetto gemello di _safe_float con i non finiti,
+    # non catturato prima di questo giro sarebbe stato un crash sul percorso
+    # caldo della sintesi.
+    st.trip("flash31", reason="r", detail="d", job_id="j1")
+    st._CACHE["flash31"]["consecutive_failures"] = bad_value
     assert st.record_failure("flash31") == 1
     assert st.state("flash31")["consecutive_failures"] == 1

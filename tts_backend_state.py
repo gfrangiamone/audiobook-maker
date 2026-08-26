@@ -24,9 +24,24 @@ stampato su stdout COSI' COM'E', troncato a 300 caratteri ma non altrimenti
 filtrato o redatto. Questo modulo non applica alcuna redazione: e' cura
 esclusiva del chiamante non passare qui header, token o altre credenziali.
 
+Forma su disco: `{"_credit": {...ledger...}, "models": {model_key: {...}}}`.
+Il ledger della spesa Cloudflare vive SEMPRE sotto la chiave riservata
+top-level `_credit`, mai dentro lo spazio dei `model_key` (`_CACHE` in
+memoria contiene solo voci di modello: il ledger e' un dict separato,
+`_CREDIT`). Questo rende impossibile, per costruzione, la collisione fra un
+`model_key` chiamato letteralmente `_credit` e il ledger: il primo vivrebbe
+sotto `models["_credit"]`, il secondo resta al top level - percorsi diversi,
+mai fusi. Retrocompatibilita': un file scritto dalle versioni precedenti
+(prima di questo modulo) ha i `model_key` mescolati al top level invece che
+sotto `models`; `_load()` lo riconosce (assenza della chiave `models`) e
+tratta ogni chiave diversa da `_credit` come voce di modello, esattamente
+come faceva il codice precedente. Da quel momento in poi il file viene
+riscritto nella forma nuova.
+
 File di stato: <data_dir>/_tts_backend_state.json
 """
 import json
+import math
 import os
 import threading
 import time
@@ -36,7 +51,24 @@ import community_store
 
 _STATE_PATH = None
 _LOCK = threading.RLock()
+
+# Voci per-modello del circuit breaker (model_key -> entry). Non contiene MAI
+# la chiave riservata del ledger credito (vedi _CREDIT_KEY / _CREDIT sotto):
+# i due spazi sono tenuti separati per costruzione, non per convenzione.
 _CACHE = {}
+
+# Chiave riservata top-level su disco per il ledger della spesa Cloudflare, e
+# chiave (sempre top-level) sotto cui vivono le voci di modello nel formato
+# nuovo. Nessuna delle due puo' mai comparire come model_key reale in
+# _CACHE: un model_key letteralmente uguale a una di queste due stringhe
+# finisce comunque annidato dentro `models[...]`, quindi non collide mai col
+# ledger ne' con il contenitore stesso.
+_CREDIT_KEY = "_credit"
+_MODELS_KEY = "models"
+
+# Ledger della spesa Cloudflare: dict indipendente da _CACHE, mai annidato al
+# suo interno. Vedi _default_credit_ledger() per la forma.
+_CREDIT = {}
 
 # True quando il file di stato ESISTEVA ma non e' stato letto correttamente
 # (I/O, JSON invalido, radice non-dict). Governa solo il fallback di
@@ -56,6 +88,32 @@ def init(data_dir):
         _CACHE = _load()
 
 
+def _default_credit_ledger():
+    return {"spent_eur": 0.0, "alerted": False}
+
+
+def _parse_credit_ledger(raw_credit):
+    """Sanifica la voce del ledger letta da disco (chiave riservata
+    `_CREDIT_KEY`, mai un model_key). Non solleva mai: una voce assente, non
+    un dict, o con `spent_eur` di forma inattesa (stringa non numerica,
+    None, NaN/Infinity - vedi `_safe_float`) degrada al ledger vuoto (0 speso,
+    non ancora segnalato). E' la scelta piu' conservativa: nel caso peggiore
+    genera un allarme di troppo dopo una ricarica, mai zero quando servirebbe
+    (a differenza di un residuo rimasto +Infinity per un valore non finito
+    mai sanificato)."""
+    if not isinstance(raw_credit, dict):
+        if raw_credit is not None:
+            print(f"[tts-backend-state] BOOT: ledger credito "
+                  f"({_CREDIT_KEY!r}) non e' un dict "
+                  f"({type(raw_credit).__name__}) - ripartito da 0 speso.",
+                  flush=True)
+        return _default_credit_ledger()
+    return {
+        "spent_eur": _safe_float(raw_credit.get("spent_eur")),
+        "alerted": bool(raw_credit.get("alerted")),
+    }
+
+
 def _load():
     """Carica lo stato da disco distinguendo i due casi che contano:
 
@@ -73,9 +131,20 @@ def _load():
       trip concreto con motivo `state_entry_corrupt`, cosi' che il resto del
       modulo veda sempre e solo dict ben formati e non possa mai sollevare
       un'eccezione sul percorso caldo della sintesi.
+
+    Il ledger credito (chiave riservata `_CREDIT_KEY`) e' sempre estratto
+    PRIMA di interpretare le voci di modello, ed e' l'unica lettura che lo
+    tocca: qualunque sia la sua forma (assente, corrotta, non-dict), non
+    viene mai scambiato per un modello scattato, e non appare mai in
+    `_CACHE`. Le voci di modello vivono sotto la chiave `_MODELS_KEY` nel
+    formato nuovo; un file scritto da una versione precedente di questo
+    modulo non ha quella chiave e le ha mescolate al top level insieme al
+    ledger - riconosciuto e migrato qui in lettura, riscritto nel formato
+    nuovo alla prossima `_save()`.
     """
-    global _FAIL_SAFE
+    global _FAIL_SAFE, _CREDIT
     _FAIL_SAFE = False
+    _CREDIT = _default_credit_ledger()
     if not _STATE_PATH or not os.path.isfile(_STATE_PATH):
         return {}
     try:
@@ -92,9 +161,26 @@ def _load():
               f"path={_STATE_PATH}", flush=True)
         return {}
 
+    _CREDIT = _parse_credit_ledger(raw.get(_CREDIT_KEY))
+
+    models_raw = raw.get(_MODELS_KEY)
+    if isinstance(models_raw, dict):
+        model_items = list(models_raw.items())
+    else:
+        # Formato precedente (o "models" corrotto): ogni chiave diversa dalle
+        # due riservate e' una voce di modello, come faceva il codice prima
+        # di questo giro. Un `model_key` letterale uguale a una chiave
+        # riservata in un file di questo formato e' un'ambiguita' che il
+        # formato piatto porta gia' con se' (nessun percorso di produzione la
+        # crea): risolta a favore del ledger/contenitore, mai un crash, mai
+        # una fusione dei due schemi - e sparisce non appena il file viene
+        # riscritto nel formato nuovo.
+        model_items = [(k, v) for k, v in raw.items()
+                       if k not in (_CREDIT_KEY, _MODELS_KEY)]
+
     data = {}
     tripped_models = []
-    for model_key, entry in raw.items():
+    for model_key, entry in model_items:
         if isinstance(entry, dict):
             data[model_key] = entry
             if entry.get("tripped_at"):
@@ -123,8 +209,10 @@ def _load():
 
 
 def _save():
-    """Persiste _CACHE su disco: tmp + fsync + os.replace, riusando il
-    primitivo condiviso `community_store.atomic_write_json` (stesso usato da
+    """Persiste _CACHE (voci di modello) e _CREDIT (ledger) su disco nella
+    forma nuova `{"_credit": {...}, "models": {...}}`, tmp + fsync +
+    os.replace, riusando il primitivo condiviso
+    `community_store.atomic_write_json` (stesso usato da
     token/pagamenti/voucher/usage) invece di una seconda implementazione
     inline. Verifica rileggendo, con retry+backoff (3 tentativi) come
     `gemini_tts.set_admin_disabled`: un trip() riuscito solo in memoria e mai
@@ -133,13 +221,22 @@ def _save():
     backend guasto senza che nessuno lo sappia. Il fallimento e' quindi
     loggato in modo evidente, non un semplice print silenzioso.
 
-    Va sempre chiamata sotto `_LOCK` (dal chiamante): `_CACHE` non cambia
-    durante il retry. Ritorna True se persistito e verificato, False
+    Va sempre chiamata sotto `_LOCK` (dal chiamante): `_CACHE`/`_CREDIT` non
+    cambiano durante il retry. Ritorna True se persistito e verificato, False
     altrimenti.
+
+    `_CREDIT` e' gia' sanificato (solo float finiti, vedi `_safe_float`) da
+    ogni punto che lo scrive (`add_spend`, `reset_spend`,
+    `claim_credit_alert`, `mark_credit_alerted`) e da `_parse_credit_ledger`
+    al caricamento: uno snapshot con un NaN/Infinity al suo interno
+    romperebbe il confronto `check == snapshot` qui sotto (il JSON round-trip
+    di NaN produce un oggetto float diverso, non uguale a se stesso) per
+    QUALUNQUE chiamata a `_save()` nell'intero modulo, non solo per il
+    ledger - da cui l'obbligo di non lasciarlo mai entrare non sanificato.
     """
     if not _STATE_PATH:
         return False
-    snapshot = dict(_CACHE)
+    snapshot = {_CREDIT_KEY: dict(_CREDIT), _MODELS_KEY: dict(_CACHE)}
     last_err = None
     for attempt in range(3):
         try:
@@ -251,10 +348,18 @@ def _safe_int(value, default=0):
     che ucciderebbe un job sul percorso caldo della sintesi: un contatore
     illeggibile non e' evidenza di N fallimenti reali, e ripartire da 0 e' la
     scelta piu' conservativa (non fa scattare nulla da solo - la soglia resta
-    decisa dal chiamante confrontando con ABM_CF_TRIP_FAILURES)."""
+    decisa dal chiamante confrontando con ABM_CF_TRIP_FAILURES).
+
+    `OverflowError` e' catturata accanto a `TypeError`/`ValueError`: e' il
+    difetto gemello di `_safe_float` con i non finiti. `int(value)` su un
+    valore gia' `float` non passa da nessuna conversione stringa, quindi
+    `int(float('nan'))` solleva `ValueError` (catturato), ma
+    `int(float('inf'))` solleva `OverflowError` - non catturata sarebbe
+    esattamente la stessa classe di crash silenzioso sul percorso caldo che
+    questa funzione esiste per evitare."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -340,8 +445,9 @@ def record_success(model_key):
 
 # --- Ledger della spesa Cloudflare -----------------------------------------
 # Il credito AI Gateway e' unico per l'account: la spesa di ogni modello lo
-# intacca, quindi il ledger e' globale e vive sotto la chiave "_credit".
-_CREDIT_KEY = "_credit"
+# intacca, quindi il ledger e' globale e vive nel dict `_CREDIT`, isolato da
+# `_CACHE` (vedi `_CREDIT_KEY` / `_MODELS_KEY` e il docstring di modulo per
+# la forma su disco e perche' i due spazi non si mescolano mai).
 
 
 def _f_env(name, default):
@@ -359,25 +465,46 @@ def _safe_float(value, default=0.0):
     `default`, non un'eccezione. `add_spend` in particolare e' pensata per
     essere chiamata a ogni chunk sintetizzato su Cloudflare: una singola voce
     corrotta non deve poter uccidere ogni chiamata successiva sul percorso
-    caldo della sintesi."""
+    caldo della sintesi.
+
+    Un valore convertibile ma NON finito (`NaN`, `Infinity`, `-Infinity` -
+    tutti float validi per Python/JSON) e' trattato come malformato quanto
+    una stringa non numerica: degrada a `default`, non passa. Senza questo
+    controllo, due guasti silenziosi riprodotti in review: (1) `spent_eur =
+    -Infinity` rende `credit_left_eur()` = `+Infinity`, spegnendo il
+    pre-allarme per sempre senza errori; (2) `spent_eur = NaN` sopravvive a
+    un'operazione aritmetica reale (resta NaN), e un NaN scritto su disco
+    rompe il confronto `check == snapshot` di OGNI `_save()` successivo
+    nell'intero modulo (round-trip JSON di NaN produce un nuovo oggetto float
+    che non e' mai `==` a se stesso), non solo per il ledger - da cui il
+    falso log critico "stato NON persistito" su trip/reset/record_failure di
+    qualunque modello."""
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return default
+    if not math.isfinite(result):
+        return default
+    return result
 
 
 def add_spend(model_key, eur):
-    """Accumula la spesa stimata di una chiamata sul ledger locale."""
+    """Accumula la spesa stimata di una chiamata sul ledger locale.
+
+    `model_key` non e' usato per ripartire la spesa (il credito e' unico per
+    l'account, vedi sopra): resta nella firma per simmetria con le altre
+    funzioni di questo modulo chiamate dal percorso di sintesi, e per una
+    futura rottura di spesa per modello se mai servisse."""
     with _LOCK:
-        entry = _CACHE.setdefault(_CREDIT_KEY, {})
-        entry["spent_eur"] = _safe_float(entry.get("spent_eur")) + _safe_float(eur)
+        _CREDIT["spent_eur"] = _safe_float(_CREDIT.get("spent_eur")) + _safe_float(eur)
         _save()
 
 
 def reset_spend():
     """Azzera il ledger: da chiamare quando l'admin ricarica il credito."""
+    global _CREDIT
     with _LOCK:
-        _CACHE[_CREDIT_KEY] = {"spent_eur": 0.0, "alerted": False}
+        _CREDIT = _default_credit_ledger()
         _save()
 
 
@@ -389,55 +516,84 @@ def credit_left_eur():
     spec per l'esito della ricognizione sull'API del saldo.
     """
     with _LOCK:
-        spent = _safe_float((_CACHE.get(_CREDIT_KEY) or {}).get("spent_eur"))
+        spent = _safe_float(_CREDIT.get("spent_eur"))
     return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
 
 
-def should_alert_credit():
-    """True quando il residuo scende sotto soglia e l'allarme non e' gia' dato.
+def credit_alert_pending():
+    """PURA: nessuna mutazione, nessuna scrittura su `_CREDIT`, nessuna
+    materializzazione di entry, nessun tocco al disco. Ritorna `True` se il
+    residuo stimato e' sotto soglia e l'allarme non e' ancora stato
+    consumato da `claim_credit_alert()`. Chiamabile un numero arbitrario di
+    volte (es. da una pagina di stato admin che vuole solo MOSTRARE
+    "allarme credito: si/no") con lo stesso esito, senza alcun effetto
+    collaterale: a differenza della vecchia `should_alert_credit()` (rimossa
+    in questo giro), questa funzione non decide mai da sola se l'email va
+    mandata e non puo' mai "consumare" l'unico allarme disponibile.
 
-    Con saldo dichiarato a 0 (default) l'allarme e' disattivato: sarebbe
+    Con saldo dichiarato a 0 (default) ritorna sempre `False`: sarebbe
     rumore costante su un'installazione che non usa Cloudflare.
 
-    Atomica, sullo stesso modello di `trip()`: la decisione "va segnalato" e
-    la registrazione "l'ho gia' segnalato" (`alerted=True`) avvengono nella
-    stessa sezione critica sotto `_LOCK`, quindi questa funzione ritorna
-    `True` a un solo chiamante anche sotto concorrenza reale - N chiamate
-    parallele (una per chunk sintetizzato) che controllano il credito nello
-    stesso istante non possono piu' generare N email admin duplicate. Un
-    check-poi-act con `mark_credit_alerted()` chiamata separatamente dal
-    chiamante, come nella prima versione, non garantiva questa proprieta':
-    un I/O reale (invio email) fra le due chiamate lascia una finestra in cui
-    tutti i chiamanti concorrenti leggono ancora `alerted=False`.
-
-    Il chiamante che riceve `True` e' quello (e l'unico) che deve mandare
-    l'email; non serve piu' invocare `mark_credit_alerted()` per ottenere la
-    deduplica, che e' gia' avvenuta qui - ma farlo comunque resta innocuo,
-    perche' `mark_credit_alerted()` e' idempotente.
+    Per il percorso da cui parte davvero l'invio dell'email usare
+    `claim_credit_alert()`, MAI questa funzione.
     """
     balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
     if balance <= 0:
         return False
     with _LOCK:
-        entry = _CACHE.setdefault(_CREDIT_KEY, {})
-        if entry.get("alerted"):
+        if _CREDIT.get("alerted"):
             return False
-        spent = _safe_float(entry.get("spent_eur"))
+        spent = _safe_float(_CREDIT.get("spent_eur"))
+    return (balance - spent) < _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+
+
+def claim_credit_alert():
+    """Check-and-set ATOMICO sotto `_LOCK`: ritorna `True` a ESATTAMENTE un
+    chiamante quando il residuo stimato scende sotto soglia, poi marca
+    l'allarme come dato e lo persiste. Nessun'altra chiamata (anche
+    concorrente, anche successiva) puo' piu' ricevere `True` finche' un
+    topup (`reset_spend()` con saldo dichiarato rialzato) non riarma
+    l'allarme.
+
+    QUESTA E', E DEVE RESTARE, L'UNICA FUNZIONE DA CUI PARTE L'INVIO
+    DELL'EMAIL DI ALLARME CREDITO. Chiamarla per qualunque altro scopo (es.
+    per popolare una pagina di stato, un log, un contatore) BRUCIA
+    silenziosamente l'unica occasione di allarme senza che nessuna email
+    parta mai: per una lettura che non deve consumare nulla usare
+    `credit_alert_pending()`.
+
+    Verificata sotto concorrenza reale (thread + barrier + sleep fra check e
+    uso): N chiamate parallele che vedrebbero tutte le condizioni per
+    allarmare, se non fosse per l'atomicita', producono esattamente un
+    `True`. Un check-poi-act con `mark_credit_alerted()` chiamata
+    separatamente dal chiamante, come in una versione precedente, non
+    garantiva questa proprieta': un I/O reale (invio email) fra le due
+    chiamate lascia una finestra in cui tutti i chiamanti concorrenti
+    leggono ancora `alerted=False`.
+    """
+    balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    if balance <= 0:
+        return False
+    with _LOCK:
+        if _CREDIT.get("alerted"):
+            return False
+        spent = _safe_float(_CREDIT.get("spent_eur"))
         if (balance - spent) >= _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0):
             return False
-        entry["alerted"] = True
+        _CREDIT["alerted"] = True
         _save()
         return True
 
 
 def mark_credit_alerted():
-    """Marca l'allarme come gia' dato. Idempotente: `should_alert_credit()`
-    lo fa gia' internamente al momento in cui ritorna `True`, quindi questa
-    funzione resta per chi la richiami comunque (compatibilita' con l'uso
-    esplicito nel brief) o per marcare l'allarme senza essere passati da
-    `should_alert_credit()` - non fa mai scattare una seconda email da sola,
-    perche' non e' lei a decidere se allarmare."""
+    """Marca l'allarme come gia' dato, SENZA passare dal controllo soglia di
+    `claim_credit_alert()`. Il percorso normale da cui parte l'email resta
+    SEMPRE `claim_credit_alert()`: questa funzione esiste solo per chi debba
+    marcare l'allarme a prescindere dal residuo attuale (es. nei test che
+    simulano "allarme gia' dato" senza attraversare la soglia reale).
+    Idempotente: chiamarla piu' volte non ha alcun effetto aggiuntivo, e non
+    fa mai scattare una seconda email da sola perche' non e' lei a decidere
+    se allarmare."""
     with _LOCK:
-        entry = _CACHE.setdefault(_CREDIT_KEY, {})
-        entry["alerted"] = True
+        _CREDIT["alerted"] = True
         _save()
