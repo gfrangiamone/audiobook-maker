@@ -515,7 +515,9 @@ Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, accoun
 | Variabile | Default | Note |
 |-----------|---------|------|
 | `ABM_GEMINI_API_KEY` | *(vuoto)* | Se vuoto e backend non risolve a Vertex, Gemini TTS è disabilitato. Usato dal backend `apikey` (e fallback in modalità `auto`). |
-| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key. `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. File: `gemini_tts.py:_resolve_backend` (linea ~97). |
+| `ABM_GEMINI_BACKEND` | `auto` | Selettore backend Gemini TTS: `vertex` \| `apikey` \| `cloudflare` \| `auto`. `auto` preferisce Vertex se config completa (project + credentials), altrimenti cade su API key; **`auto` non seleziona mai Cloudflare** (quel backend e' solo opt-in esplicito). `vertex` forza Vertex (richiede `ABM_GCP_PROJECT_ID` + `ABM_GOOGLE_CREDENTIALS_FILE`). `apikey` forza API key. `cloudflare` richiede `ABM_CF_ACCOUNT_ID` + `ABM_CF_API_TOKEN` e che il modello abbia un `id_cloudflare` in `GEMINI_MODELS`: un modello non ospitato su Cloudflare ricade su Vertex, non va in errore. Il circuit breaker persistito (vedi §7.9) ha **precedenza su questa variabile**: un modello scattato viene forzato su Vertex anche dopo un riavvio del processo. File: `gemini_tts.py:_resolve_backend`. |
+| `ABM_CF_ACCOUNT_ID` | *(vuoto)* | Account ID Cloudflare per l'endpoint Workers AI `POST /client/v4/accounts/<id>/ai/run`. Assieme a `ABM_CF_API_TOKEN` abilita il backend `cloudflare`: se una delle due manca, `_resolve_backend` non seleziona mai Cloudflare e una call forzata fallisce con `kind="fatal"`. File: `gemini_transport.py:cloudflare_call` (185), `gemini_tts.py:_resolve_backend` (240). |
+| `ABM_CF_API_TOKEN` | *(vuoto)* | API token Cloudflare, ristretto ai soli permessi Workers AI. **Solo variabile d'ambiente**: mai in UI, mai in log, mai serializzato negli header di un'eccezione di trasporto. File: `gemini_transport.py:cloudflare_call` (186), `gemini_tts.py:_resolve_backend` (241). |
 | `ABM_GCP_PROJECT_ID` | *(vuoto)* | ID progetto GCP che ospita le API Vertex AI e Cloud TTS. Richiesto se `ABM_GEMINI_BACKEND=vertex` (o auto-risolto a Vertex). Esempio: `audiobook-maker-496208`. File: `gemini_tts.py:_vertex_project`. |
 | `ABM_VERTEX_LOCATION_FLASH25` | `global` | Region Vertex per il modello `gemini-2.5-flash-tts` (GA). Default `global`: routing automatico latency-aware. Pinnare `us-central1` se servono quote dedicate. File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash25"]["location_vertex"]`). |
 | `ABM_VERTEX_LOCATION_FLASH31` | `us-central1` | Region Vertex per `gemini-3.1-flash-tts-preview`. Solo `us-central1` supporta il modello preview (verificato 2026-05-26 via `models.list()`). File: `gemini_tts.py:_resolve_location` (`GEMINI_MODELS["flash31"]["location_vertex"]`). |
@@ -654,9 +656,31 @@ Il credito Cloudflare AI Gateway è **prepagato** e non è leggibile via API (gl
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
 | `ABM_CF_CREDIT_BALANCE_EUR` | `0` | Saldo Cloudflare dichiarato dall'admin dopo l'ultima ricarica. `0` (non dichiarato) disabilita il pre-allarme: evita rumore costante su installazioni che non usano Cloudflare o non hanno ancora eseguito la procedura di accensione. |
-| `ABM_CF_CREDIT_ALERT_EUR` | `5` | Soglia di residuo stimato sotto cui `should_alert_credit()` ritorna `True` (solo se non già segnalato via `mark_credit_alerted()`). |
+| `ABM_CF_CREDIT_ALERT_EUR` | `5` | Soglia di residuo stimato sotto cui scatta il pre-allarme sul credito. |
 
-**API del modulo:** `add_spend(model_key, eur)`, `reset_spend()` (da chiamare alla ricarica, azzera il ledger e riarma l'allarme), `credit_left_eur()`, `should_alert_credit()`, `mark_credit_alerted()`. Persistenza: stesso file `<ABM_DATA_DIR>/_tts_backend_state.json` usato dal circuit breaker, sotto la chiave `_credit`.
+**API del modulo:** `add_spend(model_key, eur)`, `reset_spend()` (da chiamare alla ricarica: azzera il ledger e riarma l'allarme), `credit_left_eur()`, `credit_alert_pending()`, `claim_credit_alert()`, `mark_credit_alerted()`.
+
+**Ispezione e consumo dell'allarme sono due funzioni diverse, e la distinzione non e' cosmetica.**
+
+- `credit_alert_pending()` e' **puro**: nessuna mutazione, nessuna scrittura. Ritorna `True` finche' il residuo stimato e' sotto soglia e l'allarme non e' stato consumato. E' la funzione da usare per mostrare lo stato in una pagina admin o in una diagnostica: chiamarla N volte da' sempre lo stesso esito.
+- `claim_credit_alert()` **consuma** l'allarme: check-and-set atomico sotto lock, ritorna `True` a **esattamente un** chiamante e persiste il flag. Va chiamata **solo** nel punto in cui l'email parte davvero, esattamente come `trip()`. Chiamarla per ispezione brucia l'unica notifica e nessuno riceve niente.
+
+**Forma del file di stato.** Il file porta un marcatore esplicito `version: 2` al livello superiore; le voci per-modello del breaker stanno dentro `models`, il ledger del credito sotto `_credit`. I file scritti dalle versioni precedenti (forma piatta, senza marcatore) vengono migrati in lettura senza perdere trip. Il marcatore e' l'**unico** criterio di riconoscimento: `version` assente significa forma vecchia, `version` presente ma diversa da `2` significa dato illeggibile e attiva il fail-safe (ogni modello considerato scattato). Non si deduce mai il formato dalla forma dei dati: dedurlo aveva gia' prodotto una perdita silenziosa di trip.
+
+### 7.9 Backend Cloudflare — failover automatico e circuit breaker (`tts_backend_state.py`)
+
+Il passaggio Cloudflare → Vertex e' **automatico e a senso unico**: quando il backend Cloudflare si rivela non utilizzabile, il modello viene marcato come "scattato" su disco (`<ABM_DATA_DIR>/_tts_backend_state.json`) e da quel momento risolve a Vertex. Non esiste half-open, non esiste scadenza: il rientro su Cloudflare avviene **solo** dal pulsante in console admin (`reset()`), che deve anche invalidare la cache in-process `gemini_tts._BACKEND`, altrimenti il processo vivo continua a servire Vertex.
+
+Il job in corso non viene interrotto: prosegue su Vertex **dal chunk corrente**, e il backend viene ricalcolato ad ogni tentativo di retry. All'ingresso di Vertex parte una email immediata all'admin: `trip()` e' un check-and-set atomico sotto lock e ritorna `True` a **esattamente un** chiamante, quindi la notifica non ha bisogno di un secondo meccanismo di deduplica.
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `ABM_CF_TRIP_FAILURES` | `3` | Fallimenti consecutivi dopo i quali un errore `retryable` / `rate_limited` fa scattare il breaker. Floor a 1; valore non numerico → default. Un successo azzera il contatore. Gli errori `backend_down` fanno scattare **subito**, ignorando la soglia; `fatal` e `content_rejected` non fanno scattare nulla (sono difetti della richiesta, non del backend). File: `gemini_tts.py:_cf_trip_failures` (358). |
+| `ABM_CF_TIMEOUT_MS` | `60000` | Timeout HTTP (ms) delle call verso Workers AI. Floor a 1000; valore non numerico → default. Indipendente dai timeout Vertex (`ABM_GEMINI_HTTP_TIMEOUT_MS*`) perche' la latenza del gateway Cloudflare ha un profilo diverso. File: `gemini_tts.py:_cf_timeout_ms` (1903). |
+
+**Lettura fail-safe dello stato.** File **assente** = installazione pulita, nessun modello scattato (trattarlo come scattato disabiliterebbe Cloudflare dal primo avvio e la feature non si accenderebbe mai). File **presente ma illeggibile** = ogni modello e' considerato scattato finche' l'admin non interviene. Una singola voce per-modello corrotta viene materializzata come trip concreto con `reason="state_entry_corrupt"`, limitato a quel modello.
+
+**Sicurezza:** il campo `detail` passato a `trip()` viene persistito su disco e stampato su stdout **senza redazione** — non deve mai contenere header o token.
 
 ---
 
