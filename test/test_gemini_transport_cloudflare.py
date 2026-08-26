@@ -171,3 +171,37 @@ def test_payload_carries_text_voice_and_temperature(monkeypatch):
     assert seen["json"]["input"]["temperature"] == 0.75
     assert seen["json"]["model"] == "google/gemini-3.1-flash-tts"
     assert seen["timeout"] == 45.0
+
+
+def test_malformed_base64_is_retryable_and_billed():
+    # Un payload base64 con caratteri non-validi (con validate=True) deve
+    # solleva TransportError, non restituire PCM troncato/corrotto in silenzio.
+    # Incidenti passati nel progetto: audio troncato consegnato come completo.
+    b64_good = base64.b64encode(b"\x00" * 32).decode("ascii")
+    b64_bad = b64_good[:20] + "~~~!!!" + b64_good[26:]
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(
+            200, {"result": {"audio": f"data:audio/l16;base64,{b64_bad}"},
+                  "success": True}))
+    assert ei.value.kind == "retryable"
+    assert ei.value.billed is True
+
+
+def test_invalid_temperature_is_fatal(monkeypatch):
+    import gemini_transport
+
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
+
+    def _fake_post(url, **kw):
+        return _ok()
+
+    monkeypatch.setattr(gemini_transport.requests, "post", _fake_post)
+    # Temperature non convertibile: il contratto dichiara che solo
+    # TransportError esce dal trasporto.
+    with pytest.raises(TransportError) as ei:
+        gemini_transport.cloudflare_call(
+            final_text="ciao", voice_name="Kore", model_key="flash31",
+            model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
+            temperature="not-a-number")
+    assert ei.value.kind == "fatal"

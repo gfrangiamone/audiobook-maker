@@ -16,6 +16,7 @@ conosce il modello.
 """
 
 import base64
+import binascii
 import os
 
 import requests
@@ -75,6 +76,9 @@ _CF_AUDIO_PREFIX = "base64,"
 # (modello sovraccarico). Se il formato del messaggio cambiasse, il degrado e'
 # qualche retry sprecato, non un comportamento scorretto.
 _CF_INVALID_VALUE_MARK = "Invalid value at "
+# Esito standard per gli errori di audio nella risposta HTTP 200: riprovabile
+# e fatturato (Cloudflare addebita le 200 comunque).
+_CF_200_ERROR_KWARGS = {"kind": "retryable", "billed": True, "http_status": 200}
 
 
 def _cf_first_error(body):
@@ -110,19 +114,22 @@ def _interpret_cloudflare_response(resp):
         if not audio:
             raise TransportError(
                 "Cloudflare ha risposto 200 senza audio",
-                kind="retryable", billed=True, http_status=200)
+                **_CF_200_ERROR_KWARGS)
         idx = audio.find(_CF_AUDIO_PREFIX)
         raw = audio[idx + len(_CF_AUDIO_PREFIX):] if idx >= 0 else audio
         try:
-            pcm = base64.b64decode(raw)
-        except (ValueError, TypeError) as e:
+            # validate=True: rifiuta silenziosamente i caratteri fuori dall'alfabeto
+            # base64, invece di decodificare comunque un payload troncato/corrotto.
+            # Incidenti passati: edge-tts troncato consegnato, PCM assembly troncato.
+            pcm = base64.b64decode(raw, validate=True)
+        except (ValueError, TypeError, binascii.Error) as e:
             raise TransportError(
                 "audio Cloudflare non decodificabile",
-                kind="retryable", billed=True, http_status=200) from e
+                **_CF_200_ERROR_KWARGS) from e
         if not pcm:
             raise TransportError(
                 "audio Cloudflare vuoto dopo la decodifica",
-                kind="retryable", billed=True, http_status=200)
+                **_CF_200_ERROR_KWARGS)
         # L'API non restituisce i token: la stima spetta al chiamante, che
         # conosce il modello e il rapporto token/secondo.
         return {"pcm": pcm, "input_tokens": None, "output_tokens": None}
@@ -186,7 +193,17 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
     payload = {"model": model_id,
                "input": {"text": final_text, "voice": voice_name}}
     if temperature is not None:
-        payload["input"]["temperature"] = float(temperature)
+        try:
+            payload["input"]["temperature"] = float(temperature)
+        except (ValueError, TypeError) as e:
+            raise TransportError(
+                f"temperatura non valida: {temperature!r}",
+                kind="fatal") from e
+
+    # model_key e' parte della firma uniforme dell'adapter (come definito dal brief
+    # e usato nei task successivi), ma non e' usato qui: il modello viene sempre
+    # identificato via model_id in Cloudflare. Il parametro e' presente per
+    # coerenza con vertex_call, non deve essere rimosso.
 
     try:
         resp = requests.post(
