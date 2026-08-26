@@ -60,3 +60,6 @@ voucher_admin.log
 
 # Script di test standalone con API key impostate a mano (mai committare)
 tts_kokoro_test.py
+
+# Artefatti dei run del banco di prova Cloudflare TTS
+out/
