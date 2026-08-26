@@ -51,7 +51,7 @@ Motivo: l'adapter Vertex dipende da `_get_client`, `_extract_audio_pcm`, `_is_42
 
 ### Task 1: Fase 0 — ricognizione del credito e chiusura di G4
 
-> **ESEGUITO il 26/08/2026.** Esito in spec §10.2: il saldo **non** e' leggibile via API (gli endpoint di credito non esistono, quelli di fatturazione rispondono 403 perche' il token e' ristretto a Workers AI di proposito); il gateway e' in modalita' `postpaid`; G4 resta **non chiuso**; G3 chiuso per giudizio dell'esercente. Il Task 8 usa quindi il ledger locale.
+> **ESEGUITO il 26/08/2026.** Esito in spec §10.2: il saldo **non** e' leggibile via API (gli endpoint di credito non esistono, quelli di fatturazione rispondono 403 perche' il token e' ristretto a Workers AI di proposito). Il credito e' **prepagato** e si esaurisce davvero (accertato per osservazione: a credito zero le chiamate falliscono); il campo `workers_ai_billing_mode: postpaid` appartiene all'oggetto AI Gateway, che non e' sul nostro percorso di chiamata, e non va usato per dedurre il modello di pagamento. G4 resta **non chiuso**; G3 chiuso per giudizio dell'esercente. Il Task 8 usa quindi il ledger locale.
 
 **Files:**
 - Create: `scripts/cf_credit_probe.py`
@@ -1957,7 +1957,7 @@ git commit -m "feat(tts): failover automatico da Cloudflare a Vertex con breaker
 
 **Esito del Task 1 (spec §10.2): il saldo non e' leggibile via API.** Il ledger locale e' quindi l'unica fonte, e l'allarme va dichiarato esplicitamente come **stima** nel testo che l'admin riceve e nel pannello (piano gemello, Fase 6).
 
-**Semantica in modalita' `postpaid`:** il gateway non ha un saldo prepagato che si esaurisce, ma una spesa che matura sulla fattura. `ABM_CF_CREDIT_BALANCE_EUR` non e' quindi un saldo reale bensi' un **budget che l'admin si autoimpone**, e `credit_left_eur()` e' quanto ne resta. La meccanica del codice non cambia di una riga; cambia il testo che l'accompagna, che non deve promettere una precisione che non ha. Con `ABM_CF_CREDIT_BALANCE_EUR = 0` (default) il pre-allarme resta disabilitato: chi non dichiara un budget non riceve allarmi su un numero inventato.
+**Semantica del saldo:** il credito Cloudflare e' **prepagato** e si esaurisce davvero, ma non e' leggibile via API. `ABM_CF_CREDIT_BALANCE_EUR` e' quindi il saldo che l'admin **dichiara** dopo ogni ricarica, e `credit_left_eur()` e' quel valore meno la spesa accumulata nel ledger locale: una stima di una grandezza reale, non un saldo letto dal provider. Il testo che accompagna il numero deve dirlo, senza promettere una precisione che non ha. Con `ABM_CF_CREDIT_BALANCE_EUR = 0` (default) il pre-allarme resta disabilitato: chi non dichiara il saldo caricato non riceve allarmi su un numero inventato. Dichiararlo alla prima ricarica fa parte della procedura di accensione.
 
 - [ ] **Step 1: Scrivi i test che falliscono**
 

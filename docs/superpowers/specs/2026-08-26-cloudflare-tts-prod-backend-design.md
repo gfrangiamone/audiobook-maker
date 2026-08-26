@@ -502,20 +502,25 @@ Probe read-only (`scripts/cf_credit_probe.py`), nessuna inferenza, nessun addebi
 
 **Conclusione: il saldo non e' esposto.** Gli endpoint di credito non esistono affatto; quelli di fatturazione rispondono `403` perche' il token e' volutamente ristretto a Workers AI. Allargarne i permessi per leggere un saldo sarebbe un pessimo scambio: si darebbe a un token che vive su un server di produzione la visibilita' sulla fatturazione dell'account, per un numero che non e' operativamente necessario. **Il pre-allarme si basa quindi sul ledger locale ed e' una stima**, e va dichiarato tale all'admin nel testo dell'allarme e nel pannello.
 
-#### Modalita' di fatturazione: `postpaid`
+#### Modalita' di fatturazione: il credito e' **prepagato**
 
-L'unico endpoint che risponde espone la configurazione del gateway, e contiene la riga che conta:
+L'unico endpoint che risponde espone la configurazione dell'AI Gateway, che contiene la riga:
 
 ```
 "workers_ai_billing_mode": "postpaid",
 "wholesale": true
 ```
 
+**Questa riga non descrive il nostro percorso di chiamata e non va usata per dedurre il modello di pagamento dell'account.** E' una proprieta' dell'oggetto *AI Gateway*: dice come quel gateway attribuisce l'uso di Workers AI **che lo attraversa**. La produzione chiama `/ai/run` in modo diretto, senza gateway.
+
+Il modello reale e' **prepagato, con credito caricato in anticipo**, accertato per osservazione diretta dell'esercente: **con credito a zero le chiamate non funzionavano**. E' il comportamento del prepagato — in postpaid la spesa maturerebbe sulla fattura e la chiamata passerebbe. Il codice `2021 insufficient balance` (`402`) esiste esattamente perche' c'e' un saldo che si puo' esaurire.
+
 Conseguenze:
 
-1. **Non c'e' un saldo prepagato che si esaurisce**, ma una spesa che matura sulla fattura. Il "credito residuo" del pannello e' quindi il residuo di un **budget che l'admin si autoimpone** (`ABM_CF_CREDIT_BALANCE_EUR`), non un saldo reale letto da Cloudflare. La meccanica del pre-allarme non cambia; cambia il significato, e il testo mostrato deve dirlo.
-2. **La commissione di ricarica del 5% (`ABM_CF_CREDIT_TOPUP_FEE`) va riverificata.** Ha senso su credito prepagato comprato in anticipo; in modalita' postpaid potrebbe non applicarsi affatto. Il parametro resta a `0.05` per prudenza — sovrastimare il costo Cloudflare rende il prezzo leggermente piu' alto e il margine reale migliore del previsto, mai il contrario. Portarlo a `0` e' una modifica di una variabile d'ambiente, senza rilascio.
-3. **L'errore `2021` (saldo insufficiente, `402`) resta gestito** come `backend_down`, ma in postpaid e' improbabile: la causa realistica di un blocco e' un problema di fatturazione sull'account, non un credito finito. Il trattamento e' comunque corretto — qualunque `402` e' un motivo per passare a Vertex e avvisare l'admin.
+1. **Il saldo e' reale e si esaurisce**, ma non e' leggibile via API (vedi sopra). `ABM_CF_CREDIT_BALANCE_EUR` e' quindi il saldo che l'admin **dichiara** dopo ogni ricarica, e `credit_left_eur()` e' quel valore meno la spesa accumulata nel ledger locale. Resta una stima — la spesa e' derivata dai token stimati, non letta da Cloudflare — ma stima **di una grandezza che esiste davvero**, e va tenuta prudenziale: e' meglio credere di avere meno credito di quanto se ne ha.
+2. **La commissione di ricarica del 5% (`ABM_CF_CREDIT_TOPUP_FEE`) e' appropriata** e resta a `0.05`: il credito si compra, e cio' che si paga per comprarlo e' costo del servizio a tutti gli effetti. Va verificata sulla ricevuta della prossima ricarica e allineata al valore effettivo.
+3. **L'errore `2021` (saldo insufficiente, `402`) e' uno scenario di esercizio ordinario**, non un caso remoto: prima o poi il credito finisce. Il trattamento come `backend_down` — trip del breaker alla prima occorrenza, failover su Vertex, email immediata all'admin — e' la protezione principale contro l'interruzione del servizio, e va provato prima dell'accensione.
+4. **Il pre-allarme sul credito e' la difesa che evita di arrivarci.** Con `ABM_CF_CREDIT_BALANCE_EUR = 0` (default) resta disabilitato: chi non dichiara il saldo caricato non riceve allarmi. Dichiararlo alla prima ricarica e' parte della procedura di accensione, non un'opzione.
 
 #### G4 — latenza p95: **NON CHIUSO**
 
