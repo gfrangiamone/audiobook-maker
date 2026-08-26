@@ -52,9 +52,28 @@ def _env_float(name, default):
         return float(default)
 
 
-# Tariffe Cloudflare per il modello (USD per milione di token).
+# Tariffe Cloudflare per il modello (USD per milione di token). Il token e'
+# l'unita' di fatturazione reale - e' cio' che la dashboard conta nelle colonne
+# "in"/"out" - ma non e' l'unita' in cui si ragiona su un audiolibro. Le due
+# grandezze osservabili sono i CARATTERI spediti e i SECONDI di audio resi, e
+# la conversione verso i token e' esatta in entrambe le direzioni:
+#   secondi -> token: x AUDIO_TOKENS_PER_SECOND (25, dato ufficiale Google,
+#                     confermato dalla riconciliazione col saldo a -0,39%)
+#   caratteri -> token: tokenizzatore per lingua (gemini_tts, ~3,4 char/token
+#                     sulle lingue latine, molto meno sul cinese)
+# Vedi `tariffe_native()` per le stesse tariffe espresse in EUR/Mchar e
+# EUR/ora di audio, che sono i numeri con cui si preventiva un libro.
 CF_INPUT_USD_PER_MTOK = 0.75
 CF_OUTPUT_USD_PER_MTOK = 12.00
+
+# Onere di ricarica del credito prepagato AI Gateway. I modelli partner non si
+# pagano coi Neuron del piano Workers Paid ma con credito prepagato, e il
+# credito costa piu' del suo valore facciale: 10,00 USD di saldo se ne portano
+# via 10,50. E' un costo reale per ogni chiamata, quindi entra nel prezzo di
+# default: il banco deve dire quanto si SPENDE, non quanto cala il saldo.
+# Per il confronto con la dashboard - che il saldo lo segue e la commissione
+# non la vede - resta `cost_usd_gateway()`.
+CF_CREDIT_TOPUP_FEE = _env_float("ABM_CF_CREDIT_TOPUP_FEE", 0.05)
 
 # Cambio e token/secondo NON sono costanti del banco: il ramo Vertex dell'A/B
 # li prende da `gemini_tts`, che li legge dalle stesse env. Se il banco li
@@ -274,10 +293,51 @@ def estimate_tokens(chars, audio_seconds, language, prompt_chars=None):
     }
 
 
-def cost_usd(tokens_in, tokens_out):
-    """Costo USD di una chiamata alle tariffe Cloudflare."""
+def cost_usd_gateway(tokens_in, tokens_out):
+    """Costo USD addebitato sul saldo AI Gateway, SENZA onere di ricarica.
+
+    E' l'unica cifra confrontabile col saldo della dashboard: la commissione
+    si paga al momento della ricarica, non della chiamata, quindi il saldo
+    cala di questo importo e non di `cost_usd()`. Serve alla riconciliazione,
+    non al preventivo.
+    """
     return (tokens_in * CF_INPUT_USD_PER_MTOK / 1e6
             + tokens_out * CF_OUTPUT_USD_PER_MTOK / 1e6)
+
+
+def cost_usd(tokens_in, tokens_out):
+    """Costo USD realmente sostenuto: gateway + onere di ricarica del credito.
+
+    E' la cifra che conta per il tetto di spesa e per il caso economico della
+    migrazione, ed e' quella che tutto il banco usa per default.
+    """
+    return cost_usd_gateway(tokens_in, tokens_out) * (1.0 + CF_CREDIT_TOPUP_FEE)
+
+
+def tariffe_native():
+    """Le stesse tariffe nelle unita' osservabili di un audiolibro.
+
+    L'output e' esatto: i token audio sono `AUDIO_TOKENS_PER_SECOND` per
+    secondo, senza dipendere dal testo. L'input dipende dalla lingua (il
+    tokenizzatore rende piu' token per carattere sul cinese che sull'italiano),
+    quindi la voce per-carattere e' data per lingua.
+
+    Restituisce importi in EUR, commissione di ricarica inclusa: sono i numeri
+    da usare per preventivare, non per riconciliare.
+    """
+    fee = 1.0 + CF_CREDIT_TOPUP_FEE
+    per_sec = (AUDIO_TOKENS_PER_SECOND * CF_OUTPUT_USD_PER_MTOK / 1e6
+               * USD_EUR_RATE * fee)
+    per_mchar = {}
+    for lang in ("it", "en", "zh"):
+        tok = gemini_tts.estimate_input_tokens("x" * 100000, lang)
+        per_mchar[lang] = (tok * 10 * CF_INPUT_USD_PER_MTOK / 1e6
+                           * USD_EUR_RATE * fee)
+    return {
+        "eur_per_audio_second": per_sec,
+        "eur_per_audio_hour": per_sec * 3600.0,
+        "eur_per_mchar_input": per_mchar,
+    }
 
 
 def predict_call_usd(chars, language, prompt_chars=None):
@@ -1157,6 +1217,11 @@ def summarize(records):
         "tokens_out": sum(int(r.get("tokens_out_est") or 0) for r in records),
         "cost_usd": cost_usd_tot,
         "cost_eur": cost_usd_tot * USD_EUR_RATE,
+        # Stesso denaro, al netto dell'onere di ricarica: e' quanto cala il
+        # saldo AI Gateway, e quindi la sola cifra che la dashboard confermera'.
+        # Confrontare `cost_usd` col saldo darebbe uno scarto sistematico del
+        # +5% e farebbe sembrare rotto un modello di costo che non lo e'.
+        "cost_usd_gateway": cost_usd_tot / (1.0 + CF_CREDIT_TOPUP_FEE),
         "latency": percentiles([r.get("latency_ms") for r in records]),
         "http_429": sum(sum(1 for s in st if s == 429) for st in tentativi),
         "http_5xx": sum(sum(1 for s in st if s >= 500) for st in tentativi),
@@ -1269,7 +1334,14 @@ def reconciliation_block(records, unrecorded_paid_calls=0):
         f"  token input (stima)   {agg['tokens_in']}\n"
         f"  token output (stima)  {agg['tokens_out']}\n"
         f"  costo atteso        USD {agg['cost_usd']:.4f}   "
-        f"EUR {agg['cost_eur']:.4f}\n"
+        f"EUR {agg['cost_eur']:.4f}   (onere di ricarica "
+        f"{CF_CREDIT_TOPUP_FEE * 100:.0f}% incluso)\n"
+        f"  addebito sul saldo  USD {agg['cost_usd_gateway']:.4f}   "
+        f"<-- confronta QUESTO col credito\n"
+        "  Il saldo AI Gateway cala dell'addebito, non del costo: la\n"
+        "  commissione di ricarica si paga comprando il credito, non\n"
+        "  spendendolo. Confrontare la riga sbagliata produce uno scarto\n"
+        f"  sistematico del +{CF_CREDIT_TOPUP_FEE * 100:.0f}%.\n"
         "  Confronta questi numeri con Cloudflare Dashboard -> Workers & Pages\n"
         "  -> AI -> Usage, selezionando esattamente la finestra qui sopra.\n"
         "  Nota: il costo e' STIMATO (l'API non restituisce i token). Finche'\n"
@@ -1330,8 +1402,22 @@ def render_report(run_dir, records, residual_anomalies, partial, notes,
     lines.append(f"| Audio (s) | {agg['audio_seconds']:.1f} |")
     lines.append(f"| Token input (stima) | {agg['tokens_in']} |")
     lines.append(f"| Token output (stima) | {agg['tokens_out']} |")
-    lines.append(f"| Costo stimato | USD {agg['cost_usd']:.4f} / "
+    lines.append(f"| Costo stimato (ricarica {CF_CREDIT_TOPUP_FEE * 100:.0f}% "
+                 f"inclusa) | USD {agg['cost_usd']:.4f} / "
                  f"EUR {agg['cost_eur']:.4f} |")
+    lines.append(f"| Addebito sul saldo AI Gateway | "
+                 f"USD {agg['cost_usd_gateway']:.4f} |")
+    if agg["audio_seconds"] > 0 and agg["chars"] > 0:
+        # Le due grandezze che servono a preventivare il libro successivo:
+        # quanto e' costata un'ora di audio e a che velocita' e' stato letto
+        # questo testo. La seconda e' l'unica incognita di un preventivo,
+        # perche' il prezzo lo fa la durata, non la lunghezza del testo.
+        eur_ora = agg["cost_eur"] / (agg["audio_seconds"] / 3600.0)
+        lines.append(f"| Costo per ora di audio | EUR {eur_ora:.4f} |")
+        lines.append(f"| Velocita' di lettura misurata | "
+                     f"{agg['chars'] / agg['audio_seconds']:.2f} char/s |")
+        lines.append(f"| Costo per Mchar di QUESTO testo | "
+                     f"EUR {agg['cost_eur'] / agg['chars'] * 1e6:.2f} |")
     if agg["calls_not_billed"]:
         # Difetto 3 (round 4): la riga sopra include il costo delle chiamate
         # non fatturate, il footer del run no. Le due cifre restano quelle

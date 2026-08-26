@@ -77,14 +77,70 @@ def test_estimate_tokens_usa_25_token_al_secondo():
     assert got == {"tokens_in": 100, "tokens_out": 1000}
 
 
-def test_cost_usd_tariffe_cloudflare():
-    assert bench.cost_usd(1000, 100000) == pytest.approx(1.20075)
+def test_cost_usd_gateway_e_la_tariffa_nuda():
+    """L'addebito sul saldo NON include l'onere di ricarica.
+
+    E' la cifra con cui si riconcilia il credito: se ci finisse dentro la
+    commissione, ogni riconciliazione mostrerebbe un +5% inesistente.
+    """
+    assert bench.cost_usd_gateway(1000, 100000) == pytest.approx(1.20075)
+
+
+def test_cost_usd_aggiunge_l_onere_di_ricarica():
+    """Il costo di default e' denaro speso davvero, ricarica inclusa."""
+    assert bench.cost_usd(1000, 100000) == pytest.approx(
+        1.20075 * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
+
+
+def test_le_due_cifre_di_costo_differiscono_solo_per_la_commissione():
+    """Invariante che tiene insieme riconciliazione e preventivo.
+
+    Se qualcuno cambiasse una sola delle due formule, il footer del run e il
+    confronto col saldo divergerebbero senza che nulla lo segnali.
+    """
+    for tin, tout in ((0, 0), (1, 1), (33116, 215422)):
+        assert bench.cost_usd(tin, tout) == pytest.approx(
+            bench.cost_usd_gateway(tin, tout) * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
 
 
 def test_predict_call_usd_da_baseline_lingua():
     # 1460 char it / 14.6 char-sec = 100 s -> 2500 token out; 365 token in
-    atteso = 365 * 0.75 / 1e6 + 2500 * 12.0 / 1e6
+    atteso = ((365 * 0.75 / 1e6 + 2500 * 12.0 / 1e6)
+              * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
     assert bench.predict_call_usd(1460, "it") == pytest.approx(atteso)
+
+
+def test_tariffa_nativa_per_secondo_di_audio():
+    """Il prezzo dell'output e' esatto per secondo: 25 token/s x tariffa.
+
+    Non dipende dal testo - e' la ragione per cui un audiolibro si preventiva
+    sulla durata e non sulla lunghezza. Con i default (25 tok/s, 12 USD/Mtok,
+    cambio 0,86, ricarica 5%) fa 0,9752 EUR per ora di audio.
+    """
+    t = bench.tariffe_native()
+    atteso_sec = (bench.AUDIO_TOKENS_PER_SECOND * bench.CF_OUTPUT_USD_PER_MTOK
+                  / 1e6 * bench.USD_EUR_RATE * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
+    assert t["eur_per_audio_second"] == pytest.approx(atteso_sec)
+    assert t["eur_per_audio_hour"] == pytest.approx(atteso_sec * 3600.0)
+    assert t["eur_per_audio_hour"] == pytest.approx(0.97524)
+
+
+def test_tariffa_nativa_input_dipende_dalla_lingua():
+    """Il costo per carattere NON e' unico: il cinese rende piu' token.
+
+    Collassare l'input su un solo EUR/Mchar romperebbe il preventivo delle
+    lingue non latine, che l'app supporta.
+    """
+    nat = bench.tariffe_native()
+    t = nat["eur_per_mchar_input"]
+    assert t["zh"] > t["it"]
+    # E l'input resta comunque trascurabile: e' l'output a fare il prezzo.
+    # Il confronto va fatto a parita' di base - un'ora di audio italiano sono
+    # 14,6 char/s x 3600 = 52.560 caratteri - non fra EUR/Mchar e EUR/ora,
+    # che sono unita' diverse.
+    char_in_un_ora = 14.6 * 3600.0
+    input_per_ora = t["it"] * char_in_un_ora / 1e6
+    assert input_per_ora < nat["eur_per_audio_hour"] * 0.02
 
 
 def test_spend_guard_accumula_e_converte_in_euro():
