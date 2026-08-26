@@ -501,6 +501,25 @@ def _with_body(msg, resp):
     return f"{msg} - risposta: {frammento}" if frammento else msg
 
 
+def _e_errore_di_esecuzione(resp):
+    """True se il corpo porta `code 7003` (Model execution failed).
+
+    Cloudflare marca 7003 come "User Input Error", ma lo restituisce anche
+    quando il modello fallisce per conto suo su un payload valido. Distinguere
+    e' possibile solo dal codice: gli altri 4xx restano non ritentabili.
+    """
+    try:
+        corpo = resp.json()
+    except Exception:
+        return False
+    if not isinstance(corpo, dict):
+        return False
+    for err in corpo.get("errors") or []:
+        if isinstance(err, dict) and err.get("code") == 7003:
+            return True
+    return False
+
+
 def call_cf(session, account_id, api_token, text, voice, temperature,
             max_attempts=4, timeout=HTTP_TIMEOUT_SEC, sleep=time.sleep,
             on_billed=None):
@@ -563,6 +582,16 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
             sleep(_retry_after_seconds(resp, attempt))
             continue
         if resp.status_code != 200:
+            if _e_errore_di_esecuzione(resp):
+                # 7003 si presenta come errore d'input, ma non lo e': il chunk
+                # 512 del run sul libro l'ha ricevuto e poi, con payload
+                # identico byte per byte, un 200 con audio regolare. Un 400
+                # non e' fatturato (verificato nei registri Cloudflare: token
+                # e costo assenti), quindi il ritentativo e' gratuito.
+                retry_statuses.append(resp.status_code)
+                if attempt < max_attempts:
+                    sleep(_retry_after_seconds(resp, attempt))
+                    continue
             raise CFCallError(_with_body(
                                   f"HTTP {resp.status_code} non gestibile "
                                   f"con retry", resp),
@@ -582,6 +611,16 @@ def call_cf(session, account_id, api_token, text, voice, temperature,
         audio_b64 = ((body.get("result") or {}).get("audio")
                      if isinstance(body, dict) else None)
         if not audio_b64:
+            # Transitorio: sul run del libro 6 chiamate su 738 hanno risposto
+            # 200 con `result` privo di `audio`, e riprovate a mano con lo
+            # stesso payload hanno reso audio regolare. Senza ritentativo il
+            # chunk sparisce dall'audiolibro senza lasciare traccia.
+            # ATTENZIONE: ogni tentativo e' un 200, quindi e' FATTURATO -
+            # `on_billed` e' gia' scattato sopra per ciascuno di essi.
+            retry_statuses.append(resp.status_code)
+            if attempt < max_attempts:
+                sleep(_retry_after_seconds(resp, attempt))
+                continue
             raise CFCallError("risposta 200 senza campo audio",
                               status=resp.status_code, attempts=attempt,
                               retry_statuses=retry_statuses)
@@ -805,13 +844,16 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
     reserved = ctx.guard.reserve(
         predict_call_usd(chars, lang, prompt_chars=prompt_chars))
     settled = False
-    billed = {"hit": False}
+    billed = {"hit": 0}
 
     def _on_billed():
         # Chiamata da call_cf appena arriva un 200: da quel momento il POST e'
         # fatturato, e nessuna uscita successiva puo' farlo sparire dai
         # conteggi (fix round 4, difetto 1).
-        billed["hit"] = True
+        # CONTATORE, non flag: da quando il 200-senza-audio viene ritentato,
+        # una sola chiamata logica puo' produrre piu' 200 fatturati, e la
+        # spesa deve contarli tutti o il cap sottostima il denaro bruciato.
+        billed["hit"] += 1
         ctx.paid_calls.bump()
 
     try:
@@ -834,8 +876,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # consumava il cap, cioe' un run difettoso poteva bruciare denaro
             # senza limite. Restano a costo zero le sole chiamate senza 200
             # (timeout, 4xx, 5xx dopo i retry).
-            _settle_quiet(ctx.guard, reserved,
-                          reserved if billed["hit"] else 0.0)
+            _settle_quiet(ctx.guard, reserved, reserved * billed["hit"])
             settled = True
             expected_seconds = float(chars or 0) / gemini_tts.baseline_rate(lang)
             tok = estimate_tokens(chars, expected_seconds, lang,
@@ -919,6 +960,13 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             tok = estimate_tokens(chars, dur["expected_seconds"], lang,
                                   prompt_chars=prompt_chars)
             usd = reserved
+        if billed["hit"] > 1:
+            # Il chunk e' andato a buon fine, ma i 200-senza-audio che l'hanno
+            # preceduto sono stati fatturati lo stesso. Il costo del chunk e'
+            # quello dell'ultima chiamata piu' la stima piena di ogni tentativo
+            # bruciato: senza questa somma la riconciliazione con la dashboard
+            # sottostima proprio dove il ritentativo costa denaro.
+            usd += reserved * (billed["hit"] - 1)
         record = make_record(
             run_id=ctx.run_id, backend=ctx.backend, lang=lang, voice=voice,
             rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,
@@ -954,7 +1002,7 @@ def _one_call(ctx, final_text, chars, lang, voice, rate, style, pcm_path,
             # azzerata. Solo un'uscita PRIMA del 200 libera tutto: meglio
             # dichiarare una spesa in piu' di quante ne siano fatturate.
             _settle_quiet(ctx.guard, reserved,
-                          reserved if billed["hit"] else 0.0)
+                          reserved * billed["hit"])
 
 
 def synth_chunk(ctx, text, chunk_index, lang, voice, rate, style, pcm_path):

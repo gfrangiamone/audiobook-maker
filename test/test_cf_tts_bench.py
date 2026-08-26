@@ -329,13 +329,13 @@ def test_new_run_dir_crea_sottocartelle(tmp_path):
     assert os.path.basename(run_dir).endswith("_smoke")
 
 
-def _ctx(tmp_path, session, max_eur=10.0):
+def _ctx(tmp_path, session, max_eur=10.0, max_attempts=4):
     run_dir = bench.new_run_dir(str(tmp_path), "test")
     return bench.BenchContext(
         session=session, account_id="acc", api_token="tok", run_dir=run_dir,
         writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(max_eur),
         run_id="run-test", temperature=0.3, backend="cloudflare",
-        sleep=lambda _: None,
+        sleep=lambda _: None, max_attempts=max_attempts,
     )
 
 
@@ -1879,7 +1879,10 @@ def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     s = FakeSession([FakeResponse(200, {"result": {}}),
                      FakeResponse(200, {"result": {}})])
     # Cap appena sopra una chiamata: la seconda deve essere rifiutata.
-    ctx = _ctx(tmp_path, s, max_eur=previsto * bench.USD_EUR_RATE * 1.5)
+    # max_attempts=1: qui si misura la FATTURAZIONE di un 200 rotto, non il
+    # ritentativo (coperto da test_duecento_senza_audio_viene_ritentato).
+    ctx = _ctx(tmp_path, s, max_eur=previsto * bench.USD_EUR_RATE * 1.5,
+               max_attempts=1)
     rec, seconds, path = bench._one_call(ctx, "testo finale", 20, "it",
                                          "Zephyr", "+0%", None,
                                          os.path.join(ctx.run_dir, "x.pcm"), 0)
@@ -1890,6 +1893,42 @@ def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     with pytest.raises(bench.SpendCapExceeded):
         bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "y.pcm"), 0)
+    ctx.writer.close()
+
+
+def test_ritentare_il_200_senza_audio_moltiplica_la_spesa(tmp_path):
+    """Conseguenza da tenere in vista: ogni tentativo su un 200-senza-audio e'
+    a sua volta un 200, quindi e' fatturato. Un chunk irrecuperabile costa
+    max_attempts chiamate, non una."""
+    previsto = bench.predict_call_usd(20, "it",
+                                      prompt_chars=len("testo finale"))
+    s = FakeSession([FakeResponse(200, {"result": {}}) for _ in range(3)])
+    ctx = _ctx(tmp_path, s, max_attempts=3)
+    rec, _, _ = bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%",
+                                None, os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert rec["anomaly"] == "error"
+    assert ctx.paid_calls.count == 3
+    assert ctx.guard.spent_eur() == pytest.approx(
+        previsto * bench.USD_EUR_RATE * 3)
+    ctx.writer.close()
+
+
+def test_chunk_riuscito_dopo_un_200_bruciato_paga_entrambi(tmp_path):
+    """Il ritentativo che RIESCE non cancella il 200 che l'ha preceduto:
+    Cloudflare li ha fatturati tutti e due. Il costo del record - quello che
+    la riconciliazione confronta con la dashboard - deve contenerli entrambi.
+    """
+    previsto = bench.predict_call_usd(20, "it",
+                                      prompt_chars=len("testo finale"))
+    s = FakeSession([FakeResponse(200, {"result": {}}),
+                     _ok_response(seconds=1.0)])
+    ctx = _ctx(tmp_path, s, max_attempts=3)
+    rec, _, _ = bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%",
+                                None, os.path.join(ctx.run_dir, "x.pcm"), 0)
+    assert ctx.paid_calls.count == 2
+    assert rec["cost_usd_est"] > previsto
+    assert ctx.guard.spent_eur() == pytest.approx(
+        rec["cost_usd_est"] * bench.USD_EUR_RATE)
     ctx.writer.close()
 
 
@@ -2123,13 +2162,13 @@ def test_200_non_decodificabile_stessi_token_dei_due_rami(tmp_path):
     ok = FakeSession([FakeResponse(200, {"result": {"audio":
                                                     _b64.b64encode(b"non wav")
                                                     .decode("ascii")}})])
-    ctx_ok = _ctx(tmp_path / "a", ok)
+    ctx_ok = _ctx(tmp_path / "a", ok, max_attempts=1)
     rec_ok, _, _ = bench._one_call(ctx_ok, "t", 300, "it", "Zephyr", "+0%",
                                    None, os.path.join(ctx_ok.run_dir, "x.pcm"),
                                    0)
     ctx_ok.writer.close()
     vuoto = FakeSession([FakeResponse(200, {"result": {}})])
-    ctx_ko = _ctx(tmp_path / "b", vuoto)
+    ctx_ko = _ctx(tmp_path / "b", vuoto, max_attempts=1)
     rec_ko, _, _ = bench._one_call(ctx_ko, "t", 300, "it", "Zephyr", "+0%",
                                    None, os.path.join(ctx_ko.run_dir, "x.pcm"),
                                    0)
@@ -3226,6 +3265,107 @@ def test_estratto_del_corpo_e_troncato_e_su_una_riga():
     assert "\n" not in frammento
     assert len(frammento) <= 203
     assert frammento.endswith("...")
+
+
+# --- Anomalie transitorie del run su libro (osservate in campo) -------------
+
+class _RespSequenza:
+    """Risposta finta pilotata da una sequenza di esiti."""
+
+    def __init__(self, status, corpo_json=None, testo=""):
+        self.status_code = status
+        self.headers = {"retry-after": "0"}
+        self.text = testo
+        self._json = corpo_json
+
+    def json(self):
+        if self._json is None:
+            raise ValueError("non JSON")
+        return self._json
+
+
+class _SessSequenza:
+    """Restituisce gli esiti nell'ordine dato; l'ultimo si ripete."""
+
+    def __init__(self, esiti):
+        self.esiti = list(esiti)
+        self.chiamate = 0
+
+    def post(self, *a, **k):
+        i = self.chiamate
+        self.chiamate += 1
+        return self.esiti[i] if i < len(self.esiti) else self.esiti[-1]
+
+
+def _corpo_audio_valido():
+    import base64 as _b64
+    grezzo = b"" * 2400  # 0,1 s a 24 kHz s16le
+    return {"result": {"audio": "data:audio/l16;base64,"
+                                + _b64.b64encode(grezzo).decode("ascii")}}
+
+
+def test_duecento_senza_audio_viene_ritentato():
+    """Osservato sul run del libro: 6 chiamate su 738 tornano 200 con
+    `result` privo di `audio`. Riprovate a mano con payload identico
+    rispondono 200 con audio regolare: l'anomalia e' transitoria, non
+    deterministica. Senza ritentativo quei chunk diventano buchi muti
+    nell'audiolibro, senza alcuna traccia nell'M4B.
+    """
+    sess = _SessSequenza([
+        _RespSequenza(200, {"result": {}}),
+        _RespSequenza(200, _corpo_audio_valido()),
+    ])
+    fatturate = []
+    got = bench.call_cf(sess, "acct", "tok", "Ciao.", "Zephyr", 1.0,
+                        max_attempts=4, sleep=lambda _s: None,
+                        on_billed=lambda: fatturate.append(1))
+    assert sess.chiamate == 2
+    assert got["audio"]
+    # Entrambi i 200 sono fatturati: il ritentativo NON e' gratis.
+    assert len(fatturate) == 2
+
+
+def test_duecento_senza_audio_esaurisce_i_tentativi_e_fallisce():
+    sess = _SessSequenza([_RespSequenza(200, {"result": {}})])
+    with pytest.raises(bench.CFCallError) as ei:
+        bench.call_cf(sess, "acct", "tok", "Ciao.", "Zephyr", 1.0,
+                      max_attempts=3, sleep=lambda _s: None)
+    assert sess.chiamate == 3
+    assert ei.value.attempts == 3
+
+
+def test_errore_di_esecuzione_del_modello_viene_ritentato():
+    """HTTP 400 code 7003 non e' un errore d'input: il chunk 512 del run sul
+    libro ha ricevuto 7003 e poi, con payload byte-per-byte identico, un 200
+    con audio. Un 400 non e' fatturato, quindi il ritentativo e' gratuito.
+    """
+    corpo = {"errors": [{"message": "Model execution failed (User Input "
+                                    "Error): Request contains an invalid "
+                                    "argument.", "code": 7003}],
+             "success": False}
+    sess = _SessSequenza([
+        _RespSequenza(400, corpo, testo='{"code":7003}'),
+        _RespSequenza(200, _corpo_audio_valido()),
+    ])
+    fatturate = []
+    got = bench.call_cf(sess, "acct", "tok", "Ciao.", "Zephyr", 1.0,
+                        max_attempts=4, sleep=lambda _s: None,
+                        on_billed=lambda: fatturate.append(1))
+    assert sess.chiamate == 2
+    assert got["audio"]
+    # Il 400 non e' fatturato: una sola liquidazione, quella del 200.
+    assert len(fatturate) == 1
+
+
+def test_altri_quattrocento_restano_non_ritentabili():
+    """Un 400 che non e' 7003 resta un errore d'input: ritentarlo e' inutile."""
+    corpo = {"errors": [{"message": "Unsupported field passed: prompt",
+                         "code": 7001}], "success": False}
+    sess = _SessSequenza([_RespSequenza(400, corpo, testo='{"code":7001}')])
+    with pytest.raises(bench.CFCallError):
+        bench.call_cf(sess, "acct", "tok", "Ciao.", "Zephyr", 1.0,
+                      max_attempts=4, sleep=lambda _s: None)
+    assert sess.chiamate == 1
 
 
 # --- Schema reale della risposta (osservato al primo run a pagamento) -------
