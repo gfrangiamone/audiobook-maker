@@ -139,7 +139,8 @@ Mappatura degli esiti, tutta misurata sul campo:
 |---|---|---|---|
 | 200 con `result.audio` | — successo | sì | data URI `audio/l16` → PCM |
 | 200 senza `result.audio` | `retryable` | **sì** | 8 casi su 738 nel banco |
-| 400 `code 7003` | `retryable` | no | "User Input Error" ma transitorio: ritentarlo è gratis |
+| 400 `code 7003` con `Invalid value at <campo>` | `fatal` | no | rifiuto deterministico di un parametro (es. voce fuori enum): ritentarlo è inutile. Vedi sotto |
+| 400 `code 7003` altrimenti | `retryable` | no | "User Input Error" ma transitorio: ritentarlo è gratis |
 | 422 `code 2017` | `content_rejected` | no | moderazione. Prevenuto dal §5 |
 | 402 `code 2021` | **`backend_down`** | no | credito prepagato esaurito |
 | 429 | `rate_limited` | no | 0 occorrenze nel banco fino a concorrenza 8 |
@@ -149,6 +150,17 @@ Mappatura degli esiti, tutta misurata sul campo:
 contenuto del corpo; 4xx, 5xx e timeout non lo sono (il log di AI Gateway mostra
 `- in`, `- out`, `$ -` sulle righe 400). Un timeout lato client resta ambiguo:
 Cloudflare può avere generato e fatturato l'audio comunque.
+
+**Il codice 7003 è sovraccarico** e copre due situazioni opposte: fallimenti
+transitori (osservati sul banco e risolti al retry) e rifiuti deterministici di
+un parametro. Le seconde si riconoscono dal messaggio, che ha forma
+`Invalid value at <campo>: …` ed elenca i valori ammessi — è così che è stato
+chiuso G2 (§10.1). Un rifiuto deterministico consuma inutilmente il budget di
+tentativi e va segnalato all'operatore, non ritentato: il trasporto lo mappa su
+`fatal` con il campo offeso nel messaggio. Il criterio è testuale e quindi
+fragile per costruzione; se il messaggio cambiasse forma, l'esito degrada al
+comportamento precedente (qualche retry inutile, poi errore), non a un
+comportamento scorretto.
 
 Cloudflare **non restituisce metadati di uso**: il trasporto ritorna
 `input_tokens=None, output_tokens=None` e `synthesize()` deriva (§4.6).
@@ -440,21 +452,41 @@ Lo switch di §7 passo 2 non avviene finché tutti e cinque non sono soddisfatti
 | # | Criterio | Stato | Come si chiude |
 |---|---|---|---|
 | G1 | Costo Cloudflare riconciliato contro dashboard | **fatto** (−0,39%) | — |
-| G2 | Tutte le voci di `GEMINI_VOICE_NAMES` (30) disponibili su Cloudflare | **aperto** | Fase 0: una chiamata per voce, testo minimo |
+| G2 | Tutte le voci di `GEMINI_VOICE_NAMES` (30) disponibili su Cloudflare | **fatto** (§10.1) | — |
 | G3 | Qualità indistinguibile da Vertex a parità di voce | **dichiarato dal committente**, non ancora documentato | Fase 0: A/B sullo stesso testo, allegato alla spec |
 | G4 | Latenza p95 non peggiore di Vertex a parità di concorrenza | **aperto** | Fase 0: confronto diretto |
 | G5 | Nessun `2017` su un libro intero dopo il fix chunking | **aperto** | Fase 1 + una rigenerazione di controllo |
 
-G2 è bloccante in senso stretto: se Cloudflare ospitasse un sottoinsieme delle
-voci, la selezione voce in produzione si romperebbe per gli utenti che hanno
-scelto una voce mancante, e servirebbe una risoluzione backend **per voce** oltre
-che per modello.
+### 10.1 Verifica delle voci (26/08/2026)
+
+Chiusa con due misure indipendenti.
+
+**Copertura.** Le 30 voci di `GEMINI_VOICE_NAMES` sono state sintetizzate su
+Cloudflare sullo stesso testo italiano di ~178 caratteri, concorrenza 4:
+**30 esiti 200 su 30**, nessuna anomalia, nessun retry, durate fra 13,76 s e
+15,88 s, latenze fra 6,9 s e 9,6 s. Costo totale 0,12 €.
+
+**Applicazione effettiva.** Trenta successi non dimostrano che il campo `voice`
+venga onorato: un provider che lo ignorasse restituirebbe sempre la voce di
+default senza segnalare nulla. Due controlli lo escludono:
+
+1. I 30 PCM hanno 30 hash distinti e durate distinte sullo stesso testo — una
+   dispersione del 15% fra la voce più rapida e la più lenta.
+2. Una richiesta con `voice: "___voce_inesistente___"` è respinta con
+   `HTTP 400 code 7003 — "Invalid value at voice: Invalid option: expected one
+   of …"`, seguita dall'enumerazione completa dei valori ammessi. Il campo è
+   quindi validato contro un enum chiuso, non ignorato.
+
+**L'enum restituito da Cloudflare coincide esattamente con
+`GEMINI_VOICE_NAMES`**: 30 nomi, nessuno in più, nessuno in meno. Cade quindi
+l'ipotesi di una risoluzione backend *per voce*: la granularità per modello di
+§4.3 è sufficiente.
 
 ## 11. Fasi di lavoro
 
 | Fase | Contenuto | Esito |
 |---|---|---|
-| 0 | Chiusura di G2, G3, G4; ricognizione API saldo Cloudflare | ~3 € di chiamate, nessun codice di produzione |
+| 0 | Chiusura di G3 e G4; ricognizione API saldo Cloudflare | ~3 € di chiamate, nessun codice di produzione. G2 già chiuso (§10.1) |
 | 1 | Fix chunking dei frammenti degeneri (§5) | Rilasciabile da solo |
 | 2 | `gemini_transport.py` + trasporto Vertex; `synthesize()` delega | Zero cambi di comportamento, suite verde intatta |
 | 3 | Trasporto Cloudflare: REST, data URI, mappatura errori, derivazione token | |
@@ -470,7 +502,7 @@ variabile d'ambiente più un riavvio.
 
 | Rischio | Impatto | Mitigazione |
 |---|---|---|
-| Cloudflare non ospita tutte le voci | selezione voce rotta | G2 bloccante prima dello switch |
+| Cloudflare rimuove una voce dall'enum in futuro | selezione voce rotta per chi l'ha scelta | il trasporto mappa il 400 su `voice` a errore esplicito, non a `retryable`; §10.1 è ripetibile a costo zero (400 non fatturati) |
 | Timeout lato client fatturato senza audio | costo invisibile | il registro spesa conta i timeout a parte; scostamento verificabile in dashboard |
 | Failover prolungato non notato | erosione silenziosa del margine | email immediata + margine reale a consuntivo per backend |
 | Credito esaurito di notte | Vertex fino al mattino | preallarme sotto soglia, non solo allarme a esaurimento |
