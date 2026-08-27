@@ -371,6 +371,27 @@ community_store.init(_DATA_DIR)
 pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
 
+if gemini_tts is not None:
+    def _on_tts_backend_switch(model_key, reason, detail, job_id):
+        # Notifica IMMEDIATA (non nel digest): il margine in failover su
+        # Vertex e' quasi nullo, ogni ora di ritardo costa margine su ogni
+        # job servito nel frattempo. `claim_credit_alert()` e' l'unica via
+        # atomica da cui far partire l'allarme credito: consuma l'allarme
+        # a esattamente un chiamante, cosi' l'email non riparte a ogni
+        # singolo switch successivo mentre il credito resta basso.
+        credit = None
+        try:
+            if tts_backend_state.claim_credit_alert():
+                credit = tts_backend_state.credit_left_eur()
+        except Exception:
+            credit = None
+        email_service.admin_notify_tts_backend_switch(
+            model_key, reason, detail, job_id, credit_left_eur=credit)
+        _log_activity("", "", "TTS_BACKEND_SWITCH", "", "",
+                      model_key, f"{reason}: {str(detail)[:80]}")
+
+    gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
+
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
 

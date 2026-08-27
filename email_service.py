@@ -618,6 +618,80 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         print(f"[admin] Failed to send failure alert for {key}: {e}")
 
 
+def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
+                                    credit_left_eur=None):
+    """Notifica IMMEDIATA all'admin: il backend TTS e' passato a Vertex.
+
+    Non passa dal digest di fine giornata: il margine in failover (Vertex)
+    e' quasi nullo rispetto a quello su Cloudflare, quindi ogni ora di
+    ritardo nell'avviso costa margine su ogni job servito nel frattempo.
+
+    Sec: `detail` arriva da `gemini_tts` (tipicamente un messaggio d'errore
+    HTTP del provider) e viene solo HTML-escapato qui, mai interpretato.
+    Il chiamante (gemini_tts/tts_backend_state) e' responsabile di non
+    includervi mai token/credenziali: questa funzione si limita a stamparlo.
+
+    Un guasto SMTP non deve propagare: il failover e' gia' avvenuto e il
+    job sta proseguendo su Vertex, l'email e' un di piu'.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+
+    reason_label = {
+        "cf_backend_down": "backend Cloudflare fuori uso",
+        "cf_consecutive_failures": "fallimenti consecutivi oltre soglia",
+    }.get(reason, reason)
+
+    model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
+    reason_label_safe = _esc_html(_sanitize_header(reason_label, max_len=120))
+    detail_safe = _esc_html(_sanitize_header(detail or "", max_len=300))
+    job_safe = _esc_html(_sanitize_header(job_id or "", max_len=120))
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] TTS {model_key}: switch automatico a Vertex "
+        f"({reason_label})", max_len=200)
+
+    credit_row = ""
+    if credit_left_eur is not None:
+        credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
+                      f"<td>{credit_left_eur:.2f} &euro;</td></tr>")
+
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
+      <div style="background:#c0392b;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">TTS: passaggio automatico a Vertex</h2>
+      </div>
+      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
+        <p>Il modello <strong>{model_safe}</strong> non viene piu' servito da
+           Cloudflare. I job in corso proseguono su Vertex dal chunk
+           corrente, senza interruzione e senza differenza udibile.</p>
+        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
+          <tr><td><strong>Causa</strong></td><td>{reason_label_safe}</td></tr>
+          <tr><td><strong>Dettaglio</strong></td><td style="font-family:monospace;font-size:12px">{detail_safe}</td></tr>
+          <tr><td><strong>Job che ha rilevato</strong></td><td><code>{job_safe}</code></td></tr>
+          {credit_row}
+        </table>
+        <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
+          <strong>Perche' e' urgente:</strong> su Vertex il margine scende
+          quasi al pareggio, mentre su Cloudflare resta ampio. Il servizio
+          continua a funzionare, ma ogni ora in questo stato e' margine
+          perso su ogni job servito.</p>
+        <p><strong>Il rientro e' manuale.</strong> Risolto il problema (di
+           norma: ricaricare il credito Cloudflare), riattiva Cloudflare
+           dal pannello <em>Backend TTS</em> della console admin. Non c'e'
+           alcun ripristino automatico: un backend caduto per credito
+           esaurito tornerebbe a cadere subito, e ogni caduta costa un
+           job.</p>
+      </div>
+    </div>"""
+
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Notifica switch backend TTS inviata per {model_key} "
+              f"({reason})")
+    except Exception as e:
+        print(f"[admin] Invio notifica switch backend TTS fallito: {e}")
+
+
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
                                           refund_eur, voucher_code,
                                           book_title, download_url, lang="it"):
