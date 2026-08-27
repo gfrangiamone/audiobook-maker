@@ -375,13 +375,23 @@ if gemini_tts is not None:
     def _on_tts_backend_switch(model_key, reason, detail, job_id):
         # Notifica IMMEDIATA (non nel digest): il margine in failover su
         # Vertex e' quasi nullo, ogni ora di ritardo costa margine su ogni
-        # job servito nel frattempo. `claim_credit_alert()` e' l'unica via
-        # atomica da cui far partire l'allarme credito: consuma l'allarme
-        # a esattamente un chiamante, cosi' l'email non riparte a ogni
-        # singolo switch successivo mentre il credito resta basso.
+        # job servito nel frattempo.
+        #
+        # Due cose distinte, che una versione precedente confondeva:
+        #  - `claim_credit_alert()` serve SOLO a sopprimere l'email di
+        #    pre-allarme separata quando questo switch la anticipa. E' a
+        #    consumo unico e resta l'unica via da cui quell'email parte: qui
+        #    il suo valore di ritorno non decide piu' nulla di visibile.
+        #  - il residuo mostrato nell'email si legge da `credit_left_eur()`,
+        #    che e' PURA, ogni volta che c'e' un saldo dichiarato. Legarlo
+        #    all'esito della claim lo faceva sparire proprio nel caso in cui
+        #    serve di piu': credito gia' sotto soglia (pre-allarme gia'
+        #    partito) significa claim `False`, cioe' email di failover senza
+        #    il numero che ne spiega la causa.
         credit = None
         try:
-            if tts_backend_state.claim_credit_alert():
+            tts_backend_state.claim_credit_alert()
+            if tts_backend_state.credit_balance_eur() > 0:
                 credit = tts_backend_state.credit_left_eur()
         except Exception:
             credit = None

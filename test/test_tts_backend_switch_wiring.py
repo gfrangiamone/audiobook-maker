@@ -51,6 +51,7 @@ def _registered_notifier():
 
 
 def test_wired_notifier_claims_the_alert_not_just_peeks(monkeypatch, _registered_notifier):
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
     calls = []
     monkeypatch.setattr(tts_backend_state, "claim_credit_alert",
                         lambda: calls.append("claim") or True)
@@ -65,18 +66,22 @@ def test_wired_notifier_claims_the_alert_not_just_peeks(monkeypatch, _registered
     _registered_notifier("flash31", "cf_backend_down", "d", "job-x")
 
     assert calls == ["claim"], (
-        "il notifier deve decidere l'allarme SOLO con claim_credit_alert() "
+        "il notifier deve consumare l'allarme SOLO con claim_credit_alert() "
         "(atomico): con credit_alert_pending() l'allarme non si consuma mai "
-        "e l'email di credito ripartirebbe a ogni switch")
+        "e l'email di pre-allarme ripartirebbe dopo ogni switch")
     assert sent[0][1]["credit_left_eur"] == pytest.approx(4.2)
 
 
-def test_wired_notifier_omits_credit_when_alert_not_claimed(monkeypatch, _registered_notifier):
+def test_wired_notifier_reports_credit_even_when_the_alert_was_already_claimed(
+        monkeypatch, _registered_notifier):
+    """N3: il claim e' a consumo unico. Se il pre-allarme e' gia' partito —
+    cioe' se il credito era gia' sotto soglia, lo scenario in cui il residuo
+    serve di piu' — il claim torna False, e legare a quel booleano la riga
+    «credito residuo» la faceva sparire proprio dall'email che spiega il
+    failover appena avvenuto."""
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
     monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
-    monkeypatch.setattr(tts_backend_state, "credit_alert_pending", lambda: False)
-    peeked = []
-    monkeypatch.setattr(tts_backend_state, "credit_left_eur",
-                        lambda: peeked.append(1) or 9.9)
+    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: 0.4)
     sent = []
     monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
                         lambda *a, **kw: sent.append((a, kw)))
@@ -84,11 +89,25 @@ def test_wired_notifier_omits_credit_when_alert_not_claimed(monkeypatch, _regist
 
     _registered_notifier("flash31", "cf_backend_down", "d", "job-y")
 
+    assert sent[0][1]["credit_left_eur"] == pytest.approx(0.4)
+
+
+def test_wired_notifier_omits_credit_when_no_balance_is_declared(
+        monkeypatch, _registered_notifier):
+    """Senza saldo dichiarato (`ABM_CF_CREDIT_BALANCE_EUR` a 0, il default) il
+    residuo non e' conoscibile: `credit_left_eur()` varrebbe -spesa, un numero
+    privo di significato che nell'email sembrerebbe un dato reale."""
+    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_EUR", raising=False)
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: -9.9)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-z")
+
     assert sent[0][1]["credit_left_eur"] is None
-    # credit_left_eur() non va nemmeno letto se l'allarme non e' stato
-    # reclamato: leggerlo comunque non sarebbe un bug funzionale (il valore
-    # non verrebbe usato) ma un tell che la guardia e' stata bypassata.
-    assert peeked == []
 
 
 def test_wired_notifier_forwards_reason_model_and_job(monkeypatch, _registered_notifier):
