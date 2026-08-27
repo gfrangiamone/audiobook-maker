@@ -42,6 +42,17 @@ def _mk_job(job_id, n_chars=300_000):
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
+    # gemini_tts.is_available()/is_capability_available() condividono una
+    # cache di modulo (`_available`) risolta una sola volta per processo: la
+    # prima valutazione reale avviene gia' all'import di audiobook_app
+    # (avvio, log "[startup] Gemini TTS...") e resta congelata per l'intera
+    # sessione pytest, a prescindere da ABM_GEMINI_BACKEND/credenziali che
+    # questo test imposta piu' sotto. Senza questo monkeypatch il gate di
+    # /api/generate (`if not gemini_tts.is_available(): 400`) dipende da uno
+    # stato globale non sotto controllo di questo test (ordine di esecuzione
+    # e macchina locale). monkeypatch.setattr si auto-ripristina a fine test,
+    # niente da rimettere a posto in teardown.
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "run_generation", lambda *a, **k: None)
     monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)

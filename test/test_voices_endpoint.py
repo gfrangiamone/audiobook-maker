@@ -5,7 +5,17 @@ import audiobook_app
 
 
 @pytest.fixture(autouse=True)
-def reset_voices_cache():
+def reset_voices_cache(monkeypatch):
+    # get_voices() include le voci Gemini solo se gemini_tts.is_available() e'
+    # True (audiobook_app.py, merge Gemini in _fetch_voices). Quel booleano e'
+    # una cache di modulo risolta una sola volta per l'intera sessione pytest
+    # (gia' all'import di audiobook_app, sulla base delle credenziali reali
+    # della macchina) e non viene mai ricalcolata dopo: senza questo
+    # monkeypatch il test dipenderebbe da uno stato globale fuori dal proprio
+    # controllo (macchina locale / cosa ha girato prima nella sessione).
+    # Auto-ripristinato da monkeypatch, nessun teardown manuale necessario.
+    if audiobook_app.gemini_tts is not None:
+        monkeypatch.setattr(audiobook_app.gemini_tts, "is_available", lambda: True)
     audiobook_app._invalidate_voices_cache()
     yield
     audiobook_app._invalidate_voices_cache()

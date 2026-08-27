@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 import audiobook_app
+import gemini_tts
 import payment
 from epub_to_tts import BookInfo, Chapter
 
@@ -48,6 +49,13 @@ def _mk_job(job_id, n_chars=300_000):
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     """LLM 'disponibile', nessun thread reale, stato payment isolato su tmp."""
+    # gemini_tts._available e' una cache di modulo risolta una sola volta a
+    # processo (gia' all'import di audiobook_app, in base alle credenziali
+    # reali della macchina) e mai piu' ricalcolata per il resto della sessione
+    # pytest: senza questo monkeypatch il gate is_available() di
+    # /api/generate su GEMINI_VOICE dipenderebbe da uno stato globale fuori
+    # dal controllo di questo test. Auto-ripristinato da monkeypatch.
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setattr(audiobook_app, "_llm_available", lambda: True)
     calls = []
     monkeypatch.setattr(
