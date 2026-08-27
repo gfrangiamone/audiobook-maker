@@ -1967,12 +1967,19 @@ def synth_chunk_vertex(ctx, text, chunk_index, lang, voice_name, rate, style,
     dur = evaluate_duration(len(text), lang, seconds)
     tokens_in = int(res.get("input_tokens") or 0)
     tokens_out = int(res.get("output_tokens") or 0)
-    # Costo Google reale, solo per la colonna del record: il ramo Vertex non
+    # Costo Vertex REALE, solo per la colonna del record: il ramo Vertex non
     # tocca mai ctx.guard (SpendGuard resta il cap sulla sola spesa
     # Cloudflare). Senza questo calcolo il confronto A/B mostrerebbe sempre
     # EUR 0.00 su Vertex, vanificando lo scopo del bench.
-    cost_usd_est = gemini_tts.google_cost_breakdown(
-        tokens_in, tokens_out, "flash31")["total_usd"]
+    #
+    # actual_cost_breakdown(..., "vertex"), MAI google_cost_breakdown: quello
+    # e' un alias del LISTINO, che con ABM_GEMINI_BACKEND=cloudflare (il caso
+    # naturale mentre si prova Cloudflare) e' la tariffa mista, scontata della
+    # quota di risparmio ceduta al cliente. Usarlo qui sottostimerebbe Vertex
+    # esattamente di quella quota, cioe' falserebbe il confronto economico
+    # A/B - proprio il numero per cui questo banco esiste.
+    cost_usd_est = gemini_tts.actual_cost_breakdown(
+        tokens_in, tokens_out, "flash31", "vertex")["total_usd"]
     record = make_record(
         run_id=ctx.run_id, backend="vertex", lang=lang, voice=voice_name,
         rate=rate, style_hash=style_hash(style), chunk_index=chunk_index,

@@ -57,6 +57,34 @@ def test_google_cost_breakdown_still_works_and_matches_the_price():
     assert legacy == price
 
 
+def test_the_ab_bench_measures_vertex_at_its_real_cost_not_at_the_listino():
+    """Ottavo "specchio" prezzo-vs-costo (F6 della revisione finale), in
+    `scripts/tts_cloudflare_gemini_test.py`: il ramo Vertex del banco A/B
+    calcolava la colonna di costo con `google_cost_breakdown`, che e' un alias
+    del LISTINO. Girando in una shell con `ABM_GEMINI_BACKEND=cloudflare` —
+    il caso naturale mentre si prova Cloudflare — quel listino e' la tariffa
+    mista, scontata della quota di risparmio ceduta al cliente: la colonna
+    "costo Vertex" scendeva esattamente di quella quota e il confronto
+    economico A/B, cioe' il numero per cui il banco esiste, sottostimava
+    Vertex.
+
+    Che i due numeri NON siano intercambiabili e' gia' fissato qui sopra da
+    `test_on_vertex_the_price_is_below_the_real_cost_before_margin`. Quello
+    che non era fissato da niente e' il call site: lo script non e' importabile
+    a costo ragionevole (argparse e I/O a livello di modulo) e nessun test lo
+    tocca, quindi la verifica e' sul sorgente.
+    """
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "scripts" / "tts_cloudflare_gemini_test.py").read_text(encoding="utf-8")
+    assert 'actual_cost_breakdown(\n        tokens_in, tokens_out, "flash31", "vertex")' in src, (
+        "il ramo Vertex del banco deve usare actual_cost_breakdown(..., "
+        '"vertex")')
+    assert "gemini_tts.google_cost_breakdown(" not in src, (
+        "google_cost_breakdown e' l'alias del listino: nel banco A/B "
+        "sottostima Vertex della quota di risparmio ceduta al cliente")
+
+
 def test_breakdown_keys_are_unchanged():
     b = gemini_tts.pricing_cost_breakdown(10, 10, "flash31")
     assert set(b) == {"input_usd", "output_usd", "total_usd", "total_eur"}

@@ -85,6 +85,35 @@ def test_the_notifier_fires_once_at_the_trip(tmp_path, monkeypatch):
     assert seen[0][0] == "flash31"
 
 
+def test_a_second_trip_on_the_same_model_does_not_re_notify(tmp_path, monkeypatch):
+    """La guardia `first` in `_trip_to_vertex` e' l'UNICA cosa che garantisce
+    una sola email quando N thread scoprono l'avaria insieme: `trip()` e'
+    idempotente sotto lock e ritorna True a uno solo.
+
+    Il test gemello `test_the_notifier_fires_once_at_the_trip` NON copre
+    questa proprieta': dopo il primo trip `_resolve_backend` ritorna "vertex"
+    e la seconda `synthesize()` non arriva mai a `_trip_to_vertex`. Rimuovere
+    la guardia lo lasciava verde (rilievo F6 della revisione finale, 219 test
+    verdi con la mutazione applicata). Qui `_trip_to_vertex` viene invocata
+    DUE volte in modo diretto, che e' il concorso reale fra thread.
+    """
+    seen = []
+    gemini_tts.set_backend_switch_notifier(
+        lambda model_key, reason, detail, job_id: seen.append(job_id))
+
+    gemini_tts._trip_to_vertex("flash31", reason="cf_backend_down",
+                               detail="primo thread", job_id="j1")
+    gemini_tts._trip_to_vertex("flash31", reason="cf_backend_down",
+                               detail="secondo thread", job_id="j2")
+
+    assert seen == ["j1"], (
+        "il secondo trip sullo stesso modello non deve rinotificare: "
+        "l'admin riceverebbe un'email per ogni job in corso")
+    # Lo stato persistito resta quello del PRIMO trip, non sovrascritto dal
+    # secondo: e' la stessa idempotenza vista dal lato del disco.
+    assert st.state("flash31")["trip_job_id"] == "j1"
+
+
 def test_transient_failures_trip_only_at_the_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_CF_TRIP_FAILURES", "3")
     monkeypatch.setattr(gemini_tts, "_synth_max_attempts", lambda: 1)
