@@ -144,8 +144,10 @@ Dopo il restart, in ordine:
    non arriva la prima richiesta. Non è quindi anomalo non vederla subito
    dopo il restart — lo è non vederla dopo il primo job di prova del punto 3.
 
-2. **Pannello «Backend TTS»** in `/admin/audit-tts` (richiede
-   `X-Admin-Token`). Deve mostrare, nel box in alto:
+2. **Pannello «Backend TTS»** in `/admin/audit-premium` (titolo pagina
+   "Admin - Audit Premium Services", richiede `X-Admin-Token`). Il pannello
+   è sopra la barra delle schede e visibile sempre, indipendentemente dalla
+   scheda selezionata. Deve mostrare, nel box in alto:
    - **SU CLOUDFLARE** (verde) · credito residuo stimato in €, se non c'è
      stato alcun trip;
    - se invece appare **SU VERTEX** (rosso) con dettaglio del trip, il
@@ -157,7 +159,8 @@ Dopo il restart, in ordine:
 4. **Confronto costo registrato vs dashboard Cloudflare.** Aprire
    Cloudflare → Workers & Pages → AI → Usage sulla stessa finestra
    temporale del job di prova, e confrontare con il costo registrato
-   nell'Audit TTS (`/admin/audit-tts`, tab «Audit TTS»).
+   nell'Audit TTS (`/admin/audit-premium#tab-tts`, scheda «Audit TTS» — è
+   anche la scheda di default della pagina).
 
    > **Trappola: il saldo cala dell'addebito, non del costo.** La
    > commissione di ricarica del 5% (`ABM_CF_CREDIT_TOPUP_FEE`) si paga
@@ -183,7 +186,7 @@ Dopo il restart, in ordine:
   — ma un rallentamento percepibile nella durata complessiva dei job
   rispetto a prima dell'accensione è il segnale da cui partire. In caso di
   dubbio, il rollback (§6) è immediato.
-- **Credito residuo** nel pannello «Backend TTS» (`/admin/audit-tts`):
+- **Credito residuo** nel pannello «Backend TTS» (`/admin/audit-premium`):
   deve scendere in modo coerente con il volume di job serviti, non a scatti
   improvvisi.
 - **Errori `2017` nei log.** Anche con l'accensione autorizzata (fix del
@@ -229,13 +232,18 @@ procedura:
 
 1. **Diagnosi.** La causa più comune è credito Cloudflare esaurito
    (`2021 insufficient balance`, trattato come `backend_down`: scatta al
-   primo fallimento, senza attendere soglia). Verificare nel pannello
-   «Backend TTS» il campo «Causa» e «Dettaglio» del trip.
+   primo fallimento, senza attendere soglia). Nel pannello «Backend TTS»
+   compare una riga unica di dettaglio nel formato `Causa: <motivo> ·
+   <dettaglio>` (non due campi separati) — leggerla per intero.
 2. **Ricarica** il credito Cloudflare se la causa è esaurimento saldo.
 3. **Aggiorna `ABM_CF_CREDIT_BALANCE_EUR`** nell'unit systemd con il nuovo
-   importo netto ricaricato, poi `daemon-reload` + `restart` (come in §3) —
-   il rientro dal pannello (punto 4) da solo non aggiorna questa variabile.
-4. **Rientro dal pannello** «Backend TTS» (`/admin/audit-tts`): pulsante
+   importo netto ricaricato, poi:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart audiobook-maker
+   ```
+   Il rientro dal pannello (punto 4) da solo non aggiorna questa variabile.
+4. **Rientro dal pannello** «Backend TTS» (`/admin/audit-premium`): pulsante
    «Riporta su Cloudflare», con la casella **«Ho ricaricato il credito
    (azzera il contatore di spesa)»** spuntata se si è appena ricaricato
    (azzera il ledger locale di spesa, altrimenti il pre-allarme continuerebbe
