@@ -795,7 +795,18 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
         # Coerenza con synthesize(): il backend che ha davvero eseguito e la
         # provenienza dei token. Se anche un solo pezzo ha token derivati
         # (Cloudflare, che non li misura) l'aggregato non e' misurato.
+        # NB: "backend" resta l'ultimo pezzo scritto (last-write-wins) per
+        # compatibilita' con i chiamanti esistenti - su un chunk misto (il
+        # circuit breaker scatta a meta') puo' quindi riportare "vertex" anche
+        # se dei pezzi precedenti sono girati su Cloudflare. Per qualunque
+        # decisione che debba sapere "Cloudflare e' stato toccato in questo
+        # chunk" usare `cf_used` sotto, non `backend`: quello e' un OR fra
+        # tutti i pezzi, mai sovrascritto dall'ultimo. Il ledger del credito
+        # Cloudflare non dipende da questo campo (ogni pezzo si addebita da
+        # solo dentro synthesize()): serve alla contabilita'/diagnostica a
+        # valle che leggono l'aggregato invece dei singoli pezzi.
         "backend": None,
+        "cf_used": False,
         "tokens_measured": True,
     }
 
@@ -831,6 +842,8 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                         aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
                         aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
                         aggregate["backend"] = result.get("backend") or aggregate["backend"]
+                        if result.get("backend") == "cloudflare":
+                            aggregate["cf_used"] = True
                         if not result.get("tokens_measured"):
                             aggregate["tokens_measured"] = False
                         break
