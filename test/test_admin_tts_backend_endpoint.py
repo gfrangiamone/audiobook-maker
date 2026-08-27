@@ -71,20 +71,26 @@ def test_reset_clears_the_trip(client):
     assert st.is_tripped("flash31") is False
 
 
-def test_reset_with_topup_clears_the_spend_ledger(client, monkeypatch):
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
-    st.add_spend("flash31", 30.0)
-    st.trip("flash31", reason="cf_backend_down", detail="d", job_id="j")
-    client.post("/admin/api/tts_backend", headers=AUTH,
-                json={"action": "reset", "topup": True})
-    assert st.credit_left_eur() == pytest.approx(50.0)
-
-
-def test_reset_without_topup_keeps_the_ledger(client, monkeypatch):
+def test_reset_never_touches_the_spend_ledger(client, monkeypatch):
+    # Il rientro dal breaker e l'azzeramento del ledger sono due decisioni
+    # diverse: aver risolto il guasto non implica aver ricaricato il credito.
     monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
     st.add_spend("flash31", 30.0)
     client.post("/admin/api/tts_backend", headers=AUTH,
                 json={"action": "reset"})
+    assert st.credit_left_eur() == pytest.approx(20.0)
+
+
+def test_the_old_topup_field_on_reset_is_refused_not_ignored(client, monkeypatch):
+    # La forma vecchia dell'API (topup come campo del rientro) non deve
+    # essere accettata in silenzio lasciando il ledger intatto: chi la usa
+    # crede di aver azzerato la spesa e leggerebbe un residuo sbagliato.
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    st.add_spend("flash31", 30.0)
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset", "topup": True})
+    assert r.status_code == 400
+    assert "topup" in r.get_json()["error"]
     assert st.credit_left_eur() == pytest.approx(20.0)
 
 
@@ -232,3 +238,148 @@ def test_a_clean_install_does_not_report_a_self_contradictory_state(
     body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
     assert body["configured_backend"] == "vertex"
     assert body["active"] == "vertex"
+
+
+def test_the_fallback_of_active_is_the_declared_configuration_not_a_constant(
+        client, monkeypatch):
+    # N4: il test qui sopra passa anche mutando il ripiego in una costante
+    # "vertex", perche' su quell'installazione la configurazione VALE
+    # "vertex". Con `auto` — la configurazione della produzione di oggi, e
+    # l'unica che nessun backend reale puo' pareggiare per caso — il ripiego
+    # deve restare la configurazione dichiarata.
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["configured_backend"] == "auto"
+    assert body["active"] == "auto", (
+        "su installazione pulita `active` deve ripiegare sulla "
+        "configurazione dichiarata, non su una stringa fissa")
+
+
+# --- N5: un model_key non stringa non deve produrre un 500 ----------------
+
+def test_a_non_string_model_key_is_rejected_with_400_not_500(client):
+    # `model_key` arriva anche dal corpo JSON, dove una lista e'
+    # sintatticamente legittima: `model_key not in GEMINI_MODELS` su un
+    # valore unhashable solleva TypeError -> 500. Deve seguire la stessa
+    # strada di una chiave sconosciuta.
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset", "model_key": ["flash31"]})
+    assert r.status_code == 400
+    assert "known_model_keys" in r.get_json()
+
+
+def test_a_dict_model_key_on_get_is_not_a_500(client):
+    r = client.get("/admin/api/tts_backend", headers=AUTH,
+                   json={"model_key": {"a": 1}})
+    assert r.status_code == 200
+    assert r.get_json()["tripped_at"] is None
+
+
+# --- N2: il topup e' un'azione a se', raggiungibile senza alcun trip -------
+#
+# `reset_spend()` e' l'unica cosa che riarma il pre-allarme sul credito
+# (azzera `spent_eur` e `alerted`). Finche' il suo unico innesco era la
+# casella accanto al pulsante di rientro — abilitato solo DOPO un trip —
+# l'allarme partiva una volta sola nella vita dell'installazione: dal secondo
+# ciclo di credito il servizio scivolava su Vertex di notte senza preavviso.
+
+def test_topup_clears_the_ledger_without_any_trip(client, monkeypatch):
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    st.add_spend("flash31", 46.0)
+    assert st.is_tripped("flash31") is False
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "topup"})
+
+    assert r.status_code == 200
+    assert st.credit_left_eur() == pytest.approx(50.0)
+
+
+def test_topup_does_not_touch_the_breaker(client):
+    # Aver ricaricato il credito non dimostra che la causa del guasto sia
+    # stata risolta: il rientro resta una decisione separata, con la sua
+    # conferma.
+    st.trip("flash31", reason="cf_backend_down", detail="d", job_id="j")
+    gemini_tts._set_backend("flash31", "vertex")
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "topup"})
+
+    assert r.status_code == 200
+    assert st.is_tripped("flash31") is True
+    assert r.get_json()["tripped_at"] is not None
+    assert gemini_tts._BACKEND.get("flash31") == "vertex", (
+        "il topup non deve invalidare la cache in-process del backend")
+
+
+def test_topup_is_refused_when_the_environment_does_not_select_cloudflare(
+        client, monkeypatch):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    st.add_spend("flash31", 46.0)
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "topup"})
+
+    assert r.status_code == 409
+    assert "ABM_GEMINI_BACKEND" in r.get_json()["error"]
+    # Un rifiuto che azzerasse comunque il ledger sarebbe peggio di un 200.
+    assert st.credit_left_eur() == pytest.approx(4.0)
+
+
+def test_topup_with_an_unknown_model_key_is_rejected(client):
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "topup", "model_key": "fantasma"})
+    assert r.status_code == 400
+    assert st.state("fantasma") == {}
+
+
+def test_topup_is_written_to_the_activity_log(client, monkeypatch):
+    # Una forense sul credito deve poter ritrovare l'azzeramento: senza
+    # questa riga la spesa cumulata sparisce senza traccia.
+    logged = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: logged.append(a))
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    st.add_spend("flash31", 46.0)
+
+    client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
+
+    assert logged, "il topup deve finire nell'activity log"
+    assert logged[0][2] == "ADMIN_TTS_CREDIT_TOPUP"
+
+
+def test_the_second_credit_cycle_alerts_again(client, monkeypatch):
+    """Il ciclo completo, che prima si poteva percorrere una volta sola.
+
+    Primo ciclo: la spesa porta il residuo sotto soglia, l'allarme viene
+    consumato (una sola email). Ricarica: saldo dichiarato rialzato + topup
+    dalla console. Secondo ciclo: la spesa riporta il residuo sotto soglia e
+    l'allarme deve poter tornare a scattare.
+    """
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_ALERT_EUR", "5")
+
+    # --- ciclo 1: allarme consumato -------------------------------------
+    st.add_spend("flash31", 46.0)          # residuo 4,00 < soglia 5,00
+    assert st.claim_credit_alert() is True
+    assert st.claim_credit_alert() is False, "l'allarme e' a consumo unico"
+
+    # --- ricarica: nuovo saldo dichiarato + topup dalla console ----------
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "100")
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "topup"})
+    assert r.status_code == 200
+    assert st.credit_left_eur() == pytest.approx(100.0), (
+        "senza azzerare il ledger il residuo del secondo ciclo nasce gia' "
+        "decurtato della spesa del primo")
+    assert st.claim_credit_alert() is False, (
+        "subito dopo la ricarica il residuo e' sopra soglia: nessun allarme")
+
+    # --- ciclo 2: la soglia viene riattraversata -------------------------
+    st.add_spend("flash31", 96.0)          # residuo 4,00 < soglia 5,00
+    assert st.credit_alert_pending() is True
+    assert st.claim_credit_alert() is True, (
+        "il pre-allarme deve poter scattare di nuovo dal secondo ciclo di "
+        "credito in poi: senza un topup raggiungibile senza trip, "
+        "l'installazione riceve una sola email nella sua vita")

@@ -578,11 +578,36 @@ def add_spend(model_key, eur):
 
 
 def reset_spend():
-    """Azzera il ledger: da chiamare quando l'admin ricarica il credito."""
+    """Azzera il ledger: da chiamare quando l'admin ricarica il credito.
+
+    E' l'UNICA cosa che riarma il pre-allarme (`alerted` torna False insieme a
+    `spent_eur`), quindi la via che la raggiunge deve restare percorribile
+    anche quando NON e' avvenuto alcun failover: il ciclo normale del credito
+    e' "residuo sotto soglia -> email di pre-allarme -> ricarica -> topup",
+    tutto con Cloudflare ancora sano. Legarla al rientro dal breaker (come
+    faceva il solo ramo `topup` della POST `action="reset"`, raggiungibile
+    unicamente col pulsante di rientro abilitato, cioe' solo dopo un trip)
+    la rendeva irraggiungibile proprio in quello scenario: l'allarme sarebbe
+    partito una volta sola nella vita dell'installazione. Vedi
+    l'azione `POST /admin/api/tts_backend {"action": "topup"}`.
+    """
     global _CREDIT
     with _LOCK:
         _CREDIT = _default_credit_ledger()
         _save()
+
+
+def credit_balance_eur():
+    """Saldo dichiarato dall'admin (`ABM_CF_CREDIT_BALANCE_EUR`), 0 se non
+    dichiarato. PURA: nessuna mutazione, nessun consumo dell'allarme.
+
+    Esposta per la stessa ragione di `credit_alert_threshold_eur()`: chi deve
+    decidere se il residuo e' un numero conoscibile (0 = nessun saldo
+    dichiarato, quindi `credit_left_eur()` non significa nulla) non deve
+    rileggersi l'ambiente per conto proprio con una convenzione di parsing
+    diversa da questa.
+    """
+    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
 
 
 def credit_left_eur():

@@ -5884,10 +5884,10 @@ def admin_audit_premium_page():
   <h3 style="margin:0 0 4px">Backend TTS</h3>
   <div id="tbStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
   <div id="tbDetail" style="font-size:.85rem;color:var(--muted);display:none;margin-top:4px"></div>
-  <label style="display:block;margin:8px 0;font-size:.85rem">
-    <input type="checkbox" id="tbTopup"> Ho ricaricato il credito (azzera il contatore di spesa)
-  </label>
-  <button type="button" id="tbResetBtn" disabled>...</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+    <button type="button" id="tbResetBtn" disabled>...</button>
+    <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_EUR: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
+  </div>
 </div>
 
 <div class="tab-bar">
@@ -6396,10 +6396,25 @@ def admin_audit_premium_page():
   }
   function tbApply(s){
     const btn = $("tbResetBtn");
+    const topupBtn = $("tbTopupBtn");
     const status = $("tbStatus");
     const detail = $("tbDetail");
-    if (s.configured_backend !== "cloudflare") {
-      status.innerHTML = '<span style="color:var(--muted)">Cloudflare non configurato · il TTS gira su ' + esc(s.active) + '</span>';
+    const cfConfigured = (s.configured_backend === "cloudflare");
+    // Il topup dipende SOLO dalla configurazione, mai da `tripped_at`: e'
+    // l'unica via che riarma il pre-allarme sul credito, e il ciclo normale
+    // del credito (residuo sotto soglia -> ricarica -> topup) avviene con
+    // Cloudflare ancora sano, cioe' senza alcun trip. Legarlo al trip lo
+    // rendeva irraggiungibile proprio quando serve, e l'allarme partiva una
+    // volta sola nella vita dell'installazione.
+    topupBtn.disabled = !cfConfigured;
+    topupBtn.textContent = "Ho ricaricato il credito";
+    if (!cfConfigured) {
+      // Mai stampare `active` come se fosse il backend in esecuzione: qui e'
+      // solo il ripiego sulla configurazione dichiarata, e `auto` e' un
+      // selettore, non un backend. Dopo un rollback documentato lo stato su
+      // disco puo' contenere `active: "cloudflare"` (lo scrive reset()), che
+      // stampato qui contraddirebbe la riga stessa.
+      status.innerHTML = '<span style="color:var(--muted)">Cloudflare non configurato · <code>ABM_GEMINI_BACKEND</code> = ' + esc(s.configured_backend) + '</span>';
       btn.disabled = true;
       btn.textContent = "Non applicabile";
       detail.style.display = "none";
@@ -6434,17 +6449,35 @@ def admin_audit_premium_page():
       const r = await fetch("/admin/api/tts_backend", {
         method: "POST",
         headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
-        body: JSON.stringify({action: "reset", topup: $("tbTopup").checked}),
+        body: JSON.stringify({action: "reset"}),
       });
       if (!r.ok) { alert("Errore: " + r.status); await tbRefresh(); return; }
       tbApply(await r.json());
-      $("tbTopup").checked = false;
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
+  async function tbTopup(){
+    const btn = $("tbTopupBtn");
+    if (!confirm("Azzerare il contatore di spesa Cloudflare?\n\nFallo solo dopo aver ricaricato davvero il credito e aggiornato ABM_CF_CREDIT_BALANCE_EUR nell'unit systemd: l'azzeramento e' irreversibile e, premuto per sbaglio, falsa la stima del residuo fino alla prossima ricarica.")) return;
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "topup"}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
     } catch (e) {
       alert("Errore: " + e);
       await tbRefresh();
     }
   }
   $("tbResetBtn").addEventListener("click", tbReset);
+  $("tbTopupBtn").addEventListener("click", tbTopup);
 
   // ===================== Tab Traduzioni =====================
   const TR_OUTCOME_BADGE = {
@@ -7211,12 +7244,27 @@ def admin_api_gemini_kill_switch():
 
 @app.route("/admin/api/tts_backend", methods=["GET", "POST"])
 def admin_api_tts_backend():
-    """Stato del backend TTS (Cloudflare/Vertex) e rientro manuale su Cloudflare.
+    """Stato del backend TTS (Cloudflare/Vertex), rientro manuale su
+    Cloudflare e azzeramento del ledger di spesa dopo una ricarica.
 
     GET  -> stato corrente del modello (default flash31).
-    POST -> {"action": "reset", "topup": bool?}: riattiva Cloudflare.
-            Con topup=true azzera anche il ledger della spesa, che e' il caso
-            normale dopo una ricarica del credito.
+    POST -> {"action": "reset"}: riattiva Cloudflare (breaker + cache).
+    POST -> {"action": "topup"}: azzera il ledger della spesa dopo una
+            ricarica del credito, e NON tocca il breaker.
+
+    Perche' il topup e' un'azione a se' e non piu' un campo del rientro:
+    `tts_backend_state.reset_spend()` e' l'unica cosa che riarma il
+    pre-allarme sul credito, e il ciclo normale del credito non passa mai da
+    un trip (residuo sotto soglia -> email di pre-allarme -> ricarica ->
+    topup, con Cloudflare ancora sano). Finche' l'unico innesco era la
+    casella accanto al pulsante di rientro — abilitato solo DOPO un trip —
+    l'allarme partiva una volta sola nella vita dell'installazione e il
+    residuo mostrato in console restava sbagliato per sempre, perche' il
+    saldo dichiarato veniva rialzato mentre `spent_eur` continuava ad
+    accumulare dal ciclo precedente. Il campo `topup` dentro `action="reset"`
+    e' stato quindi rimosso; per non perdere in silenzio l'intenzione di un
+    chiamante che usasse ancora la forma vecchia, un `topup` VERO in un
+    `action="reset"` e' rifiutato con 400 invece di essere ignorato.
 
     Il rientro e' manuale per scelta (D5): un backend caduto per credito
     esaurito tornerebbe a cadere subito, e ogni caduta costa un job. Nessun
@@ -7238,16 +7286,26 @@ def admin_api_tts_backend():
     ogni job PREMIUM su quel modello finirebbe in errore con rimborso
     integrale, fino al riavvio del processo.
 
-    Due guardie sull'ingresso, entrambe indispensabili perche' quelle lato
-    client (il bottone disabilitato in `tbApply`) sono scavalcabili da una
-    chiamata diretta all'API:
+    Due guardie sull'ingresso, valide per ENTRAMBE le azioni ed entrambe
+    indispensabili perche' quelle lato client (i bottoni disabilitati in
+    `tbApply`) sono scavalcabili da una chiamata diretta all'API:
 
     - `model_key` deve essere una chiave nota: `reset()` materializza la voce
       su disco, quindi una chiave inventata sporcherebbe per sempre lo stato
-      persistito con un modello inesistente;
-    - il rientro ha senso solo se l'ambiente seleziona davvero Cloudflare
+      persistito con un modello inesistente. Il topup non materializza nulla,
+      ma la chiave finisce comunque nella risposta e nell'activity log: una
+      forense sul credito deve leggere un modello vero, non quello che
+      qualcuno ha digitato per sbaglio;
+    - l'azione ha senso solo se l'ambiente seleziona davvero Cloudflare
       (`ABM_GEMINI_BACKEND == "cloudflare"`). Altrimenti la console direbbe
-      all'admin di aver riacceso un backend che nessuna sintesi usera' mai.
+      all'admin di aver riacceso un backend che nessuna sintesi usera' mai,
+      o di aver riarmato un allarme su una spesa che nessuno accumulera'.
+
+    `model_key` e' coerciuto a stringa PRIMA di qualunque confronto: arriva
+    anche dal corpo JSON, dove una lista o un dict e' sintatticamente
+    legittima e renderebbe `model_key not in GEMINI_MODELS` un
+    `TypeError: unhashable` (500 su un input malformato, invece del 400 gia'
+    previsto per una chiave sconosciuta).
 
     Sicurezza: `trip_detail` e' persistito e loggato senza redazione (vedi
     tts_backend_state) - puo' contenere solo testo diagnostico (mai
@@ -7263,17 +7321,34 @@ def admin_api_tts_backend():
     if gemini_tts is None:
         return jsonify({"error": "Gemini TTS module not loaded"}), 503
 
-    model_key = (request.args.get("model_key")
-                 or (request.get_json(silent=True) or {}).get("model_key")
-                 or "flash31")
+    # str() prima di ogni uso: `model_key` puo' arrivare dal corpo JSON come
+    # lista/dict, e un valore unhashable farebbe esplodere in TypeError sia il
+    # confronto con GEMINI_MODELS sia `tts_backend_state.state()` (500 invece
+    # del 400 previsto per una chiave sconosciuta).
+    model_key = str(request.args.get("model_key")
+                    or (request.get_json(silent=True) or {}).get("model_key")
+                    or "flash31")
     configured_backend = (os.environ.get("ABM_GEMINI_BACKEND", "auto")
                           or "auto").strip().lower()
 
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         action = str(data.get("action", "") or "").strip().lower()
-        if action != "reset":
+        if action not in ("reset", "topup"):
             return jsonify({"error": f"Azione non riconosciuta: {action!r}"}), 400
+        if action == "reset" and data.get("topup"):
+            # Forma vecchia dell'API (il topup come campo del rientro): non
+            # viene ignorata in silenzio, perche' ignorarla lascerebbe il
+            # ledger intatto facendo credere il contrario a chi ha appena
+            # ricaricato - cioe' proprio il residuo sbagliato che l'azione
+            # dedicata esiste per evitare.
+            return jsonify({
+                "error": ("Il campo 'topup' non e' piu' accettato da "
+                          "action='reset': l'azzeramento del contatore di "
+                          "spesa e' ora l'azione dedicata "
+                          "action='topup', raggiungibile anche senza alcun "
+                          "failover in corso."),
+            }), 400
         if model_key not in gemini_tts.GEMINI_MODELS:
             return jsonify({
                 "error": (f"model_key sconosciuto: {model_key!r}. Il reset "
@@ -7282,34 +7357,52 @@ def admin_api_tts_backend():
                 "known_model_keys": sorted(gemini_tts.GEMINI_MODELS),
             }), 400
         if configured_backend != "cloudflare":
+            what = ("Rientro" if action == "reset"
+                    else "Azzeramento del contatore di spesa")
+            why = ("riarmare il breaker" if action == "reset"
+                   else "azzerare il ledger della spesa Cloudflare")
             return jsonify({
-                "error": (f"Rientro non applicabile: ABM_GEMINI_BACKEND vale "
+                "error": (f"{what} non applicabile: ABM_GEMINI_BACKEND vale "
                           f"{configured_backend!r}, non 'cloudflare'. Con "
                           f"questa configurazione la sintesi non usa "
-                          f"Cloudflare in nessun caso, quindi riarmare il "
-                          f"breaker non cambierebbe nulla. Per riaccendere "
+                          f"Cloudflare in nessun caso, quindi {why} "
+                          f"non cambierebbe nulla. Per riaccendere "
                           f"Cloudflare: impostare ABM_GEMINI_BACKEND="
                           f"cloudflare nell'unit systemd e riavviare il "
                           f"servizio."),
                 "configured_backend": configured_backend,
             }), 409
-        had_trip = tts_backend_state.reset(model_key)
-        topup = bool(data.get("topup"))
-        if topup:
+
+        if action == "topup":
+            # Solo il ledger: nessun `reset()`, nessuna invalidazione della
+            # cache `gemini_tts._BACKEND`. Un modello scattato DEVE restare
+            # scattato - aver ricaricato il credito non dimostra che la causa
+            # del guasto sia stata risolta, e il rientro ha una sua conferma
+            # separata.
+            credit_before = round(tts_backend_state.credit_left_eur(), 2)
             tts_backend_state.reset_spend()
-        # Invalida la cache in-process per ogni modello noto (pop, non
-        # overwrite): un reset che lasciasse la cache degli altri modelli
-        # intonsa sarebbe innocuo, ma lasciare quella del modello appena
-        # resettato e' esattamente il difetto silenzioso descritto sopra.
-        # Nessun valore forzato nemmeno per il target: il backend torna a
-        # essere deciso da _resolve_backend alla prossima sintesi.
-        with gemini_tts._BACKEND_LOCK:
-            for known_key in gemini_tts.GEMINI_MODELS:
-                gemini_tts._BACKEND.pop(known_key, None)
-        _log_activity("", "", "ADMIN_TTS_BACKEND_RESET", "", _get_client_ip(),
-                      model_key, f"had_trip={had_trip} topup={topup}")
-        print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
-              f"(aveva trip: {had_trip}, topup: {topup})")
+            _log_activity("", "", "ADMIN_TTS_CREDIT_TOPUP", "",
+                          _get_client_ip(), model_key,
+                          f"ledger azzerato (residuo stimato prima: "
+                          f"{credit_before:.2f} EUR)")
+            print(f"[admin] Ledger spesa Cloudflare azzerato (residuo stimato "
+                  f"prima: {credit_before:.2f} EUR) - pre-allarme credito "
+                  f"riarmato")
+        else:
+            had_trip = tts_backend_state.reset(model_key)
+            # Invalida la cache in-process per ogni modello noto (pop, non
+            # overwrite): un reset che lasciasse la cache degli altri modelli
+            # intonsa sarebbe innocuo, ma lasciare quella del modello appena
+            # resettato e' esattamente il difetto silenzioso descritto sopra.
+            # Nessun valore forzato nemmeno per il target: il backend torna a
+            # essere deciso da _resolve_backend alla prossima sintesi.
+            with gemini_tts._BACKEND_LOCK:
+                for known_key in gemini_tts.GEMINI_MODELS:
+                    gemini_tts._BACKEND.pop(known_key, None)
+            _log_activity("", "", "ADMIN_TTS_BACKEND_RESET", "",
+                          _get_client_ip(), model_key, f"had_trip={had_trip}")
+            print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
+                  f"(aveva trip: {had_trip})")
 
     s = tts_backend_state.state(model_key)
     return jsonify({

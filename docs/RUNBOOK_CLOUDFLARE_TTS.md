@@ -243,13 +243,32 @@ Cloudflare e nessun job è in errore. Parte quando il residuo **stimato**
 (`ABM_CF_CREDIT_BALANCE_EUR` meno la spesa accumulata nel ledger locale)
 scende sotto `ABM_CF_CREDIT_ALERT_EUR`, subito dopo l'addebito che ha
 attraversato la soglia. Arriva **una sola volta** per soglia
-(`claim_credit_alert()` è atomica e consuma l'allarme); si riarma solo dopo
-un topup (casella «Ho ricaricato il credito» nel pannello «Backend TTS»,
-che azzera il ledger).
+(`claim_credit_alert()` è atomica e consuma l'allarme); si riarma **solo**
+con il topup, cioè il pulsante «Ho ricaricato il credito» del pannello
+«Backend TTS», che azzera il ledger di spesa.
 
-Che fare: ricaricare il credito, riallineare `ABM_CF_CREDIT_BALANCE_EUR`
-nell'unit systemd (`daemon-reload` + `restart`), spuntare la casella di
-topup nel pannello. Nessun reset del breaker serve: non è scattato nulla.
+Che fare, nell'ordine:
+
+1. Ricaricare il credito Cloudflare AI Gateway.
+2. Riallineare `ABM_CF_CREDIT_BALANCE_EUR` nell'unit systemd col nuovo saldo
+   (`daemon-reload` + `restart`).
+3. **Premere «Ho ricaricato il credito»** nel pannello «Backend TTS»
+   (`/admin/audit-premium`), con conferma. Azzera la spesa accumulata e
+   riarma il pre-allarme per il ciclo successivo.
+
+Nessun reset del breaker serve: non è scattato nulla — e infatti il pulsante
+di rientro è disabilitato in questo scenario, mentre quello di topup è
+**sempre** disponibile quando `ABM_GEMINI_BACKEND=cloudflare`, a prescindere
+dai trip. È deliberato: il ciclo normale del credito non passa mai da un
+failover, e legare il topup al rientro (com'era la vecchia casella accanto a
+quel pulsante) faceva arrivare il pre-allarme **una volta sola nella vita
+dell'installazione**.
+
+Saltare il punto 3 non è innocuo: il saldo dichiarato sale mentre
+`spent_eur` continua ad accumulare dal ciclo precedente, quindi il «credito
+residuo» del pannello resta sottostimato per sempre e l'allarme non riparte
+più. Saltare il punto 2 lascia invece il residuo sotto soglia: dopo il topup
+il pre-allarme riscatterebbe quasi subito.
 
 Se `ABM_CF_CREDIT_BALANCE_EUR` è a `0` questa email non arriva mai — è il
 motivo per cui il §2 punto 3 insiste sul non lasciarla a zero.
@@ -276,13 +295,15 @@ procedura:
    sudo systemctl daemon-reload
    sudo systemctl restart audiobook-maker
    ```
-   Il rientro dal pannello (punto 4) da solo non aggiorna questa variabile.
-4. **Rientro dal pannello** «Backend TTS» (`/admin/audit-premium`): pulsante
-   «Riporta su Cloudflare», con la casella **«Ho ricaricato il credito
-   (azzera il contatore di spesa)»** spuntata se si è appena ricaricato
-   (azzera il ledger locale di spesa, altrimenti il pre-allarme continuerebbe
-   a calcolare il residuo sulla spesa pre-ricarica). Il pulsante chiede
-   conferma esplicita prima di procedere.
+   I pulsanti del pannello (punti 4 e 5) non aggiornano questa variabile.
+4. **Topup dal pannello** «Backend TTS» (`/admin/audit-premium`): pulsante
+   **«Ho ricaricato il credito»**, da premere se si è appena ricaricato.
+   Azzera il ledger locale di spesa e riarma il pre-allarme; senza, il
+   residuo continuerebbe a essere calcolato sulla spesa pre-ricarica. È
+   un'azione **distinta dal rientro** e non tocca il breaker: chiede conferma
+   esplicita, ed è irreversibile.
+5. **Rientro dal pannello**: pulsante «Riporta su Cloudflare», anch'esso con
+   conferma esplicita.
 
    > **Il rientro non va fatto prima di aver risolto la causa.** Se il
    > problema persiste (es. credito non ricaricato per davvero, o causa

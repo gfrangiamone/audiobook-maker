@@ -708,7 +708,10 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
     Il residuo e' una STIMA (l'API Cloudflare non espone il saldo): e'
     `ABM_CF_CREDIT_BALANCE_EUR` dichiarato dall'admin meno la spesa
     accumulata dal ledger locale. Per questo l'email chiede di riallineare
-    la variabile insieme alla ricarica.
+    la variabile insieme alla ricarica E di azzerare il ledger dal pannello
+    «Backend TTS»: sono due passaggi distinti, e senza il secondo l'allarme
+    non si riarma (`reset_spend()` e' l'unica cosa che rimette `alerted` a
+    False) e il residuo stimato resta sbagliato per il ciclo successivo.
 
     Sec: nessun token, nessuna credenziale - solo importi e nomi di
     variabili d'ambiente.
@@ -757,12 +760,20 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
         <ol>
           <li>Ricaricare il credito Cloudflare AI Gateway.</li>
           <li>Aggiornare <code>ABM_CF_CREDIT_BALANCE_EUR</code> nell'unit
-              systemd col nuovo saldo dichiarato: il residuo qui sopra e' una
-              stima calcolata da quel valore meno la spesa accumulata, e senza
-              il riallineamento resterebbe sotto soglia.</li>
-          <li>Azzerare il contatore di spesa con la casella <em>«Ho ricaricato
-              il credito»</em> del pannello «Backend TTS», che riarma anche
-              questo pre-allarme per la prossima soglia.</li>
+              systemd col nuovo saldo dichiarato, poi <code>daemon-reload</code>
+              e <code>restart</code>: il residuo qui sopra e' una stima
+              calcolata da quel valore meno la spesa accumulata, e senza il
+              riallineamento resterebbe sotto soglia.</li>
+          <li><strong>Premere <em>«Ho ricaricato il credito»</em> nel pannello
+              «Backend TTS» della console admin</strong> (pulsante sempre
+              disponibile quando il backend configurato e' Cloudflare, anche
+              senza alcun failover in corso). Questo azzera il contatore di
+              spesa e riarma questo pre-allarme per il ciclo successivo:
+              <strong>senza questo passaggio l'avviso non arrivera' mai
+              piu'</strong> e il residuo mostrato in console resta sbagliato,
+              perche' il saldo dichiarato sale mentre la spesa continua ad
+              accumularsi dal ciclo precedente. Il solo aggiornamento della
+              variabile d'ambiente non basta.</li>
         </ol>
         <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_EUR=0</code>. Console: <code>{BASE_URL}/admin/</code></p>
       </div>
