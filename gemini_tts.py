@@ -1026,6 +1026,55 @@ def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
     return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
 
 
+def _budget_uses_cloudflare(model_key):
+    """True se questo modello puo' davvero finire eseguito su Cloudflare.
+
+    Stessa condizione booleana di `_pricing_uses_cloudflare` (choice ==
+    "cloudflare" e modello con listino CF configurato), ma con uno scopo
+    diverso: non decide il PREZZO (quello resta fisso sul listino, D1), serve
+    solo a capire quali backend possono concretamente addebitare questo job,
+    incluso l'esito di un eventuale trip del circuit breaker verso Vertex a
+    meta' lavorazione.
+    """
+    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+    if choice != "cloudflare":
+        return False
+    m = GEMINI_MODELS.get(model_key) or {}
+    return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
+
+
+def worst_case_rates(model_key):
+    """(input, output) USD/Mtok piu' cari fra i backend abilitati per la config.
+
+    Per la riserva di budget in preflight (guardia operativa di spesa, non
+    prezzo utente): se il modello e' configurato su Cloudflare, un trip del
+    circuit breaker a meta' job sposta l'esecuzione su Vertex, il cui costo
+    reale puo' superare il listino misto (D1 tiene il listino fisso, il costo
+    reale no). Riservare sul listino sottostimerebbe il cap in quello
+    scenario; qui si riserva sul MASSIMO fra i backend che la configurazione
+    corrente puo' effettivamente usare, mai sul backend risolto in quel
+    momento o sullo stato del breaker (quello e' runtime, questo e' capacita'
+    di spesa nel caso peggiore).
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    g_in, g_out = actual_rates(model_key, "vertex")
+    if not _budget_uses_cloudflare(model_key):
+        return g_in, g_out
+    c_in, c_out = actual_rates(model_key, "cloudflare")
+    return max(g_in, c_in), max(g_out, c_out)
+
+
+def worst_case_cost_breakdown(input_tokens, output_tokens, model_key):
+    """Costo nel caso peggiore fra i backend abilitati per la config corrente.
+
+    Ingresso della riserva di budget preflight, non del prezzo mostrato o
+    addebitato all'utente (quello resta `pricing_cost_breakdown`).
+    """
+    in_rate, out_rate = worst_case_rates(model_key)
+    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+
+
 # Alias storico: i chiamanti che chiedevano "il costo" intendevano il prezzo.
 # Mantenuto per non rompere in silenzio un chiamante dimenticato; i siti di
 # contabilita' sono stati spostati esplicitamente su actual_cost_breakdown.

@@ -9513,12 +9513,31 @@ def api_generate():
         # PRIMA di chiamare l'API, così non spendiamo nulla.
         try:
             _google_cost_pre = float(est_pre.get("google_cost_eur", 0.0) or 0.0)
-            preflight = gemini_tts.preflight_budget_check(_google_cost_pre)
+            # La riserva si fa sul caso PEGGIORE fra i backend abilitati dalla
+            # config corrente, non sul listino: se il modello gira su
+            # Cloudflare e il circuit breaker devia a meta' job su Vertex, il
+            # costo reale puo' superare il listino misto (D1 tiene il listino
+            # fisso, il costo reale no) e una riserva sul listino sforerebbe il
+            # cap in silenzio. Il prezzo mostrato/addebitato all'utente resta
+            # `gemini_eur_pre` (listino) sopra: qui cambia solo quanto si mette
+            # da parte. Fallback sul listino se il calcolo peggiore fallisce
+            # (degradazione graduale, coerente con il resto del blocco).
+            try:
+                _worst = gemini_tts.worst_case_cost_breakdown(
+                    est_pre.get("input_tokens_est", 0),
+                    est_pre.get("output_tokens_est", 0),
+                    est_pre.get("model_key"))
+                _reserve_pre = float(_worst.get("total_eur", _google_cost_pre) or _google_cost_pre)
+            except Exception as _worst_err:
+                print(f"[{job_id}] worst_case_cost_breakdown failed, falling "
+                      f"back to listino for the reservation: {_worst_err}")
+                _reserve_pre = _google_cost_pre
+            preflight = gemini_tts.preflight_budget_check(_reserve_pre)
             if preflight.get("warning"):
                 print(f"[{job_id}] Budget warning (preflight): {preflight['warning']}")
             # Atomic reservation: blocca race fra job concorrenti che vedrebbero
             # lo stesso `spent` (audit JSONL viene scritto solo a fine job).
-            gemini_tts.reserve_budget(job_id, _google_cost_pre)
+            gemini_tts.reserve_budget(job_id, _reserve_pre)
         except gemini_tts.GeminiBudgetExceeded as _bex:
             return jsonify({
                 "error": "budget_exceeded",
