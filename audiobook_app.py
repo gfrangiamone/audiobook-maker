@@ -5861,6 +5861,16 @@ def admin_audit_premium_page():
   </div>
 </div>
 
+<div class="panel" id="ttsBackendPanel">
+  <h3 style="margin:0 0 4px">Backend TTS</h3>
+  <div id="tbStatus" style="font-size:.9rem;color:var(--muted)">Caricamento stato...</div>
+  <div id="tbDetail" style="font-size:.85rem;color:var(--muted);display:none;margin-top:4px"></div>
+  <label style="display:block;margin:8px 0;font-size:.85rem">
+    <input type="checkbox" id="tbTopup"> Ho ricaricato il credito (azzera il contatore di spesa)
+  </label>
+  <button type="button" id="tbResetBtn" disabled>...</button>
+</div>
+
 <div class="tab-bar">
   <button type="button" class="tab-btn active" data-tab="tts">Audit TTS</button>
   <button type="button" class="tab-btn" data-tab="translations">Audit Traduzioni</button>
@@ -6354,6 +6364,69 @@ def admin_audit_premium_page():
   }
   $("ksToggleBtn").addEventListener("click", ksToggle);
 
+  // ---- Backend TTS: stato del failover Cloudflare/Vertex e rientro manuale ----
+  async function tbRefresh(){
+    try {
+      const r = await fetch("/admin/api/tts_backend",
+                            {headers: {"X-Admin-Token": ADMIN_TOKEN}});
+      if (!r.ok) { $("tbStatus").textContent = "Errore caricamento stato (" + r.status + ")"; return; }
+      tbApply(await r.json());
+    } catch (e) {
+      $("tbStatus").textContent = "Errore: " + e;
+    }
+  }
+  function tbApply(s){
+    const btn = $("tbResetBtn");
+    const status = $("tbStatus");
+    const detail = $("tbDetail");
+    if (s.configured_backend !== "cloudflare") {
+      status.innerHTML = '<span style="color:var(--muted)">Cloudflare non configurato · il TTS gira su ' + esc(s.active) + '</span>';
+      btn.disabled = true;
+      btn.textContent = "Non applicabile";
+      detail.style.display = "none";
+      return;
+    }
+    if (s.tripped_at) {
+      // trip_reason/trip_detail/trip_job_id sono persistiti SENZA redazione
+      // (vedi tts_backend_state) e non sono testo fidato: passano sempre da
+      // esc() prima di finire in innerHTML, mai concatenati crudi.
+      status.innerHTML = '<span style="color:var(--err);font-weight:600">SU VERTEX</span> · margine quasi azzerato';
+      detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
+                         "<br>Dal " + esc((s.tripped_at || "").slice(0,19).replace("T"," ")) +
+                         " · job " + esc(s.trip_job_id || "?") +
+                         "<br>Credito residuo (stima): " + esc(s.credit_left_eur) + " €";
+      detail.style.display = "block";
+      btn.disabled = false;
+      btn.textContent = "Riporta su Cloudflare";
+      btn.style.background = "var(--ok)";
+    } else {
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU CLOUDFLARE</span> · credito residuo (stima): ' + esc(s.credit_left_eur) + ' €';
+      detail.style.display = "none";
+      btn.disabled = true;
+      btn.textContent = "Nessun failover attivo";
+    }
+  }
+  async function tbReset(){
+    const btn = $("tbResetBtn");
+    if (!confirm("Riportare il TTS su Cloudflare?\n\nFallo solo dopo aver risolto la causa del guasto: se il problema persiste il failover riscatta subito, e ogni ricaduta costa un job.")) return;
+    btn.disabled = true;
+    btn.textContent = "...";
+    try {
+      const r = await fetch("/admin/api/tts_backend", {
+        method: "POST",
+        headers: {"X-Admin-Token": ADMIN_TOKEN, "Content-Type": "application/json"},
+        body: JSON.stringify({action: "reset", topup: $("tbTopup").checked}),
+      });
+      if (!r.ok) { alert("Errore: " + r.status); await tbRefresh(); return; }
+      tbApply(await r.json());
+      $("tbTopup").checked = false;
+    } catch (e) {
+      alert("Errore: " + e);
+      await tbRefresh();
+    }
+  }
+  $("tbResetBtn").addEventListener("click", tbReset);
+
   // ===================== Tab Traduzioni =====================
   const TR_OUTCOME_BADGE = {
     "running":            ["badge-live",  "In corso"],
@@ -6595,6 +6668,7 @@ def admin_audit_premium_page():
   // Auto-load: TTS (tab di default) + kill-switch.
   ttsLoadLanguages().finally(ttsFetch);
   ksRefresh();
+  tbRefresh();
   // Traduzioni e Optimization vengono caricate anche in background all'avvio,
   // cosi' il "Margine netto totale" in alto somma tutti e tre i servizi senza
   // dover aprire le rispettive tab. Le marchiamo come gia' caricate per non
@@ -7113,6 +7187,86 @@ def admin_api_gemini_kill_switch():
     return jsonify({
         **gemini_tts.admin_disabled_state(),
         "capability_ok": _gemini_capability_ok(),
+    })
+
+
+@app.route("/admin/api/tts_backend", methods=["GET", "POST"])
+def admin_api_tts_backend():
+    """Stato del backend TTS (Cloudflare/Vertex) e rientro manuale su Cloudflare.
+
+    GET  -> stato corrente del modello (default flash31).
+    POST -> {"action": "reset", "topup": bool?}: riattiva Cloudflare.
+            Con topup=true azzera anche il ledger della spesa, che e' il caso
+            normale dopo una ricarica del credito.
+
+    Il rientro e' manuale per scelta (D5): un backend caduto per credito
+    esaurito tornerebbe a cadere subito, e ogni caduta costa un job. Nessun
+    timer, nessun ripristino automatico: questo endpoint e' l'UNICO modo di
+    rientrare su Cloudflare.
+
+    Punto delicato: il breaker vive in due posti, lo stato persistito su
+    disco (tts_backend_state) e la cache in-process gemini_tts._BACKEND,
+    consultata a ogni sintesi. Un reset che tocca solo il disco risponde OK
+    ma non cambia nulla fino al riavvio del processo (gemini_tts._resolve_backend
+    congela il backend risolto in _BACKEND fino al prossimo cache-miss).
+    Il reset qui sotto invalida percio' anche la cache per TUTTI i model_key
+    noti (gemini_tts.GEMINI_MODELS), non solo quello passato: gli altri
+    modelli si ririsolvono da soli rispettando il proprio stato reale (pop,
+    mai un valore forzato), solo il modello target viene riportato
+    esplicitamente su "cloudflare".
+
+    Sicurezza: `trip_detail` e' persistito e loggato senza redazione (vedi
+    tts_backend_state) - puo' contenere solo testo diagnostico (mai
+    token/credenziali, responsabilita' del chiamante che invoca trip()).
+    Qui viaggia cosi' com'e' nel JSON di risposta; il rendering HTML lato
+    client deve trattarlo come testo non fidato (escape), mai come markup.
+    """
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin UI disabled"}), 404
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        time.sleep(0.5)
+        return jsonify({"error": "Unauthorized"}), 401
+    if gemini_tts is None:
+        return jsonify({"error": "Gemini TTS module not loaded"}), 503
+
+    model_key = (request.args.get("model_key")
+                 or (request.get_json(silent=True) or {}).get("model_key")
+                 or "flash31")
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action", "") or "").strip().lower()
+        if action != "reset":
+            return jsonify({"error": f"Azione non riconosciuta: {action!r}"}), 400
+        had_trip = tts_backend_state.reset(model_key)
+        topup = bool(data.get("topup"))
+        if topup:
+            tts_backend_state.reset_spend()
+        # Invalida la cache in-process per ogni modello noto (pop, non
+        # overwrite): un reset che lasciasse la cache degli altri modelli
+        # intonsa sarebbe innocuo, ma lasciare quella del modello appena
+        # resettato e' esattamente il difetto silenzioso descritto sopra.
+        with gemini_tts._BACKEND_LOCK:
+            for known_key in gemini_tts.GEMINI_MODELS:
+                gemini_tts._BACKEND.pop(known_key, None)
+        gemini_tts._set_backend(model_key, "cloudflare")
+        _log_activity("", "", "ADMIN_TTS_BACKEND_RESET", "", _get_client_ip(),
+                      model_key, f"had_trip={had_trip} topup={topup}")
+        print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
+              f"(aveva trip: {had_trip}, topup: {topup})")
+
+    s = tts_backend_state.state(model_key)
+    return jsonify({
+        "model_key": model_key,
+        "active": s.get("active") or "cloudflare",
+        "tripped_at": s.get("tripped_at"),
+        "trip_reason": s.get("trip_reason"),
+        "trip_detail": s.get("trip_detail"),
+        "trip_job_id": s.get("trip_job_id"),
+        "consecutive_failures": s.get("consecutive_failures", 0),
+        "credit_left_eur": round(tts_backend_state.credit_left_eur(), 2),
+        "configured_backend": (os.environ.get("ABM_GEMINI_BACKEND", "auto")
+                                or "auto").strip().lower(),
     })
 
 
