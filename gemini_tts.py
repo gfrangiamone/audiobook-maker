@@ -1034,13 +1034,13 @@ def _budget_uses_cloudflare(model_key):
     diverso: non decide il PREZZO (quello resta fisso sul listino, D1), serve
     solo a capire quali backend possono concretamente addebitare questo job,
     incluso l'esito di un eventuale trip del circuit breaker verso Vertex a
-    meta' lavorazione.
+    meta' lavorazione. Delega alla stessa implementazione (due copie della
+    stessa condizione divergono inevitabilmente nel tempo); resta una
+    funzione a se' per nome/intento, non solo un alias, cosi' i call site
+    restano leggibili sullo scopo (prezzo vs budget) senza dover guardare
+    l'implementazione.
     """
-    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
-    if choice != "cloudflare":
-        return False
-    m = GEMINI_MODELS.get(model_key) or {}
-    return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
+    return _pricing_uses_cloudflare(model_key)
 
 
 def worst_case_rates(model_key):
