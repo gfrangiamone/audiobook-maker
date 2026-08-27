@@ -172,3 +172,41 @@ def test_running_speechify_job_appears_in_live_records(monkeypatch):
         assert row["google_cost_eur_actual"] > 0
     finally:
         audiobook_app.jobs.pop(jid, None)
+
+
+# ---------------------------------------------------------------------------
+# _apply_cancel_effective: base della deriva % preferisce il listino Gemini
+# ---------------------------------------------------------------------------
+def test_apply_cancel_effective_uses_pricing_cost_actual_as_drift_base_when_present():
+    """Su un record Gemini con listino/costo reale separati (Cloudflare), la
+    percentuale di deriva post-rimborso deve usare il listino come
+    denominatore, non il costo reale: stesso principio di D1 applicato al
+    ricalcolo effettivo dopo un rimborso parziale."""
+    rec = {
+        "outcome": "cancelled_partial",
+        "user_price_eur_charged": 5.0,
+        "cancel_retained_eur": 5.0,
+        "google_cost_eur_actual": 0.30,
+        "pricing_cost_eur_actual": 1.80,
+        "user_price_eur_should_have_been": 5.0,
+    }
+    audiobook_app._apply_cancel_effective(rec)
+    assert rec["_eff_revenue_eur"] == 5.0
+    # margine resta sul costo reale (contabilita', non deriva prezzo)
+    assert rec["_eff_margin_eur"] == round(5.0 - 0.30, 4)
+    # delta% deve dividere per il listino (1.80), non per il costo reale (0.30)
+    assert rec["_eff_delta_pct"] == 0.0
+
+
+def test_apply_cancel_effective_falls_back_to_cost_when_pricing_cost_absent():
+    """Record non-Gemini (Speechify) o Gemini legacy: nessun campo
+    pricing_cost_eur_actual, il ripiego sul costo reale preserva il
+    comportamento storico (invariato da questa correzione)."""
+    rec = {
+        "outcome": "completed",
+        "user_price_eur_charged": 1.0,
+        "google_cost_eur_actual": 0.4,
+        "user_price_eur_should_have_been": 1.2,
+    }
+    audiobook_app._apply_cancel_effective(rec)
+    assert rec["_eff_delta_pct"] == round(((1.2 - 1.0) / 0.4) * 100, 2)

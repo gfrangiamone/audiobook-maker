@@ -105,3 +105,40 @@ def test_admin_audit_live_rerun_row_visible(client, admin_headers, monkeypatch, 
         assert live[0].get("_live") is True
     finally:
         audiobook_app.jobs.pop("rr1", None)
+
+
+def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatch):
+    """Mirror di test_write_gemini_audit_drift_uses_pricing_cost_not_actual_cost
+    (generation_engine.py) ma per la riga LIVE del pannello: senza questo fix
+    ogni job Cloudflare in corso mostrerebbe una falsa deriva prezzo per
+    l'intera durata della generazione (D1)."""
+    import audiobook_app
+    captured = []
+
+    def _fake_price(cost_eur, model_key):
+        captured.append(cost_eur)
+        return {"user_price_eur": 5.0}
+
+    monkeypatch.setattr(audiobook_app.gemini_tts, "compute_user_price_eur", _fake_price)
+    audiobook_app.jobs["Jliveposit"] = {
+        "status": "generating",
+        "voice": "gemini:flash25:Puck",
+        "rate": "+0%",
+        "gemini_actual": {"chars": 100, "google_cost_eur": 0.30,
+                          "pricing_cost_eur": 1.80, "audio_seconds": 5.0,
+                          "model_key": "flash25"},
+        "payment": {"total_eur": 5.0},
+    }
+    try:
+        recs = audiobook_app._synth_running_gemini_audit_records()
+        rec = next(r for r in recs if r["job_id"] == "Jliveposit")
+        # compute_user_price_eur deve ricevere il LISTINO (1.80), non il
+        # costo reale (0.30) accumulato finora.
+        assert captured == [1.80]
+        assert rec["google_cost_eur_actual"] == 0.30
+        assert rec["pricing_cost_eur_actual"] == 1.80
+        assert rec["margin_eur_actual"] == round(5.0 - 0.30, 4)
+        assert rec["user_price_eur_should_have_been"] == 5.0
+        assert rec["delta_eur"] == 0.0
+    finally:
+        audiobook_app.jobs.pop("Jliveposit", None)
