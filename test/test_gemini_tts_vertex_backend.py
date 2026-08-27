@@ -236,7 +236,15 @@ def test_vertex_transport_call_classifies_client_init_error_as_fatal(monkeypatch
 def test_synthesize_raises_immediately_on_fatal_vertex_error(monkeypatch, tmp_path, reset_backend_cache):
     """Un kind="fatal" (es. config Vertex mancante) non deve consumare tutti i
     tentativi del job: synthesize() lo rilancia al primo giro, senza sleep
-    ne' retry sprecati."""
+    ne' retry sprecati.
+
+    Esce come GeminiUnavailable, non come TransportError: quest'ultima e'
+    interna al trasporto e non deve mai attraversare il confine di
+    synthesize(), che parla il vocabolario di dominio su cui e' costruita la
+    macchina di rimborso. La versione precedente di questo test asseriva
+    `pytest.raises(TransportError)`, cristallizzando come atteso proprio il
+    difetto che il piano vieta.
+    """
     creds = tmp_path / "sa.json"; creds.write_text("{}")
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
     monkeypatch.setenv("ABM_GCP_PROJECT_ID", "p")
@@ -255,9 +263,12 @@ def test_synthesize_raises_immediately_on_fatal_vertex_error(monkeypatch, tmp_pa
     monkeypatch.setattr(gemini_tts, "_throttle_rpm", lambda mk: None)
     monkeypatch.setattr(gemini_tts, "_vertex_transport_call", _vx)
 
-    with pytest.raises(TransportError):
+    with pytest.raises(gemini_tts.GeminiUnavailable) as ei:
         gemini_tts.synthesize("ciao mondo", "gemini:flash25:Kore",
                               output_path=str(tmp_path / "o.pcm"))
+    assert not isinstance(ei.value, TransportError)
+    # Il messaggio redatto dell'adapter sopravvive alla mappatura.
+    assert "credenziali non valide" in str(ei.value)
     assert len(calls) == 1  # niente retry sprecati su un errore di config
 
 

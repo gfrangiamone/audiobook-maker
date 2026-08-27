@@ -13,6 +13,14 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
     monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
     monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
+    # Vertex PRONTO, dichiarato esplicitamente e non ereditato dall'ambiente
+    # dello sviluppatore: dopo il fix M2 il failover controlla la prontezza di
+    # Vertex, quindi questi test devono dire da soli in quale mondo vivono
+    # (una macchina CI senza ABM_GCP_PROJECT_ID darebbe l'esito opposto).
+    creds = tmp_path / "sa.json"
+    creds.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ABM_GCP_PROJECT_ID", "progetto")
+    monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setattr(gemini_tts, "_check_rpd_cap", lambda mk: None)
     monkeypatch.setattr(gemini_tts, "_throttle_rpm", lambda mk: None)
@@ -21,6 +29,9 @@ def _env(tmp_path, monkeypatch):
     yield
     gemini_tts._BACKEND = {}
     gemini_tts.set_backend_switch_notifier(None)
+    # La cache di tts_backend_state e' globale al processo: senza reset un
+    # trip resterebbe visibile ai file di test successivi.
+    st.reset("flash31")
 
 
 def _pcm(n=48):
@@ -124,8 +135,13 @@ def test_content_rejected_does_not_trip(tmp_path, monkeypatch):
                                            provider_code=2017)))
     monkeypatch.setattr(gemini_tts, "_vertex_transport_call", lambda **kw: _pcm())
 
-    with pytest.raises(Exception):
+    # Eccezione ESATTA, non `Exception`: con la raises larga il test passava
+    # anche quando usciva una TransportError, cioe' proprio il difetto che
+    # doveva impedire (spec §4.2: 422/2017 -> GeminiEmptyResponse).
+    with pytest.raises(gemini_tts.GeminiEmptyResponse) as ei:
         _synth(tmp_path)
+    assert ei.value.retryable is False
+    assert not isinstance(ei.value, TransportError)
     # Un chunk sbagliato non deve buttare giu' il backend per tutti.
     assert st.is_tripped("flash31") is False
 
@@ -137,22 +153,59 @@ def test_fatal_does_not_trip(tmp_path, monkeypatch):
                                            provider_code=7003)))
     monkeypatch.setattr(gemini_tts, "_vertex_transport_call", lambda **kw: _pcm())
 
-    with pytest.raises(Exception):
+    with pytest.raises(gemini_tts.GeminiUnavailable) as ei:
         _synth(tmp_path)
+    assert not isinstance(ei.value, TransportError)
     assert st.is_tripped("flash31") is False
 
 
 def test_trip_without_a_ready_vertex_raises_unavailable(tmp_path, monkeypatch):
-    def _vx(**kw):
-        raise gemini_tts.GeminiUnavailable("Vertex non configurato")
+    """Vertex davvero non configurato, non un mock che solleva l'atteso.
 
+    La versione precedente monkeypatchava `_vertex_transport_call` perche'
+    sollevasse GeminiUnavailable e poi verificava che uscisse
+    GeminiUnavailable: verificava il proprio mock, e non poteva vedere il
+    difetto reale (KeyError da `_get_client`). Qui Vertex e' irraggiungibile
+    per configurazione, come nello scenario di produzione (chiave revocata o
+    file credenziali rimosso mentre Cloudflare e' attivo).
+    """
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
+    vertex_calls = []
     monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
                         lambda **kw: (_ for _ in ()).throw(
                             TransportError("giu'", kind="backend_down")))
-    monkeypatch.setattr(gemini_tts, "_vertex_transport_call", _vx)
+    monkeypatch.setattr(gemini_tts, "_vertex_transport_call",
+                        lambda **kw: vertex_calls.append(kw) or _pcm())
+
+    with pytest.raises(gemini_tts.GeminiUnavailable):
+        _synth(tmp_path, job_id="j-no-vertex")
+
+    # Nessun tentativo verso un backend che non c'e'...
+    assert vertex_calls == []
+    # ...ma il trip resta persistito e tracciabile: l'admin deve sapere che
+    # Cloudflare e' caduto proprio quando non c'e' rete di sicurezza sotto.
+    assert st.is_tripped("flash31") is True
+    assert st.state("flash31")["trip_job_id"] == "j-no-vertex"
+    assert gemini_tts._resolve_backend("flash31") is None
+
+
+def test_the_notifier_still_fires_when_vertex_is_not_ready(tmp_path, monkeypatch):
+    """La notifica precede il sollevamento: e' l'unico avviso che l'admin ha."""
+    monkeypatch.delenv("ABM_GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ABM_GOOGLE_CREDENTIALS_FILE", raising=False)
+    seen = []
+    gemini_tts.set_backend_switch_notifier(
+        lambda model_key, reason, detail, job_id: seen.append(model_key))
+    monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
+                        lambda **kw: (_ for _ in ()).throw(
+                            TransportError("giu'", kind="backend_down")))
+    monkeypatch.setattr(gemini_tts, "_vertex_transport_call", lambda **kw: _pcm())
 
     with pytest.raises(gemini_tts.GeminiUnavailable):
         _synth(tmp_path)
+    assert seen == ["flash31"]
+    assert st.state("flash31")["notified"] is True
 
 
 def test_a_tripped_model_goes_straight_to_vertex(tmp_path, monkeypatch):

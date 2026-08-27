@@ -792,6 +792,11 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
         "voice_name": None,
         "attempts_used": 0,
         "split_pieces": len(pieces),
+        # Coerenza con synthesize(): il backend che ha davvero eseguito e la
+        # provenienza dei token. Se anche un solo pezzo ha token derivati
+        # (Cloudflare, che non li misura) l'aggregato non e' misurato.
+        "backend": None,
+        "tokens_measured": True,
     }
 
     tmp_parts = []
@@ -825,6 +830,9 @@ def _synthesize_pcm_pieces_and_concat(pieces, voice_id, output_path, style_instr
                         aggregate["model_key"] = result.get("model_key") or aggregate["model_key"]
                         aggregate["voice_name"] = result.get("voice_name") or aggregate["voice_name"]
                         aggregate["attempts_used"] = max(aggregate["attempts_used"], int(result.get("attempts_used", 1)))
+                        aggregate["backend"] = result.get("backend") or aggregate["backend"]
+                        if not result.get("tokens_measured"):
+                            aggregate["tokens_measured"] = False
                         break
                     except (_gemini.GeminiQuotaExhausted, _gemini.GeminiBudgetExceeded,
                             _gemini.GeminiUnavailable):
