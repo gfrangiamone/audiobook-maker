@@ -31,7 +31,8 @@ def test_chunk_gemini_passes_style_to_synthesize(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
     res = tts_split.generate_chunk_pcm_gemini(
-        "Ciao mondo", "gemini:flash25:Zephyr", str(out),
+        "Ciao mondo, oggi raccontiamo una storia lunga e avvincente.",
+        "gemini:flash25:Zephyr", str(out),
         style_instruction="vivace e narrativo",
     )
     assert res is not False
@@ -49,7 +50,9 @@ def test_chunk_gemini_default_style_is_none(monkeypatch, tmp_path):
     import gemini_tts
     monkeypatch.setattr(gemini_tts, "synthesize", fake_synthesize)
     out = tmp_path / "x.pcm"
-    tts_split.generate_chunk_pcm_gemini("Test", "gemini:flash25:Zephyr", str(out))
+    tts_split.generate_chunk_pcm_gemini(
+        "Questo e' un test con una frase abbastanza lunga da superare la soglia.",
+        "gemini:flash25:Zephyr", str(out))
     assert captured["style_instruction"] is None
 
 

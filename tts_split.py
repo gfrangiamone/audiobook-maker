@@ -1003,6 +1003,38 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
         _generate_silence_pcm(output_path, duration_sec=1)
         return _fail("empty_after_sanitize")
 
+    # Frammento irriducibile (il merge nel piano non ha potuto fonderlo): i
+    # backend Gemini lo rifiutano per moderazione contenuti (codice 2017).
+    # Silenzialo senza spendere una chiamata: non e' un fallimento di sintesi,
+    # e' un chunk che non contiene parlato. Caso dominante nel mondo reale: un
+    # capitolo il cui corpo e' vuoto o quasi identico al titolo, che il merge
+    # del Task 2 non puo' toccare (non esiste un vicino con cui fondersi). Log
+    # obbligatorio: un buco di audio muto senza traccia nei log sarebbe il
+    # difetto peggiore che questa fase possa produrre.
+    if _is_degenerate_chunk(clean):
+        _generate_silence_pcm(output_path, duration_sec=1)
+        _snippet = clean[:80].replace("\n", " ")
+        _job_part = f" job={job_id}" if job_id else ""
+        print(f"[gemini-tts] Chunk degenere silenziato senza chiamata API "
+              f"(reason=irreducible_degenerate_fragment){_job_part}: {_snippet!r}")
+        # model_key reale (da voice_id 'gemini:<model>:<voce>') cosi' la
+        # contabilita' costi a valle (actual_cost_breakdown/pricing_cost_breakdown,
+        # che sollevano ValueError su model_key sconosciuto) non inciampa: costo
+        # comunque zero perche' input/output token sono 0.
+        _vid_parts = str(voice_id).split(":")
+        _model_key_for_skip = _vid_parts[1] if len(_vid_parts) == 3 else None
+        return {
+            "success": True,
+            "bytes_written": os.path.getsize(output_path),
+            "audio_seconds_real": 1.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "model_key": _model_key_for_skip,
+            "voice_name": voice_id,
+            "attempts_used": 0,
+            "skipped_degenerate": True,
+        }
+
     # Emergency byte-split: se il chunk supera il byte-cap effettivo (cap API
     # meno margine per i prefissi style/rate), invece di farlo silenziare
     # spezziamo su confine frase e facciamo N chiamate API. Costa +RPD ma

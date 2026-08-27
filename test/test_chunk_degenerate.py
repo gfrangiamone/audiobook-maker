@@ -182,3 +182,77 @@ def test_merge_never_loses_text_a_chapter_worth_of_content():
     expected = f"{ch.title}.\n\n{body}"
     normalized_expected = " ".join(expected.split())
     assert normalized_out == normalized_expected
+
+
+# --- Task 3: silenzio senza chiamata API per il degenere irriducibile -------
+#
+# NOTA sul monkeypatch: generate_chunk_pcm_gemini fa un late import locale
+# `import gemini_tts as _gemini` a inizio funzione (per tenere il modulo
+# opzionale). Un monkeypatch su `tts_split._gemini` non lo vedrebbe MAI: la
+# variabile locale della funzione viene rilegata a ogni chiamata al modulo
+# reale, ignorando l'attributo di modulo. Il punto di aggancio corretto e'
+# `gemini_tts.synthesize` stesso (identico pattern di test_tts_split_pcm.py),
+# perche' `_gemini` e' solo un riferimento al modulo reale, non una copia.
+
+def test_irreducible_degenerate_chunk_is_silenced_without_api_call(tmp_path, monkeypatch):
+    import tts_split
+
+    def _boom(*a, **kw):
+        raise AssertionError("il chunk degenere non deve arrivare all'API")
+
+    monkeypatch.setattr("gemini_tts.synthesize", _boom)
+    out = tmp_path / "chunk.pcm"
+
+    res = tts_split.generate_chunk_pcm_gemini("XIV.", "gemini:flash25:Kore", str(out))
+
+    assert isinstance(res, dict)
+    assert res["success"] is True
+    assert res["skipped_degenerate"] is True
+    assert res["input_tokens"] == 0
+    assert res["output_tokens"] == 0
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_regular_chunk_still_reaches_the_api(tmp_path, monkeypatch):
+    import tts_split
+
+    called = []
+
+    def fake_synth(text, voice_id, output_path=None, **kw):
+        called.append(text)
+        with open(output_path, "wb") as f:
+            f.write(b"\x00" * 100)
+        return {"success": True, "bytes_written": 100, "audio_seconds_real": 1.0,
+                "input_tokens": 5, "output_tokens": 25, "model_key": "flash25",
+                "voice_name": "Kore", "attempts_used": 1}
+
+    monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
+    out = tmp_path / "chunk.pcm"
+    body = "Il mattino dopo la nave lasciò il porto con il vento a favore. " * 3
+
+    res = tts_split.generate_chunk_pcm_gemini(body, "gemini:flash25:Kore", str(out))
+
+    assert len(called) == 1
+    assert res["output_tokens"] == 25
+    assert "skipped_degenerate" not in res
+
+
+def test_skipped_degenerate_chunk_is_logged(tmp_path, monkeypatch, capsys):
+    import tts_split
+
+    monkeypatch.setattr(
+        "gemini_tts.synthesize",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("il chunk degenere non deve arrivare all'API")
+        ),
+    )
+    out = tmp_path / "chunk.pcm"
+
+    tts_split.generate_chunk_pcm_gemini(
+        "XIV.", "gemini:flash25:Kore", str(out), job_id="job-abc123"
+    )
+
+    captured = capsys.readouterr()
+    assert "XIV." in captured.out
+    assert "job-abc123" in captured.out
+    assert "gemini-tts" in captured.out

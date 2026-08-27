@@ -34,7 +34,8 @@ def test_fallback_used_when_gemini_fails_and_lang_known(tmp_path, monkeypatch):
     out = str(tmp_path / "chunk.pcm")
     fi = {}
     result = tts_split.generate_chunk_pcm_gemini(
-        "Texto sensible que Gemini rechaza.", "gemini:flash31:Enceladus", out,
+        "Texto sensible que el sistema rechaza por completo.",
+        "gemini:flash31:Enceladus", out,
         failure_info=fi, fallback_lang="es", rate="-10%")
 
     assert isinstance(result, dict)
@@ -59,7 +60,8 @@ def test_silence_when_no_fallback_lang(tmp_path, monkeypatch):
     out = str(tmp_path / "chunk.pcm")
     fi = {}
     result = tts_split.generate_chunk_pcm_gemini(
-        "Texto.", "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang=None)
+        "Este es un texto que el sistema rechaza sin exito.",
+        "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang=None)
 
     assert result is False
     assert fi.get("reason") == "synthesize_failed"
@@ -76,7 +78,8 @@ def test_silence_when_edge_fallback_also_fails(tmp_path, monkeypatch):
     out = str(tmp_path / "chunk.pcm")
     fi = {}
     result = tts_split.generate_chunk_pcm_gemini(
-        "Texto.", "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang="es")
+        "Este es un texto que el sistema rechaza sin exito.",
+        "gemini:flash31:Enceladus", out, failure_info=fi, fallback_lang="es")
 
     assert result is False
     assert fi.get("reason") == "synthesize_failed"
@@ -97,7 +100,8 @@ def test_quota_error_not_edge_fallbacked(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(gemini_tts.GeminiQuotaExhausted):
         tts_split.generate_chunk_pcm_gemini(
-            "Texto.", "gemini:flash31:Enceladus", out, fallback_lang="es")
+            "Este es un texto que el sistema rechaza sin exito.",
+            "gemini:flash31:Enceladus", out, fallback_lang="es")
 
 
 def test_edge_voice_map_defaults_to_english():
@@ -167,7 +171,8 @@ def test_generate_chunk_passes_gender_from_voice_id(tmp_path, monkeypatch):
     monkeypatch.setattr(tts_split, "_edge_fallback_to_pcm", _fake_edge)
     out = str(tmp_path / "chunk.pcm")
     result = tts_split.generate_chunk_pcm_gemini(
-        "Sensitive text.", "gemini:flash31:Algenib", out,
+        "This is a longer piece of sensitive text for testing.",
+        "gemini:flash31:Algenib", out,
         fallback_lang="en", accent_code="gb", rate="+10%")
 
     assert isinstance(result, dict)

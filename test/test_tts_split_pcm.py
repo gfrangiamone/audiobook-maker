@@ -49,7 +49,8 @@ def test_generate_chunk_pcm_gemini_success(tmp_path, monkeypatch):
 
     monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
     result = tts_split.generate_chunk_pcm_gemini(
-        "Ciao mondo.", "gemini:flash25:Zephyr", str(out)
+        "Ciao mondo, oggi il cielo e' sereno e faremo una lunga passeggiata.",
+        "gemini:flash25:Zephyr", str(out)
     )
     assert result is not False
     assert isinstance(result, dict)
@@ -75,7 +76,8 @@ def test_generate_chunk_pcm_gemini_retries_then_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)  # no real backoff in tests
     out = tmp_path / "chunk.pcm"
     result = tts_split.generate_chunk_pcm_gemini(
-        "hello", "gemini:flash25:Zephyr", str(out), max_retries=3
+        "Il mattino dopo la nave lascio' il porto con il vento a favore.",
+        "gemini:flash25:Zephyr", str(out), max_retries=3
     )
     assert result is not False
     assert calls["n"] == 3
@@ -89,7 +91,8 @@ def test_generate_chunk_pcm_gemini_total_failure_writes_silence(tmp_path, monkey
     monkeypatch.setattr("time.sleep", lambda s: None)
     out = tmp_path / "chunk.pcm"
     result = tts_split.generate_chunk_pcm_gemini(
-        "fail", "gemini:flash25:Zephyr", str(out), max_retries=2
+        "Questo capitolo racconta un lungo viaggio attraverso montagne innevate.",
+        "gemini:flash25:Zephyr", str(out), max_retries=2
     )
     assert result is False
     assert out.exists()
