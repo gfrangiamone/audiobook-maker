@@ -7013,6 +7013,7 @@ def admin_api_gemini_cost_audit():
     agg_n = 0
     agg_rev = 0.0
     agg_cost = 0.0
+    agg_pricing_cost = 0.0
     agg_delta = 0.0
     agg_fee = 0.0
     for r in recs:
@@ -7021,7 +7022,14 @@ def admin_api_gemini_cost_audit():
             continue
         agg_n += 1
         agg_rev += float(r.get("_eff_revenue_eur", 0) or 0)
-        agg_cost += float(r.get("google_cost_eur_actual", 0) or 0)
+        google_cost_actual = float(r.get("google_cost_eur_actual", 0) or 0)
+        agg_cost += google_cost_actual
+        # Base del delta_pct_avg: LISTINO (D1), non costo reale (vedi
+        # gemini_cost_audit.aggregate() per lo stesso pattern). Il costo
+        # reale (agg_cost) resta usato per margin_eur/net_margin_eur, che
+        # riguardano la marginalita' effettiva, non il confronto di prezzo.
+        agg_pricing_cost += float(
+            r.get("pricing_cost_eur_actual", google_cost_actual) or google_cost_actual)
         agg_delta += float(r.get("_eff_delta_eur", 0) or 0)
         agg_fee += float(r.get("_paypal_fee_eur", 0) or 0)
     agg = {
@@ -7031,7 +7039,7 @@ def admin_api_gemini_cost_audit():
         "margin_eur": round(agg_rev - agg_cost, 4),
         "paypal_fees_eur": round(agg_fee, 4),
         "net_margin_eur": round(agg_rev - agg_cost - agg_fee, 4),
-        "delta_pct_avg": round((agg_delta / agg_cost * 100), 2) if agg_cost > 0 else 0.0,
+        "delta_pct_avg": round((agg_delta / agg_pricing_cost * 100), 2) if agg_pricing_cost > 0 else 0.0,
         "filters": {"model": _norm(model), "language": _norm(language),
                     "date_from": date_from, "date_to": date_to},
     }

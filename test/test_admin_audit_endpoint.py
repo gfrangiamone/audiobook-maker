@@ -111,13 +111,20 @@ def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatc
     """Mirror di test_write_gemini_audit_drift_uses_pricing_cost_not_actual_cost
     (generation_engine.py) ma per la riga LIVE del pannello: senza questo fix
     ogni job Cloudflare in corso mostrerebbe una falsa deriva prezzo per
-    l'intera durata della generazione (D1)."""
+    l'intera durata della generazione (D1).
+
+    delta_eur e' qui DELIBERATAMENTE non nullo (should_have_been != charged):
+    un caso a numeratore zero non distinguerebbe "il codice usa il listino"
+    da "il codice usa il reale" quando i due capitano a produrre lo stesso
+    should_have_been per coincidenza dei valori scelti nel test."""
     import audiobook_app
     captured = []
 
     def _fake_price(cost_eur, model_key):
         captured.append(cost_eur)
-        return {"user_price_eur": 5.0}
+        # Scala col costo passato: se venisse passato il reale (0.30) invece
+        # del listino (1.80) il risultato sarebbe 1.05, non 6.30.
+        return {"user_price_eur": round(cost_eur * 3.5, 2)}
 
     monkeypatch.setattr(audiobook_app.gemini_tts, "compute_user_price_eur", _fake_price)
     audiobook_app.jobs["Jliveposit"] = {
@@ -138,7 +145,42 @@ def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatc
         assert rec["google_cost_eur_actual"] == 0.30
         assert rec["pricing_cost_eur_actual"] == 1.80
         assert rec["margin_eur_actual"] == round(5.0 - 0.30, 4)
-        assert rec["user_price_eur_should_have_been"] == 5.0
-        assert rec["delta_eur"] == 0.0
+        # should_have_been = 1.80 * 3.5 = 6.30 (mai 0.30 * 3.5 = 1.05)
+        assert rec["user_price_eur_should_have_been"] == 6.30
+        assert rec["delta_eur"] == round(6.30 - 5.0, 4)
     finally:
         audiobook_app.jobs.pop("Jliveposit", None)
+
+
+def test_admin_audit_aggregate_delta_pct_uses_pricing_cost_not_real_cost(
+        client, admin_headers, monkeypatch, tmp_path):
+    """F4: l'endpoint /admin/api/gemini_cost_audit deve dividere
+    delta_pct_avg per il costo di LISTINO accumulato, non per il costo
+    REALE sostenuto (Cloudflare piu' economico del listino): altrimenti la
+    cifra letta in un incidente vero sarebbe gonfiata (D1)."""
+    monkeypatch.setattr(gemini_cost_audit, "_DATA_DIR", tmp_path)
+    # Reale molto piu' basso del listino: se il denominatore fosse il reale
+    # (0.20 totali) invece del listino (2.0 totali), delta_pct_avg
+    # risulterebbe 100.0 invece di 10.0.
+    gemini_cost_audit.append_record({
+        "job_id": "cf1", "model_key": "flash25", "language": "it",
+        "outcome": "completed", "user_price_eur_charged": 1.0,
+        "user_price_eur_should_have_been": 1.10,
+        "google_cost_eur_actual": 0.10, "pricing_cost_eur_actual": 1.0,
+        "delta_eur": 0.10,
+    })
+    gemini_cost_audit.append_record({
+        "job_id": "cf2", "model_key": "flash25", "language": "it",
+        "outcome": "completed", "user_price_eur_charged": 2.0,
+        "user_price_eur_should_have_been": 2.10,
+        "google_cost_eur_actual": 0.10, "pricing_cost_eur_actual": 1.0,
+        "delta_eur": 0.10,
+    })
+    r = client.get("/admin/api/gemini_cost_audit?model=flash25", headers=admin_headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    agg = r.get_json()["aggregates"]
+    assert agg["count"] == 2
+    assert agg["delta_pct_avg"] == pytest.approx(10.0, abs=0.01)
+    assert agg["delta_pct_avg"] != pytest.approx(100.0, abs=0.01)
+    # google_cost_eur (reale) resta usato per margin_eur/net_margin_eur.
+    assert agg["google_cost_eur"] == pytest.approx(0.20, abs=0.001)
