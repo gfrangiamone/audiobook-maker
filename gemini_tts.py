@@ -153,6 +153,8 @@ GEMINI_MODELS = {
         # Cloudflare non ospita alcuna variante TTS di Gemini 2.5
         # (verificato 26/08/2026): questo modello vive su Vertex.
         "id_cloudflare": None,
+        "cf_input_usd_per_mtok": None,
+        "cf_output_usd_per_mtok": None,
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH25,
         "label": "Gemini 2.5 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_25FLASH_INPUT_USD_PER_MTOK", 0.50),
@@ -165,6 +167,10 @@ GEMINI_MODELS = {
         # Verificato il 26/08/2026: 30/30 voci sintetizzate, enum voci
         # coincidente con GEMINI_VOICE_NAMES (spec §10.1).
         "id_cloudflare": "google/gemini-3.1-flash-tts",
+        # Tariffe Cloudflare al lordo della commissione di ricarica, che viene
+        # applicata a parte da `_cf_effective`: qui stanno i numeri di listino.
+        "cf_input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_INPUT_USD_PER_MTOK", 0.75),
+        "cf_output_usd_per_mtok": _f("ABM_GEMINI_31FLASH_CF_OUTPUT_USD_PER_MTOK", 12.00),
         "location_vertex": _DEFAULT_VERTEX_LOCATION_FLASH31,
         "label": "Gemini 3.1 Flash TTS",
         "input_usd_per_mtok": _f("ABM_GEMINI_31FLASH_INPUT_USD_PER_MTOK", 1.00),
@@ -649,6 +655,78 @@ def get_margin_percent(model_key):
     if model_key == "flash31":
         return _f("ABM_GEMINI_31FLASH_MARGIN_PERCENT", 25.0)
     raise ValueError(f"Unknown model_key: {model_key}")
+
+
+def _cf_topup_fee():
+    """Commissione pagata per comprare il credito AI Gateway.
+
+    Si paga comprando il credito, non spendendolo: il saldo cala dell'addebito
+    nudo, il costo per noi e' l'addebito piu' questa commissione.
+    """
+    return _f("ABM_CF_CREDIT_TOPUP_FEE", 0.05)
+
+
+def cf_saving_share():
+    """Quota del risparmio Cloudflare ceduta al cliente, in [0, 1]."""
+    pct = _f("ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT", 50.0)
+    return max(0.0, min(1.0, pct / 100.0))
+
+
+def _cf_effective(rate):
+    """Tariffa Cloudflare comprensiva della commissione di ricarica."""
+    return rate * (1.0 + _cf_topup_fee())
+
+
+def _pricing_uses_cloudflare(model_key):
+    """True se il LISTINO di questo modello si calcola su base Cloudflare.
+
+    Guarda la CONFIGURAZIONE, non il backend attivo: dopo un trip il modello
+    esegue su Vertex, ma il prezzo non deve oscillare sotto gli occhi
+    dell'utente (decisione D1). Usare `_resolve_backend` qui sarebbe il bug
+    piu' facile da introdurre e il piu' difficile da notare.
+    """
+    choice = (os.environ.get("ABM_GEMINI_BACKEND", "auto") or "auto").strip().lower()
+    if choice != "cloudflare":
+        return False
+    m = GEMINI_MODELS.get(model_key) or {}
+    return bool(m.get("id_cloudflare")) and m.get("cf_output_usd_per_mtok") is not None
+
+
+def pricing_rates(model_key):
+    """(input, output) USD/Mtok da usare per il PREZZO all'utente.
+
+        tariffa = google - (google - cf_eff) * share
+
+    Con share=0 il listino resta quello Google; con share=1 tutto il risparmio
+    va al cliente. Se Cloudflare non e' configurato per questo modello, le
+    tariffe sono quelle Google pure e il comportamento e' identico a oggi.
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    m = GEMINI_MODELS[model_key]
+    g_in, g_out = m["input_usd_per_mtok"], m["output_usd_per_mtok"]
+    if not _pricing_uses_cloudflare(model_key):
+        return g_in, g_out
+    share = cf_saving_share()
+    c_in = _cf_effective(m["cf_input_usd_per_mtok"])
+    c_out = _cf_effective(m["cf_output_usd_per_mtok"])
+    return (g_in - (g_in - c_in) * share,
+            g_out - (g_out - c_out) * share)
+
+
+def actual_rates(model_key, backend):
+    """(input, output) USD/Mtok REALMENTE sostenute dal backend che ha eseguito.
+
+    Serve alla contabilita', non al listino: e' l'unico numero con cui ha senso
+    riconciliare la spesa e misurare il margine vero.
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    m = GEMINI_MODELS[model_key]
+    if backend == "cloudflare" and m.get("cf_output_usd_per_mtok") is not None:
+        return (_cf_effective(m["cf_input_usd_per_mtok"]),
+                _cf_effective(m["cf_output_usd_per_mtok"]))
+    return m["input_usd_per_mtok"], m["output_usd_per_mtok"]
 
 
 def parse_voice_id(voice_id):
