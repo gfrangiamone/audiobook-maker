@@ -41,6 +41,17 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
+# Un chunk piu' corto di questa soglia e' un frammento, non una frase: i
+# backend Gemini lo rifiutano per moderazione (codice 2017) quando e' composto
+# quasi solo da numerali (tipico dei titoli di capitolo: "XIV."). Parametrico
+# perche' la soglia giusta dipende dalla lingua e dal corpus.
+MIN_CHUNK_CHARS = int(os.environ.get("ABM_TTS_MIN_CHUNK_CHARS", "40") or 40)
+# Sopra questa lunghezza un chunk contiene abbastanza contesto perche' il
+# rapporto di numerali non conti piu': "Nel 1793 la Convenzione..." e' testo.
+_DEGENERATE_MAX_CHARS = 120
+# Numerale arabo o romano, eventualmente circondato da punteggiatura.
+_NUMERAL_TOKEN_RE = re.compile(r'^[\W_]*(?:\d+|[IVXLCDM]+)[\W_]*$', re.IGNORECASE)
+
 # Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
 # receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
 # connessione half-open save() resterebbe sospeso per sempre, bloccando il
@@ -416,6 +427,28 @@ def _sanitize_tts_text(text: str):
     if not clean.strip():
         return None
     return clean
+
+
+def _is_degenerate_chunk(text, min_chars=MIN_CHUNK_CHARS):
+    """True se il chunk e' un frammento che non va mandato al TTS.
+
+    Due criteri, in OR:
+      1. piu' corto di `min_chars`: e' un frammento comunque, indipendentemente
+         dal contenuto;
+      2. piu' corto di `_DEGENERATE_MAX_CHARS` e composto per almeno meta' dei
+         token da numerali (arabi o romani): e' un'intestazione di capitolo, il
+         caso che fa scattare la moderazione contenuti.
+    """
+    clean = (text or "").strip()
+    if len(clean) < min_chars:
+        return True
+    if len(clean) >= _DEGENERATE_MAX_CHARS:
+        return False
+    tokens = [t for t in re.split(r'\s+', clean) if t]
+    if not tokens:
+        return True
+    numerals = sum(1 for t in tokens if _NUMERAL_TOKEN_RE.match(t))
+    return numerals * 2 >= len(tokens)
 
 
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
