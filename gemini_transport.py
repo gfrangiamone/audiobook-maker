@@ -81,16 +81,79 @@ _CF_INVALID_VALUE_MARK = "Invalid value at "
 _CF_200_ERROR_KWARGS = {"kind": "retryable", "billed": True, "http_status": 200}
 
 
-def _cf_first_error(body):
-    """(codice, messaggio) del primo errore Cloudflare, o (None, "")."""
+def _cf_error_code(value):
+    """Normalizza il codice d'errore a int quando possibile.
+
+    Cloudflare documenta codici numerici, ma un proxy davanti all'API puo'
+    rimandarli come stringa ("2021"): senza normalizzazione il confronto
+    `code == 2021` fallirebbe e un credito esaurito verrebbe classificato
+    `retryable`, cioe' ritentato all'infinito invece di far scattare il
+    breaker. La classificazione non deve dipendere dal tipo JSON.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
     try:
-        errors = body.get("errors") or []
-        if errors:
-            first = errors[0]
-            return first.get("code"), str(first.get("message") or "")
-    except AttributeError:
-        pass
-    return None, ""
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return value or None
+
+
+def _cf_error_pair(item):
+    """(codice, messaggio) da un singolo elemento di errore, in qualunque forma."""
+    if isinstance(item, dict):
+        message = item.get("message")
+        if message is None:
+            message = item.get("error") or item.get("detail") or ""
+        return _cf_error_code(item.get("code")), str(message or "")
+    if item is None:
+        return None, ""
+    return None, str(item)
+
+
+def _cf_first_error(body):
+    """(codice, messaggio) del primo errore Cloudflare, o (None, "").
+
+    Non solleva mai: il contratto di trasporto ammette una sola eccezione
+    (`TransportError`) e questa funzione e' chiamata sul percorso d'avaria,
+    cioe' proprio quando il corpo della risposta ha la forma meno prevedibile.
+    Regge `errors` come array, oggetto singolo, mappa indicizzata, stringa,
+    null o assente, e un `body` che non sia affatto un dizionario.
+    """
+    try:
+        if not isinstance(body, dict):
+            # Corpo non-oggetto (stringa, lista, null): niente codice, ma il
+            # testo e' comunque diagnostica utile e non va perso.
+            if body is None:
+                return None, ""
+            if isinstance(body, (list, tuple)):
+                return _cf_error_pair(body[0]) if body else (None, "")
+            return None, str(body)
+
+        errors = body.get("errors")
+        if errors is None:
+            errors = body.get("error")
+        if errors is None:
+            # Alcune risposte mettono code/message al primo livello.
+            if "code" in body or "message" in body:
+                return _cf_error_pair(body)
+            return None, ""
+
+        if isinstance(errors, (list, tuple)):
+            return _cf_error_pair(errors[0]) if errors else (None, "")
+        if isinstance(errors, dict):
+            if "code" in errors or "message" in errors:
+                return _cf_error_pair(errors)
+            # Mappa indicizzata ({"0": {...}}): si prende il primo valore.
+            for value in errors.values():
+                return _cf_error_pair(value)
+            return None, ""
+        return _cf_error_pair(errors)
+    except Exception:
+        # Nessuna forma di risposta puo' far uscire dall'adapter
+        # un'eccezione diversa da TransportError.
+        return None, ""
 
 
 def _interpret_cloudflare_response(resp):
@@ -102,7 +165,11 @@ def _interpret_cloudflare_response(resp):
     status = resp.status_code
     try:
         body = resp.json()
-    except (ValueError, AttributeError):
+    except Exception:
+        # Corpo vuoto, non-JSON, o decoder che solleva un'eccezione
+        # proprietaria: nessuna di queste e' una TransportError, quindi
+        # nessuna puo' uscire da qui. Si prosegue con body=None e la
+        # classificazione ricade sullo status HTTP.
         body = None
 
     if status == 200:
@@ -110,8 +177,13 @@ def _interpret_cloudflare_response(resp):
         # comunque, anche se il corpo non contiene audio.
         audio = None
         if isinstance(body, dict):
-            audio = (body.get("result") or {}).get("audio")
-        if not audio:
+            result = body.get("result")
+            if isinstance(result, dict):
+                audio = result.get("audio")
+        # Un `audio` che non sia una stringa non e' decodificabile: va trattato
+        # come "200 senza audio" (retryable e fatturato), non fatto esplodere
+        # su `.find` con un AttributeError fuori contratto.
+        if not audio or not isinstance(audio, str):
             raise TransportError(
                 "Cloudflare ha risposto 200 senza audio",
                 **_CF_200_ERROR_KWARGS)
@@ -134,7 +206,7 @@ def _interpret_cloudflare_response(resp):
         # conosce il modello e il rapporto token/secondo.
         return {"pcm": pcm, "input_tokens": None, "output_tokens": None}
 
-    code, message = _cf_first_error(body or {})
+    code, message = _cf_first_error(body)
 
     if status == 402 or code == 2021:
         raise TransportError(
@@ -221,4 +293,17 @@ def cloudflare_call(*, final_text, voice_name, model_key, model_id,
         raise TransportError(f"errore di rete verso Cloudflare: "
                              f"{type(e).__name__}", kind="retryable") from e
 
-    return _interpret_cloudflare_response(resp)
+    try:
+        return _interpret_cloudflare_response(resp)
+    except TransportError:
+        raise
+    except Exception as e:
+        # Rete di sicurezza del contratto: qualunque forma inattesa della
+        # risposta deve uscire come TransportError classificata, mai come
+        # eccezione grezza (che il chiamante non intercetta e che nasconde la
+        # causa vera dietro un `KeyError: 0` nei log). Solo il nome del tipo,
+        # mai `str(e)`: la stessa disciplina di redazione del ramo di rete.
+        raise TransportError(
+            f"risposta Cloudflare non interpretabile: {type(e).__name__}",
+            kind="retryable",
+            http_status=getattr(resp, "status_code", None)) from e

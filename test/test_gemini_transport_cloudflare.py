@@ -124,17 +124,22 @@ def test_missing_credentials_are_fatal(monkeypatch):
 
 
 def test_the_token_never_appears_in_an_error_message(monkeypatch):
+    """L'eccezione finta PORTA il token nel proprio messaggio.
+
+    Con una RequestException innocua ("rete giu'") l'asserzione passava anche
+    se l'adapter avesse serializzato `str(e)` senza alcuna redazione: il test
+    non mordeva. Qui l'unica ragione per cui il segreto non esce e' che
+    l'adapter mette nel messaggio solo `type(e).__name__`.
+    """
     import gemini_transport
 
     secret = "cf-token-che-non-deve-trapelare"
     monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
     monkeypatch.setenv("ABM_CF_API_TOKEN", secret)
 
-    class _Boom(Exception):
-        pass
-
     def _fake_post(url, **kw):
-        raise gemini_transport.requests.RequestException("rete giu'")
+        raise gemini_transport.requests.RequestException(
+            f"connessione fallita con header Authorization: Bearer {secret}")
 
     monkeypatch.setattr(gemini_transport.requests, "post", _fake_post)
     with pytest.raises(TransportError) as ei:
@@ -142,7 +147,53 @@ def test_the_token_never_appears_in_an_error_message(monkeypatch):
             final_text="ciao", voice_name="Kore", model_key="flash31",
             model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
             temperature=None)
-    assert secret not in str(ei.value)
+    assert secret in str(ei.value.__cause__)   # la causa lo contiene davvero
+    assert secret not in str(ei.value)         # il messaggio redatto no
+
+
+def test_the_token_never_reaches_a_synthesize_log_or_error(monkeypatch, tmp_path, capsys):
+    """Chiusura del sospetto S1: nemmeno i log di retry di synthesize()
+    possono stampare l'eccezione grezza del provider.
+
+    `synthesize()` logga e interpola `str(te)` — il messaggio gia' redatto
+    dall'adapter — non `te.__cause__`, che e' l'eccezione originale di
+    `requests` e potrebbe (dipende dalla libreria, non da noi) portarsi
+    dietro l'header Authorization.
+    """
+    import gemini_tts
+    import tts_backend_state as st
+
+    secret = "cf-token-che-non-deve-trapelare"
+    st.init(str(tmp_path))
+    gemini_tts._BACKEND = {}
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", secret)
+    monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
+    monkeypatch.setattr(gemini_tts, "_check_rpd_cap", lambda mk: None)
+    monkeypatch.setattr(gemini_tts, "_throttle_rpm", lambda mk: None)
+    monkeypatch.setattr(gemini_tts, "_rpd_increment", lambda mk: None)
+    monkeypatch.setattr(gemini_tts, "_synth_max_attempts", lambda: 2)
+    monkeypatch.setattr(gemini_tts.time, "sleep", lambda s: None)
+
+    def _cf(**kw):
+        try:
+            raise RuntimeError(f"Authorization: Bearer {secret}")
+        except RuntimeError as e:
+            raise TransportError("errore di rete verso Cloudflare: RuntimeError",
+                                 kind="retryable") from e
+
+    monkeypatch.setattr(gemini_tts._transport, "cloudflare_call", _cf)
+    try:
+        with pytest.raises(RuntimeError) as ei:
+            gemini_tts.synthesize("ciao mondo", "gemini:flash31:Kore",
+                                  output_path=str(tmp_path / "o.pcm"))
+        assert secret not in str(ei.value)
+        assert secret not in capsys.readouterr().out
+        assert secret not in (st.state("flash31").get("trip_detail") or "")
+    finally:
+        gemini_tts._BACKEND = {}
+        st.reset("flash31")
 
 
 def test_payload_carries_text_voice_and_temperature(monkeypatch):
@@ -205,3 +256,111 @@ def test_invalid_temperature_is_fatal(monkeypatch):
             model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
             temperature="not-a-number")
     assert ei.value.kind == "fatal"
+
+
+# ---------------------------------------------------------------------------
+# Robustezza del parsing della risposta d'errore (rilievo M1 della review
+# finale). Un adapter di trasporto ha UN solo modo di fallire: TransportError
+# con un kind dell'enum. Qualunque forma rimandi il server — o un proxy
+# davanti al server — non puo' far uscire altro. Prima del fix un `errors`
+# oggetto invece che array produceva un `KeyError: 0` grezzo, che il
+# chiamante non intercetta e che nei log sostituisce la causa vera.
+# ---------------------------------------------------------------------------
+
+_MALFORMED_BODIES = [
+    pytest.param({"errors": {"code": 2021, "message": "credito finito"}},
+                 id="errors-oggetto"),
+    pytest.param({"errors": {"0": {"code": 7003, "message": "boom"}}},
+                 id="errors-mappa-indicizzata"),
+    pytest.param({"errors": "qualcosa e' andato storto"}, id="errors-stringa"),
+    pytest.param({"errors": None}, id="errors-null"),
+    pytest.param({"errors": []}, id="errors-array-vuoto"),
+    pytest.param({"errors": [None]}, id="errors-array-di-null"),
+    pytest.param({"errors": ["stringa nuda"]}, id="errors-array-di-stringhe"),
+    pytest.param({"errors": 42}, id="errors-numero"),
+    pytest.param({"success": False}, id="errors-assente"),
+    pytest.param({"code": 2017, "message": "moderazione"}, id="code-al-primo-livello"),
+    pytest.param({"error": {"code": 7003, "message": "boom"}}, id="chiave-error-singolare"),
+    pytest.param(["lista", "invece", "di", "oggetto"], id="body-lista"),
+    pytest.param("errore in testo semplice", id="body-stringa"),
+    pytest.param(None, id="body-json-non-parsabile"),
+]
+
+
+@pytest.mark.parametrize("payload", _MALFORMED_BODIES)
+@pytest.mark.parametrize("status", [400, 402, 404, 422, 429, 500, 503])
+def test_any_error_body_shape_still_produces_a_transport_error(payload, status):
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(status, payload))
+    from gemini_transport import TRANSPORT_KINDS
+    assert ei.value.kind in TRANSPORT_KINDS
+
+
+def test_an_empty_body_still_produces_a_transport_error():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(500, None, text=""))
+    assert ei.value.kind == "retryable"
+
+
+def test_a_numeric_string_code_is_still_classified():
+    """Un proxy che rimanda i codici come stringa non deve disarmare il
+    breaker: "2021" e' credito esaurito esattamente come 2021."""
+    body = {"errors": [{"code": "2021", "message": "out of credits"}]}
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(500, body))
+    assert ei.value.kind == "backend_down"
+    assert ei.value.provider_code == 2021
+
+
+def test_the_error_message_is_never_lost():
+    """La forma inattesa non deve costare la diagnosi."""
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(
+            _Resp(500, {"errors": {"code": 1234, "message": "dettaglio utile"}}))
+    assert "dettaglio utile" in str(ei.value)
+    assert ei.value.provider_code == 1234
+
+
+def test_a_non_string_audio_field_is_not_an_attribute_error():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(
+            _Resp(200, {"result": {"audio": {"inatteso": True}}}))
+    assert ei.value.kind == "retryable"
+    assert ei.value.billed is True
+
+
+def test_a_non_dict_result_is_not_an_attribute_error():
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Resp(200, {"result": ["lista"]}))
+    assert ei.value.kind == "retryable"
+
+
+def test_a_json_decoder_that_explodes_does_not_escape(monkeypatch):
+    class _Exploding(_Resp):
+        def json(self):
+            raise KeyError("decoder proprietario")
+
+    with pytest.raises(TransportError) as ei:
+        _interpret_cloudflare_response(_Exploding(503, None, text="giu'"))
+    assert ei.value.kind == "retryable"
+
+
+def test_the_adapter_never_lets_a_foreign_exception_escape(monkeypatch):
+    """Rete di sicurezza del contratto: se l'interpretazione sollevasse
+    comunque qualcosa di estraneo, cloudflare_call lo riconfeziona."""
+    import gemini_transport
+
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
+    monkeypatch.setattr(gemini_transport.requests, "post",
+                        lambda url, **kw: _Resp(200, {"result": {}}))
+    monkeypatch.setattr(gemini_transport, "_interpret_cloudflare_response",
+                        lambda resp: (_ for _ in ()).throw(KeyError(0)))
+
+    with pytest.raises(TransportError) as ei:
+        gemini_transport.cloudflare_call(
+            final_text="ciao", voice_name="Kore", model_key="flash31",
+            model_id="google/gemini-3.1-flash-tts", timeout_ms=1000,
+            temperature=None)
+    assert ei.value.kind == "retryable"
+    assert "KeyError" in str(ei.value)
