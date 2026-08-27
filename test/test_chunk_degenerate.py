@@ -56,3 +56,21 @@ def test_min_chars_is_parametric():
     text = "Una frase di media lunghezza che supera i quaranta caratteri."
     assert _is_degenerate_chunk(text, min_chars=10) is False
     assert _is_degenerate_chunk(text, min_chars=200) is True
+
+
+def test_italian_words_made_of_roman_letters_are_not_numerals():
+    # Con IGNORECASE la classe [IVXLCDM] promuove a "numerale" parole italiane
+    # correnti: mi, ci, vi, li, di, il, dici, vivi, lidi, vili, idilli. Una
+    # frase breve che ne contenga abbastanza cadrebbe nella finestra 40-120 e
+    # verrebbe marcata degenere -> il Task 3 la silenzierebbe, cioe' testo
+    # cancellato dall'audiolibro senza traccia nei contatori. Caso costruito,
+    # ma il meccanismo e' reale: il riconoscimento dei romani resta maiuscolo.
+    text = "Mi, ci, vi, li, di, il: dici vivi lidi, dividi vili idilli."
+    assert 40 <= len(text) < 120, "il caso deve cadere nella finestra del criterio 2"
+    assert _is_degenerate_chunk(text) is False
+
+
+def test_english_words_made_of_roman_letters_are_not_numerals():
+    text = "Civil, vivid, mimic, civic, mid, dim, lid, mild, livid, illicit."
+    assert 40 <= len(text) < 120
+    assert _is_degenerate_chunk(text) is False

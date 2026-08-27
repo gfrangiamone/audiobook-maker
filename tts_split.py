@@ -50,7 +50,14 @@ MIN_CHUNK_CHARS = int(os.environ.get("ABM_TTS_MIN_CHUNK_CHARS", "40") or 40)
 # rapporto di numerali non conti piu': "Nel 1793 la Convenzione..." e' testo.
 _DEGENERATE_MAX_CHARS = 120
 # Numerale arabo o romano, eventualmente circondato da punteggiatura.
-_NUMERAL_TOKEN_RE = re.compile(r'^[\W_]*(?:\d+|[IVXLCDM]+)[\W_]*$', re.IGNORECASE)
+# I romani sono riconosciuti SOLO in maiuscolo, e il confronto e' volutamente
+# case-sensitive: con IGNORECASE la classe [IVXLCDM] cattura parole italiane
+# correnti ("mi", "ci", "di", "dici", "vivi", "lidi") e inglesi ("civil",
+# "vivid", "mimic"), e una frase breve che ne contenga abbastanza verrebbe
+# marcata degenere. L'asimmetria del danno impone la lettura stretta: un falso
+# negativo lascia l'errore 2017 che il codice gia' subisce oggi, un falso
+# positivo fa sparire testo dall'audiolibro senza lasciare traccia.
+_NUMERAL_TOKEN_RE = re.compile(r'^[\W_]*(?:\d+|[IVXLCDM]+)[\W_]*$')
 
 # Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
 # receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
