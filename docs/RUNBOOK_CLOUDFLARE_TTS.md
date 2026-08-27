@@ -217,8 +217,42 @@ reversibile in ogni momento):
    verificarne l'esito nell'activity log (`/admin/log-activity`) dopo il
    riavvio, invece di assumere che siano andati a buon fine o persi.
 4. Il rollback **non richiede** di toccare lo stato del breaker
-   (`tts_backend_state`): resettarlo non serve e non ha effetto sulla
-   selezione del backend, che dipende solo da `ABM_GEMINI_BACKEND`.
+   (`tts_backend_state`): resettarlo è inutile perché **in questo scenario
+   entrambi i percorsi portano comunque a Vertex** — con
+   `ABM_GEMINI_BACKEND=vertex` la selezione dà Vertex sia che il breaker sia
+   scattato sia che non lo sia.
+
+   Attenzione a non generalizzare: **non** è vero che la selezione dipenda
+   solo da `ABM_GEMINI_BACKEND`. Il breaker ha **precedenza** su quella
+   variabile (`gemini_tts._resolve_backend`): un modello scattato resta su
+   Vertex anche con `ABM_GEMINI_BACKEND=cloudflare`, e anche dopo un riavvio
+   del processo. Simmetricamente, il reset dalla console admin **cambia
+   davvero** il backend effettivo quando la configurazione dichiarata è
+   `cloudflare` (con qualunque altra configurazione l'endpoint rifiuta il
+   reset con `409`, proprio per non lasciar credere il contrario).
+
+---
+
+## 6bis. Pre-allarme credito: l'email che arriva *prima* del guasto
+
+Oggetto: `[ABM-ADMIN] Credito Cloudflare basso: <residuo> EUR residui
+(soglia <soglia>)`.
+
+Questa email **non** annuncia un failover: il TTS sta ancora girando su
+Cloudflare e nessun job è in errore. Parte quando il residuo **stimato**
+(`ABM_CF_CREDIT_BALANCE_EUR` meno la spesa accumulata nel ledger locale)
+scende sotto `ABM_CF_CREDIT_ALERT_EUR`, subito dopo l'addebito che ha
+attraversato la soglia. Arriva **una sola volta** per soglia
+(`claim_credit_alert()` è atomica e consuma l'allarme); si riarma solo dopo
+un topup (casella «Ho ricaricato il credito» nel pannello «Backend TTS»,
+che azzera il ledger).
+
+Che fare: ricaricare il credito, riallineare `ABM_CF_CREDIT_BALANCE_EUR`
+nell'unit systemd (`daemon-reload` + `restart`), spuntare la casella di
+topup nel pannello. Nessun reset del breaker serve: non è scattato nulla.
+
+Se `ABM_CF_CREDIT_BALANCE_EUR` è a `0` questa email non arriva mai — è il
+motivo per cui il §2 punto 3 insiste sul non lasciarla a zero.
 
 ---
 

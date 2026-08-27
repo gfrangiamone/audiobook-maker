@@ -658,7 +658,9 @@ Il credito Cloudflare AI Gateway è **prepagato** e non è leggibile via API (gl
 | `ABM_CF_CREDIT_BALANCE_EUR` | `0` | Saldo Cloudflare dichiarato dall'admin dopo l'ultima ricarica. `0` (non dichiarato) disabilita il pre-allarme: evita rumore costante su installazioni che non usano Cloudflare o non hanno ancora eseguito la procedura di accensione. |
 | `ABM_CF_CREDIT_ALERT_EUR` | `5` | Soglia di residuo stimato sotto cui scatta il pre-allarme sul credito. |
 
-**API del modulo:** `add_spend(model_key, eur)`, `reset_spend()` (da chiamare alla ricarica: azzera il ledger e riarma l'allarme), `credit_left_eur()`, `credit_alert_pending()`, `claim_credit_alert()`, `mark_credit_alerted()`.
+**API del modulo:** `add_spend(model_key, eur)`, `reset_spend()` (da chiamare alla ricarica: azzera il ledger e riarma l'allarme), `credit_left_eur()`, `credit_alert_threshold_eur()`, `credit_alert_pending()`, `claim_credit_alert()`, `mark_credit_alerted()`.
+
+**Dove scatta davvero il pre-allarme.** Subito dopo ogni `add_spend()` riuscito, in `gemini_tts._maybe_alert_credit(model_key)` (chiamata da `synthesize()` solo quando il backend che ha eseguito è Cloudflare): è l'unico istante in cui il residuo stimato può essere sceso sotto soglia, e il backend è ancora sano — cioè c'è ancora tempo per ricaricare. La funzione verifica **prima** che un notifier sia registrato e **poi** chiama `claim_credit_alert()`, mai il contrario: senza notifier la `claim` brucerebbe in silenzio l'unica notifica disponibile. Il notifier è registrato in `audiobook_app` (`_on_cf_credit_alert` → `email_service.admin_notify_cf_credit_low`), email **dedicata** e distinta da quella di failover (`admin_notify_tts_backend_switch`), che invece annuncia un guasto già avvenuto. `claim_credit_alert()` resta invocata anche dal notifier di switch, come riga informativa nell'email di failover, per il caso in cui il credito si esaurisca senza passare per la soglia.
 
 **Ispezione e consumo dell'allarme sono due funzioni diverse, e la distinzione non e' cosmetica.**
 
@@ -670,6 +672,8 @@ Il credito Cloudflare AI Gateway è **prepagato** e non è leggibile via API (gl
 ### 7.9 Backend Cloudflare — failover automatico e circuit breaker (`tts_backend_state.py`)
 
 Il passaggio Cloudflare → Vertex e' **automatico e a senso unico**: quando il backend Cloudflare si rivela non utilizzabile, il modello viene marcato come "scattato" su disco (`<ABM_DATA_DIR>/_tts_backend_state.json`) e da quel momento risolve a Vertex. Non esiste half-open, non esiste scadenza: il rientro su Cloudflare avviene **solo** dal pulsante in console admin (`reset()`), che deve anche invalidare la cache in-process `gemini_tts._BACKEND`, altrimenti il processo vivo continua a servire Vertex.
+
+**Contratto del rientro (`POST /admin/api/tts_backend {"action":"reset"}`).** L'endpoint azzera il trip su disco e fa il **`pop`** della voce di cache di ogni `model_key` noto — mai un valore forzato, nemmeno sul modello target: il backend torna a essere deciso da `_resolve_backend` alla sintesi successiva, cioè dalla configurazione dichiarata e da `id_cloudflare`. Due guardie sull'ingresso, entrambe lato server perché il bottone disabilitato in console è scavalcabile da una chiamata diretta all'API: `model_key` non presente in `GEMINI_MODELS` → **400** (una chiave inventata materializzerebbe per sempre una voce spuria nel file di stato); `ABM_GEMINI_BACKEND != "cloudflare"` → **409** (con quella configurazione la sintesi non userà mai Cloudflare, quindi riarmare il breaker non cambia nulla e la console direbbe il falso).
 
 Il job in corso non viene interrotto: prosegue su Vertex **dal chunk corrente**, e il backend viene ricalcolato ad ogni tentativo di retry. All'ingresso di Vertex parte una email immediata all'admin: `trip()` e' un check-and-set atomico sotto lock e ritorna `True` a **esattamente un** chiamante, quindi la notifica non ha bisogno di un secondo meccanismo di deduplica.
 
