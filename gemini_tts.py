@@ -371,6 +371,45 @@ def set_backend_switch_notifier(fn):
     _backend_switch_notifier = fn
 
 
+# Callback del PRE-allarme sul credito Cloudflare: invocata (al piu' una
+# volta per soglia, vedi `_maybe_alert_credit`) mentre il backend e' ancora
+# sano, cioe' finche' c'e' tempo per ricaricare. Distinta dalla callback di
+# switch qui sopra, che parla di un guasto gia' avvenuto. Gancio nudo per lo
+# stesso motivo: gemini_tts non deve dipendere da email_service.
+_credit_alert_notifier = None
+
+
+def set_credit_alert_notifier(fn):
+    """Registra la callback di pre-allarme credito: fn(model_key, credit_left_eur)."""
+    global _credit_alert_notifier
+    _credit_alert_notifier = fn
+
+
+def _maybe_alert_credit(model_key):
+    """Pre-allarme sul credito Cloudflare, da chiamare DOPO ogni `add_spend`.
+
+    Il credito AI Gateway e' prepagato e non leggibile via API: l'unico
+    momento in cui il residuo stimato cambia e' subito dopo un addebito sul
+    ledger, quindi e' li' che va guardato. Senza questo controllo l'allarme
+    partirebbe solo da `_trip_to_vertex`, cioe' a credito gia' finito e
+    failover gia' avvenuto: un post-allarme, non un pre-allarme.
+
+    L'ordine dei due controlli non e' arbitrario. `claim_credit_alert()` e'
+    un check-and-set atomico che CONSUMA l'unico allarme disponibile:
+    chiamarlo senza un notifier registrato lo brucerebbe in silenzio, e
+    nessuna email partirebbe mai. Per questo il notifier si verifica prima.
+
+    Non solleva mai per conto proprio nulla che il chiamante non protegga:
+    il ledger e l'allarme sono contabilita' e osservabilita', mai motivo per
+    far fallire una sintesi gia' riuscita.
+    """
+    if _credit_alert_notifier is None:
+        return
+    if not _backend_state.claim_credit_alert():
+        return
+    _credit_alert_notifier(model_key, _backend_state.credit_left_eur())
+
+
 def _cf_trip_failures():
     try:
         return max(1, int(os.environ.get("ABM_CF_TRIP_FAILURES", "3") or 3))
@@ -2911,6 +2950,15 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         except Exception as _ledger_err:
             print(f"[gemini-tts] add_spend failed (non-fatal, ledger only): "
                   f"{_ledger_err}")
+        # Pre-allarme credito: subito dopo l'addebito, cioe' l'unico istante
+        # in cui il residuo stimato puo' essere sceso sotto soglia. In un try
+        # a se': un guasto SMTP non deve nascondere un guasto del ledger, ne'
+        # viceversa, e nessuno dei due deve far fallire una sintesi riuscita.
+        try:
+            _maybe_alert_credit(model_key)
+        except Exception as _alert_err:
+            print(f"[gemini-tts] credit alert failed (non-fatal): "
+                  f"{_alert_err}")
 
     return {
         "success": True,

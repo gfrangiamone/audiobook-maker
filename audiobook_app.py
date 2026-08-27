@@ -399,7 +399,26 @@ if gemini_tts is not None:
                       model_key, f"{reason}: {str(detail)[:80]}",
                       epoch=time.time())
 
+    def _on_cf_credit_alert(model_key, credit_left_eur):
+        # PRE-allarme, non allarme: arriva mentre Cloudflare e' ancora sano,
+        # dopo l'addebito sul ledger che ha portato il residuo stimato sotto
+        # ABM_CF_CREDIT_ALERT_EUR. Email DEDICATA, mai quella di switch:
+        # quella annuncia un failover gia' avvenuto e dice il contrario.
+        # L'unicita' dell'invio e' garantita a monte da claim_credit_alert(),
+        # che consuma atomicamente l'allarme: qui non serve (ne' esiste) un
+        # secondo meccanismo di deduplica.
+        email_service.admin_notify_cf_credit_low(
+            model_key, credit_left_eur,
+            tts_backend_state.credit_alert_threshold_eur())
+        # epoch=time.time() per lo stesso motivo dello switch: ogni
+        # pre-allarme e' un fatto distinto, non va soffocato dal dedup su
+        # (session_id, operation).
+        _log_activity("", "", "TTS_CF_CREDIT_LOW", "", "",
+                      model_key, f"residuo stimato {credit_left_eur:.2f} EUR",
+                      epoch=time.time())
+
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
+    gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict

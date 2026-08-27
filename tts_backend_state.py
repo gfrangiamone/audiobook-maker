@@ -597,6 +597,15 @@ def credit_left_eur():
     return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
 
 
+def credit_alert_threshold_eur():
+    """Soglia di pre-allarme (`ABM_CF_CREDIT_ALERT_EUR`), la stessa letta da
+    `credit_alert_pending()`/`claim_credit_alert()`. Esposta perche' chi
+    manda l'email possa dichiarare il numero all'admin senza rileggere
+    l'ambiente per conto proprio (due letture divergono nel tempo). PURA:
+    nessuna mutazione, nessun consumo dell'allarme."""
+    return _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+
+
 def credit_alert_pending():
     """PURA: nessuna mutazione, nessuna scrittura su `_CREDIT`, nessuna
     materializzazione di entry, nessun tocco al disco. Ritorna `True` se il

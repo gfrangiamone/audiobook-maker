@@ -692,6 +692,90 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         print(f"[admin] Invio notifica switch backend TTS fallito: {e}")
 
 
+def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
+    """PRE-allarme all'admin: il credito Cloudflare stimato e' sotto soglia.
+
+    Gemella di `admin_notify_tts_backend_switch`, ma dice il contrario:
+    quella annuncia un failover GIA' avvenuto, questa arriva mentre il
+    backend e' ancora sano e c'e' ancora tempo per ricaricare. Le due non
+    vanno mai fuse: chi legge l'oggetto deve capire subito se il servizio sta
+    gia' girando al margine ridotto o no.
+
+    Immediata e non nel digest per la stessa ragione dello switch: se il
+    credito finisce di notte, il servizio passa su Vertex fino al mattino e
+    ogni job servito nel frattempo costa margine.
+
+    Il residuo e' una STIMA (l'API Cloudflare non espone il saldo): e'
+    `ABM_CF_CREDIT_BALANCE_EUR` dichiarato dall'admin meno la spesa
+    accumulata dal ledger locale. Per questo l'email chiede di riallineare
+    la variabile insieme alla ricarica.
+
+    Sec: nessun token, nessuna credenziale - solo importi e nomi di
+    variabili d'ambiente.
+
+    Un guasto SMTP non propaga: l'allarme e' gia' stato consumato a monte
+    (`claim_credit_alert`), il job prosegue comunque.
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+
+    model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
+    try:
+        left = float(credit_left_eur)
+    except (TypeError, ValueError):
+        left = 0.0
+    try:
+        threshold = float(threshold_eur)
+    except (TypeError, ValueError):
+        threshold = 0.0
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] Credito Cloudflare basso: {left:.2f} EUR residui "
+        f"(soglia {threshold:.2f})", max_len=200)
+
+    html_body = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
+      <div style="background:#d97706;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">Credito Cloudflare in esaurimento</h2>
+      </div>
+      <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:16px 20px;font-size:14px">
+        <p>Il credito Cloudflare stimato e' sceso sotto la soglia di
+           pre-allarme. <strong>Il TTS gira ancora su Cloudflare</strong>: non
+           e' avvenuto alcun failover, e non ci sono job in errore.</p>
+        <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
+          <tr><td><strong>Modello</strong></td><td><code>{model_safe}</code></td></tr>
+          <tr><td><strong>Credito residuo (stima)</strong></td><td>{left:.2f} &euro;</td></tr>
+          <tr><td><strong>Soglia di pre-allarme</strong></td><td>{threshold:.2f} &euro;</td></tr>
+        </table>
+        <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
+          <strong>Che cosa succede se non si interviene:</strong> a credito
+          esaurito il circuit breaker scatta e il TTS passa su Vertex, dove il
+          margine scende quasi al pareggio. Il rientro su Cloudflare e' poi
+          <em>manuale</em>, dal pannello «Backend TTS» della console admin:
+          se il credito finisce di notte, il servizio resta su Vertex fino al
+          mattino.</p>
+        <p><strong>Che cosa fare:</strong></p>
+        <ol>
+          <li>Ricaricare il credito Cloudflare AI Gateway.</li>
+          <li>Aggiornare <code>ABM_CF_CREDIT_BALANCE_EUR</code> nell'unit
+              systemd col nuovo saldo dichiarato: il residuo qui sopra e' una
+              stima calcolata da quel valore meno la spesa accumulata, e senza
+              il riallineamento resterebbe sotto soglia.</li>
+          <li>Azzerare il contatore di spesa con la casella <em>«Ho ricaricato
+              il credito»</em> del pannello «Backend TTS», che riarma anche
+              questo pre-allarme per la prossima soglia.</li>
+        </ol>
+        <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_EUR=0</code>. Console: <code>{BASE_URL}/admin/</code></p>
+      </div>
+    </div>"""
+
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Pre-allarme credito Cloudflare inviato per {model_key} "
+              f"(residuo stimato {left:.2f} EUR)")
+    except Exception as e:
+        print(f"[admin] Invio pre-allarme credito Cloudflare fallito: {e}")
+
+
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
                                           refund_eur, voucher_code,
                                           book_title, download_url, lang="it"):
