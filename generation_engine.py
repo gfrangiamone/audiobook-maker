@@ -4532,15 +4532,16 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 chunk_google_cost_eur = 0.0
                 if gemini_tts is not None:
                     try:
-                        bd = gemini_tts.google_cost_breakdown(
+                        bd = gemini_tts.actual_cost_breakdown(
                             result.get("input_tokens", 0),
                             result.get("output_tokens", 0),
                             model_key_local,
+                            result.get("backend"),
                         )
                         chunk_google_cost_eur = float(bd.get("total_eur", 0.0) or 0.0)
                         ga["google_cost_eur"] += chunk_google_cost_eur
                     except Exception as e:
-                        print(f"[{job_id}] google_cost_breakdown failed (non-fatal): {e}")
+                        print(f"[{job_id}] actual_cost_breakdown failed (non-fatal): {e}")
                     # Record usage per chunk (partial completions on cancel restano contabilizzate)
                     try:
                         gemini_tts.record_usage(

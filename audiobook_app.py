@@ -9047,14 +9047,15 @@ def api_preview_audio(job_id):
                 # Costo Google REALE della preview (token reali x rate per MTok).
                 _preview_cost_eur = 0.0
                 try:
-                    _bd = gemini_tts.google_cost_breakdown(
+                    _bd = gemini_tts.actual_cost_breakdown(
                         result.get("input_tokens", 0),
                         result.get("output_tokens", 0),
                         result.get("model_key", "flash25"),
+                        result.get("backend"),
                     )
                     _preview_cost_eur = float(_bd.get("total_eur", 0.0) or 0.0)
                 except Exception as e:
-                    print(f"[preview] google_cost_breakdown failed (non-fatal): {e}")
+                    print(f"[preview] actual_cost_breakdown failed (non-fatal): {e}")
                 try:
                     gemini_tts.record_usage(
                         result.get("model_key", "flash25"),

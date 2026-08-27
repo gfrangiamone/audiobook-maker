@@ -16,10 +16,10 @@ def test_run_generation_accumulates_gemini_actuals(monkeypatch, tmp_path):
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
-    # google_cost_breakdown fake — 0.001 € per 1k input + 0.005 € per 1k output
-    def fake_breakdown(in_t, out_t, model_key):
+    # actual_cost_breakdown fake — 0.001 € per 1k input + 0.005 € per 1k output
+    def fake_breakdown(in_t, out_t, model_key, backend):
         return {"total_eur": (in_t / 1000.0) * 0.001 + (out_t / 1000.0) * 0.005}
-    monkeypatch.setattr(generation_engine.gemini_tts, "google_cost_breakdown", fake_breakdown, raising=False)
+    monkeypatch.setattr(generation_engine.gemini_tts, "actual_cost_breakdown", fake_breakdown, raising=False)
 
     plan = []
     for ch_idx in range(2):
@@ -88,9 +88,9 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
         }
     monkeypatch.setattr(generation_engine, "generate_chunk_pcm_gemini", fake_chunk_gemini)
 
-    def fake_breakdown(in_t, out_t, model_key):
+    def fake_breakdown(in_t, out_t, model_key, backend):
         return {"total_eur": (in_t / 1000.0) * 0.001 + (out_t / 1000.0) * 0.005}
-    monkeypatch.setattr(generation_engine.gemini_tts, "google_cost_breakdown", fake_breakdown, raising=False)
+    monkeypatch.setattr(generation_engine.gemini_tts, "actual_cost_breakdown", fake_breakdown, raising=False)
 
     plan = []
     for ch_idx in range(2):

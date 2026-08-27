@@ -990,13 +990,9 @@ def estimate_output_tokens(text, language=None, model_key=None, rate_pct=0, voic
                                       rate_pct=rate_pct, voice=voice) * tok_per_sec)
 
 
-def google_cost_breakdown(input_tokens, output_tokens, model_key):
-    """Costo Google netto, dettagliato USD/EUR."""
-    if model_key not in GEMINI_MODELS:
-        raise ValueError(f"Unknown model_key: {model_key}")
-    m = GEMINI_MODELS[model_key]
-    input_usd = input_tokens * m["input_usd_per_mtok"] / 1_000_000
-    output_usd = output_tokens * m["output_usd_per_mtok"] / 1_000_000
+def _breakdown(input_tokens, output_tokens, in_rate, out_rate):
+    input_usd = input_tokens * in_rate / 1_000_000
+    output_usd = output_tokens * out_rate / 1_000_000
     total_usd = input_usd + output_usd
     return {
         "input_usd": input_usd,
@@ -1004,6 +1000,36 @@ def google_cost_breakdown(input_tokens, output_tokens, model_key):
         "total_usd": total_usd,
         "total_eur": total_usd * USD_EUR_RATE,
     }
+
+
+def pricing_cost_breakdown(input_tokens, output_tokens, model_key):
+    """Costo di RIFERIMENTO per il listino, dettagliato USD/EUR.
+
+    Usa la tariffa mista (D1): non cambia quando il failover esegue su Vertex.
+    E' l'ingresso di `compute_user_price_eur`.
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    in_rate, out_rate = pricing_rates(model_key)
+    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+
+
+def actual_cost_breakdown(input_tokens, output_tokens, model_key, backend):
+    """Costo REALMENTE sostenuto dal backend che ha eseguito.
+
+    E' l'ingresso della contabilita': con questo si misura il margine vero e si
+    riconcilia la spesa. Non usarlo mai per il prezzo.
+    """
+    if model_key not in GEMINI_MODELS:
+        raise ValueError(f"Unknown model_key: {model_key}")
+    in_rate, out_rate = actual_rates(model_key, backend)
+    return _breakdown(input_tokens, output_tokens, in_rate, out_rate)
+
+
+# Alias storico: i chiamanti che chiedevano "il costo" intendevano il prezzo.
+# Mantenuto per non rompere in silenzio un chiamante dimenticato; i siti di
+# contabilita' sono stati spostati esplicitamente su actual_cost_breakdown.
+google_cost_breakdown = pricing_cost_breakdown
 
 
 def compute_user_price_eur(google_cost_eur, model_key):
