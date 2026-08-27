@@ -7381,13 +7381,20 @@ def admin_api_gemini_recalc_params():
         # Mappa step -> etichetta UI (cfr. SPEED_KEYS in app.js)
         return {-3: "vs", -2: "s", -1: "ss", 0: "n", 1: "sf", 2: "f", 3: "vf"}.get(int(step), str(step))
 
-    # DELTA% = delta_eur / costo Google (formula del ricarico applicato).
-    # Calcolato sui totali del gruppo: piu` robusto della media semplice di
-    # percentuali (outlier su record con costo Google molto piccolo) e
-    # coerente sui record storici salvati con la vecchia formula.
+    # DELTA% = delta_eur / listino (pricing_cost_eur_actual), sempre sulla
+    # base di LISTINO (D1), mai sul costo reale sostenuto dal backend che ha
+    # eseguito il job: coerente con gemini_cost_audit.aggregate() e con
+    # l'aggregato di admin_api_gemini_cost_audit(). Calcolato sui totali del
+    # gruppo: piu` robusto della media semplice di percentuali (outlier su
+    # record con costo molto piccolo). Fallback su google_cost_eur_actual per
+    # record storici pre-esistenti alla separazione listino/reale (dove i due
+    # numeri coincidevano comunque).
     def _avg_delta_pct(recs):
         d_sum = sum(float(r.get("delta_eur") or 0) for r in recs)
-        c_sum = sum(float(r.get("google_cost_eur_actual") or 0) for r in recs)
+        c_sum = 0.0
+        for r in recs:
+            google_cost_actual = float(r.get("google_cost_eur_actual", 0) or 0)
+            c_sum += float(r.get("pricing_cost_eur_actual", google_cost_actual) or google_cost_actual)
         return (d_sum / c_sum * 100.0) if c_sum > 0 else 0.0
 
     suggestions = []

@@ -1,9 +1,12 @@
 """Test /admin/api/gemini_cost_audit/recalc-params endpoint.
 
-NB: l'endpoint calcola DELTA% = sum(delta_eur) / sum(google_cost_eur_actual) * 100
-sul gruppo (model, lang) e produce un report a sezioni con header fissi
-("=== Aggregato globale ===", "=== Per velocità ==="). I record vengono valutati
-solo se il gruppo ha >=3 campioni.
+NB: l'endpoint calcola DELTA% = sum(delta_eur) / sum(pricing_cost_eur_actual) * 100
+sul gruppo (model, lang), sempre sulla base di LISTINO (D1), mai sul costo
+reale sostenuto dal backend che ha eseguito il job (google_cost_eur_actual è
+usato solo come fallback per record legacy privi di pricing_cost_eur_actual,
+dove i due numeri coincidevano comunque). Produce un report a sezioni con
+header fissi ("=== Aggregato globale ===", "=== Per velocità ==="). I record
+vengono valutati solo se il gruppo ha >=3 campioni.
 """
 import pytest
 import gemini_cost_audit
@@ -23,8 +26,8 @@ def admin_headers():
     return {"X-Admin-Token": "test-admin-token"}
 
 
-def _add(model, lang, delta_eur, job_id, google_cost=0.5):
-    gemini_cost_audit.append_record({
+def _add(model, lang, delta_eur, job_id, google_cost=0.5, pricing_cost=None):
+    rec = {
         "job_id": job_id,
         "model_key": model,
         "language": lang,
@@ -32,7 +35,10 @@ def _add(model, lang, delta_eur, job_id, google_cost=0.5):
         "user_price_eur_charged": 1.0,
         "google_cost_eur_actual": google_cost,
         "delta_eur": delta_eur,
-    })
+    }
+    if pricing_cost is not None:
+        rec["pricing_cost_eur_actual"] = pricing_cost
+    gemini_cost_audit.append_record(rec)
 
 
 def _global_line(d, model, lang):
@@ -109,3 +115,21 @@ def test_recalc_params_ok_suggestion(client, admin_headers):
     line = _global_line(d, "flash25", "fr")
     assert line is not None
     assert "parametri OK" in line
+
+
+def test_recalc_params_uses_pricing_cost_not_actual(client, admin_headers):
+    # D1: DELTA% deve dividere per il LISTINO (pricing_cost_eur_actual),
+    # mai per il costo reale (google_cost_eur_actual). Qui i due differiscono
+    # deliberatamente: se il denominatore fosse il costo reale, il segnale
+    # sarebbe "margine alto" (falso allarme); sul listino resta "parametri OK".
+    # sum(delta)=0.15, sum(pricing)=7.5 => +2% (OK)
+    # sum(delta)=0.15, sum(google)=1.5  => +10% (margine alto) <- SBAGLIATO
+    for i in range(3):
+        _add("pro25", "de", 0.05, f"p{i}", google_cost=0.5, pricing_cost=2.5)
+    r = client.get("/admin/api/gemini_cost_audit/recalc-params",
+                   headers=admin_headers)
+    d = r.get_json()
+    line = _global_line(d, "pro25", "de")
+    assert line is not None
+    assert "parametri OK" in line
+    assert "margine alto" not in line

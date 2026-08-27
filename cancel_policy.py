@@ -2,8 +2,9 @@
 
 Usato in Fase 1 da Gemini TTS (run_generation branch _CancelledError) e in
 Fase 2 (futura, spec separata) dall'optimization LLM. La firma e' agnostica
-rispetto al provider: il chiamante passa il costo reale del provider gia'
-accumulato per la quota di lavoro eseguita.
+rispetto al provider: il chiamante passa il costo di LISTINO (D1) gia'
+accumulato per la quota di lavoro eseguita, non il costo reale sostenuto dal
+backend che ha effettivamente eseguito il job.
 
 Reference: docs/superpowers/specs/2026-05-25-cancel-gemini-floor-design.md
 """
@@ -36,8 +37,8 @@ def compute_cancel_retention(provider_cost_eur: float,
     """Calcola trattenuto e refund per un cancel volontario di un job pagato.
 
     Il trattenuto corrisponde al PREZZO che l'utente avrebbe pagato per la
-    quota di lavoro effettivamente eseguita, non al solo costo nudo del
-    provider: applichiamo il ricarico (margin) sul costo Google consumato
+    quota di lavoro effettivamente eseguita, non al solo costo di listino
+    nudo: applichiamo il ricarico (margin) sul costo di listino consumato
     cosi' da preservare la stessa marginalita' commerciale del job
     completato.
 
@@ -46,11 +47,13 @@ def compute_cancel_retention(provider_cost_eur: float,
     refund   = paid - retained
 
     Args:
-        provider_cost_eur: costo netto del provider (es. Google TTS) per la
-            porzione di lavoro gia' eseguita, senza margin.
+        provider_cost_eur: costo di LISTINO (D1, es. tariffa Google TTS) per
+            la porzione di lavoro gia' eseguita, senza margin — non il costo
+            reale sostenuto dal backend che ha effettivamente eseguito il
+            job.
         payment_method: "paypal" | "voucher" (o altro).
         paid_eur: importo realmente versato dall'utente (cap del retained).
-        margin_percent: ricarico % applicato sopra il costo provider
+        margin_percent: ricarico % applicato sopra il costo di listino
             (es. 40.0 per +40%). Default 0 = mantiene il comportamento
             legacy "trattieni solo il costo netto".
     """
