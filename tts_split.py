@@ -458,6 +458,45 @@ def _is_degenerate_chunk(text, min_chars=MIN_CHUNK_CHARS):
     return numerals * 2 >= len(tokens)
 
 
+def _merge_degenerate_chunks(chunks, max_chars, max_bytes, min_chars=MIN_CHUNK_CHARS):
+    """Fonde i chunk degeneri con un vicino, senza mai violare i cap.
+
+    Preferenza in avanti (il titolo sta naturalmente davanti al corpo del
+    capitolo), fallback all'indietro. Se nessuna delle due fusioni resta dentro
+    `max_chars`/`max_bytes`, il chunk resta com'e': l'invariante sui cap vale
+    piu' del fix, e il caso irriducibile viene silenziato a valle.
+    """
+    if len(chunks) < 2:
+        return list(chunks)
+    out = list(chunks)
+    i = 0
+    while i < len(out):
+        if not _is_degenerate_chunk(out[i], min_chars=min_chars):
+            i += 1
+            continue
+        merged = None
+        target = None
+        if i + 1 < len(out):
+            candidate = f"{out[i].strip()}\n\n{out[i + 1].lstrip()}"
+            if _within(candidate, max_chars, max_bytes):
+                merged, target = candidate, i + 1
+        if merged is None and i > 0:
+            candidate = f"{out[i - 1].rstrip()}\n\n{out[i].strip()}"
+            if _within(candidate, max_chars, max_bytes):
+                merged, target = candidate, i - 1
+        if merged is None:
+            i += 1
+            continue
+        out[target] = merged
+        del out[i]
+        # Fusione all'indietro: l'indice corrente punta gia' al chunk successivo.
+        # Fusione in avanti: `del out[i]` ha portato il fuso in posizione i, che
+        # va rivalutato perche' potrebbe essere ancora degenere.
+        if target < i:
+            i = target + 1
+    return out
+
+
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                  strip_round=True, strip_square=True):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
@@ -484,6 +523,11 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         else:
             full_text = f"{ch.title}.\n\n{clean_text}"
         chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
+        # Un frammento tipo "XIV." fa scattare la moderazione contenuti dei
+        # backend Gemini (codice 2017): fondilo col vicino finche' i cap lo
+        # permettono. Cio' che resta degenere e' irriducibile e viene silenziato
+        # in fase di sintesi, senza chiamata API.
+        chunks = _merge_degenerate_chunks(chunks, max_chars, max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,
@@ -492,6 +536,7 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                 "chunks_in_chapter": len(chunks),
                 "text": chunk_text,
                 "chars": len(chunk_text),
+                "degenerate": _is_degenerate_chunk(chunk_text),
             })
     return plan
 
