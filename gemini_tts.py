@@ -1674,8 +1674,13 @@ def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0
 
     Args:
         model_key: 'flash25' | 'flash31'
-        estimated_eur: costo Google stimato pre-job (da estimate_book_cost)
-        actual_eur: costo Google REALE (somma chunk usage_metadata x rate)
+        estimated_eur: costo di LISTINO stimato pre-job sui token stimati
+            (da estimate_book_cost, che usa pricing_cost_breakdown)
+        actual_eur: costo di LISTINO sui token REALI (pricing_cost_breakdown
+            su usage_metadata), MAI il costo reale del backend che ha
+            eseguito (actual_cost_breakdown): mischiare le due basi
+            confonderebbe l'errore dell'estimatore con la scelta di
+            infrastruttura (Cloudflare/Vertex), che qui non deve entrare (D1).
         user_price_eur: prezzo pagato dall'utente (se 0 = job gratuito o ignoto)
     """
     if model_key not in GEMINI_MODELS:
