@@ -5647,6 +5647,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             try:
                 actual = job.get("gemini_actual") or {}
                 google_cost = float(actual.get("google_cost_eur", 0.0) or 0.0)
+                # Base del trattenuto: LISTINO (D1), non costo reale. Il
+                # margine sotto e' calibrato per essere applicato sul costo
+                # di listino (stessa base di compute_user_price_eur, vedi
+                # correzione 3): passare il costo reale qui farebbe dipendere
+                # quanto tratteniamo dal backend che ha eseguito, e dal fatto
+                # che un failover a meta' job sia scattato o no - un utente
+                # vedrebbe cifre diverse per lo stesso lavoro svolto solo per
+                # una scelta di infrastruttura a lui invisibile. Fallback sul
+                # costo reale per job legacy senza pricing_cost_eur (prima di
+                # questa separazione i due numeri coincidevano comunque).
+                pricing_cost = float(actual.get("pricing_cost_eur", google_cost) or google_cost)
                 payment_meta = job.get("payment") or {}
                 paid = float(payment_meta.get("total_eur", 0) or 0)
                 method = payment_meta.get("method", "")
@@ -5664,7 +5675,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     print(f"[{job_id}] margin lookup failed (using 0%): {_mp_err}")
 
                 cr = cancel_policy.compute_cancel_retention(
-                    google_cost, method, paid, margin_percent=margin_pct)
+                    pricing_cost, method, paid, margin_percent=margin_pct)
                 retained = cr["retained_eur"]
                 refund = cr["refund_eur"]
 
