@@ -64,22 +64,29 @@ def aggregate(model=None, language=None, date_from=None, date_to=None):
     """Aggregati su record completed: count, revenue, cost, margin, delta avg.
 
     `delta_pct_avg` e` ricomputato dai totali euro
-    (sum(delta_eur) / sum(google_cost) * 100) cosi` da seguire la formula
-    DELTA% = DELTA€ / Costo Google coerentemente anche sui record storici
-    salvati con la vecchia formula (delta_eur / charged).
+    (sum(delta_eur) / sum(pricing_cost) * 100), sempre sulla base di LISTINO
+    (D1), mai sul costo reale sostenuto dal backend che ha eseguito il job:
+    un denominatore sul costo reale non genera un falso allarme dal nulla,
+    ma gonfia ogni deriva genuina, rendendo inaffidabile la cifra letta
+    durante un incidente vero. Fallback su google_cost_eur_actual per record
+    storici pre-esistenti alla separazione listino/reale (dove i due numeri
+    coincidevano comunque).
     """
     n = 0
     revenue = 0.0
     cost = 0.0
+    pricing_cost = 0.0
     delta_eur_sum = 0.0
     for rec in iter_records(model=model, language=language,
                             outcome="completed",
                             date_from=date_from, date_to=date_to):
         n += 1
         revenue += float(rec.get("user_price_eur_charged", 0) or 0)
-        cost += float(rec.get("google_cost_eur_actual", 0) or 0)
+        google_cost_actual = float(rec.get("google_cost_eur_actual", 0) or 0)
+        cost += google_cost_actual
+        pricing_cost += float(rec.get("pricing_cost_eur_actual", google_cost_actual) or google_cost_actual)
         delta_eur_sum += float(rec.get("delta_eur", 0) or 0)
-    delta_pct_avg = round((delta_eur_sum / cost * 100), 2) if cost > 0 else 0.0
+    delta_pct_avg = round((delta_eur_sum / pricing_cost * 100), 2) if pricing_cost > 0 else 0.0
     return {
         "count": n,
         "revenue_eur": round(revenue, 4),
