@@ -308,3 +308,58 @@ def test_short_prose_chapter_still_reaches_the_api(tmp_path, monkeypatch):
 
     assert called == ["A mia madre."], "la dedica va sintetizzata, non silenziata"
     assert "skipped_degenerate" not in res
+
+
+# --- Tetto di lunghezza: oltre la finestra nessun chunk viene silenziato ----
+
+_CRONOLOGIA = ("1789. 1790. 1791. 1792. 1793. 1794. 1795. 1796. 1797. 1798. "
+               "1799. 1800. 1801. 1802. 1803. 1804. 1805. 1806. 1807. 1808. 1809.")
+
+
+def test_a_long_chronology_is_never_silenced():
+    # Stessa stringa che `_is_degenerate_chunk` classifica gia' come testo vero
+    # (test_enough_context_disarms_the_numeral_ratio). Senza tetto di lunghezza
+    # il predicato del silenziamento la cancellerebbe: nessun token e' una
+    # parola, eppure e' un elenco di date da leggere. Un epilogo o una
+    # cronologia sparirebbero interi dall'audiolibro dichiarando `success`.
+    assert len(_CRONOLOGIA) >= 120
+    assert _is_degenerate_chunk(_CRONOLOGIA) is False
+    assert _is_unspeakable_fragment(_CRONOLOGIA) is False
+
+
+def test_a_long_chronology_still_reaches_the_api(tmp_path, monkeypatch):
+    import tts_split
+
+    called = []
+
+    def fake_synth(text, voice_id, output_path=None, **kw):
+        called.append(text)
+        with open(output_path, "wb") as f:
+            f.write(bytes(100))
+        return {"success": True, "bytes_written": 100, "audio_seconds_real": 1.0,
+                "input_tokens": 5, "output_tokens": 25, "model_key": "flash25",
+                "voice_name": "Kore", "attempts_used": 1}
+
+    monkeypatch.setattr("gemini_tts.synthesize", fake_synth)
+    res = tts_split.generate_chunk_pcm_gemini(
+        _CRONOLOGIA, "gemini:flash25:Kore", str(tmp_path / "chunk.pcm"))
+
+    assert called == [_CRONOLOGIA]
+    assert "skipped_degenerate" not in res
+
+
+# --- Romani: solo numerali ben formati, non ogni sequenza di IVXLCDM -------
+
+@pytest.mark.parametrize("text", [
+    "CIVIL", "MILD", "VIVID", "DVD", "MILL", "DILL", "LIVID", "CIVIC", "IL",
+])
+def test_uppercase_words_made_of_roman_letters_are_not_numerals(text):
+    # Titoli e sigle tipografati in maiuscolo sono fatti delle stesse lettere
+    # dei numerali romani. Con la regola larga (qualunque sequenza di IVXLCDM)
+    # un capitolo intitolato "CIVIL" sarebbe un frammento muto da cancellare.
+    assert _is_unspeakable_fragment(text) is False
+
+
+@pytest.mark.parametrize("text", ["XIV", "MCMLXXXIV.", "III", "XL", "IX"])
+def test_well_formed_roman_numerals_remain_wordless(text):
+    assert _is_unspeakable_fragment(text) is True

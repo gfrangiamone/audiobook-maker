@@ -458,6 +458,17 @@ def _is_degenerate_chunk(text, min_chars=MIN_CHUNK_CHARS):
     return numerals * 2 >= len(tokens)
 
 
+# Numerale ben formato: cifre arabe, oppure un romano VALIDO secondo le regole
+# di composizione (non una qualunque sequenza di I,V,X,L,C,D,M). La differenza
+# conta solo qui: `_NUMERAL_TOKEN_RE` governa il merge, dove una parola scambiata
+# per numerale non fa danno, mentre questa governa il silenziamento. Con la
+# regola larga un titolo tipografato in maiuscolo — "CIVIL", "MILD", "VIVID",
+# "DVD" — sarebbe un frammento muto da cancellare; con la regola stretta resta
+# testo da leggere.
+_STRICT_NUMERAL_TOKEN_RE = re.compile(
+    r'^[\W_]*(?:\d+|M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))[\W_]*$')
+
+
 def _is_unspeakable_fragment(text):
     """True se il chunk non contiene nulla di leggibile: solo numerali e segni.
 
@@ -478,9 +489,15 @@ def _is_unspeakable_fragment(text):
     clean = (text or "").strip()
     if not clean:
         return True
+    # Tetto di lunghezza: oltre questa soglia il chunk porta informazione anche
+    # se e' fatto di sole date ("1789. 1790. ... 1809."), ed e' un elenco da
+    # leggere, non un'intestazione da saltare. Senza il tetto un epilogo o una
+    # cronologia sparirebbero interi dall'audiolibro dichiarando `success`.
+    if len(clean) >= _DEGENERATE_MAX_CHARS:
+        return False
     tokens = [t for t in re.split(r'\s+', clean) if t]
     for t in tokens:
-        if _NUMERAL_TOKEN_RE.match(t):
+        if _STRICT_NUMERAL_TOKEN_RE.match(t):
             continue
         if any(c.isalpha() for c in t):
             return False
@@ -1038,17 +1055,18 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     # e' un chunk che non contiene parlato. La condizione e'
     # `_is_unspeakable_fragment`, NON `_is_degenerate_chunk`: quest'ultimo
     # marca degenere anche la prosa corta ("A mia madre.", "Fine."), che si
-    # sintetizza benissimo e che silenziare significherebbe cancellare testo. Caso dominante nel mondo reale: un
-    # capitolo il cui corpo e' vuoto o quasi identico al titolo, che il merge
-    # del Task 2 non puo' toccare (non esiste un vicino con cui fondersi). Log
-    # obbligatorio: un buco di audio muto senza traccia nei log sarebbe il
-    # difetto peggiore che questa fase possa produrre.
+    # sintetizza benissimo e che silenziare significherebbe cancellare testo.
+    # Caso dominante nel mondo reale: un capitolo il cui corpo e' vuoto o quasi
+    # identico al titolo, che il merge del Task 2 non puo' toccare (non esiste
+    # un vicino con cui fondersi). Log obbligatorio: un buco di audio muto
+    # senza traccia nei log sarebbe il difetto peggiore che questa fase possa
+    # produrre.
     if _is_unspeakable_fragment(clean):
         _generate_silence_pcm(output_path, duration_sec=1)
         _snippet = clean[:80].replace("\n", " ")
         _job_part = f" job={job_id}" if job_id else ""
         print(f"[gemini-tts] Chunk degenere silenziato senza chiamata API "
-              f"(reason=irreducible_degenerate_fragment){_job_part}: {_snippet!r}")
+              f"(reason=wordless_fragment){_job_part}: {_snippet!r}")
         # model_key reale (da voice_id 'gemini:<model>:<voce>') cosi' la
         # contabilita' costi a valle (actual_cost_breakdown/pricing_cost_breakdown,
         # che sollevano ValueError su model_key sconosciuto) non inciampa: costo
