@@ -458,6 +458,35 @@ def _is_degenerate_chunk(text, min_chars=MIN_CHUNK_CHARS):
     return numerals * 2 >= len(tokens)
 
 
+def _is_unspeakable_fragment(text):
+    """True se il chunk non contiene nulla di leggibile: solo numerali e segni.
+
+    Distinto da `_is_degenerate_chunk` e NON intercambiabile con esso. Il
+    predicato degenere serve a decidere se vale la pena FONDERE un chunk con il
+    vicino, e li' il criterio della lunghezza minima e' innocuo: fondere due
+    frammenti non toglie niente a nessuno. Questo predicato invece decide se un
+    chunk viene SILENZIATO senza chiamare il backend, e cancellare testo e' una
+    decisione irreversibile che l'ascoltatore non puo' recuperare: "A mia
+    madre.", "Fine.", una dedica o un capitolo di poche parole sono prosa
+    legittima, corta ma perfettamente sintetizzabile, e la moderazione non le
+    rifiuta affatto. Cio' che fa scattare il codice 2017 e' il frammento privo
+    di parole vere ("XIV.", "1793"), non la brevita'.
+
+    Un token e' "parlabile" se contiene almeno una lettera e non e' un numerale
+    romano o arabo. Nessun token parlabile -> niente da leggere -> silenzio.
+    """
+    clean = (text or "").strip()
+    if not clean:
+        return True
+    tokens = [t for t in re.split(r'\s+', clean) if t]
+    for t in tokens:
+        if _NUMERAL_TOKEN_RE.match(t):
+            continue
+        if any(c.isalpha() for c in t):
+            return False
+    return True
+
+
 def _merge_degenerate_chunks(chunks, max_chars, max_bytes, min_chars=MIN_CHUNK_CHARS):
     """Fonde i chunk degeneri con un vicino, senza mai violare i cap.
 
@@ -1003,15 +1032,18 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
         _generate_silence_pcm(output_path, duration_sec=1)
         return _fail("empty_after_sanitize")
 
-    # Frammento irriducibile (il merge nel piano non ha potuto fonderlo): i
+    # Frammento privo di parole (il merge nel piano non ha potuto fonderlo): i
     # backend Gemini lo rifiutano per moderazione contenuti (codice 2017).
     # Silenzialo senza spendere una chiamata: non e' un fallimento di sintesi,
-    # e' un chunk che non contiene parlato. Caso dominante nel mondo reale: un
+    # e' un chunk che non contiene parlato. La condizione e'
+    # `_is_unspeakable_fragment`, NON `_is_degenerate_chunk`: quest'ultimo
+    # marca degenere anche la prosa corta ("A mia madre.", "Fine."), che si
+    # sintetizza benissimo e che silenziare significherebbe cancellare testo. Caso dominante nel mondo reale: un
     # capitolo il cui corpo e' vuoto o quasi identico al titolo, che il merge
     # del Task 2 non puo' toccare (non esiste un vicino con cui fondersi). Log
     # obbligatorio: un buco di audio muto senza traccia nei log sarebbe il
     # difetto peggiore che questa fase possa produrre.
-    if _is_degenerate_chunk(clean):
+    if _is_unspeakable_fragment(clean):
         _generate_silence_pcm(output_path, duration_sec=1)
         _snippet = clean[:80].replace("\n", " ")
         _job_part = f" job={job_id}" if job_id else ""
