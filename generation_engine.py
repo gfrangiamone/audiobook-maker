@@ -3420,10 +3420,21 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         try:
             if (gemini_tts is not None and outcome == "completed"
                     and model_key in ("flash25", "flash31")):
+                # F6: entrambi i lati sul LISTINO (D1), mai prezzo vs costo
+                # reale. `estimated_eur` (est["google_cost_eur"]) e' gia'
+                # listino (estimate_book_cost usa l'alias google_cost_
+                # breakdown = pricing_cost_breakdown sui token STIMATI); qui
+                # `actual_eur` deve essere il listino sui token REALI
+                # (pricing_cost_actual), non il costo reale del backend che
+                # ha eseguito (google_cost_actual): altrimenti la reconciliation
+                # dell'errore di stima confonderebbe "il modello di stima
+                # token/durata ha sbagliato" con "questo job e' finito su un
+                # backend piu'/meno caro", che e' rumore di infrastruttura
+                # invisibile all'utente, non errore di calibrazione.
                 gemini_tts.record_job_completion(
                     model_key,
                     estimated_eur=float(est.get("google_cost_eur", 0) or 0),
-                    actual_eur=google_cost_actual,
+                    actual_eur=pricing_cost_actual,
                     user_price_eur=charged,
                 )
         except Exception as e:

@@ -1664,7 +1664,9 @@ def record_usage(model_key, chars, input_tokens, output_tokens, google_cost_eur,
 
 
 def record_job_completion(model_key, estimated_eur, actual_eur, user_price_eur=0.0):
-    """Registra la chiusura di un job: stima ex-ante vs costo reale ex-post.
+    """Registra la chiusura di un job: stima ex-ante vs listino ex-post sugli
+    stessi token, per calibrare l'ERRORE DI STIMA (token/durata), non il
+    costo reale del backend che ha eseguito.
 
     Da chiamare una sola volta a fine job (success o cancel parziale), DOPO che
     tutti i chunk hanno gia` chiamato record_usage(). Tiene traccia dell'errore
