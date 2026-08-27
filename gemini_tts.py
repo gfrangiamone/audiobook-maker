@@ -2836,6 +2836,26 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         # rispetto all'alternativa, che e' contare zero.
         usage_input = estimate_input_tokens(final_text)
 
+    # --- Ledger del credito Cloudflare -------------------------------------
+    # Per-chiamata, non per-chunk: ogni synthesize() sa con certezza quale
+    # backend ha eseguito PROPRIO se stesso (backend_used), quindi addebita
+    # solo la spesa che ha davvero generato. Questo vale anche quando questa
+    # chiamata e' un pezzo di un chunk spezzato (_synthesize_pcm_pieces_and_
+    # concat in tts_split.py chiama synthesize() una volta per pezzo): un
+    # trip del circuit breaker a meta' chunk fa si' che i pezzi ante-trip
+    # addebitino qui il credito Cloudflare esattamente quando e' stato speso,
+    # e i pezzi post-trip (su vertex) non lo tocchino. Nessun altro punto del
+    # codice deve chiamare add_spend: farlo anche a livello di chunk
+    # duplicherebbe l'addebito.
+    if backend_used == "cloudflare":
+        try:
+            _cf_spend = actual_cost_breakdown(usage_input, usage_output,
+                                              model_key, "cloudflare")
+            _backend_state.add_spend(model_key, _cf_spend["total_eur"])
+        except Exception as _ledger_err:
+            print(f"[gemini-tts] add_spend failed (non-fatal, ledger only): "
+                  f"{_ledger_err}")
+
     return {
         "success": True,
         "bytes_written": len(pcm_data),
