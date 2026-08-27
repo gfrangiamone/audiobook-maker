@@ -7210,10 +7210,25 @@ def admin_api_tts_backend():
     ma non cambia nulla fino al riavvio del processo (gemini_tts._resolve_backend
     congela il backend risolto in _BACKEND fino al prossimo cache-miss).
     Il reset qui sotto invalida percio' anche la cache per TUTTI i model_key
-    noti (gemini_tts.GEMINI_MODELS), non solo quello passato: gli altri
-    modelli si ririsolvono da soli rispettando il proprio stato reale (pop,
-    mai un valore forzato), solo il modello target viene riportato
-    esplicitamente su "cloudflare".
+    noti (gemini_tts.GEMINI_MODELS), non solo quello passato: ogni modello,
+    target compreso, si ririsolve da solo rispettando il proprio stato reale
+    (pop, mai un valore forzato). Un `_set_backend(model_key, "cloudflare")`
+    forzato qui sarebbe un bug: scavalcherebbe `_resolve_backend`, cioe' la
+    configurazione dichiarata e la presenza di `id_cloudflare`, inchiodando
+    su Cloudflare anche un modello che Cloudflare non ospita - da li' in poi
+    ogni job PREMIUM su quel modello finirebbe in errore con rimborso
+    integrale, fino al riavvio del processo.
+
+    Due guardie sull'ingresso, entrambe indispensabili perche' quelle lato
+    client (il bottone disabilitato in `tbApply`) sono scavalcabili da una
+    chiamata diretta all'API:
+
+    - `model_key` deve essere una chiave nota: `reset()` materializza la voce
+      su disco, quindi una chiave inventata sporcherebbe per sempre lo stato
+      persistito con un modello inesistente;
+    - il rientro ha senso solo se l'ambiente seleziona davvero Cloudflare
+      (`ABM_GEMINI_BACKEND == "cloudflare"`). Altrimenti la console direbbe
+      all'admin di aver riacceso un backend che nessuna sintesi usera' mai.
 
     Sicurezza: `trip_detail` e' persistito e loggato senza redazione (vedi
     tts_backend_state) - puo' contenere solo testo diagnostico (mai
@@ -7232,12 +7247,33 @@ def admin_api_tts_backend():
     model_key = (request.args.get("model_key")
                  or (request.get_json(silent=True) or {}).get("model_key")
                  or "flash31")
+    configured_backend = (os.environ.get("ABM_GEMINI_BACKEND", "auto")
+                          or "auto").strip().lower()
 
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         action = str(data.get("action", "") or "").strip().lower()
         if action != "reset":
             return jsonify({"error": f"Azione non riconosciuta: {action!r}"}), 400
+        if model_key not in gemini_tts.GEMINI_MODELS:
+            return jsonify({
+                "error": (f"model_key sconosciuto: {model_key!r}. Il reset "
+                          f"creerebbe una voce di stato per un modello che "
+                          f"non esiste."),
+                "known_model_keys": sorted(gemini_tts.GEMINI_MODELS),
+            }), 400
+        if configured_backend != "cloudflare":
+            return jsonify({
+                "error": (f"Rientro non applicabile: ABM_GEMINI_BACKEND vale "
+                          f"{configured_backend!r}, non 'cloudflare'. Con "
+                          f"questa configurazione la sintesi non usa "
+                          f"Cloudflare in nessun caso, quindi riarmare il "
+                          f"breaker non cambierebbe nulla. Per riaccendere "
+                          f"Cloudflare: impostare ABM_GEMINI_BACKEND="
+                          f"cloudflare nell'unit systemd e riavviare il "
+                          f"servizio."),
+                "configured_backend": configured_backend,
+            }), 409
         had_trip = tts_backend_state.reset(model_key)
         topup = bool(data.get("topup"))
         if topup:
@@ -7246,10 +7282,11 @@ def admin_api_tts_backend():
         # overwrite): un reset che lasciasse la cache degli altri modelli
         # intonsa sarebbe innocuo, ma lasciare quella del modello appena
         # resettato e' esattamente il difetto silenzioso descritto sopra.
+        # Nessun valore forzato nemmeno per il target: il backend torna a
+        # essere deciso da _resolve_backend alla prossima sintesi.
         with gemini_tts._BACKEND_LOCK:
             for known_key in gemini_tts.GEMINI_MODELS:
                 gemini_tts._BACKEND.pop(known_key, None)
-        gemini_tts._set_backend(model_key, "cloudflare")
         _log_activity("", "", "ADMIN_TTS_BACKEND_RESET", "", _get_client_ip(),
                       model_key, f"had_trip={had_trip} topup={topup}")
         print(f"[admin] Backend TTS {model_key} riportato su Cloudflare "
@@ -7258,15 +7295,19 @@ def admin_api_tts_backend():
     s = tts_backend_state.state(model_key)
     return jsonify({
         "model_key": model_key,
-        "active": s.get("active") or "cloudflare",
+        # Ripiego sulla configurazione dichiarata, mai sulla stringa
+        # "cloudflare": su un'installazione pulita `state()` ritorna {} e un
+        # default fisso faceva scrivere al pannello «Cloudflare non
+        # configurato · il TTS gira su cloudflare», che si contraddice da
+        # solo nella prima riga che un admin legge dopo il deploy.
+        "active": s.get("active") or configured_backend,
         "tripped_at": s.get("tripped_at"),
         "trip_reason": s.get("trip_reason"),
         "trip_detail": s.get("trip_detail"),
         "trip_job_id": s.get("trip_job_id"),
         "consecutive_failures": s.get("consecutive_failures", 0),
         "credit_left_eur": round(tts_backend_state.credit_left_eur(), 2),
-        "configured_backend": (os.environ.get("ABM_GEMINI_BACKEND", "auto")
-                                or "auto").strip().lower(),
+        "configured_backend": configured_backend,
     })
 
 

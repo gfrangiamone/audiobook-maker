@@ -20,6 +20,15 @@ def _reset_gemini_backend_cache():
 def client(tmp_path, monkeypatch):
     st.init(str(tmp_path))
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "segreto")
+    # Il rientro su Cloudflare e' rifiutato quando l'ambiente non seleziona
+    # Cloudflare (409): il default di questa fixture e' quindi la
+    # configurazione in cui il reset e' legittimo. I test che vogliono
+    # provare il rifiuto sovrascrivono la variabile da soli.
+    # Credenziali FINTE: servono solo a far risolvere _resolve_backend, non
+    # viene mai aperta alcuna connessione.
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
+    monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "account-di-test")
+    monkeypatch.setenv("ABM_CF_API_TOKEN", "token-di-test")
     audiobook_app.app.config["TESTING"] = True
     with audiobook_app.app.test_client() as c:
         yield c
@@ -110,10 +119,11 @@ def test_reset_reactivates_cloudflare_in_the_in_process_cache(client):
                     json={"action": "reset"})
     assert r.status_code == 200
 
-    # Il reset deve aver riportato la cache in-process su "cloudflare": una
-    # riscrittura solo del disco non cambierebbe questo valore, congelato
-    # nella cache fino al prossimo cache-miss.
-    assert gemini_tts._BACKEND.get("flash31") == "cloudflare"
+    # Il reset deve aver invalidato la cache in-process: la voce sparisce
+    # (una riscrittura del solo disco la lascerebbe congelata su "vertex"
+    # fino al riavvio del processo) e la risoluzione successiva torna a
+    # Cloudflare passando da _resolve_backend, non da un valore forzato.
+    assert "flash31" not in gemini_tts._BACKEND
     assert gemini_tts._resolve_backend("flash31") == "cloudflare"
 
 
@@ -129,15 +139,96 @@ def test_reset_invalidates_the_cache_of_every_known_model_not_only_the_target(cl
                     json={"action": "reset", "model_key": "flash31"})
     assert r.status_code == 200
 
-    # Il modello target e' esplicitamente riportato su cloudflare...
-    assert gemini_tts._BACKEND.get("flash31") == "cloudflare"
-    # ...e OGNI altro modello noto ha la voce di cache invalidata (rimossa,
-    # non lasciata a "vertex"): la prossima sintesi la ririsolve da zero
-    # rispettando il proprio stato reale, invece di restare congelata sul
-    # valore stantio letto prima del reset.
+    # OGNI modello noto, target compreso, ha la voce di cache invalidata
+    # (rimossa, non lasciata a "vertex" e non sovrascritta a mano): la
+    # prossima sintesi la ririsolve da zero rispettando il proprio stato
+    # reale, invece di restare congelata sul valore stantio letto prima del
+    # reset.
     for key in gemini_tts.GEMINI_MODELS:
-        if key == "flash31":
-            continue
-        assert gemini_tts._BACKEND.get(key) != "vertex", (
+        assert key not in gemini_tts._BACKEND, (
             f"la cache di {key!r} non e' stata invalidata dal reset di flash31"
         )
+
+
+# --- Guardie del rientro (F1) ---------------------------------------------
+#
+# `reset()` MATERIALIZZA la voce di stato su disco e il vecchio endpoint
+# chiamava poi `_set_backend(model_key, "cloudflare")` senza validare nulla.
+# Le conseguenze, entrambe verificate in esecuzione prima del fix:
+#  - un reset su un modello che Cloudflare non ospita (flash25,
+#    id_cloudflare=None) lo inchiodava su Cloudflare: da li' in poi ogni job
+#    PREMIUM su quel modello finiva in TransportError(fatal) ->
+#    GeminiUnavailable -> errore + rimborso integrale, fino al riavvio;
+#  - con ABM_GEMINI_BACKEND diverso da "cloudflare" la console rispondeva
+#    200 e accendeva Cloudflare in-process, cosa che l'ambiente non
+#    autorizza. La guardia lato client (bottone disabilitato) e' scavalcata
+#    da una chiamata diretta all'API.
+
+def test_an_unknown_model_key_is_rejected(client):
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset", "model_key": "modello-inesistente"})
+    assert r.status_code == 400
+    assert "modello-inesistente" in r.get_json()["error"]
+    # E soprattutto: nessuna voce spuria e' finita nello stato persistito.
+    assert st.state("modello-inesistente") == {}
+
+
+def test_an_unknown_model_key_from_the_query_string_is_rejected(client):
+    # model_key arriva sia da query sia dal corpo JSON: la guardia deve
+    # valere per entrambe le vie, non solo per quella del corpo.
+    r = client.post("/admin/api/tts_backend?model_key=fantasma", headers=AUTH,
+                    json={"action": "reset"})
+    assert r.status_code == 400
+    assert st.state("fantasma") == {}
+
+
+def test_reset_is_refused_when_the_environment_does_not_select_cloudflare(
+        client, monkeypatch):
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    st.trip("flash31", reason="cf_backend_down", detail="d", job_id="j")
+
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset"})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert body["configured_backend"] == "auto"
+    # Il messaggio deve dire PERCHE', non solo che e' vietato.
+    assert "ABM_GEMINI_BACKEND" in body["error"]
+    # Il trip non e' stato toccato: un rifiuto che azzerasse comunque lo
+    # stato sarebbe peggio di un 200.
+    assert st.is_tripped("flash31") is True
+
+
+def test_a_refused_reset_does_not_pin_any_model_on_cloudflare(client, monkeypatch):
+    # Il difetto vero: con configurazione "auto" il vecchio endpoint fissava
+    # su Cloudflare il model_key passato, flash25 compreso — che su
+    # Cloudflare non esiste (id_cloudflare=None).
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset", "model_key": "flash25"})
+    assert r.status_code == 409
+    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
+    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
+
+
+def test_reset_never_pins_a_model_cloudflare_does_not_host(client):
+    # Anche con l'ambiente su "cloudflare" (reset legittimo), il rientro non
+    # deve mai forzare su Cloudflare un modello privo di id_cloudflare: dopo
+    # il pop, _resolve_backend lo rimanda su Vertex da solo.
+    assert gemini_tts.GEMINI_MODELS["flash25"].get("id_cloudflare") is None
+    r = client.post("/admin/api/tts_backend", headers=AUTH,
+                    json={"action": "reset", "model_key": "flash25"})
+    assert r.status_code == 200
+    assert gemini_tts._BACKEND.get("flash25") != "cloudflare"
+    assert gemini_tts._resolve_backend("flash25") != "cloudflare"
+
+
+def test_a_clean_install_does_not_report_a_self_contradictory_state(
+        client, monkeypatch):
+    # F5: su installazione pulita state() ritorna {} e il fallback fisso
+    # "cloudflare" faceva scrivere al pannello «Cloudflare non configurato ·
+    # il TTS gira su cloudflare».
+    monkeypatch.setenv("ABM_GEMINI_BACKEND", "vertex")
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["configured_backend"] == "vertex"
+    assert body["active"] == "vertex"
