@@ -1,0 +1,125 @@
+"""Esercita la closure VERA registrata da audiobook_app su
+gemini_tts.set_backend_switch_notifier, non una lambda di comodo del test.
+
+Il gap che questo file chiude (review round 1, rilievo MAGGIORE): nessun
+altro test invocava mai `audiobook_app._on_tts_backend_switch`.
+`test_gemini_failover.py` sovrascrive sempre il notifier con una lambda
+locale (verifica solo che *un* notifier venga chiamato, mai quale). I test
+di `email_service` chiamano `admin_notify_tts_backend_switch` direttamente,
+saltando la closure. Risultato: uno swap di
+`tts_backend_state.claim_credit_alert()` (atomico, consuma l'allarme) con
+`tts_backend_state.credit_alert_pending()` (pura, non consuma mai nulla) —
+esattamente l'errore segnalato in review — lasciava tutta la suite verde.
+Con `credit_alert_pending()` l'allarme resterebbe pendente per sempre e
+l'email di credito ripartirebbe a ogni singolo switch: un allarme che arriva
+mille volte e' un allarme spento.
+
+Verificato manualmente (non solo per costruzione): sostituendo
+`claim_credit_alert` con `credit_alert_pending` nella closure di
+`audiobook_app.py` e rilanciando questo file,
+`test_wired_notifier_claims_the_alert_not_just_peeks` diventa rosso
+(l'assert su `calls == ["claim"]` fallisce, vede `["pending"]`); ripristinato
+il codice torna verde. Vedi task-4-report.md, sezione "fix round 1".
+"""
+import pytest
+
+import audiobook_app
+import gemini_tts
+import tts_backend_state
+import email_service
+
+
+@pytest.fixture
+def _registered_notifier():
+    """Ri-registra ESPLICITAMENTE la closure vera di audiobook_app nello slot
+    globale di gemini_tts e la invoca passando per
+    `gemini_tts._backend_switch_notifier`, cioe' esattamente il percorso che
+    `_trip_to_vertex` usa in produzione.
+
+    Non ci si puo' affidare al fatto che il notifier registrato all'IMPORT
+    di audiobook_app sopravviva fino a qui: altri file di test (es.
+    `test_gemini_failover.py`) mutano lo stesso slot globale con una lambda
+    locale e lo resettano a `None` nel proprio teardown, indipendentemente
+    dall'ordine di raccolta della suite.
+    """
+    original = gemini_tts._backend_switch_notifier
+    gemini_tts.set_backend_switch_notifier(audiobook_app._on_tts_backend_switch)
+    try:
+        yield lambda *a: gemini_tts._backend_switch_notifier(*a)
+    finally:
+        gemini_tts.set_backend_switch_notifier(original)
+
+
+def test_wired_notifier_claims_the_alert_not_just_peeks(monkeypatch, _registered_notifier):
+    calls = []
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert",
+                        lambda: calls.append("claim") or True)
+    monkeypatch.setattr(tts_backend_state, "credit_alert_pending",
+                        lambda: calls.append("pending") or True)
+    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: 4.2)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-x")
+
+    assert calls == ["claim"], (
+        "il notifier deve decidere l'allarme SOLO con claim_credit_alert() "
+        "(atomico): con credit_alert_pending() l'allarme non si consuma mai "
+        "e l'email di credito ripartirebbe a ogni switch")
+    assert sent[0][1]["credit_left_eur"] == pytest.approx(4.2)
+
+
+def test_wired_notifier_omits_credit_when_alert_not_claimed(monkeypatch, _registered_notifier):
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(tts_backend_state, "credit_alert_pending", lambda: False)
+    peeked = []
+    monkeypatch.setattr(tts_backend_state, "credit_left_eur",
+                        lambda: peeked.append(1) or 9.9)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-y")
+
+    assert sent[0][1]["credit_left_eur"] is None
+    # credit_left_eur() non va nemmeno letto se l'allarme non e' stato
+    # reclamato: leggerlo comunque non sarebbe un bug funzionale (il valore
+    # non verrebbe usato) ma un tell che la guardia e' stata bypassata.
+    assert peeked == []
+
+
+def test_wired_notifier_forwards_reason_model_and_job(monkeypatch, _registered_notifier):
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_consecutive_failures", "HTTP 402", "job-w")
+
+    args, kwargs = sent[0]
+    assert args[:4] == ("flash31", "cf_consecutive_failures", "HTTP 402", "job-w")
+
+
+def test_wired_notifier_logs_activity_with_a_fresh_epoch(monkeypatch, _registered_notifier):
+    """Rilievo 3: la chiave di dedup di _log_activity non deve restare
+    costante, altrimenti il secondo switch nel mese sparisce in silenzio dal
+    business log."""
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: None)
+    logged = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: logged.append((a, kw)))
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-z")
+
+    assert logged, "il notifier deve chiamare _log_activity"
+    args, kwargs = logged[0]
+    assert args[2] == "TTS_BACKEND_SWITCH"
+    assert kwargs.get("epoch") is not None, (
+        "senza epoch la chiave di dedup (session_id, operation) resta "
+        "costante e gli switch successivi nello stesso mese spariscono")

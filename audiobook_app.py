@@ -387,8 +387,17 @@ if gemini_tts is not None:
             credit = None
         email_service.admin_notify_tts_backend_switch(
             model_key, reason, detail, job_id, credit_left_eur=credit)
+        # epoch=time.time() rende la chiave di dedup sempre nuova: a
+        # differenza degli eventi di download (spam da prefetch, dedup
+        # voluto), ogni switch di backend e' un fatto distinto anche a
+        # parita' di session_id (qui sempre vuota) e operation. Senza epoch
+        # la chiave (session_id, operation) resterebbe costante e il primo
+        # switch del mese soffocherebbe in silenzio tutti quelli successivi
+        # (modello diverso, o riarmo manuale seguito da nuova ricaduta) —
+        # proprio l'evento che un'indagine forense va a cercare.
         _log_activity("", "", "TTS_BACKEND_SWITCH", "", "",
-                      model_key, f"{reason}: {str(detail)[:80]}")
+                      model_key, f"{reason}: {str(detail)[:80]}",
+                      epoch=time.time())
 
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
 
