@@ -475,7 +475,11 @@ def _merge_degenerate_chunks(chunks, max_chars, max_bytes, min_chars=MIN_CHUNK_C
             i += 1
             continue
         merged = None
-        target = -1  # int: `merged is not None` implica un target valido
+        # -1 e' un segnaposto mai usato: `merged` e `target` si assegnano
+        # sempre insieme, quindi il ramo che scrive `out[target]` gira solo
+        # con un indice valido. Serve a tenere il tipo `int` (con None gli
+        # analizzatori statici segnalano l'indicizzazione e il confronto).
+        target = -1
         if i + 1 < len(out):
             candidate = f"{out[i].strip()}\n\n{out[i + 1].lstrip()}"
             if _within(candidate, max_chars, max_bytes):
