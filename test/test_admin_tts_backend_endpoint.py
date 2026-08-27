@@ -334,6 +334,50 @@ def test_topup_with_an_unknown_model_key_is_rejected(client):
     assert st.state("fantasma") == {}
 
 
+def test_the_refusal_explains_the_action_the_caller_asked_for(client):
+    # Lo stesso 400 serve due azioni con effetti diversi: solo il reset
+    # materializzerebbe una voce di stato. Motivare il topup con la frase del
+    # reset manda l'admin a cercare una voce che quell'azione non crea mai.
+    reset = client.post("/admin/api/tts_backend", headers=AUTH,
+                        json={"action": "reset", "model_key": "fantasma"})
+    topup = client.post("/admin/api/tts_backend", headers=AUTH,
+                        json={"action": "topup", "model_key": "fantasma"})
+    assert "voce di stato" in reset.get_json()["error"]
+    assert "voce di stato" not in topup.get_json()["error"]
+
+
+def test_the_topup_log_does_not_report_a_residual_nobody_declared(
+        client, monkeypatch):
+    # Senza ABM_CF_CREDIT_BALANCE_EUR il "residuo" e' la spesa cambiata di
+    # segno: un negativo che il pre-allarme stesso ignora (con saldo <= 0 non
+    # scatta mai). Stamparlo come misura fa leggere all'admin un numero che non
+    # significa nulla proprio nella riga che documenta la ricarica.
+    logged = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: logged.append(a))
+    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_EUR", raising=False)
+    st.add_spend("flash31", 3.0)
+
+    client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
+
+    dettaglio = logged[0][6]
+    assert "-3.00" not in dettaglio
+    assert "non dichiarato" in dettaglio
+
+
+def test_the_topup_log_reports_the_residual_when_a_balance_is_declared(
+        client, monkeypatch):
+    logged = []
+    monkeypatch.setattr(audiobook_app, "_log_activity",
+                        lambda *a, **kw: logged.append(a))
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    st.add_spend("flash31", 46.0)
+
+    client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
+
+    assert "4.00" in logged[0][6]
+
+
 def test_topup_is_written_to_the_activity_log(client, monkeypatch):
     # Una forense sul credito deve poter ritrovare l'azzeramento: senza
     # questa riga la spesa cumulata sparisce senza traccia.

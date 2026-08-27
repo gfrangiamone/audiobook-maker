@@ -7360,10 +7360,17 @@ def admin_api_tts_backend():
                           "failover in corso."),
             }), 400
         if model_key not in gemini_tts.GEMINI_MODELS:
+            # Il perche' del rifiuto dipende dall'azione: solo il reset
+            # materializzerebbe una voce di stato. Motivare il topup con il
+            # testo del reset descriverebbe un effetto che quell'azione non
+            # ha, e manderebbe l'admin a cercare una voce di stato inesistente.
+            why = ("Il reset creerebbe una voce di stato per un modello che "
+                   "non esiste."
+                   if action == "reset" else
+                   "Il ledger della spesa Cloudflare e' unico per l'account, "
+                   "ma il model_key resta tracciato nel log dell'operazione.")
             return jsonify({
-                "error": (f"model_key sconosciuto: {model_key!r}. Il reset "
-                          f"creerebbe una voce di stato per un modello che "
-                          f"non esiste."),
+                "error": f"model_key sconosciuto: {model_key!r}. {why}",
                 "known_model_keys": sorted(gemini_tts.GEMINI_MODELS),
             }), 400
         if configured_backend != "cloudflare":
@@ -7389,15 +7396,22 @@ def admin_api_tts_backend():
             # scattato - aver ricaricato il credito non dimostra che la causa
             # del guasto sia stata risolta, e il rientro ha una sua conferma
             # separata.
-            credit_before = round(tts_backend_state.credit_left_eur(), 2)
+            # Senza saldo dichiarato il "residuo" e' solo la spesa cambiata di
+            # segno: un numero negativo che non significa nulla, e che il
+            # pre-allarme stesso ignora (con saldo <= 0 non scatta mai). Meglio
+            # dirlo che stamparlo come se fosse una misura.
+            if tts_backend_state.declared_balance_eur() > 0:
+                before = (f"residuo stimato prima: "
+                          f"{tts_backend_state.credit_left_eur():.2f} EUR")
+            else:
+                before = ("residuo non calcolabile: ABM_CF_CREDIT_BALANCE_EUR "
+                          "non dichiarato")
             tts_backend_state.reset_spend()
             _log_activity("", "", "ADMIN_TTS_CREDIT_TOPUP", "",
                           _get_client_ip(), model_key,
-                          f"ledger azzerato (residuo stimato prima: "
-                          f"{credit_before:.2f} EUR)")
-            print(f"[admin] Ledger spesa Cloudflare azzerato (residuo stimato "
-                  f"prima: {credit_before:.2f} EUR) - pre-allarme credito "
-                  f"riarmato")
+                          f"ledger azzerato ({before})")
+            print(f"[admin] Ledger spesa Cloudflare azzerato ({before}) - "
+                  f"pre-allarme credito riarmato")
         else:
             had_trip = tts_backend_state.reset(model_key)
             # Invalida la cache in-process per ogni modello noto (pop, non

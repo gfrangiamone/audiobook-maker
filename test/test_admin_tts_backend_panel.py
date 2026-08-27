@@ -16,10 +16,15 @@ difetto N2 lato client, che e' una condizione di abilitazione sbagliata:
   sola, e con la configurazione di default stampava «gira su auto», che e' un
   selettore, non un backend.
 
-Mutazioni verificate in esecuzione (vedi final-fix-round-2-report.md):
-`topupBtn.disabled = !cfConfigured || !s.tripped_at;` rende rossi
-`test_the_topup_control_does_not_depend_on_a_trip` e
-`test_only_one_place_decides_whether_topup_is_enabled`.
+Mutazioni verificate in esecuzione (vedi final-fix-round-2-report.md), una per
+test — le due condizioni sono distinte e vanno rotte separatamente:
+- riscrivere l'assegnazione in `topupBtn.disabled = !cfConfigured || !s.tripped_at;`
+  rende rosso `test_the_topup_control_does_not_depend_on_a_trip`;
+- AGGIUNGERE una seconda assegnazione di `topupBtn.disabled` piu' avanti nel
+  ramo del trip rende rosso `test_only_one_place_decides_whether_topup_is_enabled`,
+  che esiste proprio per impedire che una riabilitazione tardiva rimetta la
+  decisione in due posti. La prima mutazione non lo tocca: continua a esserci
+  una sola assegnazione.
 """
 import re
 

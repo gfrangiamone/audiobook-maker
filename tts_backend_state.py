@@ -622,6 +622,19 @@ def credit_left_eur():
     return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
 
 
+def declared_balance_eur():
+    """Saldo Cloudflare DICHIARATO dall'admin (`ABM_CF_CREDIT_BALANCE_EUR`),
+    non il residuo. PURA: nessuna mutazione, nessun consumo dell'allarme.
+
+    Esiste perche' `credit_left_eur()` ritorna un numero anche quando nessun
+    saldo e' stato dichiarato - in quel caso e' la spesa cambiata di segno,
+    non una misura: `credit_alert_pending()`/`claim_credit_alert()` lo sanno
+    e con saldo <= 0 non allarmano mai. Chi deve MOSTRARE il residuo (log,
+    pannello, email) usa questa funzione per distinguere "residuo basso" da
+    "nessun saldo dichiarato" invece di stampare un negativo senza senso."""
+    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+
+
 def credit_alert_threshold_eur():
     """Soglia di pre-allarme (`ABM_CF_CREDIT_ALERT_EUR`), la stessa letta da
     `credit_alert_pending()`/`claim_credit_alert()`. Esposta perche' chi
