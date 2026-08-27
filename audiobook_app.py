@@ -6645,13 +6645,21 @@ def _synth_running_gemini_audit_records():
                 if model_key == "?":
                     model_key = ga.get("model_key") or "?"
                 provider_cost_actual = float(ga.get("google_cost_eur", 0.0) or 0.0)
+                # Mirror di _write_gemini_audit (generation_engine.py): la riga
+                # "running" deve confrontare l'incasso col LISTINO (D1), non
+                # col costo reale accumulato finora, altrimenti su Cloudflare
+                # questa riga live urlerebbe una deriva prezzo falsa per
+                # l'intera durata del job.
+                pricing_cost_actual = float(
+                    ga.get("pricing_cost_eur", provider_cost_actual) or provider_cost_actual)
                 try:
-                    should = gemini_tts.compute_user_price_eur(provider_cost_actual, model_key)
+                    should = gemini_tts.compute_user_price_eur(pricing_cost_actual, model_key)
                     should_have_been = float(should.get("user_price_eur", 0.0))
                 except Exception:
                     should_have_been = 0.0
                 chars_total = int(ga.get("chars", 0) or 0)
                 audio_seconds = float(ga.get("audio_seconds", 0) or 0)
+                pricing_cost_field = pricing_cost_actual
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
@@ -6665,6 +6673,9 @@ def _synth_running_gemini_audit_records():
                     should_have_been = 0.0
                 chars_total = int(sa.get("chars", 0) or 0)
                 audio_seconds = float(sa.get("audio_seconds", 0) or 0)
+                # Speechify non ha una separazione listino/costo reale (un
+                # solo backend): coincide col costo, come nel record persistito.
+                pricing_cost_field = provider_cost_actual
             delta_eur = round(should_have_been - charged, 4)
             _llm_quota = (job.get("payment") or {}).get("llm_eur")
             combined_total = (round(charged + float(_llm_quota or 0), 4)
@@ -6678,6 +6689,7 @@ def _synth_running_gemini_audit_records():
                 "chars_total": chars_total,
                 "audio_seconds_actual": round(audio_seconds, 2),
                 "google_cost_eur_actual": round(provider_cost_actual, 4),
+                "pricing_cost_eur_actual": round(pricing_cost_field, 4),
                 "user_price_eur_charged": round(charged, 4),
                 "user_price_eur_should_have_been": round(should_have_been, 2),
                 "delta_eur": delta_eur,
@@ -6900,6 +6912,12 @@ def _apply_cancel_effective(rec):
         return rec
     charged = float(rec.get("user_price_eur_charged", 0) or 0)
     cost = float(rec.get("google_cost_eur_actual", 0) or 0)
+    # Base per la % di deriva: LISTINO quando il record la porta (Gemini,
+    # dopo la separazione prezzo/costo reale), altrimenti il costo (unica
+    # nozione di costo per Speechify/traduzione/ottimizzazione). Coincide con
+    # `cost` quando Cloudflare non e' configurato o il record non e' Gemini:
+    # nessun cambio di comportamento in quei casi.
+    drift_base = float(rec.get("pricing_cost_eur_actual", cost) or cost)
     should = float(rec.get("user_price_eur_should_have_been", 0) or 0)
     cancel_retained = rec.get("cancel_retained_eur")
     outcome = rec.get("outcome") or ""
@@ -6912,7 +6930,7 @@ def _apply_cancel_effective(rec):
     rec["_eff_revenue_eur"] = round(revenue, 4)
     rec["_eff_margin_eur"] = round(revenue - cost, 4)
     rec["_eff_delta_eur"] = round(should - revenue, 4)
-    rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / cost * 100), 2) if cost > 0 else 0.0
+    rec["_eff_delta_pct"] = round((rec["_eff_delta_eur"] / drift_base * 100), 2) if drift_base > 0 else 0.0
     fee = _compute_paypal_fee_eur(revenue, rec.get("payment_method", ""),
                                   combined_total_eur=rec.get("combined_total_eur"))
     rec["_paypal_fee_eur"] = round(fee, 4)
