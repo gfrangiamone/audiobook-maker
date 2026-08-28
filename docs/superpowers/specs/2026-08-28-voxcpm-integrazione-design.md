@@ -54,6 +54,7 @@ Tutte confermate in sede di brainstorming, 2026-08-28.
 | D7 | `CARATTERE` filtra la lista voci; scelta la voce, il campo si allinea come etichetta. Nessuna bidirezionalità simmetrica (§5.3) |
 | D8 | Clonazione offerta nelle **6 lingue dell'interfaccia**: IT, EN, FR, ES, DE, ZH |
 | D9 | Il worker **sintetizza soltanto**; l'assemblaggio resta all'app |
+| D10 | Il catalogo è una **variabile indipendente**: `voices.json` si legge a runtime, nessun elenco di voci è scritto nel codice o nelle traduzioni (§12.1) |
 
 ## 4. Fuori perimetro
 
@@ -100,8 +101,9 @@ nelle sei lingue dell'interfaccia.
 ### 5.3 Perché VOCE e CARATTERE non sono simmetrici
 
 Nel catalogo **ogni voce ha esattamente un carattere**: il carattere è inciso
-nel campione da cui VoxCPM clona, non è una manopola applicabile dopo. In
-italiano, 12 voci per 10 caratteri:
+nel campione da cui VoxCPM clona, non è una manopola applicabile dopo.
+Non è una deduzione: è stato misurato, vedi §15.1. In italiano, 13 voci
+per 11 caratteri:
 
 ```
 audiobook-slow   Federica, Andrea      intimate        Giulia
@@ -109,7 +111,13 @@ warm-young       Martina, Stefano      bright-lively   Alessia
 grave-narrator   Elena                 poised-dry      Chiara
 neutral-pro      Lorenzo               deep-adventure  Davide
 weathered        Riccardo              casual-drawl    Marco
+warm-pro         Tommaso
 ```
+
+Esempio illustrativo, fotografia al 2026-08-28: la generazione delle
+voci è in corso e questi numeri cambieranno. Nessuna parte dell'app li
+conosce — vedi D10 e §12.1. Quello che non cambia è la **forma**: un
+carattere può avere più voci, una voce ha un carattere solo.
 
 Quindi *carattere → voci* restringe davvero (a una o due voci), mentre
 *voce → caratteri* restituisce sempre uno. Il secondo verso non è una scelta:
@@ -260,6 +268,15 @@ era l'accensione del worker, non la modalità.
 `hifi` richiede `prompt_wav` e `prompt_text`. Per le voci di catalogo il testo
 viene dal manifest; per la voce dell'utente è la frase guidata.
 
+**Il canale che porta l'identità è `prompt_wav`, non `reference_wav`.**
+Misurato il 2026-08-28 (§15.1): incrociando i due canali, il risultato
+segue il prefisso e ignora il riferimento. Questo rende `prompt_text` un
+requisito duro e non un accessorio — un campione senza la sua trascrizione
+esatta resta fuori dal canale che conta, e la resa crolla a quella di
+`reference`, già giudicata inaccettabile. È la ragione tecnica per cui D2
+sceglie la frase guidata: la trascrizione è nota per costruzione, quindi
+esatta per costruzione.
+
 ## 8. Costi, quota, pagamento
 
 ### 8.1 Ordine di applicazione
@@ -398,7 +415,32 @@ per addestramento.
 
 **Non toccati:** il repo `abm-voxcpm-worker`.
 
-### 12.1 Formato degli identificatori
+### 12.1 Il catalogo è un dato (D10)
+
+La cartella `data/voci_inventate/` — `voices.json` più i `.wav` dei
+campioni — entra nel progetto `AudioBook-Maker` come **dato importato** dal
+repo del worker, non come sorgente da mantenere qui.
+
+La generazione delle voci è in corso e prosegue in parallelo a questa
+implementazione: numero di voci, nomi, lingue e caratteri **cambieranno**.
+Nessuna riga di codice, nessuna stringa di traduzione e nessun test può
+dipendere da quali voci esistono. In concreto:
+
+- l'elenco delle voci, delle lingue, degli accenti e dei caratteri si
+  ricava **leggendo `voices.json`**, mai da una costante;
+- i caratteri sono chiavi tecniche (`warm-pro`, `audiobook-slow`): l'app li
+  traduce con un dizionario che, davanti a una chiave sconosciuta, ricade
+  sulla chiave stessa invece di rompersi. Un carattere nuovo nel catalogo
+  non deve richiedere un rilascio;
+- i test usano un `voices.json` **di fixture**, non quello reale, così la
+  suite non si rompe a ogni rigenerazione;
+- una voce citata in un job salvato e poi sparita dal catalogo è un caso
+  normale, non un errore: vedi la tabella dei fallimenti in §9.4.
+
+Il percorso della cartella è configurabile (`ABM_VOXCPM_CATALOG_DIR`), così
+aggiornare il catalogo è sostituire una cartella, non toccare il codice.
+
+### 12.2 Formato degli identificatori
 
 ```
 voxcpm:v2:<locale>/<Nome>     voce di catalogo, es. voxcpm:v2:it-IT/Stefano
@@ -417,6 +459,7 @@ Variabili nuove, tutte con default. Da riportare in
 |---|---|---|
 | `ABM_VOXCPM_ENDPOINT_ID` | — | endpoint RunPod; assente = motore nascosto |
 | `ABM_VOXCPM_API_KEY` | — | chiave RunPod |
+| `ABM_VOXCPM_CATALOG_DIR` | `data/voci_inventate` | cartella del catalogo importato (D10) |
 | `ABM_VOXCPM_RATE_EUR_PER_MCHAR` | da fissare | listino all'utente |
 | `ABM_VOXCPM_MIN_COST_EUR` | da fissare | floor sul residuo dopo la quota |
 | `ABM_VOXCPM_CATALOG_PATH` | — | percorso di `voices.json` e dei campioni |
@@ -464,14 +507,51 @@ imputabile a questo lavoro.
 
 ## 15. Punti aperti
 
-### 15.1 Bidirezionalità voce/carattere
+### 15.1 Bidirezionalità voce/carattere — CHIUSO il 2026-08-28
 
-Renderla reale richiede più campioni per la stessa voce, uno per carattere.
-Prima serve una **misura**: a parità di seme, l'identità del parlante regge
-cambiando il design prompt? Il seme fissa il campionamento, non garantisce che
-«Stefano warm-young» e «Stefano grave-narrator» suonino la stessa persona.
-Se regge, è un lotto GPU con curatela e ascolto: progetto a sé, a monte di
-questa integrazione.
+L'ipotesi era che i due canali di `hifi` fossero separabili:
+`reference_wav_b64` = *chi* parla, `prompt_wav_b64` + `prompt_text` = *come*.
+Se lo fossero stati, la bidirezionalità sarebbe uscita gratis, incrociando
+a runtime campioni già in catalogo. **Non lo sono.**
+
+Misura su `it-IT`, quattro job, stesso seme (4242), stesso `cfg` (2,4),
+stesso testo, stessa trascrizione: l'unica variabile era quale clip stesse
+su quale canale. Similarità di speaker con embedding ECAPA-TDNN, coseno.
+
+| take | riferimento | prefisso | vs riferimento | vs prefisso |
+|---|---|---|---|---|
+| `T_A` | Tommaso | Andrea | **0,640** | **0,925** |
+| `A_T` | Andrea | Tommaso | **0,712** | **0,928** |
+
+Scala della metrica, misurata sugli stessi campioni: **pavimento 0,707**
+(Tommaso contro Andrea, due voci diverse), **soffitto 0,92** (una voce col
+proprio clone). Gli incroci non stanno nel mezzo: atterrano esattamente sul
+soffitto del prefisso. `T_A` somiglia ad Andrea quanto Andrea somiglia a sé
+stesso, e contro Tommaso fa 0,640 — *sotto il pavimento*.
+
+La f0 concorda: `T_A` 122,8 Hz, identica ad `A_A` (Andrea), contro i 137 Hz
+di Tommaso. Nemmeno l'andatura si separa: 11,04 s per `A_A`, `T_A` e `A_T`,
+11,36 s per `T_T`, a parità di testo. Ascolto umano il 2026-08-28: `T_A` e
+`A_A` sono la stessa persona.
+
+**Conclusione.** Il prefisso porta tutto — identità e carattere insieme — e
+il riferimento non lo corregge. Non esiste un canale «come» da incrociare.
+Due conseguenze:
+
+1. La bidirezionalità simmetrica resta **fuori portata a runtime**. D7 e
+   §5.3 restano come sono. Ottenere «Tommaso lento da audiolibro» richiede
+   di generarlo come campione: un asse in più nella generazione del
+   catalogo, progetto a sé e fuori perimetro (§4).
+2. Per «La mia voce», il campione dell'utente **deve** stare su
+   `prompt_wav` con la trascrizione esatta. Vedi §7.4: rafforza D2 invece
+   di metterla in discussione.
+
+Limiti dichiarati: un seme, un testo, una coppia di voci, entrambe maschili
+e vicine di timbro (137 contro 125 Hz). Lo scarto è però di 0,28, sopra il
+soffitto da un lato e sotto il pavimento dall'altro: non è un margine che si
+ribalta allargando il campione. Il ramo «stesso seme, descrizione diversa»
+non è stato provato perché è il worker stesso a escluderlo: senza
+riferimento il modello inventa una voce diversa a ogni chiamata.
 
 ### 15.2 Anteprima una tantum della voce clonata
 
@@ -497,8 +577,14 @@ dell'assemblaggio. R2 è già nel percorso, ma il volume per libro va misurato
 sul primo libro vero: se pesa, la compressione dei chunk in transito è
 l'ottimizzazione ovvia, e non cambia il design.
 
-### 15.5 Manifest e catalogo pubblicato
+### 15.5 Cadenza di aggiornamento del catalogo
 
-`manifest.csv` conta 169 righe, `voices.json` ne pubblica 383. La sorgente per
-l'app è `voices.json`, ma la divergenza va capita prima di dipendere da
-entrambi.
+La divergenza fra `manifest.csv` e `voices.json` è rientrata: al 2026-08-28
+sono 361 righe contro 361 voci. La sorgente per l'app resta comunque
+`voices.json` soltanto.
+
+Quello che resta aperto è **procedurale, non tecnico**: con quale cadenza e
+con quale comando la cartella `data/voci_inventate/` viene ri-importata dal
+repo del worker ad `AudioBook-Maker`, e chi decide che un lotto di voci
+nuove è pronto per la produzione. Per D10 questo non blocca
+l'implementazione: il codice regge qualsiasi contenuto del file.
