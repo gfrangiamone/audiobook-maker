@@ -4,7 +4,9 @@ Playbook to diagnose a job incident (lost file, "link scaduto in anticipo", miss
 
 ## Topology (verified, not the documented defaults)
 
-- Service: `audiobook-maker.service` (single process — Werkzeug dev server, **no gunicorn/multi-worker**). WorkingDirectory + code: `/opt/audiobook-maker`. There is also `audiobook-maker-test.service` (**separate** `ABM_DATA_DIR` — does not touch prod data).
+- **Host: `80.211.137.33` (`MiniLinux2`), 4 vCPU / 8 GB RAM / 80 GB disk / 4 GB swap.** Production moved here on 23/08/2026; the old server `80.211.136.211` (`MiniLinux`) proxied traffic until 28/08/2026 and is being decommissioned. Its logs, backups and test environment are archived on this host in `/opt/archive-oldserver/` (syslog to 23/08, nginx logs, `audiobook-maker-test`, nightly backups, plus a manifest of its final state).
+- Service: `audiobook-maker.service` (single process — Werkzeug dev server, **no gunicorn/multi-worker**). WorkingDirectory + code: `/opt/audiobook-maker`. **The test environment no longer runs anywhere**: `audiobook-maker-test.service` stayed on the old server, masked; `test.audiobook-maker.com` resolves here, where no vhost claims it — it lands on the production vhost with a certificate error.
+- **No trusted proxy in front of this origin** (removed 28/08/2026 along with the old server's): nginx has no `set_real_ip_from`/`real_ip_header`, so `$remote_addr` in the access log is always the real peer. An `X-Forwarded-For` in the log is client-declared and worth nothing.
 - **`ABM_DATA_DIR = /opt/audiobook-maker/data`** (NOT `/var/lib/...`). Job dir = `data/<job_id>/output_<epoch>/...`.
 - Env vars live in the systemd unit/EnvironmentFile, **not** visible via `grep ABM_ ...service`. Read the *actual* runtime env from `/proc/$(pgrep -f audiobook_app.py | head -1)/environ` (`tr '\0' '\n'`).
 - **Cold storage is ENABLED**: Cloudflare R2 (`ABM_S3_*`, bucket `audiobook-maker`). boto3 is installed → can list/serve cold directly.

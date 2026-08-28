@@ -1688,7 +1688,7 @@ git commit -m "docs(ops): aggiorna topologia dopo la migrazione sul nuovo server
 
 Nessun push senza conferma esplicita dell'utente.
 
-- [ ] **Step 5: Smontare il proxy temporaneo e le autorizzazioni collegate**
+- [x] **Step 5: Smontare il proxy temporaneo e le autorizzazioni collegate** *(eseguito 28/08/2026: proxy rimosso sul vecchio (vhost pre-cutover ripristinato, copia del proxy in `audiobook-maker.proxy_cutover`), `set_real_ip_from`/`real_ip_header`/`real_ip_recursive` rimosse sul nuovo (backup `nginx.conf.pre_dismissione`), `certbot renew --dry-run` superato senza proxy, IP reale confermato nel log. Residuo Cloudflare gia' rimosso il 24/08. **Restano: revoca vecchie chiavi R2, cambio password root, rotazione admin token, reboot per kernel 6.8.0-138.**)*
 
 Quando il traffico sul vecchio IP è a zero (verificare sull'access log dell'ultima ora), il
 proxy del Task 8, Step 9 non serve più e va rimosso insieme alla riga che lo autorizza a
@@ -1734,7 +1734,7 @@ Sul **vecchio** server, il cron `abm-cleanup-stale` sospeso al Task 8, Step 8 va
 (`/root/abm-cleanup-stale.OLD_SERVER_ROLLBACK`) e sparisce con la macchina: non va rimesso in
 `/etc/cron.d`.
 
-- [ ] **Step 6: Dismissione del vecchio server (T+7 giorni)**
+- [x] **Step 6: Dismissione del vecchio server (T+7 giorni)** *(28/08/2026: traffico legittimo sul vecchio IP azzerato dal cutover — le richieste applicative sono scese da 35.680/giorno a ~30/giorno, tutte scansioni; nessuna `/dl/` reale. Archiviati su NEW in `/opt/archive-oldserver/` (191 MB): syslog, log nginx, ambiente test, backup, manifest. **Manca solo lo spegnimento/cancellazione della VM presso il provider — decisione dell'utente.**)*
 
 Prima di spegnere:
 
