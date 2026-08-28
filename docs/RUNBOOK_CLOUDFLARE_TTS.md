@@ -40,29 +40,42 @@ vede subito sui primi job reali, e il rollback è una variabile d'ambiente.
 Diventa quindi sorveglianza nelle prime 24 ore (§5), non un blocco
 all'accensione.
 
-**G5 — perché è aperto e blocca l'accensione.** Il fix dei chunk degeneri
-(piano `docs/superpowers/plans/2026-08-26-tts-chunking-degenerate-fix.md`)
-**non è stato implementato**: il primo task del piano (`_is_degenerate_chunk`
-in `tts_split.py`) risulta ancora da fare. Senza quel fix, un capitolo il
-cui titolo è un frammento quasi solo numerale (es. `XIV.`, `Cap. 12`) genera
-un chunk che il backend Cloudflare rifiuta per moderazione contenuti con
-codice `2017` (vedi `gemini_tts.py`, commento a riga 2809: *"Percorso
-Cloudflare (422 / codice 2017, spec §4.2)"*). Questo non è un rischio
-statistico: è **deterministico**. Ogni libro con quella struttura di
-titoli — e sono comuni — lo incontra allo stesso punto, ogni volta.
-Accendere Cloudflare oggi significa consegnare un guasto certo a una classe
-intera di libri, non un'eventualità rara da monitorare.
+**G5 — chiuso il 2026-08-28, con esito diverso da quello atteso.** Il piano
+`docs/superpowers/plans/2026-08-26-tts-chunking-degenerate-fix.md` partiva da
+una premessa che si è rivelata falsa: che un capitolo titolato con un
+frammento quasi solo numerale (`XIV.`, `Cap. 12`) producesse un **buco muto**
+nell'audiolibro. Il backend Cloudflare rifiuta davvero quel chunk per
+moderazione contenuti con codice `2017`, e in modo deterministico — ma dal
+**v3.35.0** quel rifiuto non lascia silenzio: `generate_chunk_pcm_gemini`
+instrada il chunk a una voce edge-tts dello stesso genere e accento, che lo
+narra, e il chunk **non conta come fallito** (`tts_split.py`, ramo
+`if fallback_lang:`; `fallback_lang` è sempre valorizzato dal chiamante in
+`generation_engine.py` via `_audit_language`).
 
-> ## Riga netta: **ACCENSIONE NON AUTORIZZATA**
+Il rimedio pianificato — fondere il frammento col chunk vicino — è stato
+implementato, misurato e **rimosso**: su 6000 input casuali (italiano e
+cinese, cap 60-2000 caratteri, byte-cap 200-1800) non cambiava l'esito in
+nemmeno un caso. Lo splitter fa già greedy packing, quindi un frammento resta
+isolato solo quando il vicino non ha spazio residuo, e in quel caso nemmeno la
+fusione potrebbe rispettare i cap. Il comportamento reale è ora fissato da
+`test/test_chunk_fragments.py`.
+
+Resta quindi una **degradazione**, non un guasto: sui capitoli titolati a
+numerale isolato si spendono tre tentativi Gemini e il titolo viene letto con
+una voce diversa dal resto del libro. Non è una ragione per tenere spento
+Cloudflare; è una cosa da ascoltare al primo libro reale.
+
+> ## Riga netta: **ACCENSIONE AUTORIZZATA dopo il controllo di ascolto**
 >
-> Resta non autorizzata finché non sono vere **entrambe** le condizioni:
-> 1. il fix del chunking (piano sopra) è implementato e i suoi test passano;
-> 2. è stata eseguita una rigenerazione di controllo su un libro reale con
->    titoli di capitolo numerali/brevi, backend Cloudflare attivo, **senza**
->    alcun errore `2017` nei log del job.
+> G5 non blocca più. Resta **una** condizione, ed è di ascolto, non di log:
+> una rigenerazione di controllo su un libro reale con titoli di capitolo
+> numerali/brevi, backend Cloudflare attivo, in cui si verifica che
+> 1. il testo dei titoli **si sente** (letto da Gemini o dalla voce di
+>    ripiego: entrambi gli esiti vanno bene, un titolo muto no);
+> 2. `failed_chunks` resta 0 — gli eventuali `2017` nei log sono attesi e
+>    innocui **purché** seguiti dal recupero edge.
 >
-> Solo allora questa riga va aggiornata a **ACCENSIONE AUTORIZZATA**, con
-> data e riferimento al job di controllo, e si può procedere alla §3.
+> Eseguito il controllo, annotare qui data e id del job e procedere alla §3.
 
 ---
 

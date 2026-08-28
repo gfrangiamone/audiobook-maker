@@ -41,24 +41,6 @@ from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
 CHUNK_MAX_CHARS = 2000
 
-# Un chunk piu' corto di questa soglia e' un frammento, non una frase: i
-# backend Gemini lo rifiutano per moderazione (codice 2017) quando e' composto
-# quasi solo da numerali (tipico dei titoli di capitolo: "XIV."). Parametrico
-# perche' la soglia giusta dipende dalla lingua e dal corpus.
-MIN_CHUNK_CHARS = int(os.environ.get("ABM_TTS_MIN_CHUNK_CHARS", "40") or 40)
-# Sopra questa lunghezza un chunk contiene abbastanza contesto perche' il
-# rapporto di numerali non conti piu': "Nel 1793 la Convenzione..." e' testo.
-_DEGENERATE_MAX_CHARS = 120
-# Numerale arabo o romano, eventualmente circondato da punteggiatura.
-# I romani sono riconosciuti SOLO in maiuscolo, e il confronto e' volutamente
-# case-sensitive: con IGNORECASE la classe [IVXLCDM] cattura parole italiane
-# correnti ("mi", "ci", "di", "dici", "vivi", "lidi") e inglesi ("civil",
-# "vivid", "mimic"), e una frase breve che ne contenga abbastanza verrebbe
-# marcata degenere. L'asimmetria del danno impone la lettura stretta: un falso
-# negativo lascia l'errore 2017 che il codice gia' subisce oggi, un falso
-# positivo fa sparire testo dall'audiolibro senza lasciare traccia.
-_NUMERAL_TOKEN_RE = re.compile(r'^[\W_]*(?:\d+|[IVXLCDM]+)[\W_]*$')
-
 # Timeout (secondi) per una singola chiamata edge-tts. edge-tts non applica
 # receive_timeout alla websocket (ws_connect senza timeout in aiohttp): su
 # connessione half-open save() resterebbe sospeso per sempre, bloccando il
@@ -436,117 +418,6 @@ def _sanitize_tts_text(text: str):
     return clean
 
 
-def _is_degenerate_chunk(text, min_chars=MIN_CHUNK_CHARS):
-    """True se il chunk e' un frammento che non va mandato al TTS.
-
-    Due criteri, in OR:
-      1. piu' corto di `min_chars`: e' un frammento comunque, indipendentemente
-         dal contenuto;
-      2. piu' corto di `_DEGENERATE_MAX_CHARS` e composto per almeno meta' dei
-         token da numerali (arabi o romani): e' un'intestazione di capitolo, il
-         caso che fa scattare la moderazione contenuti.
-    """
-    clean = (text or "").strip()
-    if len(clean) < min_chars:
-        return True
-    if len(clean) >= _DEGENERATE_MAX_CHARS:
-        return False
-    tokens = [t for t in re.split(r'\s+', clean) if t]
-    if not tokens:
-        return True
-    numerals = sum(1 for t in tokens if _NUMERAL_TOKEN_RE.match(t))
-    return numerals * 2 >= len(tokens)
-
-
-# Numerale ben formato: cifre arabe, oppure un romano VALIDO secondo le regole
-# di composizione (non una qualunque sequenza di I,V,X,L,C,D,M). La differenza
-# conta solo qui: `_NUMERAL_TOKEN_RE` governa il merge, dove una parola scambiata
-# per numerale non fa danno, mentre questa governa il silenziamento. Con la
-# regola larga un titolo tipografato in maiuscolo — "CIVIL", "MILD", "VIVID",
-# "DVD" — sarebbe un frammento muto da cancellare; con la regola stretta resta
-# testo da leggere.
-_STRICT_NUMERAL_TOKEN_RE = re.compile(
-    r'^[\W_]*(?:\d+|M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))[\W_]*$')
-
-
-def _is_unspeakable_fragment(text):
-    """True se il chunk non contiene nulla di leggibile: solo numerali e segni.
-
-    Distinto da `_is_degenerate_chunk` e NON intercambiabile con esso. Il
-    predicato degenere serve a decidere se vale la pena FONDERE un chunk con il
-    vicino, e li' il criterio della lunghezza minima e' innocuo: fondere due
-    frammenti non toglie niente a nessuno. Questo predicato invece decide se un
-    chunk viene SILENZIATO senza chiamare il backend, e cancellare testo e' una
-    decisione irreversibile che l'ascoltatore non puo' recuperare: "A mia
-    madre.", "Fine.", una dedica o un capitolo di poche parole sono prosa
-    legittima, corta ma perfettamente sintetizzabile, e la moderazione non le
-    rifiuta affatto. Cio' che fa scattare il codice 2017 e' il frammento privo
-    di parole vere ("XIV.", "1793"), non la brevita'.
-
-    Un token e' "parlabile" se contiene almeno una lettera e non e' un numerale
-    romano o arabo. Nessun token parlabile -> niente da leggere -> silenzio.
-    """
-    clean = (text or "").strip()
-    if not clean:
-        return True
-    # Tetto di lunghezza: oltre questa soglia il chunk porta informazione anche
-    # se e' fatto di sole date ("1789. 1790. ... 1809."), ed e' un elenco da
-    # leggere, non un'intestazione da saltare. Senza il tetto un epilogo o una
-    # cronologia sparirebbero interi dall'audiolibro dichiarando `success`.
-    if len(clean) >= _DEGENERATE_MAX_CHARS:
-        return False
-    tokens = [t for t in re.split(r'\s+', clean) if t]
-    for t in tokens:
-        if _STRICT_NUMERAL_TOKEN_RE.match(t):
-            continue
-        if any(c.isalpha() for c in t):
-            return False
-    return True
-
-
-def _merge_degenerate_chunks(chunks, max_chars, max_bytes, min_chars=MIN_CHUNK_CHARS):
-    """Fonde i chunk degeneri con un vicino, senza mai violare i cap.
-
-    Preferenza in avanti (il titolo sta naturalmente davanti al corpo del
-    capitolo), fallback all'indietro. Se nessuna delle due fusioni resta dentro
-    `max_chars`/`max_bytes`, il chunk resta com'e': l'invariante sui cap vale
-    piu' del fix, e il caso irriducibile viene silenziato a valle.
-    """
-    if len(chunks) < 2:
-        return list(chunks)
-    out = list(chunks)
-    i = 0
-    while i < len(out):
-        if not _is_degenerate_chunk(out[i], min_chars=min_chars):
-            i += 1
-            continue
-        merged = None
-        # -1 e' un segnaposto mai usato: `merged` e `target` si assegnano
-        # sempre insieme, quindi il ramo che scrive `out[target]` gira solo
-        # con un indice valido. Serve a tenere il tipo `int` (con None gli
-        # analizzatori statici segnalano l'indicizzazione e il confronto).
-        target = -1
-        if i + 1 < len(out):
-            candidate = f"{out[i].strip()}\n\n{out[i + 1].lstrip()}"
-            if _within(candidate, max_chars, max_bytes):
-                merged, target = candidate, i + 1
-        if merged is None and i > 0:
-            candidate = f"{out[i - 1].rstrip()}\n\n{out[i].strip()}"
-            if _within(candidate, max_chars, max_bytes):
-                merged, target = candidate, i - 1
-        if merged is None:
-            i += 1
-            continue
-        out[target] = merged
-        del out[i]
-        # Fusione all'indietro: l'indice corrente punta gia' al chunk successivo.
-        # Fusione in avanti: `del out[i]` ha portato il fuso in posizione i, che
-        # va rivalutato perche' potrebbe essere ancora degenere.
-        if target < i:
-            i = target + 1
-    return out
-
-
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                  strip_round=True, strip_square=True):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
@@ -573,11 +444,6 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         else:
             full_text = f"{ch.title}.\n\n{clean_text}"
         chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
-        # Un frammento tipo "XIV." fa scattare la moderazione contenuti dei
-        # backend Gemini (codice 2017): fondilo col vicino finche' i cap lo
-        # permettono. Cio' che resta degenere e' irriducibile e viene silenziato
-        # in fase di sintesi, senza chiamata API.
-        chunks = _merge_degenerate_chunks(chunks, max_chars, max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,
@@ -586,7 +452,6 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                 "chunks_in_chapter": len(chunks),
                 "text": chunk_text,
                 "chars": len(chunk_text),
-                "degenerate": _is_degenerate_chunk(chunk_text),
             })
     return plan
 
@@ -1048,42 +913,6 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
     if clean is None:
         _generate_silence_pcm(output_path, duration_sec=1)
         return _fail("empty_after_sanitize")
-
-    # Frammento privo di parole (il merge nel piano non ha potuto fonderlo): i
-    # backend Gemini lo rifiutano per moderazione contenuti (codice 2017).
-    # Silenzialo senza spendere una chiamata: non e' un fallimento di sintesi,
-    # e' un chunk che non contiene parlato. La condizione e'
-    # `_is_unspeakable_fragment`, NON `_is_degenerate_chunk`: quest'ultimo
-    # marca degenere anche la prosa corta ("A mia madre.", "Fine."), che si
-    # sintetizza benissimo e che silenziare significherebbe cancellare testo.
-    # Caso dominante nel mondo reale: un capitolo il cui corpo e' vuoto o quasi
-    # identico al titolo, che il merge del Task 2 non puo' toccare (non esiste
-    # un vicino con cui fondersi). Log obbligatorio: un buco di audio muto
-    # senza traccia nei log sarebbe il difetto peggiore che questa fase possa
-    # produrre.
-    if _is_unspeakable_fragment(clean):
-        _generate_silence_pcm(output_path, duration_sec=1)
-        _snippet = clean[:80].replace("\n", " ")
-        _job_part = f" job={job_id}" if job_id else ""
-        print(f"[gemini-tts] Chunk degenere silenziato senza chiamata API "
-              f"(reason=wordless_fragment){_job_part}: {_snippet!r}")
-        # model_key reale (da voice_id 'gemini:<model>:<voce>') cosi' la
-        # contabilita' costi a valle (actual_cost_breakdown/pricing_cost_breakdown,
-        # che sollevano ValueError su model_key sconosciuto) non inciampa: costo
-        # comunque zero perche' input/output token sono 0.
-        _vid_parts = str(voice_id).split(":")
-        _model_key_for_skip = _vid_parts[1] if len(_vid_parts) == 3 else None
-        return {
-            "success": True,
-            "bytes_written": os.path.getsize(output_path),
-            "audio_seconds_real": 1.0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "model_key": _model_key_for_skip,
-            "voice_name": voice_id,
-            "attempts_used": 0,
-            "skipped_degenerate": True,
-        }
 
     # Emergency byte-split: se il chunk supera il byte-cap effettivo (cap API
     # meno margine per i prefissi style/rate), invece di farlo silenziare
