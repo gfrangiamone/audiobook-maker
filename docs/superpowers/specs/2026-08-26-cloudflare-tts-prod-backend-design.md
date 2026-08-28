@@ -454,7 +454,7 @@ Lo switch di §7 passo 2 non avviene finché tutti e cinque non sono soddisfatti
 | G1 | Costo Cloudflare riconciliato contro dashboard | **fatto** (−0,39%) | — |
 | G2 | Tutte le voci di `GEMINI_VOICE_NAMES` (30) disponibili su Cloudflare | **fatto** (§10.1) | — |
 | G3 | Qualità indistinguibile da Vertex a parità di voce | **dichiarato dal committente**, non ancora documentato | Fase 0: A/B sullo stesso testo, allegato alla spec |
-| G4 | Latenza p95 non peggiore di Vertex a parità di concorrenza | **aperto** | Fase 0: confronto diretto |
+| G4 | Latenza p95 non peggiore di Vertex a parità di concorrenza | **fatto** (§10.4) | — |
 | G5 | Nessun `2017` su un libro intero dopo il fix chunking | **aperto** | Fase 1 + una rigenerazione di controllo |
 
 ### 10.1 Verifica delle voci (26/08/2026)
@@ -522,13 +522,13 @@ Conseguenze:
 3. **L'errore `2021` (saldo insufficiente, `402`) e' uno scenario di esercizio ordinario**, non un caso remoto: prima o poi il credito finisce. Il trattamento come `backend_down` — trip del breaker alla prima occorrenza, failover su Vertex, email immediata all'admin — e' la protezione principale contro l'interruzione del servizio, e va provato prima dell'accensione.
 4. **Il pre-allarme sul credito e' la difesa che evita di arrivarci.** Con `ABM_CF_CREDIT_BALANCE_EUR = 0` (default) resta disabilitato: chi non dichiara il saldo caricato non riceve allarmi. Dichiararlo alla prima ricarica e' parte della procedura di accensione, non un'opzione.
 
-#### G4 — latenza p95: **NON CHIUSO**
+#### G4 — latenza p95: **CHIUSO il 28/08/2026** (misura in §10.4)
 
-Misurato sul banco Cloudflare: 30 chiamate su testi di ~200 caratteri, latenza per chiamata fra **6,9 e 9,6 s**. Non esiste una misura comparabile su Vertex: la produzione non registra oggi la latenza per chiamata, e i job reali usano chunk di dimensione diversa, con concorrenza diversa, in fasce orarie diverse. Confrontare quei 30 campioni con un'impressione della produzione sarebbe una misura finta.
+Misurato sul banco Cloudflare: 30 chiamate su testi di ~200 caratteri, latenza per chiamata fra **6,9 e 9,6 s**. A questa data non esisteva una misura comparabile su Vertex: la produzione non registra la latenza per chiamata, e i job reali usano chunk di dimensione diversa, con concorrenza diversa, in fasce orarie diverse. Confrontare quei 30 campioni con un'impressione della produzione sarebbe stata una misura finta.
 
-**Cosa servirebbe per chiuderlo:** una campagna A/B sullo stesso testo, con lo stesso piano di chunk e la stessa concorrenza, eseguita nella stessa finestra oraria contro i due backend. Circa un'ora di lavoro e pochi centesimi di spesa.
+**Decisione del 26/08/2026:** G4 resta aperto e non blocca l'accensione. La latenza per chiamata non e' un criterio di qualita' del prodotto ma di durata del job; il rischio e' contenuto perche' un rallentamento si osserva subito sui primi job reali e il rollback e' una variabile d'ambiente. Il runbook indica di sorvegliare la durata dei job nelle prime 24 ore.
 
-**Decisione:** G4 resta aperto e non blocca l'accensione. La latenza per chiamata non e' un criterio di qualita' del prodotto ma di durata del job; il rischio e' contenuto perche' un rallentamento si osserva subito sui primi job reali e il rollback e' una variabile d'ambiente. Il runbook indica di sorvegliare la durata dei job nelle prime 24 ore.
+**Chiusura del 28/08/2026:** la campagna A/B che serviva — stesso testo, stesso piano di chunk, stessa concorrenza, stessa finestra oraria — e' stata eseguita. Esito: Cloudflare non e' peggiore di Vertex ed e' piu' regolare. Numeri e limiti in §10.4.
 
 #### G3 — qualita' A/B: **CHIUSO**
 
@@ -558,11 +558,55 @@ Il catalogo nativo (`/ai/models/search`, 64 modelli `@cf/*`) non elenca i modell
 3. Il modello economico **non** e' toccato dalla tariffa mista: `flash25` conserva le tariffe Google, il suo margine e il suo prezzo. Accendere Cloudflare non sposta flash25 e non ne cambia il listino.
 4. Un id di modello inesistente risponde `404` con **codice 7003**, lo stesso codice dell'overload transitorio. La tabella di §4.2 distingue i due casi sull'HTTP status: `404` -> `fatal`, `400 + 7003` -> `retryable` o `fatal` a seconda del messaggio. Senza quel ramo un id sbagliato verrebbe ritentato su ogni chunk di ogni job.
 
+### 10.4 Latenza A/B Cloudflare vs Vertex (28/08/2026)
+
+Chiude G4 con la misura che §10.2 dichiarava mancante.
+
+**Strumento.** `scripts/ab_latency_bench.py` cronometra `gemini_tts.synthesize()`
+— il percorso vero della produzione, non un clone HTTP — e alterna i due backend
+a chunk alterni, cosi' che una deriva della rete non si scarichi tutta su uno dei
+due. Fra un chunk e l'altro azzera `gemini_tts._BACKEND` e `_available`: quella
+cache memorizza la scelta per `model_key` e non rilegge piu' l'ambiente, quindi
+senza invalidarla il secondo ramo dell'A/B girerebbe in silenzio sul backend del
+primo. Prima di ogni chiamata verifica che il backend risolto sia quello richiesto
+e, se non lo e', salta il chunk invece di spendere su una misura sbagliata.
+
+**Campione.** 10 chunk da 450 caratteri (`ABM_GEMINI_CHUNK_CHARS` di produzione),
+3.849 caratteri totali, voce Zephyr, italiano, 0 errori e 0 retry su entrambi i
+lati, ~0,22 USD di spesa reale.
+
+| | Cloudflare | Vertex |
+|---|---|---|
+| mediana per chiamata | 15,57 s | 17,14 s |
+| **p95** | **20,53 s** | **32,86 s** |
+| min – max | 13,26 – 20,53 s | 11,66 – 32,86 s |
+| totale su 10 chunk | 160,6 s | 183,9 s |
+| velocita' | 1,68x tempo reale | 1,47x tempo reale |
+
+**Esito: criterio soddisfatto.** Cloudflare non e' peggiore di Vertex, e ha una
+coda destra piu' corta: il p95 di Vertex e' gonfiato da un singolo campione a
+32,9 s, mentre il massimo di Cloudflare coincide col suo p95. La regolarita' e'
+il risultato piu' solido della misura.
+
+**Limiti, dichiarati.** Dieci campioni per lato: lo scarto del ~10% fra le
+mediane e' dentro il rumore, e l'unica lettura difendibile e' che i due backend
+sono equivalenti — non che Cloudflare sia piu' veloce. La concorrenza e' 1, che
+e' pero' la concorrenza reale della produzione per Gemini: la sintesi procede
+chunk per chunk e l'unico pool parallelo del progetto (`generation_engine.py`)
+serve la pre-sintesi Speechify, non Gemini.
+
+**Conseguenza operativa, indipendente dal backend.** Entrambi producono audio a
+circa 1,5-1,7x il tempo reale: un libro da 6 h di audio richiede ~3,5-4 h di
+generazione sequenziale su Cloudflare come su Vertex. La lentezza percepita sui
+job premium e' strutturale del TTS Gemini e non e' imputabile all'accensione di
+Cloudflare; l'unica leva che la ridurrebbe davvero e' parallelizzare le chiamate
+sul ramo Gemini, che e' lavoro fuori dal perimetro di questa spec.
+
 ## 11. Fasi di lavoro
 
 | Fase | Contenuto | Esito |
 |---|---|---|
-| 0 | Chiusura di G3 e G4; ricognizione API saldo Cloudflare | ~3 € di chiamate, nessun codice di produzione. G2 già chiuso (§10.1) |
+| 0 | Chiusura di G3 e G4; ricognizione API saldo Cloudflare | ~3 € di chiamate, nessun codice di produzione. G2 già chiuso (§10.1); G4 chiuso il 28/08/2026 (§10.4) |
 | 1 | Fix chunking dei frammenti degeneri (§5) | Rilasciabile da solo |
 | 2 | `gemini_transport.py` + trasporto Vertex; `synthesize()` delega | Zero cambi di comportamento, suite verde intatta |
 | 3 | Trasporto Cloudflare: REST, data URI, mappatura errori, derivazione token | |

@@ -27,18 +27,27 @@ della spec (`docs/superpowers/specs/2026-08-26-cloudflare-tts-prod-backend-desig
 | G1 | Costo Cloudflare riconciliato contro dashboard | **chiuso** | 26/08/2026 | scarto −0,39% |
 | G2 | Parità voci: tutte le 30 voci di `GEMINI_VOICE_NAMES` disponibili su Cloudflare | **chiuso** | 26/08/2026 | 30/30 verificate, §10.1 della spec |
 | G3 | Qualità indistinguibile da Vertex (A/B a orecchio) | **chiuso** | 26/08/2026 | giudizio dell'esercente, §10.2 |
-| G4 | Latenza p95 non peggiore di Vertex a parità di concorrenza | **aperto, non bloccante** | — | vedi nota sotto |
+| G4 | Latenza p95 non peggiore di Vertex a parità di concorrenza | **chiuso** | 28/08/2026 | A/B sul percorso di produzione, §10.4 |
 | G5 | Nessun errore `2017` su un libro intero dopo il fix del chunking | **aperto, bloccante** | — | il fix non è ancora implementato |
 
-**G4 — perché è aperto ma non blocca l'accensione.** Non esiste oggi una
-misura di latenza per chiamata comparabile su Vertex (la produzione non la
-registra), quindi il confronto diretto con i 30 campioni Cloudflare
-(6,9–9,6 s a chiamata) sarebbe una misura finta. La decisione della spec
-(§10.2) è di procedere comunque: la latenza per chiamata non è un criterio
-di qualità del prodotto ma di durata del job, un eventuale rallentamento si
-vede subito sui primi job reali, e il rollback è una variabile d'ambiente.
-Diventa quindi sorveglianza nelle prime 24 ore (§5), non un blocco
-all'accensione.
+**G4 — chiuso il 28/08/2026.** L'A/B che mancava è stato eseguito con
+`scripts/ab_latency_bench.py`, che cronometra `gemini_tts.synthesize()` — il
+percorso vero della produzione, non un clone HTTP — alternando i due backend
+a chunk alterni, così che una deriva della rete non si scarichi tutta su uno
+dei due. Dieci chunk da 450 caratteri (il valore di produzione), italiano,
+voce Zephyr, zero errori e zero retry su entrambi i lati:
+
+| | Cloudflare | Vertex |
+|---|---|---|
+| mediana per chiamata | 15,57 s | 17,14 s |
+| **p95** | **20,53 s** | **32,86 s** |
+| min – max | 13,26 – 20,53 s | 11,66 – 32,86 s |
+| totale su 10 chunk | 160,6 s | 183,9 s |
+
+Cloudflare non è peggiore di Vertex ed è più regolare: il p95 di Vertex è
+gonfiato da un singolo campione a 32,9 s, mentre Cloudflare non produce
+outlier confrontabili. Il criterio è soddisfatto. Numeri, limiti della misura
+(n=10, concorrenza 1) e conseguenze operative in §10.4 della spec.
 
 **G5 — chiuso il 2026-08-28, con esito diverso da quello atteso.** Il piano
 `docs/superpowers/plans/2026-08-26-tts-chunking-degenerate-fix.md` partiva da
@@ -215,11 +224,14 @@ Dopo il restart, in ordine:
   `[ABM-ADMIN] TTS flash31: switch automatico a Vertex (...)`, il failover
   è scattato: passare alla §7. Nessuna email = nessun failover, situazione
   normale.
-- **Latenza percepita sui job lunghi** (G4, non chiuso). Non c'è una
-  soglia numerica da verificare — non esiste un baseline Vertex comparabile
-  — ma un rallentamento percepibile nella durata complessiva dei job
-  rispetto a prima dell'accensione è il segnale da cui partire. In caso di
-  dubbio, il rollback (§6) è immediato.
+- **Durata complessiva dei job lunghi.** G4 è chiuso (§1): a parità di
+  chunk, Cloudflare gira come Vertex. La sorveglianza resta perché il
+  criterio misura la singola chiamata, non il job: entrambi i backend
+  generano a circa 1,5–1,7x il tempo reale, quindi un libro da 6 h di audio
+  impegna ~3,5–4 h in ogni caso, e l'anomalia si riconosce solo confrontando
+  con quella base — non con un'attesa. Un rallentamento marcato rispetto a
+  prima dell'accensione è il segnale da cui partire; in caso di dubbio il
+  rollback (§6) è immediato.
 - **Credito residuo** nel pannello «Backend TTS» (`/admin/audit-premium`):
   deve scendere in modo coerente con il volume di job serviti, non a scatti
   improvvisi.
