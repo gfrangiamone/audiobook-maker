@@ -89,14 +89,19 @@ d'occhio.
 | ASCOLTA CAMPIONE | player del `.wav` di riferimento | `audio.file` |
 | STIMA COSTO | invariato nella forma | `/api/combined_estimate` |
 
-Il catalogo pubblicato (`data/voci_inventate/voices.json`) conta **383 voci**
-su 30 lingue e 48 varianti, ognuna con `description.persona` valorizzata.
+Il catalogo pubblicato è `data/voci_inventate/voices.json`. Al 2026-08-28
+conta 361 voci su 30 lingue e 41 varianti, con 11 caratteri distinti, ma
+**questi numeri non sono un requisito**: per D10 l'app li scopre leggendo
+il file. Ogni voce ha `description.persona` valorizzata, e questo sì è un
+requisito: una voce che ne fosse priva va scartata al caricamento con una
+riga di log, non mostrata senza carattere.
 
-I dieci caratteri: `audiobook-slow`, `bright-lively`, `casual-drawl`,
-`deep-adventure`, `grave-narrator`, `intimate`, `neutral-pro`, `poised-dry`,
-`warm-young`, `weathered`. Le etichette mostrate all'utente sono le stringhe
-già presenti nel catalogo (`description.role`, `description.axes`), tradotte
-nelle sei lingue dell'interfaccia.
+I caratteri sono chiavi tecniche in inglese (`audiobook-slow`,
+`grave-narrator`, `warm-pro`, …). L'app le traduce nelle sei lingue
+dell'interfaccia con un dizionario che, davanti a una chiave sconosciuta,
+ricade sulle stringhe del catalogo (`description.role`, `description.axes`)
+e in ultima istanza sulla chiave stessa. Un carattere nuovo non deve
+richiedere un rilascio.
 
 ### 5.3 Perché VOCE e CARATTERE non sono simmetrici
 
@@ -160,7 +165,7 @@ registrato*, non *come VoxCPM lo renderà* (§15.2).
 ### 6.3 Il gate di qualità
 
 `tools/voice_prompts/audio.py` del repo worker contiene già `measure()` e
-`Gate`, la macchina che ha selezionato le 383 voci del catalogo. Va portata
+`Gate`, la macchina che ha selezionato le voci del catalogo. Va portata
 lato server, non riscritta.
 
 `measure()` restituisce: `snr_db`, `speech_ratio`, `bandwidth_hz`,
@@ -284,29 +289,49 @@ esatta per costruzione.
 Invariante, nell'ordine:
 
 ```
-1. quota mensile gratuita (free_quota, ABM_FREE_QUOTA_EUR_PER_MONTH, €2,00/mese per abm_cid)
-2. sul residuo: se ≤ ABM_LLM_FREE_THRESHOLD_EUR (€0,50) → gratis, dovuto 0
-3. altrimenti dovuto = max(residuo, ABM_VOXCPM_MIN_COST_EUR)
+1. se listino > soglia del motore → job a pagamento, la quota non entra
+2. altrimenti quota mensile gratuita (ABM_FREE_QUOTA_EUR_PER_MONTH, €2,00/mese per abm_cid)
+3. se la quota non copre: dovuto = max(listino, floor del motore)
 ```
+
+È esattamente l'ordine che `free_quota.decision(client_id, voice_id,
+list_total_eur, job_id)` già applica a Gemini e Speechify: **il percorso
+esiste, VoxCPM ci si innesta, non se ne scrive uno nuovo.** Due punti soli
+vanno resi consapevoli del terzo motore, entrambi in `free_quota.py`:
+
+- `_premium_threshold_eur(voice_id)` — oggi un `if is_speechify_voice` con
+  fallback Gemini; prende un ramo `is_voxcpm_voice`.
+- il floor finale di `decision()`, oggi la costante unica
+  `ABM_PREMIUM_MIN_COST_EUR` letta inline; diventa
+  `_premium_floor_eur(voice_id)`, con Gemini e Speechify che continuano a
+  leggere quella stessa variabile (comportamento invariato) e VoxCPM la sua.
 
 **Il floor si applica al residuo, mai al lordo.** Un utente con quota ancora
 capiente non deve vedersi chiedere il minimo per un importo che la quota
-copre.
+copre — in `decision()` questo è il ramo che ritorna `due_eur = 0.0` prima
+di arrivare al floor.
 
-Sono due meccanismi distinti già presenti nel codice e vanno tenuti distinti:
-la soglia con floor è di `payment.py` (ottimizzazione AI e traduzione); la
-quota mensile è di `free_quota.py` (voci premium). VoxCPM è la prima
-funzionalità che li usa entrambi.
+Il meccanismo di `payment.py` (`_llm_apply_min_cost`, soglia free + floor)
+resta dov'è e **non si tocca**: governa l'ottimizzazione AI e la traduzione,
+non le voci. Se un job VoxCPM ha anche l'ottimizzazione attiva, i due importi
+si sommano come già accade per Gemini.
 
 ### 8.2 Costanti nuove
 
-Due sole, in `payment.py`, sullo schema di `LLM_MIN_COST_EUR` (€1,00) e
-`TRANSLATE_MIN_COST_EUR` (€1,50):
+Tre variabili d'ambiente nuove, nessuna nuova regola di prezzo. Il listino
+sta in `voxcpm_tts.py` insieme al motore — dov'è anche quello di Speechify,
+non in `payment.py`; le due lette da `free_quota.py` seguono la convenzione
+delle omologhe premium già esistenti:
 
-- `ABM_VOXCPM_RATE_EUR_PER_MCHAR`
-- `ABM_VOXCPM_MIN_COST_EUR`
+| Variabile | Default | Letta da |
+|---|---|---|
+| `ABM_VOXCPM_RATE_EUR_PER_MCHAR` | — (§15.3) | `voxcpm_tts.compute_user_price_eur` |
+| `ABM_VOXCPM_FREE_THRESHOLD_EUR` | `0.50` | `free_quota._premium_threshold_eur` |
+| `ABM_VOXCPM_MIN_COST_EUR` | `0.50` | `free_quota._premium_floor_eur` |
 
-La funzione `apply_min_cost` esistente si riusa, non si duplica.
+I default replicano quelli premium in vigore (`ABM_SPEECHIFY_FREE_THRESHOLD_EUR`
+e `ABM_PREMIUM_MIN_COST_EUR`, entrambi €0,50): a variabili non impostate,
+VoxCPM si comporta come gli altri motori premium.
 
 ### 8.3 Base di costo
 
@@ -396,16 +421,20 @@ per addestramento.
 
 | File | Responsabilità |
 |---|---|
-| `voxcpm_tts.py` | catalogo, risoluzione voce, sottomissione job, polling, misure. Porting del cuore di `voxcpm_book.py` |
+| `voxcpm_catalog.py` | lettura di `voices.json`, scarto delle voci non valide, indice per lingua e carattere, risoluzione di un id in campione + trascrizione |
+| `voxcpm_tts.py` | listino, sottomissione job a RunPod, polling, errori. Porting del cuore di `voxcpm_book.py` |
 | `voice_clone.py` | procedura di cloning, gate di qualità, normalizzazione, storage, token, email |
+
+Il catalogo sta in un modulo suo e non dentro `voxcpm_tts.py`: leggere un
+file di dati e parlare con RunPod sono due responsabilità senza nulla in
+comune, e la prima deve restare testabile senza endpoint né chiave.
 
 **Toccati:**
 
 | File | Modifica |
 |---|---|
 | `voice_utils.py` | `VOXCPM_VOICE_PREFIX`, `is_voxcpm_voice`. Modulo foglia: nessun import di progetto |
-| `payment.py` | due costanti, riuso di `apply_min_cost` |
-| `free_quota.py` | `is_voxcpm_voice` accanto a `is_speechify_voice` |
+| `free_quota.py` | soglia e floor per motore: `_premium_threshold_eur` e nuovo `_premium_floor_eur` (§8.2) |
 | `generation_engine.py` | ramo VoxCPM in `run_generation`, retention per job |
 | `audiobook_app.py` | `/api/voices` esteso, endpoint del cloning, `/api/voice_sample`, `/api/combined_estimate` |
 | `storage_tiering.py` | campioni vocali nel tiering |
@@ -462,7 +491,6 @@ Variabili nuove, tutte con default. Da riportare in
 | `ABM_VOXCPM_CATALOG_DIR` | `data/voci_inventate` | cartella del catalogo importato (D10) |
 | `ABM_VOXCPM_RATE_EUR_PER_MCHAR` | da fissare | listino all'utente |
 | `ABM_VOXCPM_MIN_COST_EUR` | da fissare | floor sul residuo dopo la quota |
-| `ABM_VOXCPM_CATALOG_PATH` | — | percorso di `voices.json` e dei campioni |
 | `ABM_VOXCPM_CONCURRENCY` | 32 | chunk in volo per job |
 | `ABM_VOICE_CLONE_ENABLED` | true | interruttore della clonazione |
 | `ABM_VOICE_CLONE_RETENTION_DAYS` | da fissare | retention del campione |
