@@ -61,8 +61,9 @@ def _env_float(name, default):
 #                     confermato dalla riconciliazione col saldo a -0,39%)
 #   caratteri -> token: tokenizzatore per lingua (gemini_tts, ~3,4 char/token
 #                     sulle lingue latine, molto meno sul cinese)
-# Vedi `tariffe_native()` per le stesse tariffe espresse in EUR/Mchar e
-# EUR/ora di audio, che sono i numeri con cui si preventiva un libro.
+# Vedi `tariffe_native()` per le stesse tariffe nelle unita' osservabili di
+# un audiolibro, in USD (la valuta in cui Cloudflare fattura) e in EUR (la
+# valuta in cui si preventiva al cliente).
 CF_INPUT_USD_PER_MTOK = 0.75
 CF_OUTPUT_USD_PER_MTOK = 12.00
 
@@ -109,7 +110,12 @@ BOOK_EXTENSIONS = (".abm", ".txt", ".epub")
 
 DEFAULT_CHUNK_CHARS = 450
 DEFAULT_TEMPERATURE = 0.3
-DEFAULT_MAX_SPEND_EUR = 2.00
+# Il cap di spesa e' in USD: il credito AI Gateway e' denominato in dollari,
+# quindi il tetto e il saldo che deve proteggere si confrontano senza cambio
+# di mezzo. Un cap in euro faceva dipendere da `ABM_GEMINI_USD_EUR_RATE`
+# QUANTO credito il banco poteva bruciare - un ritocco del cambio spostava il
+# tetto reale senza che nessuno avesse toccato il tetto.
+DEFAULT_MAX_SPEND_USD = 2.00
 HTTP_TIMEOUT_SEC = 60
 
 
@@ -322,21 +328,25 @@ def tariffe_native():
     tokenizzatore rende piu' token per carattere sul cinese che sull'italiano),
     quindi la voce per-carattere e' data per lingua.
 
-    Restituisce importi in EUR, commissione di ricarica inclusa: sono i numeri
-    da usare per preventivare, non per riconciliare.
+    Restituisce gli stessi importi in USD e in EUR, commissione di ricarica
+    inclusa: sono i numeri da usare per preventivare, non per riconciliare.
+    Il dollaro e' la valuta in cui Cloudflare fattura e in cui e' denominato
+    il credito; l'euro resta perche' il preventivo al cliente si fa in euro.
     """
     fee = 1.0 + CF_CREDIT_TOPUP_FEE
-    per_sec = (AUDIO_TOKENS_PER_SECOND * CF_OUTPUT_USD_PER_MTOK / 1e6
-               * USD_EUR_RATE * fee)
-    per_mchar = {}
+    per_sec_usd = AUDIO_TOKENS_PER_SECOND * CF_OUTPUT_USD_PER_MTOK / 1e6 * fee
+    per_mchar_usd = {}
     for lang in ("it", "en", "zh"):
         tok = gemini_tts.estimate_input_tokens("x" * 100000, lang)
-        per_mchar[lang] = (tok * 10 * CF_INPUT_USD_PER_MTOK / 1e6
-                           * USD_EUR_RATE * fee)
+        per_mchar_usd[lang] = tok * 10 * CF_INPUT_USD_PER_MTOK / 1e6 * fee
     return {
-        "eur_per_audio_second": per_sec,
-        "eur_per_audio_hour": per_sec * 3600.0,
-        "eur_per_mchar_input": per_mchar,
+        "usd_per_audio_second": per_sec_usd,
+        "usd_per_audio_hour": per_sec_usd * 3600.0,
+        "usd_per_mchar_input": dict(per_mchar_usd),
+        "eur_per_audio_second": per_sec_usd * USD_EUR_RATE,
+        "eur_per_audio_hour": per_sec_usd * 3600.0 * USD_EUR_RATE,
+        "eur_per_mchar_input": {k: v * USD_EUR_RATE
+                                for k, v in per_mchar_usd.items()},
     }
 
 
@@ -352,7 +362,12 @@ def predict_call_usd(chars, language, prompt_chars=None):
 
 
 class SpendGuard:
-    """Accumulatore di spesa con tetto in euro. `max_eur=0` disattiva il tetto.
+    """Accumulatore di spesa con tetto in USD. `max_usd=0` disattiva il tetto.
+
+    Il tetto e' in dollari perche' in dollari e' il credito Cloudflare che
+    protegge: contabilita' e cap parlano la stessa valuta, e nessuna
+    conversione si interpone fra la spesa misurata e la decisione di fermare
+    il run.
 
     Thread-safe: `reserve`/`settle` sono l'idioma di prenotazione atomica
     (lo stesso di `google_tts.reserve_chars`) usato dal livello matrix per
@@ -363,8 +378,8 @@ class SpendGuard:
     concorrenti e sono anch'essi protetti dallo stesso lock.
     """
 
-    def __init__(self, max_eur=DEFAULT_MAX_SPEND_EUR):
-        self.max_eur = float(max_eur or 0)
+    def __init__(self, max_usd=DEFAULT_MAX_SPEND_USD):
+        self.max_usd = float(max_usd or 0)
         self.spent_usd = 0.0
         # Sticky: una volta che il tetto e' stato sfondato da una
         # liquidazione (settle) il run non deve poter effettuare altre
@@ -373,28 +388,25 @@ class SpendGuard:
         self.breached = False
         self._lock = threading.Lock()
 
-    def spent_eur(self):
-        return self.spent_usd * USD_EUR_RATE
-
     def check(self, projected_usd):
         """Solleva SpendCapExceeded se aggiungere `projected_usd` sfonda il cap."""
         with self._lock:
             self._check_locked(projected_usd)
 
     def _check_locked(self, projected_usd):
-        if self.max_eur <= 0:
+        if self.max_usd <= 0:
             return
         if self.breached:
             raise SpendCapExceeded(
                 f"cap di spesa gia' sfondato da una liquidazione precedente: "
-                f"{self.spent_usd * USD_EUR_RATE:.4f} EUR contabilizzati "
-                f"contro un tetto di {self.max_eur:.2f} EUR"
+                f"{self.spent_usd:.4f} USD contabilizzati "
+                f"contro un tetto di {self.max_usd:.2f} USD"
             )
-        proiettato = (self.spent_usd + float(projected_usd)) * USD_EUR_RATE
-        if proiettato > self.max_eur:
+        proiettato = self.spent_usd + float(projected_usd)
+        if proiettato > self.max_usd:
             raise SpendCapExceeded(
-                f"cap di spesa raggiunto: {proiettato:.4f} EUR previsti "
-                f"contro un tetto di {self.max_eur:.2f} EUR"
+                f"cap di spesa raggiunto: {proiettato:.4f} USD previsti "
+                f"contro un tetto di {self.max_usd:.2f} USD"
             )
 
     def add(self, usd):
@@ -420,7 +432,7 @@ class SpendGuard:
         baseline char/sec della lingua, ma l'audio realmente prodotto puo'
         essere molto piu' lungo del previsto (il gate ammette fino a 1.6x, e
         un `overlong` grave viene comunque contabilizzato). Senza questo
-        controllo il run proseguiva oltre `--max-spend-eur`: osservato un
+        controllo il run proseguiva oltre `--max-spend-usd`: osservato un
         footer a 1.9x il tetto.
 
         La correzione resta contabilizzata - la chiamata e' gia' stata
@@ -429,12 +441,12 @@ class SpendGuard:
         """
         with self._lock:
             self.spent_usd += float(actual) - float(reserved)
-            if self.max_eur > 0 and self.spent_usd * USD_EUR_RATE > self.max_eur:
+            if self.max_usd > 0 and self.spent_usd > self.max_usd:
                 self.breached = True
                 raise SpendCapExceeded(
                     f"cap di spesa superato dalla liquidazione: "
-                    f"{self.spent_usd * USD_EUR_RATE:.4f} EUR spesi contro un "
-                    f"tetto di {self.max_eur:.2f} EUR"
+                    f"{self.spent_usd:.4f} USD spesi contro un "
+                    f"tetto di {self.max_usd:.2f} USD"
                 )
 
 
@@ -1355,7 +1367,7 @@ def reconciliation_block(records, unrecorded_paid_calls=0):
 
 
 def spend_cap_note():
-    """Nota sul significato reale di `--max-spend-eur`.
+    """Nota sul significato reale di `--max-spend-usd`.
 
     Il cap e' un freno, non un tetto duro: `settle()` ferma il run DOPO che
     lo sforamento e' avvenuto, e le chiamate gia' in volo arrivano comunque
@@ -1363,7 +1375,7 @@ def spend_cap_note():
     misurato ~1,9x in sequenziale e fino a ~12x a concorrenza 8. Chi manda
     gli sweep di saturazione deve dimensionare il tetto di conseguenza.
     """
-    return ("`--max-spend-eur` e' un freno, non un tetto duro: il run si "
+    return ("`--max-spend-usd` e' un freno, non un tetto duro: il run si "
             "ferma alla prima liquidazione che supera il tetto, ma la "
             "chiamata che l'ha fatto scattare e quelle gia' in volo sono "
             "gia' fatturate. Lo sforamento cresce con `--concurrency` "
@@ -2066,9 +2078,9 @@ def build_arg_parser():
                     help="Ripetizioni della stessa combinazione (varianza)")
     ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE,
                     help=f"Temperature (default {DEFAULT_TEMPERATURE})")
-    ap.add_argument("--max-spend-eur", type=float, default=DEFAULT_MAX_SPEND_EUR,
+    ap.add_argument("--max-spend-usd", type=float, default=DEFAULT_MAX_SPEND_USD,
                     help=f"Tetto di spesa stimata (default "
-                         f"{DEFAULT_MAX_SPEND_EUR:.2f}; 0 disattiva). Freno, "
+                         f"{DEFAULT_MAX_SPEND_USD:.2f}; 0 disattiva). Freno, "
                          f"non tetto duro: le chiamate gia' in volo restano "
                          f"fatturate, quindi con --concurrency N imposta "
                          f"circa tetto_voluto/N")
@@ -2142,11 +2154,11 @@ def main(argv=None):
     """
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     args = build_arg_parser().parse_args(argv_list)
-    if args.max_spend_eur < 0:
-        # Un valore negativo rendeva `max_eur <= 0` vero, cioe' disattivava
+    if args.max_spend_usd < 0:
+        # Un valore negativo rendeva `max_usd <= 0` vero, cioe' disattivava
         # il tetto in silenzio: l'esatto contrario di quello che chiede chi
         # scrive un numero piccolo. Solo 0 disattiva, e in modo esplicito.
-        print("[errore] --max-spend-eur non puo' essere negativo "
+        print("[errore] --max-spend-usd non puo' essere negativo "
               "(usa 0 per disattivare il tetto). Nessuna chiamata effettuata.")
         return 1
     if args.level == "book" and not args.book:
@@ -2185,7 +2197,7 @@ def main(argv=None):
     ctx = BenchContext(
         session=_build_session(args.concurrency), account_id=account_id,
         api_token=api_token, run_dir=run_dir, writer=writer,
-        guard=SpendGuard(args.max_spend_eur),
+        guard=SpendGuard(args.max_spend_usd),
         run_id=os.path.basename(run_dir), temperature=args.temperature,
         backend="cloudflare", max_attempts=args.max_attempts)
 
@@ -2350,13 +2362,13 @@ def main(argv=None):
                               for r in vertex_records)
         vertex_cost_eur = vertex_cost_usd * USD_EUR_RATE
         if vertex_records:
-            # Il gemello Vertex non tocca mai ctx.guard (--max-spend-eur e'
+            # Il gemello Vertex non tocca mai ctx.guard (--max-spend-usd e'
             # il cap della sola spesa Cloudflare by design): senza questa
             # nota un operatore che lancia --compare vertex vede solo meta'
             # della spesa reale, e con --runs N il divario raddoppia in
             # silenzio (fix round 2).
             notes.append(
-                f"spesa Vertex stimata (fuori dal cap --max-spend-eur, che "
+                f"spesa Vertex stimata (fuori dal cap --max-spend-usd, che "
                 f"copre solo Cloudflare): USD {vertex_cost_usd:.4f} / "
                 f"EUR {vertex_cost_eur:.4f}.")
         report = render_report(run_dir, cf_records, cf_residue, partial, notes,
@@ -2472,8 +2484,9 @@ def main(argv=None):
               f"{report})")
     if m4b_path:
         print(f"[fine] M4B: {m4b_path}")
-    print(f"[fine] spesa stimata Cloudflare (soggetta al cap --max-spend-eur): "
-          f"EUR {ctx.guard.spent_eur():.4f}")
+    print(f"[fine] spesa stimata Cloudflare (soggetta al cap "
+          f"--max-spend-usd): USD {ctx.guard.spent_usd:.4f} "
+          f"(~ EUR {ctx.guard.spent_usd * USD_EUR_RATE:.4f})")
     if vertex_records:
         print(f"[fine] spesa stimata Vertex (fuori dal cap, solo A/B): "
               f"EUR {vertex_cost_eur:.4f}")

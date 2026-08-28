@@ -51,13 +51,13 @@ def _registered_notifier():
 
 
 def test_wired_notifier_claims_the_alert_not_just_peeks(monkeypatch, _registered_notifier):
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     calls = []
     monkeypatch.setattr(tts_backend_state, "claim_credit_alert",
                         lambda: calls.append("claim") or True)
     monkeypatch.setattr(tts_backend_state, "credit_alert_pending",
                         lambda: calls.append("pending") or True)
-    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: 4.2)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 4.2)
     sent = []
     monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
                         lambda *a, **kw: sent.append((a, kw)))
@@ -69,7 +69,7 @@ def test_wired_notifier_claims_the_alert_not_just_peeks(monkeypatch, _registered
         "il notifier deve consumare l'allarme SOLO con claim_credit_alert() "
         "(atomico): con credit_alert_pending() l'allarme non si consuma mai "
         "e l'email di pre-allarme ripartirebbe dopo ogni switch")
-    assert sent[0][1]["credit_left_eur"] == pytest.approx(4.2)
+    assert sent[0][1]["credit_left_usd"] == pytest.approx(4.2)
 
 
 def test_wired_notifier_reports_credit_even_when_the_alert_was_already_claimed(
@@ -79,9 +79,9 @@ def test_wired_notifier_reports_credit_even_when_the_alert_was_already_claimed(
     serve di piu' — il claim torna False, e legare a quel booleano la riga
     «credito residuo» la faceva sparire proprio dall'email che spiega il
     failover appena avvenuto."""
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
-    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: 0.4)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 0.4)
     sent = []
     monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
                         lambda *a, **kw: sent.append((a, kw)))
@@ -89,17 +89,17 @@ def test_wired_notifier_reports_credit_even_when_the_alert_was_already_claimed(
 
     _registered_notifier("flash31", "cf_backend_down", "d", "job-y")
 
-    assert sent[0][1]["credit_left_eur"] == pytest.approx(0.4)
+    assert sent[0][1]["credit_left_usd"] == pytest.approx(0.4)
 
 
 def test_wired_notifier_omits_credit_when_no_balance_is_declared(
         monkeypatch, _registered_notifier):
-    """Senza saldo dichiarato (`ABM_CF_CREDIT_BALANCE_EUR` a 0, il default) il
-    residuo non e' conoscibile: `credit_left_eur()` varrebbe -spesa, un numero
+    """Senza saldo dichiarato (`ABM_CF_CREDIT_BALANCE_USD` a 0, il default) il
+    residuo non e' conoscibile: `credit_left_usd()` varrebbe -spesa, un numero
     privo di significato che nell'email sembrerebbe un dato reale."""
-    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_EUR", raising=False)
+    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_USD", raising=False)
     monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
-    monkeypatch.setattr(tts_backend_state, "credit_left_eur", lambda: -9.9)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: -9.9)
     sent = []
     monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
                         lambda *a, **kw: sent.append((a, kw)))
@@ -107,7 +107,7 @@ def test_wired_notifier_omits_credit_when_no_balance_is_declared(
 
     _registered_notifier("flash31", "cf_backend_down", "d", "job-z")
 
-    assert sent[0][1]["credit_left_eur"] is None
+    assert sent[0][1]["credit_left_usd"] is None
 
 
 def test_wired_notifier_forwards_reason_model_and_job(monkeypatch, _registered_notifier):
@@ -142,3 +142,48 @@ def test_wired_notifier_logs_activity_with_a_fresh_epoch(monkeypatch, _registere
     assert kwargs.get("epoch") is not None, (
         "senza epoch la chiave di dedup (session_id, operation) resta "
         "costante e gli switch successivi nello stesso mese spariscono")
+
+
+def test_wired_notifier_omits_credit_when_the_check_is_off(
+        monkeypatch, _registered_notifier):
+    """A controllo spento il residuo non entra nell'email di failover.
+
+    Con la ricarica automatica attiva sul pannello Cloudflare nessuno
+    aggiorna piu' `ABM_CF_CREDIT_BALANCE_USD`: il residuo calcolato su quel
+    saldo fermo e' un numero plausibile e falso, e in un'email che annuncia
+    un failover manderebbe l'admin a cercare un credito esaurito che non e'
+    la causa del guasto.
+    """
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_CHECK", "0")
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 12.0)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-k")
+
+    assert sent[0][1]["credit_left_usd"] is None
+
+
+def test_wired_notifier_still_reports_credit_when_the_check_is_on(
+        monkeypatch, _registered_notifier):
+    """Controprova del test precedente: acceso, il residuo c'e'.
+
+    Senza questa coppia, una guardia scritta al contrario (o sempre vera)
+    resterebbe verde nel test che conta l'assenza.
+    """
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_CHECK", "1")
+    monkeypatch.setattr(tts_backend_state, "claim_credit_alert", lambda: False)
+    monkeypatch.setattr(tts_backend_state, "credit_left_usd", lambda: 12.0)
+    sent = []
+    monkeypatch.setattr(email_service, "admin_notify_tts_backend_switch",
+                        lambda *a, **kw: sent.append((a, kw)))
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **kw: None)
+
+    _registered_notifier("flash31", "cf_backend_down", "d", "job-k")
+
+    assert sent[0][1]["credit_left_usd"] == pytest.approx(12.0)

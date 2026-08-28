@@ -619,7 +619,7 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
 
 
 def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
-                                    credit_left_eur=None):
+                                    credit_left_usd=None):
     """Notifica IMMEDIATA all'admin: il backend TTS e' passato a Vertex.
 
     Non passa dal digest di fine giornata: il margine in failover (Vertex)
@@ -650,10 +650,14 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         f"[ABM-ADMIN] TTS {model_key}: switch automatico a Vertex "
         f"({reason_label})", max_len=200)
 
+    # In USD: e' la valuta in cui Cloudflare denomina il credito AI
+    # Gateway, quindi la cifra qui e quella sulla dashboard del fornitore si
+    # confrontano a occhio. Un importo in euro costringerebbe chi legge di
+    # notte a rifare il cambio a mente prima di decidere se ricaricare.
     credit_row = ""
-    if credit_left_eur is not None:
+    if credit_left_usd is not None:
         credit_row = (f"<tr><td><strong>Credito residuo (stima)</strong></td>"
-                      f"<td>{credit_left_eur:.2f} &euro;</td></tr>")
+                      f"<td>{credit_left_usd:.2f} USD</td></tr>")
 
     html_body = f"""
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin:0 auto">
@@ -692,7 +696,7 @@ def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
         print(f"[admin] Invio notifica switch backend TTS fallito: {e}")
 
 
-def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
+def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
     """PRE-allarme all'admin: il credito Cloudflare stimato e' sotto soglia.
 
     Gemella di `admin_notify_tts_backend_switch`, ma dice il contrario:
@@ -706,8 +710,11 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
     ogni job servito nel frattempo costa margine.
 
     Il residuo e' una STIMA (l'API Cloudflare non espone il saldo): e'
-    `ABM_CF_CREDIT_BALANCE_EUR` dichiarato dall'admin meno la spesa
-    accumulata dal ledger locale. Per questo l'email chiede di riallineare
+    `ABM_CF_CREDIT_BALANCE_USD` dichiarato dall'admin meno la spesa
+    accumulata dal ledger locale. Tutti gli importi sono in USD, la valuta
+    in cui Cloudflare denomina il credito: chi riceve questa email deve
+    poterli confrontare con la dashboard del fornitore senza cambio di
+    mezzo. Per questo l'email chiede di riallineare
     la variabile insieme alla ricarica E di azzerare il ledger dal pannello
     «Backend TTS»: sono due passaggi distinti, e senza il secondo l'allarme
     non si riarma (`reset_spend()` e' l'unica cosa che rimette `alerted` a
@@ -724,15 +731,15 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
 
     model_safe = _esc_html(_sanitize_header(model_key or "", max_len=80))
     try:
-        left = float(credit_left_eur)
+        left = float(credit_left_usd)
     except (TypeError, ValueError):
         left = 0.0
     try:
-        threshold = float(threshold_eur)
+        threshold = float(threshold_usd)
     except (TypeError, ValueError):
         threshold = 0.0
     subject = _sanitize_header(
-        f"[ABM-ADMIN] Credito Cloudflare basso: {left:.2f} EUR residui "
+        f"[ABM-ADMIN] Credito Cloudflare basso: {left:.2f} USD residui "
         f"(soglia {threshold:.2f})", max_len=200)
 
     html_body = f"""
@@ -746,8 +753,8 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
            e' avvenuto alcun failover, e non ci sono job in errore.</p>
         <table cellpadding="6" style="border-collapse:collapse;font-size:.95em">
           <tr><td><strong>Modello</strong></td><td><code>{model_safe}</code></td></tr>
-          <tr><td><strong>Credito residuo (stima)</strong></td><td>{left:.2f} &euro;</td></tr>
-          <tr><td><strong>Soglia di pre-allarme</strong></td><td>{threshold:.2f} &euro;</td></tr>
+          <tr><td><strong>Credito residuo (stima)</strong></td><td>{left:.2f} USD</td></tr>
+          <tr><td><strong>Soglia di pre-allarme</strong></td><td>{threshold:.2f} USD</td></tr>
         </table>
         <p style="background:#fff4e5;padding:10px;border-left:4px solid #d97706;margin-top:14px">
           <strong>Che cosa succede se non si interviene:</strong> a credito
@@ -759,8 +766,9 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
         <p><strong>Che cosa fare:</strong></p>
         <ol>
           <li>Ricaricare il credito Cloudflare AI Gateway.</li>
-          <li>Aggiornare <code>ABM_CF_CREDIT_BALANCE_EUR</code> nell'unit
-              systemd col nuovo saldo dichiarato, poi <code>daemon-reload</code>
+          <li>Aggiornare <code>ABM_CF_CREDIT_BALANCE_USD</code> nell'unit
+              systemd col nuovo saldo dichiarato <strong>in USD</strong>, poi
+              <code>daemon-reload</code>
               e <code>restart</code>: il residuo qui sopra e' una stima
               calcolata da quel valore meno la spesa accumulata, e senza il
               riallineamento resterebbe sotto soglia.</li>
@@ -775,14 +783,14 @@ def admin_notify_cf_credit_low(model_key, credit_left_eur, threshold_eur):
               accumularsi dal ciclo precedente. Il solo aggiornamento della
               variabile d'ambiente non basta.</li>
         </ol>
-        <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_EUR=0</code>. Console: <code>{BASE_URL}/admin/</code></p>
+        <p style="color:#888;font-size:12px;margin-top:16px">Il saldo Cloudflare non e' leggibile via API: questo importo e' una stima, in USD come il credito del fornitore. Per disattivare l'avviso: <code>ABM_CF_CREDIT_BALANCE_USD=0</code>. Console: <code>{BASE_URL}/admin/</code></p>
       </div>
     </div>"""
 
     try:
         _send_email(ADMIN_EMAIL, subject, html_body)
         print(f"[admin] Pre-allarme credito Cloudflare inviato per {model_key} "
-              f"(residuo stimato {left:.2f} EUR)")
+              f"(residuo stimato {left:.2f} USD)")
     except Exception as e:
         print(f"[admin] Invio pre-allarme credito Cloudflare fallito: {e}")
 

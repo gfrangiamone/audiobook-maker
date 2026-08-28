@@ -51,7 +51,7 @@ def test_get_returns_a_clean_state(client):
     assert r.status_code == 200
     body = r.get_json()
     assert body["tripped_at"] is None
-    assert "credit_left_eur" in body
+    assert "credit_left_usd" in body
 
 
 def test_get_reports_a_trip(client):
@@ -74,24 +74,24 @@ def test_reset_clears_the_trip(client):
 def test_reset_never_touches_the_spend_ledger(client, monkeypatch):
     # Il rientro dal breaker e l'azzeramento del ledger sono due decisioni
     # diverse: aver risolto il guasto non implica aver ricaricato il credito.
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 30.0)
     client.post("/admin/api/tts_backend", headers=AUTH,
                 json={"action": "reset"})
-    assert st.credit_left_eur() == pytest.approx(20.0)
+    assert st.credit_left_usd() == pytest.approx(20.0)
 
 
 def test_the_old_topup_field_on_reset_is_refused_not_ignored(client, monkeypatch):
     # La forma vecchia dell'API (topup come campo del rientro) non deve
     # essere accettata in silenzio lasciando il ledger intatto: chi la usa
     # crede di aver azzerato la spesa e leggerebbe un residuo sbagliato.
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 30.0)
     r = client.post("/admin/api/tts_backend", headers=AUTH,
                     json={"action": "reset", "topup": True})
     assert r.status_code == 400
     assert "topup" in r.get_json()["error"]
-    assert st.credit_left_eur() == pytest.approx(20.0)
+    assert st.credit_left_usd() == pytest.approx(20.0)
 
 
 def test_an_unknown_action_is_rejected(client):
@@ -278,13 +278,13 @@ def test_a_dict_model_key_on_get_is_not_a_500(client):
 # --- N2: il topup e' un'azione a se', raggiungibile senza alcun trip -------
 #
 # `reset_spend()` e' l'unica cosa che riarma il pre-allarme sul credito
-# (azzera `spent_eur` e `alerted`). Finche' il suo unico innesco era la
+# (azzera `spent_usd` e `alerted`). Finche' il suo unico innesco era la
 # casella accanto al pulsante di rientro — abilitato solo DOPO un trip —
 # l'allarme partiva una volta sola nella vita dell'installazione: dal secondo
 # ciclo di credito il servizio scivolava su Vertex di notte senza preavviso.
 
 def test_topup_clears_the_ledger_without_any_trip(client, monkeypatch):
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 46.0)
     assert st.is_tripped("flash31") is False
 
@@ -292,7 +292,7 @@ def test_topup_clears_the_ledger_without_any_trip(client, monkeypatch):
                     json={"action": "topup"})
 
     assert r.status_code == 200
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
 
 
 def test_topup_does_not_touch_the_breaker(client):
@@ -315,7 +315,7 @@ def test_topup_does_not_touch_the_breaker(client):
 def test_topup_is_refused_when_the_environment_does_not_select_cloudflare(
         client, monkeypatch):
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "auto")
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 46.0)
 
     r = client.post("/admin/api/tts_backend", headers=AUTH,
@@ -324,7 +324,7 @@ def test_topup_is_refused_when_the_environment_does_not_select_cloudflare(
     assert r.status_code == 409
     assert "ABM_GEMINI_BACKEND" in r.get_json()["error"]
     # Un rifiuto che azzerasse comunque il ledger sarebbe peggio di un 200.
-    assert st.credit_left_eur() == pytest.approx(4.0)
+    assert st.credit_left_usd() == pytest.approx(4.0)
 
 
 def test_topup_with_an_unknown_model_key_is_rejected(client):
@@ -348,14 +348,14 @@ def test_the_refusal_explains_the_action_the_caller_asked_for(client):
 
 def test_the_topup_log_does_not_report_a_residual_nobody_declared(
         client, monkeypatch):
-    # Senza ABM_CF_CREDIT_BALANCE_EUR il "residuo" e' la spesa cambiata di
+    # Senza ABM_CF_CREDIT_BALANCE_USD il "residuo" e' la spesa cambiata di
     # segno: un negativo che il pre-allarme stesso ignora (con saldo <= 0 non
     # scatta mai). Stamparlo come misura fa leggere all'admin un numero che non
     # significa nulla proprio nella riga che documenta la ricarica.
     logged = []
     monkeypatch.setattr(audiobook_app, "_log_activity",
                         lambda *a, **kw: logged.append(a))
-    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_EUR", raising=False)
+    monkeypatch.delenv("ABM_CF_CREDIT_BALANCE_USD", raising=False)
     st.add_spend("flash31", 3.0)
 
     client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
@@ -370,7 +370,7 @@ def test_the_topup_log_reports_the_residual_when_a_balance_is_declared(
     logged = []
     monkeypatch.setattr(audiobook_app, "_log_activity",
                         lambda *a, **kw: logged.append(a))
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 46.0)
 
     client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
@@ -384,7 +384,7 @@ def test_topup_is_written_to_the_activity_log(client, monkeypatch):
     logged = []
     monkeypatch.setattr(audiobook_app, "_log_activity",
                         lambda *a, **kw: logged.append(a))
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     st.add_spend("flash31", 46.0)
 
     client.post("/admin/api/tts_backend", headers=AUTH, json={"action": "topup"})
@@ -401,8 +401,8 @@ def test_the_second_credit_cycle_alerts_again(client, monkeypatch):
     dalla console. Secondo ciclo: la spesa riporta il residuo sotto soglia e
     l'allarme deve poter tornare a scattare.
     """
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
-    monkeypatch.setenv("ABM_CF_CREDIT_ALERT_EUR", "5")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_ALERT_USD", "5")
 
     # --- ciclo 1: allarme consumato -------------------------------------
     st.add_spend("flash31", 46.0)          # residuo 4,00 < soglia 5,00
@@ -410,11 +410,11 @@ def test_the_second_credit_cycle_alerts_again(client, monkeypatch):
     assert st.claim_credit_alert() is False, "l'allarme e' a consumo unico"
 
     # --- ricarica: nuovo saldo dichiarato + topup dalla console ----------
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "100")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "100")
     r = client.post("/admin/api/tts_backend", headers=AUTH,
                     json={"action": "topup"})
     assert r.status_code == 200
-    assert st.credit_left_eur() == pytest.approx(100.0), (
+    assert st.credit_left_usd() == pytest.approx(100.0), (
         "senza azzerare il ledger il residuo del secondo ciclo nasce gia' "
         "decurtato della spesa del primo")
     assert st.claim_credit_alert() is False, (
@@ -427,3 +427,55 @@ def test_the_second_credit_cycle_alerts_again(client, monkeypatch):
         "il pre-allarme deve poter scattare di nuovo dal secondo ciclo di "
         "credito in poi: senza un topup raggiungibile senza trip, "
         "l'installazione riceve una sola email nella sua vita")
+
+
+# ---------------------------------------------------------------------------
+# Doppia valuta e interruttore del controllo credito nel payload
+# ---------------------------------------------------------------------------
+
+def test_the_payload_carries_both_currencies(client, monkeypatch):
+    """USD e' l'importo autorevole, EUR viaggia accanto per il solo display.
+
+    Il pannello deve poter mostrare entrambi senza rifare il cambio in JS con
+    una costante propria: due conversioni in due punti divergono al primo
+    ritocco di `ABM_GEMINI_USD_EUR_RATE`.
+    """
+    monkeypatch.setenv("ABM_GEMINI_USD_EUR_RATE", "0.80")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    st.add_spend("flash31", 10.0)
+
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["credit_left_usd"] == pytest.approx(40.0)
+    assert body["credit_left_eur"] == pytest.approx(32.0)
+
+
+def test_the_payload_reports_the_credit_check_switch(client, monkeypatch):
+    """Il pannello deve poter distinguere "residuo basso" da "non sorvegliato".
+
+    Senza questo campo mostrerebbe un residuo calcolato su un saldo che
+    nessuno aggiorna piu' (la ricarica automatica lo rialza da sola), cioe'
+    un numero plausibile e falso.
+    """
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["credit_check_enabled"] is True
+
+    monkeypatch.setenv("ABM_CF_CREDIT_CHECK", "0")
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["credit_check_enabled"] is False
+
+
+def test_the_payload_carries_the_cumulative_spend(client, monkeypatch):
+    """La spesa cumulata e' cio' che il pannello mostra a controllo spento.
+
+    Viaggia sempre, non solo quando il controllo e' spento: il contratto del
+    payload resta uno solo, ed e' il pannello a scegliere cosa mostrarne.
+    """
+    monkeypatch.setenv("ABM_GEMINI_USD_EUR_RATE", "0.80")
+    monkeypatch.setenv("ABM_CF_CREDIT_CHECK", "0")
+    st.add_spend("flash31", 12.5)
+
+    body = client.get("/admin/api/tts_backend", headers=AUTH).get_json()
+    assert body["credit_spent_usd"] == pytest.approx(12.5)
+    assert body["credit_spent_eur"] == pytest.approx(10.0)
+    # Il residuo non sparisce mai dal payload, nemmeno a controllo spento.
+    assert "credit_left_usd" in body

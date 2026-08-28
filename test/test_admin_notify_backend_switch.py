@@ -61,7 +61,7 @@ def test_the_body_explains_that_the_return_is_manual(_sent):
 
 def test_the_credit_left_appears_when_known(_sent):
     email_service.admin_notify_tts_backend_switch(
-        "flash31", "cf_backend_down", "d", "j", credit_left_eur=1.23)
+        "flash31", "cf_backend_down", "d", "j", credit_left_usd=1.23)
     assert "1.23" in _sent[0][2] or "1,23" in _sent[0][2]
 
 

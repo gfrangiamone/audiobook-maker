@@ -13,22 +13,22 @@ import tts_backend_state as st
 @pytest.fixture(autouse=True)
 def _fresh(tmp_path, monkeypatch):
     st.init(str(tmp_path))
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
-    monkeypatch.setenv("ABM_CF_CREDIT_ALERT_EUR", "5")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_ALERT_USD", "5")
     yield
 
 
 def test_spend_accumulates():
     st.add_spend("flash31", 1.25)
     st.add_spend("flash31", 0.75)
-    assert st.credit_left_eur() == pytest.approx(48.0)
+    assert st.credit_left_usd() == pytest.approx(48.0)
 
 
 def test_spend_is_global_not_per_model():
     # Il credito AI Gateway e' uno solo: la spesa di ogni modello lo intacca.
     st.add_spend("flash31", 10.0)
     st.add_spend("flash25", 10.0)
-    assert st.credit_left_eur() == pytest.approx(30.0)
+    assert st.credit_left_usd() == pytest.approx(30.0)
 
 
 def test_no_alert_while_the_balance_is_comfortable():
@@ -70,15 +70,15 @@ def test_a_topup_rearms_the_alert(monkeypatch):
     assert st.claim_credit_alert() is True
     # L'admin ricarica: alza il saldo dichiarato e azzera il ledger.
     st.reset_spend()
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "100")
-    assert st.credit_left_eur() == pytest.approx(100.0)
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "100")
+    assert st.credit_left_usd() == pytest.approx(100.0)
     assert st.credit_alert_pending() is False
     assert st.claim_credit_alert() is False
 
 
 def test_a_zero_balance_disables_the_alert(monkeypatch):
     # Saldo non dichiarato (default 0): l'allarme sarebbe rumore costante.
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "0")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "0")
     st.add_spend("flash31", 5.0)
     assert st.credit_alert_pending() is False
     assert st.claim_credit_alert() is False
@@ -96,7 +96,7 @@ def test_mark_credit_alerted_is_idempotent_and_used_for_rearm_tests():
 def test_the_ledger_survives_a_reload(tmp_path):
     st.add_spend("flash31", 12.0)
     st.init(str(tmp_path))
-    assert st.credit_left_eur() == pytest.approx(38.0)
+    assert st.credit_left_usd() == pytest.approx(38.0)
 
 
 def _read_raw(tmp_path):
@@ -111,31 +111,31 @@ def _write_raw(tmp_path, raw):
         json.dump(raw, f)
 
 
-def _corrupt_spent_eur(tmp_path, bad_value):
-    """Scrive `bad_value` come `_credit.spent_eur` sul file di stato e
+def _corrupt_spent_usd(tmp_path, bad_value):
+    """Scrive `bad_value` come `_credit.spent_usd` sul file di stato e
     ricarica, come farebbe un file modificato a mano o corrotto a meta'."""
     raw = _read_raw(tmp_path)
-    raw.setdefault("_credit", {})["spent_eur"] = bad_value
+    raw.setdefault("_credit", {})["spent_usd"] = bad_value
     _write_raw(tmp_path, raw)
     st.init(str(tmp_path))
 
 
 @pytest.mark.parametrize("bad_value", ["not-a-number", None, [1, 2, 3], {"x": 1}])
-def test_malformed_spent_eur_never_raises(tmp_path, bad_value):
+def test_malformed_spent_usd_never_raises(tmp_path, bad_value):
     # Fixture accende gia' il ledger prima di corromperlo, cosi' il file
     # esiste ed ha davvero la chiave "_credit" da corrompere.
     st.add_spend("flash31", 1.0)
-    _corrupt_spent_eur(tmp_path, bad_value)
+    _corrupt_spent_usd(tmp_path, bad_value)
     # Nessuna delle tre deve sollevare: un campo illeggibile vale 0, non
     # un'eccezione che ucciderebbe il percorso caldo della sintesi.
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
     assert st.credit_alert_pending() in (True, False)
     st.add_spend("flash31", 2.0)
-    assert st.credit_left_eur() == pytest.approx(48.0)
+    assert st.credit_left_usd() == pytest.approx(48.0)
 
 
 @pytest.mark.parametrize("bad_value", [math.nan, math.inf, -math.inf])
-def test_non_finite_spent_eur_never_raises_and_heals(tmp_path, bad_value, capsys):
+def test_non_finite_spent_usd_never_raises_and_heals(tmp_path, bad_value, capsys):
     # Fix round 2 (Decisione 1): un valore non finito e' float valido per
     # Python/JSON e passava _safe_float senza filtro.
     # -Infinity spegneva il pre-allarme per sempre (residuo = +Infinity);
@@ -143,18 +143,18 @@ def test_non_finite_spent_eur_never_raises_and_heals(tmp_path, bad_value, capsys
     # _save() per l'INTERO modulo (non solo il ledger), da quel momento in
     # poi su qualunque trip/reset/record_failure di qualunque modello.
     st.add_spend("flash31", 1.0)
-    _corrupt_spent_eur(tmp_path, bad_value)
+    _corrupt_spent_usd(tmp_path, bad_value)
     capsys.readouterr()  # scarta l'eventuale log di BOOT sul ledger corrotto
 
     # Un valore non finito degrada a 0 speso: mai un residuo infinito che
     # spegnerebbe l'allarme per sempre, mai un'eccezione.
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
     assert st.credit_alert_pending() in (True, False)
 
     # add_spend() reale successivo deve restare sano: il residuo torna
     # finito e prevedibile.
     st.add_spend("flash31", 2.0)
-    assert st.credit_left_eur() == pytest.approx(48.0)
+    assert st.credit_left_usd() == pytest.approx(48.0)
     out = capsys.readouterr().out
     assert "ERROR" not in out
 
@@ -241,11 +241,11 @@ def test_old_flat_format_file_is_migrated_and_read_correctly(tmp_path):
             "trip_reason": "cf_credit_exhausted", "trip_detail": "d",
             "trip_job_id": "j1", "consecutive_failures": 0, "notified": False,
         },
-        "_credit": {"spent_eur": 12.0, "alerted": False},
+        "_credit": {"spent_usd": 12.0, "alerted": False},
     })
     st.init(str(tmp_path))
     assert st.is_tripped("flash31") is True
-    assert st.credit_left_eur() == pytest.approx(38.0)
+    assert st.credit_left_usd() == pytest.approx(38.0)
     # Il ledger non deve mai comparire come modello.
     assert st.state("_credit") == {}
     assert st.is_tripped("_credit") is False
@@ -278,7 +278,7 @@ def test_malformed_credit_key_does_not_appear_as_a_model(tmp_path, capsys):
     # Il modello reale non e' toccato dalla corruzione del ledger.
     assert st.is_tripped("flash31") is True
     # Ledger degradato a 0 speso, mai un'eccezione.
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
 
 
 def test_model_key_literally_credit_does_not_collide_with_the_ledger():
@@ -292,7 +292,7 @@ def test_model_key_literally_credit_does_not_collide_with_the_ledger():
     assert st.is_tripped("_credit") is True
     assert st.state("_credit")["active"] == "vertex"
     # Il ledger resta intatto e isolato dal trip sul model_key omonimo.
-    assert st.credit_left_eur() == pytest.approx(40.0)
+    assert st.credit_left_usd() == pytest.approx(40.0)
     assert st.credit_alert_pending() is False
 
 
@@ -301,11 +301,11 @@ def test_model_key_literally_credit_survives_a_reload(tmp_path):
     st.trip("_credit", reason="r", detail="d", job_id="j1")
     st.init(str(tmp_path))
     assert st.is_tripped("_credit") is True
-    assert st.credit_left_eur() == pytest.approx(40.0)
+    assert st.credit_left_usd() == pytest.approx(40.0)
     # Un reset del modello "_credit" non deve toccare il ledger.
     assert st.reset("_credit") is True
     assert st.is_tripped("_credit") is False
-    assert st.credit_left_eur() == pytest.approx(40.0)
+    assert st.credit_left_usd() == pytest.approx(40.0)
 
 
 # --- Fix round 3: marcatore di versione esplicito, non piu' euristica -------
@@ -334,7 +334,7 @@ def test_old_format_model_literally_named_models_survives_migration(tmp_path):
     _write_raw(tmp_path, {
         "flash31": _model_entry(failures=3, notified=True),
         "models": _model_entry(reason="edge_tts_down"),
-        "_credit": {"spent_eur": 5.0, "alerted": False},
+        "_credit": {"spent_usd": 5.0, "alerted": False},
     })
     st.init(str(tmp_path))
 
@@ -345,7 +345,7 @@ def test_old_format_model_literally_named_models_survives_migration(tmp_path):
     assert st.is_tripped("models") is True
     assert st.state("models")["trip_reason"] == "edge_tts_down"
 
-    assert st.credit_left_eur() == pytest.approx(45.0)
+    assert st.credit_left_usd() == pytest.approx(45.0)
 
     # La migrazione diventa permanente alla prossima riscrittura (non alla
     # sola lettura): un trip su un terzo modello forza _save() a riscrivere
@@ -395,7 +395,7 @@ def test_new_format_with_wrong_type_version_is_fail_safe_not_old_format(
     # fail-safe sull'intero file, esattamente come un JSON invalido.
     _write_raw(tmp_path, {
         "version": bad_version,
-        "_credit": {"spent_eur": 1.0, "alerted": False},
+        "_credit": {"spent_usd": 1.0, "alerted": False},
         "models": {"flash31": _model_entry()},
     })
     capsys.readouterr()
@@ -408,13 +408,13 @@ def test_new_format_with_wrong_type_version_is_fail_safe_not_old_format(
     assert st.is_tripped("flash31") is True
     assert st.is_tripped("never_seen_before") is True
     # Neanche il ledger viene letto da un file di cui non ci fidiamo.
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
 
 
 def test_new_format_with_non_dict_models_is_fail_safe(tmp_path, capsys):
     _write_raw(tmp_path, {
         "version": 2,
-        "_credit": {"spent_eur": 3.0, "alerted": False},
+        "_credit": {"spent_usd": 3.0, "alerted": False},
         "models": "not-a-dict",
     })
     capsys.readouterr()
@@ -423,7 +423,7 @@ def test_new_format_with_non_dict_models_is_fail_safe(tmp_path, capsys):
     assert "non e' un dict" in out
 
     assert st.is_tripped("flash31") is True
-    assert st.credit_left_eur() == pytest.approx(50.0)
+    assert st.credit_left_usd() == pytest.approx(50.0)
 
 
 def test_new_format_ignores_stray_top_level_keys(tmp_path):
@@ -432,7 +432,7 @@ def test_new_format_ignores_stray_top_level_keys(tmp_path):
     # "version") non e' mai un modello e non deve dare fastidio.
     _write_raw(tmp_path, {
         "version": 2,
-        "_credit": {"spent_eur": 0.0, "alerted": False},
+        "_credit": {"spent_usd": 0.0, "alerted": False},
         "models": {"flash31": _model_entry()},
         "some_future_field": {"whatever": True},
     })
@@ -452,7 +452,7 @@ def test_migration_is_idempotent_across_multiple_reload_cycles(tmp_path):
     _write_raw(tmp_path, {
         "flash31": _model_entry(failures=2),
         "models": _model_entry(reason="edge_tts_down", failures=1),
-        "_credit": {"spent_eur": 7.0, "alerted": True},
+        "_credit": {"spent_usd": 7.0, "alerted": True},
     })
     for _ in range(3):
         st.init(str(tmp_path))
@@ -461,14 +461,14 @@ def test_migration_is_idempotent_across_multiple_reload_cycles(tmp_path):
         assert st.is_tripped("models") is True
         assert st.state("models")["consecutive_failures"] == 1
         assert st.state("models")["trip_reason"] == "edge_tts_down"
-        assert st.credit_left_eur() == pytest.approx(43.0)
+        assert st.credit_left_usd() == pytest.approx(43.0)
         assert st.credit_alert_pending() is False  # gia' segnalato ("alerted": True)
         st.add_spend("flash31", 0.0)  # forza la riscrittura senza alterare il ledger
 
     on_disk = _read_raw(tmp_path)
     assert on_disk["version"] == 2
     assert set(on_disk["models"].keys()) == {"flash31", "models"}
-    assert on_disk["_credit"]["spent_eur"] == pytest.approx(7.0)
+    assert on_disk["_credit"]["spent_usd"] == pytest.approx(7.0)
 
 
 def test_credit_never_enumerable_as_a_model_in_either_format(tmp_path):
@@ -477,7 +477,7 @@ def test_credit_never_enumerable_as_a_model_in_either_format(tmp_path):
     # resettabili (in _CACHE), ne' nel formato vecchio ne' in quello nuovo.
     _write_raw(tmp_path, {
         "flash31": _model_entry(),
-        "_credit": {"spent_eur": 9.0, "alerted": False},
+        "_credit": {"spent_usd": 9.0, "alerted": False},
     })
     st.init(str(tmp_path))
     assert st.state("_credit") == {}

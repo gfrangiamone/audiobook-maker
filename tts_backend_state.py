@@ -114,6 +114,18 @@ _FAIL_SAFE = False
 
 _FILENAME = "_tts_backend_state.json"
 
+# Soglia di pre-allarme sul credito, in USD (la valuta in cui Cloudflare
+# denomina il credito AI Gateway). Il default valeva 5 EUR prima che il
+# credito fosse riportato alla valuta del fornitore: 5 USD e' lo stesso
+# ordine di grandezza, non lo stesso importo, e resta comunque un valore che
+# ogni installazione seria ridichiara secondo il proprio ritmo di consumo.
+_DEFAULT_ALERT_USD = 5.0
+
+# Nomi di variabile gia' segnalati come obsoleti: l'avviso di ripiego vale
+# una volta per processo, non a ogni lettura (queste funzioni stanno sul
+# percorso caldo della sintesi, un print per chunk sarebbe rumore puro).
+_LEGACY_ENV_WARNED = set()
+
 
 def init(data_dir):
     """Fissa la directory dello stato e ricarica dal disco."""
@@ -124,18 +136,31 @@ def init(data_dir):
 
 
 def _default_credit_ledger():
-    return {"spent_eur": 0.0, "alerted": False}
+    return {"spent_usd": 0.0, "alerted": False}
 
 
 def _parse_credit_ledger(raw_credit):
     """Sanifica la voce del ledger letta da disco (chiave riservata
     `_CREDIT_KEY`, mai un model_key). Non solleva mai: una voce assente, non
-    un dict, o con `spent_eur` di forma inattesa (stringa non numerica,
+    un dict, o con `spent_usd` di forma inattesa (stringa non numerica,
     None, NaN/Infinity - vedi `_safe_float`) degrada al ledger vuoto (0 speso,
     non ancora segnalato). E' la scelta piu' conservativa: nel caso peggiore
     genera un allarme di troppo dopo una ricarica, mai zero quando servirebbe
     (a differenza di un residuo rimasto +Infinity per un valore non finito
-    mai sanificato)."""
+    mai sanificato).
+
+    MIGRAZIONE valuta: il credito Cloudflare e' denominato in USD, ed e' in
+    USD che il ledger tiene i conti. Un file scritto prima di questo giro
+    porta `spent_eur`: viene riconvertito in USD col cambio dichiarato
+    (`ABM_GEMINI_USD_EUR_RATE`, la stessa variabile usata da Gemini,
+    Speechify e dal calcolo prezzo) invece di essere buttato. Buttarlo
+    significherebbe ripartire da 0 speso su un credito gia' consumato: il
+    residuo stimato salirebbe di colpo e il pre-allarme resterebbe muto fino
+    a esaurimento vero, cioe' fino al failover. La migrazione NON e' legata
+    a `_STATE_VERSION`: quel marcatore governa le voci di MODELLO, e
+    cambiarlo qui farebbe leggere l'intero stato come illeggibile,
+    spegnendo Cloudflare su tutti i modelli al primo avvio dopo il deploy.
+    """
     if not isinstance(raw_credit, dict):
         if raw_credit is not None:
             print(f"[tts-backend-state] BOOT: ledger credito "
@@ -143,8 +168,18 @@ def _parse_credit_ledger(raw_credit):
                   f"({type(raw_credit).__name__}) - ripartito da 0 speso.",
                   flush=True)
         return _default_credit_ledger()
+    if "spent_usd" in raw_credit:
+        spent_usd = _safe_float(raw_credit.get("spent_usd"))
+    elif "spent_eur" in raw_credit:
+        rate = usd_eur_rate()
+        spent_usd = _safe_float(raw_credit.get("spent_eur")) / rate
+        print(f"[tts-backend-state] BOOT: ledger credito in EUR (formato "
+              f"precedente) convertito in USD al cambio {rate}: "
+              f"{spent_usd:.4f} USD speso.", flush=True)
+    else:
+        spent_usd = 0.0
     return {
-        "spent_eur": _safe_float(raw_credit.get("spent_eur")),
+        "spent_usd": spent_usd,
         "alerted": bool(raw_credit.get("alerted")),
     }
 
@@ -534,9 +569,27 @@ def _f_env(name, default):
         return float(default)
 
 
+def _warn_legacy_env(old_name, new_name, converted_usd):
+    """Avvisa UNA volta per processo che si sta usando un nome obsoleto.
+
+    Non solleva e non blocca: il valore convertito viene usato comunque. Chi
+    legge questo avviso ha una configurazione che funziona ma denomina il
+    credito in una valuta che Cloudflare non usa, e va allineata alla prima
+    occasione utile.
+    """
+    if old_name in _LEGACY_ENV_WARNED:
+        return
+    _LEGACY_ENV_WARNED.add(old_name)
+    print(f"[tts-backend-state] {old_name} e' obsoleta: il credito "
+          f"Cloudflare e' denominato in USD. Valore convertito al cambio "
+          f"({converted_usd:.2f} USD) e usato lo stesso. Impostare "
+          f"{new_name} nell'unit systemd e rimuovere la vecchia.",
+          flush=True)
+
+
 def _safe_float(value, default=0.0):
     """Converte in float senza mai sollevare. Stesso ruolo di `_safe_int`
-    (righe sopra) ma per i campi del ledger credito: un `spent_eur` di forma
+    (righe sopra) ma per i campi del ledger credito: un `spent_usd` di forma
     inattesa letto da disco (stringa non numerica, `None`, lista, dict - file
     modificato a mano, corruzione parziale, futura evoluzione di schema) vale
     `default`, non un'eccezione. `add_spend` in particolare e' pensata per
@@ -547,9 +600,9 @@ def _safe_float(value, default=0.0):
     Un valore convertibile ma NON finito (`NaN`, `Infinity`, `-Infinity` -
     tutti float validi per Python/JSON) e' trattato come malformato quanto
     una stringa non numerica: degrada a `default`, non passa. Senza questo
-    controllo, due guasti silenziosi riprodotti in review: (1) `spent_eur =
-    -Infinity` rende `credit_left_eur()` = `+Infinity`, spegnendo il
-    pre-allarme per sempre senza errori; (2) `spent_eur = NaN` sopravvive a
+    controllo, due guasti silenziosi riprodotti in review: (1) `spent_usd =
+    -Infinity` rende `credit_left_usd()` = `+Infinity`, spegnendo il
+    pre-allarme per sempre senza errori; (2) `spent_usd = NaN` sopravvive a
     un'operazione aritmetica reale (resta NaN), e un NaN scritto su disco
     rompe il confronto `check == snapshot` di OGNI `_save()` successivo
     nell'intero modulo (round-trip JSON di NaN produce un nuovo oggetto float
@@ -565,15 +618,20 @@ def _safe_float(value, default=0.0):
     return result
 
 
-def add_spend(model_key, eur):
-    """Accumula la spesa stimata di una chiamata sul ledger locale.
+def add_spend(model_key, usd):
+    """Accumula la spesa stimata di una chiamata sul ledger locale, in USD.
+
+    USD e non EUR perche' e' la valuta in cui Cloudflare denomina il credito
+    e fattura le tariffe Workers AI: il ledger deve poter essere confrontato
+    a occhio col saldo che l'admin legge sulla dashboard del fornitore, senza
+    un cambio di mezzo che ne sposta le cifre.
 
     `model_key` non e' usato per ripartire la spesa (il credito e' unico per
     l'account, vedi sopra): resta nella firma per simmetria con le altre
     funzioni di questo modulo chiamate dal percorso di sintesi, e per una
     futura rottura di spesa per modello se mai servisse."""
     with _LOCK:
-        _CREDIT["spent_eur"] = _safe_float(_CREDIT.get("spent_eur")) + _safe_float(eur)
+        _CREDIT["spent_usd"] = _safe_float(_CREDIT.get("spent_usd")) + _safe_float(usd)
         _save()
 
 
@@ -581,7 +639,7 @@ def reset_spend():
     """Azzera il ledger: da chiamare quando l'admin ricarica il credito.
 
     E' l'UNICA cosa che riarma il pre-allarme (`alerted` torna False insieme a
-    `spent_eur`), quindi la via che la raggiunge deve restare percorribile
+    `spent_usd`), quindi la via che la raggiunge deve restare percorribile
     anche quando NON e' avvenuto alcun failover: il ciclo normale del credito
     e' "residuo sotto soglia -> email di pre-allarme -> ricarica -> topup",
     tutto con Cloudflare ancora sano. Legarla al rientro dal breaker (come
@@ -597,51 +655,165 @@ def reset_spend():
         _save()
 
 
-def credit_balance_eur():
-    """Saldo dichiarato dall'admin (`ABM_CF_CREDIT_BALANCE_EUR`), 0 se non
+def usd_eur_rate():
+    """Cambio USD->EUR dichiarato (`ABM_GEMINI_USD_EUR_RATE`, default 0.86).
+
+    E' la STESSA variabile gia' usata da Gemini, Speechify e dal calcolo del
+    prezzo al cliente: il credito Cloudflare non introduce un secondo cambio
+    per conto proprio, altrimenti due parti dell'app convertirebbero lo
+    stesso dollaro a due tassi diversi. Serve qui per due sole cose: migrare
+    un ledger vecchio scritto in EUR, e affiancare l'equivalente in euro
+    all'importo in dollari. MAI per decidere un allarme: soglia, saldo e
+    spesa si confrontano fra loro sempre in USD, cosi' un ritocco del cambio
+    non puo' far scattare (o tacere) il pre-allarme.
+
+    Un valore <= 0 o non numerico e' inutilizzabile (dividerebbe per zero
+    nella migrazione): degrada al default invece di sollevare.
+    """
+    rate = _f_env("ABM_GEMINI_USD_EUR_RATE", 0.86)
+    if not rate or rate <= 0:
+        return 0.86
+    return rate
+
+
+def to_eur(usd):
+    """Equivalente in EUR di un importo in USD, per il solo DISPLAY.
+
+    Gli importi autorevoli del credito Cloudflare sono in USD: questa
+    funzione esiste perche' pannello ed email possano affiancare la cifra in
+    euro a chi ragiona in euro, non per riportare la contabilita' in EUR.
+    """
+    return _safe_float(usd) * usd_eur_rate()
+
+
+def _declared_balance_usd():
+    """Saldo dichiarato dall'admin, in USD, con ripiego sul nome vecchio.
+
+    `ABM_CF_CREDIT_BALANCE_USD` e' il nome corrente. Se non e' dichiarato ma
+    lo e' `ABM_CF_CREDIT_BALANCE_EUR` (il nome che questa variabile aveva
+    prima che il credito tornasse alla valuta in cui Cloudflare lo denomina),
+    il valore viene convertito al cambio e usato lo stesso, con un avviso a
+    stdout. Il ripiego non e' cortesia: senza, un deploy che arriva prima
+    dell'aggiornamento dell'unit systemd leggerebbe 0, e un saldo 0 SPEGNE
+    il pre-allarme in silenzio - l'admin scoprirebbe il credito finito dal
+    failover, cioe' proprio cio' che il pre-allarme esiste per evitare.
+    """
+    if (os.environ.get("ABM_CF_CREDIT_BALANCE_USD", "") or "").strip():
+        return _f_env("ABM_CF_CREDIT_BALANCE_USD", 0.0)
+    if (os.environ.get("ABM_CF_CREDIT_BALANCE_EUR", "") or "").strip():
+        usd = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) / usd_eur_rate()
+        _warn_legacy_env("ABM_CF_CREDIT_BALANCE_EUR",
+                         "ABM_CF_CREDIT_BALANCE_USD", usd)
+        return usd
+    return 0.0
+
+
+def _alert_threshold_usd():
+    """Soglia di pre-allarme in USD, con lo stesso ripiego sul nome vecchio.
+
+    Qui il ripiego pesa meno che sul saldo (un default esiste), ma lasciare i
+    due nomi disallineati darebbe la combinazione peggiore: saldo convertito
+    dal nome vecchio e soglia presa dal default, cioe' una soglia diversa da
+    quella che l'admin crede di aver impostato.
+    """
+    if (os.environ.get("ABM_CF_CREDIT_ALERT_USD", "") or "").strip():
+        return _f_env("ABM_CF_CREDIT_ALERT_USD", _DEFAULT_ALERT_USD)
+    if (os.environ.get("ABM_CF_CREDIT_ALERT_EUR", "") or "").strip():
+        usd = _f_env("ABM_CF_CREDIT_ALERT_EUR", 0.0) / usd_eur_rate()
+        _warn_legacy_env("ABM_CF_CREDIT_ALERT_EUR",
+                         "ABM_CF_CREDIT_ALERT_USD", usd)
+        return usd
+    return _DEFAULT_ALERT_USD
+
+
+def credit_check_enabled():
+    """`False` se l'admin ha spento il controllo del credito Cloudflare
+    (`ABM_CF_CREDIT_CHECK=0`), `True` per default.
+
+    Esiste perche' il pre-allarme e' utile soltanto su un credito prepagato
+    che si esaurisce senza preavviso. Con la ricarica automatica a soglia
+    attiva sul pannello Cloudflare, il credito si ricarica da solo: il
+    residuo stimato da questo modulo non descrive piu' nulla di azionabile e
+    l'email di pre-allarme diventerebbe rumore periodico su una condizione
+    che il fornitore ha gia' risolto da solo.
+
+    Spegne SOLO l'allarme e il residuo, MAI la contabilita': `add_spend()`
+    continua ad accumulare `spent_usd` a ogni chiamata. La spesa cumulata
+    serve comunque - e' il solo modo per sapere quanto costa davvero
+    Cloudflare - e resta visibile nel pannello admin; e' il "quanto ne
+    resta" a perdere significato, non il "quanto ne ho speso".
+
+    Nota su cosa NON e' equivalente: lasciare `ABM_CF_CREDIT_BALANCE_USD` a 0
+    ottiene il silenzio per un'altra strada (nessun saldo dichiarato =>
+    nessun allarme possibile), ma dice "non so quanto credito ho", mentre
+    questa variabile dice "non voglio che il credito venga sorvegliato". La
+    differenza conta al primo incidente: davanti a un pannello muto, la
+    prima serve a distinguere una configurazione dimenticata da una scelta.
+    """
+    raw = (os.environ.get("ABM_CF_CREDIT_CHECK", "") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in ("true", "1", "yes", "on")
+
+
+def credit_balance_usd():
+    """Saldo dichiarato dall'admin (`ABM_CF_CREDIT_BALANCE_USD`), 0 se non
     dichiarato. PURA: nessuna mutazione, nessun consumo dell'allarme.
 
-    Esposta per la stessa ragione di `credit_alert_threshold_eur()`: chi deve
+    Esposta per la stessa ragione di `credit_alert_threshold_usd()`: chi deve
     decidere se il residuo e' un numero conoscibile (0 = nessun saldo
-    dichiarato, quindi `credit_left_eur()` non significa nulla) non deve
+    dichiarato, quindi `credit_left_usd()` non significa nulla) non deve
     rileggersi l'ambiente per conto proprio con una convenzione di parsing
     diversa da questa.
     """
-    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    return _declared_balance_usd()
 
 
-def credit_left_eur():
-    """Residuo stimato: saldo dichiarato meno speso cumulato.
+def credit_left_usd():
+    """Residuo stimato in USD: saldo dichiarato meno speso cumulato.
 
     E' una STIMA: l'API Cloudflare non restituisce i token, quindi la spesa e'
     calcolata dal chiamante sui secondi di audio prodotti. Vedi §10.2 della
     spec per l'esito della ricognizione sull'API del saldo.
     """
     with _LOCK:
-        spent = _safe_float(_CREDIT.get("spent_eur"))
-    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0) - spent
+        spent = _safe_float(_CREDIT.get("spent_usd"))
+    return _declared_balance_usd() - spent
 
 
-def declared_balance_eur():
-    """Saldo Cloudflare DICHIARATO dall'admin (`ABM_CF_CREDIT_BALANCE_EUR`),
+def credit_spent_usd():
+    """Spesa Cloudflare cumulata sul ledger locale, in USD. PURA.
+
+    E' l'unica meta' del conto che resta significativa quando il controllo
+    del credito e' spento (`ABM_CF_CREDIT_CHECK=0`): senza un saldo da
+    sorvegliare il "quanto ne resta" non descrive nulla, ma il "quanto ne ho
+    speso" continua a misurare cosa costa Cloudflare. Il pannello admin la
+    mostra al posto del residuo in quel caso.
+    """
+    with _LOCK:
+        return _safe_float(_CREDIT.get("spent_usd"))
+
+
+def declared_balance_usd():
+    """Saldo Cloudflare DICHIARATO dall'admin (`ABM_CF_CREDIT_BALANCE_USD`),
     non il residuo. PURA: nessuna mutazione, nessun consumo dell'allarme.
 
-    Esiste perche' `credit_left_eur()` ritorna un numero anche quando nessun
+    Esiste perche' `credit_left_usd()` ritorna un numero anche quando nessun
     saldo e' stato dichiarato - in quel caso e' la spesa cambiata di segno,
     non una misura: `credit_alert_pending()`/`claim_credit_alert()` lo sanno
     e con saldo <= 0 non allarmano mai. Chi deve MOSTRARE il residuo (log,
     pannello, email) usa questa funzione per distinguere "residuo basso" da
     "nessun saldo dichiarato" invece di stampare un negativo senza senso."""
-    return _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    return _declared_balance_usd()
 
 
-def credit_alert_threshold_eur():
-    """Soglia di pre-allarme (`ABM_CF_CREDIT_ALERT_EUR`), la stessa letta da
+def credit_alert_threshold_usd():
+    """Soglia di pre-allarme (`ABM_CF_CREDIT_ALERT_USD`), la stessa letta da
     `credit_alert_pending()`/`claim_credit_alert()`. Esposta perche' chi
     manda l'email possa dichiarare il numero all'admin senza rileggere
     l'ambiente per conto proprio (due letture divergono nel tempo). PURA:
     nessuna mutazione, nessun consumo dell'allarme."""
-    return _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+    return _alert_threshold_usd()
 
 
 def credit_alert_pending():
@@ -658,17 +830,23 @@ def credit_alert_pending():
     Con saldo dichiarato a 0 (default) ritorna sempre `False`: sarebbe
     rumore costante su un'installazione che non usa Cloudflare.
 
+    Con il controllo disattivato (`ABM_CF_CREDIT_CHECK=0`, tipicamente
+    perche' la ricarica automatica Cloudflare copre gia' l'esaurimento)
+    ritorna sempre `False`, prima ancora di leggere saldo e ledger.
+
     Per il percorso da cui parte davvero l'invio dell'email usare
     `claim_credit_alert()`, MAI questa funzione.
     """
-    balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    if not credit_check_enabled():
+        return False
+    balance = _declared_balance_usd()
     if balance <= 0:
         return False
     with _LOCK:
         if _CREDIT.get("alerted"):
             return False
-        spent = _safe_float(_CREDIT.get("spent_eur"))
-    return (balance - spent) < _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0)
+        spent = _safe_float(_CREDIT.get("spent_usd"))
+    return (balance - spent) < _alert_threshold_usd()
 
 
 def claim_credit_alert():
@@ -694,15 +872,23 @@ def claim_credit_alert():
     garantiva questa proprieta': un I/O reale (invio email) fra le due
     chiamate lascia una finestra in cui tutti i chiamanti concorrenti
     leggono ancora `alerted=False`.
+
+    Con `ABM_CF_CREDIT_CHECK=0` ritorna sempre `False` senza toccare il
+    ledger: l'allarme non viene ne' dato ne' CONSUMATO, cosi' riaccendere il
+    controllo lo ritrova ancora armato invece di averlo perso in silenzio
+    mentre era spento.
     """
-    balance = _f_env("ABM_CF_CREDIT_BALANCE_EUR", 0.0)
+    if not credit_check_enabled():
+        return False
+    balance = _declared_balance_usd()
     if balance <= 0:
         return False
+    threshold = _alert_threshold_usd()
     with _LOCK:
         if _CREDIT.get("alerted"):
             return False
-        spent = _safe_float(_CREDIT.get("spent_eur"))
-        if (balance - spent) >= _f_env("ABM_CF_CREDIT_ALERT_EUR", 5.0):
+        spent = _safe_float(_CREDIT.get("spent_usd"))
+        if (balance - spent) >= threshold:
             return False
         _CREDIT["alerted"] = True
         _save()

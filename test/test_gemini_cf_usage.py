@@ -32,7 +32,7 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setenv("ABM_GOOGLE_CREDENTIALS_FILE", str(creds))
     monkeypatch.setenv("ABM_CF_ACCOUNT_ID", "acc")
     monkeypatch.setenv("ABM_CF_API_TOKEN", "tok")
-    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_EUR", "50")
+    monkeypatch.setenv("ABM_CF_CREDIT_BALANCE_USD", "50")
     monkeypatch.setattr(gemini_tts, "is_available", lambda: True)
     monkeypatch.setattr(gemini_tts, "_check_rpd_cap", lambda mk: None)
     monkeypatch.setattr(gemini_tts, "_throttle_rpm", lambda mk: None)
@@ -60,18 +60,18 @@ def test_a_cloudflare_call_debits_the_credit_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
                         lambda **kw: {"pcm": PCM_60_SECONDI,
                                       "input_tokens": None, "output_tokens": None})
-    before = st.credit_left_eur()
+    before = st.credit_left_usd()
 
     out = _synth(tmp_path)
 
     assert out["backend"] == "cloudflare"
-    after = st.credit_left_eur()
+    after = st.credit_left_usd()
     assert after < before
     # L'addebito deve corrispondere esattamente al costo reale calcolato sugli
     # stessi token che la chiamata ha restituito (nessuna euristica separata).
     expected = gemini_tts.actual_cost_breakdown(
         out["input_tokens"], out["output_tokens"], out["model_key"], "cloudflare")
-    assert (before - after) == pytest.approx(expected["total_eur"])
+    assert (before - after) == pytest.approx(expected["total_usd"])
 
 
 def test_a_vertex_call_does_not_touch_the_cloudflare_ledger(tmp_path, monkeypatch):
@@ -79,12 +79,12 @@ def test_a_vertex_call_does_not_touch_the_cloudflare_ledger(tmp_path, monkeypatc
     monkeypatch.setattr(gemini_tts, "_vertex_transport_call",
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": 5, "output_tokens": 25})
-    before = st.credit_left_eur()
+    before = st.credit_left_usd()
 
     out = _synth(tmp_path)
 
     assert out["backend"] == "vertex"
-    assert st.credit_left_eur() == pytest.approx(before)
+    assert st.credit_left_usd() == pytest.approx(before)
 
 
 def test_ledger_debit_is_non_fatal_if_add_spend_raises(tmp_path, monkeypatch):
@@ -113,17 +113,17 @@ def test_the_ledger_is_precise_per_piece_across_a_split_chunk(tmp_path, monkeypa
     monkeypatch.setattr(gemini_tts._transport, "cloudflare_call",
                         lambda **kw: {"pcm": PCM_20_SECONDI,
                                       "input_tokens": None, "output_tokens": None})
-    before = st.credit_left_eur()
+    before = st.credit_left_usd()
 
     agg = tts_split._synthesize_pcm_pieces_and_concat(
         ["primo pezzo di testo", "secondo pezzo di testo"],
         "gemini:flash31:Kore", str(tmp_path / "unito.pcm"), None, 1)
 
     assert agg is not False
-    spent = before - st.credit_left_eur()
+    spent = before - st.credit_left_usd()
     expected_per_piece = gemini_tts.actual_cost_breakdown(
         agg["input_tokens"] // 2, agg["output_tokens"] // 2,
-        agg["model_key"], "cloudflare")["total_eur"]
+        agg["model_key"], "cloudflare")["total_usd"]
     assert spent == pytest.approx(expected_per_piece * 2, rel=1e-6)
 
 
@@ -235,4 +235,4 @@ def test_worst_case_cost_breakdown_never_undercuts_the_pricing_listino_when_fail
     monkeypatch.setenv("ABM_GEMINI_BACKEND", "cloudflare")
     listino = gemini_tts.pricing_cost_breakdown(100000, 100000, "flash31")
     worst = gemini_tts.worst_case_cost_breakdown(100000, 100000, "flash31")
-    assert worst["total_eur"] >= listino["total_eur"]
+    assert worst["total_usd"] >= listino["total_usd"]

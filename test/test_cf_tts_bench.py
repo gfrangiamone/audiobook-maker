@@ -115,53 +115,84 @@ def test_tariffa_nativa_per_secondo_di_audio():
 
     Non dipende dal testo - e' la ragione per cui un audiolibro si preventiva
     sulla durata e non sulla lunghezza. Con i default (25 tok/s, 12 USD/Mtok,
-    cambio 0,86, ricarica 5%) fa 0,9752 EUR per ora di audio.
+    ricarica 5%) fa 1,134 USD per ora di audio, cioe' 0,9752 EUR al cambio
+    0,86. La valuta nativa e' il dollaro: l'euro e' il derivato, non il
+    contrario, perche' Cloudflare fattura e denomina il credito in USD.
     """
     t = bench.tariffe_native()
     atteso_sec = (bench.AUDIO_TOKENS_PER_SECOND * bench.CF_OUTPUT_USD_PER_MTOK
-                  / 1e6 * bench.USD_EUR_RATE * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
-    assert t["eur_per_audio_second"] == pytest.approx(atteso_sec)
-    assert t["eur_per_audio_hour"] == pytest.approx(atteso_sec * 3600.0)
+                  / 1e6 * (1.0 + bench.CF_CREDIT_TOPUP_FEE))
+    assert t["usd_per_audio_second"] == pytest.approx(atteso_sec)
+    assert t["usd_per_audio_hour"] == pytest.approx(atteso_sec * 3600.0)
+    assert t["usd_per_audio_hour"] == pytest.approx(1.134)
+    # L'equivalente in euro resta esposto per il preventivo al cliente, ed e'
+    # esattamente il valore in dollari moltiplicato per il cambio: se i due
+    # numeri si scollegassero, il banco direbbe due prezzi diversi per la
+    # stessa ora di audio.
+    assert t["eur_per_audio_hour"] == pytest.approx(
+        t["usd_per_audio_hour"] * bench.USD_EUR_RATE)
     assert t["eur_per_audio_hour"] == pytest.approx(0.97524)
 
 
 def test_tariffa_nativa_input_dipende_dalla_lingua():
     """Il costo per carattere NON e' unico: il cinese rende piu' token.
 
-    Collassare l'input su un solo EUR/Mchar romperebbe il preventivo delle
+    Collassare l'input su un solo USD/Mchar romperebbe il preventivo delle
     lingue non latine, che l'app supporta.
     """
     nat = bench.tariffe_native()
-    t = nat["eur_per_mchar_input"]
+    t = nat["usd_per_mchar_input"]
     assert t["zh"] > t["it"]
     # E l'input resta comunque trascurabile: e' l'output a fare il prezzo.
     # Il confronto va fatto a parita' di base - un'ora di audio italiano sono
-    # 14,6 char/s x 3600 = 52.560 caratteri - non fra EUR/Mchar e EUR/ora,
+    # 14,6 char/s x 3600 = 52.560 caratteri - non fra USD/Mchar e USD/ora,
     # che sono unita' diverse.
     char_in_un_ora = 14.6 * 3600.0
     input_per_ora = t["it"] * char_in_un_ora / 1e6
-    assert input_per_ora < nat["eur_per_audio_hour"] * 0.02
+    assert input_per_ora < nat["usd_per_audio_hour"] * 0.02
+    # Stessa lingua, stesso rapporto fra le due valute: la voce per-carattere
+    # non puo' avere un cambio suo.
+    assert nat["eur_per_mchar_input"]["it"] == pytest.approx(
+        t["it"] * bench.USD_EUR_RATE)
 
 
-def test_spend_guard_accumula_e_converte_in_euro():
-    guard = bench.SpendGuard(max_eur=1.0)
+def test_spend_guard_accumula_in_dollari():
+    """La contabilita' del guard e' in USD, la valuta del credito Cloudflare.
+
+    Nessuna conversione si interpone fra la spesa misurata e il tetto: un
+    ritocco di `ABM_GEMINI_USD_EUR_RATE` non deve poter spostare quanto
+    credito il banco e' autorizzato a bruciare.
+    """
+    guard = bench.SpendGuard(max_usd=1.0)
     guard.add(0.5)
     guard.add(0.25)
     assert guard.spent_usd == pytest.approx(0.75)
-    assert guard.spent_eur() == pytest.approx(0.645)
 
 
 def test_spend_guard_blocca_oltre_il_cap():
-    guard = bench.SpendGuard(max_eur=1.0)
-    guard.add(1.10)  # 0.946 EUR
-    guard.check(0.05)  # 0.989 EUR: ancora sotto, non solleva
+    guard = bench.SpendGuard(max_usd=1.20)
+    guard.add(1.10)
+    guard.check(0.05)  # 1.15 USD: ancora sotto, non solleva
     guard.add(0.05)
     with pytest.raises(bench.SpendCapExceeded):
-        guard.check(0.10)
+        guard.check(0.10)  # 1.25 USD: sopra il tetto
+
+
+def test_il_cambio_non_sposta_il_tetto_di_spesa(monkeypatch):
+    """Controprova del punto sopra: il cap vive in USD, il cambio e' fuori.
+
+    Con un cap in euro questo test falliva a comando - bastava dichiarare un
+    cambio piu' basso per far passare una spesa che il tetto vietava.
+    """
+    guard = bench.SpendGuard(max_usd=1.0)
+    guard.add(0.99)
+    monkeypatch.setattr(bench, "USD_EUR_RATE", 0.10)
+    with pytest.raises(bench.SpendCapExceeded):
+        guard.check(0.05)
 
 
 def test_spend_guard_cap_zero_disattiva_il_controllo():
-    guard = bench.SpendGuard(max_eur=0)
+    guard = bench.SpendGuard(max_usd=0)
     guard.add(999.0)
     guard.check(999.0)  # nessuna eccezione
 
@@ -385,11 +416,11 @@ def test_new_run_dir_crea_sottocartelle(tmp_path):
     assert os.path.basename(run_dir).endswith("_smoke")
 
 
-def _ctx(tmp_path, session, max_eur=10.0, max_attempts=4):
+def _ctx(tmp_path, session, max_usd=10.0, max_attempts=4):
     run_dir = bench.new_run_dir(str(tmp_path), "test")
     return bench.BenchContext(
         session=session, account_id="acc", api_token="tok", run_dir=run_dir,
-        writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(max_eur),
+        writer=bench.MetricsWriter(run_dir), guard=bench.SpendGuard(max_usd),
         run_id="run-test", temperature=0.3, backend="cloudflare",
         sleep=lambda _: None, max_attempts=max_attempts,
     )
@@ -461,7 +492,7 @@ def test_synth_chunk_usa_il_prompt_di_produzione(tmp_path):
 
 
 def test_synth_chunk_rispetta_il_cap_di_spesa(tmp_path):
-    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]), max_eur=0.000001)
+    ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=9.0)]), max_usd=0.000001)
     with pytest.raises(bench.SpendCapExceeded):
         bench.synth_chunk(ctx, "a" * 146, 0, "it", "Zephyr", "+0%", None,
                           os.path.join(ctx.run_dir, "audio", "000.pcm"))
@@ -669,7 +700,7 @@ def test_run_matrix_cap_di_spesa_ferma_il_run_sotto_concorrenza(tmp_path):
     s = FakeSession([_ok_response(seconds=9.0) for _ in combos])
     # cap cosi' minuscolo che anche la prima prenotazione lo sfonda: nessuna
     # chiamata HTTP deve partire.
-    ctx = _ctx(tmp_path, s, max_eur=1e-9)
+    ctx = _ctx(tmp_path, s, max_usd=1e-9)
     with pytest.raises(bench.SpendCapExceeded):
         bench.run_matrix(ctx, combos, concurrency=4)
     ctx.writer.close()
@@ -690,7 +721,7 @@ def test_spend_guard_reserve_concorrenza_produce_esattamente_k_successi():
     k = 3
     n = 10
     usd = 1.0
-    guard = bench.SpendGuard(max_eur=k * usd * bench.USD_EUR_RATE)
+    guard = bench.SpendGuard(max_usd=k * usd)
     barrier = threading.Barrier(n)
     successes = []
     lock = threading.Lock()
@@ -978,7 +1009,7 @@ def test_run_book_cap_di_spesa_ferma_il_run_sotto_concorrenza(tmp_path):
     s = FakeSession([_ok_response(seconds=30.0) for _ in range(attesi)])
     # cap cosi' minuscolo che anche la prima prenotazione lo sfonda: nessuna
     # chiamata HTTP deve partire.
-    ctx = _ctx(tmp_path, s, max_eur=1e-9)
+    ctx = _ctx(tmp_path, s, max_usd=1e-9)
     with pytest.raises(bench.SpendCapExceeded):
         bench.run_book(ctx, book, "Zephyr", "+0%", None,
                        chunk_chars=450, concurrency=4,
@@ -1086,7 +1117,7 @@ def test_arg_parser_default_allineati_a_produzione():
     assert ns.level == "smoke"
     assert ns.chunk_chars == 450
     assert ns.temperature == 0.3
-    assert ns.max_spend_eur == 2.00
+    assert ns.max_spend_usd == 2.00
     assert ns.langs == "it,en"
     assert ns.voices == "Zephyr"
     assert ns.rates == "+0%"
@@ -1143,7 +1174,7 @@ def test_main_cap_di_spesa_produce_report_parziale(tmp_path, monkeypatch):
     monkeypatch.setenv("CF_API_TOKEN", "tok")
     monkeypatch.setattr(bench.requests, "Session",
                         lambda: FakeSession([_ok_response(seconds=14.0)]))
-    rc = bench.main(["--level", "smoke", "--max-spend-eur", "0.0000001",
+    rc = bench.main(["--level", "smoke", "--max-spend-usd", "0.0000001",
                      "--out-dir", str(tmp_path)])
     assert rc == 1
     run_dir = os.path.join(str(tmp_path),
@@ -1399,7 +1430,7 @@ def test_one_call_cfautherror_libera_la_prenotazione(tmp_path):
     with pytest.raises(bench.CFAuthError):
         bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "x.pcm"), 0)
-    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    assert ctx.guard.spent_usd == pytest.approx(0.0)
     ctx.writer.close()
 
 
@@ -1747,9 +1778,9 @@ def test_one_call_libera_la_prenotazione_su_keyboardinterrupt(tmp_path,
                         os.path.join(ctx.run_dir, "x.pcm"), 0)
     # I token di input si stimano sul prompt realmente inviato (M2), quindi
     # la previsione di riferimento va calcolata sulla stessa base.
-    atteso = (bench.predict_call_usd(20, "it", prompt_chars=len("testo finale"))
-              * bench.USD_EUR_RATE)
-    assert ctx.guard.spent_eur() == pytest.approx(atteso)
+    atteso = bench.predict_call_usd(20, "it",
+                                    prompt_chars=len("testo finale"))
+    assert ctx.guard.spent_usd == pytest.approx(atteso)
     assert atteso > 0.0
     assert ctx.paid_calls.count == 1
     ctx.writer.close()
@@ -1760,7 +1791,7 @@ def test_one_call_libera_la_prenotazione_su_keyboardinterrupt(tmp_path,
     with pytest.raises(KeyboardInterrupt):
         bench._one_call(ctx_b, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx_b.run_dir, "x.pcm"), 0)
-    assert ctx_b.guard.spent_eur() == pytest.approx(0.0)
+    assert ctx_b.guard.spent_usd == pytest.approx(0.0)
     assert ctx_b.paid_calls.count == 0
     ctx_b.writer.close()
 
@@ -1824,7 +1855,8 @@ def test_main_200_gia_fatturato_perso_prima_del_record_resta_visibile(
     assert "non compare in metrics.jsonl" in out
     assert "nessuna chiamata effettuata" not in out
     # La spesa non puo' essere azzerata: il POST e' stato fatturato.
-    assert "spesa stimata Cloudflare (soggetta al cap --max-spend-eur): EUR 0.0000" not in out
+    assert ("spesa stimata Cloudflare (soggetta al cap --max-spend-usd): "
+            "USD 0.0000") not in out
     run_dir = os.path.join(str(tmp_path), [d for d in os.listdir(tmp_path)][0])
     report = open(os.path.join(run_dir, "report.md"), encoding="utf-8").read()
     assert "non compare in metrics.jsonl" in report
@@ -1928,7 +1960,7 @@ def test_main_render_report_fallito_non_nasconde_la_riconciliazione(
 def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     """Difetto 1 (round 5): un HTTP 200 con corpo inutilizzabile e' comunque
     fatturato da Cloudflare, ma `except CFCallError` liquidava la prenotazione
-    a zero. Conseguenza dimostrata: spesa EUR 0.0000 e cap che non scatta mai,
+    a zero. Conseguenza dimostrata: spesa USD 0.0000 e cap che non scatta mai,
     cioe' un run difettoso puo' bruciare denaro senza alcun limite."""
     previsto = bench.predict_call_usd(20, "it",
                                       prompt_chars=len("testo finale"))
@@ -1937,7 +1969,7 @@ def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     # Cap appena sopra una chiamata: la seconda deve essere rifiutata.
     # max_attempts=1: qui si misura la FATTURAZIONE di un 200 rotto, non il
     # ritentativo (coperto da test_duecento_senza_audio_viene_ritentato).
-    ctx = _ctx(tmp_path, s, max_eur=previsto * bench.USD_EUR_RATE * 1.5,
+    ctx = _ctx(tmp_path, s, max_usd=previsto * 1.5,
                max_attempts=1)
     rec, seconds, path = bench._one_call(ctx, "testo finale", 20, "it",
                                          "Zephyr", "+0%", None,
@@ -1945,7 +1977,7 @@ def test_200_con_corpo_rotto_e_fatturato_e_consuma_il_cap(tmp_path):
     assert rec["http_status"] == 200
     assert rec["anomaly"] == "error"
     assert ctx.paid_calls.count == 1
-    assert ctx.guard.spent_eur() == pytest.approx(previsto * bench.USD_EUR_RATE)
+    assert ctx.guard.spent_usd == pytest.approx(previsto)
     with pytest.raises(bench.SpendCapExceeded):
         bench._one_call(ctx, "testo finale", 20, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "y.pcm"), 0)
@@ -1964,8 +1996,7 @@ def test_ritentare_il_200_senza_audio_moltiplica_la_spesa(tmp_path):
                                 None, os.path.join(ctx.run_dir, "x.pcm"), 0)
     assert rec["anomaly"] == "error"
     assert ctx.paid_calls.count == 3
-    assert ctx.guard.spent_eur() == pytest.approx(
-        previsto * bench.USD_EUR_RATE * 3)
+    assert ctx.guard.spent_usd == pytest.approx(previsto * 3)
     ctx.writer.close()
 
 
@@ -1983,8 +2014,7 @@ def test_chunk_riuscito_dopo_un_200_bruciato_paga_entrambi(tmp_path):
                                 None, os.path.join(ctx.run_dir, "x.pcm"), 0)
     assert ctx.paid_calls.count == 2
     assert rec["cost_usd_est"] > previsto
-    assert ctx.guard.spent_eur() == pytest.approx(
-        rec["cost_usd_est"] * bench.USD_EUR_RATE)
+    assert ctx.guard.spent_usd == pytest.approx(rec["cost_usd_est"])
     ctx.writer.close()
 
 
@@ -1999,14 +2029,14 @@ def test_chiamata_senza_200_resta_non_fatturata(tmp_path):
                                          os.path.join(ctx.run_dir, "x.pcm"), 0)
     assert rec["http_status"] == 500
     assert ctx.paid_calls.count == 0
-    assert ctx.guard.spent_eur() == pytest.approx(0.0)
+    assert ctx.guard.spent_usd == pytest.approx(0.0)
     ctx.writer.close()
 
 
 def test_200_con_audio_non_decodificabile_costa_la_stima_piena(tmp_path):
     """Difetto 5 (round 5): il prezzo era calcolato sulla durata decodificata.
     Con un 200 il cui audio non e' un WAV valido la durata e' zero, quindi il
-    costo scendeva a ~3e-05 USD e il footer mostrava EUR 0.0000 su una
+    costo scendeva a ~3e-05 USD e il footer mostrava USD 0.0000 su una
     chiamata realmente fatturata. La stima piena prenotata e' il numero
     disponibile e onesto."""
     import base64 as _b64
@@ -2021,7 +2051,7 @@ def test_200_con_audio_non_decodificabile_costa_la_stima_piena(tmp_path):
     assert rec["anomaly"] == "format"
     assert rec["cost_usd_est"] == pytest.approx(previsto)
     assert ctx.paid_calls.count == 1
-    assert ctx.guard.spent_eur() == pytest.approx(previsto * bench.USD_EUR_RATE)
+    assert ctx.guard.spent_usd == pytest.approx(previsto)
     ctx.writer.close()
 
 
@@ -2617,7 +2647,7 @@ def test_wrapper_non_forza_gli_altri_default_del_banco():
     mascherare un valore dedotto o il default di Python."""
     src = open(_PS1_PATH, encoding="utf-8").read()
     for nome in ("Voices", "Rates", "ChunkChars", "Concurrency", "Runs",
-                 "Temperature", "MaxSpendEur", "MaxAttempts"):
+                 "Temperature", "MaxSpendUsd", "MaxAttempts"):
         assert "$PSBoundParameters.ContainsKey('%s')" % nome in src, nome
 
 
@@ -2671,17 +2701,17 @@ def test_wrapper_eseguito_davvero_non_inietta_langs(tmp_path):
 def test_settle_solleva_se_la_liquidazione_sfonda_il_cap():
     """I2: settle() sommava actual-reserved senza ricontrollare il tetto.
     Con audio molto piu' lungo del previsto il run continuava a spendere
-    (osservato EUR 0.0387 contro un cap di 0.02, cioe' 1.9x)."""
-    guard = bench.SpendGuard(max_eur=0.02)
-    reserved = guard.reserve(0.004)  # ~0.0034 EUR: sotto il cap
+    (osservato USD 0.045 contro un cap di 0.02, cioe' 2.2x)."""
+    guard = bench.SpendGuard(max_usd=0.02)
+    reserved = guard.reserve(0.004)  # sotto il cap
     with pytest.raises(bench.SpendCapExceeded):
-        guard.settle(reserved, 0.045)  # ~0.0387 EUR: sopra il cap
+        guard.settle(reserved, 0.045)  # sopra il cap
     # La spesa resta contabilizzata: la chiamata e' gia' stata fatturata.
-    assert guard.spent_eur() == pytest.approx(0.045 * bench.USD_EUR_RATE)
+    assert guard.spent_usd == pytest.approx(0.045)
 
 
 def test_settle_oltre_il_cap_blocca_le_chiamate_successive():
-    guard = bench.SpendGuard(max_eur=0.02)
+    guard = bench.SpendGuard(max_usd=0.02)
     reserved = guard.reserve(0.004)
     with pytest.raises(bench.SpendCapExceeded):
         guard.settle(reserved, 0.045)
@@ -2691,7 +2721,7 @@ def test_settle_oltre_il_cap_blocca_le_chiamate_successive():
 
 
 def test_settle_sotto_il_cap_non_solleva():
-    guard = bench.SpendGuard(max_eur=1.0)
+    guard = bench.SpendGuard(max_usd=1.0)
     reserved = guard.reserve(0.5)
     guard.settle(reserved, 0.6)
     assert guard.spent_usd == pytest.approx(0.6)
@@ -2699,7 +2729,7 @@ def test_settle_sotto_il_cap_non_solleva():
 
 
 def test_settle_cap_zero_non_solleva_mai():
-    guard = bench.SpendGuard(max_eur=0)
+    guard = bench.SpendGuard(max_usd=0)
     reserved = guard.reserve(1.0)
     guard.settle(reserved, 999.0)
     assert guard.spent_usd == pytest.approx(999.0)
@@ -2710,7 +2740,7 @@ def test_one_call_scrive_il_record_anche_se_il_cap_scatta_in_liquidazione(
     """I2: una chiamata gia' fatturata non deve sparire da metrics.jsonl a
     causa dell'abort che essa stessa provoca."""
     ctx = _ctx(tmp_path, FakeSession([_ok_response(seconds=150.0)]),
-               max_eur=0.02)
+               max_usd=0.02)
     with pytest.raises(bench.SpendCapExceeded):
         bench._one_call(ctx, "testo finale", 146, "it", "Zephyr", "+0%", None,
                         os.path.join(ctx.run_dir, "audio", "0000.pcm"), 0)
@@ -2797,7 +2827,7 @@ def test_run_matrix_si_ferma_alla_prima_liquidazione_oltre_il_cap(tmp_path):
     fermare il run, non solo essere annotato."""
     combos = bench.matrix_combinations(["it"], ["Zephyr"], ["+0%"], [], runs=4)
     s = FakeSession([_ok_response(seconds=150.0)] * 4)
-    ctx = _ctx(tmp_path, s, max_eur=0.02)
+    ctx = _ctx(tmp_path, s, max_usd=0.02)
     with pytest.raises(bench.SpendCapExceeded):
         bench.run_matrix(ctx, combos, concurrency=1)
     ctx.writer.close()
@@ -2805,7 +2835,7 @@ def test_run_matrix_si_ferma_alla_prima_liquidazione_oltre_il_cap(tmp_path):
 
 
 def test_main_rifiuta_max_spend_negativo(tmp_path, monkeypatch, capsys):
-    """Trivia: un cap negativo rendeva `max_eur <= 0` vero, cioe' disattivava
+    """Trivia: un cap negativo rendeva `max_usd <= 0` vero, cioe' disattivava
     il tetto in silenzio."""
     monkeypatch.setenv("CF_ACCOUNT_ID", "acc")
     monkeypatch.setenv("CF_API_TOKEN", "tok")
@@ -2814,7 +2844,7 @@ def test_main_rifiuta_max_spend_negativo(tmp_path, monkeypatch, capsys):
         raise AssertionError("nessuna sessione HTTP deve essere creata")
 
     monkeypatch.setattr(bench.requests, "Session", _mai)
-    rc = bench.main(["--level", "smoke", "--max-spend-eur", "-1",
+    rc = bench.main(["--level", "smoke", "--max-spend-usd", "-1",
                      "--out-dir", str(tmp_path)])
     assert rc == 1
     assert "non puo' essere negativo" in capsys.readouterr().out
@@ -3243,7 +3273,7 @@ def test_e2e_i2_il_cap_ferma_il_run_invece_di_sforarlo(tmp_path):
     esito, out_dir = _run_e2e(
         tmp_path,
         ["--level", "matrix", "--langs", "it", "--voices", "Zephyr",
-         "--runs", "6", "--concurrency", "1", "--max-spend-eur", "0.02"],
+         "--runs", "6", "--concurrency", "1", "--max-spend-usd", "0.02"],
         [{"status": 200, "seconds": 150.0}], nome="i2")
     assert len(esito["posts"]) == 1
     report = os.path.join(_run_dir_unico(out_dir), "report.md")

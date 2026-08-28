@@ -380,7 +380,7 @@ _credit_alert_notifier = None
 
 
 def set_credit_alert_notifier(fn):
-    """Registra la callback di pre-allarme credito: fn(model_key, credit_left_eur)."""
+    """Registra la callback di pre-allarme credito: fn(model_key, credit_left_usd)."""
     global _credit_alert_notifier
     _credit_alert_notifier = fn
 
@@ -407,7 +407,7 @@ def _maybe_alert_credit(model_key):
         return
     if not _backend_state.claim_credit_alert():
         return
-    _credit_alert_notifier(model_key, _backend_state.credit_left_eur())
+    _credit_alert_notifier(model_key, _backend_state.credit_left_usd())
 
 
 def _cf_trip_failures():
@@ -2946,7 +2946,11 @@ def synthesize(text, voice_id, rate="+0%", output_path="output.pcm", style_instr
         try:
             _cf_spend = actual_cost_breakdown(usage_input, usage_output,
                                               model_key, "cloudflare")
-            _backend_state.add_spend(model_key, _cf_spend["total_eur"])
+            # In USD: il ledger tiene i conti nella valuta in cui
+            # Cloudflare denomina il credito, cosi' il residuo stimato e
+            # il saldo sulla dashboard del fornitore sono confrontabili a
+            # occhio, senza un cambio di mezzo.
+            _backend_state.add_spend(model_key, _cf_spend["total_usd"])
         except Exception as _ledger_err:
             print(f"[gemini-tts] add_spend failed (non-fatal, ledger only): "
                   f"{_ledger_err}")

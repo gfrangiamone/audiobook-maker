@@ -45,7 +45,7 @@ param(
     [int]$Concurrency = 1,
     [int]$Runs = 1,
     [double]$Temperature = 0.3,
-    [double]$MaxSpendEur = 2.00,
+    [double]$MaxSpendUsd = 2.00,
     [int]$MaxAttempts = 4,
 
     [ValidateSet('vertex')]
@@ -92,7 +92,7 @@ if ($PSBoundParameters.ContainsKey('ChunkChars')) { $cliArgs += @('--chunk-chars
 if ($PSBoundParameters.ContainsKey('Concurrency')) { $cliArgs += @('--concurrency', $Concurrency.ToString($inv)) }
 if ($PSBoundParameters.ContainsKey('Runs')) { $cliArgs += @('--runs', $Runs.ToString($inv)) }
 if ($PSBoundParameters.ContainsKey('Temperature')) { $cliArgs += @('--temperature', $Temperature.ToString($inv)) }
-if ($PSBoundParameters.ContainsKey('MaxSpendEur')) { $cliArgs += @('--max-spend-eur', $MaxSpendEur.ToString($inv)) }
+if ($PSBoundParameters.ContainsKey('MaxSpendUsd')) { $cliArgs += @('--max-spend-usd', $MaxSpendUsd.ToString($inv)) }
 if ($PSBoundParameters.ContainsKey('MaxAttempts')) { $cliArgs += @('--max-attempts', $MaxAttempts.ToString($inv)) }
 if ($Styles.Count -gt 0) { $cliArgs += @('--styles', ($Styles -join ',')) }
 if ($Book) { $cliArgs += @('--book', $Book) }

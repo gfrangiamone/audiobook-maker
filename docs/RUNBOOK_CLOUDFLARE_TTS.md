@@ -93,15 +93,29 @@ Da completare **prima** di toccare l'unit systemd:
    ampi). Il valore del token non va **mai** scritto in documentazione, log
    applicativi o export di configurazione — solo il nome della variabile
    (`ABM_CF_API_TOKEN`) va citato.
-3. **`ABM_CF_CREDIT_BALANCE_EUR` allineato all'importo ricaricato.** Questa
-   variabile è il saldo che l'admin **dichiara** dopo la ricarica — non è
-   leggibile via API Cloudflare (nessun endpoint di credito esiste; quelli
-   di fatturazione rispondono `403` perché il token è volutamente
+3. **`ABM_CF_CREDIT_BALANCE_USD` allineato all'importo ricaricato**, *oppure*
+   `ABM_CF_CREDIT_CHECK=0` se la ricarica automatica è attiva. Il credito
+   Cloudflare è denominato **in dollari**: la variabile va dichiarata in USD,
+   così la cifra del pannello e quella della dashboard del fornitore si
+   confrontano a occhio. È il saldo che l'admin **dichiara** dopo la ricarica
+   — non è leggibile via API Cloudflare (nessun endpoint di credito esiste;
+   quelli di fatturazione rispondono `403` perché il token è volutamente
    ristretto). Impostarla all'importo netto della ricarica: il credito si
    compra pagando anche la commissione del 5% (`ABM_CF_CREDIT_TOPUP_FEE`),
    quindi il saldo disponibile per le chiamate è l'importo ricaricato, non
    l'importo speso in fattura. Con `0` (default) il pre-allarme sul credito
    resta disabilitato — non lasciarla a zero dopo l'accensione.
+
+   **Alternativa consigliata se il pannello Cloudflare ha la ricarica
+   automatica a soglia:** impostare `ABM_CF_CREDIT_CHECK=0` e ignorare il
+   saldo dichiarato. Con la ricarica automatica il credito si rialza da solo,
+   quindi un saldo dichiarato a mano invecchia dal giorno dopo e il residuo
+   stimato diventa un numero plausibile e falso. A controllo spento il
+   pannello mostra la **spesa cumulata** al posto del residuo, e la
+   contabilità resta intatta: si continua a sapere quanto costa Cloudflare,
+   si smette solo di sorvegliare quanto ne resta. Il nome vecchio
+   `ABM_CF_CREDIT_BALANCE_EUR` è ancora onorato (convertito al cambio, con un
+   avviso a stdout), ma va sostituito alla prima occasione utile.
 
 ---
 
@@ -114,7 +128,14 @@ Variabili da aggiungere all'unit systemd (`Environment=` o
 ABM_GEMINI_BACKEND=cloudflare
 ABM_CF_ACCOUNT_ID=<account id Cloudflare>
 ABM_CF_API_TOKEN=<token con soli permessi Workers AI>
-ABM_CF_CREDIT_BALANCE_EUR=<importo netto ricaricato, es. 50>
+ABM_CF_CREDIT_BALANCE_USD=<importo netto ricaricato in USD, es. 50>
+```
+
+Con la ricarica automatica attiva sul pannello Cloudflare, al posto della
+riga del saldo:
+
+```
+ABM_CF_CREDIT_CHECK=0
 ```
 
 Poi:
@@ -218,7 +239,7 @@ reversibile in ogni momento):
    ```
    ABM_GEMINI_BACKEND=vertex
    ```
-   (lasciare `ABM_CF_ACCOUNT_ID` / `ABM_CF_API_TOKEN` / `ABM_CF_CREDIT_BALANCE_EUR`
+   (lasciare `ABM_CF_ACCOUNT_ID` / `ABM_CF_API_TOKEN` / `ABM_CF_CREDIT_BALANCE_USD`
    presenti non ha effetto: senza `cloudflare` come backend selezionato non
    vengono usate.)
 2. ```bash
@@ -248,13 +269,15 @@ reversibile in ogni momento):
 
 ## 6bis. Pre-allarme credito: l'email che arriva *prima* del guasto
 
-Oggetto: `[ABM-ADMIN] Credito Cloudflare basso: <residuo> EUR residui
-(soglia <soglia>)`.
+Oggetto: `[ABM-ADMIN] Credito Cloudflare basso: <residuo> USD residui
+(soglia <soglia>)`. Tutti gli importi dell'email sono in USD, la valuta in
+cui Cloudflare denomina il credito: chi la legge di notte deve poterli
+confrontare con la dashboard del fornitore senza rifare il cambio a mente.
 
 Questa email **non** annuncia un failover: il TTS sta ancora girando su
 Cloudflare e nessun job è in errore. Parte quando il residuo **stimato**
-(`ABM_CF_CREDIT_BALANCE_EUR` meno la spesa accumulata nel ledger locale)
-scende sotto `ABM_CF_CREDIT_ALERT_EUR`, subito dopo l'addebito che ha
+(`ABM_CF_CREDIT_BALANCE_USD` meno la spesa accumulata nel ledger locale)
+scende sotto `ABM_CF_CREDIT_ALERT_USD`, subito dopo l'addebito che ha
 attraversato la soglia. Arriva **una sola volta** per soglia
 (`claim_credit_alert()` è atomica e consuma l'allarme); si riarma **solo**
 con il topup, cioè il pulsante «Ho ricaricato il credito» del pannello
@@ -263,7 +286,7 @@ con il topup, cioè il pulsante «Ho ricaricato il credito» del pannello
 Che fare, nell'ordine:
 
 1. Ricaricare il credito Cloudflare AI Gateway.
-2. Riallineare `ABM_CF_CREDIT_BALANCE_EUR` nell'unit systemd col nuovo saldo
+2. Riallineare `ABM_CF_CREDIT_BALANCE_USD` nell'unit systemd col nuovo saldo (in USD)
    (`daemon-reload` + `restart`).
 3. **Premere «Ho ricaricato il credito»** nel pannello «Backend TTS»
    (`/admin/audit-premium`), con conferma. Azzera la spesa accumulata e
@@ -278,13 +301,20 @@ quel pulsante) faceva arrivare il pre-allarme **una volta sola nella vita
 dell'installazione**.
 
 Saltare il punto 3 non è innocuo: il saldo dichiarato sale mentre
-`spent_eur` continua ad accumulare dal ciclo precedente, quindi il «credito
+`spent_usd` continua ad accumulare dal ciclo precedente, quindi il «credito
 residuo» del pannello resta sottostimato per sempre e l'allarme non riparte
 più. Saltare il punto 2 lascia invece il residuo sotto soglia: dopo il topup
 il pre-allarme riscatterebbe quasi subito.
 
-Se `ABM_CF_CREDIT_BALANCE_EUR` è a `0` questa email non arriva mai — è il
-motivo per cui il §2 punto 3 insiste sul non lasciarla a zero.
+Se `ABM_CF_CREDIT_BALANCE_USD` è a `0` questa email non arriva mai — è il
+motivo per cui il §2 punto 3 insiste sul non lasciarla a zero. **Non arriva
+mai nemmeno con `ABM_CF_CREDIT_CHECK=0`**, e lì è voluto: con la ricarica
+automatica attiva l'esaurimento lo gestisce il fornitore. In quel caso
+l'intero §6 non si applica — nessuna email di pre-allarme, nessun topup da
+premere, e il pannello mostra la spesa cumulata invece del residuo. Le due
+configurazioni non vanno confuse: il saldo a `0` dice «non so quanto credito
+ho», l'interruttore dice «non voglio che venga sorvegliato», e davanti a un
+pannello muto la differenza distingue una dimenticanza da una scelta.
 
 ---
 
@@ -302,8 +332,9 @@ procedura:
    compare una riga unica di dettaglio nel formato `Causa: <motivo> ·
    <dettaglio>` (non due campi separati) — leggerla per intero.
 2. **Ricarica** il credito Cloudflare se la causa è esaurimento saldo.
-3. **Aggiorna `ABM_CF_CREDIT_BALANCE_EUR`** nell'unit systemd con il nuovo
-   importo netto ricaricato, poi:
+3. **Aggiorna `ABM_CF_CREDIT_BALANCE_USD`** nell'unit systemd con il nuovo
+   importo netto ricaricato (in USD) — passo da saltare se
+   `ABM_CF_CREDIT_CHECK=0` — poi:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl restart audiobook-maker

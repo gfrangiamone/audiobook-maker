@@ -112,7 +112,7 @@ def test_the_cost_of_a_cloudflare_call_is_not_zero(tmp_path, monkeypatch):
     costo = gemini_tts.google_cost_breakdown(
         out["input_tokens"], out["output_tokens"], out["model_key"])
 
-    assert costo["total_eur"] > 0
+    assert costo["total_usd"] > 0
     assert costo["output_usd"] > 0
 
 

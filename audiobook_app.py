@@ -382,21 +382,27 @@ if gemini_tts is not None:
         #    pre-allarme separata quando questo switch la anticipa. E' a
         #    consumo unico e resta l'unica via da cui quell'email parte: qui
         #    il suo valore di ritorno non decide piu' nulla di visibile.
-        #  - il residuo mostrato nell'email si legge da `credit_left_eur()`,
+        #  - il residuo mostrato nell'email si legge da `credit_left_usd()`,
         #    che e' PURA, ogni volta che c'e' un saldo dichiarato. Legarlo
         #    all'esito della claim lo faceva sparire proprio nel caso in cui
         #    serve di piu': credito gia' sotto soglia (pre-allarme gia'
         #    partito) significa claim `False`, cioe' email di failover senza
         #    il numero che ne spiega la causa.
+        #  - a controllo spento (`ABM_CF_CREDIT_CHECK=0`) il residuo non
+        #    viene allegato affatto: un numero calcolato su un saldo che
+        #    nessuno aggiorna piu' - perche' la ricarica automatica lo
+        #    rialza da sola - manderebbe l'admin a cercare un credito
+        #    esaurito che non e' la causa del failover.
         credit = None
         try:
             tts_backend_state.claim_credit_alert()
-            if tts_backend_state.credit_balance_eur() > 0:
-                credit = tts_backend_state.credit_left_eur()
+            if (tts_backend_state.credit_check_enabled()
+                    and tts_backend_state.credit_balance_usd() > 0):
+                credit = tts_backend_state.credit_left_usd()
         except Exception:
             credit = None
         email_service.admin_notify_tts_backend_switch(
-            model_key, reason, detail, job_id, credit_left_eur=credit)
+            model_key, reason, detail, job_id, credit_left_usd=credit)
         # epoch=time.time() rende la chiave di dedup sempre nuova: a
         # differenza degli eventi di download (spam da prefetch, dedup
         # voluto), ogni switch di backend e' un fatto distinto anche a
@@ -409,22 +415,22 @@ if gemini_tts is not None:
                       model_key, f"{reason}: {str(detail)[:80]}",
                       epoch=time.time())
 
-    def _on_cf_credit_alert(model_key, credit_left_eur):
+    def _on_cf_credit_alert(model_key, credit_left_usd):
         # PRE-allarme, non allarme: arriva mentre Cloudflare e' ancora sano,
         # dopo l'addebito sul ledger che ha portato il residuo stimato sotto
-        # ABM_CF_CREDIT_ALERT_EUR. Email DEDICATA, mai quella di switch:
+        # ABM_CF_CREDIT_ALERT_USD. Email DEDICATA, mai quella di switch:
         # quella annuncia un failover gia' avvenuto e dice il contrario.
         # L'unicita' dell'invio e' garantita a monte da claim_credit_alert(),
         # che consuma atomicamente l'allarme: qui non serve (ne' esiste) un
         # secondo meccanismo di deduplica.
         email_service.admin_notify_cf_credit_low(
-            model_key, credit_left_eur,
-            tts_backend_state.credit_alert_threshold_eur())
+            model_key, credit_left_usd,
+            tts_backend_state.credit_alert_threshold_usd())
         # epoch=time.time() per lo stesso motivo dello switch: ogni
         # pre-allarme e' un fatto distinto, non va soffocato dal dedup su
         # (session_id, operation).
         _log_activity("", "", "TTS_CF_CREDIT_LOW", "", "",
-                      model_key, f"residuo stimato {credit_left_eur:.2f} EUR",
+                      model_key, f"residuo stimato {credit_left_usd:.2f} USD",
                       epoch=time.time())
 
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
@@ -604,6 +610,32 @@ def _mark_token_downloaded(token_info):
         _save_tokens()
     except Exception as e:
         print(f"[tokens] _mark_token_downloaded persist failed: {e}")
+
+
+def _mark_token_redirected(token_info):
+    """Registra che il file del token e' stato INSTRADATO al cold storage (302
+    verso presigned URL), non consegnato: i byte vanno da R2 all'utente senza
+    passare da noi e non sappiamo se il download sia riuscito.
+
+    NON tocca `downloaded_at`, quindi NON disattiva la protezione no-download
+    di _effective_retention_for_token_info: un presigned rifiutato (incidente
+    2026-08-25, filtro IP client sul token R2) non deve costare all'utente
+    PREMIUM meta' della finestra di disponibilita'. Il campo serve solo a
+    lasciare traccia del tentativo per la diagnostica."""
+    try:
+        if _is_resume_or_probe_request():
+            return
+    except Exception:
+        pass
+    if not isinstance(token_info, dict):
+        return
+    if token_info.get("redirected_at"):
+        return
+    token_info["redirected_at"] = time.time()
+    try:
+        _save_tokens()
+    except Exception as e:
+        print(f"[tokens] _mark_token_redirected persist failed: {e}")
 
 
 def _has_active_download_tokens(job_id, now=None):
@@ -1973,6 +2005,10 @@ def _save_tokens():
                     # Timestamp primo download reale del file via /dl/<token>/*.
                     # 0/None = mai scaricato (attiva protezione 2x per voci PREMIUM).
                     "downloaded_at": info.get("downloaded_at") or 0,
+                    # Timestamp del primo redirect 302 al cold storage: traccia
+                    # il tentativo, NON conta come download (vedi
+                    # _mark_token_redirected) e non riduce la retention.
+                    "redirected_at": info.get("redirected_at") or 0,
                     # Fields required by /dl/<token> rendering after worker restart
                     # or cross-worker token merge (Gunicorn multi-process).
                     "output_format": info.get("output_format", ""),
@@ -2423,6 +2459,19 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
             _logged_sids_ops.add(key)
         except OSError:
             pass
+
+
+def _cold_op(operation):
+    """Nome dell'evento per un download risolto con redirect 302 alla copia cold.
+
+    Sul redirect i byte vanno storage->utente e non passano da noi: non sappiamo
+    se la consegna sia avvenuta. Se il presigned viene rifiutato l'utente vede un
+    403 che qui non lascia traccia, e un evento indistinguibile da una consegna
+    reale rende il business log una fonte forense falsa (incidente 2026-08-25:
+    filtro IP client sul token R2, ogni redirect finito in AccessDenied mentre il
+    log registrava download riusciti). Suffisso `_COLD` = "instradato", non
+    "consegnato"."""
+    return f"{operation}_COLD"
 
 
 def _log_m4b_progress(job: dict, event: str, **fields) -> None:
@@ -2993,9 +3042,9 @@ _PLAY_BADGE_SVG = (
     '<path d="M24.1 21.93l-3.4-3.41v-.24l3.41-3.42.08.05 4.04 2.3c1.15.65 1.15 1.72 0 2.38l-4.03 2.29-.1.05z" fill="url(#abmgp2)"/>'
     '<path d="M24.19 21.88L20.7 18.4 10.44 28.67c.38.4 1 .45 1.71.05l12.04-6.84z" fill="url(#abmgp3)"/>'
     '<path d="M24.19 14.91L12.15 8.08c-.71-.4-1.33-.35-1.71.05L20.7 18.4l3.49-3.49z" fill="url(#abmgp4)"/>'
-    '<text x="36.5" y="16" font-family="Roboto,Arial,Helvetica,sans-serif" font-size="8" fill="#fff" textLength="38" lengthAdjust="spacingAndGlyphs">GET IT ON'
+    '<text x="36.5" y="16" font-family="Roboto,Arial,Helvetica,sans-serif" font-size="7.4" fill="#d0d0d0" textLength="35" lengthAdjust="spacingAndGlyphs">GET IT ON'
     '</text>'
-    '<text x="36" y="31.5" font-family="Roboto,Arial,Helvetica,sans-serif" font-size="16" font-weight="600" fill="#fff" textLength="92" lengthAdjust="spacingAndGlyphs">Google Play'
+    '<text x="36" y="31" font-family="Roboto,Arial,Helvetica,sans-serif" font-size="13.5" font-weight="500" fill="#f2f2f2" textLength="80" lengthAdjust="spacingAndGlyphs">Google Play'
     '</text>'
     '</svg>'
 )
@@ -3008,9 +3057,9 @@ _APPLE_BADGE_SVG = (
     '<rect width="135" height="40" rx="6" fill="#000"/>'
     '<rect x=".5" y=".5" width="134" height="39" rx="5.5" fill="none" stroke="#a6a6a6"/>'
     '<path transform="translate(6.2,6.4) scale(1.12)" d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" fill="#fff"/>'
-    '<text x="31" y="16" font-family="Helvetica,Arial,sans-serif" font-size="7.8" fill="#fff" textLength="48" lengthAdjust="spacingAndGlyphs">Download on the'
+    '<text x="31" y="16" font-family="Helvetica,Arial,sans-serif" font-size="7.2" fill="#d0d0d0" textLength="44" lengthAdjust="spacingAndGlyphs">Download on the'
     '</text>'
-    '<text x="31" y="31.5" font-family="Helvetica,Arial,sans-serif" font-size="16" font-weight="600" fill="#fff" textLength="93" lengthAdjust="spacingAndGlyphs">App Store'
+    '<text x="31" y="31" font-family="Helvetica,Arial,sans-serif" font-size="13.5" font-weight="500" fill="#f2f2f2" textLength="72" lengthAdjust="spacingAndGlyphs">App Store'
     '</text>'
     '</svg>'
 )
@@ -5896,7 +5945,7 @@ def admin_audit_premium_page():
   <div id="tbDetail" style="font-size:.85rem;color:var(--muted);display:none;margin-top:4px"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
     <button type="button" id="tbResetBtn" disabled>...</button>
-    <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_EUR: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
+    <button type="button" id="tbTopupBtn" disabled title="Da premere dopo aver ricaricato il credito Cloudflare e aggiornato ABM_CF_CREDIT_BALANCE_USD: azzera la spesa accumulata e riarma il pre-allarme per il ciclo successivo.">Ho ricaricato il credito</button>
   </div>
 </div>
 
@@ -6404,6 +6453,20 @@ def admin_audit_premium_page():
       $("tbStatus").textContent = "Errore: " + e;
     }
   }
+  // Con la ricarica automatica attiva sul pannello del fornitore il residuo
+  // stimato non descrive piu' nulla di azionabile: al suo posto si mostra la
+  // spesa cumulata, l'unica meta' del conto che significa ancora qualcosa.
+  // Una sola definizione per entrambi i rami di tbApply: due copie divergono
+  // al primo ritocco.
+  function tbCreditLine(s){
+    if (s.credit_check_enabled === false) {
+      return "spesa Cloudflare: $" + esc(s.credit_spent_usd) +
+             " (&asymp; " + esc(s.credit_spent_eur) + " &euro;)" +
+             ' <span style="color:var(--muted)">&middot; controllo credito disattivato</span>';
+    }
+    return "credito residuo (stima): $" + esc(s.credit_left_usd) +
+           " (&asymp; " + esc(s.credit_left_eur) + " &euro;)";
+  }
   function tbApply(s){
     const btn = $("tbResetBtn");
     const topupBtn = $("tbTopupBtn");
@@ -6438,13 +6501,13 @@ def admin_audit_premium_page():
       detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
                          "<br>Dal " + esc((s.tripped_at || "").slice(0,19).replace("T"," ")) +
                          " · job " + esc(s.trip_job_id || "?") +
-                         "<br>Credito residuo (stima): " + esc(s.credit_left_eur) + " €";
+                         "<br>" + tbCreditLine(s);
       detail.style.display = "block";
       btn.disabled = false;
       btn.textContent = "Riporta su Cloudflare";
       btn.style.background = "var(--ok)";
     } else {
-      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU CLOUDFLARE</span> · credito residuo (stima): ' + esc(s.credit_left_eur) + ' €';
+      status.innerHTML = '<span style="color:var(--ok);font-weight:600">SU CLOUDFLARE</span> · ' + tbCreditLine(s);
       detail.style.display = "none";
       btn.disabled = true;
       btn.textContent = "Nessun failover attivo";
@@ -6470,7 +6533,7 @@ def admin_audit_premium_page():
   }
   async function tbTopup(){
     const btn = $("tbTopupBtn");
-    if (!confirm("Azzerare il contatore di spesa Cloudflare?\n\nFallo solo dopo aver ricaricato davvero il credito e aggiornato ABM_CF_CREDIT_BALANCE_EUR nell'unit systemd: l'azzeramento e' irreversibile e, premuto per sbaglio, falsa la stima del residuo fino alla prossima ricarica.")) return;
+    if (!confirm("Azzerare il contatore di spesa Cloudflare?\n\nFallo solo dopo aver ricaricato davvero il credito e aggiornato ABM_CF_CREDIT_BALANCE_USD nell'unit systemd: l'azzeramento e' irreversibile e, premuto per sbaglio, falsa la stima del residuo fino alla prossima ricarica.")) return;
     btn.disabled = true;
     btn.textContent = "...";
     try {
@@ -7270,7 +7333,7 @@ def admin_api_tts_backend():
     casella accanto al pulsante di rientro — abilitato solo DOPO un trip —
     l'allarme partiva una volta sola nella vita dell'installazione e il
     residuo mostrato in console restava sbagliato per sempre, perche' il
-    saldo dichiarato veniva rialzato mentre `spent_eur` continuava ad
+    saldo dichiarato veniva rialzato mentre `spent_usd` continuava ad
     accumulare dal ciclo precedente. Il campo `topup` dentro `action="reset"`
     e' stato quindi rimosso; per non perdere in silenzio l'intenzione di un
     chiamante che usasse ancora la forma vecchia, un `topup` VERO in un
@@ -7400,11 +7463,11 @@ def admin_api_tts_backend():
             # segno: un numero negativo che non significa nulla, e che il
             # pre-allarme stesso ignora (con saldo <= 0 non scatta mai). Meglio
             # dirlo che stamparlo come se fosse una misura.
-            if tts_backend_state.declared_balance_eur() > 0:
+            if tts_backend_state.declared_balance_usd() > 0:
                 before = (f"residuo stimato prima: "
-                          f"{tts_backend_state.credit_left_eur():.2f} EUR")
+                          f"{tts_backend_state.credit_left_usd():.2f} USD")
             else:
-                before = ("residuo non calcolabile: ABM_CF_CREDIT_BALANCE_EUR "
+                before = ("residuo non calcolabile: ABM_CF_CREDIT_BALANCE_USD "
                           "non dichiarato")
             tts_backend_state.reset_spend()
             _log_activity("", "", "ADMIN_TTS_CREDIT_TOPUP", "",
@@ -7442,7 +7505,20 @@ def admin_api_tts_backend():
         "trip_detail": s.get("trip_detail"),
         "trip_job_id": s.get("trip_job_id"),
         "consecutive_failures": s.get("consecutive_failures", 0),
-        "credit_left_eur": round(tts_backend_state.credit_left_eur(), 2),
+        # USD e' l'importo autorevole (il credito Cloudflare e' denominato
+        # in dollari); l'equivalente in euro viaggia accanto solo perche' il
+        # pannello lo mostri a chi ragiona in euro, convertito con la stessa
+        # ABM_GEMINI_USD_EUR_RATE usata dal resto dell'app.
+        "credit_left_usd": round(tts_backend_state.credit_left_usd(), 2),
+        "credit_left_eur": round(
+            tts_backend_state.to_eur(tts_backend_state.credit_left_usd()), 2),
+        # Il residuo viaggia SEMPRE, anche a controllo spento: il campo non
+        # sparisce mai dal contratto, cosi' nessun client deve gestire due
+        # forme di payload. E' il pannello a decidere cosa mostrarne.
+        "credit_check_enabled": tts_backend_state.credit_check_enabled(),
+        "credit_spent_usd": round(tts_backend_state.credit_spent_usd(), 2),
+        "credit_spent_eur": round(
+            tts_backend_state.to_eur(tts_backend_state.credit_spent_usd()), 2),
         "configured_backend": configured_backend,
     })
 
@@ -13650,8 +13726,8 @@ def token_do_download_m4b(token):
         if _cold is not None:
             if request.method != "HEAD" and not request.headers.get("Range"):
                 _log_activity(job_id, token_info.get("original_filename", ""),
-                              "DOWNLOAD_M4B_TOKEN", "", "", "", "")
-            _mark_token_downloaded(token_info)
+                              _cold_op("DOWNLOAD_M4B_TOKEN"), "", "", "", "")
+            _mark_token_redirected(token_info)
             return _cold
 
     # M4B fallito ma esiste un kit di ripiego (ZIP con MP3 + capitoli + script):
@@ -13700,8 +13776,9 @@ def token_do_download_m4b(token):
     _cold = _try_cold_serve(token_info.get("output_m4b", ""), download_name=f"{safe_name}.m4b")
     if _cold is not None:
         if request.method != "HEAD" and not request.headers.get("Range"):
-            _log_activity(job_id, token_info.get("original_filename", ""), "DOWNLOAD_M4B_TOKEN", "", "", "", "")
-        _mark_token_downloaded(token_info)
+            _log_activity(job_id, token_info.get("original_filename", ""),
+                          _cold_op("DOWNLOAD_M4B_TOKEN"), "", "", "", "")
+        _mark_token_redirected(token_info)
         return _cold
 
     # Diagnostica completa: nessun M4B e nessun MP3 disponibile.
@@ -13758,12 +13835,10 @@ def token_do_download(token):
                                             bypass_throttle=True, conditional=True)
             _cold = _try_cold_serve(token_info.get("optimized_abm_path", ""), download_name=abm_name)
             if _cold is not None:
-                if job:
-                    job["downloaded_at"] = time.time()
                 if not _is_resume_or_probe_request():
                     _log_activity(job_id, token_info.get("original_filename", ""),
-                                  "DOWNLOAD_OPT_ABM", "", "", "", "")
-                _mark_token_downloaded(token_info)
+                                  _cold_op("DOWNLOAD_OPT_ABM"), "", "", "", "")
+                _mark_token_redirected(token_info)
                 return _cold
             return "File not found", 404
 
@@ -13796,16 +13871,20 @@ def _serve_audio_download(token_info, job, job_id):
     orig = token_info.get("original_filename", "")
     job_dir = UPLOAD_DIR / job_id
 
-    def _do_log():
+    def _do_log(cold=False):
         if _is_resume_or_probe_request():
             return
-        _log_activity(job_id, orig, "DOWNLOAD_EMAIL",
+        _log_activity(job_id, orig, _cold_op("DOWNLOAD_EMAIL") if cold else "DOWNLOAD_EMAIL",
                       job.get("client_id", "") if job else "",
                       job.get("client_ip", "") if job else "",
                       job.get("voice", "") if job else "",
                       job.get("browser_lang", "") if job else "")
-        # Disattiva la protezione no-download per voci PREMIUM (cleanup loop).
-        _mark_token_downloaded(token_info)
+        # Disattiva la protezione no-download per voci PREMIUM (cleanup loop),
+        # ma SOLO su consegna reale: un redirect al cold non prova nulla.
+        if cold:
+            _mark_token_redirected(token_info)
+        else:
+            _mark_token_downloaded(token_info)
 
     output_zip = token_info.get("output_zip", "")
     output_file = token_info.get("output_file", "")
@@ -13852,7 +13931,7 @@ def _serve_audio_download(token_info, job, job_id):
     for _p in (output_zip, output_file):
         _cold = _try_cold_serve(_p, download_name=output_name)
         if _cold is not None:
-            _do_log()
+            _do_log(cold=True)
             return _cold
 
     # 5. Fallback: scan job directory for downloadable files
@@ -13923,7 +14002,7 @@ def _serve_audio_download(token_info, job, job_id):
     for _p in (output_zip, output_file):
         _cold = _try_cold_serve(_p, download_name=output_name)
         if _cold is not None:
-            _do_log()
+            _do_log(cold=True)
             return _cold
 
     print(f"[dl] No files found for job {job_id} (job_dir exists: {job_dir.exists()})")
@@ -14762,7 +14841,6 @@ def api_download(job_id):
     
     # Refresh heartbeat  -  evita che il cleanup rimuova il job durante il download
     job["last_poll"] = time.time()
-    job["downloaded_at"] = time.time()
     
     log_type = "DOWNLOAD"
     if download_type == "m4b":
@@ -14774,12 +14852,19 @@ def api_download(job_id):
     elif download_type == "abm":
         log_type = "DOWNLOAD_ABM"
 
-    def _do_log():
+    def _do_log(cold=False):
         if _is_resume_or_probe_request():
             return
-        _log_activity(job_id, job.get("original_filename", ""), log_type,
+        _log_activity(job_id, job.get("original_filename", ""),
+                      _cold_op(log_type) if cold else log_type,
                       job.get("client_id", ""), job.get("client_ip", ""),
                       job.get("voice", ""), job.get("browser_lang", ""))
+        # `downloaded_at` disattiva la protezione no-download PREMIUM: va settato
+        # solo su consegna reale. Sul redirect al cold i byte non passano da noi
+        # e un presigned rifiutato non deve dimezzare la finestra (incidente
+        # 2026-08-25, filtro IP client sul token R2).
+        if not cold:
+            job["downloaded_at"] = time.time()
 
     if download_type == "abm":
         # Always regenerate from cumulative in-memory state to avoid stale chapters
@@ -14875,7 +14960,7 @@ def api_download(job_id):
                 _cold = _try_cold_serve(_m4b_snap, download_name=f"{safe_name}.m4b")
                 if _cold is not None:
                     print(f"[debug] M4B served from cold storage: {_m4b_snap}")
-                    _do_log()
+                    _do_log(cold=True)
                     return _cold
 
             print(f"[debug] M4B totally missing. Falling back to MP3.")
