@@ -1002,6 +1002,13 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    è concentrata sulla stella iniziale (dorata), così il tab non sembra
    selezionato quando in realtà è inattivo. */
 .tab-bar #tabPremiumBtn { display:inline-block; }
+/* L'attributo [hidden] su questo bottone va onorato: il selettore con id qui
+   sopra vince sulla regola UA [hidden]{display:none}, quindi senza questa riga
+   `btn.hidden=true` in _applyPremiumAvailability() non nascondeva niente. Con
+   la capability Gemini KO il tab restava cliccabile e apriva un pannello con
+   lingua e voce vuote — cioè esattamente il "sembra rotta" che quella funzione
+   esiste per evitare. Stesso inciampo già documentato per .form-row[hidden]. */
+.tab-bar #tabPremiumBtn[hidden] { display:none; }
 .tab-bar #tabPremiumBtn::first-letter { color:#d4a83a; font-size:1.05em;
                                         text-shadow:0 1px 0 rgba(255,255,255,.35); }
 .tab-panel { padding-top:16px; }
