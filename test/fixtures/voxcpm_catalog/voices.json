@@ -1,0 +1,67 @@
+{
+  "schema": "abm-voices/1",
+  "catalog": "voci_inventate",
+  "voice_count": 7,
+  "languages": [
+    {"code": "it", "label": "italiano", "voices": 4, "locales": ["it-IT"]},
+    {"code": "en", "label": "inglese", "voices": 3, "locales": ["en-US", "en-GB"]}
+  ],
+  "voices": [
+    {
+      "id": "it-IT_m_stefano", "name": "Stefano", "name_is_invented": true,
+      "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+      "gender": {"value": "m", "label": "maschile", "f0_median_hz": 118.4},
+      "audio": {"file": "it-IT/Stefano.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 19.52, "sample_rate_hz": 24000},
+      "quality": {"score": 0.88, "gate_passed": true},
+      "description": {"persona": "warm-young", "role": "caldo, giovane", "axes": ["giovane", "tono medio"], "lang": "it"}
+    },
+    {
+      "id": "it-IT_f_federica", "name": "Federica", "name_is_invented": true,
+      "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+      "gender": {"value": "f", "label": "femminile", "f0_median_hz": 201.7},
+      "audio": {"file": "it-IT/Federica.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 21.03, "sample_rate_hz": 24000},
+      "quality": {"score": 0.91, "gate_passed": true},
+      "description": {"persona": "audiobook-slow", "role": "narrativo, lento", "axes": ["ritmo lento"], "lang": "it"}
+    },
+    {
+      "id": "it-IT_f_chiara", "name": "Chiara", "name_is_invented": true,
+      "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+      "gender": {"value": "f", "label": "femminile", "f0_median_hz": 214.9},
+      "audio": {"file": "it-IT/Chiara.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 20.11, "sample_rate_hz": 24000},
+      "quality": {"score": 0.86, "gate_passed": true},
+      "description": {"persona": "poised-dry", "role": "posato, asciutto", "axes": ["registro sobrio"], "lang": "it"}
+    },
+    {
+      "id": "it-IT_m_senzacarattere", "name": "Senzacarattere", "name_is_invented": true,
+      "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+      "gender": {"value": "m", "label": "maschile", "f0_median_hz": 130.0},
+      "audio": {"file": "it-IT/Senzacarattere.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 20.0, "sample_rate_hz": 24000},
+      "quality": {"score": 0.80, "gate_passed": true},
+      "description": {"role": "senza persona", "axes": [], "lang": "it"}
+    },
+    {
+      "id": "en-US_m_nolan", "name": "Nolan", "name_is_invented": true,
+      "language": {"code": "en", "locale": "en-US", "label": "inglese"},
+      "gender": {"value": "m", "label": "maschile", "f0_median_hz": 112.2},
+      "audio": {"file": "en-US/Nolan.wav", "transcript": "When the seven forty-five train pulled in twelve minutes late, I took out my phone to check the mail.", "duration_s": 18.74, "sample_rate_hz": 24000},
+      "quality": {"score": 0.89, "gate_passed": true},
+      "description": {"persona": "warm-young", "role": "warm, young", "axes": ["young"], "lang": "en"}
+    },
+    {
+      "id": "en-US_f_ivy", "name": "Ivy", "name_is_invented": true,
+      "language": {"code": "en", "locale": "en-US", "label": "inglese"},
+      "gender": {"value": "f", "label": "femminile", "f0_median_hz": 198.3},
+      "audio": {"file": "en-US/Ivy.wav", "transcript": "When the seven forty-five train pulled in twelve minutes late, I took out my phone to check the mail.", "duration_s": 19.90, "sample_rate_hz": 24000},
+      "quality": {"score": 0.87, "gate_passed": true},
+      "description": {"persona": "poised-dry", "role": "poised, dry", "axes": ["measured"], "lang": "en"}
+    },
+    {
+      "id": "en-GB_m_rufus", "name": "Rufus", "name_is_invented": true,
+      "language": {"code": "en", "locale": "en-GB", "label": "inglese"},
+      "gender": {"value": "m", "label": "maschile", "f0_median_hz": 104.6},
+      "audio": {"file": "en-GB/Rufus.wav", "transcript": "When the seven forty-five train pulled in twelve minutes late, I took out my phone to check the mail.", "duration_s": 22.40, "sample_rate_hz": 24000},
+      "quality": {"score": 0.90, "gate_passed": true},
+      "description": {"persona": "grave-narrator", "role": "grave, narrator", "axes": ["deep"], "lang": "en"}
+    }
+  ]
+}

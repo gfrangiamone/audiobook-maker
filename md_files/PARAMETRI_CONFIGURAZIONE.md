@@ -399,6 +399,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `LANGUAGE_NAMES` | Dict di 60+ codici lingua -> nomi | `audiobook_app.py` | 555 |
+| `ABM_VOXCPM_CATALOG_DIR` | `data/voci_inventate` | Cartella del catalogo di voci inventate VoxCPM (`voices.json` piu' i `.wav` dei campioni). E' un dato importato dal repo `abm-voxcpm-worker`: aggiornarlo significa sostituire la cartella, non toccare il codice. | `voxcpm_catalog.py` | 247 |
 
 ### 3.6 Cleanup (pulizia automatica)
 
