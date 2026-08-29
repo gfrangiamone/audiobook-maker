@@ -11,8 +11,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | Parametro | Valore default | File | Riga |
 |-----------|---------------|------|------|
 | `ABM_DATA_DIR` | `"/var/lib/audiobook-maker/data"` | `audiobook_app.py` | 77 |
-| `ABM_PORT` | `5601` (porta di bind di `app.run`, utile per affiancare istanze separate sullo stesso host — es. test vs prod) | `audiobook_app.py` | 8414 |
-| `ABM_DEBUG` | `0` (Werkzeug debugger + auto-reload; valori truthy: `1`/`true`/`yes`/`on`). In produzione **deve** restare disattivato | `audiobook_app.py` | 8415 |
+| `ABM_PORT` | `5601` (porta di bind di `app.run`, utile per affiancare istanze separate sullo stesso host — es. test vs prod) | `audiobook_app.py` | 16861 |
+| `ABM_DEBUG` | `0` (Werkzeug debugger + auto-reload; valori truthy: `1`/`true`/`yes`/`on`). In produzione **deve** restare disattivato | `audiobook_app.py` | 16862 |
 | `ABM_SMTP_HOST` | `""` (vuoto) | `audiobook_app.py` | 102 |
 | `ABM_SMTP_PORT` | `587` | `audiobook_app.py` | 103 |
 | `ABM_SMTP_USER` | `""` (vuoto) | `audiobook_app.py` | 104 |
@@ -21,13 +21,13 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_BASE_URL` | `""` (vuoto, con rstrip di `/`) | `audiobook_app.py` | 107 |
 | `ABM_ADMIN_EMAIL` | `""` (vuoto, se vuoto il digest admin e' disabilitato) | `audiobook_app.py` | 114 |
 | `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` | `audiobook_app.py` | 123 |
-| `ABM_MAX_CONCURRENT_GLOBAL` | `6` (tetto GLOBALE d'istanza di generazioni simultanee, tutti i client; `0` = illimitato). Superato, `/api/generate` e `/api/paypal_create_order_gemini` rispondono `429` con `error_code: server_busy` **prima** di chiedere qualunque pagamento | `audiobook_app.py` | 599 |
+| `ABM_MAX_CONCURRENT_GLOBAL` | `6` (tetto GLOBALE d'istanza di generazioni simultanee, tutti i client; `0` = illimitato). Superato, `/api/generate` e `/api/paypal_create_order_gemini` rispondono `429` con `error_code: server_busy` **prima** di chiedere qualunque pagamento | `audiobook_app.py` | 703 |
 | `ABM_MAX_CONCURRENT_ASSEMBLY` | `max(1, cpu_count() - 1)` (encode FFmpeg finali ammessi in parallelo: PCM→AAC/MP3, MP3→M4B, ZIP). Non rifiuta job: li mette in coda | `assembly_queue.py` | 50 |
 | `ABM_ASSEMBLY_WAIT_TIMEOUT_SEC` | `1800` (attesa massima di uno slot di assembly; scaduta, il job procede comunque senza slot) | `assembly_queue.py` | 37 |
 | `ABM_ASSEMBLY_STARVE_SEC` | `900` (secondi in coda oltre i quali un job pesa quanto un PREMIUM: anti-starvation dei job gratuiti scavalcati dai pagati. `0` = priorita' pura, nessuna promozione) | `assembly_queue.py` | 87 |
-| `ABM_MEM_LOG_INTERVAL_SEC` | `300` (intervallo della riga `[mem]` nel cleanup loop) | `audiobook_app.py` | 15086 |
-| `ABM_MEM_WARN_AVAIL_MB` | `300` (sotto questa `MemAvailable` scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15087 |
-| `ABM_MEM_WARN_SWAP_PCT` | `80` (sopra questa percentuale di swap usata scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15088 |
+| `ABM_MEM_LOG_INTERVAL_SEC` | `300` (intervallo della riga `[mem]` nel cleanup loop) | `audiobook_app.py` | 16192 |
+| `ABM_MEM_WARN_AVAIL_MB` | `300` (sotto questa `MemAvailable` scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 16193 |
+| `ABM_MEM_WARN_SWAP_PCT` | `80` (sopra questa percentuale di swap usata scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 16194 |
 | `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 115 |
 | `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 116 |
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 163 |
@@ -114,7 +114,7 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 |-----------|--------|------|------|
 | `MAX_CONCURRENT_PER_CLIENT` | da `ABM_MAX_CONCURRENT_PER_CLIENT` (default `2`) | `audiobook_app.py` | 123 |
 | `MAX_CONCURRENT_LLM_PER_CLIENT` | da `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` (default `1`) | `audiobook_app.py` | 163 |
-| `MAX_CONCURRENT_GLOBAL` | da `ABM_MAX_CONCURRENT_GLOBAL` (default `6`) | `audiobook_app.py` | 599 |
+| `MAX_CONCURRENT_GLOBAL` | da `ABM_MAX_CONCURRENT_GLOBAL` (default `6`) | `audiobook_app.py` | 703 |
 | `assembly_queue.MAX_CONCURRENT_ASSEMBLY` | da `ABM_MAX_CONCURRENT_ASSEMBLY` (default `max(1, cpu_count() - 1)`) | `assembly_queue.py` | 50 |
 | `assembly_queue.PRIORITY_NORMAL` / `PRIORITY_PREMIUM` | `0` / `10` (peso in coda di assembly; premium = voce Gemini/Speechify o job con pagamento incassato, vedi `generation_engine._assembly_priority`) | `assembly_queue.py` | 82-83 |
 | `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 126 |
@@ -411,6 +411,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
+| `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
 
 ### 3.6 Cleanup (pulizia automatica)
 
