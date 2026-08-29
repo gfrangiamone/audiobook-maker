@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from community_store import atomic_write_json
-from voice_utils import is_speechify_voice
+from voice_utils import is_speechify_voice, is_voxcpm_voice
 
 _lock = threading.RLock()
 _KEEP_MONTHS = 3
@@ -153,9 +153,25 @@ def snapshot(client_id):
 
 
 def _premium_threshold_eur(voice_id):
+    """Soglia sotto la quale il job premium e' gratuito, per motore."""
+    if is_voxcpm_voice(voice_id):
+        return _env_float("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.50")
     if is_speechify_voice(voice_id):
         return _env_float("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50")
     return _env_float("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50")
+
+
+def _premium_floor_eur(voice_id):
+    """Importo minimo fatturato quando la quota non copre, per motore.
+
+    Gemini e Speechify restano sulla costante storica `ABM_PREMIUM_MIN_COST_EUR`:
+    scorporare la lettura dal corpo di `decision()` non cambia il loro prezzo.
+    VoxCPM ha la sua perche' il suo costo non sta nei caratteri ma
+    nell'accensione del worker (§8.3), e il minimo esiste proprio per quello.
+    """
+    if is_voxcpm_voice(voice_id):
+        return _env_float("ABM_VOXCPM_MIN_COST_EUR", "0.50")
+    return _env_float("ABM_PREMIUM_MIN_COST_EUR", "0.50")
 
 
 def decision(client_id, voice_id, list_total_eur, job_id=None):
@@ -202,7 +218,7 @@ def decision(client_id, voice_id, list_total_eur, job_id=None):
         out["due_eur"] = 0.0
         out["is_free"] = True
         return out
-    floor = _env_float("ABM_PREMIUM_MIN_COST_EUR", "0.50")
+    floor = _premium_floor_eur(voice_id)
     out["due_eur"] = round(max(list_total, floor), 2)
     out["quota_exhausted"] = True
     return out
