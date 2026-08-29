@@ -1099,6 +1099,18 @@ function updModelsPremium(){
       addOpt('simba-3.2', t('lbl_model_simba')||'Simba (English)');
     }
   }
+  // VoxCPM2: presente in ogni lingua per cui il catalogo espone voci. A
+  // differenza di Simba non e' legato all'inglese, e a differenza di Gemini
+  // non e' sempre presente: se il motore non e' configurato, /api/voices non
+  // manda ne' le voci ne' _voxcpm.available, e il modello non compare.
+  const _voxStatus=(voices&&voices._voxcpm)||null;
+  const _langData=voices&&voices[lang];
+  const _hasVox=!!(_voxStatus&&_voxStatus.available
+                   &&_langData&&Array.isArray(_langData.voices)
+                   &&_langData.voices.some(v=>v&&_isVoxcpmVoiceId(v.id)));
+  if(_hasVox){
+    addOpt('voxcpm',t('lbl_model_voxcpm')||'VoxCPM2 · La tua voce');
+  }
   // Default: su inglese preferisci Simba (se presente), altrimenti mantieni la
   // scelta precedente se ancora valida, altrimenti il primo modello.
   let target=null;
@@ -1126,16 +1138,42 @@ function _isSpeechifyModelSelected(){
   return !!(vm&&vm.value==='simba-3.2');
 }
 
+function _isVoxcpmVoiceId(id){return typeof id==='string'&&id.indexOf('voxcpm:')===0;}
+
+function _isVoxcpmModelSelected(){
+  const vm=document.getElementById('vmPremium');
+  return !!(vm&&vm.value==='voxcpm');
+}
+
+// Selezioni VoxCPM persistite fuori dal DOM. Stessa ragione documentata per
+// _speechifyAccentSel/_speechifyVoiceSel: i dropdown si ricostruiscono a ogni
+// cambio di tab, modello o lingua, e senza una fonte di verita' esterna la
+// scelta dell'utente si perde a ogni rebuild.
+let _voxcpmAccentSel='';
+let _voxcpmVoiceSel='';
+let _voxcpmCharacterSel='';   // '' = tutti i caratteri
+
 // Mostra/nasconde i controlli in base al modello premium selezionato e
 // (ri)popola voci/emozioni/accento coerentemente.
 function _onPremiumModelChanged(){
   const styleRow=document.getElementById('geminiStyleRow');
   const emoRow=document.getElementById('speechifyEmotionRow');
   const accentRow=document.getElementById('geminiAccentRow');
+  const carRow=document.getElementById('voxcpmCharacterRow');
+  const sampleRow=document.getElementById('voxcpmSampleRow');
   const simba=_isSpeechifyModelSelected();
-  if(styleRow)styleRow.hidden=simba;
+  const vox=_isVoxcpmModelSelected();
+  // Istruzioni di stile: solo Gemini. Emozione: solo Simba. Carattere e
+  // campione: solo VoxCPM.
+  if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  if(simba){
+  if(carRow)carRow.hidden=!vox;
+  if(sampleRow)sampleRow.hidden=!vox;
+  if(vox){
+    _populateVoxcpmAccents();
+    _populateVoxcpmCharacters();
+    if(accentRow)accentRow.hidden=false;
+  }else if(simba){
     _populateSpeechifyAccents();
     _populateSpeechifyEmotions();
     if(accentRow)accentRow.hidden=false;   // accento (locale) sempre visibile per Simba
@@ -1164,6 +1202,137 @@ function _populateSpeechifyAccents(){
   acc.onchange=()=>{_speechifyAccentSel=acc.value;updVoicesPremium();if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
 }
 
+// Le voci VoxCPM della lingua corrente, comunque filtrate. Sorgente unica
+// dei tre dropdown: cosi' un accento o un carattere compaiono se e solo se
+// esiste una voce che li porta.
+function _voxcpmVoicesForLang(){
+  const vlEl=document.getElementById('vlPremium');
+  const lang=(vlEl&&vlEl.value)||'it';
+  const d=voices&&voices[lang];
+  const arr=(d&&Array.isArray(d.voices))?d.voices:[];
+  return arr.filter(v=>v&&_isVoxcpmVoiceId(v.id));
+}
+
+function _populateVoxcpmAccents(){
+  const acc=document.getElementById('geminiAccent');
+  if(!acc)return;
+  // I locali si ricavano dalle voci, non da una tabella: il catalogo e' una
+  // variabile (D10) e una lingua puo' guadagnare varianti senza rilascio.
+  const locali=[];
+  for(const v of _voxcpmVoicesForLang()){
+    if(v.locale&&locali.indexOf(v.locale)<0)locali.push(v.locale);
+  }
+  locali.sort();
+  const prev=(locali.indexOf(_voxcpmAccentSel)>=0)?_voxcpmAccentSel:'';
+  acc.innerHTML='';
+  for(const loc of locali){
+    const o=document.createElement('option');
+    o.value=loc;
+    o.textContent=_voxcpmLocaleLabel(loc);
+    acc.appendChild(o);
+  }
+  acc.value=prev||(locali.length?locali[0]:'');
+  _voxcpmAccentSel=acc.value;
+  acc.onchange=()=>{
+    _voxcpmAccentSel=acc.value;
+    _populateVoxcpmCharacters();
+    updVoicesPremium();
+    if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+  };
+}
+
+function _populateVoxcpmCharacters(){
+  const sel=document.getElementById('voxcpmCharacter');
+  if(!sel)return;
+  const loc=_voxcpmAccentSel;
+  const chiavi=[];
+  for(const v of _voxcpmVoicesForLang()){
+    if(loc&&v.locale!==loc)continue;
+    if(v.persona&&chiavi.indexOf(v.persona)<0)chiavi.push(v.persona);
+  }
+  chiavi.sort();
+  const prev=(chiavi.indexOf(_voxcpmCharacterSel)>=0)?_voxcpmCharacterSel:'';
+  sel.innerHTML='';
+  // "Tutti" e' la prima voce e il default: CARATTERE e' un filtro, e un
+  // filtro deve poter non filtrare.
+  const tutti=document.createElement('option');
+  tutti.value='';
+  tutti.textContent=t('character_all')||'Tutti';
+  sel.appendChild(tutti);
+  for(const k of chiavi){
+    const o=document.createElement('option');
+    o.value=k;
+    o.textContent=_voxcpmPersonaLabel(k);
+    sel.appendChild(o);
+  }
+  sel.value=prev;
+  _voxcpmCharacterSel=sel.value;
+  sel.onchange=()=>{
+    _voxcpmCharacterSel=sel.value;
+    updVoicesPremium();
+    if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+  };
+}
+
+// Etichetta leggibile di un carattere. Il Task 13 la sostituisce con la
+// catena dizionario -> voices._voxcpm.personas (dal catalogo) -> chiave.
+// Nota su t(): quando non trova la chiave la restituisce tal quale, quindi
+// il confronto con la chiave e' l'unico modo di sapere se ha tradotto.
+function _voxcpmPersonaLabel(chiave){
+  if(!chiave)return '';
+  const k='persona_'+String(chiave).replace(/-/g,'_');
+  const tradotta=t(k);
+  return (tradotta&&tradotta!==k)?tradotta:chiave;
+}
+
+// Etichetta di un locale. Il Task 13 ci aggiunge Intl.DisplayNames; per ora
+// il codice grezzo, che e' brutto ma non e' mai sbagliato.
+function _voxcpmLocaleLabel(loc){
+  if(!loc)return '';
+  const k='accent_'+String(loc).toLowerCase().replace(/-/g,'_');
+  const tradotta=t(k);
+  return (tradotta&&tradotta!==k)?tradotta:loc;
+}
+
+// Record di catalogo della voce VoxCPM selezionata, o null.
+function _voxcpmSelectedVoice(){
+  const sel=document.getElementById('vvPremium');
+  const id=sel?sel.value:'';
+  if(!_isVoxcpmVoiceId(id))return null;
+  for(const v of _voxcpmVoicesForLang())if(v.id===id)return v;
+  return null;
+}
+
+// §5.3: ogni voce ha esattamente un carattere, perche' il carattere e' inciso
+// nel campione da cui il modello clona. Scelta una voce, CARATTERE mostra il
+// suo valore: e' un'etichetta, non un'alternativa. E non si svuota mai —
+// verso "voce -> carattere" la risposta e' sempre una sola, e un campo vuoto
+// fingerebbe che ce ne siano altre.
+function _syncVoxcpmCharacterToVoice(){
+  const sel=document.getElementById('voxcpmCharacter');
+  const v=_voxcpmSelectedVoice();
+  if(!sel||!v||!v.persona)return;
+  if(!Array.prototype.some.call(sel.options,o=>o.value===v.persona)){
+    const o=document.createElement('option');
+    o.value=v.persona;o.textContent=_voxcpmPersonaLabel(v.persona);
+    sel.appendChild(o);
+  }
+  sel.value=v.persona;
+  _voxcpmCharacterSel=v.persona;
+}
+
+// Carica il campione della voce nel player. Il .wav non si scarica finche'
+// l'utente non preme play (preload="none" nel markup).
+function _loadVoxcpmSample(){
+  const audio=document.getElementById('voxcpmSample');
+  const v=_voxcpmSelectedVoice();
+  if(!audio)return;
+  audio.pause();
+  if(v&&v.sample_url){audio.src=v.sample_url;}
+  else{audio.removeAttribute('src');}
+  audio.load();
+}
+
 function _populateSpeechifyEmotions(){
   const sel=document.getElementById('speechifyEmotion');
   if(!sel)return;
@@ -1183,6 +1352,46 @@ function updVoicesPremium(){
   const vmEl=document.getElementById('vmPremium');
   const sel=document.getElementById('vvPremium');
   if(!sel)return;
+  // --- Ramo VoxCPM2: voci filtrate per lingua, locale (ACCENTO) e persona
+  // (CARATTERE). Qui i menu' non compongono una richiesta al motore: sono
+  // filtri su un catalogo (§5.1).
+  if(vmEl&&vmEl.value==='voxcpm'){
+    const loc=_voxcpmAccentSel;
+    const car=_voxcpmCharacterSel;
+    const lista=_voxcpmVoicesForLang().filter(v=>{
+      if(loc&&v.locale!==loc)return false;
+      if(car&&v.persona!==car)return false;
+      return true;
+    });
+    const prevVoice=_voxcpmVoiceSel||sel.value;
+    sel.innerHTML='';
+    let lg='';
+    for(const v of lista){
+      if(v.gender!==lg){
+        const g=document.createElement('optgroup');
+        g.label=v.gender==='Female'?'♀':(v.gender==='Male'?'♂':'•');
+        sel.appendChild(g);lg=v.gender;
+      }
+      const o=document.createElement('option');
+      o.value=v.id;
+      // Nome, genere e carattere sulla stessa riga (§5.2): il carattere e'
+      // l'informazione che distingue due voci dello stesso genere.
+      o.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.id.split('/').pop())
+                    +' · '+_voxcpmPersonaLabel(v.persona);
+      sel.lastElementChild.appendChild(o);
+    }
+    if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
+    _voxcpmVoiceSel=sel.value;
+    _syncVoxcpmCharacterToVoice();
+    _loadVoxcpmSample();
+    sel.onchange=()=>{
+      _voxcpmVoiceSel=sel.value;
+      _syncVoxcpmCharacterToVoice();
+      _loadVoxcpmSample();
+      if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+    };
+    return;
+  }
   // --- Ramo Speechify Simba-3.2: voci filtrate per accento (locale), non per lingua ---
   if(vmEl&&vmEl.value==='simba-3.2'){
     const accEl=document.getElementById('geminiAccent');
@@ -1967,6 +2176,13 @@ function _buildPreviewUrl(){
 function _updatePreviewBtn(){
   const btn=document.getElementById('btnPrev');
   if(!btn)return;
+  // Su VoxCPM l'anteprima non esiste: si ascolta il campione (§5.2), e
+  // /api/preview risponde 400 per queste voci. Spegnere il bottone evita
+  // all'utente un errore per una funzione che gli e' stata sostituita.
+  const sez=document.getElementById('previewSection');
+  const vox=_isVoxcpmVoiceId(getCurrentVoiceId());
+  if(sez)sez.hidden=vox;
+  if(vox){btn.disabled=true;btn.classList.remove('loading');return;}
   const ok=!!(bookData&&bookData.preview_text&&!generating&&!jobDone);
   btn.disabled=!ok;
   btn.classList.remove('loading');

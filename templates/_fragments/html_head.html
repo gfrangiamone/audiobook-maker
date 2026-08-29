@@ -424,6 +424,12 @@ __REVIEWS_LD__
             <div class="model-rate-hint" data-t="accent_hint"></div>
           </div>
         </div>
+        <div class="form-row" id="voxcpmCharacterRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="voxcpmCharacter" data-t="lbl_character">Carattere</label>
+            <select id="voxcpmCharacter"></select>
+          </div>
+        </div>
         <div class="form-row">
           <div class="form-group">
             <label for="vvPremium" data-t="lbl_voice">Voce</label>
@@ -442,6 +448,15 @@ __REVIEWS_LD__
           <div class="form-group" style="flex:1 1 100%">
             <label for="speechifyEmotion" data-t="lbl_emotion">Emozione</label>
             <select id="speechifyEmotion"></select>
+          </div>
+        </div>
+        <div class="form-row" id="voxcpmSampleRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label data-t="voxcpm_sample_title">Ascolta la voce</label>
+            <audio id="voxcpmSample" controls preload="none"></audio>
+            <div class="model-rate-hint" data-t="voxcpm_sample_hint">
+              Il campione da cui la voce viene clonata: il libro suonerà così.
+            </div>
           </div>
         </div>
       </div>
