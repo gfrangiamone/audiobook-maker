@@ -99,11 +99,18 @@ def _load():
     except Exception as e:
         print(f"[voxcpm_catalog] voices.json non leggibile ({path}): {e}")
         return []
+    if not isinstance(data, dict):
+        print(f"[voxcpm_catalog] voices.json è un {type(data).__name__}, atteso dict ({path})")
+        return []
     out = []
     for raw in (data.get("voices") or []):
-        rec = _normalize(raw)
-        if rec is not None:
-            out.append(rec)
+        try:
+            rec = _normalize(raw)
+            if rec is not None:
+                out.append(rec)
+        except Exception as e:
+            src_id = raw.get("id") if isinstance(raw, dict) else "<non-dict>"
+            print(f"[voxcpm_catalog] voce scartata: {src_id} errore normalizzazione: {e}")
     print(f"[voxcpm_catalog] {len(out)} voci caricate da {path}")
     return out
 

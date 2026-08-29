@@ -88,3 +88,49 @@ def test_json_malformato_non_solleva(tmp_path, monkeypatch, capsys):
     voxcpm_catalog.invalidate_cache()
     assert voxcpm_catalog.voices() == []
     assert "voices.json" in capsys.readouterr().out
+
+
+def test_json_array_top_level_non_solleva(tmp_path, monkeypatch, capsys):
+    # voices.json è un array invece di un dict con chiave "voices"
+    (tmp_path / "voices.json").write_text('[]', encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+    assert voxcpm_catalog.voices() == []
+    out = capsys.readouterr().out
+    assert "dict" in out
+
+
+def test_record_malformato_tra_validi_non_solleva(tmp_path, monkeypatch, capsys):
+    # Un record con duration_s invalido non deve abbattere il catalogo intero
+    import json
+    data = {
+        "voices": [
+            {
+                "id": "it-IT_m_buono", "name": "Buono", "name_is_invented": True,
+                "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+                "gender": {"value": "m", "label": "maschile", "f0_median_hz": 118.4},
+                "audio": {"file": "it-IT/Buono.wav", "transcript": "Test", "duration_s": 20.0, "sample_rate_hz": 24000},
+                "quality": {"score": 0.88, "gate_passed": True},
+                "description": {"persona": "warm-young", "role": "caldo", "axes": [], "lang": "it"}
+            },
+            {
+                "id": "it-IT_m_malformato", "name": "Malformato", "name_is_invented": True,
+                "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+                "gender": {"value": "m", "label": "maschile", "f0_median_hz": 120.0},
+                "audio": {"file": "it-IT/Malformato.wav", "transcript": "Test", "duration_s": "oops", "sample_rate_hz": 24000},
+                "quality": {"score": 0.85, "gate_passed": True},
+                "description": {"persona": "poised-dry", "role": "posato", "axes": [], "lang": "it"}
+            }
+        ]
+    }
+    (tmp_path / "voices.json").write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+    voci = voxcpm_catalog.voices()
+    # Solo il record buono deve essere caricato
+    assert len(voci) == 1
+    assert voci[0]["name"] == "Buono"
+    out = capsys.readouterr().out
+    # Il record malformato deve essere loggato come scartato
+    assert "it-IT_m_malformato" in out
+    assert "errore normalizzazione" in out
