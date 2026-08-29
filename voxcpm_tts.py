@@ -211,6 +211,18 @@ class VoxcpmCodaSatura(VoxcpmJobError):
     ritentabile = False
 
 
+class VoxcpmAnnullato(VoxcpmJobError):
+    """Annullamento dell'utente osservato durante l'attesa del job.
+
+    Distinta da `VoxcpmBloccato`/`VoxcpmCodaSatura`: non e' un guasto o una
+    saturazione dell'endpoint, e' `cancelled()` diventato vero mentre
+    `_attendi_esito` dormiva fra un poll e l'altro (Review finale, Important
+    F3). Non ritentabile per definizione: l'utente ha chiesto di fermarsi.
+    """
+
+    ritentabile = False
+
+
 # Quante volte si rifa' un job i cui chunk sono usciti a silenzio, e quante
 # se n'e' rimbalzato uno. Budget separati perche' misurano cose diverse: il
 # primo il carico sulla GPU, il secondo la sfortuna nell'instradamento.
@@ -313,8 +325,16 @@ def cancel_job(job_id, *, session=None):
         pass
 
 
+# Tick massimo della sonnellino a rate limitato in `_attendi_esito`: `cancelled`
+# va controllato spesso durante l'attesa fra un poll e l'altro, non solo fra un
+# poll e il successivo, altrimenti un `poll_s` di qualche decina di secondi (o
+# un `job_timeout_s` di 1800s da attraversare intero) terrebbe un cancel
+# dell'utente in sospeso per minuti (Review finale, Important F3).
+_TICK_ANNULLAMENTO_S = 1.0
+
+
 def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
-            queue_timeout=None, clock=time.time, on_queue=None):
+            queue_timeout=None, clock=time.time, on_queue=None, cancelled=None):
     """Sottomette il job e ne aspetta l'esito. Ritorna l'`output`.
 
     `/run` piu' polling su `/status`, mai `/runsync`: quello risponde 200 e
@@ -336,10 +356,17 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
         on_queue: callback opzionale `(secondi_in_coda)` chiamata mentre il
             job e' ancora in fila. Serve alla UI per dichiarare l'attesa
             invece di fingere un progresso che non c'e' (§9.1).
+        cancelled: predicato opzionale senza argomenti.
+            `None` (default) mantiene il comportamento precedente: nessun
+            controllo durante l'attesa. Se passato, viene controllato a tick
+            di al piu' `_TICK_ANNULLAMENTO_S` secondi durante il sonno fra un
+            poll e l'altro: appena torna vero, il job viene cancellato e
+            l'attesa si interrompe subito, senza aspettare il resto del tick
+            di polling.
 
     Raises:
         VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
-        VoxcpmCodaSatura, VoxcpmJobError: vedi la tabella §9.4.
+        VoxcpmCodaSatura, VoxcpmAnnullato, VoxcpmJobError: vedi la tabella §9.4.
     """
     ses = session or requests
     attesa = poll_seconds() if poll is None else float(poll)
@@ -349,23 +376,56 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     job_id = _submit(payload, ses, sleep)
     try:
         return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
-                              tetto_coda, clock, on_queue)
+                              tetto_coda, clock, on_queue, cancelled=cancelled)
     except BaseException:
         # Qualunque uscita che non sia il `return` di successo lascia un job
         # in volo, e RunPod lo fattura finche' gira: si cancella prima di
         # rilanciare, senza mai sostituire l'errore vero con uno di rete
-        # (`cancel_job` non solleva mai).
+        # (`cancel_job` non solleva mai). Se l'uscita e' gia' un
+        # `VoxcpmAnnullato`, il job e' gia' stato cancellato da
+        # `_attendi_esito`: `cancel_job` e' idempotente e non ripete l'HTTP
+        # dell'annullamento a vuoto (l'endpoint risponde 2xx a un cancel su un
+        # job gia' cancellato).
         cancel_job(job_id, session=ses)
         raise
 
 
+def _dormi_annullabile(sleep, attesa, cancelled, job_id, ses):
+    """Dorme `attesa` secondi in tick di al piu' `_TICK_ANNULLAMENTO_S`,
+    controllando `cancelled` dopo ogni tick (e prima, se `attesa` e' 0).
+
+    Se l'annullamento arriva a meta' dell'attesa, non si sta ad aspettare il
+    resto: si cancella subito il job (RunPod lo fattura a secondi finche'
+    gira) e si solleva `VoxcpmAnnullato`, invece di lasciare il chiamante in
+    sonno fino al prossimo poll.
+    """
+    if cancelled is None:
+        sleep(attesa)
+        return
+    rimanente = attesa
+    while True:
+        if cancelled():
+            cancel_job(job_id, session=ses)
+            raise VoxcpmAnnullato(
+                f"job {job_id} annullato durante l'attesa", job_id)
+        if rimanente <= 0:
+            return
+        tick = min(_TICK_ANNULLAMENTO_S, rimanente)
+        sleep(tick)
+        rimanente -= tick
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
-                    on_queue):
+                    on_queue, cancelled=None):
     """Il polling vero e proprio: isolato per poterlo avvolgere in un solo
     `try/except` che cancella il job su qualunque uscita non riuscita."""
     t0 = clock()
     t_run = None
     while True:
+        if cancelled is not None and cancelled():
+            cancel_job(job_id, session=ses)
+            raise VoxcpmAnnullato(
+                f"job {job_id} annullato durante l'attesa", job_id)
         trascorso = clock() - t0
         if t_run is None:
             if trascorso > tetto_coda:
@@ -385,14 +445,14 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
             # Il job sull'endpoint vive per conto suo: una sonda che non passa
             # e' un problema nostro, e abbandonarlo qui lascerebbe una GPU
             # accesa e pagata.
-            sleep(attesa)
+            _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)
             continue
 
         if r.status_code >= 400:
             if r.status_code in _HTTP_TRANSIENT:
                 # Stesso criterio di `_submit`: un 429/5xx e' del server che
                 # respira, non del job. Si riprova a sondare.
-                sleep(attesa)
+                _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)
                 continue
             # Un 401/403/404 non migliora aspettando: la chiave revocata resta
             # revocata. Non e' ritentabile, e Task 7 non deve riscoprirlo
@@ -427,7 +487,7 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
 
         if t_run is None and on_queue is not None:
             on_queue(trascorso)
-        sleep(attesa)
+        _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)
 
 
 # --------------------------------------------------------------------------
@@ -629,7 +689,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         try:
             out = run_job(payload, session=session, sleep=riposa,
-                          on_queue=on_queue)
+                          on_queue=on_queue, cancelled=cancelled)
         except VoxcpmRimbalzato:
             # Respinto senza essere partito: si rifa' uguale. La concorrenza
             # resta quella e il contatore dei tentativi veri non si muove,

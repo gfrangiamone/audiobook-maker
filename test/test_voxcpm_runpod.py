@@ -340,6 +340,66 @@ def test_submit_non_dorme_dopo_l_ultimo_tentativo():
     assert len(chiamate_sleep) == voxcpm_tts._SUBMIT_RETRIES - 1
 
 
+def test_annullamento_e_osservato_a_tick_brevi_non_dopo_poll_s():
+    # Review finale, Important F3: prima `cancelled()` era controllato solo
+    # fra un poll e l'altro (mai DENTRO il sonno di `poll_s`), quindi un
+    # `poll_s` lungo (o un `job_timeout_s` di minuti) teneva un cancel
+    # dell'utente in sospeso fino al prossimo giro. Con `poll=30` un fix che
+    # dormisse i 30s tutti d'un fiato farebbe scadere lo script GET (uno solo
+    # previsto) o comunque non si accorgerebbe dell'annullamento se non dopo
+    # l'intera attesa: qui deve bastare qualche tick da 1s.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-15"})],
+        get=[FintaRisposta(body={"status": "IN_QUEUE"})],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+
+    tick_sleeps = []
+
+    def sleep_che_conta(secondi):
+        tick_sleeps.append(secondi)
+
+    def cancellato():
+        # Falso al primo controllo (subito dopo il poll IN_QUEUE): il cancel
+        # arriva mentre si dorme, non prima.
+        return len(tick_sleeps) >= 2
+
+    with pytest.raises(voxcpm_tts.VoxcpmAnnullato):
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=sleep_che_conta,
+                           poll=30, cancelled=cancellato)
+    # Ogni tick e' al piu' 1s: non si e' dormito 30s tutti insieme prima di
+    # accorgersi dell'annullamento.
+    assert all(s <= 1.0 for s in tick_sleeps)
+    # Pochi tick (2), non l'intero poll_s (che ne richiederebbe 30 da 1s).
+    assert len(tick_sleeps) < 5
+    assert ses.post_fatte[-1]["url"].endswith("/cancel/job-15")
+
+
+def test_annullamento_gia_vero_non_fa_nemmeno_un_poll():
+    # Se cancelled() e' gia' vero all'ingresso (fra una sottomissione e la
+    # successiva, con la GET ancora da fare), non ha senso spendere quel poll:
+    # si cancella e si esce subito.
+    ses = FintaSessione(post=[FintaRisposta(body={"id": "job-16"})])
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmAnnullato):
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                           poll=0, cancelled=lambda: True)
+    assert ses.get_fatte == []
+    assert ses.post_fatte[-1]["url"].endswith("/cancel/job-16")
+
+
+def test_senza_cancelled_il_comportamento_non_cambia():
+    # Compatibilita': tutte le chiamate esistenti non passano `cancelled`, e
+    # devono continuare a funzionare esattamente come prima (nessun controllo,
+    # nessun tick).
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-17"})],
+        get=[FintaRisposta(body={"status": "COMPLETED", "output": {"ok": 9}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert out == {"ok": 9}
+
+
 def test_cancel_job_logga_se_la_cancellazione_non_e_confermata(caplog):
     # Non deve sollevare (e' best-effort), ma deve lasciare traccia: un
     # cancel non confermato e' un job che magari continua a girare e pagare.
