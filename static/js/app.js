@@ -1910,15 +1910,17 @@ function _openPayModalCtx(ctx) {
 // Chiamante Gemini: costruisce il contesto e apre il popup.
 function openPaymentModal(estimate) {
   _openPayModalCtx({
-    // Importo premium = engine attivo (Gemini o Speechify, mutuamente esclusivi:
-    // una sola voce premium selezionata). Usare solo gemini_eur mostrerebbe "—"
-    // per le voci Speechify pur avendo un totale a pagamento.
+    // Importo premium = engine attivo (Gemini, Speechify o VoxCPM, mutuamente
+    // esclusivi: una sola voce premium selezionata). Usare solo gemini_eur
+    // (o solo gemini+speechify) mostrerebbe "—" per le voci VoxCPM pur avendo
+    // un totale a pagamento (Review finale, Important F2): /api/combined_estimate
+    // somma anche voxcpm_eur nel totale addebitato.
     lines: [
-      { labelKey: 'pay_premium_voices', amount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0) },
+      { labelKey: 'pay_premium_voices', amount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0) },
       { labelKey: 'pay_text_ai_optimization', amount: estimate.llm_eur },
     ],
     total: estimate.total_eur,
-    geminiAmount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0),
+    geminiAmount: (Number(estimate.gemini_eur)||0)+(Number(estimate.speechify_eur)||0)+(Number(estimate.voxcpm_eur)||0),
     voucherPurpose: 'gemini',
     paypal: {
       endpoint: '/api/paypal_create_order_gemini',

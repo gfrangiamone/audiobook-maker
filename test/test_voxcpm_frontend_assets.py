@@ -123,3 +123,16 @@ def test_l_anteprima_lascia_il_posto_al_campione():
     # backend la respinge con 400 (Task 10) e l'utente vedrebbe un errore.
     i = JS.find("function _updatePreviewBtn")
     assert "_isVoxcpmVoiceId" in JS[i:i + 700]
+
+
+def test_il_modale_di_pagamento_non_dimentica_voxcpm_eur():
+    # Review finale, Important F2: /api/combined_estimate restituisce anche
+    # voxcpm_eur (motore mutuamente esclusivo con Gemini/Speechify) e il
+    # server addebita l'importo completo. Se openPaymentModal sommasse solo
+    # gemini_eur + speechify_eur, il prezzo mostrato per una voce VoxCPM
+    # sarebbe "—" pur essendoci un totale a pagamento.
+    i = JS.find("function openPaymentModal")
+    j = JS.find("\nfunction ", i + 1)
+    assert i != -1 and j != -1
+    corpo = JS[i:j]
+    assert "voxcpm_eur" in corpo
