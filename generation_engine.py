@@ -48,6 +48,7 @@ import gemini_cost_audit
 import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
+import voxcpm_tts
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -202,6 +203,7 @@ _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
+from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 
 
 def _retention_for_job(job):
@@ -1545,6 +1547,10 @@ def _friendly_voice_name(voice):
         name = v.split(":")[-1]
         name = re.sub(r"_\d+$", "", name)
         return name.replace("_", " ").strip().title()
+    if _is_voxcpm_voice(v):
+        # 'voxcpm:v2:it-IT/Stefano' -> 'Stefano'. Il locale serve a distinguere
+        # le voci dentro il catalogo, non a chi legge l'email di consegna.
+        return v.split("/")[-1].strip()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
@@ -3209,6 +3215,7 @@ def _engine_for_voice(voice):
     """Sceglie il motore TTS dal voice ID.
 
     Prefissi:
+      - "voxcpm:..."    -> VoxCPM2 su RunPod (PCM native, job per capitolo)
       - "speechify:..." -> Speechify Simba-3.2 (PCM native)
       - "gemini:..."  -> Gemini TTS (PCM native)
       - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
@@ -3216,6 +3223,8 @@ def _engine_for_voice(voice):
     """
     if not voice:
         return "edge"
+    if _is_voxcpm_voice(voice):
+        return "voxcpm"
     if _is_speechify_voice(voice):
         return "speechify"
     if _is_gemini_voice(voice):
@@ -3223,6 +3232,87 @@ def _engine_for_voice(voice):
     if _google_tts is not None and _google_tts.is_google_voice(voice):
         return "google"
     return "edge"
+
+
+def _voxcpm_chapter_groups(plan, reusable):
+    """I chunk del piano raggruppati per capitolo, in ordine.
+
+    Ritorna `[(chapter_index, [indice_chunk, ...]), ...]`, saltando i capitoli
+    i cui chunk sono TUTTI riusabili da un tentativo precedente.
+
+    Il riuso e' per capitolo e non per chunk perche' l'unita' di lavoro e' il
+    capitolo (§7.3): rigenerare un solo chunk costerebbe comunque il job
+    intero, e il PCM che torna e' del capitolo, non ricucibile a pezzi.
+    """
+    ordine = []
+    per_capitolo = {}
+    for i, blocco in enumerate(plan):
+        ci = blocco.get("chapter_index", 0)
+        if ci not in per_capitolo:
+            per_capitolo[ci] = []
+            ordine.append(ci)
+        per_capitolo[ci].append(i)
+    return [(ci, per_capitolo[ci]) for ci in ordine
+            if not set(per_capitolo[ci]) <= set(reusable)]
+
+
+def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
+                     cancelled=None):
+    """Sintetizza il libro un capitolo per job. Ritorna {indice_chunk: esito}.
+
+    Gemella della pre-sintesi Speechify poco piu' sotto, con un'unita' diversa:
+    li' un chunk per chiamata, qui un capitolo per job (§7.3). L'assemblaggio
+    sequenziale non cambia: legge i file-parte gia' scritti.
+
+    Il worker restituisce UN PCM per job, e i confini fra i chunk non tornano
+    indietro. L'audio del capitolo si scrive percio' nel file-parte del suo
+    PRIMO chunk, e gli altri chunk dello stesso capitolo ricevono un file
+    vuoto: `pcm_concat` li concatena in ordine e un pezzo vuoto non aggiunge
+    nulla, quindi l'audio esce identico e i marcatori M4B restano allineati.
+    Chiedere al worker le lunghezze dei singoli chunk vorrebbe dire modificare
+    `abm-voxcpm-worker`, che la spec mette fra i non toccati.
+
+    Raises:
+        _CancelledError: annullamento richiesto.
+        voxcpm_tts.VoxcpmJobError: capitolo perso a ritentativi esauriti. E'
+            un fallimento del job con rimborso (§9.4), non un capitolo muto.
+    """
+    import concurrent.futures as _cf
+
+    gruppi = _voxcpm_chapter_groups(plan, reusable)
+    esiti = {}
+
+    def _uno(gruppo):
+        ci, indici = gruppo
+        if cancelled is not None and cancelled():
+            raise _CancelledError("Job cancelled")
+        testa = indici[0]
+        dest = str(work_dir / f"chunk_{testa:06d}.pcm")
+        stats = voxcpm_tts.synthesize_chapter(
+            [plan[i]["text"] for i in indici], voice, dest,
+            # Un job = un capitolo: la chiave e' univoca e permette di risalire
+            # dal file su R2 al job che l'ha prodotto.
+            key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
+            cancelled=cancelled)
+        voxcpm_tts.apply_rate(dest, rate, stats.get("sample_rate") or 48000)
+        return ci, indici, stats
+
+    with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
+        for ci, indici, stats in _ex.map(_uno, gruppi):
+            for posto, i in enumerate(indici):
+                if posto == 0:
+                    esiti[i] = stats
+                    continue
+                # Coda del capitolo: file vuoto, e un esito a zero perche' le
+                # misure del capitolo sono gia' contate sul primo chunk.
+                parte = work_dir / f"chunk_{i:06d}.pcm"
+                with open(parte, "wb"):
+                    pass
+                esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
+                            "chars": 0, "audio_seconds": 0.0,
+                            "tts_seconds": 0.0, "jobs": 0, "redone": 0,
+                            "bounced": 0, "failed_chunks": 0, "bytes": 0}
+    return esiti
 
 
 # ---------------------------------------------------------------------------
@@ -4175,12 +4265,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_google = (engine == "google")
     use_gemini = (engine == "gemini")
     use_speechify = (engine == "speechify")
-    use_pcm = use_gemini or use_speechify
+    use_voxcpm = (engine == "voxcpm")
+    use_pcm = use_gemini or use_speechify or use_voxcpm
     if use_speechify:
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
     # Sample rate reale del PCM Speechify (Simba-3.2 nativo 48000). Popolato dal
-    # primo chunk sintetizzato; default 48000. Per Gemini resta 24000.
-    _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
+    # primo chunk sintetizzato; default 48000. VoxCPM e' nativo 48000. Per
+    # Gemini resta 24000.
+    _pcm_sr = (48000 if (use_speechify or use_voxcpm)
+               else 24000) if use_pcm else 24000
+    if use_speechify:
+        _pcm_sr = job.get("speechify_sample_rate", 48000)
 
     # Direttiva di accento (solo Gemini): ancora TUTTI i chunk allo stesso accento.
     # Senza, ogni chiamata stateless puo` scegliere una variante regionale diversa
@@ -4462,6 +4557,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Risultati pre-sintetizzati in pool parallelo (vedi sotto), letti da
         # _synthesize_chunk invece di richiamare l'API una seconda volta.
         _speechify_pre = {}
+        _voxcpm_pre = {}
 
         def _synthesize_chunk(i, block):
             """Sintetizza il chunk `i`. Ritorna (result, part_path).
@@ -4485,6 +4581,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # impronta: nessuna chiamata TTS, nessun costo, nessun usage da
                 # registrare (era gia' stato contabilizzato al primo tentativo).
                 return {"reused": True}, str(work_dir / f"chunk_{i:06d}.{_chunk_ext}")
+            if use_voxcpm:
+                # L'audio l'ha gia' scritto la pre-sintesi per capitolo: qui
+                # non si chiama nessuna API, si consegna il file-parte. Per i
+                # chunk di coda quel file e' vuoto ed e' corretto che lo sia,
+                # perche' l'audio del capitolo sta tutto sul primo.
+                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                return _voxcpm_pre.get(i, {"reused": True}), part_path
             if use_speechify:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                 pre = _speechify_pre.get(i)
@@ -4650,6 +4753,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # i rami (single-file / multi-file).
         _ea_ratio, _ea_min = _early_abort_params()
 
+        # Pre-sintesi VoxCPM: un job per capitolo, jobs_in_flight() in volo.
+        # L'assemblaggio sotto resta sequenziale e legge i .pcm gia' prodotti
+        # (via _voxcpm_pre), come per Speechify.
+        if use_voxcpm:
+            job["progress_message"] = (
+                "Accensione del motore vocale, circa tre minuti...")
+            _voxcpm_pre = _voxcpm_pre_pass(
+                plan, voice, rate, work_dir, job_id, _reusable_chunks,
+                cancelled=_check_cancelled)
+            job["progress_message"] = "Assembling audio..."
+
         # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata
         # attraversa il gate globale (invariante concorrenza abbonamento). L'attesa
         # su slot saturo e' trasparente. L'assemblaggio sotto resta sequenziale e
@@ -4682,7 +4796,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         job["speechify_sample_rate"] = _res.get("sample_rate", 48000)
             job["progress_message"] = "Assembling audio..."
         # Re-read del sample rate reale ora che la pre-sintesi lo ha popolato.
-        _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
+        # VoxCPM e' nativo 48000 come Speechify (nessun campo di job da
+        # ri-leggere: la pre-sintesi non lo scrive, il valore e' fisso).
+        _pcm_sr = (job.get("speechify_sample_rate", 48000) if use_speechify
+                   else (48000 if use_voxcpm else 24000))
 
         if single_file:
             all_parts = []

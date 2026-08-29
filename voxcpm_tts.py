@@ -732,3 +732,44 @@ def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
         f.write(dati)
     os.replace(tmp, dest_path)
     return len(dati)
+
+
+def jobs_in_flight():
+    """Capitoli sottomessi insieme. Floor a 1.
+
+    Il default e' 2 e non 24 come la concorrenza dei chunk: quella misura il
+    batch dentro un worker, questa quanti worker si accendono. Ogni job in
+    piu' e' un'accensione in piu' se l'endpoint deve scalare, e l'accensione
+    e' il costo dominante (§9.2).
+    """
+    return max(1, _i("ABM_VOXCPM_JOBS", 2))
+
+
+def apply_rate(pcm_path, rate, sample_rate):
+    """Applica la velocita' di lettura al PCM, sul posto. Ritorna True se fatto.
+
+    L'azione `generate` del worker non ha un parametro di velocita': ce l'ha
+    `assemble`, che D9 lascia fuori dal perimetro. La velocita' la mette
+    quindi l'app, con un `atempo` di ffmpeg sul PCM grezzo. L'intervallo del
+    pannello e' -30%..+30% (§5.2), comodamente dentro il dominio 0,5-2,0 di
+    `atempo`: un solo filtro basta, nessuna catena.
+    """
+    try:
+        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        return False
+    tempo = 1.0 + pct / 100.0
+    if abs(tempo - 1.0) < 0.005:
+        return False
+    tempo = max(0.5, min(2.0, tempo))
+
+    import subprocess
+    sr = int(sample_rate or 48000)
+    tmp = pcm_path + ".rate"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", pcm_path,
+           "-filter:a", f"atempo={tempo:.4f}",
+           "-f", "s16le", "-ar", str(sr), "-ac", "1", tmp]
+    subprocess.run(cmd, check=True)
+    os.replace(tmp, pcm_path)
+    return True

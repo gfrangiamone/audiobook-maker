@@ -410,6 +410,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_QUEUE_TIMEOUT_S` | `900` Quanto si aspetta in coda un job VoxCPM prima di dichiarare l'endpoint saturo. Scaduto, il job si cancella e non si ritenta. | `voxcpm_tts.py` | 245 |
 | `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
+| `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
 
 ### 3.6 Cleanup (pulizia automatica)
 

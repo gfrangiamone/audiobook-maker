@@ -109,3 +109,28 @@ def test_stima_libro_somma_i_capitoli(configurato):
     assert s["list_price_eur"] == 1.00
     assert s["language"] == "it"
     assert s["model_key"] == "v2"
+
+
+def test_jobs_in_flight_ha_un_floor(monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "0")
+    assert voxcpm_tts.jobs_in_flight() == 1
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "4")
+    assert voxcpm_tts.jobs_in_flight() == 4
+    monkeypatch.delenv("ABM_VOXCPM_JOBS", raising=False)
+    assert voxcpm_tts.jobs_in_flight() == 2
+
+
+def test_apply_rate_non_fa_niente_a_velocita_normale(tmp_path):
+    p = tmp_path / "x.pcm"
+    p.write_bytes(b"\x00\x01" * 100)
+    for neutro in ("+0%", "0%", "", None):
+        assert voxcpm_tts.apply_rate(str(p), neutro, 48000) is False
+    assert p.stat().st_size == 200
+
+
+def test_apply_rate_accelera_il_pcm(tmp_path):
+    # ffmpeg vero su un PCM di silenzio: +30% deve accorciare il file.
+    p = tmp_path / "x.pcm"
+    p.write_bytes(b"\x00\x00" * 48000)          # 1 s a 48 kHz, 16 bit mono
+    assert voxcpm_tts.apply_rate(str(p), "+30%", 48000) is True
+    assert 60000 < p.stat().st_size < 84000     # ~1/1,3 di 96000 byte
