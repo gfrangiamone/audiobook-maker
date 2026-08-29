@@ -84,6 +84,17 @@ except ImportError:
 #  -  -  Speechify Simba-3.2 (PREMIUM, solo inglese)  -  opzionale  -  -
 import speechify_tts
 
+#  -  -  VoxCPM2 (voci inventate via RunPod, catalogo importato)  -  opzionale  -  -
+try:
+    import voxcpm_catalog
+    import voxcpm_tts
+except Exception as _voxcpm_err:      # noqa: BLE001
+    # Il catalogo e' un dato importato e il motore e' opzionale: se manca,
+    # l'app parte lo stesso con tre motori invece di quattro.
+    print(f"VoxCPM non disponibile: {_voxcpm_err}")
+    voxcpm_catalog = None
+    voxcpm_tts = None
+
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
     _extract_cover_for_preview, _generate_podcast_rss,
@@ -2326,6 +2337,23 @@ async def _fetch_voices():
                 languages[lc_short]["voices"].extend(v_list)
         except Exception as e:
             print(f"Error merging Speechify voices: {e}")
+
+    # 5. VoxCPM2 (opzionale) — gated su endpoint, chiave, tariffa e catalogo.
+    if voxcpm_tts is not None and voxcpm_tts.is_available():
+        try:
+            vox_dict = voxcpm_catalog.get_voices()  # -> {"it": [entry, ...]}
+            for lc_short, v_list in vox_dict.items():
+                if lc_short not in languages:
+                    # Il catalogo e' una variabile (D10): una lingua nuova
+                    # apre la sua sezione senza che nessuno rilasci codice.
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            # Un catalogo illeggibile toglie un motore, non l'applicazione.
+            print(f"Error merging VoxCPM voices: {e}")
 
     # Sorting
     for lang in languages.values():
@@ -7895,6 +7923,22 @@ def api_voices():
                 }
             except Exception:
                 pass
+        # Stato VoxCPM per il tab premium: se il motore non e' disponibile la
+        # UI non mostra il modello, invece di mostrarlo con la combo vuota.
+        # `personas` e' l'elenco dei CARATTERI presenti nel catalogo di oggi:
+        # arriva da li' e non da una costante, cosi' un carattere nuovo non
+        # richiede un rilascio (D10).
+        if voxcpm_tts is not None:
+            try:
+                disponibile = bool(voxcpm_tts.is_available())
+                voices["_voxcpm"] = {
+                    "available": disponibile,
+                    "model_label": voxcpm_catalog.MODEL_LABEL,
+                    "personas": voxcpm_catalog.personas() if disponibile else [],
+                }
+            except Exception:
+                voices["_voxcpm"] = {"available": False, "model_label": "",
+                                     "personas": []}
         # Disponibilita' traduzione libro: backend LLM configurato + modello di
         # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
         # bottone "Traduci" invece di farlo fallire dopo la selezione capitoli.
@@ -7905,6 +7949,35 @@ def api_voices():
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/voice_sample")
+def api_voice_sample():
+    """Il `.wav` di riferimento di una voce di catalogo.
+
+    Sostituisce l'anteprima di lettura per le voci VoxCPM (§5.2): l'anteprima
+    costerebbe un'accensione del worker per pochi secondi di audio, mentre il
+    campione e' un file che esiste gia' e che dice esattamente come suonera'
+    la voce, perche' e' proprio quello che il modello clonera'.
+
+    Non e' un file statico: il catalogo sta in una cartella importata e
+    configurabile, e solo `voxcpm_catalog` sa quali voci sono valide.
+    """
+    voice_id = (request.args.get("voice") or "").strip()
+    if voxcpm_catalog is None:
+        return jsonify({"error": "voxcpm non disponibile"}), 404
+    try:
+        percorso = voxcpm_catalog.sample_path(voice_id)
+    except ValueError as e:
+        # Id malformato, motore sbagliato, o voce non piu' in catalogo dopo una
+        # rigenerazione: dal punto di vista del browser sono la stessa cosa,
+        # una richiesta a cui non si puo' rispondere.
+        messaggio = str(e)
+        codice = 404 if "non presente nel catalogo" in messaggio else 400
+        return jsonify({"error": messaggio}), codice
+    except FileNotFoundError:
+        return jsonify({"error": "campione non disponibile"}), 404
+    return send_file(percorso, mimetype="audio/wav", conditional=True)
 
 
 @app.route("/api/community/stats/today")
