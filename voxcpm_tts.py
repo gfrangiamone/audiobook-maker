@@ -13,9 +13,11 @@ freddo), non nei caratteri. Un job da 1 chunk e uno da 8 costano uguale.
 Da qui l'unita' di lavoro per capitolo e il retry a caldo dentro lo stesso
 job invece del rilancio a freddo.
 """
+import base64
 import json
 import logging
 import os
+import threading
 import time
 
 import requests
@@ -425,3 +427,225 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
         if t_run is None and on_queue is not None:
             on_queue(trascorso)
         sleep(attesa)
+
+
+# --------------------------------------------------------------------------
+# Un capitolo, un job (§7.3)
+# --------------------------------------------------------------------------
+
+# Aderenza al testo e al riferimento. E' il default di lettura del client
+# (`voxcpm_book.py`, CFG_READ): alzarlo irrigidisce la dizione, abbassarlo
+# fa divagare la voce dal campione.
+CFG_READ = 2.0
+
+# Concorrenza minima: sotto i 4 chunk in volo il worker paga piu' overhead di
+# quanto guadagni in stabilita', e il capitolo che non passa a 4 non passa.
+_CONCURRENCY_FLOOR = 4
+
+_clone_cache = {}
+_clone_lock = threading.Lock()
+
+# Indirezione sul sonno, cosi' i test della politica di ritentativo non
+# durano quanto le pause che verificano.
+_dormi = time.sleep
+
+
+def invalidate_clone_cache():
+    """Svuota la cache dei campioni codificati. La chiamano i test."""
+    with _clone_lock:
+        _clone_cache.clear()
+
+
+def clone_block(voice_id):
+    """I campi del payload che determinano la voce, in modalita' `hifi`.
+
+    `hifi` per tutte le voci (§7.4): prefisso piu' riferimento. Il canale che
+    porta l'identita' e' `prompt_wav_b64`, misurato il 2026-08-28 incrociando
+    i due canali — il risultato segue il prefisso e ignora il riferimento.
+    Per questo `prompt_text` e' un requisito duro: senza la trascrizione
+    esatta il prefisso non entra nel canale che conta e la resa crolla a
+    quella di `reference`, gia' giudicata inaccettabile.
+
+    Il risultato e' memorizzato per `voice_id`: il wav non cambia, e su un
+    libro da quaranta capitoli sarebbero quaranta letture identiche.
+    """
+    with _clone_lock:
+        pronto = _clone_cache.get(voice_id)
+    if pronto is not None:
+        return dict(pronto)
+
+    rec = voxcpm_catalog.parse_voice_id(voice_id)
+    with open(voxcpm_catalog.sample_path(voice_id), "rb") as f:
+        wav = base64.b64encode(f.read()).decode("ascii")
+    blocco = {
+        "prompt_wav_b64": wav,
+        "prompt_format": "wav",
+        "prompt_text": rec["transcript"],
+        "reference_wav_b64": wav,
+        "reference_format": "wav",
+    }
+    with _clone_lock:
+        _clone_cache[voice_id] = blocco
+    return dict(blocco)
+
+
+def _scarica(url, dest):
+    """Scrive in `dest` il corpo di `url`, senza tenerlo tutto in memoria.
+
+    Il PCM di un capitolo a 48 kHz sta sulle decine di megabyte: leggerlo in
+    una stringa moltiplicherebbe la memoria del server per il numero di
+    capitoli in volo.
+    """
+    tmp = dest + ".part"
+    with requests.get(url, stream=True, timeout=300) as r:
+        r.raise_for_status()
+        with open(tmp, "wb") as f:
+            for pezzo in r.iter_content(chunk_size=1 << 20):
+                if pezzo:
+                    f.write(pezzo)
+    os.replace(tmp, dest)
+
+
+def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
+                       sleep=None, on_queue=None, cancelled=None):
+    """Sintetizza un capitolo intero come un solo job. Scrive il PCM grezzo.
+
+    Un job per capitolo (§7.3): il costo sta nell'accensione del worker, non
+    nei caratteri, quindi un job da un chunk e uno da otto costano uguale, e
+    l'accensione si ammortizza sui capitoli successivi finche' il worker resta
+    caldo.
+
+    Il ritentativo sta qui e non piu' in alto per la stessa ragione (§9.2):
+    rifare il capitolo mentre il worker e' caldo costa secondi di GPU, rifarlo
+    a freddo costa un'accensione intera.
+
+    Args:
+        chunks: i testi del capitolo, gia' spezzati da `tts_split`.
+        voice_id: `voxcpm:v2:<locale>/<Nome>`.
+        dest_path: dove scrivere il PCM 16 bit mono.
+        key: chiave R2 dell'intermedio. Vuota o R2 spento = audio inline.
+        session, sleep, on_queue: inoltrati a `run_job`.
+        cancelled: predicato senza argomenti. Se vero prima di sottomettere,
+            il job non parte: e' il momento in cui la spesa comincia.
+
+    Returns:
+        dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
+        `jobs`, `redone`, `bounced`, `failed_chunks`, `bytes`.
+
+    Raises:
+        ValueError: la voce non e' nel catalogo (§9.4, caso normale).
+        VoxcpmJobError e sottoclassi: vedi la tabella §9.4.
+    """
+    import storage_backend
+
+    clone = clone_block(voice_id)      # prima di tutto: se la voce non c'e',
+                                       # si scopre senza aver acceso nulla
+    riposa = sleep or _dormi
+    su_r2 = bool(key) and storage_backend.is_enabled()
+    stats = {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
+             "tts_seconds": 0.0, "jobs": 0, "redone": 0, "bounced": 0,
+             "failed_chunks": 0, "bytes": 0}
+
+    conc = concurrency()
+    tentativo, rimbalzi = 0, 0
+    while True:
+        if cancelled is not None and cancelled():
+            raise VoxcpmJobError("job annullato: nessun altro worker acceso")
+        ultimo = tentativo >= SILENCE_RETRIES
+
+        payload = {"input": {
+            "action": "generate",
+            "chunks": list(chunks),
+            **clone,
+            "cfg": CFG_READ,
+            "concurrency": conc,
+            # PCM grezzo, non WAV: i capitoli vengono concatenati byte a byte
+            # da `pcm_concat`, e un header WAV in mezzo finirebbe dentro
+            # l'audio come rumore.
+            "output_format": "pcm",
+        }}
+        if su_r2:
+            payload["input"]["s3"] = {
+                "put_url": storage_backend.presigned_put_url(key),
+                "key": key,
+            }
+
+        try:
+            out = run_job(payload, session=session, sleep=riposa,
+                          on_queue=on_queue)
+        except VoxcpmRimbalzato:
+            # Respinto senza essere partito: si rifa' uguale. La concorrenza
+            # resta quella e il contatore dei tentativi veri non si muove,
+            # perche' questo non e' un sintomo di carico ma di instradamento.
+            rimbalzi += 1
+            stats["bounced"] += 1
+            if rimbalzi > BOUNCE_RETRIES:
+                raise
+            # Una pausa che cresce, non un ritentativo immediato: il worker
+            # guasto impiega ancora una decina di secondi a uscire, e finche'
+            # e' li' respinge tutto.
+            riposa(min(30, 10 * rimbalzi))
+            continue
+        except (VoxcpmBloccato, VoxcpmMotoreCompromesso):
+            # Stesso rimedio, due sintomi: il worker che si e' fermato e la
+            # GPU che non ha retto vogliono entrambi un batch piu' stretto.
+            if ultimo:
+                raise
+        else:
+            stats["jobs"] += 1
+            stats["sample_rate"] = stats["sample_rate"] or int(
+                out.get("sample_rate") or 48000)
+            stats["chars"] += int(out.get("chars") or 0)
+            stats["audio_seconds"] += float(out.get("audio_seconds") or 0.0)
+            stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
+
+            bad = out.get("failed_indices") or []
+            if bad:
+                # Il worker mette un secondo di silenzio al posto della frase
+                # caduta e tira dritto, cosi' il capitolo resta allineato. Per
+                # un audiolibro pero' quel silenzio e' una frase persa, e a
+                # valle passerebbe ogni verifica: l'M4B corrisponderebbe
+                # esattamente ai frammenti, silenzi compresi.
+                if su_r2:
+                    storage_backend.delete_object(key)
+                if ultimo:
+                    raise VoxcpmJobError(
+                        f"{len(bad)} chunk su {len(chunks)} a silenzio anche a "
+                        f"concorrenza {conc}: il capitolo sarebbe bucato, non "
+                        f"lo si tiene")
+            else:
+                scritti = _consegna(out, dest_path, key, su_r2, conc, len(chunks))
+                stats["bytes"] = scritti
+                return stats
+
+        conc = max(_CONCURRENCY_FLOOR, conc // 4)
+        tentativo += 1
+        stats["redone"] += 1
+
+
+def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
+    """Porta l'audio del job in `dest_path`. Ritorna i byte scritti."""
+    import storage_backend
+
+    if su_r2:
+        caricati = int((out.get("s3") or {}).get("bytes") or 0)
+        if not caricati:
+            raise VoxcpmJobError(
+                "il job non ha caricato niente su R2: " + json.dumps(out)[:300])
+        _scarica(storage_backend.presigned_get_url(key), dest_path)
+        # L'oggetto su R2 e' un intermedio: il server ha gia' i byte, tenerlo
+        # sarebbe pagare storage per una copia che nessuno rilegge.
+        storage_backend.delete_object(key)
+        return os.path.getsize(dest_path)
+
+    audio = out.get("audio_b64")
+    if not audio:
+        raise VoxcpmJobError(
+            f"risposta senza audio per {n_chunk} chunk a concorrenza {conc}: "
+            + json.dumps(out)[:300])
+    dati = base64.b64decode(audio)
+    tmp = dest_path + ".part"
+    with open(tmp, "wb") as f:
+        f.write(dati)
+    os.replace(tmp, dest_path)
+    return len(dati)
