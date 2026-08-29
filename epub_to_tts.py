@@ -1030,6 +1030,150 @@ def _is_title_content(title: str) -> bool:
     return not _title_is_non_content(title)
 
 
+def _chapters_to_lines(chapters: list) -> list:
+    """Concatena le righe di tutti i capitoli, con un confine vuoto tra loro."""
+    lines = []
+    for ch in chapters:
+        lines.extend(ch.text.split("\n"))
+        lines.append("")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def _is_index_entry_line(line: str) -> bool:
+    """Riga candidata a voce di indice: breve, isolata, senza aspetto di prosa."""
+    s = line.strip()
+    return 0 < len(s) < 80 and len(s.split()) <= 12
+
+
+# Intestazioni che aprono un indice testuale interno al libro (sotto-insieme
+# "Indice / TOC" di NON_CONTENT_TITLE_PHRASES).
+_INLINE_INDEX_HEADERS = (
+    "indice", "indice generale", "indice dei contenuti", "sommario",
+    "table of contents", "contents", "table des matières", "sommaire",
+    "índice", "índice general", "inhaltsverzeichnis", "inhalt",
+)
+
+
+def _find_inline_index_block(lines: list) -> tuple | None:
+    """Individua un indice testuale interno al libro.
+
+    Pattern tipico delle conversioni calibre da TXT/RTF: una riga
+    "INDICE." / "Contents" seguita da una sequenza di righe brevi (le voci),
+    fino alla prima riga di prosa. Restituisce (header_idx, end_idx, entries)
+    con end_idx esclusivo, oppure None se non c'è un blocco di almeno 4 voci.
+    """
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s or len(s) > 40:
+            continue
+        if not _title_is_non_content(s, _INLINE_INDEX_HEADERS):
+            continue
+        entries = []
+        seen = set()
+        j = i + 1
+        while j < len(lines):
+            t = lines[j].strip()
+            if not t:
+                j += 1
+                continue
+            # Fine del blocco: prima riga di prosa, oppure una voce che si
+            # ripete identica (è il titolo con cui inizia il corpo del libro).
+            # Confronto esatto: un indice può contenere legittimamente
+            # "IL SOPRAVVISSUTO." (parte) e "Il sopravvissuto." (sezione).
+            if not _is_index_entry_line(t) or t in seen:
+                break
+            entries.append(t)
+            seen.add(t)
+            j += 1
+        if len(entries) >= 3:
+            return (i, j, entries)
+    return None
+
+
+def _norm_title_key(s: str) -> str:
+    """Chiave di confronto titolo: minuscolo, senza punteggiatura, senza
+    rimandi a nota in coda ("MASSA E STORIA. (74)" → "massa e storia")."""
+    s = re.sub(r"\s*[\(\[]\s*\d+\s*[\)\]]\s*$", "", s.strip())
+    return re.sub(r"\W+", " ", s.lower()).strip()
+
+
+def _resegment_chapters_by_inline_index(chapters: list) -> list:
+    """Ri-suddivide il testo usando l'indice testuale interno al libro.
+
+    Le voci dell'indice vengono cercate, in ordine, come righe isolate nel
+    corpo. Se l'indice ha due livelli (voci in MAIUSCOLO in minoranza: parti)
+    i capitoli sono le parti; altrimenti ogni voce è un capitolo. Le voci di
+    apparato (Note, Bibliografia…) tagliano sempre e vengono scartate. Il
+    blocco indice non finisce nell'audio. Restituisce [] se non c'è un indice
+    o se meno della metà (e meno di 4) delle voci ricompare nel corpo.
+    """
+    lines = _chapters_to_lines(chapters)
+    found = _find_inline_index_block(lines)
+    if not found:
+        return []
+    hdr, end, entries = found
+
+    caps = [e for e in entries if e == e.upper() and re.search(r"[^\W\d_]", e)]
+    hierarchical = 3 <= len(caps) <= len(entries) // 2
+    markers = []
+    for e in entries:
+        if not hierarchical or e in caps or _title_is_non_content(e):
+            markers.append(e)
+    marker_keys = [_norm_title_key(m) for m in markers]
+
+    # Match in ordine con lookahead limitato (voci mancanti nel corpo tollerate).
+    cut_pos = []  # (line_idx, title)
+    j = 0
+    body_range = [k for k in range(len(lines)) if k < hdr or k >= end]
+    for k in body_range:
+        if j >= len(marker_keys):
+            break
+        s = lines[k].strip()
+        if not _is_index_entry_line(s):
+            continue
+        key = _norm_title_key(s)
+        if not key:
+            continue
+        for look in range(j, min(j + 4, len(marker_keys))):
+            if marker_keys[look] == key:
+                # Titolo dalla voce dell'indice (pulita), non dalla riga del
+                # corpo che può portare rimandi a nota o refusi.
+                cut_pos.append((k, markers[look]))
+                j = look + 1
+                break
+
+    matched = len(cut_pos)
+    if matched < 4 or matched * 2 < len(markers):
+        return []
+
+    skip = set(range(hdr, end))
+    sections = []
+    prev_title = None
+    prev_start = 0
+    for k, title in cut_pos + [(len(lines), None)]:
+        body = "\n".join(lines[m] for m in range(prev_start, k) if m not in skip).strip()
+        sections.append((prev_title, body))
+        prev_title, prev_start = title, k + 1
+
+    result = []
+    for title, body in sections:
+        if not body:
+            continue
+        if title and not _is_title_content(title):
+            continue
+        if title is None and len(body.split()) < 30:
+            continue
+        result.append(Chapter(
+            index=len(result) + 1,
+            title=(title or "").strip() or "Premessa",
+            text=body,
+            source_file=chapters[0].source_file if chapters else "",
+        ))
+    return result
+
+
 def _resegment_chapters_by_markers(chapters: list) -> list:
     """Ri-suddivide il testo dei capitoli usando i marcatori testuali di capitolo
     ("Chapter 4", "Capitolo III", "Глава 1", "第2章"…) su riga isolata.
@@ -1042,13 +1186,14 @@ def _resegment_chapters_by_markers(chapters: list) -> list:
     (es. "Part I" seguito da "Chapter One") vengono fusi nel titolo successivo.
     Restituisce [] se non trova almeno 2 marcatori (niente da ri-segmentare).
     """
-    # Concatena le righe di tutti i capitoli, con un confine tra loro.
-    lines = []
-    for ch in chapters:
-        lines.extend(ch.text.split("\n"))
-        lines.append("")
-    while lines and not lines[-1].strip():
-        lines.pop()
+    lines = _chapters_to_lines(chapters)
+
+    # Un indice testuale interno cita i titoli ("Epilogo", "Capitolo primo"):
+    # non sono marcatori, e il blocco indice non deve finire nell'audio.
+    found = _find_inline_index_block(lines)
+    if found:
+        hdr, end, _ = found
+        del lines[hdr:end]
 
     marker_pos = [i for i, ln in enumerate(lines) if is_chapter_marker_line(ln)]
     if len(marker_pos) < 2:
@@ -1379,8 +1524,12 @@ def parse_epub(epub_path: str, include_toc_chapters: bool = False) -> BookInfo:
     # capitolo. Con >= 4 capitoli ci si affida al TOC dell'EPUB, senza
     # introdurre suddivisioni ulteriori. Si sostituisce solo se la
     # ri-segmentazione produce PIÙ capitoli (non perde mai testo).
+    # Prima l'indice testuale interno al libro (autorevole quando le sue voci
+    # ricompaiono nel corpo), poi i marcatori generici.
     if len(info.chapters) < 4:
-        resegmented = _resegment_chapters_by_markers(info.chapters)
+        resegmented = _resegment_chapters_by_inline_index(info.chapters)
+        if len(resegmented) <= len(info.chapters):
+            resegmented = _resegment_chapters_by_markers(info.chapters)
         if len(resegmented) > len(info.chapters):
             info.chapters = resegmented
 
