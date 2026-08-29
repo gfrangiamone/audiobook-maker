@@ -9,7 +9,10 @@ import os
 import pytest
 
 import audiobook_app
+import free_quota
+import payment
 import voxcpm_catalog
+import voxcpm_tts
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "voxcpm_catalog")
 VOCE = "voxcpm:v2:it-IT/Stefano"
@@ -19,6 +22,11 @@ class Cap:
     def __init__(self, index, text):
         self.index = index
         self.text = text
+        # Servono a /api/generate (selected_chars = sum(ch.char_count ...)),
+        # non solo a /api/combined_estimate: senza questi i nuovi test sul
+        # ramo di generazione vera (Fix round 1) esplodono con AttributeError.
+        self.char_count = len(text)
+        self.word_count = max(1, len(text.split()))
 
 
 class Info:
@@ -167,6 +175,13 @@ def test_il_cap_caratteri_e_quello_di_voxcpm(motore, monkeypatch):
     import importlib
     importlib.reload(audiobook_app)
     assert audiobook_app._max_text_chars_for_voice(VOCE) == 1234
+    # Il reload sotto va fatto SENZA la env var, non con essa ancora attiva:
+    # monkeypatch la ripristina solo a fine test (dopo il return), quindi un
+    # secondo reload qui dentro la vedrebbe di nuovo "1234" e il modulo
+    # resterebbe con MAX_VOXCPM_TEXT_CHARS=1234 per il resto della sessione
+    # di test (era un bug di isolamento: rotto ogni test successivo che
+    # generasse con la voce VoxCPM senza aspettarsi quel cap).
+    monkeypatch.delenv("ABM_MAX_VOXCPM_TEXT_CHARS", raising=False)
     importlib.reload(audiobook_app)
 
 
@@ -177,3 +192,106 @@ def test_stima_e_addebito_dicono_lo_stesso_numero(client, job_grande):
     dec = free_quota.decision("cid-vox", VOCE, 1.00, job_grande)
     assert d["total_eur"] == dec["due_eur"]
     assert d["is_free"] == dec["is_free"]
+
+
+# ---------------------------------------------------------------------------
+# /api/generate: stima e addebito devono dire lo stesso numero anche qui, non
+# solo in /api/combined_estimate (Fix round 1, task-10-report.md).
+# ---------------------------------------------------------------------------
+
+class _SyncThread:
+    """Thread sincrono: il pocket job["payment"] e il consumo di free_quota
+    avvengono PRIMA di thread.start() nella route, quindi non serve per le
+    asserzioni sotto — ma evita un thread daemon reale (rete VoxCPM finta)
+    che sopravviverebbe al test."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._t, self._a, self._k = target, args, kwargs or {}
+
+    def start(self):
+        self._t(*self._a, **self._k)
+
+
+@pytest.fixture
+def no_real_generation(monkeypatch, tmp_path):
+    monkeypatch.setattr(audiobook_app, "run_generation", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "_admin_notify_generation", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app, "_log_activity", lambda *a, **k: None)
+    monkeypatch.setattr(audiobook_app.threading, "Thread", _SyncThread)
+    # Isola gli store di pagamento reali: _PAYMENTS_FILE/_VOUCHERS_FILE/
+    # _PAID_JOBS_DONE_FILE sono calcolati da payment.py all'import (prima che
+    # ABM_DATA_DIR=tmp_path della fixture `motore` esista), quindi senza
+    # questo i test scrivono/leggono i file veri di sviluppo e si sporcano a
+    # vicenda fra run diversi (_paid_jobs_done in particolare e' una lista in
+    # memoria mai svuotata fra test).
+    monkeypatch.setattr(payment, "_payments", {})
+    monkeypatch.setattr(payment, "_vouchers", {})
+    monkeypatch.setattr(payment, "_paid_jobs_done", [])
+    monkeypatch.setattr(payment, "_PAYMENTS_FILE", tmp_path / "_payments.json")
+    monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
+    monkeypatch.setattr(payment, "_PAID_JOBS_DONE_FILE", tmp_path / "_paid_jobs_done.json")
+
+
+def _post_generate(client, job_id, **extra):
+    payload = {"job_id": job_id, "voice": VOCE, "rate": "+0%",
+               "output_format": "m4b", "lang": "it"}
+    payload.update(extra)
+    return client.post("/api/generate", json=payload)
+
+
+def test_generate_402_dice_lo_stesso_numero_della_stima(client, job_grande, no_real_generation):
+    d = stima(client, job_grande)
+    assert d["is_free"] is False
+
+    client.set_cookie("abm_cid", "cid-vox")  # owner del job_grande
+    r = client.post("/api/generate", json={
+        "job_id": job_grande, "voice": VOCE, "rate": "+0%",
+        "output_format": "m4b", "lang": "it",
+    })
+    assert r.status_code == 402, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["error_code"] in ("payment_required", "free_quota_exhausted")
+    assert body["total_eur"] == pytest.approx(d["total_eur"])
+
+
+def test_generate_sotto_soglia_parte_gratis_e_muove_la_quota(client, job_piccolo, no_real_generation):
+    cid = "cid-vox2"  # client_id fissato da job_piccolo
+    assert free_quota.used_eur(cid) == pytest.approx(0.0)
+    d = stima(client, job_piccolo)
+    assert d["is_free"] is True
+    list_price = voxcpm_tts.estimate_book_cost(
+        audiobook_app.jobs[job_piccolo]["info"].chapters, language="it"
+    )["list_price_eur"]
+
+    client.set_cookie("abm_cid", cid)
+    r = client.post("/api/generate", json={
+        "job_id": job_piccolo, "voice": VOCE, "rate": "+0%",
+        "output_format": "m4b", "lang": "it",
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "started"
+    # La quota gratuita cumulativa si e' davvero mossa, non solo la stima.
+    assert free_quota.used_eur(cid) == pytest.approx(list_price, abs=0.01)
+    # Nessun pagamento: coerente col ramo free di Gemini/Speechify.
+    assert "payment" not in audiobook_app.jobs[job_piccolo]
+
+
+def test_generate_pagato_registra_voxcpm_est_e_purpose(client, job_grande, no_real_generation):
+    """Caso a pagamento (voucher): job["payment"]["voxcpm_est"] deve essere
+    popolato (serve all'audit Task 11) e purpose="voxcpm" deve arrivare a
+    consume_payment_token, non "speechify" (sono due motori diversi che
+    condividono lo stesso ramo di codice in /api/generate)."""
+    code, _v = payment._create_voucher("u@x.it", 100.0, kind="test", note="t")
+    client.set_cookie("abm_cid", "cid-vox")  # owner del job_grande
+    r = client.post("/api/generate", json={
+        "job_id": job_grande, "voice": VOCE, "rate": "+0%",
+        "output_format": "m4b", "lang": "it",
+        "payment_token": code,
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    job = audiobook_app.jobs[job_grande]
+    assert job["payment"]["voxcpm_est"] is not None
+    assert job["payment"]["voxcpm_est"]["user_price_eur"] == pytest.approx(1.00)
+    purposes = [rec["purpose"] for rec in payment._paid_jobs_done
+                if rec["job_id"] == job_grande]
+    assert purposes == ["voxcpm"]

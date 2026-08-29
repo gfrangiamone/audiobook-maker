@@ -16,10 +16,13 @@ import time
 import pytest
 
 import audiobook_app
+import free_quota
 import payment
+import voxcpm_tts
 from epub_to_tts import BookInfo, Chapter
 
 GEMINI_VOICE = "gemini:flash25:Zephyr"
+VOXCPM_VOICE = "voxcpm:v2:it-IT/Stefano"
 
 # NB: accesso a app/jobs/_jobs_lock SEMPRE via attributo a runtime, mai
 # `from audiobook_app import jobs`: i test test_cold_*.py (che girano prima
@@ -195,3 +198,65 @@ def test_already_optimized_releases_claim(client, env):
     assert r.get_json()["status"] == "already_optimized"
     assert job["status"] == "analyzed"
     assert env == []
+
+
+# ---------------------------------------------------------------------------
+# Ramo combinato VoxCPM (Fix round 1, task-10-report.md).
+#
+# Bug: _is_combined_voxcpm sopprimeva il gate standalone-LLM ma nessun blocco
+# a valle addebitava davvero la quota VoxCPM (a differenza di Gemini/Speechify
+# sopra): auto_generate + voce VoxCPM + LLM sotto soglia -> job VoxCPM gratis,
+# ne' TTS ne' LLM incassati, quota gratuita mai toccata.
+# ---------------------------------------------------------------------------
+
+def test_voxcpm_combined_no_token_returns_402_with_matching_total(client, env, monkeypatch):
+    """VoxCPM, testo grande, nessun pagamento -> 402 con total_eur = listino
+    (TTS + LLM), identico a quanto gia' verificato per Gemini/Speechify."""
+    monkeypatch.setattr(voxcpm_tts, "is_available", lambda: True)
+    monkeypatch.setenv("ABM_VOXCPM_RATE_EUR_PER_MCHAR", "4.00")
+    monkeypatch.setenv("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.10")
+    job = _mk_job("cpe-vox-notoken", 300_000)
+    est = voxcpm_tts.estimate_book_cost(job["info"].chapters, language="it")
+    llm_eur = audiobook_app._estimate_llm_cost_eur(300_000)
+    expected_total = round(est["list_price_eur"] + llm_eur, 2)
+    assert expected_total > 0
+
+    r = _post_optimize(client, "cpe-vox-notoken", voice=VOXCPM_VOICE)
+    assert r.status_code == 402, r.get_data(as_text=True)
+    d = r.get_json()
+    assert d["error_code"] == "payment_required"
+    assert d["total_eur"] == pytest.approx(expected_total, abs=0.01)
+    assert d["voxcpm_eur"] > 0
+    # Il claim "optimizing" deve essere rilasciato (retry post-pagamento possibile).
+    assert job["status"] == "analyzed"
+    # Nessuna ottimizzazione avviata: ne' LLM ne' TTS regalati.
+    assert env == []
+
+
+def test_voxcpm_combined_below_threshold_runs_free_and_debits_quota(client, env, monkeypatch):
+    """VoxCPM, testo sotto soglia -> parte senza token E la quota gratuita
+    cumulativa viene debitata (non semplicemente ignorata)."""
+    monkeypatch.setattr(voxcpm_tts, "is_available", lambda: True)
+    monkeypatch.setenv("ABM_VOXCPM_RATE_EUR_PER_MCHAR", "4.00")
+    # Soglia motore alta abbastanza da coprire l'intero libro di test.
+    monkeypatch.setenv("ABM_VOXCPM_FREE_THRESHOLD_EUR", "1000")
+    monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "1000")
+    job = _mk_job("cpe-vox-free", 5_000)
+    cid = "cpe-vox-free-cid"
+    job["client_id"] = cid
+    # Il job ora ha client_id: _check_job_owner richiede che il cookie della
+    # richiesta corrisponda, altrimenti 403 Forbidden.
+    client.set_cookie("abm_cid", cid)
+    est = voxcpm_tts.estimate_book_cost(job["info"].chapters, language="it")
+    llm_eur = audiobook_app._estimate_llm_cost_eur(5_000)
+    expected_combined_list = round(est["list_price_eur"] + llm_eur, 2)
+    assert free_quota.used_eur(cid) == pytest.approx(0.0)
+
+    r = _post_optimize(client, "cpe-vox-free", voice=VOXCPM_VOICE)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "started"
+    assert env == [("cpe-vox-free", [0])]
+    # La quota gratuita cumulativa si e' davvero mossa, sul listino combinato.
+    assert free_quota.used_eur(cid) == pytest.approx(expected_combined_list, abs=0.01)
+    # Nessun pagamento: il job resta senza job["payment"] (come per Gemini free).
+    assert "payment" not in job

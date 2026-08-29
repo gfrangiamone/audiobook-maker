@@ -12223,6 +12223,9 @@ def api_combined_estimate():
         # volte). "voxcpm_eur" qui e' il prezzo di listino esposto in stima;
         # l'unico punto che decide se e' gratis o no e' free_quota piu' sotto
         # (is_free/total_eur), non questo campo.
+        # ATTENZIONE UI: il frontend deve renderizzare da `total_eur`/`is_free`
+        # nella risposta JSON, MAI da `voxcpm_eur` — qui e' listino grezzo, non
+        # il dovuto (puo' restare > 0 anche quando il job e' gratuito).
         voxcpm_eur = round(est_vox.get("list_price_eur", 0.0), 2)
         _premium_list_eur = round(est_vox.get("list_price_eur", 0.0), 2)
         voxcpm_breakdown = {
@@ -12435,7 +12438,10 @@ def api_paypal_create_order_gemini():
     voxcpm_eur = 0.0
     if _is_voxcpm_voice(voice_id):
         try:
-            est = voxcpm_tts.estimate_book_cost(chs, language="it")
+            # `lang` gia' risolto sopra (UI > metadata > "it"), stessa
+            # priorita' di /api/combined_estimate: necessario per non
+            # produrre un amount mismatch server-side (Fix round 1).
+            est = voxcpm_tts.estimate_book_cost(chs, language=lang)
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
         voxcpm_eur = round(est["user_price_eur"], 2)
@@ -12671,9 +12677,13 @@ def api_optimize():
                               and _is_speechify_voice(data.get("voice", ""))
                               and speechify_tts.is_available())
     # Stessa ragione del ramo Speechify sopra: il flusso auto_generate chiama
-    # run_generation direttamente e salta il preflight di /api/generate. Senza
-    # questo, un audiolibro VoxCPM col costo LLM sotto soglia uscirebbe senza
-    # incassare la quota TTS.
+    # run_generation direttamente e salta il preflight di /api/generate. Questo
+    # flag sopprime SOLO il gate standalone-LLM qui sotto: l'addebito vero e
+    # proprio (TTS VoxCPM + LLM) avviene nel blocco "Combined payment (LLM +
+    # VoxCPM in auto_generate flow)" piu' sotto (mirror del ramo Speechify).
+    # Prima di quel blocco, `_is_combined_voxcpm=True` senza un charge a valle
+    # lasciava passare un job VoxCPM gratis (ne' LLM ne' TTS incassati) — vedi
+    # task-10-report.md "Fix round 1".
     _is_combined_voxcpm = (auto_generate
                            and _is_voxcpm_voice(data.get("voice", ""))
                            and voxcpm_tts is not None
@@ -13057,6 +13067,150 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"speechify={_speechify_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total_spx:.2f}€ ({_consumed_method_spx})")
+
+    # ----- Combined payment (LLM + VoxCPM in auto_generate flow) -----
+    # Mirror LEAN del blocco Speechify sopra per le voci VoxCPM. Un unico
+    # token (PayPal order o voucher) copre LLM + TTS VoxCPM. Enforcement SEMPRE
+    # (anche senza token): il flusso auto-gen chiama run_generation diretto,
+    # bypassando il preflight pagamento di /api/generate. Senza questo blocco il
+    # TTS VoxCPM veniva regalato (margine negativo) ogni volta che la sola quota
+    # LLM cadeva sotto soglia — vedi task-10-report.md "Fix round 1". Lingua:
+    # stessa priorita' di /api/combined_estimate e del ramo Gemini sopra
+    # (UI > metadata libro > "it"), non fissa come per Speechify (solo inglese).
+    if _is_combined_voxcpm:
+        _combined_token_vox = (data.get("payment_token_combined")
+                               or data.get("payment_token") or "").strip()
+        _ui_lang_for_vox = (lang or "").split("-")[0].lower() if lang else ""
+        _lang_for_vox = (_ui_lang_for_vox
+                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or "it")
+        # Capitoli selezionati per la generazione (stessa logica frontend
+        # combined_estimate: subset se selected_chapters, altrimenti tutti).
+        _all_chs_vox = list(getattr(info, "chapters", []) or [])
+        _sel_list_vox = _parse_selected_chapters(data.get("selected_chapters"))
+        if _sel_list_vox:
+            _by_idx_vox = {ch.index: ch for ch in _all_chs_vox}
+            _chs_for_est_vox = [_by_idx_vox[i] for i in _sel_list_vox if i in _by_idx_vox]
+        else:
+            _chs_for_est_vox = _all_chs_vox
+        try:
+            _est_vox = voxcpm_tts.estimate_book_cost(_chs_for_est_vox, language=_lang_for_vox)
+            _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
+            _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
+        except Exception as _e_est_vox:
+            print(f"[{job_id}] combined-payment voxcpm estimate failed: {_e_est_vox}")
+            _est_vox = None
+            _voxcpm_eur_quota = 0.0
+            _voxcpm_list_quota = 0.0
+        # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
+        _voice_vox = data.get("voice", "")
+        _quota_cid_vox = _quota_client_id(job)
+        _quota_dec_vox = _premium_quota_decision(
+            _quota_cid_vox, _voice_vox,
+            round(_voxcpm_list_quota + estimated_cost, 2), job_id,
+        )
+        _expected_total_vox = _quota_dec_vox["due_eur"]
+        _threshold_vox = _quota_dec_vox["threshold_eur"]
+        # Consumo immediato solo a quota attiva (vedi ramo Gemini sopra).
+        _fq_consumed_vox = False
+        if _quota_dec_vox["is_free"] and free_quota.limit_eur() > 0:
+            try:
+                free_quota.consume(_quota_cid_vox,
+                                   _quota_dec_vox["list_total_eur"], job_id)
+                _fq_consumed_vox = True
+            except Exception as _fq_err_vox:
+                print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_vox}")
+        _free_quota_log(job_id, _quota_dec_vox, charged=_fq_consumed_vox)
+        if not _quota_dec_vox["is_free"]:
+            if not _combined_token_vox:
+                if _quota_dec_vox["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=_voice_vox)
+                    except Exception:
+                        pass
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Payment required for generation.",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec_vox["quota_exhausted"] else "payment_required"),
+                    "total_eur": _expected_total_vox,
+                    "voxcpm_eur": _voxcpm_eur_quota,
+                    "llm_eur": estimated_cost,
+                    "threshold_eur": _threshold_vox,
+                    "quota_used_eur": _quota_dec_vox["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec_vox["quota_limit_eur"],
+                }), 402
+            # Validazione + consume del token combinato.
+            _consumed_vox = False
+            _consumed_method_vox = ""
+            _consumed_email_vox = ""
+            if _combined_token_vox in payment._payments:
+                with payment._payments_lock:
+                    _pay_vox = payment._payments.get(_combined_token_vox)
+                    if (_pay_vox and not _pay_vox.get("used")
+                            and float(_pay_vox.get("amount_eur", 0)) + 0.05
+                            >= _expected_total_vox):
+                        _pay_vox["used"] = True
+                        _pay_vox["used_at"] = time.time()
+                        _pay_vox["used_job_id"] = job_id
+                        _consumed_method_vox = "paypal"
+                        _consumed_email_vox = _pay_vox.get("email", "") or ""
+                        _consumed_vox = True
+                if _consumed_vox:
+                    _save_payments()
+            elif _combined_token_vox in payment._vouchers:
+                try:
+                    payment._voucher_consume(_combined_token_vox, _expected_total_vox,
+                                             job_id=job_id)
+                    _v_vox = payment._vouchers.get(_combined_token_vox, {})
+                    _consumed_method_vox = "voucher"
+                    _consumed_email_vox = _v_vox.get("email", "") or ""
+                    _consumed_vox = True
+                except ValueError as _vc_err_vox:
+                    print(f"[{job_id}] combined voucher consume failed: {_vc_err_vox}")
+            if not _consumed_vox:
+                print(f"[{job_id}] combined payment token "
+                      f"{_combined_token_vox[:12]}... not consumable "
+                      f"(expected_total={_expected_total_vox:.2f}€) -> 402")
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Invalid or already-used payment token.",
+                    "error_code": "invalid_payment",
+                }), 402
+            # Stash payment per audit VoxCPM (Task 11) + refund su cancel/error
+            # (stessa "tasca" job["payment"] di Gemini/Speechify). total_eur =
+            # quota VoxCPM (la quota LLM e' in payment["llm_eur"]).
+            job["payment"] = {
+                "token": _combined_token_vox,
+                "total_eur": _voxcpm_eur_quota,
+                "method": _consumed_method_vox,
+                "ts": time.time(),
+                "voxcpm_est": _est_vox,
+                "llm_eur": float(estimated_cost),
+                "source": "combined_optimize_autogen",
+            }
+            _acq_src_vox, _acq_plat_vox = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src_vox
+            job["payment"]["acquisition_platform"] = _acq_plat_vox
+            if _acq_src_vox == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat_vox)
+                except Exception:
+                    pass
+            job["payment_token"] = _combined_token_vox
+            job["payment_type"] = _consumed_method_vox
+            job["payment_email"] = _consumed_email_vox
+            job["payment_amount_eur"] = _expected_total_vox
+            # Snapshot stima pre-LLM: allinea i campi *_est dell'audit al prezzo
+            # lockato in payment["total_eur"] (come per Gemini/Speechify).
+            job["voxcpm_estimate"] = _est_vox
+            print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                  f"voxcpm={_voxcpm_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"= {_expected_total_vox:.2f}€ ({_consumed_method_vox})")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).
