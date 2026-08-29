@@ -13,7 +13,11 @@ freddo), non nei caratteri. Un job da 1 chunk e uno da 8 costano uguale.
 Da qui l'unita' di lavoro per capitolo e il retry a caldo dentro lo stesso
 job invece del rilancio a freddo.
 """
+import json
 import os
+import time
+
+import requests
 
 import voxcpm_catalog
 
@@ -139,3 +143,242 @@ def estimate_book_cost(chapters, language="it"):
         "model_key": MODEL_ID,
         "model_label": MODEL_LABEL,
     }
+
+
+# --------------------------------------------------------------------------
+# Errori
+# --------------------------------------------------------------------------
+class VoxcpmJobError(RuntimeError):
+    """Un job VoxCPM non ha consegnato l'audio.
+
+    `ritentabile` dice se rifare il job ha una speranza. E' la tabella §9.4
+    della spec messa nel tipo: chi orchestra decide la politica, ma non deve
+    ridedurre da un messaggio se quel fallimento si rifa' o no.
+    """
+
+    ritentabile = False
+
+    def __init__(self, messaggio, job_id=""):
+        super().__init__(messaggio)
+        self.job_id = job_id
+
+
+class VoxcpmRimbalzato(VoxcpmJobError):
+    """Respinto da un worker gia' in spegnimento: non e' un guasto nostro.
+
+    Il controllo all'ingresso di `handler.py` rifiuta i job che arrivano su un
+    worker dichiarato morto, e lo fa PRIMA di toccare la GPU. Si rifa'
+    identico: stessa concorrenza, e senza spendere i tentativi riservati alla
+    GPU che non regge.
+    """
+
+    ritentabile = True
+
+
+class VoxcpmMotoreCompromesso(VoxcpmJobError):
+    """Il processo nanovllm e' caduto (tipicamente un OOM) e il worker si spegne.
+
+    Ritentabile, ma stringendo il batch: la causa comune e' la VRAM al limite.
+    Distinto dal rimbalzo apposta — vedi §9.3.
+    """
+
+    ritentabile = True
+
+
+class VoxcpmBloccato(VoxcpmJobError):
+    """Partito e mai arrivato: cancellato per non pagarlo a vuoto.
+
+    E' il caso in cui ritentare conviene di piu', perche' il tentativo nuovo
+    quasi sempre finisce su un altro worker.
+    """
+
+    ritentabile = True
+
+
+class VoxcpmCodaSatura(VoxcpmJobError):
+    """Mai partito: l'endpoint e' saturo, non lento.
+
+    L'unica riga non ritentabile della tabella §9.4: rimettersi in fila
+    dietro se stessi non libera nessun worker.
+    """
+
+    ritentabile = False
+
+
+# Quante volte si rifa' un job i cui chunk sono usciti a silenzio, e quante
+# se n'e' rimbalzato uno. Budget separati perche' misurano cose diverse: il
+# primo il carico sulla GPU, il secondo la sfortuna nell'instradamento.
+SILENCE_RETRIES = 2
+BOUNCE_RETRIES = 6
+
+# Sottostringhe che, nel messaggio d'errore, dicono "la GPU non ce l'ha
+# fatta". Sono i casi in cui rifare piu' stretti ha senso: una firma scaduta
+# o un testo malformato non migliorano certo a concorrenza 4.
+_GPU_PRESSURE = ("out of memory", "cuda", "nvml", "cublas", "device-side",
+                 "motore compromesso")
+
+_RUNPOD_BASE = "https://api.runpod.ai/v2"
+_SUBMIT_RETRIES = 4
+_HTTP_TRANSIENT = (429, 500, 502, 503, 504)
+
+
+def _base():
+    ep = endpoint_id()
+    if not ep or not api_key():
+        raise VoxcpmJobError(
+            "endpoint VoxCPM non configurato: servono ABM_VOXCPM_ENDPOINT_ID "
+            "e ABM_VOXCPM_API_KEY")
+    return f"{_RUNPOD_BASE}/{ep}"
+
+
+def _headers():
+    return {"Authorization": f"Bearer {api_key()}",
+            "Content-Type": "application/json"}
+
+
+def queue_timeout_s():
+    return _f("ABM_VOXCPM_QUEUE_TIMEOUT_S", 900.0)
+
+
+def job_timeout_s():
+    return _f("ABM_VOXCPM_JOB_TIMEOUT_S", 1800.0)
+
+
+def poll_seconds():
+    return _f("ABM_VOXCPM_POLL_S", 2.0)
+
+
+def _rimbalzo(out, testo):
+    """Il rimbalzo si riconosce dal campo o, sulle immagini vecchie, dal testo."""
+    return bool(out.get("bounced")) or "in spegnimento" in testo
+
+
+def _errore_del_job(out, testo, job_id):
+    """Da una risposta fallita all'eccezione giusta."""
+    if _rimbalzo(out, testo):
+        return VoxcpmRimbalzato(testo, job_id)
+    basso = testo.lower()
+    if out.get("engine_dead") or any(k in basso for k in _GPU_PRESSURE):
+        return VoxcpmMotoreCompromesso(testo, job_id)
+    return VoxcpmJobError(testo, job_id)
+
+
+def _submit(payload, session, sleep):
+    ultimo = ""
+    for tentativo in range(_SUBMIT_RETRIES):
+        try:
+            r = session.post(f"{_base()}/run", headers=_headers(),
+                             json=payload, timeout=60)
+        except requests.RequestException as e:
+            ultimo = str(e)
+        else:
+            if r.status_code < 400:
+                return r.json()["id"]
+            if r.status_code not in _HTTP_TRANSIENT:
+                raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
+            ultimo = f"HTTP {r.status_code}"
+        sleep(min(30, 2 ** tentativo))
+    raise VoxcpmJobError(f"esauriti i tentativi di sottomissione ({ultimo})")
+
+
+def cancel_job(job_id, *, session=None):
+    """Cancella un job in volo. Non solleva mai.
+
+    Si chiama nei percorsi che stanno gia' fallendo: farla esplodere
+    sostituirebbe l'errore vero con uno di rete. Un job abbandonato pero' va
+    cancellato davvero, perche' continua a occupare la GPU e si paga a secondi.
+    """
+    ses = session or requests
+    try:
+        ses.post(f"{_base()}/cancel/{job_id}", headers=_headers(),
+                 json=None, timeout=30)
+    except Exception:      # noqa: BLE001 - best effort, per definizione
+        pass
+
+
+def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
+            queue_timeout=None, clock=time.time, on_queue=None):
+    """Sottomette il job e ne aspetta l'esito. Ritorna l'`output`.
+
+    `/run` piu' polling su `/status`, mai `/runsync`: quello risponde 200 e
+    senza `output` quando il job supera la finestra della richiesta, e il job
+    continua a girare — e a essere pagato — senza che nessuno ne raccolga il
+    risultato. Il primo job di una sessione quella finestra la supera sempre,
+    per via del cold start di ~180 s (§9.1).
+
+    Args:
+        payload: il corpo completo, `{"input": {...}}`.
+        session: oggetto con `post`/`get` alla `requests`. Il default e'
+            `requests` stesso; nei test e' il doppio.
+        sleep: funzione d'attesa. Iniettabile perche' un test del backoff non
+            deve durare quanto il backoff.
+        poll: secondi fra due sonde. `None` = da ambiente.
+        timeout: tetto sull'esecuzione, in secondi. `None` = da ambiente.
+        queue_timeout: tetto sull'attesa in coda. `None` = da ambiente.
+        clock: sorgente del tempo, iniettabile come `sleep`.
+        on_queue: callback opzionale `(secondi_in_coda)` chiamata mentre il
+            job e' ancora in fila. Serve alla UI per dichiarare l'attesa
+            invece di fingere un progresso che non c'e' (§9.1).
+
+    Raises:
+        VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
+        VoxcpmCodaSatura, VoxcpmJobError: vedi la tabella §9.4.
+    """
+    ses = session or requests
+    attesa = poll_seconds() if poll is None else float(poll)
+    tetto_exec = job_timeout_s() if timeout is None else float(timeout)
+    tetto_coda = queue_timeout_s() if queue_timeout is None else float(queue_timeout)
+
+    job_id = _submit(payload, ses, sleep)
+    t0 = clock()
+    t_run = None
+    while True:
+        trascorso = clock() - t0
+        if t_run is None:
+            if trascorso > tetto_coda:
+                cancel_job(job_id, session=ses)
+                raise VoxcpmCodaSatura(
+                    f"job {job_id} mai partito: {trascorso / 60:.0f} min in "
+                    f"coda, oltre i {tetto_coda / 60:.0f} concessi. "
+                    f"L'endpoint e' saturo, non lento", job_id)
+        elif clock() - t_run > tetto_exec:
+            # Cancellare non restituisce i secondi gia' consumati, ma ferma
+            # quelli che verrebbero dopo.
+            cancel_job(job_id, session=ses)
+            raise VoxcpmBloccato(
+                f"job {job_id} oltre {tetto_exec:.0f}s di esecuzione: il "
+                f"worker non sta avanzando, si cancella e si rifa", job_id)
+
+        try:
+            r = ses.get(f"{_base()}/status/{job_id}", headers=_headers(),
+                        timeout=60)
+            r.raise_for_status()
+            st = r.json()
+        except requests.RequestException:
+            # Il job sull'endpoint vive per conto suo: una sonda che non passa
+            # e' un problema nostro, e abbandonarlo qui lascerebbe una GPU
+            # accesa e pagata.
+            sleep(attesa)
+            continue
+
+        stato = st.get("status")
+        if t_run is None and stato == "IN_PROGRESS":
+            t_run = clock()
+        if stato in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
+            out = st.get("output")
+            out = out if isinstance(out, dict) else {}
+            if stato == "COMPLETED" and not out.get("error"):
+                return out
+            # L'`output` per primo, quando c'e': il worker che rifiuta o che
+            # muore risponde con un dizionario — `engine_dead`, `bounced`, la
+            # scheda, la VRAM libera — mentre `error` di RunPod e' la sola
+            # stringa. Leggere prima quella butterebbe via proprio i campi
+            # messi li' per diagnosticare il guasto.
+            dettaglio = json.dumps(out) if out else json.dumps(
+                st.get("error") or st)
+            testo = f"job {job_id} {stato}: {dettaglio[:400]}"
+            raise _errore_del_job(out, testo, job_id)
+
+        if t_run is None and on_queue is not None:
+            on_queue(trascorso)
+        sleep(attesa)
