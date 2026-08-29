@@ -64,7 +64,6 @@ def test_floor_non_abbassa_un_importo_maggiore(quota_pulita):
     free_quota.consume(quota_pulita, 1.95, job_id="job-vecchio")
     d = free_quota.decision(quota_pulita, VOCE, 0.49)
     assert d["due_eur"] == 0.50   # max(0.49, floor 0.50)
-    free_quota.consume(quota_pulita, 0.0, job_id="ignoto")
 
 
 def test_retry_dello_stesso_job_resta_gratis(quota_pulita):
