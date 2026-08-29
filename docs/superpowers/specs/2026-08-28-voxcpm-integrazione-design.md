@@ -616,3 +616,67 @@ con quale comando la cartella `data/voci_inventate/` viene ri-importata dal
 repo del worker ad `AudioBook-Maker`, e chi decide che un lotto di voci
 nuove è pronto per la produzione. Per D10 questo non blocca
 l'implementazione: il codice regge qualsiasi contenuto del file.
+
+## 16. Esito dell'implementazione — 2026-08-29
+
+Il piano `docs/superpowers/plans/2026-08-28-voxcpm-motore-catalogo.md`
+(14 task) è stato eseguito per intero sul ramo `VOXCPM`, da `ac1ba45` a
+`ae6bf97`: 31 commit, suite a **2154 passati / 16 saltati / 0 falliti**
+contro i 1964 della baseline. La revisione finale dell'intero ramo non ha
+trovato difetti critici; i tre Important sono stati corretti e riverificati
+nello stesso giro:
+
+- `_voxcpm_pre_pass` consumava i capitoli con `Executor.map`, che rilancia
+  la prima eccezione in ordine di sottomissione: i capitoli riusciti dopo
+  quello fallito non entravano in `voxcpm_actual`, e l'audit (§8.4)
+  sottostimava i secondi GPU su ogni cancel o fallimento. Ora le future si
+  drenano tutte con `as_completed` prima di rilanciare.
+- Il modale di pagamento sommava solo Gemini e Speechify: con VoxCPM il
+  prezzo mostrato era **minore** di quello addebitato, l'inverso esatto
+  dell'invariante di §8.1. `voxcpm_eur` entra nella somma.
+- La cancellazione dell'utente era osservata solo fra un poll e l'altro:
+  ora l'attesa del job si sveglia ogni secondo e chiama `cancel_job` subito
+  (`VoxcpmAnnullato`).
+
+Resta vero quanto scritto in §14: il collaudo su GPU vera
+(`docs/MANUAL_TESTS_VOXCPM.md`) non è mai stato eseguito, e §15.3 blocca il
+rilascio finché i due valori di listino non sono fissati.
+
+### 16.1 Residui parcheggiati
+
+Segnalati dalle revisioni e lasciati fuori per scelta: nessuno viola un
+invariante di questa spec, e ciascuno costa più di quanto rende oggi.
+
+1. **Sample rate di VoxCPM fissato a 48000** in `generation_engine.py`
+   per durate e silenzi fra capitoli, mentre il worker lo riporta in
+   `stats["sample_rate"]`. Se un'immagine del worker uscisse a 24 kHz,
+   tempi e pause dell'M4B si dimezzerebbero senza errore. Rimedio: copiare
+   il valore riportato in `job["voxcpm_sample_rate"]` nella pre-pass, come
+   fa Speechify.
+2. **`chunks_reused` conta i chunk di coda** sotto il riuso atomico per
+   capitolo: un capitolo riusato da 40 chunk pesa 40 nell'audit. Il campo
+   non significa più la stessa cosa fra motori; è cosmetico.
+3. **Cache dei cloni FIFO, non LRU** (`_CLONE_CACHE_MAX = 16` in
+   `voxcpm_tts.py`): una rotazione su più di 16 voci rilegge e ricodifica il
+   WAV a ogni capitolo.
+4. **Numeri di riga in `md_files/PARAMETRI_CONFIGURAZIONE.md`**: le 13 righe
+   VoxCPM sono esatte, ma il file nel suo insieme ha 124 righe su 163 con il
+   numero sbagliato, e le aveva già prima di questo ramo. Vale un controllo
+   in CI; non è un difetto di questo lavoro.
+5. **`zh` `persona_deep_adventure`** è più laconico dei fratelli; i test
+   i18n verificano la parità delle chiavi e il guardiano D10, non la qualità
+   del testo.
+6. **Doppia `cancel_job`** su un job già terminale: `run_job` la chiama
+   anche quando `/status` aveva già risposto `COMPLETED`/`FAILED`, e dopo il
+   fix della cancellazione può chiamarla due volte di seguito. RunPod la
+   tratta come no-op; è una chiamata HTTP sprecata su un percorso che sta
+   già fallendo, più economica della race che previene.
+7. **Nessun test integrato con `ABM_VOXCPM_JOBS > 1`** oltre a quello
+   aggiunto per il primo Important: la suite esercita quasi solo il percorso
+   sequenziale, ed è questo che aveva nascosto il difetto.
+
+### 16.2 Effetti collaterali del processo
+
+Durante la revisione del Task 10 un revisore, contro le istruzioni, ha
+sondato PayPal dal vivo: esiste l'ordine `303800248L157072N` in stato
+CREATED, mai catturato, e un'email reale di digest admin. Nessun addebito.
