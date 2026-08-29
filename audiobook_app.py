@@ -3800,13 +3800,14 @@ def admin_logs():
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     # Sessioni che hanno realmente avviato la generazione del libro con voci
-    # PREMIUM (Gemini o Speechify/Simba: stessa tasca di pagamento/rimborso) —
-    # esclude le anteprime: richiediamo GENERATE in events.
+    # PREMIUM (Gemini, Speechify/Simba o VoxCPM: stessa tasca di
+    # pagamento/rimborso) — esclude le anteprime: richiediamo GENERATE in events.
     gemini_started = sum(
         1 for s in sessions.values()
         if "GENERATE" in s["events"] and (
             _is_gemini_voice(s.get("voice", ""))
             or _is_speechify_voice(s.get("voice", ""))
+            or _is_voxcpm_voice(s.get("voice", ""))
         )
     )
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
@@ -4033,7 +4034,8 @@ def admin_logs():
                 card_cls = "card"
             is_gemini_run = (
                 "GENERATE" in s["events"]
-                and (_is_gemini_voice(voice_raw) or _is_speechify_voice(voice_raw))
+                and (_is_gemini_voice(voice_raw) or _is_speechify_voice(voice_raw)
+                     or _is_voxcpm_voice(voice_raw))
             )
             session_platform = html_mod.escape(s.get("platform", "") or "")
             session_transferred = s.get("transferred", False)
@@ -6890,7 +6892,8 @@ def _synth_running_gemini_audit_records():
             voice = job.get("voice") or job.get("opt_voice") or ""
             is_gem = _is_gemini_voice(voice)
             is_spe = _is_speechify_voice(voice)
-            if not (is_gem or is_spe):
+            is_vox = _is_voxcpm_voice(voice)
+            if not (is_gem or is_spe or is_vox):
                 continue
             parts = voice.split(":")
             model_key = parts[1] if len(parts) >= 3 else "?"

@@ -3730,6 +3730,128 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
 
 
+def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
+    """Append audit record al termine di un job VoxCPM. Best-effort, non fatale.
+
+    Terzo `provider` dello stesso JSONL mensile: l'aggregato di
+    `gemini_cost_audit` e' provider-agnostico e non va toccato. Il costo vivo
+    va in `google_cost_eur_actual` per la stessa ragione per cui ce lo mette
+    Speechify — il nome del campo e' storico, il significato e' "costo
+    sostenuto dal backend".
+
+    Qui pero' quel costo non e' una fattura ma tempo di GPU stimato dai
+    caratteri col valore misurato del §8.3. Il record porta percio' anche
+    `gpu_seconds` e `cost_usd_per_mchar`: se domani cambia il prezzo della
+    scheda, l'audit storico si ricalcola senza rigenerare nulla.
+    """
+    try:
+        if not _is_voxcpm_voice(voice_id):
+            return
+        actual = job.get("voxcpm_actual") or {}
+        # --- Pagamento: stessa tasca premium job["payment"] degli altri due ---
+        payment = job.get("payment") or {}
+        charged = float(payment.get("total_eur", 0) or 0)
+        payment_method = payment.get("method", "") or ""
+        payment_source = payment.get("source", "") or ""
+        payment_token_full = payment.get("token", "") or ""
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        payment_token_short = ((payment_token_full[:8] + "...")
+                               if len(payment_token_full) > 12
+                               else payment_token_full)
+        _llm_quota = payment.get("llm_eur")
+        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
+                               if _llm_quota is not None else round(charged, 4))
+
+        # --- Costo GPU + prezzo "dovuto" sui caratteri effettivamente letti ---
+        chars = int(actual.get("chars", 0) or 0)
+        gpu_seconds = round(float(actual.get("tts_seconds", 0) or 0), 2)
+        provider_cost_eur = 0.0
+        should_have_been = 0.0
+        cost_usd_mchar = 0.0
+        try:
+            price = voxcpm_tts.compute_user_price_eur(chars)
+            cost_usd_mchar = voxcpm_tts.cost_usd_per_mchar()
+            provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
+                speechify_tts.usd_eur_rate())
+            should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+        except Exception:
+            provider_cost_eur = 0.0
+            should_have_been = 0.0
+        delta_eur = round(should_have_been - charged, 4)
+        delta_pct = (round((delta_eur / provider_cost_eur * 100), 2)
+                     if provider_cost_eur > 0 else 0.0)
+        rate_raw = job.get("rate", "+0%")
+        try:
+            rate_pct_val = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
+        except (TypeError, ValueError):
+            rate_pct_val = 0
+
+        rec = {
+            "job_id": job_id,
+            "provider": "voxcpm",
+            "model_key": "v2",
+            "language": language or "",
+            "rate_pct": rate_pct_val,
+            "rate_step": max(-3, min(3, round(rate_pct_val / 10.0))),
+            "chars_total": chars,
+            "billable_chars": chars,
+            "input_tokens_est": 0,
+            "input_tokens_actual": 0,
+            "output_tokens_est": 0,
+            "output_tokens_actual": 0,
+            "audio_seconds_est": 0.0,
+            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "google_cost_eur_est": 0.0,
+            "google_cost_eur_actual": round(provider_cost_eur, 4),
+            "user_price_eur_charged": charged,
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "delta_pct": delta_pct,
+            "margin_eur_actual": round(charged - provider_cost_eur, 4),
+            "combined_total_eur": _combined_total_eur,
+            "outcome": outcome,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+            # Specifici di VoxCPM: la base per ricalcolare, e la salute del
+            # worker (rimbalzi e capitoli rifatti) accanto al costo.
+            "gpu_seconds": gpu_seconds,
+            "cost_usd_per_mchar": cost_usd_mchar,
+            "worker_jobs": int(actual.get("jobs", 0) or 0),
+            "worker_redone": int(actual.get("redone", 0) or 0),
+            "worker_bounced": int(actual.get("bounced", 0) or 0),
+            "worker_failed_chunks": int(actual.get("failed_chunks", 0) or 0),
+        }
+        _reused_n = int(job.get("chunks_reused", 0) or 0)
+        if _reused_n:
+            rec["chunks_reused"] = _reused_n
+        _cancel_meta = job.get("cancel_meta")
+        if isinstance(_cancel_meta, dict):
+            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
+            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
+            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
+            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
+            rec["cancel_partial_audio_delivered"] = bool(
+                _cancel_meta.get("partial_audio_delivered", False))
+        gemini_cost_audit.append_record(rec)
+        try:
+            _free_thr = float(os.environ.get("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.50"))
+        except (TypeError, ValueError):
+            _free_thr = 0.50
+        if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
+            print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
+                  f"({should_have_been:.2f}€) senza pagamento registrato "
+                  f"(payment_method={payment_method or 'NONE'}).")
+    except Exception as e:
+        print(f"[{job_id}] voxcpm audit write failed (non-fatal): {e}")
+
+
 def _write_translation_audit(job_id, job, *, backend, model, source_lang,
                              target_lang, optimize, chars_total,
                              usage_report, outcome):
@@ -4809,6 +4931,21 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _voxcpm_pre = _voxcpm_pre_pass(
                 plan, voice, rate, work_dir, job_id, _reusable_chunks,
                 cancelled=_check_cancelled)
+            # Misure reali del worker, sommate sui capitoli: e' la base
+            # dell'audit (§8.4). Solo i chunk di testa portano numeri; quelli
+            # di coda hanno esiti a zero e sommarli e' innocuo.
+            job["voxcpm_actual"] = {
+                "chars": sum(int(v.get("chars", 0) or 0) for v in _voxcpm_pre.values()),
+                "audio_seconds": round(sum(float(v.get("audio_seconds", 0) or 0)
+                                           for v in _voxcpm_pre.values()), 2),
+                "tts_seconds": round(sum(float(v.get("tts_seconds", 0) or 0)
+                                         for v in _voxcpm_pre.values()), 2),
+                "jobs": sum(int(v.get("jobs", 0) or 0) for v in _voxcpm_pre.values()),
+                "redone": sum(int(v.get("redone", 0) or 0) for v in _voxcpm_pre.values()),
+                "bounced": sum(int(v.get("bounced", 0) or 0) for v in _voxcpm_pre.values()),
+                "failed_chunks": sum(int(v.get("failed_chunks", 0) or 0)
+                                     for v in _voxcpm_pre.values()),
+            }
             job["progress_message"] = "Assembling audio..."
 
         # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata
@@ -5571,11 +5708,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
                   f"engine={engine} -> error + refund, nessuna consegna.")
             try:
-                # Speechify e' un engine premium: il pagamento vive in
+                # Speechify e VoxCPM sono engine premium: il pagamento vive in
                 # job["payment"] (stessa tasca di Gemini) e va rimborsato via
                 # _refund_gemini_payment. _refund_job_payment tratta la tasca
                 # LLM (payment_amount_eur) e sarebbe la tasca sbagliata.
-                if use_speechify:
+                if use_speechify or use_voxcpm:
                     _refund_gemini_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
                 else:
                     _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
@@ -5586,6 +5723,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _write_speechify_audit(job_id, job, voice,
                                            _audit_language(job, info),
                                            "failed_all_chunks_refunded")
+                except Exception:
+                    pass
+            if use_voxcpm:
+                try:
+                    _write_voxcpm_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "failed_all_chunks_refunded")
                 except Exception:
                     pass
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
@@ -5651,6 +5795,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _write_speechify_audit(job_id, job, voice,
                                            _audit_language(job, info),
                                            "failed_no_output_refunded")
+                except Exception:
+                    pass
+                try:
+                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            elif use_voxcpm:
+                # Premium: rimborso sulla tasca job["payment"], come Speechify.
+                try:
+                    _write_voxcpm_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "failed_no_output_refunded")
                 except Exception:
                     pass
                 try:
@@ -5724,6 +5880,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
         elif use_speechify:
             _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
+        elif use_voxcpm:
+            _write_voxcpm_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
         # Send push notification to mobile devices
         if _send_push:
@@ -5951,6 +6109,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
+        elif use_voxcpm and still_current:
+            # Cancel volontario di un job VoxCPM pagato: rimborso INTEGRALE,
+            # stessa tasca premium job["payment"] di Gemini/Speechify.
+            # _refund_gemini_payment e' no-op se il job non era pagato.
+            try:
+                _write_voxcpm_audit(job_id, job, voice,
+                                    _audit_language(job, info),
+                                    "cancelled_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+            except Exception as _ref_err:
+                print(f"[{job_id}] VoxCPM cancel refund failed (non-fatal): {_ref_err}")
 
         if use_google:
             _google_tts_refund_unused(job_id, job)
@@ -6147,6 +6319,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _refund_gemini_payment(job_id, job, f"failed: {e}")
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify refund failed (non-fatal): {_ref_err}")
+            _mark_pending_failed(job_id, "failed_refunded")
+        if use_voxcpm:
+            # Job premium VoxCPM fallito: rimborso integrale (path generico premium,
+            # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
+            try:
+                _write_voxcpm_audit(job_id, job, voice,
+                                    _audit_language(job, info), "failed_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, f"failed: {e}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_refunded")
         # Refund caratteri Google TTS non consumati anche in caso di errore
         if use_google:
