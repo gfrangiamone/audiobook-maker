@@ -130,3 +130,94 @@ def voices():
 def personas():
     """Caratteri presenti nel catalogo, ordinati. Chiavi tecniche, non label."""
     return sorted({v["persona"] for v in voices()})
+
+
+MODEL_ID = CATALOG_SCHEMA          # "v2": la chiave modello nel voice id
+MODEL_LABEL = "VoxCPM2"            # etichetta del selettore MODELLO
+
+
+def _display_name(rec):
+    """`Nolan` -> `Nolan (US)`.
+
+    Dentro una stessa lingua convivono piu' varianti (`en-US`, `en-GB`, i nove
+    `zh-*`): senza la regione nel nome, chi non usa il filtro ACCENTO non sa
+    cosa sta scegliendo. Stessa convenzione delle voci Edge.
+    """
+    region = rec["locale"].split("-")[-1].upper()
+    return f"{rec['name']} ({region})"
+
+
+def _sample_url(voice_id):
+    from urllib.parse import quote
+    return "/api/voice_sample?voice=" + quote(voice_id, safe="")
+
+
+def get_voices():
+    """Catalogo per l'UI: {codice lingua: [entry, ...]}.
+
+    Stessa forma delle entry di `speechify_tts.get_voices()` e delle voci Edge,
+    cosi' `_fetch_voices()` in audiobook_app le fonde senza casi speciali. In
+    piu' porta `persona` (il CARATTERE, filtro del pannello) e `sample_url`
+    (il player del campione di riferimento, che sostituisce l'anteprima).
+    """
+    out = {}
+    for rec in voices():
+        out.setdefault(rec["lang"], []).append({
+            "id": rec["id"],
+            "name": _display_name(rec),
+            "locale": rec["locale"],
+            "engine": "voxcpm",
+            "model_key": MODEL_ID,
+            "model_label": MODEL_LABEL,
+            "gender": rec["gender"],
+            "gender_icon": "\U0001f469" if rec["gender"] == "Female" else "\U0001f468",
+            "persona": rec["persona"],
+            # Il `role` del catalogo viaggia con l'entry: e' l'anello di mezzo
+            # della catena di ricadute con cui il Task 13 traduce i caratteri,
+            # quando la chiave non e' ancora nel dizionario.
+            "persona_role": rec["role"],
+            "sample_url": _sample_url(rec["id"]),
+        })
+    for entries in out.values():
+        entries.sort(key=lambda e: (e["gender"], e["name"]))
+    return out
+
+
+def parse_voice_id(voice_id):
+    """Da `voxcpm:v2:<locale>/<Nome>` al record del catalogo.
+
+    Solleva ValueError su qualunque altra forma, voce clonata compresa: le
+    `voxcpm:mine:<token>` le risolve `voice_clone`, non questo modulo. Anche
+    una voce sparita dal catalogo dopo una rigenerazione finisce qui, ed e' un
+    caso normale (§9.4): chi chiama lo tratta come voce non piu' disponibile,
+    non come errore di programmazione.
+    """
+    if not isinstance(voice_id, str) or not voice_id:
+        raise ValueError(f"voice id VoxCPM non valido: {voice_id!r}")
+    parts = voice_id.split(":", 2)
+    if len(parts) != 3 or parts[0] != "voxcpm":
+        raise ValueError(f"voice id VoxCPM non valido: {voice_id!r}")
+    schema, rest = parts[1], parts[2]
+    if schema != CATALOG_SCHEMA:
+        raise ValueError(
+            f"schema {schema!r} non e' di catalogo (atteso {CATALOG_SCHEMA!r}): {voice_id!r}")
+    for rec in voices():
+        if rec["id"] == voice_id:
+            return rec
+    raise ValueError(f"voce non presente nel catalogo: {rest!r}")
+
+
+def sample_path(voice_id):
+    """Percorso assoluto del `.wav` di riferimento della voce.
+
+    Il percorso relativo arriva da un file di dati importato: si verifica che
+    resti dentro `catalog_dir()` prima di aprirlo.
+    """
+    rec = parse_voice_id(voice_id)
+    base = catalog_dir()
+    path = os.path.abspath(os.path.join(base, rec["sample_rel"].replace("/", os.sep)))
+    if os.path.commonpath([base, path]) != base:
+        raise ValueError(f"campione fuori dal catalogo: {rec['sample_rel']!r}")
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    return path

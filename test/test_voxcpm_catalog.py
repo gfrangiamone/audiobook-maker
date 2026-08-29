@@ -134,3 +134,95 @@ def test_record_malformato_tra_validi_non_solleva(tmp_path, monkeypatch, capsys)
     # Il record malformato deve essere loggato come scartato
     assert "it-IT_m_malformato" in out
     assert "errore normalizzazione" in out
+
+
+def test_get_voices_raggruppa_per_lingua():
+    d = voxcpm_catalog.get_voices()
+    assert sorted(d.keys()) == ["en", "it"]
+    assert len(d["it"]) == 3   # Stefano, Federica, Chiara
+    assert len(d["en"]) == 3   # Nolan, Ivy (en-US), Rufus (en-GB)
+
+
+def test_entry_ha_la_forma_delle_altre_premium():
+    ivy = next(v for v in voxcpm_catalog.get_voices()["en"] if v["name"].startswith("Ivy"))
+    assert ivy["id"] == "voxcpm:v2:en-US/Ivy"
+    assert ivy["engine"] == "voxcpm"
+    assert ivy["model_key"] == "v2"
+    assert ivy["model_label"] == "VoxCPM2"
+    assert ivy["locale"] == "en-US"
+    assert ivy["gender"] == "Female"
+    assert ivy["gender_icon"] == "\U0001f469"
+    assert ivy["persona"] == "poised-dry"
+    assert ivy["persona_role"] == "poised, dry"
+
+
+def test_nome_porta_la_regione():
+    # Dentro la stessa lingua due varianti convivono: senza la regione nel nome
+    # l'utente che non filtra per accento non sa cosa sta scegliendo.
+    nomi = sorted(v["name"] for v in voxcpm_catalog.get_voices()["en"])
+    assert nomi == ["Ivy (US)", "Nolan (US)", "Rufus (GB)"]
+
+
+def test_sample_url_punta_alla_rotta():
+    stefano = next(v for v in voxcpm_catalog.get_voices()["it"] if v["name"].startswith("Stefano"))
+    assert stefano["sample_url"] == "/api/voice_sample?voice=voxcpm%3Av2%3Ait-IT%2FStefano"
+
+
+def test_parse_voice_id_ritorna_il_record():
+    rec = voxcpm_catalog.parse_voice_id("voxcpm:v2:it-IT/Stefano")
+    assert rec["name"] == "Stefano"
+    assert rec["transcript"].startswith("Quando il treno")
+
+
+def test_parse_voice_id_rifiuta_input_estranei():
+    for cattivo in (None, "", 7, "gemini:flash25:Zephyr", "voxcpm:v2", "voxcpm:v9:it-IT/Stefano"):
+        with pytest.raises(ValueError):
+            voxcpm_catalog.parse_voice_id(cattivo)
+
+
+def test_parse_voice_id_voce_sparita_dal_catalogo():
+    # Caso normale, non errore di programmazione (§9.4): un job vecchio cita
+    # una voce che una rigenerazione del catalogo ha rimosso.
+    with pytest.raises(ValueError) as e:
+        voxcpm_catalog.parse_voice_id("voxcpm:v2:it-IT/Fantasma")
+    assert "Fantasma" in str(e.value)
+
+
+def test_parse_voce_clonata_non_e_di_catalogo():
+    # `voxcpm:mine:<token>` e' del piano 2: questo modulo la riconosce come
+    # non sua e lo dice, invece di cercarla fra le voci inventate.
+    with pytest.raises(ValueError) as e:
+        voxcpm_catalog.parse_voice_id("voxcpm:mine:abc123")
+    assert "mine" in str(e.value)
+
+
+def test_sample_path_esiste():
+    p = voxcpm_catalog.sample_path("voxcpm:v2:it-IT/Stefano")
+    assert p == os.path.join(FIXTURE, "it-IT", "Stefano.wav")
+    assert os.path.exists(p)
+
+
+def test_sample_path_file_mancante():
+    # Federica e' nel JSON ma il suo .wav non e' nella fixture.
+    with pytest.raises(FileNotFoundError):
+        voxcpm_catalog.sample_path("voxcpm:v2:it-IT/Federica")
+
+
+def test_sample_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
+    # `audio.file` arriva da un file di dati: un percorso con .. non deve
+    # poter servire file fuori dal catalogo.
+    import json as _json
+    cattivo = {
+        "voices": [{
+            "id": "x_m_evasione", "name": "Evasione",
+            "language": {"code": "it", "locale": "it-IT"},
+            "gender": {"value": "m"},
+            "audio": {"file": "../../../etc/passwd", "transcript": "testo", "duration_s": 1.0},
+            "description": {"persona": "warm-young"},
+        }]
+    }
+    (tmp_path / "voices.json").write_text(_json.dumps(cattivo), encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+    with pytest.raises(ValueError):
+        voxcpm_catalog.sample_path("voxcpm:v2:it-IT/Evasione")
