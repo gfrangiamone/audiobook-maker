@@ -1279,24 +1279,38 @@ function _populateVoxcpmCharacters(){
   };
 }
 
-// Etichetta leggibile di un carattere. Il Task 13 la sostituisce con la
-// catena dizionario -> stringhe del catalogo -> chiave.
-// Nota su t(): quando non trova la chiave la restituisce tal quale, quindi
-// il confronto con la chiave e' l'unico modo di sapere se ha tradotto.
-function _voxcpmPersonaLabel(chiave){
+// Etichetta leggibile di un carattere, in tre gradini (§5.2).
+//   1. il dizionario delle traduzioni, se conosce la chiave;
+//   2. il `role` che il catalogo si porta dietro — non tradotto, ma
+//      descrittivo e sempre presente;
+//   3. la chiave tecnica.
+// Il terzo gradino non e' un ripiego elegante: e' cio' che permette a un
+// carattere generato dopo l'ultimo rilascio di comparire lo stesso (D10).
+function _voxcpmPersonaLabel(chiave,voce){
   if(!chiave)return '';
   const k='persona_'+String(chiave).replace(/-/g,'_');
   const tradotta=t(k);
-  return (tradotta&&tradotta!==k)?tradotta:chiave;
+  if(tradotta&&tradotta!==k)return tradotta;
+  if(voce&&voce.persona_role)return voce.persona_role;
+  return chiave;
 }
 
-// Etichetta di un locale. Il Task 13 ci aggiunge Intl.DisplayNames; per ora
-// il codice grezzo, che e' brutto ma non e' mai sbagliato.
+// Etichetta di un locale ('it-IT' -> 'italiano (Italia)'). Anche qui tre
+// gradini: la chiave accent_* se esiste gia' per un altro motore, poi
+// Intl.DisplayNames — che il browser localizza nella lingua dell'interfaccia
+// e che copre i locali di domani senza righe nuove (D10) — e infine il
+// codice grezzo, che e' brutto ma non e' mai sbagliato.
 function _voxcpmLocaleLabel(loc){
   if(!loc)return '';
   const k='accent_'+String(loc).toLowerCase().replace(/-/g,'_');
   const tradotta=t(k);
-  return (tradotta&&tradotta!==k)?tradotta:loc;
+  if(tradotta&&tradotta!==k)return tradotta;
+  try{
+    const dn=new Intl.DisplayNames([cl||'en'],{type:'language'});
+    const nome=dn.of(loc);
+    if(nome&&nome!==loc)return nome;
+  }catch(e){/* Intl assente o locale non riconosciuto: si scende. */}
+  return loc;
 }
 
 // Record di catalogo della voce VoxCPM selezionata, o null.
@@ -1319,7 +1333,7 @@ function _syncVoxcpmCharacterToVoice(){
   if(!sel||!v||!v.persona)return;
   if(!Array.prototype.some.call(sel.options,o=>o.value===v.persona)){
     const o=document.createElement('option');
-    o.value=v.persona;o.textContent=_voxcpmPersonaLabel(v.persona);
+    o.value=v.persona;o.textContent=_voxcpmPersonaLabel(v.persona,v);
     sel.appendChild(o);
   }
   sel.value=v.persona;
@@ -1395,7 +1409,7 @@ function updVoicesPremium(){
       // Nome, genere e carattere sulla stessa riga (§5.2): il carattere e'
       // l'informazione che distingue due voci dello stesso genere.
       o.textContent=(v.gender_icon?v.gender_icon+' ':'')+(v.name||v.id.split('/').pop())
-                    +' · '+_voxcpmPersonaLabel(v.persona);
+                    +' · '+_voxcpmPersonaLabel(v.persona,v);
       sel.lastElementChild.appendChild(o);
     }
     if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
