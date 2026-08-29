@@ -400,6 +400,12 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 |-----------|--------|------|------|
 | `LANGUAGE_NAMES` | Dict di 60+ codici lingua -> nomi | `audiobook_app.py` | 555 |
 | `ABM_VOXCPM_CATALOG_DIR` | `data/voci_inventate` — cartella del catalogo di voci inventate VoxCPM con `voices.json` e `.wav` dei campioni. Dato importato dal repo `abm-voxcpm-worker`: aggiornare significa sostituire la cartella, non toccare il codice. | `voxcpm_catalog.py` | 27 |
+| `ABM_VOXCPM_ENDPOINT_ID` | — Endpoint RunPod serverless del worker VoxCPM. Assente: il motore non compare fra i modelli. | `voxcpm_tts.py` | 43 |
+| `ABM_VOXCPM_API_KEY` | — Chiave API RunPod. Assente: il motore non compare fra i modelli. | `voxcpm_tts.py` | 47 |
+| `ABM_VOXCPM_RATE_EUR_PER_MCHAR` | — Tariffa di listino all'utente, EUR per milione di caratteri, fee di pagamento incluse. Assente o 0: il motore non compare (meglio nascosto che venduto a un prezzo non deciso). | `voxcpm_tts.py` | 51 |
+| `ABM_VOXCPM_FREE_THRESHOLD_EUR` | `0.50` Sotto questo importo il job è gratuito, come per Gemini e Speechify. | `voxcpm_tts.py` | 60 |
+| `ABM_VOXCPM_COST_USD_PER_MCHAR` | `0.91` Costo GPU misurato (RTX 4090, 2026-08-04). Alimenta solo l'audit del margine, mai il prezzo all'utente. | `voxcpm_tts.py` | 56 |
+| `ABM_VOXCPM_CONCURRENCY` | `32` Chunk in volo dentro un singolo job del worker. | `voxcpm_tts.py` | 64 |
 
 ### 3.6 Cleanup (pulizia automatica)
 
