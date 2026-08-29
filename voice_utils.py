@@ -26,3 +26,19 @@ def is_speechify_voice(voice):
     Safe su input non-stringa/None/"": ritorna False senza sollevare.
     """
     return bool(voice) and isinstance(voice, str) and voice.startswith(SPEECHIFY_VOICE_PREFIX)
+
+
+VOXCPM_VOICE_PREFIX = "voxcpm:"
+
+
+def is_voxcpm_voice(voice):
+    """True se la voce e' una voce PREMIUM VoxCPM.
+
+    Due formati sotto lo stesso prefisso: `voxcpm:v2:<locale>/<Nome>` per il
+    catalogo di voci inventate, `voxcpm:mine:<token>` per la voce clonata
+    dell'utente. Il predicato copre entrambi: la distinzione fra i due la fa
+    `voxcpm_catalog.parse_voice_id`, non questo modulo.
+
+    Safe su input non-stringa/None/"": ritorna False senza sollevare.
+    """
+    return bool(voice) and isinstance(voice, str) and voice.startswith(VOXCPM_VOICE_PREFIX)
