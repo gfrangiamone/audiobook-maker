@@ -35,10 +35,22 @@ def catalog_dir():
 
 
 def invalidate_cache():
-    """Svuota la cache: il prossimo `voices()` rilegge il file."""
+    """Svuota la cache: il prossimo `voices()` rilegge il file.
+
+    Svuota anche la cache dei campioni codificati in `voxcpm_tts`: un
+    catalogo cambiato (voci rigenerate, cartella spostata) puo' spostare o
+    sostituire il .wav di una voce, e quella cache altrimenti continuerebbe
+    a servire il campione vecchio. Import interno per non creare un ciclo:
+    `voxcpm_tts` importa questo modulo al livello del modulo.
+    """
     global _cache
     with _lock:
         _cache = None
+    try:
+        import voxcpm_tts
+    except ImportError:
+        return
+    voxcpm_tts.invalidate_clone_cache()
 
 
 def _normalize(raw):

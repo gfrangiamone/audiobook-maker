@@ -14,6 +14,7 @@ Da qui l'unita' di lavoro per capitolo e il retry a caldo dentro lo stesso
 job invece del rilancio a freddo.
 """
 import base64
+import collections
 import json
 import logging
 import os
@@ -442,7 +443,11 @@ CFG_READ = 2.0
 # quanto guadagni in stabilita', e il capitolo che non passa a 4 non passa.
 _CONCURRENCY_FLOOR = 4
 
-_clone_cache = {}
+# FIFO, non LRU: le voci di un libro sono poche (una manciata di personaggi),
+# il tetto serve solo contro un chiamante che passasse voice_id a raffica
+# (es. un audit su tutto il catalogo) senza mai liberare la cache.
+_CLONE_CACHE_MAX = 16
+_clone_cache = collections.OrderedDict()
 _clone_lock = threading.Lock()
 
 # Indirezione sul sonno, cosi' i test della politica di ritentativo non
@@ -486,7 +491,21 @@ def clone_block(voice_id):
     }
     with _clone_lock:
         _clone_cache[voice_id] = blocco
+        if len(_clone_cache) > _CLONE_CACHE_MAX:
+            _clone_cache.popitem(last=False)
     return dict(blocco)
+
+
+# Chiavi di un output di job che si possono stampare in un messaggio
+# d'errore. Whitelist e non l'intero dict: l'output porta anche URL firmati
+# (get/put su R2), che nei log non devono mai finire.
+_CHIAVI_DIAGNOSTICA = ("error", "format", "bytes", "chunks")
+
+
+def _riassunto(out):
+    """Estratto sicuro di un output di job, per i messaggi d'errore."""
+    ridotto = {k: out.get(k) for k in _CHIAVI_DIAGNOSTICA if k in out}
+    return json.dumps(ridotto)[:300]
 
 
 def _scarica(url, dest):
@@ -495,15 +514,46 @@ def _scarica(url, dest):
     Il PCM di un capitolo a 48 kHz sta sulle decine di megabyte: leggerlo in
     una stringa moltiplicherebbe la memoria del server per il numero di
     capitoli in volo.
+
+    Un fallimento di rete esce come `VoxcpmJobError`, non come
+    `requests.HTTPError`: e' il contratto dichiarato da `synthesize_chapter`,
+    e chi chiama non deve conoscere il trasporto per capire cosa e' successo.
+    Il messaggio non riporta `url`: e' una GET firmata, e finirebbe nei log.
     """
     tmp = dest + ".part"
-    with requests.get(url, stream=True, timeout=300) as r:
-        r.raise_for_status()
-        with open(tmp, "wb") as f:
-            for pezzo in r.iter_content(chunk_size=1 << 20):
-                if pezzo:
-                    f.write(pezzo)
-    os.replace(tmp, dest)
+    try:
+        with requests.get(url, stream=True, timeout=300) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                for pezzo in r.iter_content(chunk_size=1 << 20):
+                    if pezzo:
+                        f.write(pezzo)
+        os.replace(tmp, dest)
+    except requests.RequestException as e:
+        codice = getattr(getattr(e, "response", None), "status_code", None)
+        dettaglio = f"HTTP {codice}" if codice else type(e).__name__
+        raise VoxcpmJobError(
+            f"scaricamento del capitolo da R2 fallito: {dettaglio}") from e
+    finally:
+        # Un fallimento a meta' lascia un `.part` orfano: sul prossimo
+        # tentativo scriverebbe su un file gia' li', ingannando chi guarda
+        # solo la dimensione.
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _cancella_intermedio(key):
+    """Cancella l'intermedio R2. Non solleva mai.
+
+    Si chiama quando il capitolo e' gia' scritto (o gia' scartato): una
+    cancellazione fallita lascia solo un oggetto orfano su R2, non deve
+    buttare via lavoro gia' fatto.
+    """
+    import storage_backend
+    try:
+        storage_backend.delete_object(key)
+    except Exception:      # noqa: BLE001 - best effort, per definizione
+        _LOG.warning("cancellazione R2 non riuscita per la chiave %s", key)
 
 
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
@@ -533,10 +583,14 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `bytes`.
 
     Raises:
-        ValueError: la voce non e' nel catalogo (§9.4, caso normale).
+        ValueError: la voce non e' nel catalogo, o `chunks` e' vuoto
+            (§9.4, casi normali).
         VoxcpmJobError e sottoclassi: vedi la tabella §9.4.
     """
     import storage_backend
+
+    if not chunks:
+        raise ValueError("synthesize_chapter: nessun chunk da sintetizzare")
 
     clone = clone_block(voice_id)      # prima di tutto: se la voce non c'e',
                                        # si scopre senza aver acceso nulla
@@ -544,6 +598,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     su_r2 = bool(key) and storage_backend.is_enabled()
     stats = {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
              "tts_seconds": 0.0, "jobs": 0, "redone": 0, "bounced": 0,
+             # Strutturalmente sempre 0: un tentativo con chunk a silenzio
+             # non arriva mai al `return` sotto (si rifa' o solleva), quindi
+             # la consegna che esce da questo ciclo non ne ha mai.
              "failed_chunks": 0, "bytes": 0}
 
     conc = concurrency()
@@ -592,14 +649,28 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             if ultimo:
                 raise
         else:
+            if "failed_indices" not in out:
+                # Assente e' un worker che non rispetta il protocollo, non un
+                # worker senza chunk caduti: zero e assente non sono la
+                # stessa cosa, e confonderli terrebbe un capitolo che nessuno
+                # ha verificato.
+                raise VoxcpmJobError(
+                    "risposta senza failed_indices: protocollo del worker "
+                    "non rispettato: " + _riassunto(out))
+
             stats["jobs"] += 1
             stats["sample_rate"] = stats["sample_rate"] or int(
                 out.get("sample_rate") or 48000)
-            stats["chars"] += int(out.get("chars") or 0)
-            stats["audio_seconds"] += float(out.get("audio_seconds") or 0.0)
+            # Non `+=`: i caratteri e i secondi d'audio del capitolo sono
+            # quelli del tentativo che finisce per essere consegnato, non la
+            # somma coi tentativi scartati per silenzio. `tts_seconds` invece
+            # e' GPU pagata anche sul tentativo buttato via, e quella si
+            # somma davvero.
+            stats["chars"] = int(out.get("chars") or 0)
+            stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
-            bad = out.get("failed_indices") or []
+            bad = out["failed_indices"] or []
             if bad:
                 # Il worker mette un secondo di silenzio al posto della frase
                 # caduta e tira dritto, cosi' il capitolo resta allineato. Per
@@ -607,7 +678,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 # valle passerebbe ogni verifica: l'M4B corrisponderebbe
                 # esattamente ai frammenti, silenzi compresi.
                 if su_r2:
-                    storage_backend.delete_object(key)
+                    _cancella_intermedio(key)
                 if ultimo:
                     raise VoxcpmJobError(
                         f"{len(bad)} chunk su {len(chunks)} a silenzio anche a "
@@ -631,18 +702,30 @@ def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
         caricati = int((out.get("s3") or {}).get("bytes") or 0)
         if not caricati:
             raise VoxcpmJobError(
-                "il job non ha caricato niente su R2: " + json.dumps(out)[:300])
-        _scarica(storage_backend.presigned_get_url(key), dest_path)
-        # L'oggetto su R2 e' un intermedio: il server ha gia' i byte, tenerlo
-        # sarebbe pagare storage per una copia che nessuno rilegge.
-        storage_backend.delete_object(key)
-        return os.path.getsize(dest_path)
+                "il job non ha caricato niente su R2: " + _riassunto(out))
+        try:
+            _scarica(storage_backend.presigned_get_url(key), dest_path)
+            scaricati = os.path.getsize(dest_path)
+            if scaricati != caricati:
+                # Un troncamento silenzioso scriverebbe un capitolo corto
+                # senza che nulla a valle se ne accorga: l'M4B risulterebbe
+                # comunque valido, solo piu' breve del dovuto.
+                raise VoxcpmJobError(
+                    f"scaricamento troncato da R2: il worker ne ha caricati "
+                    f"{caricati}, ne sono arrivati {scaricati}")
+        finally:
+            # L'oggetto su R2 e' un intermedio: il server ha gia' i byte,
+            # tenerlo sarebbe pagare storage per una copia che nessuno
+            # rilegge. Gira sempre, successo o no: un fallimento a meta'
+            # lascia comunque un oggetto da non tenere.
+            _cancella_intermedio(key)
+        return scaricati
 
     audio = out.get("audio_b64")
     if not audio:
         raise VoxcpmJobError(
             f"risposta senza audio per {n_chunk} chunk a concorrenza {conc}: "
-            + json.dumps(out)[:300])
+            + _riassunto(out))
     dati = base64.b64decode(audio)
     tmp = dest_path + ".part"
     with open(tmp, "wb") as f:

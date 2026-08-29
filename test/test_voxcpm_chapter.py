@@ -8,6 +8,7 @@ import base64
 import os
 
 import pytest
+import requests
 
 import voxcpm_catalog
 import voxcpm_tts
@@ -43,7 +44,6 @@ class FintoRunJob:
     def __init__(self, *esiti):
         self.esiti = list(esiti)
         self.payload = []
-        self.attese = []
 
     def __call__(self, payload, **kw):
         self.payload.append(payload)
@@ -135,6 +135,8 @@ def test_rimbalzi_a_oltranza_si_arrendono(tmp_path, monkeypatch):
     finto = FintoRunJob(*troppi)
     with pytest.raises(voxcpm_tts.VoxcpmRimbalzato):
         sintetizza(finto, tmp_path, monkeypatch)
+    # Il budget e' BOUNCE_RETRIES ritentativi oltre al primo tentativo vero.
+    assert len(finto.payload) == voxcpm_tts.BOUNCE_RETRIES + 1
 
 
 def test_motore_compromesso_si_rifa_a_batch_stretto(tmp_path, monkeypatch):
@@ -162,6 +164,8 @@ def test_silenzio_ostinato_e_un_fallimento(tmp_path, monkeypatch):
     with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
         sintetizza(finto, tmp_path, monkeypatch)
     assert "silenzio" in str(e.value)
+    # Il budget e' SILENCE_RETRIES ritentativi oltre al primo tentativo vero.
+    assert len(finto.payload) == voxcpm_tts.SILENCE_RETRIES + 1
 
 
 def test_la_concorrenza_non_scende_sotto_quattro(tmp_path, monkeypatch):
@@ -212,9 +216,14 @@ def test_r2_acceso_ma_il_worker_non_carica_niente(tmp_path, monkeypatch):
     monkeypatch.setattr(storage_backend, "presigned_put_url",
                         lambda key, ttl=None: "https://r2.esempio/x?firma")
     monkeypatch.setattr(storage_backend, "delete_object", lambda k: None)
-    finto = FintoRunJob({"s3": {"bytes": 0}, "sample_rate": 48000},
-                        {"s3": {"bytes": 0}, "sample_rate": 48000},
-                        {"s3": {"bytes": 0}, "sample_rate": 48000})
+    # failed_indices presente e vuoto: il worker rispetta il protocollo, ha
+    # solo caricato zero byte su R2.
+    finto = FintoRunJob({"s3": {"bytes": 0}, "sample_rate": 48000,
+                        "failed_indices": []},
+                        {"s3": {"bytes": 0}, "sample_rate": 48000,
+                        "failed_indices": []},
+                        {"s3": {"bytes": 0}, "sample_rate": 48000,
+                        "failed_indices": []})
     with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
         sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
     assert "non ha caricato" in str(e.value)
@@ -237,3 +246,162 @@ def test_voce_sparita_dal_catalogo(tmp_path, monkeypatch):
         voxcpm_tts.synthesize_chapter(CHUNKS, "voxcpm:v2:it-IT/Fantasma",
                                       str(tmp_path / "x.pcm"))
     assert finto.payload == []
+
+
+def test_capitolo_senza_chunk_e_un_errore(tmp_path, monkeypatch):
+    finto = FintoRunJob()
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    with pytest.raises(ValueError):
+        voxcpm_tts.synthesize_chapter([], VOCE, str(tmp_path / "x.pcm"))
+    assert finto.payload == []
+
+
+def test_risposta_senza_failed_indices_e_un_errore_di_protocollo(tmp_path, monkeypatch):
+    # Assente e zero non sono la stessa cosa: un worker che non dichiara
+    # affatto i chunk caduti non ha rispettato il protocollo, e il capitolo
+    # non si consegna sulla fiducia.
+    finto = FintoRunJob({"audio_b64": base64.b64encode(b"\x00" * 4).decode(),
+                         "sample_rate": 48000})
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        sintetizza(finto, tmp_path, monkeypatch)
+    assert "failed_indices" in str(e.value)
+
+
+def test_le_statistiche_vengono_dal_tentativo_consegnato(tmp_path, monkeypatch):
+    # Un chunk a silenzio nel primo tentativo non deve sommarsi al secondo:
+    # i caratteri e i secondi d'audio del capitolo sono quelli del tentativo
+    # consegnato, non la somma coi tentativi scartati. I secondi di GPU
+    # invece si pagano anche sul tentativo buttato via, e quelli si sommano.
+    scartato = esito_ok(chars=100, audio_seconds=5.0, tts_seconds=2.0,
+                        failed_indices=[1])
+    consegnato = esito_ok(chars=42, audio_seconds=3.0, tts_seconds=1.0)
+    finto = FintoRunJob(scartato, consegnato)
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["chars"] == 42
+    assert stats["audio_seconds"] == 3.0
+    assert stats["tts_seconds"] == 3.0
+
+
+def test_scarica_traduce_un_fallimento_di_rete_in_errore_di_dominio(tmp_path, monkeypatch):
+    # `_scarica` e' il trasporto: chi la chiama (`_consegna`) e chi chiama
+    # lui (`synthesize_chapter`) devono vedere solo VoxcpmJobError, mai
+    # requests.HTTPError.
+    class RispostaRotta:
+        def raise_for_status(self):
+            raise requests.HTTPError("500 Server Error")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_content(self, chunk_size):
+            return iter(())
+
+    monkeypatch.setattr(voxcpm_tts.requests, "get",
+                        lambda *a, **kw: RispostaRotta())
+    dest = str(tmp_path / "cap.pcm")
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    # Il .part parziale non deve restare in giro dopo un fallimento.
+    assert not os.path.exists(dest + ".part")
+
+
+def test_download_r2_troncato_e_un_errore(tmp_path, monkeypatch):
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+    cancellate = []
+    monkeypatch.setattr(storage_backend, "delete_object", cancellate.append)
+    # Il worker dichiara 64 byte caricati, ma il download ne consegna solo
+    # 32: un troncamento silenzioso scriverebbe un capitolo corto senza che
+    # nulla a valle se ne accorga.
+    monkeypatch.setattr(voxcpm_tts, "_scarica",
+                        lambda url, dest: open(dest, "wb").write(b"\x07" * 32) and None)
+    finto = FintoRunJob({"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+                         "audio_seconds": 1.0, "tts_seconds": 0.5,
+                         "failed_indices": []})
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert "troncat" in str(e.value).lower()
+    # L'intermedio si cancella comunque: il download parziale non lo salva.
+    assert cancellate == ["voxcpm/j/ch1.pcm"]
+
+
+def test_download_r2_fallito_cancella_comunque_l_intermedio(tmp_path, monkeypatch):
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+    cancellate = []
+    monkeypatch.setattr(storage_backend, "delete_object", cancellate.append)
+
+    def scarica_rotto(url, dest):
+        raise voxcpm_tts.VoxcpmJobError("scaricamento del capitolo da R2 fallito")
+
+    monkeypatch.setattr(voxcpm_tts, "_scarica", scarica_rotto)
+    finto = FintoRunJob({"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+                         "audio_seconds": 1.0, "tts_seconds": 0.5,
+                         "failed_indices": []})
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    # L'intermedio e' gia' su R2 anche se il download e' fallito: lasciarlo
+    # li' sarebbe pagare storage per un file che nessuno riprova a scaricare
+    # con questa stessa chiave.
+    assert cancellate == ["voxcpm/j/ch1.pcm"]
+
+
+def test_cancellazione_r2_fallita_non_perde_il_capitolo(tmp_path, monkeypatch):
+    # Il capitolo e' gia' scritto su disco quando la cancellazione fallisce:
+    # buttare via il risultato per un bucket irraggiungibile sarebbe perdere
+    # lavoro buono per un problema di pulizia.
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+
+    def rotta(k):
+        raise RuntimeError("bucket irraggiungibile")
+
+    monkeypatch.setattr(storage_backend, "delete_object", rotta)
+    monkeypatch.setattr(voxcpm_tts, "_scarica",
+                        lambda url, dest: open(dest, "wb").write(b"\x07" * 64) and None)
+    finto = FintoRunJob({"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+                         "audio_seconds": 1.0, "tts_seconds": 0.5,
+                         "failed_indices": []})
+    stats, dest = sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert os.path.getsize(dest) == 64
+    assert stats["bytes"] == 64
+
+
+def test_invalidare_il_catalogo_svuota_la_cache_dei_campioni(tmp_path, monkeypatch):
+    # La cache dei campioni vive in voxcpm_tts, ma la sorgente di verita' e'
+    # il catalogo: se qualcuno rigenera le voci e invalida il catalogo (o
+    # sposta ABM_VOXCPM_CATALOG_DIR su una cartella nuova), la cache deve
+    # seguirlo, non restare con il wav della cartella precedente.
+    letture = {"n": 0}
+    vero = voxcpm_catalog.sample_path
+
+    def conta(vid):
+        letture["n"] += 1
+        return vero(vid)
+
+    monkeypatch.setattr(voxcpm_catalog, "sample_path", conta)
+    voxcpm_tts.clone_block(VOCE)
+    assert letture["n"] == 1
+    assert voxcpm_tts._clone_cache
+
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", FIXTURE)
+    voxcpm_catalog.invalidate_cache()
+    assert not voxcpm_tts._clone_cache
+
+    voxcpm_tts.clone_block(VOCE)
+    assert letture["n"] == 2
