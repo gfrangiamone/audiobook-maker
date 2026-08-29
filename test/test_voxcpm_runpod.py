@@ -225,15 +225,11 @@ def test_un_transitorio_di_rete_sul_polling_non_uccide_il_job():
     assert out == {"ok": 2}
 
 
-def test_endpoint_non_configurato():
-    import os
-    os.environ["ABM_VOXCPM_ENDPOINT_ID"] = ""
-    try:
-        with pytest.raises(voxcpm_tts.VoxcpmJobError):
-            voxcpm_tts.run_job({"input": {}}, session=FintaSessione(),
-                               sleep=dormi_finto, poll=0)
-    finally:
-        os.environ["ABM_VOXCPM_ENDPOINT_ID"] = "ep-di-prova"
+def test_endpoint_non_configurato(monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_ENDPOINT_ID", "")
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts.run_job({"input": {}}, session=FintaSessione(),
+                           sleep=dormi_finto, poll=0)
 
 
 def test_cancel_job_non_esplode_se_la_rete_cade():
@@ -241,3 +237,114 @@ def test_cancel_job_non_esplode_se_la_rete_cade():
     # esplodere sostituirebbe l'errore vero con uno di rete.
     ses = FintaSessione(post=[voxcpm_tts.requests.RequestException("giu'")])
     voxcpm_tts.cancel_job("job-x", session=ses)   # non solleva
+
+
+def test_timed_out_e_bloccato_non_un_generico_non_ritentabile():
+    # TIMED_OUT lo chiude RunPod, non il worker: e' "partito e mai arrivato",
+    # cioe' VoxcpmBloccato — non un VoxcpmJobError semplice che verrebbe letto
+    # come non ritentabile mentre l'unica riga non ritentabile di §9.4 e'
+    # VoxcpmCodaSatura.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-10"})],
+        get=[FintaRisposta(body={"status": "TIMED_OUT", "output": {}})],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmBloccato) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert e.value.ritentabile is True
+
+
+def test_cancelled_dal_lato_runpod_e_bloccato():
+    # Stesso discorso di TIMED_OUT: un CANCELLED letto da /status arriva da
+    # fuori (dashboard, un altro processo), non dal nostro `cancel_job`.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-11"})],
+        get=[FintaRisposta(body={"status": "CANCELLED", "output": {}})],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmBloccato) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert e.value.ritentabile is True
+
+
+def test_status_401_non_ritenta_e_non_e_ritentabile():
+    # Come per la sottomissione: una chiave revocata resta revocata, e
+    # rimettersi ad aspettare fino al tetto di coda o di esecuzione la
+    # travestirebbe da "job bloccato" ritentabile mentre non lo e'.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-12"})],
+        get=[FintaRisposta(status_code=401, text="unauthorized")],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert "401" in str(e.value)
+    assert e.value.ritentabile is False
+    assert len(ses.get_fatte) == 1
+
+
+def test_status_503_sul_polling_continua_a_sondare():
+    # Stesso criterio di `_submit`: un 503 sul polling e' del server che
+    # scala, non del job. Non deve ne' uccidere il job ne' consumare il
+    # tetto di esecuzione come farebbe un errore definitivo.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-13"})],
+        get=[FintaRisposta(status_code=503, text="scaling"),
+             FintaRisposta(body={"status": "COMPLETED", "output": {"ok": 3}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert out == {"ok": 3}
+
+
+def test_on_queue_che_esplode_cancella_il_job_e_rilancia_l_originale():
+    # Qualunque eccezione che non sia il successo lascia un job in volo, e va
+    # cancellato prima di rilanciare: farlo dopo (o non farlo) lascerebbe una
+    # GPU accesa e pagata anche se l'eccezione non c'entra con la rete.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-14"})],
+        get=[FintaRisposta(body={"status": "IN_QUEUE"})],
+    )
+    ses.copione_post.append(FintaRisposta(body={"status": "CANCELLED"}))
+
+    def esplodi(_secondi_in_coda):
+        raise RuntimeError("callback della UI in errore")
+
+    with pytest.raises(RuntimeError, match="callback della UI in errore"):
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                           poll=0, on_queue=esplodi)
+    assert ses.post_fatte[-1]["url"].endswith("/cancel/job-14")
+
+
+def test_submit_risposta_senza_id_non_esplode_con_keyerror():
+    # Un 2xx senza un `id` valido non e' un KeyError da lasciar risalire: e'
+    # un job mai sottomesso, e Task 7 lo deve poter riconoscere come tale.
+    ses = FintaSessione(post=[FintaRisposta(body={"non": "ha un id"})])
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+
+
+def test_submit_non_dorme_dopo_l_ultimo_tentativo():
+    # L'ultimo tentativo fallito non deve aspettare per niente: non c'e' un
+    # tentativo successivo a giustificare il backoff.
+    chiamate_sleep = []
+
+    def conta_sleep(secondi):
+        chiamate_sleep.append(secondi)
+
+    ses = FintaSessione(
+        post=[FintaRisposta(status_code=503, text="scaling")
+              for _ in range(voxcpm_tts._SUBMIT_RETRIES)],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=conta_sleep, poll=0)
+    assert len(chiamate_sleep) == voxcpm_tts._SUBMIT_RETRIES - 1
+
+
+def test_cancel_job_logga_se_la_cancellazione_non_e_confermata(caplog):
+    # Non deve sollevare (e' best-effort), ma deve lasciare traccia: un
+    # cancel non confermato e' un job che magari continua a girare e pagare.
+    ses = FintaSessione(post=[FintaRisposta(status_code=404, text="not found")])
+    with caplog.at_level("WARNING"):
+        voxcpm_tts.cancel_job("job-y", session=ses)   # non solleva
+    assert "404" in caplog.text
+    assert "chiave-di-prova" not in caplog.text

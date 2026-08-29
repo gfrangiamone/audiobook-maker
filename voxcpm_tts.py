@@ -14,12 +14,15 @@ Da qui l'unita' di lavoro per capitolo e il retry a caldo dentro lo stesso
 job invece del rilancio a freddo.
 """
 import json
+import logging
 import os
 import time
 
 import requests
 
 import voxcpm_catalog
+
+_LOG = logging.getLogger(__name__)
 
 MODEL_ID = voxcpm_catalog.MODEL_ID
 MODEL_LABEL = voxcpm_catalog.MODEL_LABEL
@@ -273,11 +276,18 @@ def _submit(payload, session, sleep):
             ultimo = str(e)
         else:
             if r.status_code < 400:
-                return r.json()["id"]
+                try:
+                    return r.json()["id"]
+                except (ValueError, KeyError, TypeError) as e:
+                    # Un 2xx senza un id valido non e' un transitorio da
+                    # ritentare: e' una risposta che il worker non sa dare.
+                    raise VoxcpmJobError(
+                        f"risposta di /run senza un id valido: {e}")
             if r.status_code not in _HTTP_TRANSIENT:
                 raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
             ultimo = f"HTTP {r.status_code}"
-        sleep(min(30, 2 ** tentativo))
+        if tentativo < _SUBMIT_RETRIES - 1:
+            sleep(min(30, 2 ** tentativo))
     raise VoxcpmJobError(f"esauriti i tentativi di sottomissione ({ultimo})")
 
 
@@ -290,8 +300,12 @@ def cancel_job(job_id, *, session=None):
     """
     ses = session or requests
     try:
-        ses.post(f"{_base()}/cancel/{job_id}", headers=_headers(),
-                 json=None, timeout=30)
+        r = ses.post(f"{_base()}/cancel/{job_id}", headers=_headers(),
+                     json=None, timeout=30)
+        codice = getattr(r, "status_code", None)
+        if codice is not None and not (200 <= codice < 300):
+            _LOG.warning("cancel del job %s non confermata: HTTP %s",
+                         job_id, codice)
     except Exception:      # noqa: BLE001 - best effort, per definizione
         pass
 
@@ -330,21 +344,33 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     tetto_coda = queue_timeout_s() if queue_timeout is None else float(queue_timeout)
 
     job_id = _submit(payload, ses, sleep)
+    try:
+        return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
+                              tetto_coda, clock, on_queue)
+    except BaseException:
+        # Qualunque uscita che non sia il `return` di successo lascia un job
+        # in volo, e RunPod lo fattura finche' gira: si cancella prima di
+        # rilanciare, senza mai sostituire l'errore vero con uno di rete
+        # (`cancel_job` non solleva mai).
+        cancel_job(job_id, session=ses)
+        raise
+
+
+def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
+                    on_queue):
+    """Il polling vero e proprio: isolato per poterlo avvolgere in un solo
+    `try/except` che cancella il job su qualunque uscita non riuscita."""
     t0 = clock()
     t_run = None
     while True:
         trascorso = clock() - t0
         if t_run is None:
             if trascorso > tetto_coda:
-                cancel_job(job_id, session=ses)
                 raise VoxcpmCodaSatura(
                     f"job {job_id} mai partito: {trascorso / 60:.0f} min in "
                     f"coda, oltre i {tetto_coda / 60:.0f} concessi. "
                     f"L'endpoint e' saturo, non lento", job_id)
         elif clock() - t_run > tetto_exec:
-            # Cancellare non restituisce i secondi gia' consumati, ma ferma
-            # quelli che verrebbero dopo.
-            cancel_job(job_id, session=ses)
             raise VoxcpmBloccato(
                 f"job {job_id} oltre {tetto_exec:.0f}s di esecuzione: il "
                 f"worker non sta avanzando, si cancella e si rifa", job_id)
@@ -352,14 +378,26 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
         try:
             r = ses.get(f"{_base()}/status/{job_id}", headers=_headers(),
                         timeout=60)
-            r.raise_for_status()
-            st = r.json()
         except requests.RequestException:
             # Il job sull'endpoint vive per conto suo: una sonda che non passa
             # e' un problema nostro, e abbandonarlo qui lascerebbe una GPU
             # accesa e pagata.
             sleep(attesa)
             continue
+
+        if r.status_code >= 400:
+            if r.status_code in _HTTP_TRANSIENT:
+                # Stesso criterio di `_submit`: un 429/5xx e' del server che
+                # respira, non del job. Si riprova a sondare.
+                sleep(attesa)
+                continue
+            # Un 401/403/404 non migliora aspettando: la chiave revocata resta
+            # revocata. Non e' ritentabile, e Task 7 non deve riscoprirlo
+            # dopo aver aspettato fino al tetto di coda o di esecuzione.
+            raise VoxcpmJobError(
+                f"job {job_id}: HTTP {r.status_code} su /status: "
+                f"{r.text[:200]}", job_id)
+        st = r.json()
 
         stato = st.get("status")
         if t_run is None and stato == "IN_PROGRESS":
@@ -377,6 +415,11 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
             dettaglio = json.dumps(out) if out else json.dumps(
                 st.get("error") or st)
             testo = f"job {job_id} {stato}: {dettaglio[:400]}"
+            if stato in ("TIMED_OUT", "CANCELLED"):
+                # RunPod l'ha chiuso lei, non il worker: e' "partito e mai
+                # arrivato", cioe' esattamente VoxcpmBloccato (§9.4) — non un
+                # generico VoxcpmJobError non ritentabile.
+                raise VoxcpmBloccato(testo, job_id)
             raise _errore_del_job(out, testo, job_id)
 
         if t_run is None and on_queue is not None:
