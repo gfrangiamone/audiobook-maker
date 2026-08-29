@@ -5,9 +5,12 @@ capitoli, pre-sintesi.
 viene diviso in job e dove finisce l'audio, non come si parla con RunPod.
 """
 import os
+import threading
+import time
 
 import pytest
 
+import chunk_reuse
 import generation_engine
 import voxcpm_tts
 
@@ -35,6 +38,23 @@ def test_il_motore_si_riconosce_dal_prefisso():
 def test_nome_amichevole_senza_locale_ne_prefisso():
     assert generation_engine._friendly_voice_name(VOCE) == "Stefano"
     assert generation_engine._friendly_voice_name("voxcpm:v2:en-GB/Rufus") == "Rufus"
+
+
+def test_nome_amichevole_voce_clonata_senza_slash():
+    # 'voxcpm:mine:<token>' non ha '/': il token non e' un nome da mostrare
+    # nell'email di consegna, va sostituito con un'etichetta amichevole.
+    assert generation_engine._friendly_voice_name("voxcpm:mine:ab12cd34") == "La tua voce"
+    # Schema voxcpm ignoto (ne' v2 ne' mine): ultimo segmento ':' come ripiego,
+    # ma mai il token/id grezzo per intero senza alcun tentativo di pulizia.
+    assert generation_engine._friendly_voice_name("voxcpm:altro") == "altro"
+
+
+def test_pcm_sample_rate_per_motore():
+    assert generation_engine._pcm_sample_rate({}, False, True) == 48000    # voxcpm
+    assert generation_engine._pcm_sample_rate({}, False, False) == 24000   # gemini/edge/google
+    assert generation_engine._pcm_sample_rate({}, True, False) == 48000    # speechify, default
+    assert generation_engine._pcm_sample_rate(
+        {"speechify_sample_rate": 44100}, True, False) == 44100
 
 
 def test_i_chunk_si_raggruppano_per_capitolo():
@@ -158,3 +178,114 @@ def test_la_velocita_si_applica_al_pcm_del_capitolo(tmp_path, monkeypatch):
     assert applicate == [("chunk_000000.pcm", "+15%", 48000),
                          ("chunk_000002.pcm", "+15%", 48000),
                          ("chunk_000003.pcm", "+15%", 48000)]
+
+
+def test_fallimento_in_corsa_con_l_annullamento_esce_come_annullamento(tmp_path, monkeypatch):
+    # Il controllo in testa a _uno non basta da solo: se l'annullamento arriva
+    # DOPO che la sintesi e' partita, e l'ultimo tentativo del worker fallisce
+    # proprio allora, non e' un capitolo perso a ritentativi esauriti (§9.4) ma
+    # una cancellazione in corsa col retry -> va sul binario del rimborso.
+    stato = {"annullato": False}
+
+    def cancellato():
+        return stato["annullato"]
+
+    def sintesi_che_fallisce_dopo_l_annullamento(chunks, voice_id, dest_path, **kw):
+        stato["annullato"] = True
+        raise voxcpm_tts.VoxcpmJobError("chunk a silenzio")
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter",
+                        sintesi_che_fallisce_dopo_l_annullamento)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    with pytest.raises(generation_engine._CancelledError):
+        generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                           "job-1", set(), cancelled=cancellato)
+
+
+def test_un_capitolo_perso_senza_annullamento_resta_un_fallimento(tmp_path, monkeypatch):
+    # Controllo di non regressione sul percorso "normale" di errore §9.4: se
+    # non c'e' alcun annullamento in corso, l'eccezione originale deve restare
+    # VoxcpmJobError, non diventare una cancellazione.
+    f = FintaSintesi(errore=voxcpm_tts.VoxcpmJobError("chunk a silenzio"))
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                           "job-1", set(), cancelled=lambda: False)
+
+
+def test_la_velocita_applicata_aggiorna_byte_e_durata(tmp_path, monkeypatch):
+    # Dopo che apply_rate riscrive il PCM sul posto, le statistiche del
+    # capitolo (bytes/audio_seconds) devono riflettere il file FINALE, non
+    # quello uscito dal worker, altrimenti gli "attuali" del Task 11 non
+    # corrispondono all'audio davvero consegnato.
+    f = FintaSintesi()
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+
+    def rate_finto(path, r, sr):
+        with open(path, "wb") as fh:
+            fh.write(b"\x00\x00" * 24000)  # 0.5 s a 48 kHz, 16 bit mono
+        return True
+
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", rate_finto)
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+15%", tmp_path,
+                                             "job-1", set())
+    assert pre[0]["bytes"] == 48000
+    assert pre[0]["audio_seconds"] == 0.5
+
+
+def test_velocita_non_applicata_non_tocca_le_statistiche(tmp_path, sintesi_finta):
+    # apply_rate finto ritorna False (rate neutro/nessun cambiamento): le
+    # statistiche restano quelle originali del worker.
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                             "job-1", set())
+    assert pre[0]["bytes"] == 2 * 2       # FintaSintesi: 2 byte per chunk, 2 chunk nel cap.0
+    assert pre[0]["audio_seconds"] == 2.0
+
+
+def test_concorrenza_capitoli_limitata_da_abm_voxcpm_jobs(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "2")
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    piano5 = [blocco(f"testo{c}", c) for c in range(5)]  # 5 capitoli, 1 chunk ciascuno
+    lock = threading.Lock()
+    stato = {"correnti": 0, "picco": 0}
+
+    def sintesi_lenta(chunks, voice_id, dest_path, **kw):
+        with lock:
+            stato["correnti"] += 1
+            stato["picco"] = max(stato["picco"], stato["correnti"])
+        time.sleep(0.05)
+        with lock:
+            stato["correnti"] -= 1
+        with open(dest_path, "wb") as fh:
+            fh.write(b"\x11\x22")
+        return {"sample_rate": 48000, "chars": 1, "audio_seconds": 1.0,
+                "tts_seconds": 0.5, "jobs": 1, "redone": 0, "bounced": 0,
+                "failed_chunks": 0, "bytes": 2}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi_lenta)
+    generation_engine._voxcpm_pre_pass(piano5, VOCE, "+0%", tmp_path, "job-1", set())
+    assert stato["picco"] == 2
+
+
+def test_riuso_capitolo_completo_non_richiama_il_worker_ne_lo_fattura(tmp_path, sintesi_finta):
+    # Capitolo 0 (chunk 0,1) gia' completo su disco: chunk_reuse deve
+    # segnalarlo riusabile, e la pre-sintesi deve saltarlo del tutto (non
+    # comparire in `pre` -> non ri-fatturato, e il suo primo chunk prendera'
+    # la via {"reused": True} dentro _synthesize_chunk perche' l'indice e'
+    # in _reusable_chunks).
+    (tmp_path / "chunk_000000.pcm").write_bytes(b"\x11\x22" * 2)
+    (tmp_path / "chunk_000001.pcm").write_bytes(b"")
+    fp = chunk_reuse.fingerprint(voice=VOCE, rate="+0%", engine="voxcpm", plan=PIANO)
+    chunk_reuse.write_manifest(tmp_path, fp)
+    reusable = chunk_reuse.reusable_indices(tmp_path, fp, len(PIANO), "pcm",
+                                            plan=PIANO)
+    assert reusable == {0, 1}   # il capitolo 0 e' riusabile per intero
+
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                             "job-1", reusable)
+    # Solo i capitoli 1 e 2 vengono sintetizzati: il worker non viene mai
+    # chiamato per il capitolo 0, quindi non viene mai fatturato.
+    assert [c["chunks"] for c in sintesi_finta.chiamate] == [["c"], ["d", "e", "f"]]
+    assert 0 not in pre and 1 not in pre

@@ -134,3 +134,50 @@ def test_apply_rate_accelera_il_pcm(tmp_path):
     p.write_bytes(b"\x00\x00" * 48000)          # 1 s a 48 kHz, 16 bit mono
     assert voxcpm_tts.apply_rate(str(p), "+30%", 48000) is True
     assert 60000 < p.stat().st_size < 84000     # ~1/1,3 di 96000 byte
+
+
+def test_apply_rate_ffmpeg_fallito_non_perde_l_audio(tmp_path, monkeypatch):
+    # ffmpeg mancante o che fallisce non deve buttare via il PCM gia' pagato
+    # al worker: resta quello originale, si legge a velocita' normale.
+    import subprocess
+    originale = b"\x01\x02" * 48000
+    p = tmp_path / "x.pcm"
+    p.write_bytes(originale)
+
+    def fallisce(cmd, check=True):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(subprocess, "run", fallisce)
+    assert voxcpm_tts.apply_rate(str(p), "+30%", 48000) is False
+    assert p.read_bytes() == originale
+
+
+def test_apply_rate_ffmpeg_fallito_pulisce_il_file_temporaneo(tmp_path, monkeypatch):
+    import subprocess
+    p = tmp_path / "x.pcm"
+    p.write_bytes(b"\x01\x02" * 48000)
+
+    def fallisce(cmd, check=True):
+        raise FileNotFoundError("ffmpeg non trovato")
+
+    monkeypatch.setattr(subprocess, "run", fallisce)
+    assert voxcpm_tts.apply_rate(str(p), "+30%", 48000) is False
+    assert not (tmp_path / "x.pcm.rate").exists()
+
+
+def test_apply_rate_ffmpeg_fallito_non_logga_il_path(tmp_path, monkeypatch, caplog):
+    import logging
+    import subprocess
+
+    p = tmp_path / "x.pcm"
+    p.write_bytes(b"\x01\x02" * 48000)
+
+    def fallisce(cmd, check=True):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(subprocess, "run", fallisce)
+    with caplog.at_level(logging.WARNING, logger="voxcpm_tts"):
+        voxcpm_tts.apply_rate(str(p), "+30%", 48000)
+    testo = "\n".join(r.getMessage() for r in caplog.records)
+    assert str(p) not in testo
+    assert str(tmp_path) not in testo

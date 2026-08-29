@@ -1550,7 +1550,15 @@ def _friendly_voice_name(voice):
     if _is_voxcpm_voice(v):
         # 'voxcpm:v2:it-IT/Stefano' -> 'Stefano'. Il locale serve a distinguere
         # le voci dentro il catalogo, non a chi legge l'email di consegna.
-        return v.split("/")[-1].strip()
+        if "/" in v:
+            return v.split("/")[-1].strip()
+        # 'voxcpm:mine:<token>' -> nessuno slash: e' una voce clonata
+        # dall'utente, il token non e' un nome da mostrare. Schema ignoto (ne'
+        # v2 ne' mine) -> ultimo segmento ':' come ripiego, meglio di niente.
+        parti = v.split(":")
+        if len(parti) >= 2 and parti[1] == "mine":
+            return "La tua voce"
+        return parti[-1].strip()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
@@ -3234,6 +3242,25 @@ def _engine_for_voice(voice):
     return "edge"
 
 
+def _pcm_sample_rate(job, use_speechify, use_voxcpm):
+    """Sample rate del flusso PCM in corso: unica fonte di verita', usata sia
+    per il calcolo delle durate sia per generare il silenzio fra i capitoli
+    (prima i due punti divergevano, ed e' cosi' che il silenzio VoxCPM usciva
+    a 24 kHz invece che nativo 48 kHz, dimezzando la pausa richiesta).
+
+    Speechify: nativo 48000, ma il valore vero arriva dal primo chunk
+    sintetizzato (job['speechify_sample_rate']); prima che la pre-sintesi lo
+    scriva, 48000 e' comunque la stima giusta. VoxCPM: nativo 48000, fisso
+    (nessun campo di job da rileggere: il worker non lo varia mai). Gli altri
+    motori (Gemini incluso) restano a 24000, lo standard usato ovunque nel
+    resto della pipeline."""
+    if use_speechify:
+        return job.get("speechify_sample_rate", 48000)
+    if use_voxcpm:
+        return 48000
+    return 24000
+
+
 def _voxcpm_chapter_groups(plan, reusable):
     """I chunk del piano raggruppati per capitolo, in ordine.
 
@@ -3288,13 +3315,34 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             raise _CancelledError("Job cancelled")
         testa = indici[0]
         dest = str(work_dir / f"chunk_{testa:06d}.pcm")
-        stats = voxcpm_tts.synthesize_chapter(
-            [plan[i]["text"] for i in indici], voice, dest,
-            # Un job = un capitolo: la chiave e' univoca e permette di risalire
-            # dal file su R2 al job che l'ha prodotto.
-            key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
-            cancelled=cancelled)
-        voxcpm_tts.apply_rate(dest, rate, stats.get("sample_rate") or 48000)
+        try:
+            stats = voxcpm_tts.synthesize_chapter(
+                [plan[i]["text"] for i in indici], voice, dest,
+                # Un job = un capitolo: la chiave e' univoca e permette di
+                # risalire dal file su R2 al job che l'ha prodotto.
+                key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
+                cancelled=cancelled)
+        except voxcpm_tts.VoxcpmJobError:
+            # Se il fallimento coincide con un annullamento gia' richiesto,
+            # non e' un capitolo perso a ritentativi esauriti: e' la corsa fra
+            # l'annullamento e l'ultimo tentativo del worker. Va sul binario
+            # del rimborso (_CancelledError), non su quello del fallimento
+            # silenzioso di §9.4, che e' per i capitoli DAVVERO persi.
+            if cancelled is not None and cancelled():
+                raise _CancelledError("Job cancelled") from None
+            raise
+        sr = stats.get("sample_rate") or 48000
+        if voxcpm_tts.apply_rate(dest, rate, sr):
+            # La velocita' ha riscritto il PCM sul posto: dimensione e durata
+            # vanno ricalcolate dal file finale, altrimenti gli "attuali" del
+            # Task 11 non corrispondono all'audio davvero consegnato.
+            try:
+                nbytes = os.path.getsize(dest)
+            except OSError:
+                nbytes = stats.get("bytes", 0)
+            stats = dict(stats)
+            stats["bytes"] = nbytes
+            stats["audio_seconds"] = nbytes / (sr * 2)
         return ci, indici, stats
 
     with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
@@ -4269,13 +4317,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_pcm = use_gemini or use_speechify or use_voxcpm
     if use_speechify:
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
-    # Sample rate reale del PCM Speechify (Simba-3.2 nativo 48000). Popolato dal
-    # primo chunk sintetizzato; default 48000. VoxCPM e' nativo 48000. Per
-    # Gemini resta 24000.
-    _pcm_sr = (48000 if (use_speechify or use_voxcpm)
-               else 24000) if use_pcm else 24000
-    if use_speechify:
-        _pcm_sr = job.get("speechify_sample_rate", 48000)
+    # Sample rate reale del PCM: vedi `_pcm_sample_rate` per la scelta motore
+    # per motore (Speechify dal job una volta popolato, VoxCPM fisso 48000,
+    # Gemini/altri 24000). Riletto piu' sotto una volta che la pre-sintesi
+    # Speechify ha popolato job['speechify_sample_rate'].
+    _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
 
     # Direttiva di accento (solo Gemini): ancora TUTTI i chunk allo stesso accento.
     # Senza, ogni chiamata stateless puo` scegliere una variante regionale diversa
@@ -4372,7 +4418,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             strip_round=_strip_round, strip_square=_strip_square)
         try:
             _reusable_chunks = chunk_reuse.reusable_indices(
-                work_dir, _reuse_fp, total_chunks, _chunk_ext)
+                work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)
         except Exception as _reuse_err:
             print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
             _reusable_chunks = set()
@@ -4495,11 +4541,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
-        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify, MP3 altrimenti)
+        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify/VoxCPM, MP3 altrimenti)
         if use_pcm:
             silence_path = str(work_dir / "_silence.pcm")
             _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC,
-                                  sample_rate=(48000 if use_speechify else None))
+                                  sample_rate=_pcm_sample_rate(
+                                      job, use_speechify, use_voxcpm))
             silence_ok = os.path.exists(silence_path)
         else:
             silence_path = str(work_dir / "_silence.mp3")
@@ -4795,11 +4842,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     if isinstance(_res, dict) and not job.get("speechify_sample_rate"):
                         job["speechify_sample_rate"] = _res.get("sample_rate", 48000)
             job["progress_message"] = "Assembling audio..."
-        # Re-read del sample rate reale ora che la pre-sintesi lo ha popolato.
-        # VoxCPM e' nativo 48000 come Speechify (nessun campo di job da
-        # ri-leggere: la pre-sintesi non lo scrive, il valore e' fisso).
-        _pcm_sr = (job.get("speechify_sample_rate", 48000) if use_speechify
-                   else (48000 if use_voxcpm else 24000))
+        # Re-read del sample rate reale ora che la pre-sintesi Speechify ha
+        # popolato job['speechify_sample_rate'] (VoxCPM e' fisso: nessun
+        # campo da rileggere, vedi `_pcm_sample_rate`).
+        _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
 
         if single_file:
             all_parts = []

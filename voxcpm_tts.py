@@ -770,6 +770,20 @@ def apply_rate(pcm_path, rate, sample_rate):
            "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", pcm_path,
            "-filter:a", f"atempo={tempo:.4f}",
            "-f", "s16le", "-ar", str(sr), "-ac", "1", tmp]
-    subprocess.run(cmd, check=True)
-    os.replace(tmp, pcm_path)
-    return True
+    try:
+        subprocess.run(cmd, check=True)
+        os.replace(tmp, pcm_path)
+        return True
+    except Exception:
+        # ffmpeg mancante o fallito non deve buttare via l'audio gia' pagato
+        # al worker: il PCM originale resta com'era, si consegna a velocita'
+        # normale invece di perdere il capitolo. Niente path ne' credenziali
+        # nel log, solo il fatto.
+        _LOG.warning("apply_rate: ffmpeg non disponibile o fallito, "
+                     "velocita' non applicata")
+        return False
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
