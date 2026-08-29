@@ -3357,8 +3357,27 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             stats["audio_seconds"] = nbytes / (sr * 2)
         return ci, indici, stats
 
+    # `Executor.map` restituisce (e solleva) in ordine di SOTTOMISSIONE: se il
+    # primo gruppo fallisce, il generatore solleva subito e i gruppi successivi
+    # -- gia' completati o in corso su altri worker -- non vengono mai
+    # consumati dal for, quindi il loro contributo a `job["voxcpm_actual"]"
+    # andrebbe perso anche se il worker li ha davvero fatturati (Review finale,
+    # Important F1). Si sottomettono percio' future esplicite e si consuma con
+    # `as_completed`: ogni esito arrivato si accumula subito, indipendentemente
+    # dall'ordine, e la prima eccezione (in ordine di capitolo, per
+    # determinismo del messaggio) si rilancia solo dopo aver drenato tutte le
+    # future.
     with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
-        for ci, indici, stats in _ex.map(_uno, gruppi):
+        future_a_posizione = {_ex.submit(_uno, gruppo): posizione
+                              for posizione, gruppo in enumerate(gruppi)}
+        errori = {}
+        for fut in _cf.as_completed(future_a_posizione):
+            posizione = future_a_posizione[fut]
+            try:
+                ci, indici, stats = fut.result()
+            except BaseException as e:
+                errori[posizione] = e
+                continue
             for posto, i in enumerate(indici):
                 if posto == 0:
                     esiti[i] = stats
@@ -3381,7 +3400,38 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
                             "bounced": 0, "failed_chunks": 0, "bytes": 0}
+        if errori:
+            prima_posizione = min(errori)
+            raise errori[prima_posizione]
     return esiti
+
+
+def _voxcpm_chunk_result(i, voxcpm_pre, reusable_chunks, job_id):
+    """Il risultato del chunk `i` per `_synthesize_chunk` (voci VoxCPM).
+
+    Tre casi:
+      1. `i` e' in `voxcpm_pre` (l'ha scritto `_voxcpm_pre_pass`): il suo
+         esito, normale o di coda-capitolo (zero, file vuoto).
+      2. `i` non c'e' ma e' un riuso legittimo (`reusable_chunks`): il chunk
+         non e' mai entrato nella pre-sintesi apposta, perche' il capitolo era
+         gia' su disco da un tentativo precedente.
+      3. `i` non c'e' e non e' nel piano di riuso: la pre-sintesi ha saltato
+         un chunk che avrebbe dovuto sintetizzare. Prima degradava in
+         silenzio a `{"reused": True}`, consegnando il file-parte gia' vuoto o
+         di un tentativo vecchio come se fosse audio valido (Review finale,
+         Minor F4). Qui si logga e si solleva, cosi' il job fallisce in modo
+         tracciabile invece di un capitolo muto consegnato all'utente.
+    """
+    if i in voxcpm_pre:
+        return voxcpm_pre[i]
+    if i in reusable_chunks:
+        return {"reused": True}
+    print(f"[{job_id}] VoxCPM: chunk {i} assente dalla pre-sintesi e non nel "
+          f"piano di riuso — non e' un audio riusato, e' un chunk perso",
+          flush=True)
+    raise voxcpm_tts.VoxcpmJobError(
+        f"chunk {i} assente dalla pre-sintesi VoxCPM (job {job_id}): "
+        f"non riusabile e mai sintetizzato")
 
 
 # ---------------------------------------------------------------------------
@@ -4790,7 +4840,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # chunk di coda quel file e' vuoto ed e' corretto che lo sia,
                 # perche' l'audio del capitolo sta tutto sul primo.
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
-                return _voxcpm_pre.get(i, {"reused": True}), part_path
+                return _voxcpm_chunk_result(i, _voxcpm_pre, _reusable_chunks,
+                                            job_id), part_path
             if use_speechify:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                 pre = _speechify_pre.get(i)

@@ -304,12 +304,74 @@ def test_capitolo_perso_a_meta_libro_lascia_le_statistiche_dei_capitoli_gia_fatt
     assert job["voxcpm_actual"]["tts_seconds"] == 1.0
 
 
+def test_capitolo_0_perso_non_perde_le_statistiche_dei_capitoli_dopo_in_concorrenza(
+        tmp_path, monkeypatch):
+    # Review finale, Important F1: con `_ex.map`, il capitolo fallito e' il
+    # PRIMO in ordine di sottomissione (capitolo 0) e il generatore solleva
+    # subito al primo next() -> il corpo del for non gira nemmeno una volta,
+    # e i capitoli 1-3 (gia' completati o in corso su altri worker, perche'
+    # ABM_VOXCPM_JOBS=4 li sottomette tutti insieme) spariscono dall'audit
+    # anche se il worker li ha davvero fatturati. Con `as_completed` ogni
+    # esito si accumula appena arriva, indipendentemente dall'ordine.
+    piano4 = [blocco("cap0", 0), blocco("cap1", 1),
+             blocco("cap2", 2), blocco("cap3", 3)]
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        if "ch000000.pcm" in kw.get("key", ""):
+            raise voxcpm_tts.VoxcpmJobError("chunk a silenzio")
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
+                "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "4")   # sottomessi tutti insieme
+    job = {}
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        generation_engine._voxcpm_pre_pass(piano4, VOCE, "+0%", tmp_path,
+                                           "job-1", set(), job=job)
+    # Capitoli 1, 2 e 3 (4 caratteri ciascuno, "cap1"/"cap2"/"cap3") sono
+    # riusciti: le loro misure GPU devono restare nell'audit anche se il
+    # capitolo 0 -- primo in ordine di sottomissione -- e' quello fallito.
+    assert job["voxcpm_actual"]["chars"] == 12
+    assert job["voxcpm_actual"]["jobs"] == 3
+    assert job["voxcpm_actual"]["tts_seconds"] == 1.5
+
+
 def test_job_none_non_rompe_la_pre_sintesi(tmp_path, sintesi_finta):
     # Compatibilita': tutte le chiamate dirette esistenti non passano `job=`,
     # e devono continuare a funzionare esattamente come prima.
     pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
                                              "job-1", set())
     assert sorted(pre) == [0, 1, 2, 3, 4, 5]
+
+
+def test_indice_presente_nella_pre_sintesi_torna_il_suo_esito():
+    pre = {0: {"chars": 2, "bytes": 4}}
+    assert generation_engine._voxcpm_chunk_result(0, pre, set(), "job-1") == pre[0]
+
+
+def test_indice_assente_ma_nel_piano_di_riuso_e_un_riuso_legittimo():
+    # Il caso normale: il capitolo era gia' su disco da un tentativo
+    # precedente e non e' mai entrato nella pre-sintesi apposta.
+    assert generation_engine._voxcpm_chunk_result(
+        3, {}, {3, 4}, "job-1") == {"reused": True}
+
+
+def test_indice_assente_e_fuori_dal_piano_di_riuso_solleva(capsys):
+    # Review finale, Minor F4: un indice mancante nella pre-pass che NON e'
+    # nemmeno un riuso legittimo non deve degradare in silenzio a un audio
+    # "riusato" muto (il file-parte resterebbe vuoto o di un tentativo
+    # vecchio, consegnato come se fosse valido).
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        generation_engine._voxcpm_chunk_result(5, {0: {}}, {0, 1}, "job-9")
+    assert "5" in str(e.value)
+    assert "job-9" in str(e.value)
+    out = capsys.readouterr().out
+    assert "5" in out and "job-9" in out
 
 
 def test_riuso_capitolo_completo_non_richiama_il_worker_ne_lo_fattura(tmp_path, sintesi_finta):
