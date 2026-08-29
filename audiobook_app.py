@@ -721,6 +721,61 @@ def _quota_client_id(job=None):
     return cid or _get_client_id()
 
 
+def _pricing_chapters(job_id, job, chapters):
+    """Capitoli con TESTO GARANTITO, da usare in ogni calcolo di prezzo.
+
+    Su un job gia' passato da uno stato terminale (done/partial/error/
+    cancelled) i testi capitolo sono serializzati su disco e svuotati dalla RAM
+    (`generation_engine.spill_job_texts`): `ch.text` e' "" mentre `ch.char_count`
+    conserva la lunghezza reale. Stimare su quei capitoli produce un prezzo di
+    listino ~0 -> la decisione quota lo dichiara sotto soglia -> la voce PREMIUM
+    parte SENZA pagamento, e subito dopo `run_generation` reidrata i testi e
+    sintetizza il libro intero (incidente Q9lQN3RrapCvGLSonVnzmA: job da 50k+
+    caratteri quotato 0,35€ di listino, costo reale a doppia cifra).
+
+    Ritorna copie superficiali dei capitoli con il testo riletto dallo spill:
+    il job NON viene reidratato (nessun ritorno dei testi in RAM) e gli oggetti
+    originali non vengono mutati.
+    """
+    if not isinstance(job, dict) or not job.get("_texts_spilled"):
+        return chapters
+    try:
+        texts = generation_engine.chapter_texts(job_id, job)
+    except Exception as e:
+        print(f"[{job_id}] _pricing_chapters: rilettura spill fallita: {e}", flush=True)
+        return chapters
+    out = []
+    for ch in chapters:
+        txt = texts.get(getattr(ch, "index", None)) or getattr(ch, "text", "") or ""
+        if txt == (getattr(ch, "text", "") or ""):
+            out.append(ch)
+            continue
+        ch2 = copy(ch)
+        try:
+            ch2.text = txt
+        except Exception:
+            out.append(ch)
+            continue
+        out.append(ch2)
+    return out
+
+
+def _assert_priced_on_real_text(job_id, chapters, chars_priced):
+    """Fail-closed: il prezzo non deve MAI essere calcolato su testo mancante.
+
+    Difesa in profondita' dietro `_pricing_chapters`: se i capitoli dichiarano
+    caratteri (`char_count`, che sopravvive allo spill) ma il testo effettivamente
+    quotato e' vuoto, la stima e' priva di significato e regalerebbe un job
+    PREMIUM. Meglio un errore esplicito che una generazione gratuita.
+    """
+    declared = sum(getattr(ch, "char_count", 0) or 0 for ch in chapters)
+    if declared > 0 and (chars_priced or 0) <= 0:
+        print(f"[{job_id}] PREZZO SU TESTO VUOTO: {declared} char dichiarati, "
+              f"0 quotati -> richiesta rifiutata (fail-closed)", flush=True)
+        return False
+    return True
+
+
 def _free_quota_log(job_id, decision, charged=False):
     """Traccia la decisione di quota su stdout (best-effort)."""
     try:
@@ -9906,6 +9961,10 @@ def api_generate():
             chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
         else:
             chs_pre = all_chs_pre
+        # Job gia' terminale: i testi sono spillati su disco e `ch.text` e' ""
+        # in RAM. Senza questa rilettura la stima sotto vale ~0 e la voce
+        # PREMIUM parte gratis (vedi _pricing_chapters).
+        chs_pre = _pricing_chapters(job_id, job, chs_pre)
         # Cap caratteri PRIMA di qualsiasi prenotazione budget o consumo del
         # pagamento. Per le voci PREMIUM il cap (MAX_GEMINI_TEXT_CHARS) e` piu`
         # restrittivo: verificarlo qui garantisce che un libro troppo grande non
@@ -9951,6 +10010,12 @@ def api_generate():
             job["gemini_estimate"] = est_pre
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
+        # Fail-closed: se i capitoli dichiarano caratteri ma la stima ne ha
+        # quotati zero, il prezzo e` finto e la voce PREMIUM partirebbe gratis.
+        if not _assert_priced_on_real_text(job_id, chs_pre,
+                                           est_pre.get("chars_total", 0)):
+            return jsonify({"error": "Cost estimate unavailable, please retry.",
+                            "error_code": "estimate_failed"}), 500
         llm_eur_pre = 0.0
         if data.get("ai_opt_enabled"):
             chars_pre = sum(len(getattr(c, "text", "") or "") for c in chs_pre)
@@ -10228,6 +10293,8 @@ def api_generate():
             chs_pre = [_by_index_pre[i] for i in sel if i in _by_index_pre]
         else:
             chs_pre = all_chs_pre
+        # Vedi nota nel ramo Gemini: su job spillato `ch.text` e' vuoto in RAM.
+        chs_pre = _pricing_chapters(job_id, job, chs_pre)
         # Cap caratteri PRIMA di consumare il pagamento (stessa motivazione del
         # ramo Gemini sopra: evita di trattenere denaro per un job che verra'
         # comunque rifiutato dal cap a valle).
@@ -10252,6 +10319,11 @@ def api_generate():
             job["speechify_estimate"] = est_pre
         except Exception as e:
             return jsonify({"error": f"estimate failed: {e}"}), 500
+        # Fail-closed: vedi nota nel ramo Gemini.
+        if not _assert_priced_on_real_text(job_id, chs_pre,
+                                           est_pre.get("chars_total", 0)):
+            return jsonify({"error": "Cost estimate unavailable, please retry.",
+                            "error_code": "estimate_failed"}), 500
         speechify_eur_pre = round(est_pre["user_price_eur"], 2)
         llm_eur_pre = 0.0
         if data.get("ai_opt_enabled"):
@@ -11982,6 +12054,9 @@ def api_gemini_estimate():
         chs = all_chs
     if not chs:
         return jsonify({"error": "no chapters selected"}), 400
+    # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in RAM.
+    # Senza rilettura la stima vale ~0 e la voce PREMIUM risulta gratis.
+    chs = _pricing_chapters(job_id, job, chs)
 
     # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
     # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
@@ -12043,6 +12118,9 @@ def api_combined_estimate():
         chs = all_chs
     if not chs:
         return jsonify({"error": "no chapters"}), 400
+    # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in RAM.
+    # Senza rilettura la stima vale ~0 e la voce PREMIUM risulta gratis.
+    chs = _pricing_chapters(job_id, job, chs)
 
     # Lingua: priorita` (1) override UI da "Impostazioni audio" > (2) metadata
     # libro > (3) "it". L'UI vince perche' governa anche cluster rate-log e
@@ -12236,6 +12314,9 @@ def api_paypal_create_order_gemini():
         chs = all_chs
     if not chs:
         return jsonify({"error": "no chapters"}), 400
+    # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in RAM.
+    # Senza rilettura la stima vale ~0 e la voce PREMIUM risulta gratis.
+    chs = _pricing_chapters(job_id, job, chs)
 
     # Cap caratteri PRIMA di creare l'ordine PayPal. Un libro che supera il cap
     # della voce PREMIUM (MAX_GEMINI_TEXT_CHARS, default 800k) non potra` mai
@@ -12597,6 +12678,9 @@ def api_optimize():
             _chs_for_est = [_by_idx[i] for i in _sel_list if i in _by_idx]
         else:
             _chs_for_est = _all_chs
+        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
+        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
+        _chs_for_est = _pricing_chapters(job_id, job, _chs_for_est)
         try:
             _est_gemini = gemini_tts.estimate_book_cost(
                 _chs_for_est, _voice_for_est,
@@ -12605,10 +12689,14 @@ def api_optimize():
             _gemini_eur_quota = round(_est_gemini.get("user_price_eur", 0.0), 2)
             _gemini_list_quota = round(_est_gemini.get("list_price_eur", 0.0), 2)
         except Exception as _e_est:
-            print(f"[{job_id}] combined-payment estimate failed: {_e_est}")
-            _est_gemini = None
-            _gemini_eur_quota = 0.0
-            _gemini_list_quota = 0.0
+            # FAIL-CLOSED. Azzerare la stima qui mandava il listino sotto
+            # soglia -> la voce PREMIUM partiva GRATIS (stesso esito
+            # dell'incidente Q9lQN3RrapCvGLSonVnzmA). /api/generate rifiuta
+            # gia' in questo caso: qui allineato.
+            print(f"[{job_id}] combined-payment estimate failed: {_e_est}", flush=True)
+            _release_opt_claim()
+            return jsonify({"error": "Cost estimate unavailable, please retry.",
+                            "error_code": "estimate_failed"}), 500
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _quota_cid = _quota_client_id(job)
         _quota_dec = _premium_quota_decision(
@@ -12766,15 +12854,19 @@ def api_optimize():
             _chs_for_est_spx = [_by_idx_spx[i] for i in _sel_list_spx if i in _by_idx_spx]
         else:
             _chs_for_est_spx = _all_chs_spx
+        # Job gia' terminale: testi spillati su disco, `ch.text` vuoto in
+        # RAM. Senza rilettura la stima vale ~0 (voce PREMIUM gratis).
+        _chs_for_est_spx = _pricing_chapters(job_id, job, _chs_for_est_spx)
         try:
             _est_spx = speechify_tts.estimate_book_cost(_chs_for_est_spx, language="en")
             _speechify_eur_quota = round(_est_spx.get("user_price_eur", 0.0), 2)
             _speechify_list_quota = round(_est_spx.get("list_price_eur", 0.0), 2)
         except Exception as _e_est_spx:
-            print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}")
-            _est_spx = None
-            _speechify_eur_quota = 0.0
-            _speechify_list_quota = 0.0
+            # FAIL-CLOSED: vedi nota nel ramo Gemini.
+            print(f"[{job_id}] combined-payment speechify estimate failed: {_e_est_spx}", flush=True)
+            _release_opt_claim()
+            return jsonify({"error": "Cost estimate unavailable, please retry.",
+                            "error_code": "estimate_failed"}), 500
         # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
         _voice_spx = data.get("voice", "")
         _quota_cid_spx = _quota_client_id(job)
