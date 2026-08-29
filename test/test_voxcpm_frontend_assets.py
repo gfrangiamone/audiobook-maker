@@ -4,6 +4,7 @@ Asserzioni statiche sul sorgente, come test_speechify_frontend_assets.py: nel
 progetto non c'e' un runner JS, e questi test difendono la presenza dei
 meccanismi, non il loro comportamento a runtime.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,10 +52,28 @@ def test_il_modello_dipende_dalla_disponibilita_del_motore():
 def test_i_caratteri_arrivano_dal_catalogo():
     # D10: un carattere nuovo non deve richiedere un rilascio. Se comparisse
     # un array di caratteri nel sorgente, sarebbe la firma dell'errore.
-    assert "personas" in JS
+    assert "_VOXCPM_PERSONAS" not in JS
+    assert "_VOXCPM_ACCENTS" not in JS
     for cablato in ("audiobook-slow", "grave-narrator", "warm-pro",
                     "neutral-pro", "casual-drawl"):
         assert cablato not in JS, f"carattere cablato nel sorgente: {cablato}"
+    # Negativa e reale: nel blocco di funzioni VoxCPM non deve comparire un
+    # letterale array di stringhe-carattere/locale (la forma di un catalogo
+    # cablato, es. ["warm-young", "grave-narrator", ...] o ["en-US","en-GB"]).
+    i_blocco = JS.find("function _isVoxcpmVoiceId")
+    j_blocco = JS.find("function _populateSpeechifyEmotions", i_blocco)
+    assert i_blocco != -1 and j_blocco != -1 and i_blocco < j_blocco
+    blocco = JS[i_blocco:j_blocco]
+    array_cablato = re.search(r"\[\s*['\"][a-zA-Z][\w]*-[\w-]+['\"]\s*,", blocco)
+    assert array_cablato is None, f"array cablato nel blocco VoxCPM: {array_cablato}"
+    # Positiva: i due popolatori leggono .persona/.locale dalle voci del
+    # catalogo (l'unica fonte ammessa), non da una tabella locale.
+    i_car = JS.find("function _populateVoxcpmCharacters")
+    assert i_car != -1
+    assert "v.persona" in JS[i_car:i_car + 900]
+    i_acc = JS.find("function _populateVoxcpmAccents")
+    assert i_acc != -1
+    assert "v.locale" in JS[i_acc:i_acc + 900]
 
 
 def test_i_locali_voxcpm_arrivano_dal_catalogo():
@@ -75,6 +94,26 @@ def test_carattere_si_allinea_alla_voce_e_non_si_svuota():
     # §5.3: alla selezione di una voce, CARATTERE mostra il valore di quella
     # voce. E' un'etichetta, non un'alternativa.
     assert "_syncVoxcpmCharacterToVoice" in JS
+
+
+def test_il_campione_si_ferma_lasciando_voxcpm():
+    # Il campione non deve continuare a suonare dietro una riga hidden: sia
+    # cambiando modello (VoxCPM -> Gemini/Simba) sia cambiando tab
+    # (Premium -> Standard) il player va messo in pausa.
+    i_pause = JS.find("function _pauseVoxcpmSample")
+    assert i_pause != -1
+    assert "voxcpmSample" in JS[i_pause:i_pause + 300]
+    assert ".pause()" in JS[i_pause:i_pause + 300]
+
+    i_model = JS.find("function _onPremiumModelChanged")
+    j_model = JS.find("\nfunction ", i_model + 1)
+    assert i_model != -1 and j_model != -1
+    assert "_pauseVoxcpmSample" in JS[i_model:j_model]
+
+    i_tab = JS.find("function switchAudioTab")
+    j_tab = JS.find("\nfunction ", i_tab + 1)
+    assert i_tab != -1 and j_tab != -1
+    assert "_pauseVoxcpmSample" in JS[i_tab:j_tab]
 
 
 def test_l_anteprima_lascia_il_posto_al_campione():

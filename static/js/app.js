@@ -1174,10 +1174,15 @@ function _onPremiumModelChanged(){
     _populateVoxcpmCharacters();
     if(accentRow)accentRow.hidden=false;
   }else if(simba){
+    // Si lascia VoxCPM (verso Simba): la riga campione sparisce, e il player
+    // non deve continuare a suonare invisibile dietro di essa.
+    _pauseVoxcpmSample();
     _populateSpeechifyAccents();
     _populateSpeechifyEmotions();
     if(accentRow)accentRow.hidden=false;   // accento (locale) sempre visibile per Simba
   }else{
+    // Si lascia VoxCPM (verso Gemini), stessa ragione del ramo Simba sopra.
+    _pauseVoxcpmSample();
     // Gemini: ripristina l'accento gemini gestito da _updateAccentDropdown().
     if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
   }
@@ -1275,7 +1280,7 @@ function _populateVoxcpmCharacters(){
 }
 
 // Etichetta leggibile di un carattere. Il Task 13 la sostituisce con la
-// catena dizionario -> voices._voxcpm.personas (dal catalogo) -> chiave.
+// catena dizionario -> stringhe del catalogo -> chiave.
 // Nota su t(): quando non trova la chiave la restituisce tal quale, quindi
 // il confronto con la chiave e' l'unico modo di sapere se ha tradotto.
 function _voxcpmPersonaLabel(chiave){
@@ -1330,6 +1335,19 @@ function _loadVoxcpmSample(){
   audio.pause();
   if(v&&v.sample_url){audio.src=v.sample_url;}
   else{audio.removeAttribute('src');}
+  audio.load();
+}
+
+// Ferma il campione VoxCPM quando la riga che lo contiene sparisce: cambio
+// modello (VoxCPM -> Gemini/Simba) o cambio tab (Premium -> Standard). Senza
+// questo l'audio continua a suonare dietro una riga hidden — il player e'
+// invisibile ma non muto. pause()+removeAttribute('src')+load() per non
+// lasciare nemmeno il buffer scaricato appeso al player.
+function _pauseVoxcpmSample(){
+  const audio=document.getElementById('voxcpmSample');
+  if(!audio)return;
+  audio.pause();
+  audio.removeAttribute('src');
   audio.load();
 }
 
@@ -1622,6 +1640,10 @@ function switchAudioTab(tab){
     // del tab attivo: se la firma è in _knownPreviewSigs ricarica l'audio,
     // altrimenti nasconde il player ma NON cancella le firme note.
     const a=document.getElementById('previewAudioWiz');if(a)a.pause();
+    // Uscendo dal tab Premium il campione VoxCPM smette di suonare: stessa
+    // ragione dell'anteprima sopra, non deve restare vivo dietro un tab
+    // nascosto (tabPremium.hidden=true).
+    if(tab!=='premium'&&typeof _pauseVoxcpmSample==='function')_pauseVoxcpmSample();
     if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
