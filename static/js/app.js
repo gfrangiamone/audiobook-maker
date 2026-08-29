@@ -1300,14 +1300,16 @@ function _voxcpmPersonaLabel(chiave,voce){
 // Intl.DisplayNames — che il browser localizza nella lingua dell'interfaccia
 // e che copre i locali di domani senza righe nuove (D10) — e infine il
 // codice grezzo, che e' brutto ma non e' mai sbagliato.
+let _voxcpmDnCache=null,_voxcpmDnCacheLang=null; // un Intl.DisplayNames per lingua UI, non uno per chiamata
 function _voxcpmLocaleLabel(loc){
   if(!loc)return '';
   const k='accent_'+String(loc).toLowerCase().replace(/-/g,'_');
   const tradotta=t(k);
   if(tradotta&&tradotta!==k)return tradotta;
   try{
-    const dn=new Intl.DisplayNames([cl||'en'],{type:'language'});
-    const nome=dn.of(loc);
+    const lang=cl||'en';
+    if(_voxcpmDnCacheLang!==lang){_voxcpmDnCache=new Intl.DisplayNames([lang],{type:'language'});_voxcpmDnCacheLang=lang;}
+    const nome=_voxcpmDnCache.of(loc);
     if(nome&&nome!==loc)return nome;
   }catch(e){/* Intl assente o locale non riconosciuto: si scende. */}
   return loc;
