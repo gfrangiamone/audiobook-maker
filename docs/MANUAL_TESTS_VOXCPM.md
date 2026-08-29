@@ -86,6 +86,11 @@ dovesse ripetersi.
    chunk di testa e tutte le sue code sono già su disco. Cancella a mano la
    coda di un capitolo dalla cartella di lavoro e rigenera: quel capitolo
    viene rifatto per intero, non a metà. → _atteso: sì_
+   La cartella di lavoro è la directory di upload configurata (`_upload_dir`
+   in `generation_engine.py`) seguita dall'id del job, cioè
+   `<upload_dir>/<job_id>` (vedi `work_dir = _upload_dir / job_id` in
+   `generation_engine.py`, ad es. riga 4492); i chunk VoxCPM ci stanno come
+   `chunk_XXXXXX.pcm`.
 
 ## 7. L'audit dice la verità
 
