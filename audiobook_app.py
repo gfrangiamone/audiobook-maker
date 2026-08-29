@@ -6006,6 +6006,7 @@ def admin_audit_premium_page():
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
+          <option value="v2">VoxCPM v2 (PREMIUM)</option>
         </select>
       </div>
       <div>
@@ -6869,14 +6870,14 @@ _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
 
 
 def _synth_running_gemini_audit_records():
-    """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba) in forma
-    audit-shaped.
+    """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba + VoxCPM) in
+    forma audit-shaped.
 
     Permette a /admin/audit-tts di mostrare una riga immediatamente all'avvio
     di una generazione Premium, aggiornata ad ogni refresh con i dati di costo
-    accumulati in `job["gemini_actual"]` (Gemini) o `job["speechify_actual"]`
-    (Simba). Quando il job termina, la riga "running" sparisce e viene
-    rimpiazzata dal record persistito nel JSONL.
+    accumulati in `job["gemini_actual"]` (Gemini), `job["speechify_actual"]`
+    (Simba) o `job["voxcpm_actual"]` (VoxCPM). Quando il job termina, la riga
+    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
     """
     out = []
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -6930,6 +6931,26 @@ def _synth_running_gemini_audit_records():
                 chars_total = int(ga.get("chars", 0) or 0)
                 audio_seconds = float(ga.get("audio_seconds", 0) or 0)
                 pricing_cost_field = pricing_cost_actual
+            elif is_vox:
+                # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
+                # dai caratteri col tariffario VoxCPM, mai quello di Speechify
+                # (altrimenti la riga live mostra costo 0 e delta_eur negativo
+                # quanto l'incasso, e sballa l'aggregato della pagina).
+                va = job.get("voxcpm_actual") or {}
+                chars_metered = int(va.get("chars", 0) or 0)
+                try:
+                    price = voxcpm_tts.compute_user_price_eur(chars_metered)
+                    provider_cost_actual = float(price.get("cost_usd", 0.0) or 0.0) * float(
+                        speechify_tts.usd_eur_rate())
+                    should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+                except Exception:
+                    provider_cost_actual = 0.0
+                    should_have_been = 0.0
+                if model_key == "?":
+                    model_key = "v2"
+                chars_total = chars_metered
+                audio_seconds = float(va.get("audio_seconds", 0) or 0)
+                pricing_cost_field = provider_cost_actual
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)

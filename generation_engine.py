@@ -3284,7 +3284,7 @@ def _voxcpm_chapter_groups(plan, reusable):
 
 
 def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
-                     cancelled=None):
+                     cancelled=None, job=None):
     """Sintetizza il libro un capitolo per job. Ritorna {indice_chunk: esito}.
 
     Gemella della pre-sintesi Speechify poco piu' sotto, con un'unita' diversa:
@@ -3299,6 +3299,13 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     Chiedere al worker le lunghezze dei singoli chunk vorrebbe dire modificare
     `abm-voxcpm-worker`, che la spec mette fra i non toccati.
 
+    `job`, se passato, riceve `job["voxcpm_actual"]` aggiornato capitolo per
+    capitolo, DENTRO lo stesso loop che raccoglie `esiti` (non a fine
+    funzione): se un capitolo successivo solleva (annullamento o ritentativi
+    esauriti), le misure dei capitoli gia' completati non vanno perse. Senza
+    questo, un job cancellato/fallito a meta' libro auditerebbe zero
+    caratteri e zero costo, anche quando il worker ha davvero fatturato GPU.
+
     Raises:
         _CancelledError: annullamento richiesto.
         voxcpm_tts.VoxcpmJobError: capitolo perso a ritentativi esauriti. E'
@@ -3308,6 +3315,11 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
 
     gruppi = _voxcpm_chapter_groups(plan, reusable)
     esiti = {}
+    if job is not None:
+        job.setdefault("voxcpm_actual", {
+            "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
+            "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
+        })
 
     def _uno(gruppo):
         ci, indici = gruppo
@@ -3350,6 +3362,15 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             for posto, i in enumerate(indici):
                 if posto == 0:
                     esiti[i] = stats
+                    if job is not None:
+                        _va = job["voxcpm_actual"]
+                        _va["chars"] += int(stats.get("chars", 0) or 0)
+                        _va["audio_seconds"] += float(stats.get("audio_seconds", 0) or 0)
+                        _va["tts_seconds"] += float(stats.get("tts_seconds", 0) or 0)
+                        _va["jobs"] += int(stats.get("jobs", 0) or 0)
+                        _va["redone"] += int(stats.get("redone", 0) or 0)
+                        _va["bounced"] += int(stats.get("bounced", 0) or 0)
+                        _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
                     continue
                 # Coda del capitolo: file vuoto, e un esito a zero perche' le
                 # misure del capitolo sono gia' contate sul primo chunk.
@@ -3783,6 +3804,22 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
         except Exception:
             provider_cost_eur = 0.0
             should_have_been = 0.0
+
+        # Costo provider STIMATO (EUR) dallo snapshot pre-generazione, se
+        # presente (lockato in /api/optimize o popolato nel path auto-gen).
+        # Stessa parita' con `_write_speechify_audit`: audio_seconds_est non
+        # si applica a VoxCPM (modello char-based, nessuna stima di durata)
+        # e resta 0. Nessuna stima disponibile -> 0.0 (invariato).
+        _vox_est = job.get("voxcpm_estimate") or {}
+        provider_cost_eur_est = 0.0
+        try:
+            _cost_usd_est = float(_vox_est.get("cost_usd", 0.0) or 0.0)
+            if _cost_usd_est > 0:
+                provider_cost_eur_est = round(
+                    _cost_usd_est * float(speechify_tts.usd_eur_rate()), 4)
+        except Exception:
+            provider_cost_eur_est = 0.0
+
         delta_eur = round(should_have_been - charged, 4)
         delta_pct = (round((delta_eur / provider_cost_eur * 100), 2)
                      if provider_cost_eur > 0 else 0.0)
@@ -3807,7 +3844,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "output_tokens_actual": 0,
             "audio_seconds_est": 0.0,
             "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
-            "google_cost_eur_est": 0.0,
+            "google_cost_eur_est": provider_cost_eur_est,
             "google_cost_eur_actual": round(provider_cost_eur, 4),
             "user_price_eur_charged": charged,
             "user_price_eur_should_have_been": round(should_have_been, 2),
@@ -3840,10 +3877,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
-        try:
-            _free_thr = float(os.environ.get("ABM_VOXCPM_FREE_THRESHOLD_EUR", "0.50"))
-        except (TypeError, ValueError):
-            _free_thr = 0.50
+        _free_thr = voxcpm_tts.free_threshold_eur()
         if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
             print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
                   f"({should_have_been:.2f}€) senza pagamento registrato "
@@ -4928,24 +4962,15 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         if use_voxcpm:
             job["progress_message"] = (
                 "Accensione del motore vocale, circa tre minuti...")
+            # Misure reali del worker: `job["voxcpm_actual"]` viene costruito
+            # DENTRO `_voxcpm_pre_pass`, capitolo per capitolo, cosi' resta
+            # corretto anche se il libro si interrompe a meta' (annullamento
+            # o capitolo perso a ritentativi esauriti) — vedi Important 1
+            # della review del Task 11: sommarlo solo qui, a fine chiamata,
+            # perdeva tutto il lavoro gia' fatturato su un'eccezione.
             _voxcpm_pre = _voxcpm_pre_pass(
                 plan, voice, rate, work_dir, job_id, _reusable_chunks,
-                cancelled=_check_cancelled)
-            # Misure reali del worker, sommate sui capitoli: e' la base
-            # dell'audit (§8.4). Solo i chunk di testa portano numeri; quelli
-            # di coda hanno esiti a zero e sommarli e' innocuo.
-            job["voxcpm_actual"] = {
-                "chars": sum(int(v.get("chars", 0) or 0) for v in _voxcpm_pre.values()),
-                "audio_seconds": round(sum(float(v.get("audio_seconds", 0) or 0)
-                                           for v in _voxcpm_pre.values()), 2),
-                "tts_seconds": round(sum(float(v.get("tts_seconds", 0) or 0)
-                                         for v in _voxcpm_pre.values()), 2),
-                "jobs": sum(int(v.get("jobs", 0) or 0) for v in _voxcpm_pre.values()),
-                "redone": sum(int(v.get("redone", 0) or 0) for v in _voxcpm_pre.values()),
-                "bounced": sum(int(v.get("bounced", 0) or 0) for v in _voxcpm_pre.values()),
-                "failed_chunks": sum(int(v.get("failed_chunks", 0) or 0)
-                                     for v in _voxcpm_pre.values()),
-            }
+                cancelled=_check_cancelled, job=job)
             job["progress_message"] = "Assembling audio..."
 
         # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata

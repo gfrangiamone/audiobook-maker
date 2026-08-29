@@ -5,14 +5,19 @@ campo che l'aggregato legge come costo vivo, e che i secondi di GPU restino
 scritti per poter ricalcolare domani.
 """
 import json
-import os
 
 import pytest
 
 import generation_engine
 import gemini_cost_audit
+import audiobook_app
 
 VOCE = "voxcpm:v2:it-IT/Stefano"
+
+
+class _Info:
+    language = "it-IT"
+    title = "Libro di prova"
 
 
 @pytest.fixture
@@ -115,3 +120,88 @@ def test_un_job_gratis_sopra_soglia_lascia_traccia(audit_isolato, capsys):
     generation_engine._write_voxcpm_audit("job-1", job_finito(charged=0.0),
                                           VOCE, "it", "completed")
     assert "AUDIT WARNING" in capsys.readouterr().out
+
+
+def test_la_stima_pre_generazione_finisce_nel_campo_est(audit_isolato):
+    # Review Task 11, Minor 1: job["voxcpm_estimate"] e' persistito da
+    # /api/generate e /api/optimize proprio per questo campo (parita' con
+    # _write_speechify_audit che legge job["speechify_estimate"]): prima di
+    # questa correzione google_cost_eur_est restava sempre 0.0.
+    job = job_finito()
+    job["voxcpm_estimate"] = {"chars_total": 250_000, "cost_usd": 0.2275,
+                              "list_price_eur": 1.00, "user_price_eur": 1.00,
+                              "is_free": False, "language": "it",
+                              "model_key": "v2", "model_label": "VoxCPM v2"}
+    generation_engine._write_voxcpm_audit("job-1", job, VOCE, "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["google_cost_eur_est"] > 0.0
+    assert r["audio_seconds_est"] == 0.0   # VoxCPM e' char-based, nessuna stima di durata
+
+
+def test_nessuna_stima_disponibile_resta_a_zero(audit_isolato):
+    # Non-regressione: senza job["voxcpm_estimate"] (job creati prima di
+    # /api/optimize, o path che non lo popola) il campo est resta 0.0 come
+    # prima, non solleva.
+    generation_engine._write_voxcpm_audit("job-1", job_finito(), VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["google_cost_eur_est"] == 0.0
+
+
+def test_capitolo_perso_a_meta_libro_lascia_traccia_nell_audit_del_rimborso(audit_isolato):
+    # Review Task 11, Important 1 (seconda meta'): il job passato all'audit
+    # e' esattamente cio' che _voxcpm_pre_pass ha accumulato incrementalmente
+    # in job["voxcpm_actual"] prima di sollevare VoxcpmJobError - qui si
+    # verifica solo che _write_voxcpm_audit non azzeri quelle statistiche
+    # parziali quando l'outcome e' un fallimento rimborsato.
+    job = {
+        "voxcpm_actual": {"chars": 3, "audio_seconds": 2.0, "tts_seconds": 1.0,
+                          "jobs": 2, "redone": 0, "bounced": 0, "failed_chunks": 0},
+        "payment": {"total_eur": 0.0, "method": "", "source": "", "token": ""},
+        "rate": "+0%",
+    }
+    generation_engine._write_voxcpm_audit("job-1", job, VOCE, "it",
+                                          "failed_refunded")
+    r = leggi(audit_isolato)[0]
+    assert r["outcome"] == "failed_refunded"
+    assert r["chars_total"] == 3
+    assert r["worker_jobs"] == 2
+
+
+def test_riga_live_di_un_job_voxcpm_in_corso_usa_il_tariffario_voxcpm(monkeypatch):
+    # Review Task 11, Important 2: prima della correzione un job VoxCPM in
+    # corso finiva nel ramo "else: # Speechify / Simba" di
+    # _synth_running_gemini_audit_records, leggeva job["speechify_actual"]
+    # (vuoto per un job VoxCPM) e prezzava con speechify_tts.compute_user_
+    # price_eur(0) -> riga a costo 0 e delta_eur = -incassato.
+    # rate_eur_per_mchar() e' 0.0 (motore "nascosto") senza questo env var:
+    # senza tariffa il dovuto resta 0 a prescindere dal ramo, e la prova
+    # perderebbe di senso.
+    monkeypatch.setenv("ABM_VOXCPM_RATE_EUR_PER_MCHAR", "4.00")
+    jid = "Jvoxlive"
+    job = {
+        "status": "generating",
+        "voice": VOCE,
+        "info": _Info(),
+        # 250k char, come job_finito(): abbastanza sopra la soglia gratuita
+        # da rendere il "dovuto" un numero positivo confrontabile, non 0.
+        "voxcpm_actual": {"chars": 250_000, "audio_seconds": 9000.0,
+                          "tts_seconds": 315.0, "jobs": 12, "redone": 1,
+                          "bounced": 3, "failed_chunks": 0},
+        "payment": {"total_eur": 0.9, "method": "paypal"},
+        "rate": "+0%",
+    }
+    monkeypatch.setitem(audiobook_app.jobs, jid, job)
+    try:
+        rows = audiobook_app._synth_running_gemini_audit_records()
+        row = next(r for r in rows if r.get("job_id") == jid)
+        assert row["model_key"] == "v2"
+        assert row["outcome"] == "running"
+        assert row["chars_total"] == 250_000
+        assert row["user_price_eur_charged"] == 0.9
+        # Con job["speechify_actual"] assente (ramo sbagliato) sarebbe stato
+        # costo 0 e dovuto 0: qui devono essere entrambi positivi.
+        assert row["google_cost_eur_actual"] > 0
+        assert row["user_price_eur_should_have_been"] > 0
+    finally:
+        audiobook_app.jobs.pop(jid, None)

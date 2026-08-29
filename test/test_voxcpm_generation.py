@@ -269,6 +269,49 @@ def test_concorrenza_capitoli_limitata_da_abm_voxcpm_jobs(tmp_path, monkeypatch)
     assert stato["picco"] == 2
 
 
+def test_capitolo_perso_a_meta_libro_lascia_le_statistiche_dei_capitoli_gia_fatti(
+        tmp_path, monkeypatch):
+    # Review Task 11, Important 1: se il libro si ferma a meta' per un
+    # capitolo perso a ritentativi esauriti, le statistiche dei capitoli GIA'
+    # completati non devono sparire - job["voxcpm_actual"] e' cio' che
+    # l'audit del rimborso (§9.4) legge per sapere quanto e' stato davvero
+    # prodotto prima dello stop, non solo quanto e' stato pagato.
+    chiamate = []
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        chiamate.append(list(chunks))
+        if len(chiamate) == 3:
+            raise voxcpm_tts.VoxcpmJobError("chunk a silenzio")
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
+                "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # sequenziale: ordine deterministico
+    job = {}
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                           "job-1", set(), job=job)
+    # Capitolo 0 ("a"+"b" = 2 char, 1 job) e capitolo 1 ("c" = 1 char, 1 job)
+    # sono gia' passati prima che il capitolo 2 sollevasse l'errore: 3 char e
+    # 2 job totali devono restare, non azzerarsi.
+    assert job["voxcpm_actual"]["chars"] == 3
+    assert job["voxcpm_actual"]["jobs"] == 2
+    assert job["voxcpm_actual"]["tts_seconds"] == 1.0
+
+
+def test_job_none_non_rompe_la_pre_sintesi(tmp_path, sintesi_finta):
+    # Compatibilita': tutte le chiamate dirette esistenti non passano `job=`,
+    # e devono continuare a funzionare esattamente come prima.
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path,
+                                             "job-1", set())
+    assert sorted(pre) == [0, 1, 2, 3, 4, 5]
+
+
 def test_riuso_capitolo_completo_non_richiama_il_worker_ne_lo_fattura(tmp_path, sintesi_finta):
     # Capitolo 0 (chunk 0,1) gia' completo su disco: chunk_reuse deve
     # segnalarlo riusabile, e la pre-sintesi deve saltarlo del tutto (non
