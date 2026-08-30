@@ -401,13 +401,35 @@ def _title_already_in_text(title, text, lookahead_chars=300):
 
 
 def _sanitize_tts_text(text: str):
-    """Pulisce il testo per TTS: rimuove caratteri di controllo/zero-width,
-    collassa whitespace eccessivo, normalizza newline.
+    """Pulisce il testo per TTS: normalizza Unicode in NFC, rimuove caratteri
+    di controllo/zero-width, collassa whitespace eccessivo, normalizza newline.
 
     Ritorna il testo pulito, oppure None se vuoto o diventato vuoto dopo pulizia
     (il chiamante deve generare silenzio in quel caso).
+
+    PERCHE' L'NFC STA QUI E NON A MONTE
+        Un accento puo' essere scritto in due modi che sullo schermo sono
+        identici: `\u00e9` (U+00E9, NFC) oppure `e` + U+0301 (NFD). I motori TTS
+        leggono la forma decomposta come vocale nuda: `perch\u00e9` in NFD viene
+        letto \u00abperche\u00bb. Misurato su VoxCPM: stesso seme, stesso testo logico,
+        audio diverso e durata diversa (6,08 s in NFC contro 6,40 s in NFD).
+        Il problema non e' del singolo motore, e nemmeno dell'ottimizzazione
+        AI del testo \u2014 un LLM non vede la differenza e restituisce quello che
+        gli e' arrivato.
+
+        `clean_text_for_tts` normalizza gia' i corpi dei capitoli di EPUB e
+        PDF, ma non copre i titoli (che arrivano dal TOC o dagli heading), i
+        .txt e i .abm (`parse_txt`/`parse_abm` non normalizzano), ne' il testo
+        che torna dall'ottimizzazione LLM o dalla traduzione. Questa funzione
+        e' invece l'ultimo punto comune: la chiamano tutte e quattro le
+        `generate_chunk_*` (edge, Gemini, Speechify, Google), quindi qualunque
+        provenienza del testo e qualunque motore \u2014 compresi quelli che
+        verranno \u2014 passano di qui.
+
+        NFC e non NFKC: NFKC riscriverebbe anche le legature e gli apici
+        tipografici, che sono scelte dell'autore, non danni di codifica.
     """
-    clean = text.strip()
+    clean = unicodedata.normalize('NFC', text).strip()
     if not clean:
         return None
     clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u2028-\u202f\ufeff\ufffe\uffff]', '', clean)
