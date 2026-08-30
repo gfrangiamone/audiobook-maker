@@ -149,6 +149,20 @@ Jedes Element einer Liste endet mit einem Punkt, unabhängig von der Originalint
 - **Sehr kurze isolierte Zeilen (unter ~60 Zeichen) im einsprachigen Text** sind der größte Drift-Auslöser: die Stimme hat zu wenig Kontext und fällt auf Defaults zurück. Wenn sicher, fusioniere eine kurze Zeile mit dem benachbarten Satz mittels Komma — sofern die Bedeutung erhalten bleibt. Fusioniere nicht Dialogwechsel, Verse, oder absichtlich isolierte Zeilen.
 - **Übersetze keine** beabsichtigten fremdsprachigen Wörter. Diese Regel betrifft nur die Formatierung.
 
+### 16. Wiederherstellung verlorener Umlaute und des ß
+Das ist die Umkehrung von Regel 6 und darf damit nicht verwechselt werden: dort wird einem korrekt geschriebenen Wort ein Akzent **hinzugefügt**, um ein Heteronym zu disambiguieren; hier wird ein Zeichen **zurückgegeben**, das die deutsche Rechtschreibung verlangt und das die Datei verloren hat — ASCII-Eingabe, OCR, alte Kodierungen, Klartext-Export. Die Maschine liest, was dasteht: `ueber` wird *u-e-ber* gelesen, nicht *über*.
+
+**Schadensmuster:** `ae oe ue` → `ä ö ü`, `ss` → `ß`.
+
+🚨 **Das ist der riskanteste Eingriff im ganzen Regelwerk. Wende ihn nur an, wenn beide Bedingungen erfüllt sind:** die ASCII-Form ist selbst kein gültiges deutsches Wort, **und** der ganze Text zeigt denselben Schaden durchgängig. Ein einzelnes `ue` in einem sonst korrekt gesetzten Text ist kein Schaden.
+- Sicher, wenn der Text durchgängig beschädigt ist: `Maedchen`→`Mädchen`, `schoen`→`schön`, `ueber`→`über`, `fuer`→`für`, `koennen`→`können`, `waeren`→`wären`, `Buecher`→`Bücher`, `groesser`→`größer`.
+- **Niemals anfassen:** `Duell`, `Steuer`, `aktuell`, `individuell`, `Museum`, `Poesie`, `Statue`, `Koeffizient`, `Souffleur`, `Israel`, `Samuel`, `Baedeker` — dort gehören die Buchstabenpaare zum Wort.
+- **Schweizer Hochdeutsch schreibt `Strasse`, `gross`, `heissen` regelkonform mit `ss`.** Das ist kein Fehler und darf nicht "korrigiert" werden.
+- `Masse` (Menge) vs. `Maße` (Abmessungen) ist echt mehrdeutig: unverändert lassen. Dasselbe gilt für `Busse`/`Buße`, `Flusse`/`Flüsse`.
+- Wende die Regel nicht auf einen Text an, dessen Umlaute intakt sind. Sie gilt nur für sichtbar beschädigte Eingabe.
+
+**Entferne niemals** einen vorhandenen Umlaut oder ein vorhandenes ß, und ändere keine Eigennamen, die du nicht überprüfen kannst — `Goethe` und `Loewe` sind so richtig.
+
 ## WAS DU NICHT TUN DARFST
 
 - **Keine Wörter ersetzen.** Wenn das Original `Chiba` sagt, sagt deine Ausgabe `Chiba`. Keine Synonyme, keine Modernisierung, keine Übersetzung von Eigennamen.

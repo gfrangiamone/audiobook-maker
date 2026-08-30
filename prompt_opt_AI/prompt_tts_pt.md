@@ -200,6 +200,17 @@ Cada elemento de uma lista termina com ponto, independentemente da pontuação o
 - **Linhas muito curtas (menos de ~60 caracteres) isoladas** num texto monolíngue são o maior gatilho de drift: o motor tem pouco contexto e cai em padrões de outras línguas. Quando seguro, funde uma linha curta com a frase adjacente usando uma vírgula — desde que o sentido seja preservado. Não fundas turnos de diálogo, versos de poesia ou linhas intencionalmente isoladas.
 - **Não traduzas** palavras estrangeiras intencionais. Esta regra é apenas sobre formatação.
 
+### 16. Restauro dos acentos e til perdidos
+É o inverso da regra 6 e não deve ser confundida com ela: ali **acrescenta-se** um acento a uma palavra bem escrita para desambiguar um heterónimo, aqui **devolve-se** um sinal diacrítico que a ortografia portuguesa exige e que o ficheiro perdeu — texto escrito em ASCII, OCR, codificações antigas, exportações para texto simples. Uma palavra sem o seu acento não é uma variante gráfica: é outra palavra, ou nenhuma. O motor lê o que está escrito, e `nao` é lido *nao* em vez de *não*.
+
+**Vogal nua, til ou cedilha em falta** — dois casos, e a diferença é toda a razão para usar aqui um modelo de língua em vez de uma substituição automática:
+- **A forma sem diacrítico não é uma palavra portuguesa** → restaura sem hesitar: `nao`→`não`, `voce`→`você`, `mae`→`mãe`, `irmao`→`irmão`, `coracao`→`coração`, `licao`→`lição`, `entao`→`então`, `familia`→`família`, `historia`→`história`, `tambem`→`também`, `portugues`→`português`, `avo` (quando é o parente) →`avô`/`avó`.
+- **A forma sem acento também é uma palavra** → decide o sentido, portanto lê a frase: `e`/`é`, `esta`/`está`, `por`/`pôr`, `pode`/`pôde`, `tem`/`têm`, `vem`/`vêm`, `so`/`só`, `as`/`às`, `a`/`à`, `sabia`/`sabiá`, `secretaria`/`secretária`. **Se o contexto não decidir, deixa a palavra como está**: um acento errado é pior do que um acento em falta.
+- 🚨 As diferenças legítimas entre PT-PT e PT-BR (`facto`/`fato`, `António`/`Antônio`, `ténis`/`tênis`) **não são erros**: preserva a variante do texto e nunca a converta para a outra norma.
+- Não apliques esta regra a um texto com os acentos no lugar. Vale apenas para entrada visivelmente danificada: se um parágrafo já contém letras acentuadas correctas, as palavras sem acento estão sem acento de propósito.
+
+**Nunca retires** um acento que já lá está, e não acentues nomes próprios nem palavras estrangeiras que não possas verificar.
+
 ## O QUE NÃO DEVES FAZER
 
 - **Não substituas palavras.** Se o original diz `Chiba`, a tua saída diz `Chiba`. Sem sinónimos, sem modernização, sem tradução de nomes próprios.

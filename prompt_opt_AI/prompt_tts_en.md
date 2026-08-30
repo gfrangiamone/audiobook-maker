@@ -184,6 +184,15 @@ Every item in a list ends with a full stop, regardless of the original punctuati
 - **Very short standalone lines (under ~60 characters) in monolingual text** are the biggest drift trigger: too little context, the voice falls back to defaults. When safe, merge a short line with an adjacent sentence using a comma — provided meaning is preserved. Do not merge dialogue turns, poetry, or intentionally isolated lines.
 - **Do not translate** intentional foreign words. This rule is about formatting only.
 
+### 16. Diacritic restoration in loanwords and quoted foreign text
+This is the mirror image of rule 6: there you **add** a mark to a correctly spelled word to disambiguate a heteronym; here you **restore** a diacritic the spelling requires and the source file has lost — ASCII typing, OCR, a legacy encoding, a plain-text export. English has few such words, so this rule is narrow, but where it applies the engine really does read it wrong: `resume` for `résumé` is read *re-zoom*, and `Zoe` for `Zoë` collapses into one syllable.
+
+- **Restore only where the accent is standard in English and changes the reading:** `café`, `naïve`, `façade`, `résumé` (when it means a CV — the verb `resume` never takes accents), `fiancée`, `cliché`, `soupçon`, `crème brûlée`, `déjà vu`.
+- 🚨 **Many borrowings are fully assimilated without accents and must be left alone:** `hotel`, `role`, `elite`, `debut`, `debris`, `matinee`, `naive` in casual registers, `cafe` on a shop sign quoted verbatim. If the unaccented form is the ordinary English spelling, that is the correct spelling.
+- **Quoted or embedded foreign text** (a French epigraph, an Italian song title, a Spanish place name) is where most of the damage sits. Repair it in the source language's own orthography: `perche'`→`perché`, `deja`→`déjà`, `manana`→`mañana`, `Munchen`→`München`, `Bronte`→`Brontë`. Do this only when you are confident of the original spelling.
+- **Proper nouns:** restore only well-known forms (`Zoë`, `Chloë`, `Brontë`, `Dvořák`, `Gödel`). Never guess at a name you cannot verify.
+- Do not apply this rule to a text whose accents are intact, and **never strip a diacritic that is already there** — see rule 15.
+
 ## WHAT YOU MUST NOT DO
 
 - **Do not replace words.** If the original says `Chiba`, your output says `Chiba`. No synonyms, no modernization, no translation of proper nouns, no "improvements" to the author's word choices.

@@ -150,6 +150,32 @@ Beyond the dot-separation of acronyms (rule A4), watch for:
 - **Very short standalone lines** (under ~60 characters; for Chinese, under ~25 characters) in the middle of a monolingual text are the single biggest drift trigger: the voice has too little context and falls back to defaults. When safe, merge a short line with the adjacent sentence using a comma — provided the merge does not change the meaning. Do not merge lines that are clearly dialogue turns, poetry, or intentionally isolated.
 - **Do not translate** foreign words. This rule is only about formatting (dots in acronyms, joining orphan lines) — never about changing the language of the text.
 
+### A16. Diacritic restoration (damaged orthography)
+
+This rule is the mirror image of Section B, and must not be confused with it. Section B **adds** a diacritic to a correctly spelled word in order to disambiguate a heteronym. A16 **restores** a diacritic that the language's own spelling requires and that the source file has lost — through ASCII typing, OCR, a legacy encoding, a keyboard without dead keys, or a plain-text export.
+
+A word stripped of a required accent is not a stylistic variant: it is a different word, or no word at all. TTS engines read what is written — `perché` written `perche` is read *perche*, with the stress on the wrong syllable, and Spanish `año` written `ano` is read as an entirely different noun. This is the highest-value accent intervention available, and it is safer than Section B, because the target spelling is fixed by orthography rather than chosen by you.
+
+**Three damage patterns:**
+
+**1. Apostrophe used as an accent surrogate.** Restore the accented letter and delete the apostrophe.
+- IT — WRONG: `perche' resto' immobile, e' cosi' che ando'.`
+  RIGHT: `perché restò immobile, è così che andò.`
+- Likewise `piu'`→`più`, `gia'`→`già`, `citta'`→`città`, `caffe'`→`caffè`, `puo'`→`può`, `sara'`→`sarà`, `finche'`→`finché`, `ne'`→`né`, `se'`→`sé`. Sentence-initial `E'` is always `È`.
+- 🚨 **Italian counter-examples — leave the apostrophe alone.** `un po'`, `mo'` and the truncated imperatives `da'`, `di'`, `fa'`, `sta'`, `va'` are correctly spelled with an apostrophe and must never be accented. In literary or archaic prose `ne'`, `de'`, `co'`, `a'`, `i'` are elisions of *nei, dei, coi, ai, il*: decide from the surrounding syntax, and when the passage reads as archaic, leave them.
+
+**2. Bare vowel — the diacritic is simply gone.** Two cases, and the difference between them is the whole reason to run a language model here instead of a search-and-replace:
+- **The stripped form is not a word of the language** → restore with confidence. IT `perche`→`perché`, `citta`→`città`, `piu`→`più`, `gia`→`già`. ES `manana`→`mañana`, `senor`→`señor`, `nino`→`niño`, `ano`→`año`, `pequeno`→`pequeño`. FR `deja`→`déjà`, `apres`→`après`, `tres`→`très`, `meme`→`même`, `etre`→`être`, `francais`→`français`, `garcon`→`garçon`, `recu`→`reçu`, `ca`→`ça`. PT `nao`→`não`, `voce`→`você`, `mae`→`mãe`, `irmao`→`irmão`, `coracao`→`coração`.
+- **The stripped form is also a valid word** → the meaning decides, so read the sentence. IT `e`/`è`, `si`/`sì`, `la`/`là`, `da`/`dà`, `ne`/`né`, `se`/`sé`, `te`/`tè`. ES `esta`/`está`, `el`/`él`, `tu`/`tú`, `mi`/`mí`, `si`/`sí`, `mas`/`más`, `aun`/`aún`, plus the interrogative and exclamative `que`/`qué`, `como`/`cómo`, `donde`/`dónde`, `cuando`/`cuándo`, `porque`/`por qué`. FR `a`/`à`, `ou`/`où`, `la`/`là`, `des`/`dès`, `sur`/`sûr`, `du`/`dû`, `mur`/`mûr`. PT `e`/`é`, `esta`/`está`, `por`/`pôr`, `pode`/`pôde`, `tem`/`têm`, `avo`/`avô`/`avó`.
+  **If the context does not settle it, leave the word exactly as it is.** A wrong restoration is worse than a missing accent.
+- Do **not** apply this pattern to a text whose accents are intact. It fires on visibly damaged input only: if a paragraph already contains correctly accented characters, its unaccented words are unaccented on purpose.
+
+**3. Digraph used as a diacritic surrogate (German only).** `ae oe ue` → `ä ö ü`, `ss` → `ß`. 🚨 **This is the riskiest of the three — apply it only when the ASCII form is not itself a valid German word and the text shows the same damage throughout.** `Maedchen`→`Mädchen`, `schoen`→`schön`, `ueber`→`über` are safe; `Duell`, `Steuer`, `aktuell`, `Museum`, `Poesie`, `Israel`, `Samuel`, `Baedeker` must not be touched. Swiss German writes `Strasse`, `gross`, `heissen` with `ss` by rule — never "correct" these. `Masse` (mass) vs. `Maße` (measurements) is genuinely ambiguous: leave it.
+
+**Language coverage.** EN — restore only in loanwords where the accent is standard and changes the reading (`café`, `naïve`, `façade`, `résumé` when it means a CV); many borrowings are fully assimilated unaccented (`hotel`, `role`, `elite`) and must be left alone. RU — see the ё-restoration rule in B8, which is the Cyrillic form of this same problem. ZH, HI — not applicable.
+
+**Never strip an accent that is already there, and never accent a proper noun or a foreign name you cannot verify.**
+
 ---
 
 ## SECTION B — HETERONYM DISAMBIGUATION (language-specific)

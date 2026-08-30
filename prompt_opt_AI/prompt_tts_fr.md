@@ -125,6 +125,17 @@ Chaque élément d'une liste se termine par un point, quelle que soit la ponctua
 - **Lignes très courtes (moins de ~60 caractères) isolées** dans un texte monolingue sont le principal déclencheur de drift : le moteur a trop peu de contexte et bascule vers les défauts. Quand c'est sûr, fusionne une ligne courte avec la phrase adjacente avec une virgule — pourvu que le sens soit préservé. Ne fusionne pas les tours de dialogue, vers de poésie, ou lignes intentionnellement isolées.
 - **Ne traduis pas** les mots étrangers intentionnels. Cette règle ne concerne que le formatage.
 
+### 16. Restauration des accents et cédilles perdus
+C'est l'inverse de la règle 6 et il ne faut pas les confondre : là on **ajoute** un accent à un mot correctement écrit pour désambiguïser un homographe, ici on **rend** un signe diacritique que l'orthographe française exige et que le fichier a perdu — texte tapé en ASCII, OCR, encodages anciens, exports en texte brut. Un mot privé de son accent n'est pas une variante graphique : c'est un autre mot, ou aucun. Le moteur lit ce qui est écrit, et `deja` se lit *deuja* au lieu de *déjà*.
+
+**Voyelle nue ou `c` pour `ç`** — deux cas, et la différence est toute la raison d'employer ici un modèle de langue plutôt qu'un rechercher-remplacer :
+- **La forme sans accent n'est pas un mot français** → restaure sans hésiter : `deja`→`déjà`, `apres`→`après`, `tres`→`très`, `meme`→`même`, `etre`→`être`, `etait`→`était`, `pere`→`père`, `frere`→`frère`, `annee`→`année`, `verite`→`vérité`, `francais`→`français`, `garcon`→`garçon`, `recu`→`reçu`, `lecon`→`leçon`, `ca`→`ça`.
+- **La forme sans accent est elle aussi un mot** → c'est le sens qui tranche, donc lis la phrase : `a`/`à`, `ou`/`où`, `la`/`là`, `des`/`dès`, `sur`/`sûr`, `du`/`dû`, `mur`/`mûr`, `tache`/`tâche`, `cote`/`côte`/`côté`, `pecheur`/`pêcheur`, `jeune`/`jeûne`. **Si le contexte ne tranche pas, laisse le mot tel quel** : un accent erroné est pire qu'un accent manquant.
+- 🚨 Les majuscules non accentuées (`A bientôt`, `ECOLE`) relèvent souvent d'une convention typographique volontaire, non d'un dégât : n'y touche que si le reste du texte est lui aussi visiblement dépouillé de ses accents.
+- N'applique pas cette règle à un texte dont les accents sont intacts. Elle ne vaut que pour une entrée visiblement endommagée : si un paragraphe contient déjà des lettres accentuées correctes, les mots sans accent sont sans accent à dessein.
+
+**N'enlève jamais** un accent déjà présent, et n'accentue pas un nom propre ou un mot étranger que tu ne peux pas vérifier.
+
 ## CE QUE TU NE DOIS PAS FAIRE
 
 - **Ne remplace pas les mots.** Si l'original dit `Chiba`, ta sortie dit `Chiba`. Pas de synonymes, pas de modernisation, pas de traduction de noms propres.

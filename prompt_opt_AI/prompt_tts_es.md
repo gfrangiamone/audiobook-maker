@@ -127,6 +127,17 @@ Cada elemento de una lista termina con punto, sin importar la puntuación origin
 - **Líneas muy cortas (menos de ~60 caracteres) aisladas** en texto monolingüe son el principal disparador de drift: el motor tiene poco contexto y cae en pronunciaciones por defecto. Cuando sea seguro, fusiona una línea corta con la oración adyacente usando una coma — siempre que el sentido se preserve. No fusiones turnos de diálogo, versos de poesía o líneas intencionalmente aisladas.
 - **No traduzcas** palabras extranjeras intencionales. Esta regla es solo sobre formato.
 
+### 16. Restauración de tildes y eñes perdidas
+Es el reverso de la regla 6 y no debe confundirse con ella: allí se **añade** una tilde a una palabra bien escrita para desambiguar un heterónimo, aquí se **devuelve** un signo diacrítico que la ortografía española exige y que el archivo ha perdido — texto tecleado en ASCII, OCR, codificaciones antiguas, exportaciones a texto plano. Una palabra sin su tilde no es una variante gráfica: es otra palabra, o ninguna. El motor lee lo que está escrito, y `ano` por `año` se lee como un sustantivo completamente distinto.
+
+**Vocal desnuda o `n` por `ñ`** — dos casos, y la diferencia es toda la razón por la que aquí hace falta un modelo de lengua y no un buscar-y-reemplazar:
+- **La forma sin diacrítico no es una palabra española** → restaura con confianza: `manana`→`mañana`, `senor`→`señor`, `nino`→`niño`, `ano`→`año`, `pequeno`→`pequeño`, `compania`→`compañía`, `corazon`→`corazón`, `tambien`→`también`, `dias`→`días`, `alli`→`allí`, `asi`→`así`.
+- **La forma sin tilde también es una palabra** → decide el sentido, así que lee la frase: `esta`/`está`, `el`/`él`, `tu`/`tú`, `mi`/`mí`, `si`/`sí`, `te`/`té`, `mas`/`más`, `aun`/`aún`, `sabana`/`sábana`, y los interrogativos y exclamativos `que`/`qué`, `como`/`cómo`, `donde`/`dónde`, `cuando`/`cuándo`, `quien`/`quién`, `porque`/`por qué`/`porqué`. **Si el contexto no lo decide, deja la palabra tal cual**: una tilde equivocada es peor que una tilde ausente.
+- 🚨 `solo` y los demostrativos `este`, `ese`, `aquel` ya no llevan tilde según la norma actual: **no se la añadas**, y si el texto la trae, tampoco se la quites.
+- No apliques esta regla a un texto con las tildes en su sitio. Actúa solo sobre entrada visiblemente dañada: si un párrafo ya contiene vocales acentuadas correctas, las palabras sin tilde están sin tilde a propósito.
+
+**Nunca quites una tilde que ya está**, y no acentúes nombres propios ni palabras extranjeras que no puedas verificar.
+
 ## LO QUE NO DEBES HACER
 
 - **No sustituyas palabras.** Si el original dice `Chiba`, tu salida dice `Chiba`. Sin sinónimos, sin modernización, sin traducción de nombres propios.

@@ -196,6 +196,20 @@ Some languages have specific punctuation conventions that affect TTS:
 
 If you know the convention for the input language with confidence, apply it. If not, leave the punctuation untouched.
 
+### B5. Diacritic restoration (damaged orthography)
+The mirror image of B1, and not to be confused with it. B1 **adds** a mark to a correctly spelled word to disambiguate a heteronym. B5 **restores** a mark the language's own spelling requires and the source file has lost — ASCII typing, OCR, a legacy encoding, a keyboard without dead keys, a plain-text export. A word stripped of a required diacritic is not a stylistic variant: it is a different word, or no word at all, and the engine reads what is written.
+
+**Three damage patterns, in decreasing order of safety:**
+1. **A mark is missing and the stripped form is not a word of the language** → restore it. This is the safest case, because orthography fixes the target spelling; you are not choosing anything.
+2. **A mark is missing and the stripped form is also a valid word** → only the meaning decides, so read the sentence. **If the context does not settle it, leave the word exactly as it is.** A wrong restoration is worse than a missing mark.
+3. **A surrogate stands in for the mark** — an apostrophe after the vowel (common in Italian: `perche'` → `perché`), a digraph (German `ue` → `ü`), a following letter (Hungarian, Vietnamese ASCII transliterations). Restore the real character and delete the surrogate **only when the whole text shows the same damage**; a single occurrence in otherwise clean text is usually correct as written.
+
+🚨 **Guards, all of them mandatory:**
+- Do not apply this rule to a text whose diacritics are intact. If a paragraph already contains correctly marked characters, its unmarked words are unmarked on purpose.
+- Never strip a diacritic that is already present.
+- Never restore a mark on a proper noun or a foreign name you cannot verify.
+- Some apostrophes and digraphs are correct spelling, not damage (Italian `un po'`, Swiss German `Strasse`, Catalan `l'home`). If you do not know the orthography of the input language well enough to tell the two apart, **skip this rule entirely** — it belongs to Section B for exactly that reason.
+
 ---
 
 ## SECTION C — MINIMAL RULES (apply at LOW confidence — fallback only)

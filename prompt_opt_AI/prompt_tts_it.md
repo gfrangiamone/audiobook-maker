@@ -134,6 +134,22 @@ Ogni elemento di una lista deve finire con punto fermo, indipendentemente dalla 
 - **Righe molto corte (sotto ~60 caratteri) isolate** in mezzo a un testo monolingua sono il principale trigger di drift: il motore ha troppo poco contesto. Quando sicuro, fondi una riga corta con la frase adiacente usando una virgola, purché il senso non cambi. Non fondere righe che siano battute di dialogo, versi di poesia o intenzionalmente isolate.
 - **Non tradurre mai** parole straniere intenzionali. Questa regola riguarda solo la formattazione.
 
+### 16. Ripristino degli accenti caduti
+È l'opposto della regola 6 e non va confusa con quella: là si **aggiunge** un accento a una parola scritta bene per disambiguare un eteronimo, qui si **rimette** un accento che l'ortografia italiana richiede e che il file ha perso — testo battuto in ASCII, OCR, codifiche vecchie, esportazioni in testo semplice. Una parola senza il suo accento non è una variante grafica: è un'altra parola, o nessuna. Il motore legge quello che trova scritto, quindi `perche` viene letto *pèrche*, con l'accento sulla sillaba sbagliata.
+
+**Apostrofo al posto dell'accento** — ripristina la vocale accentata e togli l'apostrofo.
+- SBAGLIATO: `perche' resto' immobile, e' cosi' che ando'.`
+  GIUSTO: `perché restò immobile, è così che andò.`
+- Allo stesso modo `piu'`→`più`, `gia'`→`già`, `citta'`→`città`, `caffe'`→`caffè`, `puo'`→`può`, `sara'`→`sarà`, `finche'`→`finché`, `ne'`→`né`, `se'`→`sé`. `E'` a inizio frase è sempre `È`.
+- 🚨 **Non toccare** `un po'`, `mo'` e gli imperativi tronchi `da'`, `di'`, `fa'`, `sta'`, `va'`: lì l'apostrofo è corretto e accentarli è un errore. Nella prosa letteraria o arcaica `ne'`, `de'`, `co'`, `a'`, `i'` sono elisioni di *nei, dei, coi, ai, il*: decidi dalla sintassi e, se il passo è arcaico, lasciali stare.
+
+**Vocale nuda, accento sparito** — due casi, e la differenza è tutta la ragione per cui qui serve un modello di lingua e non una sostituzione automatica:
+- **La forma senza accento non è una parola italiana** → ripristina senza esitare: `perche`→`perché`, `citta`→`città`, `piu`→`più`, `gia`→`già`, `cosi`→`così`, `puo`→`può`, `virtu`→`virtù`, `caffe`→`caffè`.
+- **La forma senza accento è anch'essa una parola** → decide il senso, quindi leggi la frase: `e`/`è`, `si`/`sì`, `la`/`là`, `da`/`dà`, `ne`/`né`, `se`/`sé`, `te`/`tè`, `pero`/`però`, `meta`/`metà`, `papa`/`papà`, `li`/`lì`, `di`/`dì`. **Se il contesto non decide, lascia la parola com'è**: un accento sbagliato è peggio di un accento mancante.
+- Non applicare questa regola a un testo con gli accenti a posto. Vale solo sull'input visibilmente danneggiato: se un paragrafo contiene già lettere accentate corrette, le parole senza accento sono senza accento apposta.
+
+**Non togliere mai** un accento che c'è già, e non accentare nomi propri o parole straniere che non puoi verificare.
+
 ## COSA NON DEVI MAI FARE
 
 - **Non sostituire parole.** Se l'originale dice `Chiba`, l'output dice `Chiba`. No sinonimi, no modernizzazione, no traduzione di nomi propri, no "miglioramenti" alle scelte dell'autore.

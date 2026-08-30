@@ -60,6 +60,10 @@ When changing a rule:
 
 ## Version
 
+v1.4 — **Diacritic restoration.** New rule covering accents the source file has *lost*, as opposed to accents added to disambiguate a heteronym (the existing Section B). Motivated by listening tests where a TTS engine read `perche` as *perche* and `restò` written `resto` as *resto*: the engine reads what is written, so a stripped accent is a mispronunciation with certainty, not a risk. Three damage patterns are covered — apostrophe surrogate (`perche'`), bare vowel (`manana`, `deja`), and digraph surrogate (German `ueber`) — each with the counter-examples that must not be touched (`un po'`, Swiss German `Strasse`, English `hotel`, `Baedeker`). Added as `A16` in the master, rule `16` in `it`/`es`/`fr`/`pt`/`de`/`en`, and `B5` (HIGH confidence only) in `generic`. `ru` needed nothing: its `ё`-restoration rule is the Cyrillic form of the same problem and already frames itself as an exception to the conservatism principle. `zh` and `hi` are not applicable.
+
+  Note that this rule is the semantic half of the problem only. Accents that are *present* but Unicode-decomposed (NFD: `e` + U+0301 instead of `é`) look identical on screen, survive any LLM pass unchanged, and are still mispronounced. That is a normalization job for the ingestion code, not for a prompt.
+
 v1.3 — `prompt_tts_en.md` revised based on regression test feedback. Four targeted improvements with explicit WRONG/RIGHT examples: (1) word-pronounced acronyms (UNESCO, NATO etc.) protected from over-application of dot-separation rule, (2) news agency tag removal made explicit with example, (3) heteronym marking promoted to default behaviour with worked examples on `read`/`lead`/`record`/`wind`, (4) em-dash → comma replacement linked to grammar check to prevent orphan fragments. File grew from 144 to 186 lines. Other language prompts unchanged.
 
 v1.2 — Added generic fallback prompt for any language not specifically supported. Includes self-confidence calibration (HIGH/MEDIUM/LOW) that scopes interventions appropriately. Routing strategy documented.
