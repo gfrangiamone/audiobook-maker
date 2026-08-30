@@ -1709,6 +1709,31 @@ let _paypalGeminiButtonsInstance = null;
 let _geminiPayCaptured = false;
 function _payPaypalErr(msg){const e=document.getElementById('payPaypalError');if(e){e.style.color='';e.textContent=msg||''}}
 var _payBusyNotice=false;  // true = errore 'server sovraccarico' gia' mostrato nel modale
+var _payKeepNotice=false;  // true = messaggio gia' a schermo, onError non deve coprirlo
+
+// Il server ha rifiutato l'importo perche' la quotazione non e' piu' valida
+// (input cambiati o quote lock scaduto): rinfresca la stima e riallinea gli
+// importi del modale, cosi' l'utente vede subito il nuovo totale.
+async function _refreshQuoteInPayModal(serverAmount){
+  // La chiave della cache non contiene il tempo: senza invalidarla
+  // _doCombinedEstimate() ritornerebbe lo stesso importo appena rifiutato.
+  _estimateCache.key=null;_estimateCache.value=null;
+  try{await _doCombinedEstimate()}catch(e){}
+  const est=_estimateCache&&_estimateCache.value;
+  const tot=(est&&typeof est.total_eur==='number')?est.total_eur:(Number(serverAmount)||0);
+  if(!(tot>0))return;
+  const gem=est?((Number(est.gemini_eur)||0)+(Number(est.speechify_eur)||0)):tot;
+  _payState.total=tot;_payState.gemini=gem;
+  const gEl=document.getElementById('payLineGemini');
+  if(gEl)gEl.textContent=(gem>0)?('€'+gem.toFixed(2)):'—';
+  if(est){
+    const llm=Number(est.llm_eur)||0;
+    const lEl=document.getElementById('payLineLlm');
+    if(lEl)lEl.textContent=(llm>0)?('€'+llm.toFixed(2)):'—';
+  }
+  const tEl=document.getElementById('payModalTotal');
+  if(tEl)tEl.textContent='€'+tot.toFixed(2);
+}
 async function renderPaypalGeminiButtons(){
   const container=document.getElementById('paypalGeminiContainer');
   if(!container)return;
@@ -1739,6 +1764,14 @@ async function renderPaypalGeminiButtons(){
         _payPaypalErr((typeof t==='function'&&t('server_busy'))||d.error);
         throw new Error('server busy');
       }
+      if(d&&d.error_code==='price_changed'){
+        // Quotazione non piu' valida: nessun ordine creato, nessun addebito.
+        // Riallinea il modale e lascia decidere l'utente sul nuovo importo.
+        await _refreshQuoteInPayModal(d.server_amount_eur);
+        _payKeepNotice=true;
+        _payPaypalErr((typeof t==='function'&&t('pay_price_updated'))||'The price has been updated — check the total and try again.');
+        throw new Error('price changed');
+      }
       if(!r.ok)throw new Error(d.error||'create failed');return d.order_id;
     },
     onApprove:async function(data,actions){
@@ -1765,7 +1798,7 @@ async function renderPaypalGeminiButtons(){
     onError:function(err){
       // Il messaggio "server sovraccarico" e` gia' a schermo: non sovrascriverlo
       // con un generico errore PayPal.
-      if(_payBusyNotice){_payBusyNotice=false;return}
+      if(_payBusyNotice||_payKeepNotice){_payBusyNotice=false;_payKeepNotice=false;return}
       _payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(err&&err.message?err.message:''))},
     onCancel:function(){}
   });

@@ -878,6 +878,82 @@ def _price_lock_lookup(job, token, sig):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Quote lock (D2): il prezzo MOSTRATO all'utente e' il prezzo con cui si crea
+# l'ordine PayPal / si scala il voucher.
+# ---------------------------------------------------------------------------
+# Il price lock sopra copre l'anello create-ordine -> conferma. Restava scoperto
+# quello a monte: /api/combined_estimate quota l'importo che finisce nel modale
+# di pagamento, /api/paypal_create_order_gemini lo ricalcola da zero e rifiuta
+# con "amount mismatch" appena i due divergono di piu' di un centesimo. In mezzo
+# la media mobile del rate log si muove — e si muove per colpa dell'utente
+# stesso: ogni anteprima audio registra un campione (record_rate_sample in
+# /api/preview_audio), e ascoltare le voci prima di pagare e' il comportamento
+# normale su una voce PREMIUM.
+#
+# Dal 20/08/2026 (commit 933caa6) il rate empirico e' raggruppato per
+# (lingua, voce, rate_step) con almeno 40 campioni per gruppo: sulle lingue con
+# pochi dati un singolo campione nuovo puo' far attraversare la soglia e
+# cambiare il tier di fallback, spostando il prezzo di punti percentuali interi.
+# Con la tolleranza a 0,01€ ASSOLUTI, su un libro da ~25€ (0,04%) il pagamento
+# diventa impossibile: segnalazione utente 30/08/2026, voce tedesca,
+# server=24,58 vs client=24,10, riproducibile a ogni tentativo.
+#
+# Il lock e' chiavizzato sulla firma degli input di prezzo (non su un token:
+# alla stima nessun token esiste ancora). Se l'utente cambia voce, capitoli,
+# velocita', lingua o AI on/off la firma non combacia piu' e il ricalcolo torna
+# a essere quello vivo. TTL breve: oltre la finestra il prezzo di mezz'ora fa
+# non e' piu' difendibile e si riparte dalla stima corrente.
+_QUOTE_LOCK_TTL_SEC = int(os.environ.get("ABM_QUOTE_LOCK_TTL_SEC", "1800") or 1800)
+_QUOTE_LOCK_MAX_PER_JOB = 8
+
+
+def _quote_lock_store(job, sig, total_eur):
+    """Congela l'importo quotato da /api/combined_estimate per la firma `sig`.
+
+    Store separato da `price_locks`: le firme si accumulano mentre l'utente
+    prova voci e selezioni diverse, e non devono sfrattare i lock d'ordine
+    PayPal, che valgono soldi gia' incassati.
+    """
+    if not isinstance(job, dict) or not sig:
+        return
+    try:
+        total = round(float(total_eur), 2)
+    except (TypeError, ValueError):
+        return
+    if total <= 0:
+        return  # niente da congelare: sotto soglia non si paga
+    now = time.time()
+    locks = job.get("quote_locks")
+    if not isinstance(locks, dict):
+        locks = {}
+    for _sig in [k for k, v in locks.items()
+                 if now - float((v or {}).get("ts", 0) or 0) > _QUOTE_LOCK_TTL_SEC]:
+        locks.pop(_sig, None)
+    locks.pop(sig, None)  # ri-quotazione: la firma torna in coda, non resta vecchia
+    while len(locks) >= _QUOTE_LOCK_MAX_PER_JOB:
+        locks.pop(next(iter(locks)), None)  # dict ordinato: esce il piu' vecchio
+    locks[sig] = {"total_eur": total, "ts": now}
+    job["quote_locks"] = locks
+
+
+def _quote_lock_lookup(job, sig):
+    """Importo quotato all'ultima stima per questa firma, o None se assente,
+    scaduto o non piu' applicabile."""
+    if not isinstance(job, dict) or not sig:
+        return None
+    rec = (job.get("quote_locks") or {}).get(sig)
+    if not isinstance(rec, dict):
+        return None
+    try:
+        if time.time() - float(rec.get("ts", 0) or 0) > _QUOTE_LOCK_TTL_SEC:
+            return None
+        _tot = round(float(rec.get("total_eur", 0) or 0), 2)
+        return _tot if _tot > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 _PLATFORM_HEADER = "X-ABM-Platform"
 _PLATFORM_RE = re.compile(r"^(android|ios)$")
 
@@ -10162,16 +10238,21 @@ def api_generate():
         # /api/optimize. Qui passa il percorso "voce PREMIUM senza
         # ottimizzazione AI": paga -> conferma -> /api/generate ricalcola.
         if not _quota_dec["is_free"] and payment_token:
-            _locked_pre = _price_lock_lookup(
-                job, payment_token,
-                _pricing_signature(voice,
-                                   [getattr(ch, "index", None) for ch in chs_pre],
-                                   rate, lang_pre, bool(data.get("ai_opt_enabled"))),
-            )
+            _sig_pre = _pricing_signature(
+                voice, [getattr(ch, "index", None) for ch in chs_pre],
+                rate, lang_pre, bool(data.get("ai_opt_enabled")))
+            _locked_pre = _price_lock_lookup(job, payment_token, _sig_pre)
+            _lock_src_pre = "al create dell'ordine"
+            if _locked_pre is None:
+                # Nessun ordine PayPal creato per questo token — e' il caso del
+                # pagamento con buono: vale comunque la quotazione mostrata
+                # all'utente (quote lock D2), non il ricalcolo di adesso.
+                _locked_pre = _quote_lock_lookup(job, _sig_pre)
+                _lock_src_pre = "alla stima mostrata"
             if _locked_pre is not None and abs(_locked_pre - total_eur_pre) > 0.005:
-                print(f"[{job_id}] price lock: dovuto {total_eur_pre:.2f}€ -> "
-                      f"{_locked_pre:.2f}€ (quotato al create dell'ordine "
-                      f"{payment_token[:12]}...)", flush=True)
+                print(f"[{job_id}] price lock: dovuto {total_eur_pre:.2f}EUR -> "
+                      f"{_locked_pre:.2f}EUR (quotato {_lock_src_pre}, "
+                      f"token {payment_token[:12]}...)", flush=True)
                 total_eur_pre = _locked_pre
         _free_quota_log(job_id, _quota_dec)
         if _quota_dec["is_free"]:
@@ -12197,6 +12278,16 @@ def api_combined_estimate():
             _quota_cid, voice_id, round(_premium_list_eur + llm_eur, 2), job_id
         )
         total = _quota_dec["due_eur"]
+        # Quote lock (D2): l'importo che l'utente sta per vedere nel modale e'
+        # quello con cui verra' creato l'ordine PayPal, anche se nel frattempo
+        # il rate empirico si muove (tipicamente per le anteprime audio che
+        # l'utente ascolta proprio adesso). Vedi _quote_lock_store.
+        _quote_lock_store(
+            job,
+            _pricing_signature(voice_id, [getattr(ch, "index", None) for ch in chs],
+                               rate, lang, ai_opt),
+            total,
+        )
     # Soglia gratuita coerente con l'engine premium attivo: /api/generate applica
     # ABM_SPEECHIFY_FREE_THRESHOLD_EUR sul ramo Speechify e
     # ABM_GEMINI_FREE_THRESHOLD_EUR altrove. Se qui usassimo sempre quella Gemini,
@@ -12381,12 +12472,31 @@ def api_paypal_create_order_gemini():
             round(_premium_list_eur + llm_eur, 2), job_id,
         )["due_eur"]
 
+    # Quote lock (D2): se il client chiede esattamente l'importo che gli e'
+    # stato quotato dall'ultima stima con gli stessi input di prezzo, quello e'
+    # il dovuto. La deriva della media mobile empirica fra la stima e il click
+    # su PayPal non e' un problema dell'utente — e in buona parte la provoca lui
+    # stesso ascoltando le anteprime. Vedi _quote_lock_store.
+    _sig_order = _pricing_signature(
+        voice_id, [getattr(ch, "index", None) for ch in chs], rate, lang, ai_opt)
+    _quoted = _quote_lock_lookup(job, _sig_order)
+    if (_quoted is not None
+            and abs(_quoted - requested_amount) <= 0.01
+            and abs(server_total - requested_amount) > 0.01):
+        print(f"[{job_id}] quote lock: dovuto {server_total:.2f}EUR -> "
+              f"{_quoted:.2f}EUR (quotato alla stima, firma invariata)", flush=True)
+        server_total = _quoted
+
     if abs(server_total - requested_amount) > 0.01:
+        # Prezzo davvero cambiato: input diversi da quelli quotati, oppure lock
+        # scaduto. 409 + importo aggiornato, cosi' il client rinfresca la stima e
+        # ripropone il pagamento invece di mostrare un errore incomprensibile.
         return jsonify({
             "error": f"amount mismatch (server={server_total}, client={requested_amount})",
+            "error_code": "price_changed",
             "server_amount_eur": server_total,
             "client_amount_eur": requested_amount,
-        }), 400
+        }), 409
 
     book_title = getattr(info, "title", "") or "Audiobook"
     description = f"Audiobook Maker - Voci PREMIUM - {book_title[:60]}"
@@ -12713,16 +12823,20 @@ def api_optimize():
         # media mobile empirica fra pagamento e conferma manda in 402 un utente
         # che ha gia' pagato, lasciando la capture orfana.
         if not _quota_dec["is_free"] and _combined_token:
-            _locked = _price_lock_lookup(
-                job, _combined_token,
-                _pricing_signature(_voice_for_est,
-                                   [getattr(ch, "index", None) for ch in _chs_for_est],
-                                   _rate_for_est, _lang_for_est, True),
-            )
+            _sig_combined = _pricing_signature(
+                _voice_for_est, [getattr(ch, "index", None) for ch in _chs_for_est],
+                _rate_for_est, _lang_for_est, True)
+            _locked = _price_lock_lookup(job, _combined_token, _sig_combined)
+            _lock_src = "al create dell'ordine"
+            if _locked is None:
+                # Pagamento con buono: nessun ordine PayPal, ma la quotazione
+                # mostrata all'utente resta vincolante (quote lock D2).
+                _locked = _quote_lock_lookup(job, _sig_combined)
+                _lock_src = "alla stima mostrata"
             if _locked is not None and abs(_locked - _expected_total) > 0.005:
-                print(f"[{job_id}] price lock: dovuto {_expected_total:.2f}€ -> "
-                      f"{_locked:.2f}€ (quotato al create dell'ordine "
-                      f"{_combined_token[:12]}...)", flush=True)
+                print(f"[{job_id}] price lock: dovuto {_expected_total:.2f}EUR -> "
+                      f"{_locked:.2f}EUR (quotato {_lock_src}, "
+                      f"token {_combined_token[:12]}...)", flush=True)
                 _expected_total = _locked
         # Consumo immediato (qui il job parte davvero) e SOLO a quota attiva:
         # con ABM_FREE_QUOTA_EUR_PER_MONTH=0 riempire il contatore in silenzio

@@ -120,5 +120,5 @@ def test_estimate_and_order_agree_when_quota_exhausted(client, jb, tmp_path, mon
         "ai_opt_enabled": False,
         "amount_eur": list_price,
     })
-    assert r_stale.status_code == 400, r_stale.get_data(as_text=True)
+    assert r_stale.status_code == 409, r_stale.get_data(as_text=True)
     assert "mismatch" in (r_stale.get_json().get("error") or "").lower()

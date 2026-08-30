@@ -233,16 +233,43 @@ def test_drifted_price_does_not_reject_paid_token(client, env, monkeypatch):
     assert env and env[0][0] == "plk-drift"
 
 
-def test_drifted_price_without_lock_still_rejects(client, env, monkeypatch):
-    """Controprova: senza lock (token mai quotato per questo job) la deriva
-    oltre tolleranza continua a produrre 402. Il fix non apre un buco."""
+def test_unquoted_price_still_rejects(client, env, monkeypatch):
+    """Controprova: un importo mai quotato per questo job — ne' al create
+    dell'ordine ne' dalla stima — resta rifiutato. I lock non aprono un buco."""
     _mk_job("plk-nolock")
     paid = _estimate_total(client, "plk-nolock")
-    _capture("ORD-PAID", paid, "plk-nolock")  # capture "dal nulla": nessun create
+    # Capture "dal nulla" per un importo che nessuna quotazione ha mai emesso.
+    _capture("ORD-PAID", round(paid * 0.4, 2), "plk-nolock")
     _inflate_estimate(monkeypatch, 1.30)
     r = _post_optimize(client, "plk-nolock", payment_token="ORD-PAID")
     assert r.status_code == 402, r.get_data(as_text=True)
     assert r.get_json()["error_code"] == "invalid_payment"
+    assert payment._payments["ORD-PAID"]["used"] is False
+
+
+def test_quote_lock_covers_estimate_to_payment(client, env, monkeypatch):
+    """Quote lock (D2): l'importo mostrato dalla stima e' esigibile anche se il
+    create dell'ordine non ha registrato nulla (path voucher/pagamento diretto)
+    e la media mobile si e' mossa nel frattempo."""
+    job = _mk_job("plk-quote")
+    paid = _estimate_total(client, "plk-quote")
+    _capture("ORD-PAID", paid, "plk-quote")  # nessun create: solo la stima quota
+    _inflate_estimate(monkeypatch, 1.30)
+    r = _post_optimize(client, "plk-quote", payment_token="ORD-PAID")
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert job["payment_amount_eur"] == pytest.approx(paid, abs=0.01)
+
+
+def test_quote_lock_expires(client, env, monkeypatch):
+    """Oltre il TTL la quotazione non difende piu' l'importo pagato."""
+    job = _mk_job("plk-quote-ttl")
+    paid = _estimate_total(client, "plk-quote-ttl")
+    _capture("ORD-PAID", paid, "plk-quote-ttl")
+    for rec in (job.get("quote_locks") or {}).values():
+        rec["ts"] -= audiobook_app._QUOTE_LOCK_TTL_SEC + 1
+    _inflate_estimate(monkeypatch, 1.30)
+    r = _post_optimize(client, "plk-quote-ttl", payment_token="ORD-PAID")
+    assert r.status_code == 402, r.get_data(as_text=True)
     assert payment._payments["ORD-PAID"]["used"] is False
 
 
