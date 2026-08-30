@@ -154,7 +154,8 @@ def _extract_json_object(raw: str) -> dict | None:
     return None
 
 
-def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool) -> str | None:
+def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool,
+              system_prompt: str | None = None, temperature: float = 0.2) -> str | None:
     client = ge._llm_client
     if client is None:
         return None
@@ -162,11 +163,11 @@ def _call_llm(payload: dict[str, str], *, timeout: float, use_json_mode: bool) -
     kwargs: dict = dict(
         model=ge.LLM_MODEL,
         messages=[
-            {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or _TRANSLATE_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
         max_tokens=4096,
-        temperature=0.2,
+        temperature=temperature,
         timeout=timeout,
         # Thinking off esplicito: il provider lo attiva di default (vedi
         # generation_engine.llm_thinking_kwargs) e qui serve solo latenza/costo.
@@ -253,19 +254,58 @@ def _drop_copied_slots(data: dict, payload: dict[str, str], src: str) -> None:
                 slot[k] = ""
 
 
+_RETRY_SYSTEM_PROMPT = """You are a translation engine.
+The user sends a JSON object of source strings written in {src_name} ({src}).
+Translate every value into EACH of these target languages: {targets}.
+
+Rules:
+- Output the translation in the target language. NEVER copy the source text
+  into a target slot: if a value comes back identical to the input, it is wrong.
+- Preserve tone, register, punctuation, emoji, newlines and Markdown markers.
+- Keep proper nouns / brand terms untranslated: AudioBook Maker, EPUB, PDF,
+  TXT, MP3, TTS.
+- No explanations, no extra keys.
+
+Output ONLY a JSON object keyed by language code:
+{{ {skeleton} }}"""
+
+_LANG_NAMES = {
+    "it": "Italian", "en": "English", "fr": "French", "es": "Spanish",
+    "de": "German", "zh": "Chinese", "hi": "Hindi",
+}
+
+
 def _retry_missing_slots(data: dict, payload: dict[str, str], src: str,
                          *, timeout: float) -> None:
-    """Un secondo tentativo per le sole chiavi rimaste vuote."""
-    missing = [(lg, k) for lg in LANGS for k in payload
-               if not (data.get(lg) or {}).get(k, "").strip()]
-    if not missing:
+    """Un secondo tentativo per le sole chiavi rimaste vuote.
+
+    Non si ripete la chiamata iniziale: quella sbaglia in modo deterministico
+    (30/08/2026: il backfill in produzione ha riscartato due volte lo stesso
+    slot italiano). Si chiede la traduzione verso le sole lingue mancanti,
+    dichiarando la lingua sorgente e vietando esplicitamente la copia."""
+    missing_langs = sorted({lg for lg in LANGS for k in payload
+                            if not (data.get(lg) or {}).get(k, "").strip()})
+    if not missing_langs:
         return
-    print(f"[community_translator] retry per {len(missing)} slot mancanti")
+    print(f"[community_translator] retry mirato per {','.join(missing_langs)}")
+    skeleton = ", ".join(
+        '"%s": { %s }' % (lg, ", ".join(f'"{k}": "..."' for k in payload))
+        for lg in missing_langs
+    )
+    prompt = _RETRY_SYSTEM_PROMPT.format(
+        src=src or "unknown",
+        src_name=_LANG_NAMES.get(src, "an unknown language"),
+        targets=", ".join(f"{_LANG_NAMES.get(lg, lg)} ({lg})" for lg in missing_langs),
+        skeleton=skeleton,
+    )
     try:
-        raw = _call_llm(payload, timeout=timeout, use_json_mode=True)
+        raw = _call_llm(payload, timeout=timeout, use_json_mode=True,
+                        system_prompt=prompt, temperature=0.4)
     except Exception as e:
         print(f"[community_translator] retry fallito: {type(e).__name__}: {e!s}")
         return
+    missing = [(lg, k) for lg in missing_langs for k in payload
+               if not (data.get(lg) or {}).get(k, "").strip()]
     retry = _extract_json_object(raw or "")
     if not isinstance(retry, dict):
         return

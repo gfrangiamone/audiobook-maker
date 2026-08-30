@@ -64,8 +64,9 @@ def test_retry_fills_only_missing_slots(monkeypatch):
     data["it"]["comment"] = ""              # buco lasciato dallo scarto
     calls = []
 
-    def fake_call(payload, *, timeout, use_json_mode):
-        calls.append(payload)
+    def fake_call(payload, *, timeout, use_json_mode, system_prompt=None,
+                  temperature=0.2):
+        calls.append((payload, system_prompt))
         import json
         out = {lg: {"comment": "RETRY-" + lg} for lg in ct.LANGS}
         return json.dumps(out)
@@ -73,6 +74,11 @@ def test_retry_fills_only_missing_slots(monkeypatch):
     monkeypatch.setattr(ct, "_call_llm", fake_call)
     ct._retry_missing_slots(data, {"comment": DE}, "de", timeout=5)
     assert len(calls) == 1
+    # Il retry non ripete il prompt iniziale (che sbaglia in modo
+    # deterministico): chiede le sole lingue mancanti, dichiarando la sorgente.
+    _payload, _prompt = calls[0]
+    assert _prompt and "German (de)" in _prompt
+    assert "Italian (it)" in _prompt and "French (fr)" not in _prompt
     assert data["it"]["comment"] == "RETRY-it"
     assert data["fr"]["comment"] == IT       # non sovrascritto
 
@@ -82,7 +88,8 @@ def test_retry_rejects_copied_answer(monkeypatch):
     data["de"]["comment"] = DE
     data["it"]["comment"] = ""
 
-    def fake_call(payload, *, timeout, use_json_mode):
+    def fake_call(payload, *, timeout, use_json_mode, system_prompt=None,
+                  temperature=0.2):
         import json
         return json.dumps({lg: {"comment": DE} for lg in ct.LANGS})
 
@@ -100,3 +107,31 @@ def test_no_retry_when_complete(monkeypatch):
 
     monkeypatch.setattr(ct, "_call_llm", boom)
     ct._retry_missing_slots(data, {"comment": DE}, "de", timeout=5)
+
+
+def test_translate_recovers_from_copied_slot(monkeypatch):
+    """End-to-end: la prima chiamata ricopia il tedesco nello slot italiano,
+    il retry mirato lo rimpiazza con una traduzione vera."""
+    import json
+    seen = []
+
+    def fake_call(payload, *, timeout, use_json_mode, system_prompt=None,
+                  temperature=0.2):
+        seen.append(system_prompt)
+        if len(seen) == 1:                      # risposta difettosa
+            out = {lg: {"comment": "TRAD-" + lg} for lg in ct.LANGS}
+            out["de"] = {"comment": DE}
+            out["it"] = {"comment": DE}         # verbatim nello slot sbagliato
+            out["source_lang"] = "de"
+            return json.dumps(out)
+        return json.dumps({"it": {"comment": IT}})
+
+    monkeypatch.setattr(ct, "is_available", lambda: True)
+    monkeypatch.setattr(ct, "_call_llm", fake_call)
+    res = ct.translate({"comment": DE})
+    assert res["source_lang"] == "de"
+    assert res["it"]["comment"] == IT           # recuperato dal retry
+    assert res["de"]["comment"] == DE
+    assert res["fr"]["comment"] == "TRAD-fr"
+    assert seen[0] is None and seen[1]          # prompt iniziale, poi mirato
+
