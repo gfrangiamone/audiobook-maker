@@ -8425,9 +8425,11 @@ def admin_api_feedback_translate_missing():
             skipped += 1
             continue
         i18n = it.get("comment_i18n") or {}
-        # consider populated if at least one non-empty translation exists
-        has_any = any((i18n.get(lg) or "").strip() for lg in community_translator.LANGS)
-        if has_any:
+        # Si ritraduce anche quando il set e' incompleto o contiene copie
+        # dell'originale in lingue diverse dalla sorgente (il modello a volte
+        # ricopia il verbatim nello slot sbagliato).
+        if not community_translator.needs_translation(
+                comment, i18n, it.get("comment_lang") or ""):
             skipped += 1
             continue
         try:

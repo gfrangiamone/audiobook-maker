@@ -60,6 +60,46 @@ Output ONLY a single JSON object with this exact structure (no prose):
 }"""
 
 
+# Soglia sotto la quale una traduzione identica all'originale e' plausibile
+# ("nice", "goated", "Excellant" restano tali in ogni lingua). Sopra, invece,
+# l'identita' e' quasi sempre il modello che ricopia il verbatim della lingua
+# sorgente in uno slot sbagliato (incidente 30/08/2026: un commento tedesco
+# finito verbatim anche in comment_i18n["it"], quindi mostrato in tedesco
+# all'utente italiano e senza il toggle "mostra originale").
+_IDENTITY_MIN_CHARS = 20
+_IDENTITY_MIN_WORDS = 4
+
+
+def _norm(txt: str) -> str:
+    return re.sub(r"\s+", " ", (txt or "").strip().lower())
+
+
+def _looks_untranslated(orig: str, txt: str) -> bool:
+    """True se `txt` e' una copia dell'originale su un testo abbastanza lungo
+    da rendere implausibile la coincidenza."""
+    o = _norm(orig)
+    if len(o) < _IDENTITY_MIN_CHARS or len(o.split()) < _IDENTITY_MIN_WORDS:
+        return False
+    return _norm(txt) == o
+
+
+def needs_translation(orig: str, i18n: dict | None, src_lang: str = "") -> bool:
+    """True se il set di traduzioni e' assente, incompleto o contiene copie
+    dell'originale in lingue diverse da quella sorgente."""
+    orig = (orig or "").strip()
+    if not orig:
+        return False
+    dict_i18n = i18n if isinstance(i18n, dict) else {}
+    src = (src_lang or "").lower()
+    for lg in LANGS:
+        val = (dict_i18n.get(lg) or "").strip()
+        if not val:
+            return True
+        if src and lg != src and _looks_untranslated(orig, val):
+            return True
+    return False
+
+
 def is_available() -> bool:
     """True if the LLM client is initialized."""
     return ge._llm_available()
@@ -187,9 +227,55 @@ def translate(payload: dict[str, str], *, timeout: float = 90.0) -> dict | None:
                 if k not in slot or not isinstance(slot.get(k), str):
                     slot[k] = ""
     data["source_lang"] = src
+    _drop_copied_slots(data, payload, src)
+    _retry_missing_slots(data, payload, src, timeout=timeout)
     keys = ", ".join(payload.keys())
     print(f"[community_translator] translated {keys} (source={src or '?'}, langs={','.join(LANGS)})")
     return data
+
+
+def _drop_copied_slots(data: dict, payload: dict[str, str], src: str) -> None:
+    """Azzera gli slot che ricopiano l'originale in una lingua diversa dalla
+    sorgente: meglio un buco (il client ripiega sull'inglese) che un testo
+    illeggibile spacciato per traduzione."""
+    if not src:
+        # Senza lingua sorgente attendibile non si distingue la copia lecita
+        # dallo sbaglio: non si tocca nulla.
+        return
+    for lg in LANGS:
+        if lg == src:
+            continue
+        slot = data.get(lg) or {}
+        for k, orig in payload.items():
+            if _looks_untranslated(orig, slot.get(k, "")):
+                print(f"[community_translator] slot {lg}.{k} ricopia l'originale "
+                      f"({src}): scartato")
+                slot[k] = ""
+
+
+def _retry_missing_slots(data: dict, payload: dict[str, str], src: str,
+                         *, timeout: float) -> None:
+    """Un secondo tentativo per le sole chiavi rimaste vuote."""
+    missing = [(lg, k) for lg in LANGS for k in payload
+               if not (data.get(lg) or {}).get(k, "").strip()]
+    if not missing:
+        return
+    print(f"[community_translator] retry per {len(missing)} slot mancanti")
+    try:
+        raw = _call_llm(payload, timeout=timeout, use_json_mode=True)
+    except Exception as e:
+        print(f"[community_translator] retry fallito: {type(e).__name__}: {e!s}")
+        return
+    retry = _extract_json_object(raw or "")
+    if not isinstance(retry, dict):
+        return
+    for lg, k in missing:
+        val = ((retry.get(lg) or {}).get(k) or "").strip() if isinstance(retry.get(lg), dict) else ""
+        if not val:
+            continue
+        if src and lg != src and _looks_untranslated(payload.get(k, ""), val):
+            continue
+        data.setdefault(lg, {})[k] = val
 
 
 def translate_async(payload: dict[str, str], on_done) -> threading.Thread:

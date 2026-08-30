@@ -5350,6 +5350,9 @@ function tryGoToAudioSettings(){
     // Prefer UI-language translation; if missing, fall back to English;
     // only then fall back to the original source text.
     let display=localized;
+    // Se lo slot della lingua UI ricopia l'originale di un'altra lingua non e'
+    // una traduzione: vale di piu' l'inglese di un testo illeggibile.
+    if(display && src && src!==ui && display===orig) display='';
     if(!display && ui!=='en') display=enFallback;
     if(!display) display=orig;
     const hasTr=!!display && display!==orig && (!src || src!==ui);
@@ -5584,6 +5587,9 @@ function tryGoToAudioSettings(){
     // Prefer UI-language translation; if missing, fall back to English;
     // only then fall back to the original source text.
     let display=localized;
+    // Se lo slot della lingua UI ricopia l'originale di un'altra lingua non e'
+    // una traduzione: vale di piu' l'inglese di un testo illeggibile.
+    if(display && src && src!==ui && display===orig) display='';
     if(!display && ui!=='en') display=enFallback;
     if(!display) display=orig;
     const hasTr=!!display && display!==orig && (!src || src!==ui);
