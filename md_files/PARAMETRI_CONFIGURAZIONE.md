@@ -552,6 +552,22 @@ Sovrascrivibili in caso di adeguamento listino Google.
 | `ABM_GEMINI_PAYPAL_PERCENT_FEE` | `3.4` |
 | `ABM_GEMINI_FREE_THRESHOLD_EUR` | `0.50` |
 
+### 7.4.2 Allarmi di margine a consuntivo (post-mortem, non bloccanti)
+
+Rilevatore in `generation_engine._check_margin_anomalies()`, invocato dopo la scrittura dell'audit di `_write_gemini_audit()` e `_write_speechify_audit()`. Non interrompe mai un job: quando parte, il job e' gia' terminato. Email via `email_service.admin_notify_margin_anomaly()`, throttle 60s per `job_id+kind`, richiede `ABM_ADMIN_EMAIL`.
+
+Due condizioni indipendenti:
+
+- **`free_over_threshold`** (email URGENTE) — job servito **gratis** perche' quotato sotto la soglia di gratuita', ma costato a consuntivo piu' della soglia stessa. Confronto sul maggiore fra costo provider reale (`google_cost_eur_actual`) e listino sui consumi reali (`user_price_eur_should_have_been`); il secondo e' la grandezza omogenea alla soglia e scatta per primo. Soglia di riferimento: `ABM_GEMINI_FREE_THRESHOLD_EUR` / `ABM_SPEECHIFY_FREE_THRESHOLD_EUR`. E' il rilevatore dell'incidente `Q9lQN3RrapCvGLSonVnzmA` (stima falsata su testi spillati → listino 0,35 € → gratis → costo reale a doppia cifra).
+- **`margin_drop`** — margine reale sceso a meta' o meno di quello atteso ex-ante. Ricavo di riferimento: l'incassato se > 0, altrimenti il listino **quotato** ex-ante (un job in quota gratuita ha ricavo contabile zero: senza questa convenzione il margine atteso sarebbe sempre negativo e il confronto insensato). Un job che soddisfa gia' `free_over_threshold` non produce anche questa seconda email.
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `ABM_MARGIN_ALERT` | `true` | Interruttore di entrambi gli allarmi. `0`/`false` li spegne. |
+| `ABM_MARGIN_ALERT_DROP_PCT` | `50` | Caduta % del margine reale rispetto all'atteso oltre cui scatta `margin_drop`. |
+| `ABM_MARGIN_ALERT_MIN_EUR` | `0.50` | Anti-rumore: scostamento assoluto minimo (€) sotto cui `margin_drop` non parte. Su cifre da centesimi il rapporto percentuale e' matematicamente vero e operativamente inutile. Non si applica a `free_over_threshold`. |
+| `ABM_FREE_JOB_COST_ALERT_FACTOR` | `1.0` | Moltiplicatore sulla soglia gratuita per `free_over_threshold`. `1.0` = allarme appena la soglia viene superata; alzarlo se il canale risultasse rumoroso. |
+
 ### 7.4.1 Stima token audio (calibrazione margine)
 
 Token audio output per secondo, per-modello con fallback globale. Usato da `estimate_output_tokens()` → `estimate_book_cost()`. Una sottostima di questo valore causa margine % a consuntivo inferiore al `MARGIN_PERCENT` configurato; una **sovrastima** gonfia il prezzo all'utente. Ricalibrazione: `= output_tokens_actual / audio_seconds_actual` dei record `completed` per quel modello in `/admin/audit-tts`.

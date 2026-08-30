@@ -3258,6 +3258,109 @@ def _audit_language(job, info):
     return (fallback.split("-")[0].lower() if fallback else "")
 
 
+def _check_margin_anomalies(job_id, job, rec, est, provider, threshold_eur):
+    """Rilevatore A POSTERIORI sul margine di un job PREMIUM. Best-effort,
+    non-fatale, senza alcun effetto sul job (che qui e' gia' terminato).
+
+    Due condizioni indipendenti, entrambe con email all'admin:
+
+    1) `free_over_threshold` (URGENTE) — il job e' stato servito GRATIS perche'
+       quotato sotto la soglia di gratuita', ma a consuntivo e' costato piu'
+       della soglia stessa. E' la firma dell'incidente Q9lQN3RrapCvGLSonVnzmA:
+       stima falsata -> listino 0,35 EUR -> gratis -> costo reale a doppia
+       cifra. Il log stampava gia' un AUDIT WARNING per il caso adiacente
+       "sopra soglia senza pagamento": qui diventa una notifica attiva.
+
+    2) `margin_drop` — il margine reale e' sceso a meta' o meno del margine
+       atteso ex-ante. Segnala deriva del modello di stima costo prima che
+       diventi sistematica.
+
+    Anti-rumore: (2) non parte se lo scostamento assoluto e' sotto
+    ABM_MARGIN_ALERT_MIN_EUR — su cifre da centesimi il rapporto percentuale
+    e' matematicamente vero e operativamente inutile, e un allarme che urla
+    sempre e' un allarme morto.
+    """
+    if not _env_bool("ABM_MARGIN_ALERT", True):
+        return
+    try:
+        charged = float(rec.get("user_price_eur_charged", 0.0) or 0.0)
+        cost_est = float(rec.get("google_cost_eur_est", 0.0) or 0.0)
+        cost_actual = float(rec.get("google_cost_eur_actual", 0.0) or 0.0)
+        list_actual = float(rec.get("user_price_eur_should_have_been", 0.0) or 0.0)
+        title = getattr(job.get("info"), "title", "") or job.get("original_filename", "")
+        chars = int(rec.get("chars_total", 0) or 0)
+
+        # --- 1) Job gratuito costato piu' della soglia che lo ha reso gratuito.
+        # Il confronto usa il MAGGIORE fra costo provider reale e listino sui
+        # consumi reali: il secondo e' la grandezza omogenea alla soglia (che e'
+        # espressa in euro verso l'utente) e scatta per primo; il costo vivo e'
+        # il presidio di cassa. Basta che uno dei due sfondi.
+        if charged <= 0.0 and threshold_eur > 0:
+            factor = _env_float("ABM_FREE_JOB_COST_ALERT_FACTOR", 1.0)
+            trigger = threshold_eur * (factor if factor > 0 else 1.0)
+            worst = max(cost_actual, list_actual)
+            if worst > trigger:
+                email_service.admin_notify_margin_anomaly(
+                    job_id, "free_over_threshold", provider,
+                    book_title=title, revenue_eur=charged,
+                    cost_est_eur=cost_est, cost_actual_eur=cost_actual,
+                    list_actual_eur=list_actual, threshold_eur=threshold_eur,
+                    margin_expected_eur=0.0,
+                    margin_actual_eur=round(-cost_actual, 4),
+                    chars_total=chars, outcome=rec.get("outcome", ""),
+                    detail=(f"gratis sotto soglia {threshold_eur:.2f} EUR, "
+                            f"a consuntivo costo reale {cost_actual:.4f} EUR / "
+                            f"listino reale {list_actual:.2f} EUR"),
+                )
+                print(f"[{job_id}] MARGIN ALERT free_over_threshold: soglia "
+                      f"{threshold_eur:.2f}EUR, costo reale {cost_actual:.4f}EUR, "
+                      f"listino reale {list_actual:.2f}EUR", flush=True)
+                return  # gia' notificato: non raddoppiare con margin_drop
+
+        # --- 2) Margine reale <= meta' del margine atteso.
+        # Ricavo di riferimento: l'incassato se c'e', altrimenti il listino
+        # QUOTATO ex-ante (un job in quota gratuita ha ricavo contabile zero,
+        # ma il valore che il sistema aveva calcolato e deliberatamente
+        # regalato e' quello: senza questa convenzione ogni job gratuito
+        # avrebbe margine atteso negativo e l'allarme sarebbe insensato).
+        revenue = charged
+        if revenue <= 0.0:
+            revenue = float((est or {}).get("user_price_eur", 0.0) or 0.0)
+        if revenue <= 0.0:
+            return
+        margin_expected = revenue - cost_est
+        margin_actual = revenue - cost_actual
+        shortfall = margin_expected - margin_actual  # == cost_actual - cost_est
+        if shortfall < _env_float("ABM_MARGIN_ALERT_MIN_EUR", 0.50):
+            return
+        drop_pct = _env_float("ABM_MARGIN_ALERT_DROP_PCT", 50.0)
+        keep = max(0.0, min(1.0, 1.0 - drop_pct / 100.0))
+        if margin_expected > 0:
+            hit = margin_actual <= margin_expected * keep
+        else:
+            # Margine atteso gia' nullo o negativo: il rapporto non ha senso,
+            # basta il peggioramento (filtrato da MIN_EUR sopra).
+            hit = margin_actual < margin_expected
+        if not hit:
+            return
+        email_service.admin_notify_margin_anomaly(
+            job_id, "margin_drop", provider,
+            book_title=title, revenue_eur=revenue,
+            cost_est_eur=cost_est, cost_actual_eur=cost_actual,
+            list_actual_eur=list_actual, threshold_eur=threshold_eur,
+            margin_expected_eur=round(margin_expected, 4),
+            margin_actual_eur=round(margin_actual, 4),
+            chars_total=chars, outcome=rec.get("outcome", ""),
+            detail=(f"margine {margin_actual:.4f} EUR contro {margin_expected:.4f} "
+                    f"EUR attesi (-{shortfall:.4f} EUR); costo provider "
+                    f"{cost_est:.4f} -> {cost_actual:.4f} EUR"),
+        )
+        print(f"[{job_id}] MARGIN ALERT margin_drop: atteso "
+              f"{margin_expected:.4f}EUR, reale {margin_actual:.4f}EUR", flush=True)
+    except Exception as e:
+        print(f"[{job_id}] _check_margin_anomalies failed (non-fatal): {e}", flush=True)
+
+
 def _write_gemini_audit(job_id, job, voice_id, language, outcome):
     """Append audit record at end of Gemini job. Best-effort, non-fatal."""
     try:
@@ -3404,6 +3507,10 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
             _free_thr = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
         except (TypeError, ValueError):
             _free_thr = 0.50
+        # Rilevatore a consuntivo su margine e job gratuiti sopra soglia.
+        # Dopo append_record: l'audit deve essere scritto anche se l'invio
+        # dell'email fallisce.
+        _check_margin_anomalies(job_id, job, rec, est, "gemini", _free_thr)
         if (outcome == "completed"
                 and charged <= 0.0
                 and should_have_been > _free_thr):
@@ -3582,6 +3689,8 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
             _free_thr = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.40"))
         except (TypeError, ValueError):
             _free_thr = 0.40
+        # Rilevatore a consuntivo (mirror del ramo Gemini).
+        _check_margin_anomalies(job_id, job, rec, _spx_est, "speechify", _free_thr)
         if (outcome == "completed"
                 and charged <= 0.0
                 and should_have_been > _free_thr):

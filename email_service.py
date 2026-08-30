@@ -618,6 +618,103 @@ def _admin_notify_gemini_failure(job_id, kind, amount_eur, email, book_title,
         print(f"[admin] Failed to send failure alert for {key}: {e}")
 
 
+def admin_notify_margin_anomaly(job_id, kind, provider, book_title="",
+                                revenue_eur=0.0, cost_est_eur=0.0,
+                                cost_actual_eur=0.0, list_actual_eur=0.0,
+                                threshold_eur=0.0, margin_expected_eur=0.0,
+                                margin_actual_eur=0.0, chars_total=None,
+                                outcome="", detail=""):
+    """Notifica A POSTERIORI all'admin su anomalia di margine di un job PREMIUM.
+
+    Non blocca e non influenza nulla: il job e' gia' terminato quando questa
+    parte. E' un rilevatore contabile, non una barriera.
+
+    kind:
+      "free_over_threshold" -> URGENTE. Un job servito GRATIS (sotto la soglia
+          di gratuita') e' costato piu' della soglia stessa: la decisione di non
+          far pagare si e' rivelata sbagliata a consuntivo. E' la firma
+          dell'incidente Q9lQN3RrapCvGLSonVnzmA (quotato 0,35 EUR, costo reale
+          a doppia cifra).
+      "margin_drop" -> il margine reale e' sceso a meno della meta' di quello
+          atteso ex-ante. Segnala deriva del modello di stima costo.
+
+    Throttle: 1 invio ogni 60s per job_id+kind (riusa il lock delle failure).
+    """
+    if not ADMIN_EMAIL or not _smtp_available():
+        return
+    key = f"{job_id}::margin::{kind}"
+    now = time.time()
+    with _admin_failure_lock:
+        last = _admin_failure_last.get(key, 0.0)
+        if (now - last) < 60.0:
+            print(f"[admin] Margin alert throttled for {key}")
+            return
+        _admin_failure_last[key] = now
+
+    urgent = (kind == "free_over_threshold")
+    if urgent:
+        kind_label = "URGENTE — job GRATIS sopra la soglia di costo"
+        color = "#b91c1c"
+        lead = (f"Il job e' stato servito <strong>gratuitamente</strong> perche' "
+                f"quotato sotto la soglia di {threshold_eur:.2f} EUR, ma a "
+                f"consuntivo ne e' costati di piu'. Verificare che la stima "
+                f"ex-ante non sia stata falsata.")
+    else:
+        kind_label = "Margine sotto le attese"
+        color = "#d97706"
+        lead = ("Il margine reale del job e' sceso sensibilmente sotto quello "
+                "atteso al momento della quotazione. Nessun impatto sul "
+                "cliente: segnala deriva del modello di stima del costo.")
+
+    title_safe = _esc_html(_sanitize_header(book_title or "(senza titolo)", max_len=120))
+    prov_safe = _esc_html(_sanitize_header(provider or "", max_len=40))
+    detail_safe = _esc_html(_sanitize_header(detail or "", max_len=300))
+    outcome_safe = _esc_html(_sanitize_header(outcome or "", max_len=60))
+    subject = _sanitize_header(
+        f"[ABM-ADMIN] {'URGENTE ' if urgent else ''}Margine {prov_safe} — "
+        f"job {job_id[:8]}", max_len=180)
+
+    chars_line = ""
+    if chars_total is not None:
+        chars_line = (f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'
+                      f'<strong>Caratteri</strong></td>'
+                      f'<td style="padding:8px 12px;border-bottom:1px solid #eee">'
+                      f'{chars_total:,}</td></tr>')
+    thr_line = ""
+    if urgent:
+        thr_line = (f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">'
+                    f'<strong>Soglia gratuità</strong></td>'
+                    f'<td style="padding:8px 12px;border-bottom:1px solid #eee">'
+                    f'{threshold_eur:.2f} EUR</td></tr>')
+
+    html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px">
+  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+    <h2 style="margin:0;font-size:18px">{kind_label}</h2>
+    <p style="margin:6px 0 0;opacity:.9;font-size:13px">Job <code style="background:rgba(255,255,255,.18);padding:2px 6px;border-radius:3px">{job_id}</code> &middot; {prov_safe}</p>
+  </div>
+  <div style="background:#fff;border:1px solid #ddd;border-top:none;padding:14px 16px;font-size:13px;color:#334155">{lead}</div>
+  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ddd;border-top:none;font-size:14px">
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee;width:46%"><strong>Libro</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{title_safe}</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Incassato</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{revenue_eur:.2f} EUR</td></tr>
+    {thr_line}
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Costo provider stimato</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{cost_est_eur:.4f} EUR</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Costo provider reale</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{cost_actual_eur:.4f} EUR</strong></td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Listino sui consumi reali</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{list_actual_eur:.2f} EUR</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Margine atteso</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee">{margin_expected_eur:.4f} EUR</td></tr>
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Margine reale</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>{margin_actual_eur:.4f} EUR</strong></td></tr>
+    {chars_line}
+    <tr><td style="padding:8px 12px;border-bottom:1px solid #eee"><strong>Outcome audit</strong></td><td style="padding:8px 12px;border-bottom:1px solid #eee"><code>{outcome_safe or '-'}</code></td></tr>
+    <tr><td style="padding:8px 12px"><strong>Dettaglio</strong></td><td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#555">{detail_safe or '-'}</td></tr>
+  </table>
+  <p style="color:#888;font-size:12px;margin-top:16px">Alert automatico a consuntivo. Disattivabile con <code>ABM_MARGIN_ALERT=0</code>. Audit: <code>{BASE_URL}/admin/audit-premium</code></p>
+</div>"""
+    try:
+        _send_email(ADMIN_EMAIL, subject, html_body)
+        print(f"[admin] Margin alert sent for {key} ({kind})")
+    except Exception as e:
+        print(f"[admin] Failed to send margin alert for {key}: {e}")
+
+
 def admin_notify_tts_backend_switch(model_key, reason, detail, job_id,
                                     credit_left_usd=None):
     """Notifica IMMEDIATA all'admin: il backend TTS e' passato a Vertex.
