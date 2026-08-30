@@ -27,6 +27,7 @@ venv/
 node_modules/
 backup/
 public/
+out/
 
 
 # App data (generated at runtime)
