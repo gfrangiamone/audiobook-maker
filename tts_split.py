@@ -1015,7 +1015,7 @@ def generate_chunk_pcm_gemini(text, voice_id, output_path, max_retries=1, style_
 
 
 def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
-                                 rate="+0%", max_retries=1, failure_info=None):
+                                 rate="+0%", max_retries=3, failure_info=None):
     """Genera PCM 16-bit mono da testo via Speechify Simba-3.2 con fallback silenzio.
 
     SpeechifyUnavailable viene ri-sollevata (errore permanente: silenziarlo
@@ -1045,7 +1045,19 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
                                    emotion=emotion, rate=rate)
         except _spx.SpeechifyUnavailable:
             raise  # non silenziare: il caller decide
+        except _spx.SpeechifyFatalError as e:
+            # 4xx non ritentabile (es. SSML invalido): ritentare costa
+            # chiamate a vuoto con esito identico.
+            last_error = e
+            snippet = clean[:60].replace('\n', ' ')
+            print(f"[speechify] Fatal error, no retry "
+                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
+            break
         except Exception as e:
+            # Errori di rete (Read timed out, ConnectionError...) e retry
+            # HTTP esauriti in synthesize: si ritenta con backoff. Prima
+            # (max_retries=1) un singolo timeout sostituiva un chunk
+            # PREMIUM pagato con 1 s di silenzio.
             last_error = e
             snippet = clean[:60].replace('\n', ' ')
             print(f"[speechify] Attempt {attempt+1}/{max_retries} failed "
@@ -1053,7 +1065,7 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
 
-    print(f"[speechify] WARNING: all {max_retries} attempts failed, silence "
+    print(f"[speechify] WARNING: synthesis failed, silence "
           f"({len(clean)} chars). Last error: {last_error}")
     _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
     return _fail("synthesize_failed", str(last_error) if last_error else "")

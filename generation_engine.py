@@ -3550,6 +3550,60 @@ def _write_gemini_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] audit write failed (non-fatal): {e}")
 
 
+def _speechify_presynth(job, plan, work_dir, voice, emotion, rate,
+                        check_cancelled, start_time):
+    """Pre-sintesi parallela Speechify: pool di min(K, N) worker.
+
+    Ogni chiamata attraversa il gate globale (invariante concorrenza
+    abbonamento); l'attesa su slot saturo e' trasparente. Ritorna
+    {idx: result} con i .pcm gia' scritti in work_dir/chunk_XXXXXX.pcm.
+
+    Il progresso del job (progress_current/progress_message/elapsed_seconds)
+    avanza a ogni chunk completato: con K=1 e ~8 s/chunk un libro da 300
+    chunk resta qui 40 minuti, e senza questi aggiornamenti utente e admin
+    vedevano un job fermo a 0% (incidente 2026-08-31).
+    """
+    import concurrent.futures as _cf
+    k = speechify_tts.per_job_concurrency()
+    n = speechify_tts.max_concurrency()
+    workers = max(1, min(k, n))
+    total = len(plan)
+    if speechify_tts.free_slots() <= 0:
+        job["progress_message"] = "In attesa di uno slot disponibile..."
+    done = 0
+    done_lock = threading.Lock()
+
+    def _pre_one(ib):
+        nonlocal done
+        idx, blk = ib
+        # Cancellazione durante la pre-sintesi: interrompe subito la
+        # sottomissione di nuove chiamate API (stop billing). L'eccezione
+        # propaga fuori da ex.map e viene intercettata dall'except
+        # _CancelledError del chiamante (refund premium via cancel path).
+        if check_cancelled():
+            raise _CancelledError("Job cancelled")
+        pp = str(work_dir / f"chunk_{idx:06d}.pcm")
+        fi = {}
+        res = generate_chunk_pcm_speechify(
+            blk["text"], voice, pp, emotion=emotion, rate=rate, failure_info=fi)
+        with done_lock:
+            done += 1
+            d = done
+        job["progress_current"] = 2 + d
+        job["progress_message"] = f"Synthesizing audio: chunk {d}/{total}"
+        job["elapsed_seconds"] = round(time.time() - start_time)
+        return idx, res
+
+    out = {}
+    with _cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        for idx, res in ex.map(_pre_one, list(enumerate(plan))):
+            out[idx] = res
+            if isinstance(res, dict) and not job.get("speechify_sample_rate"):
+                job["speechify_sample_rate"] = res.get("sample_rate", 48000)
+    job["progress_message"] = "Assembling audio..."
+    return out
+
+
 def _accumulate_speechify_actual(job, block, result):
     """Accumula in job['speechify_actual'] i caratteri e i secondi audio del
     chunk `block` appena sintetizzato. No-op se il chunk e' fallito (result
@@ -4553,7 +4607,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         def _update_progress(i, block):
             elapsed = time.time() - start_time
-            job["progress_current"] = 2 + i
+            # Monotono: sul ramo Speechify la pre-sintesi ha gia' portato il
+            # contatore a fondo scala; l'assemblaggio non deve riportare la
+            # barra a 0. Sugli altri engine e' un no-op (i cresce).
+            job["progress_current"] = max(job.get("progress_current", 0) or 0, 2 + i)
             job["progress_message"] = (
                 f"Cap. {block['chapter_index']}/{len(info.chapters)}: "
                 f"{block['chapter_title'][:35]}... \u2014 "
@@ -4759,37 +4816,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # i rami (single-file / multi-file).
         _ea_ratio, _ea_min = _early_abort_params()
 
-        # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata
-        # attraversa il gate globale (invariante concorrenza abbonamento). L'attesa
-        # su slot saturo e' trasparente. L'assemblaggio sotto resta sequenziale e
-        # legge i .pcm gia' prodotti (via _speechify_pre).
+        # Pre-sintesi parallela Speechify (vedi _speechify_presynth): produce
+        # tutti i .pcm prima dell'assemblaggio sequenziale sotto, che li
+        # legge via _speechify_pre.
         if use_speechify:
-            import concurrent.futures as _cf
-            _k = speechify_tts.per_job_concurrency()
-            _n = speechify_tts.max_concurrency()
-            _workers = max(1, min(_k, _n))
-            if speechify_tts.free_slots() <= 0:
-                job["progress_message"] = "In attesa di uno slot disponibile..."
-            def _pre_one(_ib):
-                _idx, _blk = _ib
-                # Cancellazione durante la pre-sintesi: interrompe subito la
-                # sottomissione di nuove chiamate API (stop billing). L'eccezione
-                # propaga fuori da _ex.map e viene intercettata dall'except
-                # _CancelledError esterno (refund premium via cancel path).
-                if _check_cancelled():
-                    raise _CancelledError("Job cancelled")
-                _pp = str(work_dir / f"chunk_{_idx:06d}.pcm")
-                _fi = {}
-                _res = generate_chunk_pcm_speechify(
-                    _blk["text"], voice, _pp,
-                    emotion=speechify_emotion, rate=rate, failure_info=_fi)
-                return _idx, _res
-            with _cf.ThreadPoolExecutor(max_workers=_workers) as _ex:
-                for _idx, _res in _ex.map(_pre_one, list(enumerate(plan))):
-                    _speechify_pre[_idx] = _res
-                    if isinstance(_res, dict) and not job.get("speechify_sample_rate"):
-                        job["speechify_sample_rate"] = _res.get("sample_rate", 48000)
-            job["progress_message"] = "Assembling audio..."
+            _speechify_pre = _speechify_presynth(
+                job, plan, work_dir, voice, emotion=speechify_emotion,
+                rate=rate, check_cancelled=_check_cancelled,
+                start_time=start_time)
         # Re-read del sample rate reale ora che la pre-sintesi lo ha popolato.
         _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
 

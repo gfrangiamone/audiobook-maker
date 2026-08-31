@@ -328,6 +328,15 @@ class SpeechifyUnavailable(RuntimeError):
     """TTS Speechify non disponibile (API key mancante)."""
 
 
+class SpeechifyFatalError(RuntimeError):
+    """Errore non ritentabile (4xx diverso da 429, es. SSML invalido).
+
+    Il wrapper di chunk NON deve ritentare: ogni tentativo e' una chiamata
+    API a vuoto con esito identico.
+    """
+    pass
+
+
 def build_ssml(text, emotion=None, rate="+0%"):
     """Costruisce l'SSML con emozione (se valida) e rate (se != +0%)."""
     inner = text
@@ -449,7 +458,7 @@ def synthesize(text, voice_id, output_path, emotion=None, rate="+0%",
                 "voice_name": voice_name,
             }
         if not _is_retryable(resp.status_code):
-            raise RuntimeError(f"Speechify HTTP {resp.status_code} (fatal): {getattr(resp, 'text', '')[:200]}")
+            raise SpeechifyFatalError(f"Speechify HTTP {resp.status_code} (fatal): {getattr(resp, 'text', '')[:200]}")
         last_error = f"HTTP {resp.status_code}"
         if attempt < max_attempts - 1:
             time.sleep(_retry_after_seconds(resp, attempt))
