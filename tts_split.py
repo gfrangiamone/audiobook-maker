@@ -27,6 +27,7 @@ import edge_tts
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
+from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 
 try:
     import google_tts
@@ -123,6 +124,11 @@ def _pick_chunk_max_chars(voice_id, language):
     il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
     per i tag; il clamp lato speechify_tts impedisce override pericolosi).
 
+    VoxCPM: voxcpm_tts.chunk_max_chars() (default 300, override env
+    ABM_VOXCPM_CHUNK_CHARS). Non e' un limite dell'API ma di qualita': il
+    modello riancora il timbro al campione solo all'inizio di ogni chunk, e su
+    chunk lunghi la voce deriva. Il worker non rispezza i chunk che riceve.
+
     Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
     """
     if _is_gemini_voice(voice_id):
@@ -138,6 +144,12 @@ def _pick_chunk_max_chars(voice_id, language):
             return speechify_tts.chunk_max_chars()
         except Exception:
             return 1800
+    if _is_voxcpm_voice(voice_id):
+        try:
+            import voxcpm_tts
+            return voxcpm_tts.chunk_max_chars()
+        except Exception:
+            return 300
     return CHUNK_MAX_CHARS
 
 

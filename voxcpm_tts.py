@@ -76,6 +76,36 @@ def concurrency():
     return max(1, _i("ABM_VOXCPM_CONCURRENCY", 32))
 
 
+# Caratteri per chunk. Non e' un limite dell'API: e' il punto in cui il
+# modello riancora il timbro al campione. VoxCPM2 e' autoregressivo e dentro
+# un chunk il conditioning si auto-alimenta (issue OpenBMB/VoxCPM#302): su
+# testi lunghi la voce deriva dal riferimento e il ritmo accelera. Ogni chunk
+# nuovo ricomincia dal campione, quindi chunk corti = riancoraggio frequente.
+#
+# 300 e' il valore con cui il worker e' stato misurato (README di
+# abm-voxcpm-worker, 18 job a zero chunk falliti): in italiano il chunk
+# mediano dura ~19 s a 13,8 car/s, dell'ordine del campione di clone
+# (5-20 s). A 450, il valore di produzione di Gemini, sarebbero ~30 s, oltre
+# il campione. Il worker non rispezza i `chunks` che riceve: il tetto lo
+# decide qui e va tenuto uguale a ABM_VOXCPM_CHUNK_MAX_CHARS sull'endpoint,
+# cosi' un testo grezzo e un piano di ABM producono gli stessi chunk.
+CHUNK_MAX_CHARS = 300
+# Sotto questo pavimento una frase normale non ci sta e lo splitter
+# taglierebbe sulle virgole; il tetto e' quello degli altri motori.
+CHUNK_MIN_CHARS = 40
+
+
+def chunk_max_chars():
+    """Cap caratteri/chunk sul testo (override via ABM_VOXCPM_CHUNK_CHARS).
+
+    Clampato a [CHUNK_MIN_CHARS, tts_split.CHUNK_MAX_CHARS]. Valori non
+    validi ricadono sul default CHUNK_MAX_CHARS.
+    """
+    import tts_split
+    val = _i("ABM_VOXCPM_CHUNK_CHARS", CHUNK_MAX_CHARS)
+    return max(CHUNK_MIN_CHARS, min(tts_split.CHUNK_MAX_CHARS, val))
+
+
 def is_available():
     """True sse il motore e' completamente configurato.
 

@@ -407,6 +407,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_MIN_COST_EUR` | `0.50` Importo minimo fatturato per un job VoxCPM quando la quota gratuita mensile non copre. Si applica al residuo dopo la quota, mai al lordo. | `free_quota.py` | 164 |
 | `ABM_VOXCPM_COST_USD_PER_MCHAR` | `0.91` Costo GPU misurato (RTX 4090, 2026-08-04). Alimenta solo l'audit del margine, mai il prezzo all'utente. | `voxcpm_tts.py` | 66 |
 | `ABM_VOXCPM_CONCURRENCY` | `32` Chunk in volo dentro un singolo job del worker. | `voxcpm_tts.py` | 74 |
+| `ABM_VOXCPM_CHUNK_CHARS` | `300` Tetto di caratteri per chunk delle voci `voxcpm:` (clamp 40–2000). Il worker non rispezza i chunk ricevuti: oltre questo tetto il timbro deriva dentro il chunk. Deve coincidere con `ABM_VOXCPM_CHUNK_MAX_CHARS` dell'endpoint. | `voxcpm_tts.py` | 98 |
 | `ABM_VOXCPM_QUEUE_TIMEOUT_S` | `900` Quanto si aspetta in coda un job VoxCPM prima di dichiarare l'endpoint saturo. Scaduto, il job si cancella e non si ritenta. | `voxcpm_tts.py` | 245 |
 | `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
