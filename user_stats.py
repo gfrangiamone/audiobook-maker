@@ -60,6 +60,13 @@ def split_line(line):
 
     Ritorna None se la riga non ha nemmeno i campi minimi.
     """
+    line = line.rstrip("\r\n")
+    if line.endswith(" #"):
+        # `platform` vuoto: la riga finisce con " # " e chi ha gia' fatto
+        # strip() si e' mangiato l'ultimo separatore. Senza questo ripristino
+        # l'ancoraggio a destra slitta di un campo (lang diventa "en #" e, se
+        # il titolo contiene " # ", l'operazione diventa un pezzo di titolo).
+        line += " "
     head = line.split(" # ", 2)
     if len(head) < 3:
         return None
@@ -77,9 +84,9 @@ def split_line(line):
 def parse_sessions(path):
     """Aggrega le righe del log per job_id.
 
-    Ritorna OrderedDict job_id -> {events:set, voice, client_id, client_ip,
-    platform, day}. Come `_parse_log_sessions` in audiobook_app.py: per
-    voice/client_id/ip vince l'ultimo valore non vuoto.
+    Ritorna OrderedDict job_id -> {events:set, voice, lang, client_id,
+    client_ip, platform, day}. Come `_parse_log_sessions` in audiobook_app.py:
+    per voice/lang/client_id/ip vince l'ultimo valore non vuoto.
     """
     sessions = OrderedDict()
     with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -90,7 +97,7 @@ def parse_sessions(path):
             fields = split_line(line)
             if not fields:
                 continue
-            sid, dt_str, _filename, operation, client_id, client_ip, voice, _lang, platform = fields
+            sid, dt_str, _filename, operation, client_id, client_ip, voice, lang, platform = fields
             if not sid:
                 continue  # righe di sistema (voucher, admin) senza job
             if operation.startswith("VOUCHER_ATTEMPT"):
@@ -99,7 +106,7 @@ def parse_sessions(path):
             s = sessions.get(sid)
             if s is None:
                 s = sessions[sid] = {
-                    "events": set(), "voice": "", "client_id": "",
+                    "events": set(), "voice": "", "lang": "", "client_id": "",
                     "client_ip": "", "platform": "", "day": dt_str[:10],
                 }
             s["events"].add(operation)
@@ -109,6 +116,8 @@ def parse_sessions(path):
                 s["client_ip"] = client_ip
             if voice:
                 s["voice"] = voice
+            if lang:
+                s["lang"] = lang
             if platform and not s["platform"]:
                 s["platform"] = platform
     return sessions
@@ -261,6 +270,114 @@ def concentration_value(amounts):
     return out
 
 
+def _lang_key(lang):
+    """Codice lingua normalizzato ("it-IT" -> "it"); "?" se il log non lo dice.
+
+    Il campo non e' sempre una lingua: alcune righe (es. il rifiuto di una
+    seconda capture sullo stesso job) ci scrivono un messaggio libero. Si
+    accetta quindi solo un tag plausibile, corto e senza spazi.
+    """
+    v = (lang or "").strip().lower().replace("_", "-")
+    if not v or len(v) > 12 or v.split() != [v]:
+        return "?"
+    v = v.split("-")[0]
+    return v if v.isalpha() and 2 <= len(v) <= 3 else "?"
+
+
+def ripartizione(amounts, key_name="chiave"):
+    """Ripartizione di una grandezza per chiave (qui: la lingua del libro).
+
+    Le chiavi sono poche e non anonime, quindi la curva utile non e' il Gini
+    ma la classifica: quota di ciascuna, quota cumulata, e quante chiavi
+    servono per coprire il 50/70/90% del totale. `hhi` (Herfindahl, 0-10000)
+    riassume quanto il mix e' concentrato su poche lingue.
+    """
+    total = sum(amounts.values())
+    total = round(total, 2) if isinstance(total, float) else total
+    out = {
+        "totale": total,
+        "chiavi": len(amounts),
+        "righe": [],
+        "quantili": {f"{int(q * 100)}%": 0 for q in QUANTILI},
+        "hhi": 0,
+    }
+    if not total or total <= 0:
+        return out
+
+    cum = 0.0
+    hhi = 0.0
+    quant = {q: None for q in QUANTILI}
+    for k, v in sorted(amounts.items(), key=lambda kv: (-kv[1], kv[0])):
+        cum += v
+        share = v / total * 100
+        hhi += share * share
+        out["righe"].append({
+            key_name: k,
+            "valore": round(v, 2) if isinstance(v, float) else v,
+            "pct": round(share, 1),
+            "pct_cumulata": round(cum / total * 100, 1),
+        })
+        for q in QUANTILI:
+            if quant[q] is None and cum >= q * total:
+                quant[q] = len(out["righe"])
+    for q in QUANTILI:
+        out["quantili"][f"{int(q * 100)}%"] = quant[q] or len(out["righe"])
+    out["hhi"] = int(round(hhi))
+    return out
+
+
+def language_stats(sessions, payments, ym="", premium_only=True):
+    """Ripartizione per lingua del libro: libri a voce premium e incassi.
+
+    `premium_only` limita il conteggio dei libri alle sole voci a pagamento
+    (Gemini/Speechify): e' la domanda "su quali lingue si concentra il
+    prodotto premium". Gli incassi invece sono presi tutti, perche' il
+    fatturato include anche l'ottimizzazione AI su voce standard.
+    """
+    libri = Counter()
+    eur = Counter()
+    pagamenti = Counter()
+    meta = {"senza_lingua": 0, "senza_lingua_eur": 0.0,
+            "libri_senza_lingua": 0}
+
+    for s in sessions.values():
+        if COMPLETE_OP not in s["events"]:
+            continue
+        if premium_only and not is_premium_voice(s.get("voice", "")):
+            continue
+        k = _lang_key(s.get("lang", ""))
+        if k == "?":
+            meta["libri_senza_lingua"] += 1
+        libri[k] += 1
+
+    for rec in payments or []:
+        if ym and _payment_month(rec) != ym:
+            continue
+        try:
+            amt = round(float(rec.get("amount_eur", 0) or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        if amt <= 0 or rec.get("pending_unfunded"):
+            continue
+        s = sessions.get(rec.get("job_id", "")) if rec.get("job_id") else None
+        k = _lang_key(s.get("lang", "")) if s else "?"
+        if k == "?":
+            meta["senza_lingua"] += 1
+            meta["senza_lingua_eur"] = round(meta["senza_lingua_eur"] + amt, 2)
+        eur[k] = round(eur[k] + amt, 2)
+        pagamenti[k] += 1
+
+    incassi = ripartizione(eur, key_name="lingua")
+    for row in incassi["righe"]:
+        row["pagamenti"] = pagamenti[row["lingua"]]
+    return {
+        "solo_voci_premium": bool(premium_only),
+        "libri": ripartizione(libri, key_name="lingua"),
+        "incassi": incassi,
+        "meta": meta,
+    }
+
+
 def load_payments(path):
     """Legge `_payments.json` (order_id -> record). File assente/illeggibile: []."""
     try:
@@ -387,6 +504,10 @@ def analyze(path, ip_fallback=True, payments=None):
     spesa.update(spend_meta)
     res["spesa"] = spesa
 
+    # Mix linguistico: dove si concentra il prodotto premium e il fatturato.
+    res["lingue"] = language_stats(sessions, payments,
+                                   ym=_ym_from_name(path), premium_only=True)
+
     # Sovrapposizione fra le due coorti.
     p, f = set(counts["premium"]), set(counts["free"])
     res["overlap"] = {
@@ -407,6 +528,11 @@ def empty_result(path=""):
         "clienti_paganti": 0,
         "coorti": {},
         "overlap": {"solo_premium": 0, "solo_free": 0, "entrambi": 0},
+        "lingue": {"solo_voci_premium": True,
+                   "libri": ripartizione({}, key_name="lingua"),
+                   "incassi": ripartizione({}, key_name="lingua"),
+                   "meta": {"senza_lingua": 0, "senza_lingua_eur": 0.0,
+                            "libri_senza_lingua": 0}},
         "spesa": dict(concentration_value({}),
                       pagamenti=0, totale_eur=0.0, non_attribuiti=0,
                       non_attribuiti_eur=0.0, unfunded=0, unfunded_eur=0.0),

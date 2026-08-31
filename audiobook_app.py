@@ -4713,6 +4713,61 @@ function lsUsersRender(d) {{
         ]),
     ]);
 
+    // Mix linguistico. I libri sono le sole voci premium (la domanda e' su
+    // quali lingue vive il prodotto a pagamento); gli incassi sono tutti,
+    // perche' il fatturato include l'ottimizzazione AI su voce standard.
+    const LG = d.lingue || {{}};
+    const LGN = {{it:'Italiano', en:'Inglese', fr:'Francese', es:'Spagnolo',
+        de:'Tedesco', zh:'Cinese', pt:'Portoghese', nl:'Olandese', tr:'Turco',
+        ru:'Russo', pl:'Polacco', ja:'Giapponese', ko:'Coreano', hi:'Hindi',
+        ar:'Arabo', sv:'Svedese', nb:'Norvegese', no:'Norvegese', da:'Danese',
+        fi:'Finlandese', cs:'Ceco', sk:'Slovacco', sl:'Sloveno', el:'Greco',
+        ro:'Rumeno', uk:'Ucraino', hu:'Ungherese', id:'Indonesiano',
+        vi:'Vietnamita', th:'Thai', he:'Ebraico', ca:'Catalano', fa:'Persiano',
+        bg:'Bulgaro', hr:'Croato', sr:'Serbo', ms:'Malese', et:'Estone',
+        lv:'Lettone', lt:'Lituano', '?':'Non indicata'}};
+    const lgName = c => LGN[c] || String(c || '').toUpperCase();
+    const lgRows = (rip, fmt) => {{
+        const rows = (rip || {{}}).righe || [];
+        const head = rows.slice(0, 10);
+        const out = head.map((r, i) => lsRow(String(r.lingua || '').toUpperCase(),
+            fmt(r.valore),
+            lgName(r.lingua) + ' &middot; ' + r.pct + '% (cum ' + r.pct_cumulata + '%)',
+            '', i === 0));
+        if (rows.length > head.length) {{
+            const rest = rows.slice(head.length);
+            out.push(lsRow('Altre', fmt(rest.reduce((a, r) => a + r.valore, 0)),
+                           rest.length + ' lingue', '', false));
+        }}
+        return out.length ? out : [lsRow('', '-', 'nessun dato', '', false)];
+    }};
+    const lgQ = (rip, k) => ((rip || {{}}).quantili || {{}})[k] || 0;
+    const lgPl = n => (n === 1 ? 'lingua' : 'lingue');
+    const LGb = LG.libri || {{}}, LGe = LG.incassi || {{}}, LGm = LG.meta || {{}};
+    const lingueSec = lsSec('Lingua del libro', [
+        lsCard('Libri completati a voce premium', lgRows(LGb, v => v)),
+        lsCard('Incassi per lingua del libro', lgRows(LGe, eur)),
+        lsCard('Quante lingue fanno il grosso', [
+            lsRow('50% dei libri', lgQ(LGb, '50%'), lgPl(lgQ(LGb, '50%')), '', true),
+            lsRow('70% dei libri', lgQ(LGb, '70%'), lgPl(lgQ(LGb, '70%')), '', true),
+            lsRow('90% dei libri', lgQ(LGb, '90%'), lgPl(lgQ(LGb, '90%')), '', true),
+            lsRow('50% degli incassi', lgQ(LGe, '50%'), lgPl(lgQ(LGe, '50%')), '', false),
+            lsRow('70% degli incassi', lgQ(LGe, '70%'), lgPl(lgQ(LGe, '70%')), '', false),
+            lsRow('90% degli incassi', lgQ(LGe, '90%'), lgPl(lgQ(LGe, '90%')), '', false),
+        ]),
+        lsCard('Ampiezza del mix', [
+            lsRow('Lingue con libri premium', LGb.chiavi || 0,
+                  (LGb.totale || 0) + ' libri', '', true),
+            lsRow('Lingue che incassano', LGe.chiavi || 0,
+                  eur(LGe.totale) + ' nel mese', '', false),
+            lsRow('HHI libri', LGb.hhi || 0,
+                  'su 10.000: oltre 2.500 = mix concentrato', '', false),
+            lsRow('HHI incassi', LGe.hhi || 0, '', '', false),
+            lsRow('Lingua non nel log', LGm.libri_senza_lingua || 0,
+                  'libri; ' + eur(LGm.senza_lingua_eur) + ' di incassi', '', false),
+        ]),
+    ]);
+
     return lsSec('Volumi del mese ' + (d.ym || ''), [
         lsCoh('Generazioni avviate',
               [P.generazioni_avviate || 0], [F.generazioni_avviate || 0],
@@ -4733,7 +4788,7 @@ function lsUsersRender(d) {{
         lsCoh('Indice di Gini', [P.gini || 0], [F.gini || 0], [T.gini || 0]),
     ]) + lsSec('Distribuzione per utente',
         ['1', '2', '3-5', '6-10', '>10'].map(cohHist)
-    ) + spesaSec + lsSec('Identità e pagamenti', [
+    ) + spesaSec + lingueSec + lsSec('Identità e pagamenti', [
         lsOne('Sessioni nel log', d.sessioni_totali || 0, 'mese ' + (d.ym || '')),
         lsOne('Client paganti', d.clienti_paganti || 0,
               'solo incassi PayPal: i buoni non lasciano traccia nel log'),

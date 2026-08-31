@@ -361,3 +361,134 @@ def test_modale_utenza_mostra_la_concentrazione_di_spesa(admin_log_page):
 def test_click_fuori_chiude_entrambe_le_modali(admin_log_page):
     html = admin_log_page
     assert "if (event.target == document.getElementById('usersModal')) hideUserStats();" in html
+
+
+# ---------------------------------------------------------------------------
+# user_stats: lingua del libro
+# ---------------------------------------------------------------------------
+
+LOG_LINGUE = (
+    'p1 # 2026-08-01 10:00:00 # "a.epub" # COMPLETE # cidA # 1.1.1.1'
+    ' # gemini:flash31:Despina # de # \n'
+    'p2 # 2026-08-01 11:00:00 # "b.epub" # COMPLETE # cidA # 1.1.1.1'
+    ' # speechify:scott # en-US # web\n'
+    'p3 # 2026-08-01 12:00:00 # "c.epub" # COMPLETE # cidB # 2.2.2.2'
+    ' # gemini:flash31:Despina # de # web\n'
+    'f1 # 2026-08-01 13:00:00 # "d.epub" # COMPLETE # cidC # 3.3.3.3'
+    ' # it-IT-DiegoNeural # it # web\n'
+    'x1 # 2026-08-01 14:00:00 # "e.epub" # COMPLETE # cidD # 4.4.4.4'
+    ' # gemini:flash31:Despina #  # web\n'
+)
+
+
+@pytest.fixture
+def logfile_lingue(tmp_path):
+    p = tmp_path / "activity_2026-08.log"
+    p.write_text(LOG_LINGUE, encoding="utf-8")
+    return p
+
+
+def test_split_line_regge_il_campo_finale_vuoto():
+    """Con `platform` vuota la riga finisce con ' # ': lo strip a monte si
+    mangiava l'ultimo separatore e l'ancoraggio a destra slittava."""
+    line = ('j1 # 2026-08-01 10:00:00 # "a.epub" # COMPLETE # cid1 # 1.2.3.4'
+            ' # en-US-GuyNeural # en # ')
+    assert user_stats.split_line(line.strip())[7:] == ("en", "")
+
+
+def test_split_line_cancelletto_nel_titolo_e_platform_vuota():
+    """Il caso peggiore: senza il ripristino l'operazione diventava titolo."""
+    line = ('j1 # 2026-08-01 10:00:00 # "Riftwar # 2.epub" # GENERATE # cid1'
+            ' # 1.2.3.4 # gemini:flash31:Despina # de # ')
+    f = user_stats.split_line(line.strip())
+    assert f[2] == "Riftwar # 2.epub" and f[3] == "GENERATE"
+    assert f[7] == "de" and f[8] == ""
+
+
+@pytest.mark.parametrize("raw,atteso", [
+    ("it", "it"), ("en-US", "en"), ("ZH", "zh"), ("pt_BR", "pt"),
+    ("", "?"), ("   ", "?"), ("x", "?"),
+    # il campo ospita anche messaggi liberi (rifiuto di capture duplicata)
+    ("job RRE already has a consumed capture (37J); refusing duplicate", "?"),
+])
+def test_lang_key_normalizza_e_scarta_il_testo_libero(raw, atteso):
+    assert user_stats._lang_key(raw) == atteso
+
+
+def test_ripartizione_quote_cumulate_e_hhi():
+    r = user_stats.ripartizione({"en": 60, "de": 30, "it": 10}, key_name="lingua")
+    assert r["totale"] == 100 and r["chiavi"] == 3
+    assert [x["lingua"] for x in r["righe"]] == ["en", "de", "it"]
+    assert r["righe"][0]["pct"] == 60.0 and r["righe"][1]["pct_cumulata"] == 90.0
+    # 50% e 70% coperti da 1 e 2 lingue; il 90% cade esattamente sulla seconda
+    assert r["quantili"] == {"50%": 1, "70%": 2, "90%": 2}
+    assert r["hhi"] == 60 ** 2 + 30 ** 2 + 10 ** 2
+
+
+def test_ripartizione_vuota_non_divide_per_zero():
+    r = user_stats.ripartizione({}, key_name="lingua")
+    assert r["totale"] == 0 and r["righe"] == [] and r["hhi"] == 0
+    assert r["quantili"] == {"50%": 0, "70%": 0, "90%": 0}
+
+
+def test_language_stats_conta_solo_le_voci_premium(logfile_lingue):
+    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    lg = user_stats.language_stats(sessions, [], ym="2026-08")
+    righe = {r["lingua"]: r["valore"] for r in lg["libri"]["righe"]}
+    # f1 e' su voce standard: fuori. x1 non dichiara la lingua: finisce in "?".
+    assert righe == {"de": 2, "en": 1, "?": 1}
+    assert lg["libri"]["totale"] == 4
+    assert lg["meta"]["libri_senza_lingua"] == 1
+    assert lg["solo_voci_premium"] is True
+
+
+def test_language_stats_incassi_per_lingua_del_libro(logfile_lingue):
+    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    pays = [
+        {"job_id": "p1", "amount_eur": 10.0, "captured_at": _ts(1)},
+        {"job_id": "p3", "amount_eur": 5.0, "captured_at": _ts(1)},
+        # incasso su voce standard: nel fatturato per lingua ci va comunque
+        {"job_id": "f1", "amount_eur": 2.0, "captured_at": _ts(1)},
+        # job non nel log del mese: lingua sconosciuta
+        {"job_id": "ignoto", "amount_eur": 1.0, "captured_at": _ts(1)},
+        # eCheck non compensato: escluso
+        {"job_id": "p2", "amount_eur": 99.0, "captured_at": _ts(1),
+         "pending_unfunded": True},
+    ]
+    lg = user_stats.language_stats(sessions, pays, ym="2026-08")
+    righe = {r["lingua"]: r["valore"] for r in lg["incassi"]["righe"]}
+    assert righe == {"de": 15.0, "it": 2.0, "?": 1.0}
+    assert lg["incassi"]["totale"] == 18.0
+    assert lg["meta"]["senza_lingua"] == 1 and lg["meta"]["senza_lingua_eur"] == 1.0
+    pag = {r["lingua"]: r["pagamenti"] for r in lg["incassi"]["righe"]}
+    assert pag["de"] == 2
+
+
+def test_analyze_espone_le_lingue(logfile_lingue):
+    pays = [{"job_id": "p1", "amount_eur": 10.0, "captured_at": _ts(1)}]
+    res = user_stats.analyze(str(logfile_lingue), payments=pays)
+    assert res["lingue"]["libri"]["righe"][0]["lingua"] == "de"
+    assert res["lingue"]["incassi"]["totale"] == 10.0
+
+
+def test_empty_result_ha_le_lingue_azzerate():
+    lg = user_stats.empty_result()["lingue"]
+    assert lg["libri"]["totale"] == 0 and lg["incassi"]["righe"] == []
+    assert lg["meta"]["senza_lingua_eur"] == 0.0
+
+
+def test_endpoint_espone_le_lingue(admin_client, tmp_path):
+    (tmp_path / "activity_2026-08.log").write_text(LOG_LINGUE, encoding="utf-8")
+    d = admin_client.get("/api/admin/user_stats?ym=2026-08",
+                         headers={"X-Admin-Token": "tok-test"}).get_json()
+    assert d["lingue"]["libri"]["totale"] == 4
+    assert d["lingue"]["libri"]["quantili"]["90%"] >= 1
+
+
+def test_modale_utenza_mostra_la_ripartizione_per_lingua(admin_log_page):
+    html = admin_log_page
+    assert "Lingua del libro" in html
+    assert "Libri completati a voce premium" in html
+    assert "Incassi per lingua del libro" in html
+    assert "Quante lingue fanno il grosso" in html
+    assert "HHI libri" in html
