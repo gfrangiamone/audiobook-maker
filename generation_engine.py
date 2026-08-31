@@ -116,6 +116,14 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 
+# --- Auto-generazione post-ottimizzazione -----------------------------------
+# Attesa massima di uno slot di generazione libero prima di partire comunque.
+# Serve solo al ramo auto-gen del wizard, che chiama run_generation senza
+# passare da /api/generate: a valle di un'ottimizzazione (spesso pagata) il
+# lavoro non si butta via, al massimo si aspetta. 0 disabilita l'attesa.
+GEN_SLOT_WAIT_SEC = _env_float("ABM_GEN_SLOT_WAIT_SEC", 900.0)
+GEN_SLOT_POLL_SEC = _env_float("ABM_GEN_SLOT_POLL_SEC", 5.0)
+
 # --- Thinking / reasoning ---------------------------------------------------
 # ATTENZIONE: sull'API DeepSeek (deepseek-v4-pro / deepseek-v4-flash) il
 # thinking e' ABILITATO DI DEFAULT con effort "high" quando la richiesta non
@@ -197,6 +205,10 @@ _write_email_marker = None  # callable(work_dir, when): mark job dir as email-se
 _lookup_client_email = lambda cid: ""  # callable(cid) -> email or ""
 _build_descriptor = None  # callable(job, phase) -> recovery descriptor dict
 _send_push = None  # callable(job_id, event, title): invia push FCM (non-fatal)
+# callable(client_id, exclude_job_id) -> (capped, active, max): tetto di
+# generazioni FREE contemporanee per client. Iniettata perche' il ramo
+# auto-gen chiama run_generation senza passare da /api/generate.
+_client_gen_cap_reached = None
 
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
@@ -440,14 +452,15 @@ def _set_job_status(job, status):
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
               google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
-              lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None):
+              lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None,
+              client_gen_cap_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
     global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
-    global _build_descriptor, _send_push
+    global _build_descriptor, _send_push, _client_gen_cap_reached
     _jobs = jobs
     _upload_dir = Path(upload_dir)
     _download_tokens = download_tokens
@@ -466,6 +479,8 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
         _build_descriptor = build_descriptor_fn
     if send_push_fn is not None:
         _send_push = send_push_fn
+    if client_gen_cap_fn is not None:
+        _client_gen_cap_reached = client_gen_cap_fn
 
     # Inizializza client LLM (se API key presente)
     _init_llm()
@@ -2816,6 +2831,14 @@ def run_optimization(job_id, selected_chapters=None):
             except Exception:
                 pass
 
+            # Tetto di generazioni contemporanee anche su questo ramo.
+            # /api/optimize lo verifica gia' all'ingresso, ma fra quel
+            # controllo e questo punto passa tutta l'ottimizzazione LLM:
+            # se nel frattempo lo slot si e' riempito si attende, non si
+            # scarta un lavoro gia' fatto (e spesso pagato). Scaduta
+            # l'attesa si procede comunque.
+            _wait_gen_slot(job, job_id, _emit_finalization_progress)
+
             run_generation(job_id, info, voice, rate, single_file,
                            output_format=output_format,
                            podcast_base_url=podcast_base_url)
@@ -4181,6 +4204,56 @@ def is_premium_job(job):
     return False
 
 
+def _wait_gen_slot(job, job_id, emit_progress=None):
+    """Attende uno slot di generazione libero per il client del job.
+
+    Usata dal solo ramo auto-gen (wizard ottimizza+genera), che chiama
+    run_generation direttamente: senza questa attesa il tetto per-client
+    esisterebbe solo su /api/generate. I job PREMIUM non hanno tetto e non
+    attendono. L'attesa e' limitata a GEN_SLOT_WAIT_SEC: oltre quella soglia
+    si genera comunque, perche' a valle di un'ottimizzazione gia' pagata
+    rifiutare significherebbe distruggere lavoro dell'utente.
+
+    Ritorna i secondi attesi (0.0 se non ha atteso).
+    """
+    cap_fn = _client_gen_cap_reached
+    if cap_fn is None or GEN_SLOT_WAIT_SEC <= 0 or is_premium_job(job):
+        return 0.0
+    owner = job.get("gen_owner_cid") or job.get("client_id") or ""
+    if not owner:
+        return 0.0
+    waited = 0.0
+    notified = False
+    poll = max(0.5, GEN_SLOT_POLL_SEC)
+    while waited < GEN_SLOT_WAIT_SEC:
+        if job.get("opt_cancelled") or job.get("cancelled"):
+            break
+        try:
+            capped, active, cap = cap_fn(owner, job_id)
+        except Exception as e:
+            print(f"[{job_id}] check slot generazione fallito (non-fatale): {e}",
+                  flush=True)
+            break
+        if not capped:
+            break
+        if not notified:
+            notified = True
+            print(f"[{job_id}] auto-gen in attesa di uno slot libero "
+                  f"({active}/{cap} generazioni attive per il client)", flush=True)
+            if emit_progress is not None:
+                try:
+                    emit_progress("Waiting for a free generation slot...", 0.95)
+                except Exception:
+                    pass
+        time.sleep(poll)
+        waited += poll
+    if notified:
+        print(f"[{job_id}] auto-gen: attesa slot conclusa dopo {waited:.0f}s"
+              f"{' (timeout, procedo comunque)' if waited >= GEN_SLOT_WAIT_SEC else ''}",
+              flush=True)
+    return waited
+
+
 def _assembly_priority(job):
     """PREMIUM o NORMAL nella coda degli encode FFmpeg.
 
@@ -4298,6 +4371,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # Ri-generazione dopo un terminale: i testi capitolo sono stati spillati su
     # disco per liberare RAM → vanno rimessi in memoria prima del chunking.
     rehydrate_job_texts(job_id, job)
+    # Proprietario dello slot di generazione: sui percorsi che non passano da
+    # /api/generate (auto-gen del wizard, recovery) qui e' l'unico punto in cui
+    # viene fissato. Immutabile: il transfer verso l'app mobile riscrive
+    # client_id, non questo (altrimenti lo slot si libererebbe a meta' lavoro).
+    job.setdefault("gen_owner_cid", job.get("client_id", ""))
     _set_job_status(job, "generating")
     # Marker per la telemetria di carico: _set_job_status lo consuma sul
     # terminale per misurare durata ed esito di QUESTA generazione.

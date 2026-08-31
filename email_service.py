@@ -26,6 +26,9 @@ SMTP_PORT = int(os.environ.get("ABM_SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("ABM_SMTP_USER", "")
 SMTP_PASS = os.environ.get("ABM_SMTP_PASS", "")
 SMTP_FROM = os.environ.get("ABM_SMTP_FROM", os.environ.get("ABM_SMTP_USER", "") or "noreply@audiobook-maker.com")
+# Casella di assistenza utenti (form "Contatta supporto" del sito).
+# Inoltrata via MX esterno alla mailbox del titolare: qui serve solo l'indirizzo.
+SUPPORT_EMAIL = os.environ.get("ABM_SUPPORT_EMAIL", "support@audiobook-maker.com")
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
 # ---------------------------------------------------------------------------
@@ -125,8 +128,13 @@ def _esc_html(value, max_len=None):
     return _html.escape(s, quote=True)
 
 
-def _send_email(to_addr, subject, html_body):
-    """Send an HTML email via SMTP. Returns True on success."""
+def _send_email(to_addr, subject, html_body, reply_to=None):
+    """Send an HTML email via SMTP. Returns True on success.
+
+    ``reply_to``: indirizzo opzionale per l'header Reply-To. Usato dal form di
+    assistenza, dove il mittente SMTP resta ``SMTP_FROM`` (autenticato) ma la
+    risposta deve tornare all'utente che ha aperto la richiesta.
+    """
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
@@ -149,6 +157,12 @@ def _send_email(to_addr, subject, html_body):
     msg["From"] = SMTP_FROM
     msg["To"] = to_addr_clean
     msg["Subject"] = subject_clean
+    if reply_to:
+        reply_clean = _sanitize_header(reply_to, max_len=320)
+        if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', reply_clean):
+            msg["Reply-To"] = reply_clean
+        else:
+            print(f"[email] Ignored invalid Reply-To: {reply_clean!r}", flush=True)
     # Disable TurboSMTP link/open tracking to avoid redirect issues
     msg["X-TurboSMTP-Tracking"] = "0"
     msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
@@ -186,6 +200,65 @@ def _send_email(to_addr, subject, html_body):
                 server.close()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Richieste di assistenza (form "Contatta supporto" del sito)
+# ---------------------------------------------------------------------------
+
+_PLAN_LABELS = {
+    "free": "Libro FREE (voci standard)",
+    "premium": "Libro PREMIUM (voci PREMIUM / ottimizzazione AI a pagamento)",
+}
+
+
+def send_support_request(user_email, plan, book_title, download_link, message,
+                         ui_lang="", ip_hash=""):
+    """Inoltra a ``SUPPORT_EMAIL`` una richiesta di assistenza dal sito.
+
+    Il mittente SMTP resta ``SMTP_FROM`` (l'unico indirizzo autenticato sul
+    relay): l'email dell'utente finisce in ``Reply-To``, cosi' rispondere dalla
+    casella di assistenza torna direttamente a chi ha scritto.
+    Ogni valore proveniente dal client viene HTML-escapato: il corpo finisce in
+    una mailbox reale e non deve poter iniettare markup.
+    Ritorna True se l'email e' stata accettata dal relay.
+    """
+    plan_label = _PLAN_LABELS.get(plan, plan or "-")
+    title_txt = _esc_html(book_title, 300) or "<i>(non indicato)</i>"
+    link_raw = (download_link or "").strip()
+    if not link_raw:
+        link_html = "<i>(non indicato)</i>"
+    elif BASE_URL and link_raw.startswith(BASE_URL + "/"):
+        # Solo i link del nostro dominio diventano cliccabili: un URL esterno
+        # arbitrario resta testo, per non trasformare la mailbox di assistenza
+        # in un vettore di phishing a un click.
+        link_esc = _esc_html(link_raw, 500)
+        link_html = f'<a href="{link_esc}">{link_esc}</a>'
+    else:
+        link_html = _esc_html(link_raw, 500)
+    msg_html = _esc_html(message, 4000).replace(chr(10), "<br>")
+    meta_bits = []
+    if ui_lang:
+        meta_bits.append(f"lingua UI: {_esc_html(ui_lang, 8)}")
+    if ip_hash:
+        meta_bits.append(f"ip_hash: {_esc_html(ip_hash, 32)}")
+    meta = ("<p style='font-size:.85em;color:#888'>" + " &middot; ".join(meta_bits) + "</p>") if meta_bits else ""
+
+    body = (
+        f"<p><b>Nuova richiesta di assistenza dal sito.</b></p>"
+        f"<p>Email utente: <a href=\"mailto:{_esc_html(user_email, 320)}\">"
+        f"{_esc_html(user_email, 320)}</a></p>"
+        f"<p>Tipo di libro: {_esc_html(plan_label, 120)}</p>"
+        f"<p>Titolo: {title_txt}</p>"
+        f"<p>Link di download: {link_html}</p>"
+        f"<p>Problema riscontrato:</p>"
+        f"<p style='border-left:3px solid #d9a441;padding-left:8px;white-space:pre-wrap'>"
+        f"{msg_html or '<i>(vuoto)</i>'}</p>"
+        f"{meta}"
+    )
+    short_title = (book_title or "senza titolo")[:60]
+    subject = f"[ABM Support] {plan or '-'} - {short_title}"
+    return _send_email(SUPPORT_EMAIL, subject, body, reply_to=user_email)
 
 
 # ---------------------------------------------------------------------------

@@ -896,6 +896,8 @@ __REVIEWS_LD__
       <a href="https://github.com/gfrangiamone/audiobook-maker" target="_blank" rel="noopener">GitHub</a>
       <span>&middot;</span>
       <a href="/privacy" id="privacyLink">Cookie e privacy</a>
+      <span>&middot;</span>
+      <a href="#" id="supportBtn" data-t="footer_support"></a>
     </div>
     <span>Audiobook Maker</span>
   </footer>
@@ -908,6 +910,39 @@ __REVIEWS_LD__
         <button class="modal-close" id="aboutClose" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body" id="aboutBody"></div>
+    </div>
+  </div>
+
+  <!-- SUPPORT CONTACT MODAL -->
+  <div class="modal-overlay" id="supportModal" role="dialog" aria-modal="true" aria-labelledby="supportTitle">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-head">
+        <h2 id="supportTitle" data-t="sup_title"></h2>
+        <button class="modal-close" id="supportClose" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="sup-intro" data-t="sup_intro"></p>
+        <form class="sup-form" id="supportForm" novalidate>
+          <label for="supEmail" data-t="sup_email_label"></label>
+          <input type="email" id="supEmail" maxlength="320" autocomplete="email" data-t-ph="sup_email_ph">
+          <label for="supPlan" data-t="sup_plan_label"></label>
+          <select id="supPlan">
+            <option value="" data-t="sup_plan_choose"></option>
+            <option value="free" data-t="sup_plan_free"></option>
+            <option value="premium" data-t="sup_plan_premium"></option>
+          </select>
+          <label for="supBook" data-t="sup_book_label"></label>
+          <input type="text" id="supBook" maxlength="300" data-t-ph="sup_book_ph">
+          <label for="supLink" data-t="sup_link_label"></label>
+          <input type="text" id="supLink" maxlength="500" data-t-ph="sup_link_ph">
+          <span class="sup-hint" data-t="sup_link_hint"></span>
+          <label for="supMsg" data-t="sup_msg_label"></label>
+          <textarea id="supMsg" rows="5" maxlength="4000" data-t-ph="sup_msg_ph"></textarea>
+          <input type="text" id="supHoneypot" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px;width:1px;height:1px">
+          <button type="submit" class="btn btn-p btn-sm" id="supSubmit" data-t="sup_submit"></button>
+          <div class="sup-msg" id="supMsgBox" hidden></div>
+        </form>
+      </div>
     </div>
   </div>
 

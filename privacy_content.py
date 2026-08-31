@@ -28,7 +28,7 @@ _TXT = {
 <h2>1. Titolare del trattamento</h2>
 <p>Il titolare del trattamento è <strong>Luigi Frangiamone</strong> (Italia). Per
 qualsiasi richiesta relativa ai tuoi dati personali puoi scrivere a
-<a href="mailto:abm.luigi@gmail.com">abm.luigi@gmail.com</a>.</p>
+<a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>.</p>
 
 <h2>2. In breve: app e sito web sono trattati diversamente</h2>
 <p>Audiobook Maker &amp; Player esiste come app mobile e come sito web. I due
@@ -150,7 +150,7 @@ portabilità dei dati, oltre al diritto di reclamo all'Autorità Garante per la
 protezione dei dati personali.</p>
 <p>Poiché l'app non prevede account, non possiamo collegare autonomamente i dati a
 una persona: per esercitare i tuoi diritti scrivi a
-<a href="mailto:abm.luigi@gmail.com">abm.luigi@gmail.com</a>. I file che carichi si
+<a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>. I file che carichi si
 cancellano comunque da soli entro circa 24 ore senza alcuna richiesta.</p>
 """,
     },
@@ -174,7 +174,7 @@ cancellano comunque da soli entro circa 24 ore senza alcuna richiesta.</p>
 <h2>1. Data controller</h2>
 <p>The data controller is <strong>Luigi Frangiamone</strong> (Italy). For any
 request regarding your personal data, please write to
-<a href="mailto:abm.luigi@gmail.com">abm.luigi@gmail.com</a>.</p>
+<a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>.</p>
 
 <h2>2. In short: the app and the website are handled differently</h2>
 <p>Audiobook Maker &amp; Player exists as a mobile app and as a website. The two
@@ -294,7 +294,7 @@ data, as well as the right to lodge a complaint with the data protection supervi
 authority.</p>
 <p>Since the app has no accounts, we cannot link the data to a person on our own: to
 exercise your rights, write to
-<a href="mailto:abm.luigi@gmail.com">abm.luigi@gmail.com</a>. The files you upload
+<a href="mailto:support@audiobook-maker.com">support@audiobook-maker.com</a>. The files you upload
 delete themselves anyway within about 24 hours without any request.</p>
 """,
     },

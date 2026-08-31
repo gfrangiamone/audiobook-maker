@@ -189,17 +189,21 @@ def test_speechify_above_free_threshold_uses_generic_payment_required(client, en
 def test_speechify_quota_not_consumed_when_concurrency_limit_denies(client, env, monkeypatch):
     """Un job quota-free respinto dal limite di concorrenza (dopo il gate, prima
     del claim atomico) non deve bruciare quota: il consumo e' differito al
-    claim riuscito, non al gate."""
+    claim riuscito, non al gate.
+
+    Il blocco usato qui e' il tetto GLOBALE d'istanza: il tetto per-client non
+    si applica piu' alle voci PREMIUM (vedi test_gen_concurrency_policy.py).
+    """
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
-    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_PER_CLIENT", 1)
+    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_GLOBAL", 1)
     with audiobook_app._jobs_lock:
-        audiobook_app.jobs["fq-spx-blocker"] = {"status": "generating", "client_id": CID}
+        audiobook_app.jobs["fq-spx-blocker"] = {"status": "generating", "client_id": "other"}
     _mk_job("fq-spx-blocked", 5000)
     try:
         r = _post_generate(client, "fq-spx-blocked", SPEECHIFY_VOICE)
         assert r.status_code == 429, r.get_data(as_text=True)
-        assert r.get_json()["error_code"] == "concurrent_limit"
+        assert r.get_json()["error_code"] == "server_busy"
         assert env["run_calls"] == []
         assert free_quota.used_eur(CID) == pytest.approx(0.0)
     finally:
@@ -217,9 +221,9 @@ def test_speechify_stash_quota_non_sopravvive_alla_richiesta(client, env, monkey
     """
     monkeypatch.setenv("ABM_FREE_QUOTA_EUR_PER_MONTH", "2.00")
     monkeypatch.setenv("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "5.00")
-    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_PER_CLIENT", 1)
+    monkeypatch.setattr(audiobook_app, "MAX_CONCURRENT_GLOBAL", 1)
     with audiobook_app._jobs_lock:
-        audiobook_app.jobs["fq-spx-blocker2"] = {"status": "generating", "client_id": CID}
+        audiobook_app.jobs["fq-spx-blocker2"] = {"status": "generating", "client_id": "other"}
     _mk_job("fq-residuo", 5000)
     try:
         r = _post_generate(client, "fq-residuo", SPEECHIFY_VOICE)

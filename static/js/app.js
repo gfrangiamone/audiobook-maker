@@ -154,6 +154,7 @@ function setupKeyboardShortcuts(){
       previewStop();
       const aboutModal=document.getElementById('aboutModal');
       if(aboutModal)aboutModal.classList.remove('open');
+      if(typeof closeSupportModal==='function')closeSupportModal();
       closeLangDropdown();
       restoreFocus();
     }
@@ -201,6 +202,10 @@ function applyI18n(){
         }
       }
     }
+  });
+  document.querySelectorAll('[data-t-ph]').forEach(e=>{
+    const v=t(e.getAttribute('data-t-ph'));
+    if(v) e.setAttribute('placeholder',v);
   });
   document.querySelectorAll('[data-t-title]').forEach(e=>{
     const k=e.getAttribute('data-t-title'), v=t(k);
@@ -5834,5 +5839,86 @@ function tryGoToAudioSettings(){
     loadFeedback();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();
+
+// ─── Modal "Contatta supporto" (footer) ───────────────────────────────
+(function(){
+  const EMAIL_RE=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+  const MSG_MIN=10;
+  function el(id){return document.getElementById(id);}
+  function showMsg(text,kind){
+    const box=el('supMsgBox');
+    if(!box)return;
+    box.textContent=text;
+    box.className='sup-msg '+kind;
+    box.hidden=false;
+  }
+  function clearMsg(){const box=el('supMsgBox');if(box){box.hidden=true;box.textContent='';}}
+  window.openSupportModal=function(){
+    const m=el('supportModal');
+    if(!m)return;
+    clearMsg();
+    m.classList.add('open');
+  };
+  window.closeSupportModal=function(){
+    const m=el('supportModal');
+    if(m)m.classList.remove('open');
+  };
+  async function submitSupport(ev){
+    ev.preventDefault();
+    const email=((el('supEmail')||{}).value||'').trim();
+    const plan=((el('supPlan')||{}).value||'').trim();
+    const book=((el('supBook')||{}).value||'').trim();
+    const link=((el('supLink')||{}).value||'').trim();
+    const message=((el('supMsg')||{}).value||'').trim();
+    const honeypot=((el('supHoneypot')||{}).value||'');
+    if(!EMAIL_RE.test(email)){showMsg(t('sup_err_email'),'err');return;}
+    if(plan!=='free'&&plan!=='premium'){showMsg(t('sup_err_plan'),'err');return;}
+    if(!book){showMsg(t('sup_err_book'),'err');return;}
+    if(message.length<MSG_MIN){showMsg(t('sup_err_msg'),'err');return;}
+    const btn=el('supSubmit');
+    const label=btn?btn.textContent:'';
+    if(btn){btn.disabled=true;btn.classList.add('btn-loading');btn.textContent=t('sup_sending');}
+    clearMsg();
+    try{
+      const r=await fetch('/api/support/contact',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({email:email,plan:plan,book_title:book,
+                             download_link:link,message:message,
+                             lang:(typeof cl!=='undefined'?cl:'en'),website:honeypot}),
+      });
+      if(r.status===429){showMsg(t('sup_err_rate'),'err');return;}
+      if(!r.ok){
+        let code='';
+        try{const d=await r.json();code=(d&&d.error)||'';}catch(e){}
+        if(code==='invalid_email'){showMsg(t('sup_err_email'),'err');return;}
+        if(code==='invalid_plan'){showMsg(t('sup_err_plan'),'err');return;}
+        if(code==='missing_title'){showMsg(t('sup_err_book'),'err');return;}
+        if(code==='missing_message'){showMsg(t('sup_err_msg'),'err');return;}
+        showMsg(t('sup_err_send'),'err');return;
+      }
+      showMsg(t('sup_ok'),'ok');
+      const form=el('supportForm');
+      if(form)form.reset();
+    }catch(e){
+      showMsg(t('sup_err_network'),'err');
+    }finally{
+      if(btn){btn.disabled=false;btn.classList.remove('btn-loading');btn.textContent=label;}
+    }
+  }
+  function init(){
+    const modal=el('supportModal');
+    if(!modal)return;
+    const btn=el('supportBtn');
+    if(btn)btn.addEventListener('click',function(e){e.preventDefault();openSupportModal();});
+    const close=el('supportClose');
+    if(close)close.addEventListener('click',closeSupportModal);
+    modal.addEventListener('click',function(e){if(e.target===modal)closeSupportModal();});
+    const form=el('supportForm');
+    if(form)form.addEventListener('submit',submitSupport);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
 })();

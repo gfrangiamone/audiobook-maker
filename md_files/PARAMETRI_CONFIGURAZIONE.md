@@ -20,7 +20,12 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_SMTP_FROM` | `SMTP_USER` oppure `"noreply@audiobook-maker.com"` | `audiobook_app.py` | 95 |
 | `ABM_BASE_URL` | `""` (vuoto, con rstrip di `/`) | `audiobook_app.py` | 96 |
 | `ABM_ADMIN_EMAIL` | `""` (vuoto, se vuoto il digest admin e' disabilitato) | `audiobook_app.py` | 103 |
-| `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` | `audiobook_app.py` | 112 |
+| `ABM_SUPPORT_EMAIL` | `"support@audiobook-maker.com"` (destinatario del form "Contatta supporto" nel footer; casella inoltrata via MX esterno alla mailbox del titolare) | `email_service.py` | 31 |
+| `ABM_SUPPORT_RL_PER_MIN` | `2` (richieste di assistenza per IP al minuto; oltre soglia `429` con `error: rate_limit` e `retry_after`) | `audiobook_app.py` | 8478 |
+| `ABM_SUPPORT_RL_PER_HOUR` | `6` (richieste di assistenza per IP all'ora) | `audiobook_app.py` | 8479 |
+| `ABM_MAX_CONCURRENT_PER_CLIENT` | `2` (generazioni simultanee per cookie client; `0` = illimitato). **I job PREMIUM (voce Gemini/Speechify o pagamento incassato) sono esenti**: chi paga non viene messo in coda dietro se stesso | `audiobook_app.py` | 675 |
+| `ABM_GEN_SLOT_WAIT_SEC` | `900` (attesa massima di uno slot per-client nel ramo auto-gen del wizard, che chiama `run_generation` senza passare da `/api/generate`; scaduta, genera comunque perche' a valle di un'ottimizzazione gia' pagata rifiutare distruggerebbe lavoro dell'utente. `0` = nessuna attesa) | `generation_engine.py` | 124 |
+| `ABM_GEN_SLOT_POLL_SEC` | `5` (intervallo di ricontrollo dello slot durante l'attesa; floor `0.5`) | `generation_engine.py` | 125 |
 | `ABM_MAX_CONCURRENT_GLOBAL` | `6` (tetto GLOBALE d'istanza di generazioni simultanee, tutti i client; `0` = illimitato). Superato, `/api/generate` e `/api/paypal_create_order_gemini` rispondono `429` con `error_code: server_busy` **prima** di chiedere qualunque pagamento | `audiobook_app.py` | 588 |
 | `ABM_MAX_CONCURRENT_ASSEMBLY` | `max(1, cpu_count() - 1)` (encode FFmpeg finali ammessi in parallelo: PCM→AAC/MP3, MP3→M4B, ZIP). Non rifiuta job: li mette in coda | `assembly_queue.py` | 50 |
 | `ABM_ASSEMBLY_WAIT_TIMEOUT_SEC` | `1800` (attesa massima di uno slot di assembly; scaduta, il job procede comunque senza slot) | `assembly_queue.py` | 37 |
@@ -113,7 +118,8 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `MAX_CONCURRENT_PER_CLIENT` | da `ABM_MAX_CONCURRENT_PER_CLIENT` (default `2`) | `audiobook_app.py` | 112 |
+| `MAX_CONCURRENT_PER_CLIENT` | da `ABM_MAX_CONCURRENT_PER_CLIENT` (default `2`); non applicato ai job premium (`generation_engine.is_premium_job`) | `audiobook_app.py` | 675 |
+| `generation_engine.GEN_SLOT_WAIT_SEC` / `GEN_SLOT_POLL_SEC` | da `ABM_GEN_SLOT_WAIT_SEC` (default `900`) / `ABM_GEN_SLOT_POLL_SEC` (default `5`); usati da `_wait_gen_slot` | `generation_engine.py` | 124-125 |
 | `MAX_CONCURRENT_LLM_PER_CLIENT` | da `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` (default `1`) | `audiobook_app.py` | 152 |
 | `MAX_CONCURRENT_GLOBAL` | da `ABM_MAX_CONCURRENT_GLOBAL` (default `6`) | `audiobook_app.py` | 588 |
 | `assembly_queue.MAX_CONCURRENT_ASSEMBLY` | da `ABM_MAX_CONCURRENT_ASSEMBLY` (default `max(1, cpu_count() - 1)`) | `assembly_queue.py` | 50 |
@@ -124,8 +130,10 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 | `_ANALYZE_RL_PER_HOUR` | `30` upload `/api/analyze` / IP / ora | `audiobook_app.py` | — |
 | `_PREVIEW_RL_PER_MIN` | `20` preview `/api/preview_audio` / IP / minuto | `audiobook_app.py` | — |
 | `_PREVIEW_RL_PER_HOUR` | `200` preview `/api/preview_audio` / IP / ora | `audiobook_app.py` | — |
+| `_SUPPORT_RL_PER_MIN` | `2` richieste `/api/support/contact` / IP / minuto | `audiobook_app.py` | 8478 |
+| `_SUPPORT_RL_PER_HOUR` | `6` richieste `/api/support/contact` / IP / ora | `audiobook_app.py` | 8479 |
 
-Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
+Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREVIEW_RL_PER_MIN`, `ABM_PREVIEW_RL_PER_HOUR`, `ABM_SUPPORT_RL_PER_MIN`, `ABM_SUPPORT_RL_PER_HOUR`. Oltre soglia risponde `429` con `retry_after` in secondi.
 
 ### 3.3.1 Sicurezza applicativa (CSRF, HSTS, archivi, MIME)
 

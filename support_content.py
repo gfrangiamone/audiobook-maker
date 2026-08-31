@@ -34,7 +34,7 @@ _TXT = {
              "Gli audiolibri restano sul tuo dispositivo e non vengono caricati a meno che tu non li condivida esplicitamente. In questo caso rimangono per 24 ore in un'area raggiungibile soltanto con il link che ti viene comunicato. Trovi tutti i dettagli nella nostra <a href=\"/privacy?lang=it\">Informativa sulla privacy</a>."),
         ],
         "contact_h": "Contatto",
-        "contact": "Non hai trovato quello che cercavi? Scrivi a <a href=\"mailto:abm.luigi@gmail.com\">abm.luigi@gmail.com</a> e ti aiuteremo.",
+        "contact": "Non hai trovato quello che cercavi? Scrivi a <a href=\"mailto:support@audiobook-maker.com\">support@audiobook-maker.com</a> e ti aiuteremo.",
     },
     "en": {
         "lang": "en",
@@ -64,7 +64,7 @@ _TXT = {
              "Your audiobooks stay on your device and are not uploaded unless you explicitly share them. In that case they remain for 24 hours in an area reachable only via the link you are given. Full details are in our <a href=\"/privacy?lang=en\">Privacy Policy</a>."),
         ],
         "contact_h": "Contact",
-        "contact": "Didn't find what you were looking for? Email us at <a href=\"mailto:abm.luigi@gmail.com\">abm.luigi@gmail.com</a> and we'll help.",
+        "contact": "Didn't find what you were looking for? Email us at <a href=\"mailto:support@audiobook-maker.com\">support@audiobook-maker.com</a> and we'll help.",
     },
 }
 

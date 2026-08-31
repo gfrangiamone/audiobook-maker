@@ -950,6 +950,20 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .fbw-form input[type="text"]:focus,.fbw-form textarea:focus{outline:none;border-color:var(--ac)}
 .fbw-form textarea{resize:vertical;min-height:60px}
 .fbw-form button[type="submit"]{align-self:flex-end}
+/* Form "Contatta supporto" (modal dal footer) */
+.sup-intro{margin:0 0 14px;font-size:.88rem;line-height:1.5;color:var(--txd)}
+.sup-form{display:flex;flex-direction:column;gap:6px}
+.sup-form label{font-size:.82rem;color:var(--txd);margin-top:8px}
+.sup-form label:first-of-type{margin-top:0}
+.sup-form input[type="text"],.sup-form input[type="email"],.sup-form textarea{background:var(--srf);border:1px solid var(--brd);border-radius:6px;color:var(--tx);padding:8px 10px;font:inherit;font-size:.9rem;width:100%}
+.sup-form input[type="text"]:focus,.sup-form input[type="email"]:focus,.sup-form textarea:focus{outline:none;border-color:var(--ac)}
+.sup-form textarea{resize:vertical;min-height:96px}
+.sup-form select{font-size:.9rem;padding:8px 10px;padding-right:36px}
+.sup-form button[type="submit"]{align-self:flex-end;margin-top:14px}
+.sup-hint{font-size:.76rem;color:var(--txm);line-height:1.4}
+.sup-msg{padding:8px 10px;border-radius:6px;font-size:.85rem;margin-top:10px}
+.sup-msg.ok{background:rgba(91,155,91,.1);color:#5b9b5b;border:1px solid rgba(91,155,91,.2)}
+.sup-msg.err{background:rgba(180,80,80,.1);color:#b45050;border:1px solid rgba(180,80,80,.2)}
 .fbw-msg{padding:8px 10px;border-radius:6px;font-size:.85rem}
 .fbw-msg.ok{background:rgba(91,155,91,.1);color:#5b9b5b;border:1px solid rgba(91,155,91,.2)}
 .fbw-msg.err{background:rgba(180,80,80,.1);color:#b45050;border:1px solid rgba(180,80,80,.2)}

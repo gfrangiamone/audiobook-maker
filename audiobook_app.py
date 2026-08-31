@@ -134,6 +134,7 @@ import community_translator
 import community_moderator
 import pending_jobs
 import tts_backend_state
+import user_stats
 
 # Carica traduzioni pagine di download da file JSON esterno
 _DL_PAGES_I18N = {}
@@ -494,6 +495,9 @@ MAX_SPEECHIFY_TEXT_CHARS = int(os.environ.get("ABM_MAX_SPEECHIFY_TEXT_CHARS", st
 # "gemini:flash25:Zephyr"). Difesa in profondita' contro stored XSS nelle
 # pagine admin e injection nel formato "#"-separato dell'Activity Log.
 _VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,80}$")
+# Mese del business log (activity_YYYY-MM.log): vincola il nome file
+# costruito dal parametro utente.
+_YM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 # Tolleranza di crescita del testo dovuta all'ottimizzazione AI. Un libro che
 # era ENTRO il cap prima dell'ottimizzazione (precondizione garantita dal cap
@@ -1080,14 +1084,54 @@ def _get_browser_lang():
     return first.split("-")[0].lower() if first else ""
 
 
-def _active_generating_for_client_unlocked(client_id):
-    """Internal: caller MUST hold _jobs_lock."""
+def _gen_owner_cid(j):
+    """Client a cui e' imputata la generazione in corso.
+
+    `gen_owner_cid` viene fissato quando il job rivendica lo slot e NON cambia
+    piu': `client_id` invece si sposta quando l'app mobile adotta il job
+    (`/api/transfer` -> `job["client_id"] = cid`). Contare su `client_id`
+    liberava lo slot del client web a meta' generazione, e bastava trasferire
+    ogni job all'app subito dopo l'avvio per aggirare del tutto il tetto
+    (agosto 2026: un client con 8 generazioni contemporanee, tutte trasferite
+    ~2 minuti dopo il GENERATE).
+    """
+    return j.get("gen_owner_cid") or j.get("client_id") or ""
+
+
+def _active_generating_for_client_unlocked(client_id, exclude_job_id=None):
+    """Generazioni FREE in corso imputate a questo client.
+
+    Internal: caller MUST hold _jobs_lock.
+
+    I job PREMIUM sono esclusi dal conteggio: chi paga (voce Gemini/Speechify
+    o pagamento incassato) non ha tetto e non consuma gli slot della corsia
+    gratuita. Criterio unico `generation_engine.is_premium_job`, lo stesso di
+    coda di assembly e telemetria.
+    """
     if not client_id:
         return 0
     return sum(
-        1 for j in jobs.values()
-        if j.get("client_id") == client_id and j.get("status") == "generating"
+        1 for jid, j in jobs.items()
+        if j.get("status") == "generating"
+        and jid != exclude_job_id
+        and _gen_owner_cid(j) == client_id
+        and not generation_engine.is_premium_job(j)
     )
+
+
+def _client_gen_cap_reached(client_id, exclude_job_id=None):
+    """True se il client ha saturato il tetto di generazioni FREE contemporanee.
+
+    Prende _jobs_lock internamente: chiamarla SOLO fuori dal blocco atomico di
+    claim (che usa _active_generating_for_client_unlocked). Iniettata in
+    generation_engine per il ramo auto-gen post-ottimizzazione, che chiama
+    run_generation direttamente senza passare da /api/generate.
+    """
+    if not client_id or MAX_CONCURRENT_PER_CLIENT <= 0:
+        return False, 0, MAX_CONCURRENT_PER_CLIENT
+    with _jobs_lock:
+        active = _active_generating_for_client_unlocked(client_id, exclude_job_id)
+    return active >= MAX_CONCURRENT_PER_CLIENT, active, MAX_CONCURRENT_PER_CLIENT
 
 
 def _active_generating_total_unlocked():
@@ -1336,6 +1380,10 @@ def _reenqueue_orphan(job_id, rec):
         "speechify_emotion": rec.get("speechify_emotion", ""),
         "email_registered": True,
         "client_id": rec.get("client_id", ""),
+        # Slot imputato al client originale: il recovery NON e' soggetto al
+        # tetto (ripartire e' un obbligo verso un lavoro gia' avviato, spesso
+        # pagato), ma deve comunque occupare il posto giusto nel conteggio.
+        "gen_owner_cid": rec.get("client_id", ""),
         "client_ip": rec.get("client_ip", ""),
         "payment": rec.get("payment"),
         "ai_optimized": bool(rec.get("ai_optimized")) or use_abm,
@@ -3641,21 +3689,18 @@ def _parse_log_sessions(ym):
             line = line.strip()
             if not line:
                 continue
-            parts = [p.strip() for p in line.split("#")]
-            if len(parts) < 4:
+            # Split ancorato (2 campi a sinistra, 6 a destra): il vecchio
+            # `line.split("#")` sfasava i campi su ogni titolo contenente '#'
+            # ("Riftwar Saga # 2 Empire.epub" -> operazione "2 Empire"), e la
+            # sessione spariva dalle aggregazioni.
+            fields = user_stats.split_line(line)
+            if not fields:
                 continue
-            sid = parts[0]
-            dt_str = parts[1]
-            filename = parts[2].strip().strip('"')
-            operation = parts[3].strip()
+            (sid, dt_str, filename, operation, client_id, client_ip,
+             voice, browser_lang, platform) = fields
             # Skip voucher audit entries — not conversion activity
             if operation.startswith("VOUCHER_ATTEMPT"):
                 continue
-            client_id = parts[4].strip() if len(parts) > 4 else ""
-            client_ip = parts[5].strip() if len(parts) > 5 else ""
-            voice = parts[6].strip() if len(parts) > 6 else ""
-            browser_lang = parts[7].strip() if len(parts) > 7 else ""
-            platform = parts[8].strip() if len(parts) > 8 else ""
 
             try:
                 dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
@@ -4186,6 +4231,15 @@ def admin_logs():
         active_cls = ' class="active"' if m == ym else ""
         months_nav += f'<a href="/admin/log-activity?{m}"{active_cls}>{m}</a> '
 
+    # Barra mesi della modale "Statistiche utente": l'analisi e' per definizione
+    # mensile (legge activity_YYYY-MM.log), quindi qui si sceglie il mese e non
+    # una finestra temporale come nel pannello di carico.
+    us_months_nav = ""
+    for m in available_months:
+        _cls = "lsw-btn usw-btn active" if m == ym else "lsw-btn usw-btn"
+        us_months_nav += (f'<button class="{_cls}" data-usym="{m}" '
+                          f"onclick=\"loadUserStats('{m}',this)\">{m}</button>")
+
     _funnel = _funnel_data(_last_n_days(30))
     _f_open = _funnel["app_open"]["total"]
     _f_open_a = _funnel["app_open"]["android"]
@@ -4313,7 +4367,8 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     <span class="period">{ym}</span>
     <div class="header-actions">
         <button id="btnSuspend" class="btn btn-suspend" onclick="toggleSuspend()" title="Sospendi/Riprendi nuovi processi">▶ Attivi</button>
-        <button class="btn btn-accent" onclick="showStats()" title="Visualizza Statistiche">📊 Stats</button>
+        <button class="btn btn-accent" onclick="showStats()" title="Carico, code, macchina, affidabilità">📊 Statistiche funzionamento</button>
+        <button class="btn btn-accent" onclick="showUserStats()" title="Utenza free e premium: concentrazione delle generazioni per utente">👥 Statistiche utente</button>
         <a class="btn btn-accent" href="/admin/audit-premium?{ym}" title="Audit dei servizi premium: TTS, Traduzioni, AI Optimization">🎛️ Audit Premium Services</a>
         <a class="btn btn-accent" href="/admin/log-activity/export?{ym}" title="Export Excel">📁 Excel</a>
     </div>
@@ -4509,6 +4564,25 @@ body{{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;background:va
     </div>
   </div>
 </div>
+<div id="usersModal" class="modal">
+    <div class="modal-content ls-modal">
+        <div class="ls-head">
+            <div class="modal-header">
+                <h2>👥 Statistiche utente</h2>
+                <button class="modal-close" onclick="hideUserStats()">&times;</button>
+            </div>
+            <div class="lsw-bar">
+                {us_months_nav}
+                <button class="lsw-btn lsw-refresh" onclick="loadUserStats(usYm,null,true)" title="Ricarica">⟳</button>
+            </div>
+        </div>
+        <div class="ls-body">
+            <div class="ls-coverage">Analisi del business log del mese - coorte PREMIUM = voce a pagamento oppure pagamento incassato sul job.</div>
+            <div id="usCards" class="ls-cards"></div>
+        </div>
+    </div>
+</div>
+
 <div class="ktoast" id="ktoast"></div>
 
 <script>
@@ -4568,6 +4642,144 @@ function lsLevel(v, warn, crit) {{
 
 function lsPane(name, html) {{
     return '<div class="ls-pane" data-pane="' + name + '">' + html + '</div>';
+}}
+
+function lsCoh(label, prem, free, tot) {{
+    return lsCard(label, [
+        lsRow('Premium', prem[0], prem[1] || '', prem[2] || '', true),
+        lsRow('Free', free[0], free[1] || '', free[2] || '', false),
+        lsRow('Totale', tot[0], tot[1] || '', tot[2] || '', false),
+    ]);
+}}
+
+function lsUsersRender(d) {{
+    if (d.log_missing) {{
+        return '<div class="ls-empty">Nessun log attività per ' + (d.ym || '') + '.</div>';
+    }}
+    const C = d.coorti || {{}};
+    const P = C.premium || {{}}, F = C.free || {{}}, T = C.totale || {{}};
+    const nn = v => (v === undefined || v === null) ? '-' : v;
+    const qv = (o, k, f) => (((o.quantili || {{}})[k]) || {{}})[f];
+    const cohQ = k => lsCoh('Utenti per il ' + k + ' delle generazioni',
+        [nn(qv(P, k, 'utenti')), nn(qv(P, k, 'pct_utenti')) + '% della coorte'],
+        [nn(qv(F, k, 'utenti')), nn(qv(F, k, 'pct_utenti')) + '% della coorte'],
+        [nn(qv(T, k, 'utenti')), nn(qv(T, k, 'pct_utenti')) + '% della coorte']);
+    const tsv = (o, n) => ((o.top_share || {{}})['top' + n] === undefined)
+        ? '-' : (o.top_share['top' + n] + '%');
+    const cohTop = n => lsCoh('Quota generata dai top ' + n + (n === 1 ? ' utente' : ' utenti'),
+        [tsv(P, n)], [tsv(F, n)], [tsv(T, n)]);
+    const hv = (o, k) => (o.istogramma || {{}})[k] || 0;
+    const cohHist = k => lsCoh('Utenti con ' + k + (k === '1' ? ' generazione' : ' generazioni'),
+        [hv(P, k)], [hv(F, k)], [hv(T, k)]);
+    const ov = d.overlap || {{}};
+
+    // Concentrazione in valore: stessa domanda delle generazioni, ma pesata
+    // sull'incassato. Fonte diversa (_payments.json), quindi coorte unica:
+    // chi paga e' premium per definizione.
+    const S = d.spesa || {{}};
+    const eur = v => '€' + (Number(v) || 0).toFixed(2);
+    const sq = k => ((S.quantili || {{}})[k]) || {{}};
+    const spQ = k => lsCard('Utenti per il ' + k + ' della spesa', [
+        lsRow('Utenti', nn(sq(k).utenti),
+              (nn(sq(k).pct_utenti)) + '% dei paganti', '', true),
+        lsRow('Spesa coperta', eur(sq(k).spesa_coperta_eur),
+              (nn(sq(k).pct_spesa)) + '% dell&rsquo;incassato', '', false),
+    ]);
+    const sTop = n => ((S.top_share || {{}})['top' + n] === undefined)
+        ? '-' : (S.top_share['top' + n] + '%');
+    const spesaSec = lsSec('Concentrazione della spesa', [
+        lsCard('Incassato nel mese', [
+            lsRow('Totale', eur(S.totale_eur), (S.pagamenti || 0) + ' pagamenti', '', true),
+            lsRow('Utenti paganti', S.utenti || 0, 'attribuiti a un utente del log', '', false),
+            lsRow('Spesa media', eur(S.medio_per_utente_eur), 'ARPPU', '', false),
+            lsRow('Spesa mediana', eur(S.mediana_per_utente_eur), '', '', false),
+        ]),
+        spQ('50%'), spQ('70%'), spQ('90%'),
+        lsCard('Peso dei grandi spenditori', [
+            lsRow('Top 1', sTop(1), '', '', true),
+            lsRow('Top 3', sTop(3), '', '', false),
+            lsRow('Top 5', sTop(5), '', '', false),
+            lsRow('Top 10', sTop(10), '', '', false),
+            lsRow('Top 20', sTop(20), '', '', false),
+            lsRow('Indice di Gini', S.gini || 0, '0 = spesa uniforme', '', false),
+        ]),
+        lsCard('Utenti per fascia di spesa', ['< 1', '1-3', '3-10', '10-30', '> 30'].map(
+            k => lsRow('€ ' + k, (S.istogramma || {{}})[k] || 0, '', '', false))),
+        lsCard('Incassi fuori analisi', [
+            lsRow('Senza utente', S.non_attribuiti || 0,
+                  eur(S.non_attribuiti_eur) + ' - job non nel log del mese', '', false),
+            lsRow('Non compensati', S.unfunded || 0,
+                  eur(S.unfunded_eur) + ' - eCheck in attesa, esclusi dal totale', '', false),
+        ]),
+    ]);
+
+    return lsSec('Volumi del mese ' + (d.ym || ''), [
+        lsCoh('Generazioni avviate',
+              [P.generazioni_avviate || 0], [F.generazioni_avviate || 0],
+              [T.generazioni_avviate || 0]),
+        lsCoh('Generazioni completate',
+              [P.generazioni || 0], [F.generazioni || 0], [T.generazioni || 0]),
+        lsCoh('Tasso di completamento',
+              [(P.tasso_completamento_pct || 0) + '%'],
+              [(F.tasso_completamento_pct || 0) + '%'],
+              [(T.tasso_completamento_pct || 0) + '%']),
+        lsCoh('Utenti distinti', [P.utenti || 0], [F.utenti || 0], [T.utenti || 0]),
+        lsCoh('Media generazioni per utente',
+              [P.media_per_utente || 0], [F.media_per_utente || 0], [T.media_per_utente || 0]),
+    ]) + lsSec('Concentrazione: quanti utenti fanno il grosso', [
+        cohQ('50%'), cohQ('70%'), cohQ('90%'),
+    ]) + lsSec('Peso dei grandi utenti', [
+        cohTop(1), cohTop(3), cohTop(5), cohTop(10), cohTop(20),
+        lsCoh('Indice di Gini', [P.gini || 0], [F.gini || 0], [T.gini || 0]),
+    ]) + lsSec('Distribuzione per utente',
+        ['1', '2', '3-5', '6-10', '>10'].map(cohHist)
+    ) + spesaSec + lsSec('Identità e pagamenti', [
+        lsOne('Sessioni nel log', d.sessioni_totali || 0, 'mese ' + (d.ym || '')),
+        lsOne('Client paganti', d.clienti_paganti || 0,
+              'solo incassi PayPal: i buoni non lasciano traccia nel log'),
+        lsOne('Completate senza identità', (d.senza_identita || {{}}).complete || 0,
+              'escluse dai conteggi per utente'),
+        lsCard('Sovrapposizione coorti', [
+            lsRow('Solo premium', ov.solo_premium || 0, '', '', true),
+            lsRow('Solo free', ov.solo_free || 0, '', '', false),
+            lsRow('Entrambe', ov.entrambi || 0, '', '', false),
+        ]),
+    ]);
+}}
+
+// Modale "Statistiche utente": analisi mensile del business log, separata dal
+// pannello di funzionamento (che ragiona per finestre sulla telemetria di carico).
+let usYm = '{ym}';
+const usCache = {{}};
+
+function showUserStats() {{
+    document.getElementById('usersModal').style.display = 'block';
+    loadUserStats(usYm, null);
+}}
+
+function hideUserStats() {{
+    document.getElementById('usersModal').style.display = 'none';
+}}
+
+function loadUserStats(ym, btn, force) {{
+    usYm = ym;
+    document.querySelectorAll('.usw-btn[data-usym]').forEach(b => b.classList.remove('active'));
+    const target = btn || document.querySelector('.usw-btn[data-usym="' + ym + '"]');
+    if (target) target.classList.add('active');
+    const box = document.getElementById('usCards');
+    if (!force && usCache[ym]) {{ box.innerHTML = usCache[ym]; return; }}
+    box.innerHTML = '<div class="ls-empty">Caricamento...</div>';
+    fetch('/api/admin/user_stats?ym=' + encodeURIComponent(ym),
+          {{credentials: 'same-origin'}})
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(d => {{
+            usCache[ym] = lsUsersRender(d);
+            if (usYm === ym) box.innerHTML = usCache[ym];
+        }})
+        .catch(e => {{
+            box.innerHTML =
+                '<div class="ls-empty">Errore nel caricamento dell&rsquo;analisi utenza (' + e + ').</div>';
+        }});
 }}
 
 function lsRender(d) {{
@@ -4740,8 +4952,8 @@ function loadStats(win, btn) {{
 }}
 
 window.onclick = function(event) {{
-    const modal = document.getElementById('statsModal');
-    if (event.target == modal) hideStats();
+    if (event.target == document.getElementById('statsModal')) hideStats();
+    if (event.target == document.getElementById('usersModal')) hideUserStats();
 }};
 
 function toggleAllDays() {{
@@ -8472,6 +8684,50 @@ def api_community_feedback_delete(item_id: str):
     return jsonify({"ok": True}), 200
 
 
+# ─── Form "Contatta supporto" (footer del sito) ────────────────────
+# Inoltra la richiesta alla casella di assistenza. Nessuna persistenza:
+# la richiesta vive nella mailbox, non nei nostri store.
+_SUPPORT_RL_PER_MIN = int(os.environ.get("ABM_SUPPORT_RL_PER_MIN", "2"))
+_SUPPORT_RL_PER_HOUR = int(os.environ.get("ABM_SUPPORT_RL_PER_HOUR", "6"))
+_SUPPORT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+_SUPPORT_MSG_MIN = 10
+
+
+@app.route("/api/support/contact", methods=["POST"])
+def api_support_contact():
+    """Richiesta di assistenza dal form pubblico -> email a SUPPORT_EMAIL."""
+    body = request.get_json(silent=True) or {}
+    # honeypot: rispondiamo ok senza inviare nulla, il bot non impara nulla
+    if body.get("website"):
+        return jsonify({"ok": True}), 200
+    email_addr = _sanitize_text(body.get("email"), 320)
+    if not _SUPPORT_EMAIL_RE.match(email_addr):
+        return jsonify({"error": "invalid_email"}), 400
+    plan = (body.get("plan") or "").strip().lower()
+    if plan not in ("free", "premium"):
+        return jsonify({"error": "invalid_plan"}), 400
+    title = _sanitize_text(body.get("book_title"), 300)
+    if not title:
+        return jsonify({"error": "missing_title"}), 400
+    message = _sanitize_text(body.get("message"), 4000, keep_newlines=True)
+    if len(message) < _SUPPORT_MSG_MIN:
+        return jsonify({"error": "missing_message"}), 400
+    link = _sanitize_text(body.get("download_link"), 500)
+    ui_lang = (body.get("lang") or "").strip().lower()[:5]
+    ip = _client_ip()
+    allowed, retry = _ip_rl_check("support", ip,
+                                  _SUPPORT_RL_PER_MIN, _SUPPORT_RL_PER_HOUR)
+    if not allowed:
+        return jsonify({"error": "rate_limit", "retry_after": retry}), 429
+    sent = email_service.send_support_request(
+        email_addr, plan, title, link, message,
+        ui_lang=ui_lang, ip_hash=_hash_ip(ip),
+    )
+    if not sent:
+        return jsonify({"error": "send_failed"}), 502
+    return jsonify({"ok": True}), 200
+
+
 @app.route("/admin/api/feedback/list", methods=["GET"])
 def admin_api_feedback_list():
     if not _admin_auth_ok(_admin_auth_from_request()):
@@ -9091,6 +9347,67 @@ def api_admin_load_stats():
                               assembly_slots=slots)
     data["meta"]["global_cap"] = MAX_CONCURRENT_GLOBAL
     data["meta"]["assembly_slots"] = slots
+    return jsonify(data)
+
+
+# Cache dell'analisi utenza: la scansione di activity_YYYY-MM.log costa ~1s su
+# un mese pieno (15 MB) e il pannello viene aperto e richiuso di continuo.
+# Chiave = (ym, mtime, size) del file: un log che cresce invalida da solo.
+_USER_STATS_CACHE = {}
+_USER_STATS_CACHE_MAX = 6
+
+
+@app.route("/api/admin/user_stats")
+def api_admin_user_stats():
+    """Analisi dell'utenza (concentrazione free/premium) del mese richiesto.
+
+    Alimenta la modale "Statistiche utente" di /admin/log-activity.
+    Sorgente: il business log mensile, non la telemetria di carico.
+    Coorte PREMIUM = voce a pagamento OPPURE pagamento incassato sul job.
+    La concentrazione in valore incrocia gli incassi di `_payments.json`
+    (il log non riporta gli importi) via job_id; le email dei clienti
+    restano nel record e non escono mai da qui.
+    """
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "Unauthorized"}), 403
+    ym = (request.args.get("ym") or "").strip()
+    if not _YM_RE.match(ym):
+        return jsonify({"error": "Invalid month (expected YYYY-MM)"}), 400
+    log_path = SCRIPT_DIR / f"activity_{ym}.log"
+    if not log_path.exists():
+        data = user_stats.empty_result(log_path.name)
+        data["ym"] = ym
+        data["log_missing"] = True
+        return jsonify(data)
+
+    # Gli incassi arrivano dalla memoria di `payment`, che e' l'unica copia
+    # sempre allineata (il file su disco e' solo la sua persistenza).
+    pay_records = list(getattr(payment, "_payments", {}).values())
+    # Impronta dei pagamenti: un incasso nuovo deve invalidare la cache anche
+    # se il log del mese non e' cambiato.
+    pay_key = (len(pay_records),
+               max((r.get("captured_at") or 0 for r in pay_records), default=0))
+    try:
+        st = log_path.stat()
+        key = (ym, int(st.st_mtime), st.st_size, pay_key)
+    except OSError:
+        key = None
+    if key is not None and key in _USER_STATS_CACHE:
+        return jsonify(_USER_STATS_CACHE[key])
+
+    t0 = time.time()
+    try:
+        data = user_stats.analyze(log_path, payments=pay_records)
+    except Exception as e:
+        print(f"[admin] user_stats {ym} failed: {e}", flush=True)
+        return jsonify({"error": f"Analysis failed: {e}"}), 500
+    data["ym"] = ym
+    data["file"] = log_path.name  # mai il path assoluto del server
+    data["elapsed_sec"] = round(time.time() - t0, 2)
+    if key is not None:
+        if len(_USER_STATS_CACHE) >= _USER_STATS_CACHE_MAX:
+            _USER_STATS_CACHE.pop(next(iter(_USER_STATS_CACHE)), None)
+        _USER_STATS_CACHE[key] = data
     return jsonify(data)
 
 
@@ -10507,14 +10824,21 @@ def api_generate():
     #  -  -  Atomic concurrency check + status claim  -  -
     client_id = job.get("client_id", "")
     client_ip = job.get("client_ip", "")
+    # `job["voice"]` viene scritto solo al claim (sotto), quindi la voce
+    # richiesta va valutata qui a parte: is_premium_job() da sola vedrebbe
+    # ancora il job senza voce e classificherebbe free una richiesta Gemini.
+    _premium_req = (_is_gemini_voice(voice) or _is_speechify_voice(voice)
+                    or generation_engine.is_premium_job(job))
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
             _refund_payment_on_orphan(job_id, job, "status_conflict")
             try: gemini_tts.release_reservation(job_id)
             except Exception: pass
             return jsonify({"error": "Generation already running or completed."}), 400
-        if client_id and MAX_CONCURRENT_PER_CLIENT > 0:
-            if _active_generating_for_client_unlocked(client_id) >= MAX_CONCURRENT_PER_CLIENT:
+        # Il tetto per-client vale solo per la corsia gratuita: chi paga (voce
+        # premium o pagamento incassato) non viene ne' limitato ne' conteggiato.
+        if client_id and MAX_CONCURRENT_PER_CLIENT > 0 and not _premium_req:
+            if _active_generating_for_client_unlocked(client_id, job_id) >= MAX_CONCURRENT_PER_CLIENT:
                 _refund_payment_on_orphan(job_id, job, "concurrent_limit")
                 try: gemini_tts.release_reservation(job_id)
                 except Exception: pass
@@ -10522,7 +10846,7 @@ def api_generate():
                     "error": f"Concurrent generation limit reached ({MAX_CONCURRENT_PER_CLIENT}).",
                     "error_code": "concurrent_limit",
                     "max": MAX_CONCURRENT_PER_CLIENT,
-                    "active": _active_generating_for_client_unlocked(client_id),
+                    "active": _active_generating_for_client_unlocked(client_id, job_id),
                 }), 429
         # Tetto globale d'istanza: protegge RAM/CPU dal carico aggregato di
         # client diversi (incidente 2026-08-21). Va valutato DOPO il cap
@@ -10549,6 +10873,10 @@ def api_generate():
         # Save voice in job for logging
         job["voice"] = voice
         job["platform"] = _client_platform()
+        # Proprietario dello slot: fissato qui e mai piu' riscritto (vedi
+        # _gen_owner_cid), cosi' il transfer verso l'app mobile non libera
+        # il posto occupato dalla generazione ancora in corso.
+        job["gen_owner_cid"] = client_id
 
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
@@ -11345,6 +11673,11 @@ def api_transfer_claim(token):
     with _jobs_lock:
         job = jobs.get(job_id)
         if job is not None:
+            # NB: `gen_owner_cid` NON viene toccato. Il transfer cambia il
+            # proprietario del risultato, non chi ha avviato la generazione:
+            # riassegnarlo libererebbe lo slot del client web a metà lavoro e
+            # basterebbe trasferire ogni job all'app per annullare il tetto di
+            # generazioni contemporanee.
             job["client_id"] = cid
             # Il job è ora dell'app: marcalo email_registered così (a) il cleanup
             # non lo tratta come download diretto usa-e-getta (rimozione 5 min dopo
@@ -12621,6 +12954,28 @@ def api_optimize():
         with _jobs_lock:
             if job.get("status") == "optimizing":
                 job["status"] = "analyzed"
+
+    # Tetto generazioni contemporanee, anticipato al wizard combinato.
+    # Con auto_generate la generazione parte da run_optimization chiamando
+    # run_generation direttamente, senza passare da /api/generate: senza
+    # questo controllo il tetto per-client era semplicemente inesistente su
+    # quel percorso. Va valutato PRIMA di incassare qualunque pagamento, e
+    # solo per la corsia gratuita (chi paga non ha tetto).
+    if auto_generate and client_id:
+        _auto_voice = data.get("voice", "")
+        _auto_premium = (_is_gemini_voice(_auto_voice)
+                         or _is_speechify_voice(_auto_voice)
+                         or generation_engine.is_premium_job(job))
+        if not _auto_premium:
+            _capped, _active_gen, _cap = _client_gen_cap_reached(client_id, job_id)
+            if _capped:
+                _release_opt_claim()
+                return jsonify({
+                    "error": f"Concurrent generation limit reached ({_cap}).",
+                    "error_code": "concurrent_limit",
+                    "max": _cap,
+                    "active": _active_gen,
+                }), 429
 
     raw_selected = data.get("selected_chapters")
     selected_chapters = _parse_selected_chapters(raw_selected)
@@ -16808,7 +17163,8 @@ generation_engine.configure(
     write_email_marker_fn=_write_email_marker,
     lookup_client_email_fn=_lookup_client_email,
     build_descriptor_fn=_build_job_descriptor,
-    send_push_fn=_push_job_event
+    send_push_fn=_push_job_event,
+    client_gen_cap_fn=_client_gen_cap_reached
 )
 
 if _paypal_available():
