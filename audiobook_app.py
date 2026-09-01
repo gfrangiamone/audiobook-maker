@@ -6323,10 +6323,10 @@ def admin_audit_premium_page():
 <body>
 <div style="margin-bottom:16px">
   <div style="text-align:right;margin-bottom:8px">
-    <a href="/admin/log-activity" style="font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a>
+    <a href="/admin/log-activity" id="backToLog" style="font-size:.8rem;color:var(--accent);text-decoration:none;font-weight:500">&larr; Activity Log</a>
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-    <h1 style="margin:0">Admin - Audit Premium Services</h1>
+    <h1 style="margin:0">Admin - Audit Premium Services <span id="periodLabel" style="font-size:.85rem;color:var(--muted);font-weight:500"></span></h1>
     <div title="Somma dei margini netti dei tre servizi premium (Audit TTS + Traduzioni + AI Optimization), come mostrati nelle rispettive tab con i filtri correnti." style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:6px 14px;text-align:right;min-width:180px">
       <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Margine netto totale</div>
       <div id="totalNetMarginValue" style="font-size:1.5rem;font-weight:700;margin-top:2px">-</div>
@@ -7189,13 +7189,32 @@ def admin_audit_premium_page():
     b.addEventListener("click", () => showTab(b.dataset.tab));
   });
 
-  // Default periodo: primo giorno del mese corrente (tutte le tab).
-  (function setDefaultDateFrom(){
+  // Default periodo: il mese arrivato in query string dal pannello Activity
+  // Log (`/admin/audit-premium?2026-08`, stessa convenzione dell'export),
+  // altrimenti il mese corrente. Su un mese chiuso si fissa anche il "Al":
+  // senza, il pannello mostrerebbe tutto da quel mese a oggi.
+  (function setDefaultDates(){
     const now = new Date();
-    const firstDay = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-01";
+    const cur = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+    let ym = cur;
+    for (const k of new URLSearchParams(location.search).keys()) {
+      if (/^\d{4}-\d{2}$/.test(k)) { ym = k; break; }
+    }
+    const [y, m] = ym.split("-").map(Number);
+    const firstDay = ym + "-01";
+    const lastDay = (ym === cur)
+      ? "" : ym + "-" + String(new Date(y, m, 0).getDate()).padStart(2,"0");
     ["tts_auditDateFrom","tr_auditDateFrom","optDateFrom"].forEach(id => {
       const el = $(id); if (el && !el.value) el.value = firstDay;
     });
+    if (lastDay) ["tts_auditDateTo","tr_auditDateTo","optDateTo"].forEach(id => {
+      const el = $(id); if (el && !el.value) el.value = lastDay;
+    });
+    const per = $("periodLabel");
+    if (per) per.textContent = ym;
+    // Il ritorno all'Activity Log resta sullo stesso mese.
+    const back = $("backToLog");
+    if (back) back.href = "/admin/log-activity?" + ym;
   })();
 
   // Auto-load: TTS (tab di default) + kill-switch.
