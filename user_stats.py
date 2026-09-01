@@ -552,3 +552,120 @@ def empty_result(path=""):
         c["tasso_completamento_pct"] = 0.0
         res["coorti"][cohort] = c
     return res
+
+
+# ---------------------------------------------------------------------------
+# Power user (digest admin): client con molti avvii a voce STANDARD nelle 24h
+# ---------------------------------------------------------------------------
+
+def grey_source(filename):
+    """Indizio (solo indizio) di provenienza del file dal nome: le shadow
+    library lasciano il proprio marchio nel nome del file scaricato. Nessun
+    blocco: pura osservabilita' nel digest admin."""
+    f = (filename or "").lower()
+    if "z-lib" in f or "1lib" in f or "zlibrary" in f or "z-library" in f:
+        return "zlib"
+    if "anna" in f and "archive" in f:
+        return "anna"
+    if "libgen" in f:
+        return "libgen"
+    return ""
+
+
+def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=None):
+    """Client con >= `min_jobs` avvii a voce STANDARD (GENERATE + REUSE) dal
+    datetime `since` in poi, ordinati per avvii decrescenti (max `top`).
+
+    `paths`: file activity_YYYY-MM.log da leggere (mese corrente, piu' il
+    precedente a cavallo del mese). `quota_table`: output di
+    `free_tts_quota.month_table()` per caratteri e job oltre quota del mese.
+    `month_ym`: mese (YYYY-MM) dei contatori mensili; default = mese di `since`.
+    Identita' = client_id, fallback `ip:<ip>` (come `user_key`). Nessun dato
+    personale oltre a cio' che il log gia' contiene.
+    """
+    since_str = since.strftime("%Y-%m-%d %H:%M:%S")
+    month_ym = month_ym or since.strftime("%Y-%m")
+    users = {}
+    for path in paths:
+        try:
+            fh = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                fl = split_line(line.strip())
+                if not fl:
+                    continue
+                sid, ts, fn, op, cid, ip, voice, lang, plat = fl
+                key = cid or (f"ip:{ip}" if ip else "")
+                if not key:
+                    continue
+                u = users.get(key)
+                if u is None:
+                    u = users[key] = {
+                        "jobs_24h": 0, "reuse_24h": 0, "premium_24h": 0,
+                        "gate_24h": 0, "block_24h": 0, "books_month": 0,
+                        "starts_month": 0, "ips": set(), "platforms": Counter(),
+                        "sources": Counter(), "langs": Counter(),
+                    }
+                recent = ts >= since_str
+                in_month = ts.startswith(month_ym)
+                premium = is_premium_voice(voice)
+                if op == "GENERATE":
+                    if premium:
+                        if recent:
+                            u["premium_24h"] += 1
+                    else:
+                        if in_month:
+                            u["starts_month"] += 1
+                        if recent:
+                            u["jobs_24h"] += 1
+                        if lang:
+                            u["langs"][_lang_key(lang)] += 1
+                elif op == "REUSE":
+                    if in_month:
+                        u["starts_month"] += 1
+                    if recent:
+                        u["jobs_24h"] += 1
+                        u["reuse_24h"] += 1
+                elif op == "COMPLETE":
+                    if in_month and not premium:
+                        u["books_month"] += 1
+                elif op == "QUOTA_GATE":
+                    if recent:
+                        u["gate_24h"] += 1
+                elif op == "QUOTA_BLOCK":
+                    if recent:
+                        u["block_24h"] += 1
+                elif op == "ANALYZE":
+                    src = grey_source(fn)
+                    if src and in_month:
+                        u["sources"][src] += 1
+                if recent and ip:
+                    u["ips"].add(ip)
+                if plat:
+                    u["platforms"][plat] += 1
+    qt = quota_table or {}
+    rows = []
+    for key, u in users.items():
+        if u["jobs_24h"] < max(1, int(min_jobs or 1)):
+            continue
+        q = qt.get(key) if isinstance(qt.get(key), dict) else {}
+        rows.append({
+            "client_id": key,
+            "jobs_24h": u["jobs_24h"],
+            "reuse_24h": u["reuse_24h"],
+            "premium_24h": u["premium_24h"],
+            "gate_24h": u["gate_24h"],
+            "block_24h": u["block_24h"],
+            "books_month": u["books_month"],
+            "starts_month": u["starts_month"],
+            "chars_month": int(q.get("chars", 0) or 0),
+            "gated_month": int(q.get("gated", 0) or 0),
+            "ips_24h": len(u["ips"]),
+            "platform": (u["platforms"].most_common(1) or [("", 0)])[0][0],
+            "langs": [l for l, _n in u["langs"].most_common(3) if l],
+            "sources": dict(u["sources"]),
+        })
+    rows.sort(key=lambda r: (-r["jobs_24h"], -r["books_month"], r["client_id"]))
+    return rows[:max(1, int(top or 1))]

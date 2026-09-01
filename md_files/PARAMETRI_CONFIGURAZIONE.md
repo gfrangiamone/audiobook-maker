@@ -48,6 +48,9 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_LLM_COST_USD_PER_MTOK` | `0.18` (Costo provider LLM per l'ottimizzazione AI del testo — parametro **unico blended in USD** per 1M token TOTALI prompt+completion; assorbe mix input/output e token in cache; convertito in EUR con `ABM_GEMINI_USD_EUR_RATE`; base costo audit /admin/audit-premium) | `payment.py` | 68–69 |
 | `ABM_FREE_QUOTA_EUR_PER_MONTH` | `2.00` (quota gratuita cumulativa per client, € di listino non fatturato per mese solare, sulle voci PREMIUM; `0` disattiva la feature) | `free_quota.py` | 40 |
 | `ABM_PREMIUM_MIN_COST_EUR` | `0.50` (importo minimo addebitato a un job PREMIUM quando la quota gratuita mensile è esaurita) | `free_quota.py` | 168 |
+| `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` | `10000000` (quota mensile per client di caratteri sintetizzati con le voci STANDARD; oltre, ogni nuovo libro parte solo dopo il gate email; `0` disattiva la feature) | `free_tts_quota.py` | 43 |
+| `ABM_OUTPUT_REUSE` | `1` (riuso dell'output di una generazione identica — stesso client, testo, voce, rate, formato, opzioni parentesi — gia' consegnata e ancora su disco; `0`/`false`/`off` disattiva) | `output_reuse.py` | 54 |
+| `ABM_ADMIN_POWER_USER_JOBS_PER_DAY` | `5` (soglia di avvii a voce STANDARD nelle ultime 24h oltre cui un client compare nella sezione "Power user" del digest admin; `0` disattiva la sezione) | `audiobook_app.py` | 3952 |
 | `ABM_VOUCHER_EXPIRY_DAYS` | `180` (giorni validità buono rimborso, = 6 mesi) | `audiobook_app.py` | 110 |
 | `ABM_VOUCHER_BONUS_PERCENT` | `10` (% maggiorazione buono vs pagamento originale) | `audiobook_app.py` | 111 |
 | `ABM_PAYMENT_RETENTION_DAYS` | `730` (24 mesi retention dati pagamento GDPR/fiscale) | `audiobook_app.py` | 112 |
@@ -979,11 +982,50 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 
 ---
 
+## 17. Quota voci standard, riuso output, power user (`free_tts_quota.py`, `output_reuse.py`)
+
+Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi client, introdotte dopo l'analisi di agosto 2026. Tutte a costo zero per l'utente normale.
+
+### 17.1 Quota mensile di caratteri (`free_tts_quota.py`)
+
+- **Cosa conta**: caratteri dei capitoli selezionati di ogni job avviato da `/api/generate` con voce STANDARD (non Gemini/Speechify). Le voci PREMIUM restano sotto `ABM_FREE_QUOTA_EUR_PER_MONTH`.
+- **Identita'**: cookie `abm_cid`; client senza cookie condividono un unico bucket anonimo.
+- **Chiave di addebito**: `job_id:gen_epoch+1` → la rigenerazione dello stesso job (altra voce/formato) conta come nuovo libro; il retry dello stesso avvio e' idempotente.
+- **Gate**: oltre quota `/api/generate` risponde `402 free_tts_quota_exhausted` (`quota_used_chars`, `quota_limit_chars`, `chars_selected`, `email_required`), ripristina lo stato del job e logga `QUOTA_BLOCK`. Il frontend apre `#ttsQuotaModal`: l'utente registra un'email (`/api/register_email`) e rimanda `quota_ack=true`; il job parte, la quota viene comunque addebitata (`gated`) e il log riporta `QUOTA_GATE`. **Nessuno sblocco mensile**: il gate si ripresenta a ogni libro oltre quota. Senza SMTP configurato il gate e' impraticabile e il job passa senza marcatura.
+- **Storno**: `generation_engine._set_job_status` storna l'addebito solo su stato `error` (guasto lato server); cancellazione utente e consegna lo lasciano.
+- **Riuso**: un avvio servito da `output_reuse` non consuma quota ne' passa dal gate.
+- **File**: `ABM_DATA_DIR/_free_tts_quota.json` — `{ "YYYY-MM": { cid: { "chars", "jobs": { key: chars }, "gated": n } } }`, write atomico via `community_store.atomic_write_json`, mesi vecchi potati alla scrittura. `month_table()` alimenta il digest.
+- **Env**: `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` (default 10M, `0` = off, letta a ogni chiamata).
+
+### 17.2 Riuso dell'output (`output_reuse.py`)
+
+- **Chiave**: sha256 di testo dei capitoli selezionati (in ordine) + voce + rate + formato + `single_file` + flag lettura parentesi tonde/quadre.
+- **Indice**: `ABM_DATA_DIR/_output_reuse.json` → `{ key: { client_id, job_id, output_dir, ts } }`, voci piu' vecchie di `_MAX_AGE_SEC` (7 giorni) potate a ogni `record`.
+- **Condizioni** (`source_is_reusable`): job sorgente `done`, stesso client, `failed_chunks == 0`, tutti i file referenziati esistenti sotto `output_dir` (un job evicted su cold non e' riusabile).
+- **Flusso**: `/api/generate` cerca la chiave prima del gate quota; se trova una sorgente valida avvia `generation_engine.run_reuse` al posto di `run_generation`: hardlink (fallback copia) dei file di output nella nuova `output_N`, snapshot `.abm` escluso, campi `output_*` ribasati, consegna via `_finalize_delivery` come un job normale; salta prenotazione Google e quota. Log `REUSE`. `_finalize_delivery` registra la chiave (`reuse_key`) dopo `COMPLETE`.
+- **Env**: `ABM_OUTPUT_REUSE` (default attivo).
+
+### 17.3 Sezione "Power user" nel digest admin
+
+- `audiobook_app._power_users_data` (provider registrato con `email_service.set_power_users_provider`) legge `activity_YYYY-MM.log` del mese corrente (+ precedente a cavallo del mese) e chiama `user_stats.power_users(paths, since=now-24h, min_jobs=ABM_ADMIN_POWER_USER_JOBS_PER_DAY, quota_table=free_tts_quota.month_table())`.
+- Riga per client (max 10): avvii free 24h (di cui riusi), premium 24h, gate/rifiuti 24h, libri completati e avvii nel mese, caratteri del mese con % del limite e job oltre quota, IP distinti 24h, piattaforma, lingue (top 3), fonti "grigie" dedotte dal nome file (`user_stats.grey_source`: z-lib / Anna's Archive / libgen).
+- Il blocco e' omesso se non ci sono client sopra soglia, se la soglia e' `0` o in caso di errore.
+
+### 17.4 Operazioni nel business log
+
+| Op | Quando |
+|----|--------|
+| `QUOTA_BLOCK` | `/api/generate` rifiutato per quota esaurita (nessuna email registrata / nessun ack) |
+| `QUOTA_GATE` | job oltre quota avviato dopo il gate email |
+| `REUSE` | avvio servito con l'output di un job identico (`run_reuse`) |
+
+---
+
 ## Riepilogo
 
 | Categoria | Numero parametri |
 |-----------|:---:|
-| Variabili d'ambiente (`ABM_*`) | 24 |
+| Variabili d'ambiente (`ABM_*`) | 27 |
 | Configurazione Flask | 1 |
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
@@ -996,4 +1038,5 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 | Nuovi moduli v3.8.0 | 6 |
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
-| **Totale** | **121** |
+| Quota voci standard / riuso / power user | 3 |
+| **Totale** | **124** |

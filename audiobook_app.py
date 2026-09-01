@@ -124,6 +124,8 @@ import email_service
 import push_service
 import metrics_store
 import free_quota
+import free_tts_quota
+import output_reuse
 import privacy_content
 import support_content
 import payment
@@ -3944,10 +3946,45 @@ def _funnel_data(days):
     return out
 
 
-# Register funnel provider with email_service (injection — avoids circular import)
+# Soglia di avvii a voce standard nelle 24h oltre cui un client compare nella
+# sezione "power user" del digest admin (0 = sezione disattivata).
+try:
+    POWER_USER_JOBS_PER_DAY = int(os.environ.get("ABM_ADMIN_POWER_USER_JOBS_PER_DAY", "5") or 5)
+except (TypeError, ValueError):
+    POWER_USER_JOBS_PER_DAY = 5
+
+
+def _power_users_data():
+    """Righe per il blocco power user del digest: client con >= soglia avvii
+    a voce standard nelle ultime 24h, dal business log del mese corrente (piu'
+    il precedente a cavallo del mese) + quota caratteri del mese."""
+    if POWER_USER_JOBS_PER_DAY <= 0:
+        return None
+    import user_stats
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    since = now - timedelta(hours=24)
+    paths = []
+    for ym in sorted({since.strftime("%Y-%m"), now.strftime("%Y-%m")}):
+        p = SCRIPT_DIR / f"activity_{ym}.log"
+        if p.exists():
+            paths.append(p)
+    try:
+        qt = free_tts_quota.month_table()
+    except Exception:
+        qt = {}
+    rows = user_stats.power_users(paths, since, min_jobs=POWER_USER_JOBS_PER_DAY,
+                                  quota_table=qt, top=10,
+                                  month_ym=now.strftime("%Y-%m"))
+    return {"rows": rows, "min_jobs": POWER_USER_JOBS_PER_DAY,
+            "quota_limit_chars": free_tts_quota.limit_chars(), "window_hours": 24}
+
+
+# Register funnel + power user providers with email_service (injection — avoids circular import)
 try:
     import email_service as _email_service
     _email_service.set_funnel_provider(lambda: _funnel_data(_last_n_days(30)))
+    _email_service.set_power_users_provider(_power_users_data)
 except Exception:
     pass
 
@@ -11154,11 +11191,78 @@ def api_generate():
             "chars_limit": max_text_chars,
         }), 413
 
+    #  -  -  Riuso di una generazione identica (voci standard, stesso client)  -  -
+    # Impronta = testo dei capitoli selezionati + voce/rate/formato/parentesi.
+    # Un hit serve i file del job sorgente (ancora in finestra calda) senza
+    # sintesi: niente quota caratteri, niente prenotazione Google. Mai per job
+    # premium/pagati; le voci Google restano escluse perche' il fallback di
+    # run_reuse su run_generation partirebbe senza prenotazione budget.
+    _reuse_src = None
+    job.pop("reuse_key", None)
+    if (not _premium_req and output_reuse.enabled()
+            and not (google_tts is not None and google_tts.is_google_voice(voice))):
+        try:
+            _rk = output_reuse.compute_key(
+                info.chapters, voice, rate, output_format, single_file,
+                strip_round=not bool(job.get("read_round_parens", False)),
+                strip_square=not bool(job.get("read_square_brackets", False)))
+            job["reuse_key"] = _rk
+            _ent = output_reuse.lookup(_rk, client_id)
+            if _ent and _ent.get("job_id") != job_id:
+                _src_job = jobs.get(_ent.get("job_id"))
+                if output_reuse.source_is_reusable(_src_job, client_id):
+                    _reuse_src = _ent["job_id"]
+                    print(f"[{job_id}] output reuse: hit su {_reuse_src}", flush=True)
+                else:
+                    output_reuse.forget(_rk)
+        except Exception as _ru_err:
+            print(f"[{job_id}] output reuse lookup failed (non-fatal): {_ru_err}", flush=True)
+            _reuse_src = None
+
+    #  -  -  Quota mensile caratteri voci STANDARD (gate email oltre quota)  -  -
+    # Oltre `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` ogni libro a voce standard e'
+    # accettato solo in modalita' batch con email registrata (`quota_ack` dal
+    # frontend dopo /api/register_email). Il consumo e' rinviato al punto di
+    # partenza certa (sotto), come per la quota premium. La chiave include
+    # l'epoch: una ri-generazione dello stesso job e' una nuova sintesi.
+    job.pop("_free_tts_quota_charge", None)
+    if _reuse_src is None and not _premium_req and free_tts_quota.limit_chars() > 0:
+        _ftq_cid = _quota_client_id(job)
+        _ftq_key = f"{job_id}:{job.get('gen_epoch', 0) + 1}"
+        _ftq_dec = free_tts_quota.decision(_ftq_cid, selected_chars, _ftq_key)
+        _ftq_gated = False
+        if not _ftq_dec["allowed"]:
+            _ftq_ack = (bool(data.get("quota_ack")) and bool(job.get("notify_email"))
+                        and bool(job.get("email_registered")))
+            if not _ftq_ack and _smtp_available():
+                with _jobs_lock:
+                    if job["status"] == "generating":
+                        job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
+                _log_activity(job_id, job.get("original_filename", ""), "QUOTA_BLOCK",
+                              client_id, client_ip, voice,
+                              browser_lang=job.get("browser_lang", ""))
+                print(f"[{job_id}] free TTS quota: {_ftq_dec['used_chars']:,}+"
+                      f"{selected_chars:,} > {_ftq_dec['limit_chars']:,} chars "
+                      f"-> email gate", flush=True)
+                return jsonify({
+                    "error": "Monthly free-voice quota exceeded. Register an email "
+                             "address to receive this audiobook when it is ready.",
+                    "error_code": "free_tts_quota_exhausted",
+                    "quota_used_chars": _ftq_dec["used_chars"],
+                    "quota_limit_chars": _ftq_dec["limit_chars"],
+                    "chars_selected": selected_chars,
+                    "email_required": True,
+                }), 402
+            # Gate superato (email registrata) oppure SMTP assente: il gate
+            # sarebbe impassabile, quindi si lascia passare senza marcare.
+            _ftq_gated = bool(_ftq_ack)
+        job["_free_tts_quota_charge"] = (_ftq_cid, _ftq_key, selected_chars, _ftq_gated)
+
     #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  -
     # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
     # parallele non possono passare lo stesso check. Il refund della parte
     # non consumata avviene in run_generation in caso di errore/cancellazione.
-    if google_tts is not None and google_tts.is_google_voice(voice):
+    if _reuse_src is None and google_tts is not None and google_tts.is_google_voice(voice):
         total_chars_needed = sum(ch.char_count for ch in info.chapters)
         ok, remaining_after = google_tts.reserve_chars(total_chars_needed)
         if not ok:
@@ -11200,6 +11304,27 @@ def api_generate():
         except Exception as _fq_err:
             print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
 
+    # Quota caratteri voci standard: stesso punto di consumo (job certo di
+    # partire). Il riferimento posato sul job serve a _set_job_status per lo
+    # storno in caso di errore server.
+    _ftq = job.pop("_free_tts_quota_charge", None)
+    if _ftq is not None and free_tts_quota.limit_chars() > 0:
+        _ftq_cid, _ftq_key, _ftq_chars, _ftq_gated = _ftq
+        try:
+            _ftq_total = free_tts_quota.consume(_ftq_cid, _ftq_chars, _ftq_key,
+                                                gated=_ftq_gated)
+            job["_free_tts_quota_ref"] = (_ftq_cid, _ftq_key)
+            print(f"[{job_id}] free TTS quota consumed: +{_ftq_chars:,} -> "
+                  f"{_ftq_total:,}/{free_tts_quota.limit_chars():,} chars"
+                  f"{' (gated)' if _ftq_gated else ''}", flush=True)
+            if _ftq_gated:
+                _log_activity(job_id, job.get("original_filename", ""), "QUOTA_GATE",
+                              client_id, client_ip, voice,
+                              browser_lang=job.get("browser_lang", ""))
+        except Exception as _ftq_err:
+            print(f"[{job_id}] free_tts_quota consume failed (non-fatal): {_ftq_err}",
+                  flush=True)
+
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
     # questa generazione. Quello scritto da register_email puo' non esistere
     # (job allora in analyzed) o essere vecchio: voce/selezione/pagamento di un
@@ -11213,11 +11338,15 @@ def api_generate():
 
     # Increment generation epoch to invalidate any stale threads
     job["gen_epoch"] = job.get("gen_epoch", 0) + 1
+    _gen_kwargs = {'output_format': output_format, 'podcast_base_url': podcast_base_url,
+                   'gemini_style_instruction': job.get("gemini_style_instruction"),
+                   'speechify_emotion': job.get("speechify_emotion")}
+    if _reuse_src:
+        _gen_kwargs['reuse_from'] = _reuse_src
     thread = threading.Thread(
-        target=run_generation, args=(job_id, info, voice, rate, single_file),
-        kwargs={'output_format': output_format, 'podcast_base_url': podcast_base_url,
-                'gemini_style_instruction': job.get("gemini_style_instruction"),
-                'speechify_emotion': job.get("speechify_emotion")},
+        target=(generation_engine.run_reuse if _reuse_src else run_generation),
+        args=(job_id, info, voice, rate, single_file),
+        kwargs=_gen_kwargs,
         daemon=True
     )
     thread.start()

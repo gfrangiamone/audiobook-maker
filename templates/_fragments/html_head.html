@@ -1074,4 +1074,24 @@ __REVIEWS_LD__
     </div>
   </div>
 
+  <!-- STANDARD-VOICE MONTHLY QUOTA GATE: beyond quota the job runs only with an email registered -->
+  <div class="modal-overlay" id="ttsQuotaModal" role="dialog" aria-modal="true" aria-labelledby="ttsQuotaTitle" onclick="if(event.target===this)closeTtsQuotaModal()">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-head">
+        <span data-t="tts_quota_title" id="ttsQuotaTitle"></span>
+        <button class="modal-close" onclick="closeTtsQuotaModal()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="ttsQuotaBody" style="margin:0 0 10px;line-height:1.6;font-size:.92rem"></p>
+        <p data-t="tts_quota_note" style="margin:0 0 14px;line-height:1.5;font-size:.88rem;opacity:.85"></p>
+        <input type="email" id="ttsQuotaEmail" placeholder="" autocomplete="email" aria-label="Email" style="width:100%;box-sizing:border-box;margin-bottom:10px" onkeydown="if(event.key==='Enter'){event.preventDefault();_submitTtsQuotaGate()}">
+        <div id="ttsQuotaErr" style="color:var(--err,#c0392b);font-size:.85rem;margin:0 0 10px;display:none"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-outline" onclick="closeTtsQuotaModal()" data-t="btn_cancel"></button>
+          <button class="btn btn-ok" id="ttsQuotaGo" onclick="_submitTtsQuotaGate()" data-t="tts_quota_continue"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>

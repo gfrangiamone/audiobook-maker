@@ -37,6 +37,8 @@ import payment
 import pending_jobs
 import cancel_policy
 import chunk_reuse
+import free_tts_quota
+import output_reuse
 import storage_backend
 import storage_tiering
 import translation_core
@@ -424,6 +426,21 @@ def _set_job_status(job, status):
                 spill_job_texts(jid, job)
         except Exception as e:
             print(f"[spill] errore non fatale su status={status}: {e}")
+
+    # Quota caratteri voci standard: il riferimento (client, chiave) e' posato
+    # da /api/generate al consume e consumato qui con pop() su OGNI terminale;
+    # lo storno avviene solo su errore server (nulla prodotto). Cancellazione
+    # utente e consegne (anche parziali) restano addebitate.
+    if status in _TERMINAL_STATUSES and isinstance(job, dict):
+        _ftq_ref = job.pop("_free_tts_quota_ref", None)
+        if status == "error" and _ftq_ref:
+            try:
+                _n = free_tts_quota.refund(_ftq_ref[0], _ftq_ref[1])
+                if _n:
+                    print(f"[{_ftq_ref[1]}] free TTS quota refunded: -{_n:,} chars "
+                          f"(server error)", flush=True)
+            except Exception as _ftq_err:
+                print(f"free_tts_quota refund failed (non-fatal): {_ftq_err}", flush=True)
 
     # Telemetria di carico: esito e durata della generazione TTS. Il marker
     # `_lm_gen_t0` viene posato da run_generation e consumato qui con pop(),
@@ -4373,6 +4390,238 @@ def _release_assembly_slot(job, slot):
         slot.release()
 
 
+# Chiavi di output di una generazione precedente sullo stesso job_id: vanno
+# azzerate a ogni nuova partenza (formato diverso -> path vecchi serviti da
+# /api/download). I token email attivi hanno le proprie copie snapshot.
+_STALE_OUTPUT_KEYS = ("output_files", "output_name", "output_zip", "output_file",
+                      "output_m4b", "output_m4b_fallback_zip",
+                      "optimized_abm_path", "optimized_abm_name",
+                      "podcast_ready", "podcast_safe_name", "podcast_mp3s",
+                      "podcast_info", "podcast_rss_included",
+                      "m4b_failed")
+
+
+def run_reuse(job_id, info, voice, rate, single_file, output_format='m4b',
+              podcast_base_url='', reuse_from='', **_ignored):
+    """Serve una generazione IDENTICA (stesso client, stesso testo/voce/parametri)
+    copiando l'output del job sorgente `reuse_from` ancora in finestra calda,
+    invece di risintetizzarlo (agosto 2026: 165 rigenerazioni degli stessi
+    titoli da un solo client). Solo voci standard: il chiamante non arriva qui
+    con job premium/pagati. Su qualunque miss ricade su run_generation, che
+    riparte da zero sullo stesso epoch/output_dir.
+    """
+    job = _jobs.get(job_id)
+    if job is None:
+        print(f"[{job_id}] run_reuse: job assente da _jobs all'avvio — skip", flush=True)
+        return
+    client_id = job.get("client_id", "")
+    src = _jobs.get(reuse_from) if reuse_from else None
+    if not output_reuse.source_is_reusable(src, client_id):
+        print(f"[{job_id}] output reuse: sorgente {reuse_from or '-'} non piu' "
+              f"riusabile -> generazione normale", flush=True)
+        return run_generation(job_id, info, voice, rate, single_file,
+                              output_format=output_format,
+                              podcast_base_url=podcast_base_url)
+    rehydrate_job_texts(job_id, job)
+    job.setdefault("gen_owner_cid", client_id)
+    _set_job_status(job, "generating")
+    job["_lm_gen_t0"] = time.time()
+    job["cancelled"] = False
+    my_epoch = job.get("gen_epoch", 0)
+    job["last_poll"] = time.time()
+    job["rate"] = rate
+    work_dir = _upload_dir / job_id
+    work_dir.mkdir(exist_ok=True)
+    output_dir = work_dir / f"output_{my_epoch}"
+    output_dir.mkdir(exist_ok=True)
+    job["output_dir"] = str(output_dir)
+    for _stale_key in _STALE_OUTPUT_KEYS:
+        job.pop(_stale_key, None)
+    start_time = time.time()
+
+    fields = None
+    try:
+        fields = output_reuse.materialize(src, output_dir)
+    except Exception as _m_err:
+        print(f"[{job_id}] output reuse: materialize error {_m_err}", flush=True)
+        fields = None
+    if not fields:
+        print(f"[{job_id}] output reuse: file sorgente non copiabili -> "
+              f"generazione normale", flush=True)
+        try:
+            output_reuse.forget(job.get("reuse_key") or "")
+        except Exception:
+            pass
+        return run_generation(job_id, info, voice, rate, single_file,
+                              output_format=output_format,
+                              podcast_base_url=podcast_base_url)
+
+    try:
+        job.update(fields)
+        if output_format == "zip_rss":
+            job["podcast_info"] = info
+        job["failed_chunks"] = 0
+        job["failed_chunks_ratio"] = 0.0
+        _tc = int(job.get("total_chunks") or 0) or 1
+        job["progress_total"] = _tc
+        job["progress_current"] = _tc
+        job["chunks_reused"] = _tc
+        job["reused_from"] = reuse_from
+        job["elapsed_seconds"] = round(time.time() - start_time, 1)
+        job["completed_at"] = time.time()
+        print(f"[{job_id}] Output reused from {reuse_from}: "
+              f"{len(job.get('output_files') or [])} file, "
+              f"{int(job.get('bytes_generated') or 0):,} bytes, "
+              f"{job['elapsed_seconds']}s", flush=True)
+        _log_activity(job_id, job.get("original_filename", ""), "REUSE",
+                      client_id, job.get("client_ip", ""),
+                      voice, job.get("browser_lang", ""), epoch=my_epoch)
+        if job.get("ai_optimized"):
+            try:
+                abm_path, abm_name = _generate_optimized_abm(job_id)
+                job["optimized_abm_path"] = abm_path
+                job["optimized_abm_name"] = abm_name
+            except Exception as e:
+                print(f"[{job_id}] Failed to write .abm: {e}")
+                job["abm_generation_error"] = str(e)
+        _finalize_delivery(job_id, job, info, voice, False, False, False)
+    except BaseException as e:
+        if isinstance(e, (SystemExit, KeyboardInterrupt)):
+            raise
+        print(f"[{job_id}] output reuse delivery failed: {type(e).__name__}: {e}",
+              flush=True)
+        job["error"] = f"{type(e).__name__}: {e}"
+        _set_job_status(job, "error")
+
+
+
+def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial):
+    """Coda comune di consegna di una generazione conclusa: stato done/partial,
+    log COMPLETE, marker di fine generazione + offload cold, audit premium,
+    push, email/token di download, chiusura del descrittore di recovery e
+    copie admin. Condivisa da run_generation e run_reuse; le eccezioni
+    propagano al chiamante (stessi handler di prima dell'estrazione).
+    """
+    _set_job_status(job, "partial" if _is_partial else "done")
+    _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  job.get("voice", ""), job.get("browser_lang", ""),
+                  epoch=job.get("gen_epoch"))
+
+    # Indice di riuso: solo generazioni gratuite concluse senza chunk falliti.
+    # L'impronta (`reuse_key`) e' calcolata da /api/generate sul testo dei
+    # capitoli selezionati + parametri; i job premium/pagati non entrano mai.
+    _rk = job.get("reuse_key") or ""
+    if (_rk and not _is_partial and not int(job.get("failed_chunks") or 0)
+            and not is_premium_job(job) and output_reuse.enabled()):
+        try:
+            output_reuse.record(_rk, job.get("client_id", ""), job_id,
+                                job.get("output_dir", ""))
+        except Exception as _rr_err:
+            print(f"[{job_id}] output_reuse.record failed (non-fatal): {_rr_err}", flush=True)
+
+    # Offload asincrono su cold storage (se configurato). I file restano
+    # serviti da locale per tutta la finestra calda; l'upload gira intanto.
+    # Prima: marca la generazione come conclusa (file .m4b/.mp3 finalizzati)
+    # così l'offload — sia questo che il reconcile sweep — può procedere
+    # senza rischio di copiare un file ancora in scrittura (vedi F1).
+    _out_dir = job.get("output_dir", "")
+    if _out_dir:
+        try:
+            storage_tiering.mark_generation_complete(_out_dir, time.time())
+        except Exception as e:
+            print(f"[{job_id}] mark_generation_complete failed (non-fatal): {e}", flush=True)
+    try:
+        _spawn_cloud_offload(job_id, _out_dir)
+    except Exception as e:
+        print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
+
+    if use_gemini:
+        _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
+    elif use_speechify:
+        _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
+
+    # Send push notification to mobile devices
+    if _send_push:
+        try:
+            _book_title = ""
+            try:
+                _info = job.get("info")
+                _book_title = getattr(_info, "title", "") or ""
+            except Exception:
+                pass
+            threading.Thread(
+                target=_send_push, args=(job_id, "done", _book_title),
+                daemon=True, name=f"push-{job_id}",
+            ).start()
+        except Exception as _push_err:
+            print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
+
+    # Send email notification if user registered
+    notify_email = job.get("notify_email")
+    if not notify_email:
+        # Fallback: cerca email precedentemente registrata per lo stesso client
+        _cid = job.get("client_id", "")
+        if _cid:
+            notify_email = _lookup_client_email(_cid)
+            if notify_email:
+                job["notify_email"] = notify_email
+                print(f"[{job_id}] post-COMPLETE: using fallback email "
+                      f"from client_id {_cid}", flush=True)
+    if notify_email:
+        print(f"[{job_id}] post-COMPLETE: triggering email to {notify_email}", flush=True)
+        try:
+            _send_completion_email(job_id)
+        except Exception as e:
+            import traceback
+            print(f"[{job_id}] Email notification error: {e}", flush=True)
+            traceback.print_exc()
+            try:
+                _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
+                              job.get("client_id", ""), job.get("client_ip", ""),
+                              job.get("voice", ""), job.get("browser_lang", ""))
+            except Exception:
+                pass
+    elif job.get("email_registered"):
+        # Job batch mobile senza email: crea comunque il download token cosi'
+        # push + my_jobs possono servire il file (la push e' gia' emessa sopra).
+        print(f"[{job_id}] post-COMPLETE: batch job senza email, creo token "
+              f"(email_registered=True)", flush=True)
+        try:
+            _create_download_token(job_id)
+        except Exception as _tok_err:
+            print(f"[{job_id}] batch token creation failed (non-fatal): {_tok_err}", flush=True)
+    else:
+        print(f"[{job_id}] post-COMPLETE: no notify_email "
+              f"(email_registered={job.get('email_registered')})", flush=True)
+        try:
+            _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_BRANCH",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          job.get("voice", ""), job.get("browser_lang", ""))
+        except Exception:
+            pass
+
+    # Il descrittore di recovery si chiude sul COMPLETE, non sull'invio mail.
+    # _send_completion_email chiama finalize solo nel ramo "email inviata":
+    # i job senza notify_email (mobile/batch) e quelli con SMTP fallito
+    # restavano orfani per sempre → a ogni riavvio _recover_orphan_jobs
+    # bumpava attempts e, superato il cap, emetteva un rimborso automatico
+    # su un audiolibro in realtà già consegnato. Qui il job è completo:
+    # chiudiamo il descrittore in tutti i rami.
+    try:
+        pending_jobs.finalize(job_id)
+    except Exception as _e_fin:
+        print(f"[{job_id}] pending_jobs.finalize (post-COMPLETE) failed "
+              f"(non-fatal): {_e_fin}", flush=True)
+
+    # Copie amministrative agganciate mentre il job era in corso: ora che è
+    # completato, materializza i download token admin-owned (indagine).
+    try:
+        _materialize_admin_copies(job_id)
+    except Exception as _amc_err:
+        print(f"[{job_id}] admin-copy materialization failed (non-fatal): {_amc_err}", flush=True)
+
+
 def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', podcast_base_url='', gemini_style_instruction=None, speechify_emotion=None):
     job = _jobs.get(job_id)
     if job is None:
@@ -4416,11 +4665,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # in the job dict and be served by /api/download, leaking files across
     # generations. Active email tokens hold their own snapshot copies, so
     # this clear is safe for them too.
-    for _stale_key in ("output_files", "output_name", "output_zip", "output_file",
-                       "output_m4b", "optimized_abm_path", "optimized_abm_name",
-                       "podcast_ready", "podcast_safe_name", "podcast_mp3s",
-                       "podcast_info", "podcast_rss_included",
-                       "m4b_failed"):
+    for _stale_key in _STALE_OUTPUT_KEYS:
         job.pop(_stale_key, None)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -5771,112 +6016,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        _set_job_status(job, "partial" if _is_partial else "done")
-        _log_activity(job_id, job.get("original_filename", ""), "COMPLETE",
-                      job.get("client_id", ""), job.get("client_ip", ""),
-                      job.get("voice", ""), job.get("browser_lang", ""),
-                      epoch=job.get("gen_epoch"))
-
-        # Offload asincrono su cold storage (se configurato). I file restano
-        # serviti da locale per tutta la finestra calda; l'upload gira intanto.
-        # Prima: marca la generazione come conclusa (file .m4b/.mp3 finalizzati)
-        # così l'offload — sia questo che il reconcile sweep — può procedere
-        # senza rischio di copiare un file ancora in scrittura (vedi F1).
-        _out_dir = job.get("output_dir", "")
-        if _out_dir:
-            try:
-                storage_tiering.mark_generation_complete(_out_dir, time.time())
-            except Exception as e:
-                print(f"[{job_id}] mark_generation_complete failed (non-fatal): {e}", flush=True)
-        try:
-            _spawn_cloud_offload(job_id, _out_dir)
-        except Exception as e:
-            print(f"[{job_id}] cloud offload spawn error: {e}", flush=True)
-
-        if use_gemini:
-            _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
-        elif use_speechify:
-            _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
-
-        # Send push notification to mobile devices
-        if _send_push:
-            try:
-                _book_title = ""
-                try:
-                    _info = job.get("info")
-                    _book_title = getattr(_info, "title", "") or ""
-                except Exception:
-                    pass
-                threading.Thread(
-                    target=_send_push, args=(job_id, "done", _book_title),
-                    daemon=True, name=f"push-{job_id}",
-                ).start()
-            except Exception as _push_err:
-                print(f"[{job_id}] push notify failed (non-fatal): {_push_err}")
-
-        # Send email notification if user registered
-        notify_email = job.get("notify_email")
-        if not notify_email:
-            # Fallback: cerca email precedentemente registrata per lo stesso client
-            _cid = job.get("client_id", "")
-            if _cid:
-                notify_email = _lookup_client_email(_cid)
-                if notify_email:
-                    job["notify_email"] = notify_email
-                    print(f"[{job_id}] post-COMPLETE: using fallback email "
-                          f"from client_id {_cid}", flush=True)
-        if notify_email:
-            print(f"[{job_id}] post-COMPLETE: triggering email to {notify_email}", flush=True)
-            try:
-                _send_completion_email(job_id)
-            except Exception as e:
-                import traceback
-                print(f"[{job_id}] Email notification error: {e}", flush=True)
-                traceback.print_exc()
-                try:
-                    _log_activity(job_id, job.get("original_filename", ""), "EMAIL_FAILED",
-                                  job.get("client_id", ""), job.get("client_ip", ""),
-                                  job.get("voice", ""), job.get("browser_lang", ""))
-                except Exception:
-                    pass
-        elif job.get("email_registered"):
-            # Job batch mobile senza email: crea comunque il download token cosi'
-            # push + my_jobs possono servire il file (la push e' gia' emessa sopra).
-            print(f"[{job_id}] post-COMPLETE: batch job senza email, creo token "
-                  f"(email_registered=True)", flush=True)
-            try:
-                _create_download_token(job_id)
-            except Exception as _tok_err:
-                print(f"[{job_id}] batch token creation failed (non-fatal): {_tok_err}", flush=True)
-        else:
-            print(f"[{job_id}] post-COMPLETE: no notify_email "
-                  f"(email_registered={job.get('email_registered')})", flush=True)
-            try:
-                _log_activity(job_id, job.get("original_filename", ""), "EMAIL_SKIPPED_BRANCH",
-                              job.get("client_id", ""), job.get("client_ip", ""),
-                              job.get("voice", ""), job.get("browser_lang", ""))
-            except Exception:
-                pass
-
-        # Il descrittore di recovery si chiude sul COMPLETE, non sull'invio mail.
-        # _send_completion_email chiama finalize solo nel ramo "email inviata":
-        # i job senza notify_email (mobile/batch) e quelli con SMTP fallito
-        # restavano orfani per sempre → a ogni riavvio _recover_orphan_jobs
-        # bumpava attempts e, superato il cap, emetteva un rimborso automatico
-        # su un audiolibro in realtà già consegnato. Qui il job è completo:
-        # chiudiamo il descrittore in tutti i rami.
-        try:
-            pending_jobs.finalize(job_id)
-        except Exception as _e_fin:
-            print(f"[{job_id}] pending_jobs.finalize (post-COMPLETE) failed "
-                  f"(non-fatal): {_e_fin}", flush=True)
-
-        # Copie amministrative agganciate mentre il job era in corso: ora che è
-        # completato, materializza i download token admin-owned (indagine).
-        try:
-            _materialize_admin_copies(job_id)
-        except Exception as _amc_err:
-            print(f"[{job_id}] admin-copy materialization failed (non-fatal): {_amc_err}", flush=True)
+        _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial)
 
     except _GeminiQualityAbort as _qa:
         # Early-abort: troppi chunk silenziati sul campione iniziale. Stesso path

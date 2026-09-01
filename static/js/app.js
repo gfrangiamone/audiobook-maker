@@ -252,6 +252,10 @@ let wizMode='audio'; // 'audio' | 'translate'
 let trPaymentToken=null,trEstimate=null,trEmailRegistered=false,trAutoOutName='';
 let lastVoucherEmail='';
 try{lastVoucherEmail=localStorage.getItem('abm_v_email')||''}catch(e){}
+// Gate quota voci standard: true dopo che l'utente ha registrato l'email nel
+// modale del limite mensile; viaggia come `quota_ack` su /api/generate e
+// vale solo per il job corrente (azzerato con emailRegistered).
+let _ttsQuotaAck=false;
 
 // ═══════════════════ THEME ═══════════════════
 function detectTheme(){
@@ -3089,6 +3093,7 @@ async function startCombinedGeneration(combinedPaymentToken){
       _rememberLastLang(_genLang);
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang,...getParenFlags()};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
+      if(_ttsQuotaAck)genPayload.quota_ack=true;
       if(combinedPaymentToken)genPayload.payment_token=combinedPaymentToken;
       if(_isGeminiVoiceId(getCurrentVoiceId())){
         var _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
@@ -3108,6 +3113,7 @@ async function startCombinedGeneration(combinedPaymentToken){
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
           _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
         }
+        if(gd.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(gd);return;}
         if(gd.error_code==='server_busy'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
@@ -3518,6 +3524,7 @@ async function startGen(){
     _rememberLastLang(_genLang2);
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2,...getParenFlags()};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
+    if(_ttsQuotaAck)payload.quota_ack=true;
     if(_isGeminiVoiceId(getCurrentVoiceId())){
       const _gs=(document.getElementById('geminiStyle')?.value||'').trim().slice(0,200);
       if(_gs)payload.gemini_style_instruction=_gs;
@@ -3536,6 +3543,7 @@ async function startGen(){
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
         showErr('s3err',d.error);unlockUI();return;
       }
+      if(d.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(d);return;}
       if(d.error_code==='free_quota_exhausted'||d.error_code==='payment_required'){
         // Path di retry/generazione post-ottimizzazione standalone: senza
         // questo case l'utente vedrebbe la stringa cruda del 402 e resterebbe
@@ -4067,6 +4075,62 @@ function listenProgress(){
     };
   }
   connect();
+}
+
+// ---- Gate quota mensile voci standard (402 free_tts_quota_exhausted) ----
+// Il server accetta il job oltre quota solo con email registrata: il modale
+// raccoglie l'indirizzo, lo registra su /api/register_email (stesso payload
+// del box "avvisami via email") e rilancia la generazione con quota_ack.
+function _handleTtsQuotaGate(d){
+  const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+  const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+  unlockUI();generating=false;
+  const fmt=(n)=>{n=Number(n)||0;try{return n.toLocaleString()}catch(e){return String(n)}};
+  const body=document.getElementById('ttsQuotaBody');
+  if(body){
+    const used=fmt(d.quota_used_chars),limit=fmt(d.quota_limit_chars),chars=fmt(d.chars_selected);
+    let txt=t('tts_quota_body',{used:used,limit:limit,chars:chars});
+    if(!txt||txt==='tts_quota_body')txt='This month you have already converted '+used+' characters with the standard voices (free limit: '+limit+'). This book adds '+chars+'.';
+    body.textContent=txt;
+  }
+  const inp=document.getElementById('ttsQuotaEmail');
+  if(inp){
+    inp.placeholder=t('tts_quota_email_ph')||'Your email';
+    if(!inp.value){
+      let s='';try{s=(localStorage.getItem('abm_v_email')||'').trim()}catch(e){}
+      if(!s&&lastVoucherEmail)s=lastVoucherEmail;
+      inp.value=s;
+    }
+  }
+  const err=document.getElementById('ttsQuotaErr');if(err){err.style.display='none';err.textContent=''}
+  const m=document.getElementById('ttsQuotaModal');if(m)m.classList.add('open');
+  try{if(inp)inp.focus()}catch(e){}
+}
+function closeTtsQuotaModal(){const m=document.getElementById('ttsQuotaModal');if(m)m.classList.remove('open')}
+async function _submitTtsQuotaGate(){
+  const inp=document.getElementById('ttsQuotaEmail');
+  const email=((inp&&inp.value)||'').trim();
+  const err=document.getElementById('ttsQuotaErr');
+  const showE=(msg)=>{if(err){err.textContent=msg;err.style.display=''}};
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showE(t('tts_quota_email_invalid')||'Please enter a valid email address.');return}
+  const btn=document.getElementById('ttsQuotaGo');if(btn)btn.disabled=true;
+  try{
+    lastVoucherEmail=email;try{localStorage.setItem('abm_v_email',email)}catch(e){}
+    const dlType=(outputFormat==='zip_rss')?'podcast':(singleFile?'audio':'chapters');
+    const p={job_id:jobId,email:email,download_type:dlType,lang:cl};
+    if(dlType==='podcast'){const urlInput=document.getElementById('podcastUrlInput');p.base_url=urlInput?urlInput.value.trim():'';}
+    const r=await fetch('/api/register_email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    const d=await r.json();
+    if(d.error){showE(d.error);return}
+    emailRegistered=true;_ttsQuotaAck=true;
+    const late=document.getElementById('notifyEmailLate');if(late&&!late.value)late.value=email;
+    const noticeEl=document.getElementById('genActiveNoticeText');
+    if(noticeEl&&t('gen_active_notice_email'))noticeEl.textContent=t('gen_active_notice_email').replace('{0}',email);
+    try{_updateGenNoticeWarning()}catch(e){}
+    closeTtsQuotaModal();
+    retryGeneration();
+  }catch(e){showE(String(e))}
+  finally{if(btn)btn.disabled=false}
 }
 
 function retryGeneration(){
@@ -4609,7 +4673,7 @@ async function goBackToChapters(){
   if(document._hbVis){document.removeEventListener('visibilitychange',document._hbVis);document._hbVis=null}
   try{await fetch('/api/reset_to_chapters/'+jobId,{method:'POST'})}catch(e){console.warn('[goBack] reset failed:',e)}
   jobDone=false;generating=false;
-  emailRegistered=false;
+  emailRegistered=false;_ttsQuotaAck=false;
   // Reset chapter selection — uncheck all
   _getAllCheckboxes().forEach(cb=>{cb.checked=false});
   // Reset AI optimization state (keep optimizedChapters so previously optimized chapters remain tracked)
@@ -4684,7 +4748,7 @@ function resetAll(){
   const _vOutR=document.getElementById('vOut');if(_vOutR){_vOutR.value='m4b';onOutputChange();}
   previewStop();
   bookData=null;jobId=null;
-  emailRegistered=false;previewListened=false;
+  emailRegistered=false;_ttsQuotaAck=false;previewListened=false;
   _currentPreviewSig=null;_knownPreviewSigs.clear();
   ['bkCover','s4bkCover'].forEach(id=>{var el=document.getElementById(id);if(el){el.style.display='none';el.src=''}});
   const coverPlaceholder=document.getElementById('coverPlaceholder');if(coverPlaceholder)coverPlaceholder.style.display='';

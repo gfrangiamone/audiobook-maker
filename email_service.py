@@ -81,6 +81,78 @@ def _funnel_block_html():
 
 
 # ---------------------------------------------------------------------------
+# Power user provider hook (iniettato da audiobook_app — nessun import circolare)
+# ---------------------------------------------------------------------------
+
+_power_users_provider = None  # callable() -> {"rows": [...], ...} | None
+
+
+def set_power_users_provider(fn):
+    global _power_users_provider
+    _power_users_provider = fn
+
+
+def _power_users_block_html():
+    """Tabella dei client con molti avvii a voce standard nelle ultime 24h
+    (agosto 2026: pochi client = ~40% del volume sintetizzato). '' se il
+    provider manca, fallisce o non ha righe. Mai email o altri dati personali:
+    solo client_id anonimo, contatori e IP distinti."""
+    fn = _power_users_provider
+    if not fn:
+        return ""
+    try:
+        d = fn() or {}
+    except Exception:
+        return ""
+    rows = d.get("rows") or []
+    if not rows:
+        return ""
+    lim = int(d.get("quota_limit_chars") or 0)
+    hours = int(d.get("window_hours") or 24)
+    min_jobs = int(d.get("min_jobs") or 0)
+    th = "padding:6px 8px;text-align:left;font-size:12px;color:#555;white-space:nowrap"
+    td = "padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;vertical-align:top"
+    trs = ""
+    for r in rows:
+        jobs_txt = str(int(r.get("jobs_24h") or 0))
+        if int(r.get("reuse_24h") or 0):
+            jobs_txt += f" (riusi {int(r['reuse_24h'])})"
+        gate_txt = f"{int(r.get('gate_24h') or 0)} / {int(r.get('block_24h') or 0)}"
+        chars = int(r.get("chars_month") or 0)
+        chars_txt = f"{chars:,}"
+        if lim:
+            chars_txt += f" ({chars * 100 // lim}%)"
+        if int(r.get("gated_month") or 0):
+            chars_txt += f" &middot; oltre quota: {int(r['gated_month'])}"
+        srcs = r.get("sources") or {}
+        src_txt = ", ".join(f"{k}:{v}" for k, v in sorted(srcs.items())) or "-"
+        langs_txt = ", ".join(str(x) for x in (r.get("langs") or [])) or "-"
+        trs += (
+            f"<tr><td style='{td};font-family:monospace'>{_esc_html(r.get('client_id', ''), 24)}</td>"
+            f"<td style='{td};text-align:center'>{jobs_txt}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('premium_24h') or 0)}</td>"
+            f"<td style='{td};text-align:center'>{gate_txt}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('books_month') or 0)}</td>"
+            f"<td style='{td};text-align:right;white-space:nowrap'>{chars_txt}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('ips_24h') or 0)}</td>"
+            f"<td style='{td}'>{_esc_html(r.get('platform', '') or '-', 20)}</td>"
+            f"<td style='{td}'>{_esc_html(langs_txt, 30)}</td>"
+            f"<td style='{td}'>{_esc_html(src_txt, 60)}</td></tr>"
+        )
+    return (
+        f"<h3 style='margin:18px 0 6px'>Power user voci standard (ultime {hours}h, &ge; {min_jobs} avvii)</h3>"
+        "<table style='width:100%;border-collapse:collapse;background:white;border:1px solid #ddd'>"
+        f"<thead><tr style='background:#f0f5fa'><th style='{th}'>Client</th><th style='{th}'>Avvii 24h</th>"
+        f"<th style='{th}'>Premium 24h</th><th style='{th}'>Gate / rifiuti 24h</th><th style='{th}'>Libri mese</th>"
+        f"<th style='{th}'>Caratteri mese</th><th style='{th}'>IP 24h</th><th style='{th}'>Piattaforma</th>"
+        f"<th style='{th}'>Lingue</th><th style='{th}'>Fonti</th></tr></thead>"
+        f"<tbody>{trs}</tbody></table>"
+        "<p style='color:#999;font-size:11px;margin:4px 0 0'>Avvii = GENERATE + REUSE a voce standard; "
+        "gate = job accettati oltre quota con email, rifiuti = 402 senza email; fonti = indizio dal nome file.</p>"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Payment email config — imported from payment.py (single source of truth)
 # ---------------------------------------------------------------------------
 
@@ -322,6 +394,7 @@ def _try_send_admin_digest():
 </tr>"""
 
     funnel_block = _funnel_block_html()
+    power_block = _power_users_block_html()
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
@@ -340,6 +413,7 @@ def _try_send_admin_digest():
 <tbody>{rows}</tbody>
 </table>
 {funnel_block}
+{power_block}
 <p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio \u00e8 generato automaticamente da Audiobook Maker.
 Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
 </body></html>"""
