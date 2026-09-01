@@ -767,3 +767,25 @@ in conflitto, il §5 e il §17.2.
   del libro. Per le clip l'anteprima della velocità è quindi esatta; sul
   campione di riferimento è un'approssimazione onesta. Lo slider agisce
   in diretta anche a clip in riproduzione.
+
+### 17.5 Correzioni dopo la prova dal vivo — 2026-09-01
+
+- **Il volume sale nella testata del box**, all'estrema destra sulla riga
+  del titolo (`.voxcpm-listen-head` + `margin-left:auto`). In fondo al box
+  sembrava l'ultimo passo della sequenza «ascolta → regola»; è invece un
+  accessorio, e da lassù governa i tre player senza entrare nel percorso.
+- **I bottoni delle clip hanno l'aspetto di un controllo**: pasticca tonda
+  color accento per il play/pausa, `font-family:inherit` (senza, il bottone
+  eredita il font di sistema e stona con il pannello), testo troncato con
+  l'ellissi quando la riga si stringe.
+- **Gli static vanno invalidati a ogni modifica.** `audiobook_app.py`
+  imposta `SEND_FILE_MAX_AGE_DEFAULT` a un anno e l'unico cache-buster è
+  `?v=__APP_VERSION__`, che viene da `version.py`. L'HTML si rigenera a
+  ogni richiesta, `style.css` e `app.js` no: una modifica al frontend senza
+  bump di versione arriva al browser come markup nuovo su CSS e JS vecchi —
+  bottoni senza stile e handler mai cablati, che è esattamente come si è
+  presentato il difetto del 1 settembre 2026. **Chi tocca gli static bumpa
+  `__version__` nello stesso commit.**
+- **La frase di attesa del pre-pass** diventa «Avvio del motore vocale in
+  corso...»: la precedente prometteva «circa tre minuti», un tempo che
+  dipende dalla coda di RunPod e che nessuno può garantire.

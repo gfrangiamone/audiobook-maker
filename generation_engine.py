@@ -5012,7 +5012,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # (via _voxcpm_pre), come per Speechify.
         if use_voxcpm:
             job["progress_message"] = (
-                "Accensione del motore vocale, circa tre minuti...")
+                "Avvio del motore vocale in corso...")
             # Misure reali del worker: `job["voxcpm_actual"]` viene costruito
             # DENTRO `_voxcpm_pre_pass`, capitolo per capitolo, cosi' resta
             # corretto anche se il libro si interrompe a meta' (annullamento

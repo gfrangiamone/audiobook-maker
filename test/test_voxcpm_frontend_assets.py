@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "templates/_fragments/html_head.html").read_text(encoding="utf-8")
 JS = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+CSS = (ROOT / "static/css/style.css").read_text(encoding="utf-8")
 
 
 def test_il_markup_ha_il_campione_e_non_il_carattere():
@@ -44,6 +45,20 @@ def test_l_ascolto_e_un_box_compatto_con_volume_unico():
     assert blocco.count("<audio") == 3     # comune, su misura, campione
     assert "controls" not in blocco
     assert "onclick" not in blocco
+
+
+def test_il_volume_sta_nella_testata_a_destra():
+    # §17.5: il volume e' un accessorio, non un passo della lettura — sta in
+    # alto a destra sulla riga del titolo, non sotto le clip dove sembrava
+    # l'ultimo comando della sequenza.
+    i = HTML.find('class="voxcpm-listen-head"')
+    j = HTML.find('class="voxcpm-clip-row"', i)
+    assert i != -1 and j != -1
+    testata = HTML[i:j]
+    assert 'data-t="voxcpm_sample_title"' in testata
+    assert 'id="voxcpmVolume"' in testata
+    # margin-left:auto lo spinge a destra: e' quello a fare la posizione.
+    assert "margin-left:auto" in CSS.split(".voxcpm-volume-row{")[1][:120]
 
 
 def test_il_modello_compare_fra_i_premium():
