@@ -326,29 +326,38 @@ def ripartizione(amounts, key_name="chiave"):
     return out
 
 
-def language_stats(sessions, payments, ym="", premium_only=True):
-    """Ripartizione per lingua del libro: libri a voce premium e incassi.
+def language_stats(sessions, payments, ym=""):
+    """Ripartizione per lingua del libro: libri completati e incassi.
 
-    `premium_only` limita il conteggio dei libri alle sole voci a pagamento
-    (Gemini/Speechify): e' la domanda "su quali lingue si concentra il
-    prodotto premium". Gli incassi invece sono presi tutti, perche' il
-    fatturato include anche l'ottimizzazione AI su voce standard.
+    I libri sono contati in due classifiche separate secondo la voce usata
+    (`libri` = voci premium Gemini/Speechify, `libri_free` = voci standard):
+    la domanda e' su quali lingue si concentra il prodotto, e le due coorti
+    hanno mix diversi. Il criterio qui e' la sola voce, non il pagamento:
+    un libro a voce standard con ottimizzazione AI pagata resta un libro free.
+
+    Gli incassi invece sono presi tutti insieme, perche' il fatturato include
+    anche l'ottimizzazione AI su voce standard, e non si suddividono per
+    coorte: sarebbe la stessa domanda della concentrazione di spesa.
     """
     libri = Counter()
+    libri_free = Counter()
     eur = Counter()
     pagamenti = Counter()
     meta = {"senza_lingua": 0, "senza_lingua_eur": 0.0,
-            "libri_senza_lingua": 0}
+            "libri_senza_lingua": 0, "libri_free_senza_lingua": 0}
 
     for s in sessions.values():
         if COMPLETE_OP not in s["events"]:
             continue
-        if premium_only and not is_premium_voice(s.get("voice", "")):
-            continue
+        premium = is_premium_voice(s.get("voice", ""))
         k = _lang_key(s.get("lang", ""))
         if k == "?":
-            meta["libri_senza_lingua"] += 1
-        libri[k] += 1
+            meta["libri_senza_lingua" if premium
+                 else "libri_free_senza_lingua"] += 1
+        if premium:
+            libri[k] += 1
+        else:
+            libri_free[k] += 1
 
     for rec in payments or []:
         if ym and _payment_month(rec) != ym:
@@ -371,8 +380,8 @@ def language_stats(sessions, payments, ym="", premium_only=True):
     for row in incassi["righe"]:
         row["pagamenti"] = pagamenti[row["lingua"]]
     return {
-        "solo_voci_premium": bool(premium_only),
         "libri": ripartizione(libri, key_name="lingua"),
+        "libri_free": ripartizione(libri_free, key_name="lingua"),
         "incassi": incassi,
         "meta": meta,
     }
@@ -504,9 +513,8 @@ def analyze(path, ip_fallback=True, payments=None):
     spesa.update(spend_meta)
     res["spesa"] = spesa
 
-    # Mix linguistico: dove si concentra il prodotto premium e il fatturato.
-    res["lingue"] = language_stats(sessions, payments,
-                                   ym=_ym_from_name(path), premium_only=True)
+    # Mix linguistico: dove si concentrano i libri (per coorte) e il fatturato.
+    res["lingue"] = language_stats(sessions, payments, ym=_ym_from_name(path))
 
     # Sovrapposizione fra le due coorti.
     p, f = set(counts["premium"]), set(counts["free"])
@@ -528,11 +536,12 @@ def empty_result(path=""):
         "clienti_paganti": 0,
         "coorti": {},
         "overlap": {"solo_premium": 0, "solo_free": 0, "entrambi": 0},
-        "lingue": {"solo_voci_premium": True,
-                   "libri": ripartizione({}, key_name="lingua"),
+        "lingue": {"libri": ripartizione({}, key_name="lingua"),
+                   "libri_free": ripartizione({}, key_name="lingua"),
                    "incassi": ripartizione({}, key_name="lingua"),
                    "meta": {"senza_lingua": 0, "senza_lingua_eur": 0.0,
-                            "libri_senza_lingua": 0}},
+                            "libri_senza_lingua": 0,
+                            "libri_free_senza_lingua": 0}},
         "spesa": dict(concentration_value({}),
                       pagamenti=0, totale_eur=0.0, non_attribuiti=0,
                       non_attribuiti_eur=0.0, unfunded=0, unfunded_eur=0.0),

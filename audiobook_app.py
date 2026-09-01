@@ -4713,8 +4713,8 @@ function lsUsersRender(d) {{
         ]),
     ]);
 
-    // Mix linguistico. I libri sono le sole voci premium (la domanda e' su
-    // quali lingue vive il prodotto a pagamento); gli incassi sono tutti,
+    // Mix linguistico. I libri sono divisi per voce usata (premium/free): le
+    // due coorti hanno mix diversi. Gli incassi restano un blocco solo,
     // perche' il fatturato include l'ottimizzazione AI su voce standard.
     const LG = d.lingue || {{}};
     const LGN = {{it:'Italiano', en:'Inglese', fr:'Francese', es:'Spagnolo',
@@ -4743,14 +4743,19 @@ function lsUsersRender(d) {{
     }};
     const lgQ = (rip, k) => ((rip || {{}}).quantili || {{}})[k] || 0;
     const lgPl = n => (n === 1 ? 'lingua' : 'lingue');
-    const LGb = LG.libri || {{}}, LGe = LG.incassi || {{}}, LGm = LG.meta || {{}};
+    const LGb = LG.libri || {{}}, LGf = LG.libri_free || {{}};
+    const LGe = LG.incassi || {{}}, LGm = LG.meta || {{}};
     const lingueSec = lsSec('Lingua del libro', [
         lsCard('Libri completati a voce premium', lgRows(LGb, v => v)),
+        lsCard('Libri completati a voce free', lgRows(LGf, v => v)),
         lsCard('Incassi per lingua del libro', lgRows(LGe, eur)),
         lsCard('Quante lingue fanno il grosso', [
-            lsRow('50% dei libri', lgQ(LGb, '50%'), lgPl(lgQ(LGb, '50%')), '', true),
-            lsRow('70% dei libri', lgQ(LGb, '70%'), lgPl(lgQ(LGb, '70%')), '', true),
-            lsRow('90% dei libri', lgQ(LGb, '90%'), lgPl(lgQ(LGb, '90%')), '', true),
+            lsRow('50% dei libri premium', lgQ(LGb, '50%'), lgPl(lgQ(LGb, '50%')), '', true),
+            lsRow('70% dei libri premium', lgQ(LGb, '70%'), lgPl(lgQ(LGb, '70%')), '', true),
+            lsRow('90% dei libri premium', lgQ(LGb, '90%'), lgPl(lgQ(LGb, '90%')), '', true),
+            lsRow('50% dei libri free', lgQ(LGf, '50%'), lgPl(lgQ(LGf, '50%')), '', false),
+            lsRow('70% dei libri free', lgQ(LGf, '70%'), lgPl(lgQ(LGf, '70%')), '', false),
+            lsRow('90% dei libri free', lgQ(LGf, '90%'), lgPl(lgQ(LGf, '90%')), '', false),
             lsRow('50% degli incassi', lgQ(LGe, '50%'), lgPl(lgQ(LGe, '50%')), '', false),
             lsRow('70% degli incassi', lgQ(LGe, '70%'), lgPl(lgQ(LGe, '70%')), '', false),
             lsRow('90% degli incassi', lgQ(LGe, '90%'), lgPl(lgQ(LGe, '90%')), '', false),
@@ -4758,13 +4763,18 @@ function lsUsersRender(d) {{
         lsCard('Ampiezza del mix', [
             lsRow('Lingue con libri premium', LGb.chiavi || 0,
                   (LGb.totale || 0) + ' libri', '', true),
+            lsRow('Lingue con libri free', LGf.chiavi || 0,
+                  (LGf.totale || 0) + ' libri', '', false),
             lsRow('Lingue che incassano', LGe.chiavi || 0,
                   eur(LGe.totale) + ' nel mese', '', false),
-            lsRow('HHI libri', LGb.hhi || 0,
+            lsRow('HHI libri premium', LGb.hhi || 0,
                   'su 10.000: oltre 2.500 = mix concentrato', '', false),
+            lsRow('HHI libri free', LGf.hhi || 0, '', '', false),
             lsRow('HHI incassi', LGe.hhi || 0, '', '', false),
-            lsRow('Lingua non nel log', LGm.libri_senza_lingua || 0,
-                  'libri; ' + eur(LGm.senza_lingua_eur) + ' di incassi', '', false),
+            lsRow('Lingua non nel log',
+                  (LGm.libri_senza_lingua || 0) + (LGm.libri_free_senza_lingua || 0),
+                  'libri (' + (LGm.libri_senza_lingua || 0) + ' premium); '
+                  + eur(LGm.senza_lingua_eur) + ' di incassi', '', false),
         ]),
     ]);
 

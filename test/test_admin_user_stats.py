@@ -378,6 +378,12 @@ LOG_LINGUE = (
     ' # it-IT-DiegoNeural # it # web\n'
     'x1 # 2026-08-01 14:00:00 # "e.epub" # COMPLETE # cidD # 4.4.4.4'
     ' # gemini:flash31:Despina #  # web\n'
+    'f2 # 2026-08-01 15:00:00 # "f.epub" # COMPLETE # cidC # 3.3.3.3'
+    ' # it-IT-DiegoNeural # it # web\n'
+    'f3 # 2026-08-01 16:00:00 # "g.epub" # COMPLETE # cidE # 5.5.5.5'
+    ' # en-US-GuyNeural # en-GB # web\n'
+    'f4 # 2026-08-01 17:00:00 # "h.epub" # COMPLETE # cidE # 5.5.5.5'
+    ' # en-US-GuyNeural #  # web\n'
 )
 
 
@@ -435,11 +441,24 @@ def test_language_stats_conta_solo_le_voci_premium(logfile_lingue):
     sessions = user_stats.parse_sessions(str(logfile_lingue))
     lg = user_stats.language_stats(sessions, [], ym="2026-08")
     righe = {r["lingua"]: r["valore"] for r in lg["libri"]["righe"]}
-    # f1 e' su voce standard: fuori. x1 non dichiara la lingua: finisce in "?".
+    # le voci standard stanno nell'altra classifica. x1 non dichiara la
+    # lingua: finisce in "?".
     assert righe == {"de": 2, "en": 1, "?": 1}
     assert lg["libri"]["totale"] == 4
     assert lg["meta"]["libri_senza_lingua"] == 1
-    assert lg["solo_voci_premium"] is True
+
+
+def test_language_stats_separa_i_libri_a_voce_free(logfile_lingue):
+    sessions = user_stats.parse_sessions(str(logfile_lingue))
+    lg = user_stats.language_stats(sessions, [], ym="2026-08")
+    righe = {r["lingua"]: r["valore"] for r in lg["libri_free"]["righe"]}
+    # f1+f2 in italiano, f3 in en-GB (normalizzato en), f4 senza lingua
+    assert righe == {"it": 2, "en": 1, "?": 1}
+    assert lg["libri_free"]["totale"] == 4
+    assert lg["meta"]["libri_free_senza_lingua"] == 1
+    # le due coorti non si contaminano
+    assert lg["libri"]["totale"] == 4
+    assert lg["libri_free"]["quantili"]["50%"] == 1
 
 
 def test_language_stats_incassi_per_lingua_del_libro(logfile_lingue):
@@ -474,7 +493,9 @@ def test_analyze_espone_le_lingue(logfile_lingue):
 def test_empty_result_ha_le_lingue_azzerate():
     lg = user_stats.empty_result()["lingue"]
     assert lg["libri"]["totale"] == 0 and lg["incassi"]["righe"] == []
+    assert lg["libri_free"]["totale"] == 0 and lg["libri_free"]["righe"] == []
     assert lg["meta"]["senza_lingua_eur"] == 0.0
+    assert lg["meta"]["libri_free_senza_lingua"] == 0
 
 
 def test_endpoint_espone_le_lingue(admin_client, tmp_path):
@@ -483,12 +504,15 @@ def test_endpoint_espone_le_lingue(admin_client, tmp_path):
                          headers={"X-Admin-Token": "tok-test"}).get_json()
     assert d["lingue"]["libri"]["totale"] == 4
     assert d["lingue"]["libri"]["quantili"]["90%"] >= 1
+    assert d["lingue"]["libri_free"]["totale"] == 4
 
 
 def test_modale_utenza_mostra_la_ripartizione_per_lingua(admin_log_page):
     html = admin_log_page
     assert "Lingua del libro" in html
     assert "Libri completati a voce premium" in html
+    assert "Libri completati a voce free" in html
     assert "Incassi per lingua del libro" in html
     assert "Quante lingue fanno il grosso" in html
-    assert "HHI libri" in html
+    assert "HHI libri premium" in html
+    assert "HHI libri free" in html
