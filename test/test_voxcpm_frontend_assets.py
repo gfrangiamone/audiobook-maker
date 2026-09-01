@@ -12,26 +12,37 @@ HTML = (ROOT / "templates/_fragments/html_head.html").read_text(encoding="utf-8"
 JS = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
 
 
-def test_il_markup_ha_carattere_e_campione():
-    assert 'id="voxcpmCharacterRow"' in HTML
-    assert 'id="voxcpmCharacter"' in HTML
+def test_il_markup_ha_il_campione_e_non_il_carattere():
+    # §17.4: la combo CARATTERE e' stata tolta — ogni voce ha esattamente un
+    # carattere, quindi filtrava senza aggiungere scelta e faceva confusione.
+    # Il carattere resta scritto accanto al nome della voce.
+    assert 'id="voxcpmCharacterRow"' not in HTML
+    assert 'id="voxcpmCharacter"' not in HTML
     assert 'id="voxcpmSampleRow"' in HTML
     assert 'id="voxcpmSample"' in HTML
 
 
-def test_carattere_precede_la_voce_nel_markup():
-    # CARATTERE filtra VOCE: nell'ordine di lettura il filtro viene prima
-    # della cosa filtrata, come gia' l'accento per Simba.
-    i_car = HTML.find('id="voxcpmCharacterRow"')
-    i_voce = HTML.find('id="vvPremium"')
-    assert i_car != -1 and i_voce != -1 and i_car < i_voce
+def test_la_velocita_precede_l_ascolto_nel_markup():
+    # §17.4: lo slider della velocita' agisce sulle clip (playbackRate),
+    # quindi nell'ordine di lettura viene prima di cio' che modifica —
+    # altrimenti non si capisce che effetto produrra' sul libro.
+    i_speed = HTML.find('id="speedSlider"')
+    i_box = HTML.find('id="voxcpmSampleRow"')
+    assert i_speed != -1 and i_box != -1 and i_speed < i_box
 
 
-def test_il_campione_e_un_player_non_un_bottone():
-    # §5.2: si ascolta un file che esiste gia', non si genera nulla.
+def test_l_ascolto_e_un_box_compatto_con_volume_unico():
+    # §17.4: niente player nativi doppi — bottoni custom cablati in JS
+    # (addEventListener, mai onclick inline), tre <audio> nudi e un solo
+    # regolatore di volume per tutti.
     i = HTML.find('id="voxcpmSampleRow"')
-    blocco = HTML[i:i + 600]
-    assert "<audio" in blocco
+    j = HTML.find('id="advOptions"', i)
+    assert i != -1 and j != -1
+    blocco = HTML[i:j]
+    assert "voxcpm-listen-box" in blocco
+    assert 'id="voxcpmVolume"' in blocco
+    assert blocco.count("<audio") == 3     # comune, su misura, campione
+    assert "controls" not in blocco
     assert "onclick" not in blocco
 
 
@@ -66,11 +77,8 @@ def test_i_caratteri_arrivano_dal_catalogo():
     blocco = JS[i_blocco:j_blocco]
     array_cablato = re.search(r"\[\s*['\"][a-zA-Z][\w]*-[\w-]+['\"]\s*,", blocco)
     assert array_cablato is None, f"array cablato nel blocco VoxCPM: {array_cablato}"
-    # Positiva: i due popolatori leggono .persona/.locale dalle voci del
+    # Positiva: il popolatore degli accenti legge .locale dalle voci del
     # catalogo (l'unica fonte ammessa), non da una tabella locale.
-    i_car = JS.find("function _populateVoxcpmCharacters")
-    assert i_car != -1
-    assert "v.persona" in JS[i_car:i_car + 900]
     i_acc = JS.find("function _populateVoxcpmAccents")
     assert i_acc != -1
     assert "v.locale" in JS[i_acc:i_acc + 900]
@@ -86,14 +94,40 @@ def test_la_selezione_sopravvive_ai_rebuild():
     # Stessa ragione documentata per _speechifyVoiceSel: il dropdown si
     # ricostruisce a ogni cambio di tab/modello e senza una fonte di verita'
     # fuori dal DOM la scelta dell'utente si perde.
-    for nome in ("_voxcpmAccentSel", "_voxcpmVoiceSel", "_voxcpmCharacterSel"):
+    for nome in ("_voxcpmAccentSel", "_voxcpmVoiceSel"):
         assert nome in JS
+    # La combo CARATTERE non esiste piu' (§17.4): con lei se ne va anche la
+    # selezione persistita e la sincronia voce -> carattere.
+    assert "_voxcpmCharacterSel" not in JS
+    assert "_syncVoxcpmCharacterToVoice" not in JS
 
 
-def test_carattere_si_allinea_alla_voce_e_non_si_svuota():
-    # §5.3: alla selezione di una voce, CARATTERE mostra il valore di quella
-    # voce. E' un'etichetta, non un'alternativa.
-    assert "_syncVoxcpmCharacterToVoice" in JS
+def test_voxcpm_e_il_primo_modello_proposto():
+    # §17.4: dove la lingua ha voci in catalogo, «Audiobook Maker (VOXCPM2)»
+    # e' il primo modello della lista e la proposta di default (la stessa
+    # regola con cui Simba era proposto sull'inglese); dove non le ha, il
+    # modello resta nascosto (gia' verificato sopra).
+    i = JS.find("function updModelsPremium")
+    j = JS.find("\nfunction ", i + 1)
+    assert i != -1 and j != -1
+    corpo = JS[i:j]
+    i_vox = corpo.find("addOpt('voxcpm'")
+    i_gem = corpo.find("addOpt('flash25'")
+    assert i_vox != -1 and i_gem != -1 and i_vox < i_gem
+    assert "target='voxcpm'" in corpo
+    assert "Audiobook Maker (VOXCPM2)" in corpo
+
+
+def test_lo_slider_velocita_agisce_sulle_clip():
+    # §17.4: la velocita' scelta per il libro si sente nelle clip. La
+    # mappatura e' la stessa dell'atempo applicato al PCM del libro
+    # (apply_rate in voxcpm_tts.py): playbackRate = 1 + pct/100.
+    assert "playbackRate" in JS
+    i = JS.find("function _wireVoxcpmListen")
+    assert i != -1
+    corpo = JS[i:i + 2500]
+    assert "voxcpmVolume" in corpo     # un solo volume per i tre player
+    assert "speedSlider" in corpo      # la velocita' agisce in diretta
 
 
 def test_il_campione_si_ferma_lasciando_voxcpm():

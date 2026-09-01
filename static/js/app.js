@@ -1075,9 +1075,11 @@ function updVoices(){
 
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
 
-// Popola #vmPremium in base alla lingua premium corrente. Per l'inglese aggiunge
-// l'opzione "Simba (English)" (id modello 'simba-3.2') e la preseleziona come
-// default; per le altre lingue elenca solo i modelli Gemini.
+// Popola #vmPremium in base alla lingua premium corrente. Dove il catalogo
+// VoxCPM copre la lingua, "Audiobook Maker (VOXCPM2)" e' il primo modello
+// della lista e la proposta di default (§17.4); dove non la copre, il
+// modello non compare affatto. Sull'inglese senza VoxCPM la proposta resta
+// "Simba (English)" (id modello 'simba-3.2'), con la stessa regola di prima.
 function updModelsPremium(){
   const vlEl=document.getElementById('vlPremium');
   const vmEl=document.getElementById('vmPremium');
@@ -1087,6 +1089,19 @@ function updModelsPremium(){
   vmEl.innerHTML='';
   const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
   const isEnglish=(lang==='en');
+  // VoxCPM2 per primo: presente in ogni lingua per cui il catalogo espone
+  // voci. A differenza di Simba non e' legato all'inglese, e a differenza
+  // di Gemini non e' sempre presente: se il motore non e' configurato,
+  // /api/voices non manda ne' le voci ne' _voxcpm.available, e il modello
+  // non compare (ne' qui ne' come default).
+  const _voxStatus=(voices&&voices._voxcpm)||null;
+  const _langData=voices&&voices[lang];
+  const _hasVox=!!(_voxStatus&&_voxStatus.available
+                   &&_langData&&Array.isArray(_langData.voices)
+                   &&_langData.voices.some(v=>v&&_isVoxcpmVoiceId(v.id)));
+  if(_hasVox){
+    addOpt('voxcpm',t('lbl_model_voxcpm')||'Audiobook Maker (VOXCPM2)');
+  }
   // Modelli Gemini (sempre presenti). Le etichette usano i18n se disponibili.
   addOpt('flash25', t('lbl_model_flash25')||'Standard');
   addOpt('flash31', t('lbl_model_flash31')||'Avanzato');
@@ -1099,22 +1114,12 @@ function updModelsPremium(){
       addOpt('simba-3.2', t('lbl_model_simba')||'Simba (English)');
     }
   }
-  // VoxCPM2: presente in ogni lingua per cui il catalogo espone voci. A
-  // differenza di Simba non e' legato all'inglese, e a differenza di Gemini
-  // non e' sempre presente: se il motore non e' configurato, /api/voices non
-  // manda ne' le voci ne' _voxcpm.available, e il modello non compare.
-  const _voxStatus=(voices&&voices._voxcpm)||null;
-  const _langData=voices&&voices[lang];
-  const _hasVox=!!(_voxStatus&&_voxStatus.available
-                   &&_langData&&Array.isArray(_langData.voices)
-                   &&_langData.voices.some(v=>v&&_isVoxcpmVoiceId(v.id)));
-  if(_hasVox){
-    addOpt('voxcpm',t('lbl_model_voxcpm')||'VoxCPM2 · La tua voce');
-  }
-  // Default: su inglese preferisci Simba (se presente), altrimenti mantieni la
-  // scelta precedente se ancora valida, altrimenti il primo modello.
+  // Default: VoxCPM dove c'e' (la stessa regola con cui Simba veniva
+  // proposto sull'inglese), poi Simba, poi la scelta precedente se ancora
+  // valida, poi il primo modello.
   let target=null;
-  if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
+  if(_hasVox) target='voxcpm';
+  else if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
   else if(prev && vmEl.querySelector('option[value="'+prev+'"]')) target=prev;
   else target=vmEl.options.length?vmEl.options[0].value:'flash25';
   vmEl.value=target;
@@ -1151,7 +1156,6 @@ function _isVoxcpmModelSelected(){
 // scelta dell'utente si perde a ogni rebuild.
 let _voxcpmAccentSel='';
 let _voxcpmVoiceSel='';
-let _voxcpmCharacterSel='';   // '' = tutti i caratteri
 
 // Mostra/nasconde i controlli in base al modello premium selezionato e
 // (ri)popola voci/emozioni/accento coerentemente.
@@ -1159,19 +1163,16 @@ function _onPremiumModelChanged(){
   const styleRow=document.getElementById('geminiStyleRow');
   const emoRow=document.getElementById('speechifyEmotionRow');
   const accentRow=document.getElementById('geminiAccentRow');
-  const carRow=document.getElementById('voxcpmCharacterRow');
   const sampleRow=document.getElementById('voxcpmSampleRow');
   const simba=_isSpeechifyModelSelected();
   const vox=_isVoxcpmModelSelected();
-  // Istruzioni di stile: solo Gemini. Emozione: solo Simba. Carattere e
-  // campione: solo VoxCPM.
+  // Istruzioni di stile: solo Gemini. Emozione: solo Simba. Ascolto:
+  // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  if(carRow)carRow.hidden=!vox;
   if(sampleRow)sampleRow.hidden=!vox;
   if(vox){
     _populateVoxcpmAccents();
-    _populateVoxcpmCharacters();
     if(accentRow)accentRow.hidden=false;
   }else if(simba){
     // Si lascia VoxCPM (verso Simba): la riga campione sparisce, e il player
@@ -1208,8 +1209,8 @@ function _populateSpeechifyAccents(){
 }
 
 // Le voci VoxCPM della lingua corrente, comunque filtrate. Sorgente unica
-// dei tre dropdown: cosi' un accento o un carattere compaiono se e solo se
-// esiste una voce che li porta.
+// dei dropdown: cosi' un accento compare se e solo se esiste una voce che
+// lo porta.
 function _voxcpmVoicesForLang(){
   const vlEl=document.getElementById('vlPremium');
   const lang=(vlEl&&vlEl.value)||'it';
@@ -1240,40 +1241,6 @@ function _populateVoxcpmAccents(){
   _voxcpmAccentSel=acc.value;
   acc.onchange=()=>{
     _voxcpmAccentSel=acc.value;
-    _populateVoxcpmCharacters();
-    updVoicesPremium();
-    if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
-  };
-}
-
-function _populateVoxcpmCharacters(){
-  const sel=document.getElementById('voxcpmCharacter');
-  if(!sel)return;
-  const loc=_voxcpmAccentSel;
-  const chiavi=[];
-  for(const v of _voxcpmVoicesForLang()){
-    if(loc&&v.locale!==loc)continue;
-    if(v.persona&&chiavi.indexOf(v.persona)<0)chiavi.push(v.persona);
-  }
-  chiavi.sort();
-  const prev=(chiavi.indexOf(_voxcpmCharacterSel)>=0)?_voxcpmCharacterSel:'';
-  sel.innerHTML='';
-  // "Tutti" e' la prima voce e il default: CARATTERE e' un filtro, e un
-  // filtro deve poter non filtrare.
-  const tutti=document.createElement('option');
-  tutti.value='';
-  tutti.textContent=t('character_all')||'Tutti';
-  sel.appendChild(tutti);
-  for(const k of chiavi){
-    const o=document.createElement('option');
-    o.value=k;
-    o.textContent=_voxcpmPersonaLabel(k);
-    sel.appendChild(o);
-  }
-  sel.value=prev;
-  _voxcpmCharacterSel=sel.value;
-  sel.onchange=()=>{
-    _voxcpmCharacterSel=sel.value;
     updVoicesPremium();
     if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   };
@@ -1324,24 +1291,6 @@ function _voxcpmSelectedVoice(){
   return null;
 }
 
-// §5.3: ogni voce ha esattamente un carattere, perche' il carattere e' inciso
-// nel campione da cui il modello clona. Scelta una voce, CARATTERE mostra il
-// suo valore: e' un'etichetta, non un'alternativa. E non si svuota mai —
-// verso "voce -> carattere" la risposta e' sempre una sola, e un campo vuoto
-// fingerebbe che ce ne siano altre.
-function _syncVoxcpmCharacterToVoice(){
-  const sel=document.getElementById('voxcpmCharacter');
-  const v=_voxcpmSelectedVoice();
-  if(!sel||!v||!v.persona)return;
-  if(!Array.prototype.some.call(sel.options,o=>o.value===v.persona)){
-    const o=document.createElement('option');
-    o.value=v.persona;o.textContent=_voxcpmPersonaLabel(v.persona,v);
-    sel.appendChild(o);
-  }
-  sel.value=v.persona;
-  _voxcpmCharacterSel=v.persona;
-}
-
 // Carica l'ascolto della voce nei player. Se la voce ha le clip
 // dimostrative (§17) si mostrano quelle — la frase comune e, quando c'e',
 // la frase nelle corde della voce: sono generate come sara' generato il
@@ -1349,12 +1298,13 @@ function _syncVoxcpmCharacterToVoice(){
 // sul campione di riferimento. I .wav non si scaricano finche' l'utente
 // non preme play (preload="none" nel markup).
 function _loadVoxcpmSample(){
+  _wireVoxcpmListen();
   const demoBlock=document.getElementById('voxcpmDemoBlock');
   const sampleBlock=document.getElementById('voxcpmSampleBlock');
   const sample=document.getElementById('voxcpmSample');
   const comune=document.getElementById('voxcpmDemoCommon');
   const adatta=document.getElementById('voxcpmDemoStyled');
-  const adattaLabel=document.getElementById('voxcpmDemoStyledLabel');
+  const adattaBtn=document.getElementById('voxcpmDemoStyledBtn');
   const v=_voxcpmSelectedVoice();
   const demos=(v&&Array.isArray(v.demos))?v.demos:[];
   const clipComune=demos.find(d=>d.common)||demos[0]||null;
@@ -1368,8 +1318,7 @@ function _loadVoxcpmSample(){
   if(clipComune){
     set(comune,clipComune.url);
     set(adatta,clipAdatta?clipAdatta.url:null);
-    if(adatta)adatta.hidden=!clipAdatta;
-    if(adattaLabel)adattaLabel.hidden=!clipAdatta;
+    if(adattaBtn)adattaBtn.hidden=!clipAdatta;
     set(sample,null);
     if(demoBlock)demoBlock.hidden=false;
     if(sampleBlock)sampleBlock.hidden=true;
@@ -1379,6 +1328,73 @@ function _loadVoxcpmSample(){
     if(demoBlock)demoBlock.hidden=true;
     if(sampleBlock)sampleBlock.hidden=false;
   }
+  _applyVoxcpmListenParams();
+}
+
+// I tre player del box condividono i controlli (§17.4): un solo volume e la
+// velocita' del libro applicata come playbackRate. Per le clip la mappatura
+// e' esatta, non un'approssimazione: il libro viene consegnato con un
+// atempo di 1+pct/100 sul PCM (apply_rate in voxcpm_tts.py) e le clip sono
+// generate alla stessa velocita' di base del libro, quindi lo slider e'
+// l'unica differenza fra clip e lettura. Sul campione di riferimento —
+// registrato, non generato — resta un'anteprima onesta dell'effetto.
+const _VOXCPM_AUDIO_IDS=['voxcpmDemoCommon','voxcpmDemoStyled','voxcpmSample'];
+function _voxcpmListenRate(){
+  const vr=document.getElementById('vr');
+  const pct=parseFloat(String((vr&&vr.value)||'+0%').replace('%','').replace('+',''))||0;
+  return 1+pct/100;
+}
+function _applyVoxcpmListenParams(){
+  const vol=document.getElementById('voxcpmVolume');
+  const volume=vol?Math.max(0,Math.min(1,(parseInt(vol.value,10)||0)/100)):1;
+  const rate=_voxcpmListenRate();
+  for(const id of _VOXCPM_AUDIO_IDS){
+    const a=document.getElementById(id);
+    if(!a)continue;
+    a.volume=volume;
+    try{a.playbackRate=rate;}catch(e){/* rate fuori dai limiti del browser */}
+  }
+}
+let _voxcpmListenWired=false;
+function _wireVoxcpmListen(){
+  if(_voxcpmListenWired)return;
+  _voxcpmListenWired=true;
+  const coppie=[['voxcpmDemoCommonBtn','voxcpmDemoCommon'],
+                ['voxcpmDemoStyledBtn','voxcpmDemoStyled'],
+                ['voxcpmSampleBtn','voxcpmSample']];
+  for(const [btnId,audioId] of coppie){
+    const btn=document.getElementById(btnId);
+    const audio=document.getElementById(audioId);
+    if(!btn||!audio)continue;
+    btn.addEventListener('click',()=>{
+      if(!audio.getAttribute('src'))return;
+      if(audio.paused){
+        // Un ascolto alla volta: gli altri player si fermano.
+        for(const id of _VOXCPM_AUDIO_IDS){
+          const altro=document.getElementById(id);
+          if(altro&&altro!==audio)altro.pause();
+        }
+        _applyVoxcpmListenParams();
+        audio.play().catch(()=>{/* autoplay negato o file assente */});
+      }else{
+        audio.pause();
+      }
+    });
+    const ico=btn.querySelector('.voxcpm-clip-ico');
+    const aggiorna=()=>{
+      const playing=!audio.paused&&!audio.ended;
+      if(ico)ico.textContent=playing?'\u23F8':'\u25B6';
+      btn.dataset.playing=playing?'1':'';
+    };
+    for(const ev of ['play','pause','ended'])audio.addEventListener(ev,aggiorna);
+  }
+  const vol=document.getElementById('voxcpmVolume');
+  if(vol)vol.addEventListener('input',_applyVoxcpmListenParams);
+  // La velocita' agisce in diretta anche a clip in riproduzione: si sente
+  // subito l'effetto della scelta, che e' il motivo per cui lo slider sta
+  // prima del box.
+  const slider=document.getElementById('speedSlider');
+  if(slider)slider.addEventListener('input',_applyVoxcpmListenParams);
 }
 
 // Ferma il campione VoxCPM quando la riga che lo contiene sparisce: cambio
@@ -1415,17 +1431,13 @@ function updVoicesPremium(){
   const vmEl=document.getElementById('vmPremium');
   const sel=document.getElementById('vvPremium');
   if(!sel)return;
-  // --- Ramo VoxCPM2: voci filtrate per lingua, locale (ACCENTO) e persona
-  // (CARATTERE). Qui i menu' non compongono una richiesta al motore: sono
-  // filtri su un catalogo (§5.1).
+  // --- Ramo VoxCPM2: voci filtrate per lingua e locale (ACCENTO). Qui i
+  // menu' non compongono una richiesta al motore: sono filtri su un
+  // catalogo (§5.1). Il carattere non e' un filtro: e' scritto accanto al
+  // nome di ogni voce, dove distingue senza confondere.
   if(vmEl&&vmEl.value==='voxcpm'){
     const loc=_voxcpmAccentSel;
-    const car=_voxcpmCharacterSel;
-    const lista=_voxcpmVoicesForLang().filter(v=>{
-      if(loc&&v.locale!==loc)return false;
-      if(car&&v.persona!==car)return false;
-      return true;
-    });
+    const lista=_voxcpmVoicesForLang().filter(v=>!loc||v.locale===loc);
     const prevVoice=_voxcpmVoiceSel||sel.value;
     sel.innerHTML='';
     let lg='';
@@ -1445,11 +1457,9 @@ function updVoicesPremium(){
     }
     if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
     _voxcpmVoiceSel=sel.value;
-    _syncVoxcpmCharacterToVoice();
     _loadVoxcpmSample();
     sel.onchange=()=>{
       _voxcpmVoiceSel=sel.value;
-      _syncVoxcpmCharacterToVoice();
       _loadVoxcpmSample();
       if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
     };
@@ -1688,7 +1698,15 @@ function switchAudioTab(tab){
     // Uscendo dal tab Premium il campione VoxCPM smette di suonare: stessa
     // ragione dell'anteprima sopra, non deve restare vivo dietro un tab
     // nascosto (tabPremium.hidden=true).
-    if(tab!=='premium'&&typeof _pauseVoxcpmSample==='function')_pauseVoxcpmSample();
+    if(tab!=='premium'){
+      if(typeof _pauseVoxcpmSample==='function')_pauseVoxcpmSample();
+      // Il box d'ascolto vive fuori da #tabPremium (dopo lo slider della
+      // velocita', che deve precederlo e influenzarlo): tabPremium.hidden
+      // non lo copre, va nascosto qui. Al rientro ci pensa
+      // _onPremiumModelChanged.
+      const vsRow=document.getElementById('voxcpmSampleRow');
+      if(vsRow)vsRow.hidden=true;
+    }
     if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();

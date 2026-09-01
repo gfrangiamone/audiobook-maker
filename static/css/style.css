@@ -1098,3 +1098,14 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .payment-modal .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 .payment-modal .btn-secondary { background:transparent; color:var(--tx,#222);
                                 border:1px solid var(--brd,#ccc); padding:8px 14px; border-radius:6px; cursor:pointer; }
+
+/* ── Ascolta la voce (VoxCPM, §17.4): box compatto, clip e volume unico ── */
+.voxcpm-listen-box{border:1px solid var(--brd);border-radius:var(--r,8px);background:var(--srf);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.voxcpm-listen-box>label{margin:0}
+.voxcpm-clip-row{display:flex;gap:10px;flex-wrap:wrap}
+.voxcpm-clip-btn{display:inline-flex;align-items:center;gap:8px;flex:1 1 220px;min-width:0;padding:8px 12px;font-size:.86rem;color:var(--tx);background:var(--srf2);border:1px solid var(--brd);border-radius:var(--r,8px);cursor:pointer;text-align:left}
+.voxcpm-clip-btn:hover{border-color:var(--brdh)}
+.voxcpm-clip-btn[data-playing="1"]{border-color:var(--ac);background:var(--acs)}
+.voxcpm-clip-ico{color:var(--ac);flex-shrink:0}
+.voxcpm-volume-row{display:flex;align-items:center;gap:8px;color:var(--txd)}
+.voxcpm-volume-row input[type=range]{flex:0 1 220px;min-width:120px}

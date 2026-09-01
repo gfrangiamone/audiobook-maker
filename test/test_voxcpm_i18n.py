@@ -20,8 +20,9 @@ LANGS = ["it", "en", "fr", "es", "de", "zh", "hi"]
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
 CHIAVI_PANNELLO = [
-    "lbl_model_voxcpm", "lbl_character", "character_all",
-    "voxcpm_sample_title", "voxcpm_sample_hint",
+    "lbl_model_voxcpm",
+    "voxcpm_sample_title", "voxcpm_sample_hint", "voxcpm_sample_listen",
+    "voxcpm_demo_common", "voxcpm_demo_styled", "voxcpm_demo_hint",
 ]
 # Snapshot dei caratteri del catalogo al 2026-08-28. NON e' un requisito:
 # serve solo a verificare che il dizionario copra le sei lingue in modo
@@ -55,6 +56,13 @@ def _ha(lang, chiave):
 def test_le_etichette_del_pannello_ci_sono_in_tutte_le_lingue():
     mancanti = [f"{l}.{k}" for l in LANGS for k in CHIAVI_PANNELLO if not _ha(l, k)]
     assert not mancanti, f"chiavi mancanti: {mancanti}"
+
+
+def test_le_chiavi_del_carattere_sono_sparite():
+    # §17.4: la combo CARATTERE non esiste piu'; le sue chiavi non devono
+    # sopravviverle nel dizionario, dove sembrerebbero ancora in uso.
+    assert "lbl_character" not in I18N
+    assert "character_all" not in I18N
 
 
 def test_i_caratteri_noti_sono_tradotti_in_tutte_le_lingue():
@@ -111,6 +119,8 @@ def test_hi_e_davvero_in_devanagari():
     # un carattere Devanagari (U+0900-U+097F).
     blocco = _blocchi("hi")
     for k in CHIAVI_PANNELLO + CHIAVI_PERSONA:
+        if k == "lbl_model_voxcpm":
+            continue  # nome di prodotto (§17.4): identico in tutte le lingue
         m = re.search(r'%s\s*:\s*"([^"]*)"' % re.escape(k), blocco)
         assert m, f"hi.{k} mancante"
         assert DEVANAGARI.search(m.group(1)), f"hi.{k} non e' in Devanagari: {m.group(1)!r}"

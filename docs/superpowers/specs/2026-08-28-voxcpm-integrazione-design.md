@@ -725,5 +725,45 @@ Il sottosistema di raccolta dei campioni audio dagli utenti finali, con la
 generazione di audiolibri a partire da quei campioni (`voxcpm:mine:*`,
 §6), è rinviato a una seconda release per decisione dell'utente. Il §6
 resta il riferimento di progetto; in questa release non se ne costruisce
-nulla, e l'etichetta di menù «VoxCPM2 · La tua voce» resta in attesa di
-quella release.
+nulla. L'etichetta di menù «VoxCPM2 · La tua voce», pensata per quella
+release, è stata sostituita dal nome di prodotto «Audiobook Maker
+(VOXCPM2)» con la revisione del §17.4.
+
+### 17.4 Revisione del pannello — 2026-09-01
+
+Richiesta dell'utente dopo la prova dal vivo dell'app; sostituisce, dove
+in conflitto, il §5 e il §17.2.
+
+- **Nome e posizione del modello.** Il modello si chiama «Audiobook Maker
+  (VOXCPM2)» in tutte le lingue (nome di prodotto: la chiave
+  `lbl_model_voxcpm` esiste ancora in tutte, ma con lo stesso valore) ed
+  è il **primo** modello premium proposto quando la lingua del libro ha
+  voci in catalogo; quando non le ha resta nascosto (regola invariata).
+  Il default segue la regola con cui Simba era proposto sull'inglese:
+  VoxCPM dove c'è, poi Simba, poi la scelta precedente se ancora valida.
+- **La combo CARATTERE è eliminata.** Ogni voce ha esattamente un
+  carattere: la combo filtrava senza aggiungere scelta e faceva
+  confusione. Il carattere resta scritto accanto al nome di ogni voce
+  (`_voxcpmPersonaLabel`); spariscono `voxcpmCharacterRow`,
+  `_populateVoxcpmCharacters`, `_syncVoxcpmCharacterToVoice`,
+  `_voxcpmCharacterSel` e le chiavi i18n `lbl_character`/`character_all`.
+- **«Ascolta la voce» è un box compatto** (`.voxcpm-listen-box`): le due
+  clip stanno sulla stessa riga quando c'è spazio orizzontale
+  (flex-wrap), i player nativi lasciano il posto a bottoni play/pausa
+  cablati in JS (un ascolto alla volta), e un **solo regolatore di
+  volume** (`#voxcpmVolume`) agisce su tutti i player, campione di
+  ripiego compreso (nuova chiave `voxcpm_sample_listen` per il suo
+  bottone).
+- **La frase sotto le clip** diventa «Clip audio generate con questa voce
+  (non sono anteprima del tuo libro)» (`voxcpm_demo_hint`): la
+  formulazione precedente («esattamente come verrà letto il libro»)
+  faceva credere di ascoltare un'anteprima del proprio testo.
+- **La velocità precede l'ascolto e agisce sulle clip.** Il box sta dopo
+  lo slider condiviso della velocità — fuori da `#tabPremium`, quindi
+  `switchAudioTab` lo nasconde uscendo dal tab — e le clip si
+  riproducono con `playbackRate = 1 + pct/100`: la stessa mappatura
+  dell'`atempo` applicato al PCM del libro (`apply_rate`,
+  `voxcpm_tts.py`), perché le clip sono generate alla velocità di base
+  del libro. Per le clip l'anteprima della velocità è quindi esatta; sul
+  campione di riferimento è un'approssimazione onesta. Lo slider agisce
+  in diretta anche a clip in riproduzione.
