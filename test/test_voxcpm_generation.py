@@ -341,6 +341,67 @@ def test_capitolo_0_perso_non_perde_le_statistiche_dei_capitoli_dopo_in_concorre
     assert job["voxcpm_actual"]["tts_seconds"] == 1.5
 
 
+class JobSpia(dict):
+    """Un job che ricorda ogni scrittura sulla barra.
+
+    Le future partono tutte alla sottomissione, quindi spiare
+    `synthesize_chapter` non dice nulla su quando la barra si muove: e' il
+    thread che consuma `as_completed` a scriverla, un capitolo alla volta.
+    """
+
+    def __init__(self):
+        super().__init__(progress_current=2)
+        self.storia = []
+
+    def __setitem__(self, chiave, valore):
+        if chiave == "progress_current":
+            self.storia.append(valore)
+        super().__setitem__(chiave, valore)
+
+
+def test_la_barra_avanza_a_ogni_capitolo_consegnato(tmp_path, sintesi_finta):
+    # Il difetto: la barra restava a 2/(N+2) per tutto il tempo della sintesi
+    # — cioe' per tutto il tempo del job — e si muoveva solo all'assemblaggio.
+    job = JobSpia()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    # Tre capitoli da 2, 1 e 3 chunk: la barra sale a ogni consegna, non tutta
+    # insieme alla fine. Con ABM_VOXCPM_JOBS=1 l'ordine e' quello del piano.
+    assert job.storia == [2 + 9 * 2, 2 + 9 * 3, 2 + 9 * 6]
+    assert job["progress_message"] == "Sintesi vocale: 3 di 3 capitoli"
+
+
+def test_un_libro_di_un_capitolo_non_dice_capitoli(tmp_path, sintesi_finta):
+    job = {"progress_current": 2}
+    generation_engine._voxcpm_pre_pass(
+        [blocco("a", 0)], VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    assert job["progress_message"] == "Sintesi vocale: 1 di 1 capitolo"
+
+
+def test_senza_peso_la_barra_resta_ferma(tmp_path, sintesi_finta):
+    # Il default non tocca la barra: i chiamanti che non la governano (e i
+    # test che passano `job` solo per le statistiche) non devono vederla
+    # muoversi da sola.
+    job = {"progress_current": 2, "progress_message": "invariato"}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["progress_current"] == 2
+    assert job["progress_message"] == "invariato"
+
+
+def test_la_sintesi_vale_il_grosso_della_barra():
+    # Fondo scala e offset dell'assemblaggio devono combaciare: a sintesi
+    # finita la barra sta al 90%, e il 10% che resta e' l'assemblaggio.
+    peso = generation_engine._VOXCPM_PESO_BARRA
+    for chunk in (1, 6, 137):
+        fondo = chunk * (peso + 1) + 2
+        fine_sintesi = 2 + peso * chunk
+        assert fine_sintesi < fondo
+        assert round(fine_sintesi / fondo * 100) >= 88
+
+
 def test_job_none_non_rompe_la_pre_sintesi(tmp_path, sintesi_finta):
     # Compatibilita': tutte le chiamate dirette esistenti non passano `job=`,
     # e devono continuare a funzionare esattamente come prima.

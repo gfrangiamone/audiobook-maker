@@ -3283,8 +3283,16 @@ def _voxcpm_chapter_groups(plan, reusable):
             if not set(per_capitolo[ci]) <= set(reusable)]
 
 
+# Quanto vale la sintesi VoxCPM sulla barra, rispetto all'assemblaggio: 9 a
+# 1, cioe' 90% e 10%. Non e' una stima del tempo — e' un ordine di grandezza
+# onesto. La sintesi e' un job GPU per capitolo (minuti); l'assemblaggio
+# concatena PCM gia' su disco (secondi). Con la barra tutta sull'assemblaggio,
+# come prima, l'utente vedeva 2/(N+2) fisso per l'intera generazione.
+_VOXCPM_PESO_BARRA = 9
+
+
 def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
-                     cancelled=None, job=None):
+                     cancelled=None, job=None, peso_barra=0):
     """Sintetizza il libro un capitolo per job. Ritorna {indice_chunk: esito}.
 
     Gemella della pre-sintesi Speechify poco piu' sotto, con un'unita' diversa:
@@ -3305,6 +3313,11 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     esauriti), le misure dei capitoli gia' completati non vanno perse. Senza
     questo, un job cancellato/fallito a meta' libro auditerebbe zero
     caratteri e zero costo, anche quando il worker ha davvero fatturato GPU.
+
+    `peso_barra`, se non nullo, fa avanzare `job["progress_current"]` di
+    `peso_barra` punti per chunk a ogni capitolo consegnato, e riscrive
+    `progress_message` col conto dei capitoli fatti. Zero (il default) lascia
+    la barra ferma: e' il comportamento per i chiamanti che non passano `job`.
 
     Raises:
         _CancelledError: annullamento richiesto.
@@ -3371,6 +3384,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         future_a_posizione = {_ex.submit(_uno, gruppo): posizione
                               for posizione, gruppo in enumerate(gruppi)}
         errori = {}
+        fatti_capitoli = 0
+        fatti_chunk = 0
         for fut in _cf.as_completed(future_a_posizione):
             posizione = future_a_posizione[fut]
             try:
@@ -3400,6 +3415,16 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
                             "bounced": 0, "failed_chunks": 0, "bytes": 0}
+            # I capitoli tornano in ordine di completamento, non di indice: il
+            # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
+            # lettura, che a job paralleli sarebbe una mezza verita'.
+            if job is not None and peso_barra:
+                fatti_capitoli += 1
+                fatti_chunk += len(indici)
+                job["progress_current"] = 2 + peso_barra * fatti_chunk
+                job["progress_message"] = (
+                    f"Sintesi vocale: {fatti_capitoli} di {len(gruppi)} "
+                    f"capitol{'o' if len(gruppi) == 1 else 'i'}")
         if errori:
             prima_posizione = min(errori)
             raise errori[prima_posizione]
@@ -4761,7 +4786,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 2
         job["progress_message"] = "Preparazione audio..."
 
-        job["progress_total"] = total_chunks + 2
+        # VoxCPM: la sintesi si prende la sua fetta di barra (vedi
+        # _VOXCPM_PESO_BARRA), cosi' l'avanzamento segue il lavoro vero invece
+        # di restare fermo fino all'assemblaggio.
+        _peso_sintesi = _VOXCPM_PESO_BARRA if use_voxcpm else 0
+        job["progress_total"] = total_chunks * (_peso_sintesi + 1) + 2
         job["total_chars"] = total_chars
         job["processed_chars"] = 0
         job["bytes_generated"] = 0
@@ -4792,7 +4821,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         def _update_progress(i, block):
             elapsed = time.time() - start_time
-            job["progress_current"] = 2 + i
+            # L'offset e' la quota gia' consumata dalla pre-sintesi: senza,
+            # la barra tornerebbe a zero appena comincia l'assemblaggio.
+            job["progress_current"] = 2 + _peso_sintesi * total_chunks + i
             job["progress_message"] = (
                 f"Cap. {block['chapter_index']}/{len(info.chapters)}: "
                 f"{block['chapter_title'][:35]}... \u2014 "
@@ -5021,7 +5052,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # perdeva tutto il lavoro gia' fatturato su un'eccezione.
             _voxcpm_pre = _voxcpm_pre_pass(
                 plan, voice, rate, work_dir, job_id, _reusable_chunks,
-                cancelled=_check_cancelled, job=job)
+                cancelled=_check_cancelled, job=job,
+                peso_barra=_peso_sintesi)
             job["progress_message"] = "Assembling audio..."
 
         # Pre-sintesi parallela Speechify: pool di min(K, N) worker; ogni chiamata

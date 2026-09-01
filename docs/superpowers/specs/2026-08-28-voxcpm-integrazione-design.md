@@ -789,3 +789,34 @@ in conflitto, il §5 e il §17.2.
 - **La frase di attesa del pre-pass** diventa «Avvio del motore vocale in
   corso...»: la precedente prometteva «circa tre minuti», un tempo che
   dipende dalla coda di RunPod e che nessuno può garantire.
+
+### 17.6 La barra durante la pre-sintesi — 2026-09-01
+
+Il difetto: per tutta la generazione la barra restava ferma sul messaggio di
+avvio, e si muoveva solo alla fine. La causa e' strutturale, non un errore di
+calcolo. La barra vale `progress_current / progress_total`, e
+`progress_current` lo scrive **solo** `_update_progress`, che vive nel ciclo
+di assemblaggio. Con VoxCPM pero' il lavoro sta tutto prima, in
+`_voxcpm_pre_pass` (un job GPU per capitolo, minuti), mentre l'assemblaggio
+concatena PCM gia' su disco e dura secondi: la barra descriveva l'unica fase
+che non costa tempo.
+
+- **La sintesi si prende il 90% della barra.** `_VOXCPM_PESO_BARRA = 9`: il
+  fondo scala diventa `total_chunks * 10 + 2`, la pre-sintesi avanza di 9
+  punti per chunk a ogni capitolo consegnato, e `_update_progress` riparte
+  dall'offset `9 * total_chunks` invece che da zero — senza offset la barra
+  tornerebbe indietro appena comincia l'assemblaggio. Il peso e' un ordine di
+  grandezza dichiarato, non una stima del tempo.
+- **Il messaggio conta i capitoli fatti**, non dice quale sia in lettura: i
+  job vanno in parallelo e tornano in ordine di completamento, quindi
+  «capitolo 3 di 12» sarebbe una mezza verita'. Fino al primo capitolo
+  consegnato resta «Avvio del motore vocale in corso...», che e' la fase di
+  accensione reale del worker.
+- **Nessuna modifica a endpoint o frontend:** `/api/progress` espone gia'
+  `progress_current`, `progress_total` e `progress_message`.
+- I capitoli riusati da `chunk_reuse` non passano dalla pre-sintesi e non
+  avanzano la barra: a fine sintesi il riempimento e' proporzionalmente
+  minore, e l'assemblaggio lo recupera. L'avanzamento resta monotono.
+- Speechify ha la stessa forma (pre-sintesi muta, barra sull'assemblaggio) e
+  non e' stata toccata: li' l'unita' e' il chunk e le chiamate durano
+  secondi, quindi la barra ferma non si nota allo stesso modo.
