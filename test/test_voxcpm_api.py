@@ -127,3 +127,36 @@ def test_campione_di_una_voce_scartata(client, monkeypatch, tmp_path):
     # scartata: la rotta non deve servirla piu' della lista.
     r = client.get("/api/voice_sample?voice=voxcpm:v2:it-IT/Senzacarattere")
     assert r.status_code == 404
+
+
+# --- /api/voice_demo (§17) --------------------------------------------
+
+
+def test_la_clip_dimostrativa_si_scarica(client):
+    r = client.get("/api/voice_demo?voice=voxcpm:v2:it-IT/Stefano&clip=opening")
+    assert r.status_code == 200
+    assert r.mimetype == "audio/wav"
+    assert r.data[:4] == b"RIFF"
+
+
+def test_clip_inesistente_404(client):
+    r = client.get("/api/voice_demo?voice=voxcpm:v2:it-IT/Stefano&clip=fantasma")
+    assert r.status_code == 404
+
+
+def test_clip_di_voce_senza_demo_404(client):
+    # Chiara e' in catalogo ma il suo lotto non ha ancora le clip: la UI
+    # ripiega sul campione, la rotta risponde che la clip non c'e'.
+    r = client.get("/api/voice_demo?voice=voxcpm:v2:it-IT/Chiara&clip=opening")
+    assert r.status_code == 404
+
+
+def test_clip_con_voce_malformata_400(client):
+    for cattivo in ("", "gemini:flash25:Zephyr", "voxcpm:v2"):
+        r = client.get(f"/api/voice_demo?voice={cattivo}&clip=opening")
+        assert r.status_code == 400, cattivo
+
+
+def test_clip_non_evade_dal_catalogo(client):
+    r = client.get("/api/voice_demo?voice=voxcpm:v2:../../etc/passwd&clip=opening")
+    assert r.status_code in (400, 404)

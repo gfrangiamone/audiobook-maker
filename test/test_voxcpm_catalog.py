@@ -226,3 +226,81 @@ def test_sample_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
     voxcpm_catalog.invalidate_cache()
     with pytest.raises(ValueError):
         voxcpm_catalog.sample_path("voxcpm:v2:it-IT/Evasione")
+
+
+# --- Le clip dimostrative (§17) ---------------------------------------
+
+
+def test_demos_normalizzate_comune_per_prima():
+    # La fixture elenca la clip su misura per prima: l'ordine d'ascolto
+    # (comune, poi su misura) lo garantisce la normalizzazione, non il dato.
+    stefano = next(v for v in voxcpm_catalog.voices() if v["name"] == "Stefano")
+    assert [d["id"] for d in stefano["demos"]] == ["opening", "memory"]
+    assert stefano["demos"][0]["common"] is True
+    assert stefano["demos"][0]["file"] == "_demo/it-IT/Stefano-opening.wav"
+    assert stefano["demos"][0]["text"].startswith("La casa")
+
+
+def test_demo_malformata_ignorata_voce_valida():
+    # Una clip senza file o testo si ignora: la voce resta in catalogo,
+    # perche' le clip servono all'ascolto, non alla generazione del libro.
+    federica = next(v for v in voxcpm_catalog.voices() if v["name"] == "Federica")
+    assert [d["id"] for d in federica["demos"]] == ["opening"]
+
+
+def test_voce_senza_demos_resta_valida():
+    chiara = next(v for v in voxcpm_catalog.voices() if v["name"] == "Chiara")
+    assert chiara["demos"] == []
+
+
+def test_entry_porta_le_demo_url():
+    stefano = next(v for v in voxcpm_catalog.get_voices()["it"] if v["name"].startswith("Stefano"))
+    assert [d["id"] for d in stefano["demos"]] == ["opening", "memory"]
+    assert stefano["demos"][0]["common"] is True
+    assert stefano["demos"][0]["url"] == (
+        "/api/voice_demo?voice=voxcpm%3Av2%3Ait-IT%2FStefano&clip=opening")
+
+
+def test_entry_senza_demo_ha_lista_vuota():
+    # Il ripiego della UI sul campione si decide su questa lista vuota.
+    ivy = next(v for v in voxcpm_catalog.get_voices()["en"] if v["name"].startswith("Ivy"))
+    assert ivy["demos"] == []
+
+
+def test_demo_path_esiste():
+    p = voxcpm_catalog.demo_path("voxcpm:v2:it-IT/Stefano", "opening")
+    assert p == os.path.join(FIXTURE, "_demo", "it-IT", "Stefano-opening.wav")
+    assert os.path.exists(p)
+
+
+def test_demo_path_clip_inesistente():
+    with pytest.raises(ValueError) as e:
+        voxcpm_catalog.demo_path("voxcpm:v2:it-IT/Stefano", "fantasma")
+    assert "non presente" in str(e.value)
+
+
+def test_demo_path_voce_senza_clip():
+    with pytest.raises(ValueError):
+        voxcpm_catalog.demo_path("voxcpm:v2:it-IT/Chiara", "opening")
+
+
+def test_demo_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
+    # `demos[].file` arriva dallo stesso file di dati di `audio.file`: un
+    # percorso con .. non deve poter servire file fuori dal catalogo.
+    import json as _json
+    cattivo = {
+        "voices": [{
+            "id": "x_m_evasione", "name": "Evasione",
+            "language": {"code": "it", "locale": "it-IT"},
+            "gender": {"value": "m"},
+            "audio": {"file": "it-IT/Evasione.wav", "transcript": "testo", "duration_s": 1.0},
+            "description": {"persona": "warm-young"},
+            "demos": [{"id": "opening", "common": True,
+                       "file": "../../segreto.wav", "text": "testo"}],
+        }]
+    }
+    (tmp_path / "voices.json").write_text(_json.dumps(cattivo), encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+    with pytest.raises(ValueError):
+        voxcpm_catalog.demo_path("voxcpm:v2:it-IT/Evasione", "opening")

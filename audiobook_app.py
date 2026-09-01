@@ -8014,6 +8014,33 @@ def api_voice_sample():
     return send_file(percorso, mimetype="audio/wav", conditional=True)
 
 
+@app.route("/api/voice_demo")
+def api_voice_demo():
+    """Una clip dimostrativa di una voce di catalogo (§17).
+
+    Le due clip generate — la frase comune a tutte le voci e la frase nelle
+    corde di questa — sono l'ascolto dell'utente in fase di scelta: prodotte
+    esattamente come sara' prodotto il libro, sono la promessa commerciale
+    della voce. Stesse regole del campione: il catalogo e' importato, i
+    percorsi non sono fidati.
+    """
+    voice_id = (request.args.get("voice") or "").strip()
+    clip_id = (request.args.get("clip") or "").strip()
+    if voxcpm_catalog is None:
+        return jsonify({"error": "voxcpm non disponibile"}), 404
+    try:
+        percorso = voxcpm_catalog.demo_path(voice_id, clip_id)
+    except ValueError as e:
+        # Id malformato -> 400; clip o voce che non ci sono (piu') -> 404,
+        # stesso criterio di /api/voice_sample.
+        messaggio = str(e)
+        codice = 404 if "non presente" in messaggio else 400
+        return jsonify({"error": messaggio}), codice
+    except FileNotFoundError:
+        return jsonify({"error": "clip non disponibile"}), 404
+    return send_file(percorso, mimetype="audio/wav", conditional=True)
+
+
 @app.route("/api/community/stats/today")
 def api_community_stats_today():
     """Conteggio audiolibri completati oggi (cache 60s)."""

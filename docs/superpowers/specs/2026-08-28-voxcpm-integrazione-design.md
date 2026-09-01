@@ -680,3 +680,50 @@ invariante di questa spec, e ciascuno costa più di quanto rende oggi.
 Durante la revisione del Task 10 un revisore, contro le istruzioni, ha
 sondato PayPal dal vivo: esiste l'ordine `303800248L157072N` in stato
 CREATED, mai catturato, e un'email reale di digest admin. Nessun addebito.
+
+## 17. L'ascolto in fase di scelta: due clip dimostrative — 2026-09-01
+
+Decisione dell'utente (1 settembre 2026): per ciascuna voce il catalogo
+porta un campione di riferimento (la fonte della clonazione) e **due audio
+generati a partire da quel campione** — il primo su una frase comune a
+tutte le voci, nella lingua della voce; il secondo su una frase ulteriore
+più adatta al tipo di voce. Le due clip sono ciò che l'utente ascolta in
+fase di selezione: l'alternativa all'anteprima dal vivo che gli altri
+modelli TTS di AudioBook-Maker offrono, impraticabile qui perché l'avvio
+della GPU costa troppo per dodici secondi di audio.
+
+### 17.1 Contratto dati
+
+`voices.json` porta per voce `demos: [{id, common, file, text, …}]`. La
+clip `common: true` è la frase comune, quella `common: false` la frase su
+misura; alcune persone hanno la sola frase comune. Le clip sono clonate
+dal campione in hifi/CFG di lettura **alla velocità del libro**: la clip è
+una promessa commerciale, il libro suonerà così. Il worker le produce e
+`tools/verifica_contratto_catalogo.py` le valida su ogni lotto.
+
+### 17.2 Client
+
+- `voxcpm_catalog._normalize` accetta `demos` tollerando le clip
+  malformate (si ignorano con un log, la voce resta valida) e ordina la
+  comune per prima; una voce senza clip resta valida con `demos: []`.
+- `demo_path(voice_id, demo_id)` applica la stessa regola di sicurezza di
+  `sample_path` (il percorso non deve evadere da `catalog_dir()`).
+- Le entry di `get_voices()` portano `demos: [{id, common, url}]`.
+- Rotta `/api/voice_demo?voice=..&clip=..`, speculare a
+  `/api/voice_sample`: 400 su id malformato, 404 su clip o voce assente,
+  wav servito con `conditional=True`.
+- UI: il pannello mostra i due player (chiavi i18n `voxcpm_demo_common`,
+  `voxcpm_demo_styled`, `voxcpm_demo_hint`, nelle 7 lingue); il secondo
+  player si nasconde se la voce ha la sola frase comune; per le voci il
+  cui lotto non ha ancora le clip si ripiega sul player del campione di
+  riferimento (§5). Al 1 settembre 2026 le clip coprono 112 voci su 364;
+  it-IT, en-GB ed en-US sono consolidate.
+
+### 17.3 Rinviato alla release 2
+
+Il sottosistema di raccolta dei campioni audio dagli utenti finali, con la
+generazione di audiolibri a partire da quei campioni (`voxcpm:mine:*`,
+§6), è rinviato a una seconda release per decisione dell'utente. Il §6
+resta il riferimento di progetto; in questa release non se ne costruisce
+nulla, e l'etichetta di menù «VoxCPM2 · La tua voce» resta in attesa di
+quella release.

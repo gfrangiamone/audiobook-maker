@@ -83,6 +83,24 @@ def _normalize(raw):
         print(f"[voxcpm_catalog] voce scartata: {src_id} senza campione o trascrizione")
         return None
     gender_value = ((raw.get("gender") or {}).get("value") or "").strip().lower()
+    # Le clip dimostrative (§17): la frase comune a tutte le voci e la frase
+    # nelle corde di questa. Sono l'ascolto dell'utente in fase di scelta, non
+    # servono alla generazione del libro: una clip malformata si ignora con un
+    # log, la voce resta valida. La comune va per prima, e' l'ordine d'ascolto.
+    demos = []
+    for k, d in enumerate(raw.get("demos") or []):
+        if not isinstance(d, dict):
+            print(f"[voxcpm_catalog] {src_id}: demos[{k}] ignorata, non e' un oggetto")
+            continue
+        d_id = str(d.get("id") or "").strip()
+        d_file = str(d.get("file") or "").strip()
+        d_text = str(d.get("text") or "").strip()
+        if not d_id or not d_file or not d_text:
+            print(f"[voxcpm_catalog] {src_id}: demos[{k}] ignorata, senza id, file o text")
+            continue
+        demos.append({"id": d_id, "common": bool(d.get("common")),
+                      "file": d_file, "text": d_text})
+    demos.sort(key=lambda d: not d["common"])
     return {
         "id": f"{_ID_PREFIX}{locale}/{name}",
         "name": name,
@@ -95,6 +113,7 @@ def _normalize(raw):
         "sample_rel": sample_rel,
         "transcript": transcript,
         "duration_s": float(audio.get("duration_s") or 0.0),
+        "demos": demos,
     }
 
 
@@ -164,6 +183,12 @@ def _sample_url(voice_id):
     return "/api/voice_sample?voice=" + quote(voice_id, safe="")
 
 
+def _demo_url(voice_id, demo_id):
+    from urllib.parse import quote
+    return ("/api/voice_demo?voice=" + quote(voice_id, safe="")
+            + "&clip=" + quote(demo_id, safe=""))
+
+
 def get_voices():
     """Catalogo per l'UI: {codice lingua: [entry, ...]}.
 
@@ -189,6 +214,12 @@ def get_voices():
             # quando la chiave non e' ancora nel dizionario.
             "persona_role": rec["role"],
             "sample_url": _sample_url(rec["id"]),
+            # Le clip dimostrative sono l'ascolto in fase di scelta (§17):
+            # la UI mostra questi player e ripiega su `sample_url` solo per
+            # le voci il cui lotto non ha ancora le clip.
+            "demos": [{"id": d["id"], "common": d["common"],
+                       "url": _demo_url(rec["id"], d["id"])}
+                      for d in rec["demos"]],
         })
     for entries in out.values():
         entries.sort(key=lambda e: (e["gender"], e["name"]))
@@ -233,3 +264,24 @@ def sample_path(voice_id):
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     return path
+
+
+def demo_path(voice_id, demo_id):
+    """Percorso assoluto della clip dimostrativa `demo_id` della voce.
+
+    Stessa regola di `sample_path`: il percorso relativo arriva da un file
+    di dati importato, si verifica che resti dentro `catalog_dir()` prima
+    di aprirlo.
+    """
+    rec = parse_voice_id(voice_id)
+    for d in rec["demos"]:
+        if d["id"] != demo_id:
+            continue
+        base = catalog_dir()
+        path = os.path.abspath(os.path.join(base, d["file"].replace("/", os.sep)))
+        if os.path.commonpath([base, path]) != base:
+            raise ValueError(f"clip fuori dal catalogo: {d['file']!r}")
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        return path
+    raise ValueError(f"clip non presente per la voce: {demo_id!r}")

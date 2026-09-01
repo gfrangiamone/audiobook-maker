@@ -453,9 +453,24 @@ __REVIEWS_LD__
         <div class="form-row" id="voxcpmSampleRow" hidden>
           <div class="form-group" style="flex:1 1 100%">
             <label data-t="voxcpm_sample_title">Ascolta la voce</label>
-            <audio id="voxcpmSample" controls preload="none"></audio>
-            <div class="model-rate-hint" data-t="voxcpm_sample_hint">
-              Il campione da cui la voce viene clonata: il libro suonerà così.
+            <div id="voxcpmDemoBlock" hidden>
+              <div class="model-rate-hint" data-t="voxcpm_demo_common">
+                La stessa frase per tutte le voci
+              </div>
+              <audio id="voxcpmDemoCommon" controls preload="none"></audio>
+              <div class="model-rate-hint" id="voxcpmDemoStyledLabel" data-t="voxcpm_demo_styled">
+                Una frase nelle corde di questa voce
+              </div>
+              <audio id="voxcpmDemoStyled" controls preload="none"></audio>
+              <div class="model-rate-hint" data-t="voxcpm_demo_hint">
+                Clip generate esattamente come verrà letto il libro: suonerà così.
+              </div>
+            </div>
+            <div id="voxcpmSampleBlock" hidden>
+              <audio id="voxcpmSample" controls preload="none"></audio>
+              <div class="model-rate-hint" data-t="voxcpm_sample_hint">
+                Il campione da cui la voce viene clonata: il libro suonerà così.
+              </div>
             </div>
           </div>
         </div>

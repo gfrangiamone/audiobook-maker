@@ -13,6 +13,10 @@
       "gender": {"value": "m", "label": "maschile", "f0_median_hz": 118.4},
       "audio": {"file": "it-IT/Stefano.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 19.52, "sample_rate_hz": 24000},
       "quality": {"score": 0.88, "gate_passed": true},
+      "demos": [
+        {"id": "memory", "common": false, "file": "_demo/it-IT/Stefano-memory.wav", "text": "Ricordo ancora il pane la mattina presto, quando la strada dormiva.", "duration_s": 13.7},
+        {"id": "opening", "common": true, "file": "_demo/it-IT/Stefano-opening.wav", "text": "La casa in fondo alla strada era rimasta vuota tutto l'inverno.", "duration_s": 11.9}
+      ],
       "description": {"persona": "warm-young", "role": "caldo, giovane", "axes": ["giovane", "tono medio"], "lang": "it"}
     },
     {
@@ -21,6 +25,10 @@
       "gender": {"value": "f", "label": "femminile", "f0_median_hz": 201.7},
       "audio": {"file": "it-IT/Federica.wav", "transcript": "Quando il treno delle sette e quarantacinque arrivo con dodici minuti di ritardo, tirai fuori il telefono per controllare la posta.", "duration_s": 21.03, "sample_rate_hz": 24000},
       "quality": {"score": 0.91, "gate_passed": true},
+      "demos": [
+        {"id": "opening", "common": true, "file": "_demo/it-IT/Federica-opening.wav", "text": "La casa in fondo alla strada era rimasta vuota tutto l'inverno.", "duration_s": 12.2},
+        {"id": "rotta", "common": false, "file": "", "text": ""}
+      ],
       "description": {"persona": "audiobook-slow", "role": "narrativo, lento", "axes": ["ritmo lento"], "lang": "it"}
     },
     {

@@ -1342,16 +1342,43 @@ function _syncVoxcpmCharacterToVoice(){
   _voxcpmCharacterSel=v.persona;
 }
 
-// Carica il campione della voce nel player. Il .wav non si scarica finche'
-// l'utente non preme play (preload="none" nel markup).
+// Carica l'ascolto della voce nei player. Se la voce ha le clip
+// dimostrative (§17) si mostrano quelle — la frase comune e, quando c'e',
+// la frase nelle corde della voce: sono generate come sara' generato il
+// libro, e sono l'ascolto su cui l'utente sceglie. Senza clip si ripiega
+// sul campione di riferimento. I .wav non si scaricano finche' l'utente
+// non preme play (preload="none" nel markup).
 function _loadVoxcpmSample(){
-  const audio=document.getElementById('voxcpmSample');
+  const demoBlock=document.getElementById('voxcpmDemoBlock');
+  const sampleBlock=document.getElementById('voxcpmSampleBlock');
+  const sample=document.getElementById('voxcpmSample');
+  const comune=document.getElementById('voxcpmDemoCommon');
+  const adatta=document.getElementById('voxcpmDemoStyled');
+  const adattaLabel=document.getElementById('voxcpmDemoStyledLabel');
   const v=_voxcpmSelectedVoice();
-  if(!audio)return;
-  audio.pause();
-  if(v&&v.sample_url){audio.src=v.sample_url;}
-  else{audio.removeAttribute('src');}
-  audio.load();
+  const demos=(v&&Array.isArray(v.demos))?v.demos:[];
+  const clipComune=demos.find(d=>d.common)||demos[0]||null;
+  const clipAdatta=demos.find(d=>!d.common)||null;
+  const set=(audio,url)=>{
+    if(!audio)return;
+    audio.pause();
+    if(url){audio.src=url;}else{audio.removeAttribute('src');}
+    audio.load();
+  };
+  if(clipComune){
+    set(comune,clipComune.url);
+    set(adatta,clipAdatta?clipAdatta.url:null);
+    if(adatta)adatta.hidden=!clipAdatta;
+    if(adattaLabel)adattaLabel.hidden=!clipAdatta;
+    set(sample,null);
+    if(demoBlock)demoBlock.hidden=false;
+    if(sampleBlock)sampleBlock.hidden=true;
+  }else{
+    set(sample,(v&&v.sample_url)?v.sample_url:null);
+    set(comune,null);set(adatta,null);
+    if(demoBlock)demoBlock.hidden=true;
+    if(sampleBlock)sampleBlock.hidden=false;
+  }
 }
 
 // Ferma il campione VoxCPM quando la riga che lo contiene sparisce: cambio
@@ -1360,11 +1387,13 @@ function _loadVoxcpmSample(){
 // invisibile ma non muto. pause()+removeAttribute('src')+load() per non
 // lasciare nemmeno il buffer scaricato appeso al player.
 function _pauseVoxcpmSample(){
-  const audio=document.getElementById('voxcpmSample');
-  if(!audio)return;
-  audio.pause();
-  audio.removeAttribute('src');
-  audio.load();
+  for(const id of ['voxcpmSample','voxcpmDemoCommon','voxcpmDemoStyled']){
+    const audio=document.getElementById(id);
+    if(!audio)continue;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
 }
 
 function _populateSpeechifyEmotions(){
