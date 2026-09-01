@@ -820,3 +820,53 @@ che non costa tempo.
 - Speechify ha la stessa forma (pre-sintesi muta, barra sull'assemblaggio) e
   non e' stata toccata: li' l'unita' e' il chunk e le chiamate durano
   secondi, quindi la barra ferma non si nota allo stesso modo.
+
+### 17.7 Il costo reale dei secondi di GPU — 2026-09-01
+
+L'audit premium calcolava il costo VoxCPM dai caratteri, a
+`ABM_VOXCPM_COST_USD_PER_MCHAR` = 0,91 $/Mchar: una costante misurata una
+volta sola (RTX 4090, 2026-08-04, 28,5x realtime). Il numero e' cieco su tre
+cose che RunPod invece fattura — la scheda su cui il job e' davvero girato,
+l'accensione del container, e i job rimbalzati o falliti, che bruciano GPU
+senza consegnare un carattere. Il margine dell'audit era percio' una stima
+ancorata a un giorno solo.
+
+Ora il costo si misura come lo misura il libro mastro del worker
+(`voxcpm_book.py`), sugli stessi numeri:
+
+- **`ABM_VOXCPM_USD_PER_HOUR`** (default `0.69`, la RTX PRO 6000 Blackwell
+  MIG 1g.24gb con 4 vCPU e 47 GB) dichiara la tariffa della scheda
+  dell'endpoint. La sua **presenza** nell'ambiente e' il segnale: se qualcuno
+  l'ha scritta, quella vale ovunque e il listino interno per scheda (MIG
+  0,69 / A40 1,22 / 4090 1,10) non si consulta piu'. Assente, ogni job si
+  paga alla tariffa della scheda che RunPod ha effettivamente dato, con 0,69
+  come ripiego per una scheda fuori listino.
+- **Le righe di fattura** nascono in `_attendi_esito`, nel ramo di stato
+  terminale e **prima** di decidere se il job e' riuscito: `executionTime` e
+  `delayTime` (millisecondi, da `/status`) piu' `worker` e `gpu` (dall'output
+  del worker, presenti anche sui rimbalzi). `run_job` le consegna a un
+  callback `on_billing` opzionale; `synthesize_chapter` le accoda in
+  `stats["runpod"]`, una per job **sottomesso**, non per job riuscito.
+  `_riga_costo` non solleva mai: la contabilita' non deve poter portare via
+  una sintesi riuscita.
+- **`gpu_cost_usd(rows)`** somma `(executionTime + accensione) / 3600 x
+  tariffa`. L'accensione (148 s su MIG, 128 s su A40 e 4090) si addebita una
+  volta per worker mai visto, e solo se la coda di quel job supera i 30 s —
+  sotto quella soglia il worker c'era gia' e quei secondi sono un turno,
+  non un container che si accende. Una riga senza scheda eredita l'ultima
+  vista: un job caduto prima di rispondere, su un endpoint a fasce miste,
+  non deve leggersi alla tariffa di ripiego.
+- **Nel record di audit** il costo dai secondi vince quando le righe ci sono
+  (`cost_basis` = `gpu_seconds`), altrimenti resta la stima sui caratteri
+  (`cost_basis` = `chars`) — uno zero leggerebbe come margine pieno su un
+  lavoro che invece e' costato. Il record porta `gpu_exec_seconds`,
+  `gpu_cold_start_seconds`, `gpu_queue_seconds`, `gpu_cold_starts`,
+  `gpu_jobs_billed`, `gpu_card`, `gpu_usd_per_hour` e `cost_usd_actual`:
+  se domani cambia il prezzo della scheda, lo storico si ricalcola.
+- **`gpu_handler_seconds`** tiene a parte il cronometro interno del worker
+  (`tts_seconds`), che misura la sola sintesi e non vede ne' l'accensione ne'
+  l'overhead di RunPod. E' un dato di salute del motore, non una fattura, e
+  la differenza fra i due numeri e' proprio cio' che si pagava senza vederlo.
+- **Il prezzo all'utente non cambia.** Resta `ABM_VOXCPM_RATE_EUR_PER_MCHAR`
+  sui caratteri (§8.2): il cliente non compra secondi di GPU e non deve
+  pagare i nostri rimbalzi. Cambia solo il lato costo, cioe' il margine.

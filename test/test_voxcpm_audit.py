@@ -48,6 +48,77 @@ def job_finito(charged=1.00):
     }
 
 
+MIG = "NVIDIA RTX PRO 6000 Blackwell MIG 1g.24gb"
+
+
+def job_con_fattura(charged=1.00):
+    """Due job sullo stesso worker: il primo lo ha acceso, il secondo no."""
+    j = job_finito(charged)
+    j["voxcpm_actual"]["runpod"] = [
+        {"exec_s": 600.0, "queue_s": 160.0, "worker": "w1", "gpu": MIG},
+        {"exec_s": 600.0, "queue_s": 2.0, "worker": "w1", "gpu": MIG},
+    ]
+    return j
+
+
+def test_il_costo_viene_dai_secondi_quando_ci_sono(audit_isolato, monkeypatch):
+    # 1200 s di esecuzione piu' 148 s di accensione, a 0,69 $/h. Il conto sui
+    # caratteri darebbe $0,2275 per gli stessi 250.000 caratteri: sono due
+    # numeri diversi, e questo e' quello che RunPod fattura.
+    monkeypatch.delenv("ABM_VOXCPM_USD_PER_HOUR", raising=False)
+    monkeypatch.setenv("ABM_GEMINI_USD_EUR_RATE", "0.86")
+    generation_engine._write_voxcpm_audit("job-1", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["cost_basis"] == "gpu_seconds"
+    assert r["gpu_seconds"] == 1348.0
+    assert r["gpu_exec_seconds"] == 1200.0
+    assert r["gpu_cold_start_seconds"] == 148.0
+    assert r["gpu_cold_starts"] == 1
+    assert r["gpu_card"] == MIG
+    assert r["gpu_usd_per_hour"] == 0.69
+    atteso_usd = 1348.0 / 3600.0 * 0.69
+    assert r["cost_usd_actual"] == round(atteso_usd, 6)
+    assert r["google_cost_eur_actual"] == round(atteso_usd * 0.86, 4)
+    assert r["margin_eur_actual"] == round(1.00 - r["google_cost_eur_actual"], 4)
+
+
+def test_la_tariffa_dichiarata_finisce_nel_record(audit_isolato, monkeypatch):
+    # Chi rilegge lo storico deve poter dire con che listino e' stato fatto
+    # il conto, senza andare a cercare com'era configurato quel giorno.
+    monkeypatch.setenv("ABM_VOXCPM_USD_PER_HOUR", "1.22")
+    generation_engine._write_voxcpm_audit("job-1", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["gpu_usd_per_hour"] == 1.22
+    assert r["cost_usd_actual"] == round(1348.0 / 3600.0 * 1.22, 6)
+
+
+def test_senza_righe_si_ripiega_sui_caratteri(audit_isolato):
+    # Un job vecchio, o un percorso che non ha raccolto la fattura: meglio la
+    # stima di prima che uno zero, che nell'aggregato leggerebbe come margine
+    # pieno su un lavoro che invece e' costato.
+    generation_engine._write_voxcpm_audit("job-1", job_finito(), VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["cost_basis"] == "chars"
+    assert 0.15 < r["google_cost_eur_actual"] < 0.25
+    assert r["gpu_seconds"] == 315.0      # il cronometro dell'handler
+    assert r["gpu_exec_seconds"] == 0.0
+
+
+def test_i_secondi_dell_handler_restano_a_parte(audit_isolato, monkeypatch):
+    # Il cronometro interno del worker misura la sola sintesi e non vede ne'
+    # l'accensione ne' l'overhead di RunPod: e' un dato di salute del motore,
+    # non una fattura. Tenerlo separato rende visibile la differenza.
+    monkeypatch.delenv("ABM_VOXCPM_USD_PER_HOUR", raising=False)
+    generation_engine._write_voxcpm_audit("job-1", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["gpu_handler_seconds"] == 315.0
+    assert r["gpu_seconds"] == 1348.0
+
+
 def test_il_record_dichiara_il_provider(audit_isolato):
     generation_engine._write_voxcpm_audit("job-1", job_finito(), VOCE, "it",
                                           "completed")

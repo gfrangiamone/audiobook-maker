@@ -35,6 +35,55 @@ MODEL_LABEL = voxcpm_catalog.MODEL_LABEL
 # del margine reale: il prezzo all'utente e' la tariffa, non questo numero.
 _COST_USD_PER_MCHAR = 0.91
 
+# Tariffa oraria della fascia GPU su cui gira l'endpoint. Default 0,69 $/h: la
+# RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM), l'unica fascia
+# selezionata. Da riverificare quando cambia la selezione: i listini cambiano.
+_USD_PER_HOUR = 0.69
+
+# Il listino per scheda. Ogni risposta del worker porta `gpu`, quindi il costo
+# di un job si calcola con la tariffa della macchina su cui e' davvero girato
+# invece che con una media: un giro finito a fasce miste — durante una
+# release, o quando la fascia preferita non e' disponibile — smette di
+# leggersi come se fosse stato tutto sulla piu' economica.
+#
+# Si confronta in minuscolo per sottostringa e vince la prima voce che
+# corrisponde, quindi le piu' specifiche vanno per prime: `mig 1g.24gb` prima
+# di qualsiasi `rtx pro 6000` non e' pedanteria, perche' la scheda intera e'
+# una fascia molto piu' cara della partizione che usiamo.
+_USD_PER_HOUR_BY_GPU = (
+    ("mig 1g.24gb", 0.69),
+    ("a40", 1.22),
+    ("4090", 1.10),
+)
+
+# Quanto costa accendere un worker, in secondi fatturati.
+#
+# Non compare da nessuna parte nella risposta di RunPod, ed e' la ragione per
+# cui un conto sui soli `executionTime` e' sempre ottimista: quello misura il
+# solo handler, mentre la fattura parte da quando il container si accende e
+# comprende il pull, l'avvio e il caricamento del modello. Sommare i soli
+# tempi di esecuzione sottostima percio' di un'accensione per worker acceso —
+# su un libro corto puo' valere piu' della sintesi stessa.
+#
+# Misurati sul banco del worker: 148 s sulla MIG, 128 s sull'A40.
+_COLD_START_SECONDS = 148.0
+_COLD_START_BY_GPU = (
+    ("mig 1g.24gb", 148.0),
+    ("a40", 128.0),
+    ("4090", 128.0),
+)
+
+# Sotto questa attesa in coda si considera che il worker fosse gia' acceso.
+#
+# E' una stima dichiarata, non una misura: il solo segnale disponibile e'
+# `delayTime`, che pero' mescola due cose diverse, l'accensione e il turno
+# dietro ad altri job. L'avvio si addebita percio' al primo job che arriva su
+# un worker mai visto, e solo se ha aspettato abbastanza da giustificarlo.
+# Sbaglia in due modi noti, uno per verso: non addebita nulla a un worker
+# rimesso in piedi in fretta da FlashBoot, e addebita un avvio di troppo al
+# primo job che si e' preso una coda lunga su un worker gia' caldo.
+_COLD_DELAY_FLOOR = 30.0
+
 
 def _f(env, default):
     try:
@@ -65,6 +114,107 @@ def rate_eur_per_mchar():
 
 def cost_usd_per_mchar():
     return _f("ABM_VOXCPM_COST_USD_PER_MCHAR", _COST_USD_PER_MCHAR)
+
+
+def usd_per_hour():
+    """Tariffa oraria dichiarata per la scheda dell'endpoint."""
+    return _f("ABM_VOXCPM_USD_PER_HOUR", _USD_PER_HOUR)
+
+
+def _tariffa_dichiarata():
+    """Vero se la tariffa e' stata scritta a mano nell'ambiente.
+
+    Conta la PRESENZA della variabile, non il suo valore: chi scrive 0,69 sta
+    dichiarando quella tariffa per tutto l'endpoint, non lasciando il default.
+    Ed e' l'ultima parola: il listino per scheda non si consulta piu'.
+    """
+    return bool(os.environ.get("ABM_VOXCPM_USD_PER_HOUR", "").strip())
+
+
+def _tariffa_scheda(gpu, default, dichiarata):
+    """USD/h della scheda su cui e' girato un job."""
+    if dichiarata or not gpu:
+        return default
+    testo = gpu.lower()
+    for chiave, prezzo in _USD_PER_HOUR_BY_GPU:
+        if chiave in testo:
+            return prezzo
+    return default
+
+
+def _avvio_scheda(gpu):
+    """Secondi fatturati per accendere un worker su quella scheda."""
+    testo = (gpu or "").lower()
+    for chiave, secondi in _COLD_START_BY_GPU:
+        if chiave in testo:
+            return secondi
+    return _COLD_START_SECONDS
+
+
+def gpu_cost_usd(rows):
+    """Costo in USD dei job RunPod descritti da `rows`.
+
+    Il costo di un job e' il suo tempo di esecuzione alla tariffa della sua
+    scheda, piu' l'accensione del worker quando quel job e' il primo ad averlo
+    usato e ha aspettato abbastanza da far pensare che l'abbia svegliato. E' la
+    stessa formula del libro mastro del worker (`voxcpm_book.py`), cosi' i due
+    conti si confrontano riga per riga invece di essere due opinioni.
+
+    Perche' non basta il conto sui caratteri: quello moltiplica una costante
+    misurata una volta sola, su una scheda sola, con una forma di libro sola.
+    Non vede la scheda su cui il job e' davvero girato (0,69 contro 1,22 $/h),
+    non vede l'accensione del container, e soprattutto non vede i job rifatti
+    e i rimbalzi — GPU comprata che non produce un carattere, cioe' proprio i
+    job che costano di piu'.
+
+    Args:
+        rows: righe `{"exec_s", "queue_s", "worker", "gpu"}`, una per job
+            SOTTOMESSO: i tentativi buttati via compresi.
+
+    Returns:
+        dict con `cost_usd`, `exec_seconds`, `cold_start_seconds`,
+        `gpu_seconds` (la somma dei due, cioe' quello che si paga),
+        `queue_seconds`, `cold_starts`, `jobs`, `gpu` (la scheda vista) e
+        `usd_per_hour` (la tariffa che le e' stata applicata).
+    """
+    default = usd_per_hour()
+    dichiarata = _tariffa_dichiarata()
+    visti = set()
+    costo = esecuzione = accensioni = coda = 0.0
+    avvii = 0
+    scheda = ""
+    righe = list(rows or [])
+    for r in righe:
+        # Il worker dichiara la scheda in ogni risposta, ma un job caduto
+        # prima di rispondere no: attribuirlo alla tariffa di ripiego, su un
+        # endpoint a fasce miste, sarebbe proprio l'errore che il listino
+        # evita. Eredita percio' l'ultima scheda vista.
+        scheda = (r.get("gpu") or "").strip() or scheda
+        exec_s = float(r.get("exec_s") or 0.0)
+        coda_s = float(r.get("queue_s") or 0.0)
+        avvio = 0.0
+        worker = (r.get("worker") or "").strip()
+        if worker and worker not in visti:
+            visti.add(worker)
+            if coda_s >= _COLD_DELAY_FLOOR:
+                avvio = _avvio_scheda(scheda)
+                avvii += 1
+        costo += (exec_s + avvio) / 3600.0 * _tariffa_scheda(
+            scheda, default, dichiarata)
+        esecuzione += exec_s
+        accensioni += avvio
+        coda += coda_s
+    return {
+        "cost_usd": round(costo, 6),
+        "exec_seconds": round(esecuzione, 2),
+        "cold_start_seconds": round(accensioni, 2),
+        "gpu_seconds": round(esecuzione + accensioni, 2),
+        "queue_seconds": round(coda, 2),
+        "cold_starts": avvii,
+        "jobs": len(righe),
+        "gpu": scheda,
+        "usd_per_hour": _tariffa_scheda(scheda, default, dichiarata),
+    }
 
 
 def free_threshold_eur():
@@ -364,7 +514,8 @@ _TICK_ANNULLAMENTO_S = 1.0
 
 
 def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
-            queue_timeout=None, clock=time.time, on_queue=None, cancelled=None):
+            queue_timeout=None, clock=time.time, on_queue=None, cancelled=None,
+            on_billing=None):
     """Sottomette il job e ne aspetta l'esito. Ritorna l'`output`.
 
     `/run` piu' polling su `/status`, mai `/runsync`: quello risponde 200 e
@@ -393,6 +544,12 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
             poll e l'altro: appena torna vero, il job viene cancellato e
             l'attesa si interrompe subito, senza aspettare il resto del tick
             di polling.
+        on_billing: callback opzionale `(riga)` chiamata una volta quando il
+            job raggiunge uno stato terminale, riuscito o no. La riga porta i
+            numeri della FATTURA — `exec_s`, `queue_s`, `worker`, `gpu` — che
+            stanno nella risposta di `/status` e non nell'output del worker.
+            Serve a `gpu_cost_usd`: senza, il costo resta una stima sui
+            caratteri.
 
     Raises:
         VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
@@ -406,7 +563,8 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     job_id = _submit(payload, ses, sleep)
     try:
         return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
-                              tetto_coda, clock, on_queue, cancelled=cancelled)
+                              tetto_coda, clock, on_queue, cancelled=cancelled,
+                              on_billing=on_billing)
     except BaseException:
         # Qualunque uscita che non sia il `return` di successo lascia un job
         # in volo, e RunPod lo fattura finche' gira: si cancella prima di
@@ -445,8 +603,25 @@ def _dormi_annullabile(sleep, attesa, cancelled, job_id, ses):
         rimanente -= tick
 
 
+def _riga_costo(on_billing, st, out, job_id):
+    """Consegna a `on_billing` i numeri di fattura del job. Non solleva mai.
+
+    La contabilita' e' un di piu': non deve mai portarsi via una sintesi
+    riuscita ne' coprire l'errore vero di una fallita.
+    """
+    try:
+        on_billing({
+            "exec_s": float(st.get("executionTime") or 0) / 1000.0,
+            "queue_s": float(st.get("delayTime") or 0) / 1000.0,
+            "worker": out.get("worker") or "",
+            "gpu": out.get("gpu") or "",
+        })
+    except Exception:      # noqa: BLE001 - best effort, per definizione
+        _LOG.warning("riga di costo non registrata per il job %s", job_id)
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
-                    on_queue, cancelled=None):
+                    on_queue, cancelled=None, on_billing=None):
     """Il polling vero e proprio: isolato per poterlo avvolgere in un solo
     `try/except` che cancella il job su qualunque uscita non riuscita."""
     t0 = clock()
@@ -498,6 +673,14 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
         if stato in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
             out = st.get("output")
             out = out if isinstance(out, dict) else {}
+            if on_billing is not None:
+                # Prima di decidere se questo e' un successo o un guasto: la
+                # GPU che si e' fermata a meta' l'abbiamo comprata lo stesso, e
+                # se la riga uscisse solo dal ramo riuscito il costo dei
+                # ritentativi sparirebbe dal conto. `executionTime` e
+                # `delayTime` sono millisecondi, e li mette RunPod, non il
+                # worker: sono la fattura, non il cronometro dell'handler.
+                _riga_costo(on_billing, st, out, job_id)
             if stato == "COMPLETED" and not out.get("error"):
                 return out
             # L'`output` per primo, quando c'e': il worker che rifiuta o che
@@ -670,7 +853,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
-        `jobs`, `redone`, `bounced`, `failed_chunks`, `bytes`.
+        `jobs`, `redone`, `bounced`, `failed_chunks`, `bytes` e `runpod`,
+        quest'ultima la lista delle righe di fattura (una per job sottomesso,
+        rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
     Raises:
         ValueError: la voce non e' nel catalogo, o `chunks` e' vuoto
@@ -691,7 +876,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # Strutturalmente sempre 0: un tentativo con chunk a silenzio
              # non arriva mai al `return` sotto (si rifa' o solleva), quindi
              # la consegna che esce da questo ciclo non ne ha mai.
-             "failed_chunks": 0, "bytes": 0}
+             "failed_chunks": 0, "bytes": 0,
+             # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
+             # buttati via sono GPU comprata, ed e' il conto sui caratteri a
+             # non vederli.
+             "runpod": []}
 
     conc = concurrency()
     tentativo, rimbalzi = 0, 0
@@ -719,7 +908,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         try:
             out = run_job(payload, session=session, sleep=riposa,
-                          on_queue=on_queue, cancelled=cancelled)
+                          on_queue=on_queue, cancelled=cancelled,
+                          on_billing=stats["runpod"].append)
         except VoxcpmRimbalzato:
             # Respinto senza essere partito: si rifa' uguale. La concorrenza
             # resta quella e il contatore dei tentativi veri non si muove,

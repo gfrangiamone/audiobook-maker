@@ -91,7 +91,9 @@ class FintaSintesi:
         return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
                 "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
                 "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
-                "bytes": 2 * len(chunks)}
+                "bytes": 2 * len(chunks),
+                "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1",
+                            "gpu": "NVIDIA RTX PRO 6000 MIG 1g.24gb"}]}
 
 
 @pytest.fixture
@@ -339,6 +341,30 @@ def test_capitolo_0_perso_non_perde_le_statistiche_dei_capitoli_dopo_in_concorre
     assert job["voxcpm_actual"]["chars"] == 12
     assert job["voxcpm_actual"]["jobs"] == 3
     assert job["voxcpm_actual"]["tts_seconds"] == 1.5
+
+
+def test_le_righe_di_fattura_arrivano_all_audit(tmp_path, sintesi_finta):
+    # Il costo del libro e' la somma dei job che RunPod ha fatturato, non dei
+    # caratteri consegnati: le righe devono sopravvivere alla pre-sintesi,
+    # capitolo per capitolo, come le altre misure.
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    righe = job["voxcpm_actual"]["runpod"]
+    assert len(righe) == 3          # tre capitoli, un job per capitolo
+    assert {r["worker"] for r in righe} == {"w1"}
+    assert voxcpm_tts.gpu_cost_usd(righe)["exec_seconds"] == 90.0
+
+
+def test_un_actual_gia_aperto_senza_righe_non_esplode(tmp_path, sintesi_finta):
+    # Un job iniziato prima di questa versione ha un `voxcpm_actual` senza la
+    # chiave: l'aggregazione la deve creare, non pretenderla.
+    job = {"voxcpm_actual": {"chars": 0, "audio_seconds": 0.0,
+                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
+                             "bounced": 0, "failed_chunks": 0}}
+    generation_engine._voxcpm_pre_pass([blocco("a", 0)], VOCE, "+0%", tmp_path,
+                                       "job-1", set(), job=job)
+    assert len(job["voxcpm_actual"]["runpod"]) == 1
 
 
 class JobSpia(dict):

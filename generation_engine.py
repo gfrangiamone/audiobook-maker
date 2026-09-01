@@ -3332,6 +3332,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         job.setdefault("voxcpm_actual", {
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
+            # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
+            # fattura: e' il costo vero del libro, che il conto sui caratteri
+            # non puo' vedere.
+            "runpod": [],
         })
 
     def _uno(gruppo):
@@ -3405,6 +3409,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         _va["redone"] += int(stats.get("redone", 0) or 0)
                         _va["bounced"] += int(stats.get("bounced", 0) or 0)
                         _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
+                        # `setdefault`: un job aperto da una versione
+                        # precedente ha un `voxcpm_actual` senza la chiave.
+                        _va.setdefault("runpod", []).extend(
+                            stats.get("runpod") or [])
                     continue
                 # Coda del capitolo: file vuoto, e un esito a zero perche' le
                 # misure del capitolo sono gia' contate sul primo chunk.
@@ -3414,7 +3422,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
-                            "bounced": 0, "failed_chunks": 0, "bytes": 0}
+                            "bounced": 0, "failed_chunks": 0, "bytes": 0,
+                            "runpod": []}
             # I capitoli tornano in ordine di completamento, non di indice: il
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
             # lettura, che a job paralleli sarebbe una mezza verita'.
@@ -3835,10 +3844,17 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
     Speechify — il nome del campo e' storico, il significato e' "costo
     sostenuto dal backend".
 
-    Qui pero' quel costo non e' una fattura ma tempo di GPU stimato dai
-    caratteri col valore misurato del §8.3. Il record porta percio' anche
-    `gpu_seconds` e `cost_usd_per_mchar`: se domani cambia il prezzo della
-    scheda, l'audit storico si ricalcola senza rigenerare nulla.
+    Il costo e' quello che RunPod fattura: i secondi di `executionTime` di
+    ogni job alla tariffa della scheda, piu' l'accensione dei worker che
+    questo libro ha svegliato (§17.7). Ci finiscono dentro anche i tentativi
+    rimbalzati o falliti, che bruciano GPU senza consegnare un carattere —
+    proprio il punto cieco del conto sui caratteri, che resta come ripiego
+    per i job che le righe di fattura non ce l'hanno.
+
+    `cost_basis` dice quale dei due ha fatto il conto, e i secondi restano
+    scritti (`gpu_seconds`, `gpu_exec_seconds`, `gpu_cold_start_seconds`)
+    con la tariffa usata: se domani cambia il prezzo della scheda, l'audit
+    storico si ricalcola senza rigenerare nulla.
     """
     try:
         if not _is_voxcpm_voice(voice_id):
@@ -3866,19 +3882,42 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
 
         # --- Costo GPU + prezzo "dovuto" sui caratteri effettivamente letti ---
         chars = int(actual.get("chars", 0) or 0)
-        gpu_seconds = round(float(actual.get("tts_seconds", 0) or 0), 2)
-        provider_cost_eur = 0.0
+        # Il cronometro dell'handler misura la sola sintesi: non vede
+        # l'accensione ne' l'overhead di RunPod. E' salute del motore, non
+        # una fattura, e resta a parte in `gpu_handler_seconds`.
+        handler_seconds = round(float(actual.get("tts_seconds", 0) or 0), 2)
+        cost_usd = 0.0
         should_have_been = 0.0
         cost_usd_mchar = 0.0
         try:
             price = voxcpm_tts.compute_user_price_eur(chars)
             cost_usd_mchar = voxcpm_tts.cost_usd_per_mchar()
-            provider_cost_eur = float(price.get("cost_usd", 0.0) or 0.0) * float(
-                speechify_tts.usd_eur_rate())
+            cost_usd = float(price.get("cost_usd", 0.0) or 0.0)
             should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
         except Exception:
-            provider_cost_eur = 0.0
+            cost_usd = 0.0
             should_have_been = 0.0
+
+        # Le righe di fattura vincono sulla stima quando ci sono. Quando non
+        # ci sono — un job cominciato prima di questa versione — resta la
+        # stima: uno zero leggerebbe come margine pieno su un lavoro che
+        # invece e' costato.
+        fattura = {}
+        try:
+            fattura = voxcpm_tts.gpu_cost_usd(actual.get("runpod") or [])
+        except Exception:
+            fattura = {}
+        cost_basis = "chars"
+        gpu_seconds = handler_seconds
+        if fattura.get("jobs"):
+            cost_basis = "gpu_seconds"
+            cost_usd = float(fattura.get("cost_usd", 0.0) or 0.0)
+            gpu_seconds = float(fattura.get("gpu_seconds", 0.0) or 0.0)
+        try:
+            provider_cost_eur = round(
+                cost_usd * float(speechify_tts.usd_eur_rate()), 4)
+        except Exception:
+            provider_cost_eur = 0.0
 
         # Costo provider STIMATO (EUR) dallo snapshot pre-generazione, se
         # presente (lockato in /api/optimize o popolato nel path auto-gen).
@@ -3934,6 +3973,17 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             # Specifici di VoxCPM: la base per ricalcolare, e la salute del
             # worker (rimbalzi e capitoli rifatti) accanto al costo.
             "gpu_seconds": gpu_seconds,
+            "gpu_handler_seconds": handler_seconds,
+            "gpu_exec_seconds": float(fattura.get("exec_seconds", 0.0) or 0.0),
+            "gpu_cold_start_seconds": float(
+                fattura.get("cold_start_seconds", 0.0) or 0.0),
+            "gpu_queue_seconds": float(fattura.get("queue_seconds", 0.0) or 0.0),
+            "gpu_cold_starts": int(fattura.get("cold_starts", 0) or 0),
+            "gpu_jobs_billed": int(fattura.get("jobs", 0) or 0),
+            "gpu_card": fattura.get("gpu", "") or "",
+            "gpu_usd_per_hour": float(fattura.get("usd_per_hour", 0.0) or 0.0),
+            "cost_usd_actual": round(cost_usd, 6),
+            "cost_basis": cost_basis,
             "cost_usd_per_mchar": cost_usd_mchar,
             "worker_jobs": int(actual.get("jobs", 0) or 0),
             "worker_redone": int(actual.get("redone", 0) or 0),
