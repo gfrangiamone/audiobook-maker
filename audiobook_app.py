@@ -1330,6 +1330,98 @@ def _parse_book(path):
     return parse_txt(path)
 
 
+class _RecoveryRejected(Exception):
+    """Il descrittore NON va rilanciato: motivo nel messaggio."""
+
+
+def _orphan_reject(job_id, rec, reason):
+    """Chiude un descrittore che non va rilanciato e per cui NON c'e' nulla da
+    rimborsare (nessun pagamento agganciato): niente email "interrotto" — il
+    job non e' mai partito o non e' piu' eseguibile alle condizioni originali —
+    solo mark failed, cosi' il boot successivo non ci riprova."""
+    print(f"[recover] {job_id}: NON rilanciato -> {reason}; descrittore chiuso "
+          f"(nessun pagamento da rimborsare)", flush=True)
+    try:
+        pending_jobs.mark_failed(job_id)
+    except Exception as e:
+        print(f"[recover] mark_failed {job_id} failed: {e}")
+
+
+def _recovery_generate_gate(job_id, rec, info):
+    """Gate PREZZO/QUOTA/CAP per un job che il recovery sta per mandare a
+    run_generation. Replica i controlli di /api/generate che il recovery
+    bypassa (incidente 1rDPmro8ROjYKcGLo8Outw, 31/08/2026: descrittore
+    'generate' con voce PREMIUM per un job mai partito -> al boot il libro
+    INTERO, 1,6M caratteri, sintetizzato gratis senza stima ne' quota).
+
+    Ritorna {"info", "estimate_key", "estimate", "quota_charge"}; solleva
+    _RecoveryRejected se il job non deve partire.
+
+    - selezione capitoli del descrittore applicata su una COPIA di `info`,
+      fail-closed (nessuna corrispondenza -> reject, non "tutto il libro");
+    - voce premium: cap caratteri, stima ex-ante (persistita dal chiamante
+      sul job per l'audit), e se il descrittore NON ha un pagamento la
+      generazione parte solo se la quota gratuita la copre (`quota_charge`
+      da consumare alla partenza).
+    """
+    voice = (rec.get("voice") or "").strip()
+    all_chs = list(getattr(info, "chapters", []) or [])
+    sel = list(rec.get("selected_chapters") or [])
+    if sel:
+        _by_idx = {ch.index: ch for ch in all_chs}
+        chs = [_by_idx[i] for i in sel if i in _by_idx]
+        if not chs:
+            raise _RecoveryRejected(
+                f"selezione capitoli {sel} senza corrispondenza nel libro "
+                f"ri-parsato ({len(all_chs)} capitoli)")
+        if len(chs) != len(all_chs):
+            info = copy(info)
+            info.chapters = chs
+    else:
+        chs = all_chs
+    out = {"info": info, "estimate_key": None, "estimate": None, "quota_charge": None}
+    is_gem = _is_gemini_voice(voice)
+    is_spx = _is_speechify_voice(voice)
+    if not (is_gem or is_spx):
+        return out
+    total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
+    max_chars = _effective_max_text_chars(voice, None)
+    if total_chars > max_chars:
+        raise _RecoveryRejected(
+            f"{total_chars:,} caratteri oltre il cap {max_chars:,} della voce premium")
+    lang = ((rec.get("gen_lang") or rec.get("lang")
+             or getattr(info, "language", "") or "it").split("-")[0].lower() or "it")
+    if is_gem:
+        if gemini_tts is None:
+            raise _RecoveryRejected("modulo gemini_tts non disponibile")
+        est = gemini_tts.estimate_book_cost(chs, voice, language=lang,
+                                            rate_pct=rec.get("rate", "+0%"))
+        key = "gemini_estimate"
+    else:
+        est = speechify_tts.estimate_book_cost(chs, language="en")
+        key = "speechify_estimate"
+    if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
+        raise _RecoveryRejected("stima ex-ante su testo vuoto")
+    out["estimate_key"] = key
+    out["estimate"] = est
+    list_total = round(float(est.get("list_price_eur", 0.0) or 0.0), 2)
+    payment = rec.get("payment") or {}
+    if isinstance(payment, dict) and (payment.get("token") or payment.get("total_eur")):
+        print(f"[recover] {job_id}: voce premium pagata "
+              f"({float(payment.get('total_eur') or 0):.2f}EUR), listino ricalcolato "
+              f"{list_total:.2f}EUR su {total_chars:,} caratteri", flush=True)
+        return out
+    dec = _premium_quota_decision((rec.get("client_id") or "").strip(),
+                                  voice, list_total, job_id)
+    _free_quota_log(job_id, dec)
+    if not dec["is_free"]:
+        raise _RecoveryRejected(
+            f"voce premium SENZA pagamento: listino {list_total:.2f}EUR non coperto "
+            f"dalla quota gratuita (dovuto {float(dec['due_eur']):.2f}EUR)")
+    out["quota_charge"] = list_total
+    return out
+
+
 def _reenqueue_orphan(job_id, rec):
     """Ricostruisce il job dal descrittore e rilancia il thread appropriato.
     Riusa l'.abm ottimizzato se presente (salta l'LLM)."""
@@ -1352,6 +1444,24 @@ def _reenqueue_orphan(job_id, rec):
     if not src or not os.path.exists(src):
         raise FileNotFoundError(f"input mancante per {job_id}: {src!r}")
     info = _parse_book(src)
+    # Tutto cio' che va a run_generation passa dal gate (selezione capitoli,
+    # cap, stima, quota): il ramo optimize senza .abm ha i suoi controlli in
+    # run_optimization e nell'auto-generazione post-LLM.
+    _gate = None
+    if not (rec.get("phase") == "optimize" and not use_abm):
+        try:
+            _gate = _recovery_generate_gate(job_id, rec, info)
+        except _RecoveryRejected as e:
+            _pay = rec.get("payment") or {}
+            if isinstance(_pay, dict) and (_pay.get("token") or _pay.get("total_eur")):
+                # Pagato ma non eseguibile alle condizioni originali: policy
+                # "non recuperabile" (rimborso + email interrotto + failed).
+                print(f"[recover] {job_id}: {e} -> job pagato, fallback interrotto.")
+                _orphan_fallback(job_id, rec)
+            else:
+                _orphan_reject(job_id, rec, str(e))
+            return False
+        info = _gate["info"]
     job = {
         "status": "queued",
         "epub_path": rec.get("input_path", ""),
@@ -1406,8 +1516,21 @@ def _reenqueue_orphan(job_id, rec):
         # Copie admin agganciate prima del restart: da materializzare al COMPLETE.
         "admin_copy_cids": list(rec.get("admin_copy_cids", []) or []),
     }
+    if _gate and _gate.get("estimate_key"):
+        # Stima ex-ante per l'audit premium: senza, il record riporta costo
+        # stimato 0 e l'alert di margine attribuisce il job a "sotto soglia".
+        job[_gate["estimate_key"]] = _gate["estimate"]
     with _jobs_lock:
         jobs[job_id] = job
+    if _gate and _gate.get("quota_charge") is not None and free_quota.limit_eur() > 0:
+        try:
+            _fq_total = free_quota.consume(job.get("client_id", ""),
+                                           _gate["quota_charge"], job_id)
+            print(f"[recover] {job_id}: free quota consumed: "
+                  f"+{_gate['quota_charge']:.2f}€ -> {_fq_total:.2f}€/"
+                  f"{free_quota.limit_eur():.2f}€", flush=True)
+        except Exception as _fq_err:
+            print(f"[recover] {job_id}: free_quota consume failed (non-fatal): {_fq_err}")
     if rec.get("phase") == "optimize" and not use_abm:
         t = threading.Thread(
             target=run_optimization,
@@ -10655,6 +10778,20 @@ def api_generate():
                       f"{_locked_pre:.2f}EUR (quotato {_lock_src_pre}, "
                       f"token {payment_token[:12]}...)", flush=True)
                 total_eur_pre = _locked_pre
+            elif _locked_pre is None:
+                # Un ordine esiste per questo token ma la firma degli input di
+                # prezzo e' cambiata fra create e conferma: il lock non vale e il
+                # ricalcolo vivo puo' produrre "paypal amount mismatch". Traccia
+                # QUALE input e' cambiato (la firma e' leggibile: voce|capitoli|
+                # rate|lingua|ai): senza questa riga l'incidente 1rDPmro8ROjYKcGLo8Outw
+                # non era diagnosticabile dal log.
+                _lk = (job.get("price_locks") or {}).get(payment_token)
+                if isinstance(_lk, dict) and _lk.get("sig") != _sig_pre:
+                    print(f"[{job_id}] price lock NON applicabile: input di prezzo "
+                          f"cambiati fra ordine e conferma — ordine '{_lk.get('sig')}' "
+                          f"vs conferma '{_sig_pre}'; ricalcolo vivo "
+                          f"{total_eur_pre:.2f}EUR (ordine {float(_lk.get('total_eur') or 0):.2f}EUR)",
+                          flush=True)
         _free_quota_log(job_id, _quota_dec)
         if _quota_dec["is_free"]:
             # Consumo differito al claim atomico dello stato (vedi sotto): un
@@ -11062,6 +11199,17 @@ def api_generate():
                   f"{_fq_total:.2f}€/{free_quota.limit_eur():.2f}€", flush=True)
         except Exception as _fq_err:
             print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err}", flush=True)
+
+    # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
+    # questa generazione. Quello scritto da register_email puo' non esistere
+    # (job allora in analyzed) o essere vecchio: voce/selezione/pagamento di un
+    # tentativo precedente. Upsert idempotente; solo per i job batch.
+    if job.get("email_registered") and job.get("notify_download_type") != "translated":
+        try:
+            pending_jobs.register(job_id, "generate", _build_job_descriptor(job, "generate"))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register (start) failed (non-fatal): {_e}",
+                  flush=True)
 
     # Increment generation epoch to invalidate any stale threads
     job["gen_epoch"] = job.get("gen_epoch", 0) + 1
@@ -11512,6 +11660,13 @@ def api_register_email():
     if job.get("notify_download_type") == "translated":
         print(f"[{job_id}] register_email: download_type=translated -> pending "
               f"NON registrato (traduzione non recuperabile by design).", flush=True)
+    elif job.get("status") == "analyzed":
+        # Job mai partito: lo snapshot di adesso (voce/selezione di un tentativo
+        # che puo' essere stato rifiutato da /api/generate) non descrive alcuna
+        # lavorazione da riprendere. Il descrittore lo scrive /api/generate o
+        # /api/optimize alla partenza effettiva, con i parametri reali.
+        print(f"[{job_id}] register_email: job mai partito (status=analyzed) -> "
+              f"pending NON registrato; lo registra la partenza.", flush=True)
     else:
         # La fase NON è sempre 'generate': se register_email avviene mentre il job è
         # ancora in (o in attesa di) ottimizzazione AI, forzare 'generate' farebbe
@@ -16606,7 +16761,15 @@ def _cleanup_job(job_id, reason=""):
         print(f"[cleanup] {job_id} unused-capture reconcile failed (non-fatal): {e}")
 
     with _jobs_lock:
-        jobs.pop(job_id, None)
+        _prev = jobs.pop(job_id, None)
+    # Job mai partito (status analyzed): un descrittore di recovery ancora
+    # aperto (register_email prima di un /api/generate poi rifiutato) farebbe
+    # ripartire al boot un job che nessuno ha piu' — con voce premium, gratis.
+    if isinstance(_prev, dict) and _prev.get("status") == "analyzed":
+        try:
+            pending_jobs.mark_failed(job_id)
+        except Exception as e:
+            print(f"[cleanup] {job_id} pending mark_failed failed (non-fatal): {e}")
     work_dir = UPLOAD_DIR / job_id
     now = time.time()
     if work_dir.exists():

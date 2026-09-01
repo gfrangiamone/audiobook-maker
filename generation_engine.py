@@ -3323,6 +3323,22 @@ def _check_margin_anomalies(job_id, job, rec, est, provider, threshold_eur):
             trigger = threshold_eur * (factor if factor > 0 else 1.0)
             worst = max(cost_actual, list_actual)
             if worst > trigger:
+                # PERCHE' era gratis: non e' sempre "sotto soglia". Un job puo'
+                # essere gratis per quota mensile (listino sopra soglia) oppure
+                # non avere alcuna stima (recovery al boot senza gate, incidente
+                # 1rDPmro8ROjYKcGLo8Outw): attribuirlo alla soglia manda
+                # l'indagine sulla stima quando la stima non e' mai esistita.
+                est_list = float((est or {}).get("list_price_eur", 0.0) or 0.0)
+                if not est:
+                    why = "nessuna stima ex-ante registrata sul job"
+                    if job.get("recovered"):
+                        why += " (job recuperato al boot)"
+                elif est_list > threshold_eur:
+                    why = (f"gratis in quota mensile (listino quotato {est_list:.2f} EUR "
+                           f"sopra soglia {threshold_eur:.2f} EUR)")
+                else:
+                    why = (f"gratis sotto soglia {threshold_eur:.2f} EUR "
+                           f"(listino quotato {est_list:.2f} EUR)")
                 email_service.admin_notify_margin_anomaly(
                     job_id, "free_over_threshold", provider,
                     book_title=title, revenue_eur=charged,
@@ -3331,8 +3347,7 @@ def _check_margin_anomalies(job_id, job, rec, est, provider, threshold_eur):
                     margin_expected_eur=0.0,
                     margin_actual_eur=round(-cost_actual, 4),
                     chars_total=chars, outcome=rec.get("outcome", ""),
-                    detail=(f"gratis sotto soglia {threshold_eur:.2f} EUR, "
-                            f"a consuntivo costo reale {cost_actual:.4f} EUR / "
+                    detail=(f"{why}, a consuntivo costo reale {cost_actual:.4f} EUR / "
                             f"listino reale {list_actual:.2f} EUR"),
                 )
                 print(f"[{job_id}] MARGIN ALERT free_over_threshold: soglia "
