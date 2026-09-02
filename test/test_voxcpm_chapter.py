@@ -86,6 +86,43 @@ def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):
     assert atteso    # senza, il canale che porta l'identita' resterebbe vuoto
 
 
+def test_il_payload_dice_al_worker_che_lingua_legge(tmp_path, monkeypatch):
+    # La verifica delle code gira sul worker, sulla sua CPU. Senza questo
+    # campo l'ASR indovina la lingua da quattro secondi d'audio e sbaglia
+    # piu' spesso, e i falsi sospetti si pagano in GPU rigenerata.
+    finto = FintoRunJob(esito_ok())
+    sintetizza(finto, tmp_path, monkeypatch)
+    assert finto.payload[0]["input"]["language"] == "it"
+
+
+def test_code_tagliate_dal_worker_nelle_misure(tmp_path, monkeypatch):
+    # Il worker le ha gia' ritentate e ha consegnato lo stesso: il capitolo
+    # c'e', ma con delle frasi finite a meta'. Questo numero e' l'unica
+    # traccia che ne resta.
+    finto = FintoRunJob(esito_ok(chunks_difettosi=[0, 2]))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate"] == 2
+
+
+def test_senza_verifica_le_code_tagliate_sono_zero(tmp_path, monkeypatch):
+    # Un endpoint con la verifica spenta non manda il campo: e' zero, non un
+    # errore.
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate"] == 0
+
+
+def test_code_tagliate_solo_del_tentativo_consegnato(tmp_path, monkeypatch):
+    # Il primo tentativo si butta per i chunk a silenzio: le sue code non
+    # stanno nell'audio consegnato, e sommarle direbbe che il capitolo e'
+    # messo peggio di com'e'.
+    finto = FintoRunJob(
+        esito_ok(failed_indices=[1], chunks_difettosi=[0, 1, 2]),
+        esito_ok(chunks_difettosi=[2]))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate"] == 1
+
+
 def test_l_audio_finisce_nel_file(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok(pcm=b"\xaa\xbb" * 50))
     stats, dest = sintetizza(finto, tmp_path, monkeypatch)

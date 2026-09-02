@@ -853,7 +853,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
-        `jobs`, `redone`, `bounced`, `failed_chunks`, `bytes` e `runpod`,
+        `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
+        `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -869,6 +870,13 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
     clone = clone_block(voice_id)      # prima di tutto: se la voce non c'e',
                                        # si scopre senza aver acceso nulla
+    # La lingua della voce e' la lingua della lettura: nel catalogo ogni voce
+    # ha il suo locale, e la voce si sceglie per il libro. Serve alla verifica
+    # delle code sul worker, che senza la indovina da quattro secondi d'audio
+    # e sbaglia piu' spesso. `clone_block` ha gia' respinto le voci che non
+    # esistono, quindi qui il record c'e'.
+    lingua = voxcpm_catalog.parse_voice_id(voice_id)["locale"].split(
+        "-")[0].lower()
     riposa = sleep or _dormi
     su_r2 = bool(key) and storage_backend.is_enabled()
     stats = {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
@@ -877,6 +885,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # non arriva mai al `return` sotto (si rifa' o solleva), quindi
              # la consegna che esce da questo ciclo non ne ha mai.
              "failed_chunks": 0, "bytes": 0,
+             # Le code che il worker ha verificato e consegnato lo stesso,
+             # ancora tagliate dopo i suoi ritentativi. Non fanno fallire
+             # niente: sono l'unica traccia che resta di una frase finita a
+             # meta', e senza questo numero il difetto arriva nell'M4B senza
+             # che nessuno lo sappia.
+             "code_tagliate": 0,
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -899,6 +913,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # da `pcm_concat`, e un header WAV in mezzo finirebbe dentro
             # l'audio come rumore.
             "output_format": "pcm",
+            "language": lingua,
         }}
         if su_r2:
             payload["input"]["s3"] = {
@@ -948,6 +963,16 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # somma davvero.
             stats["chars"] = int(out.get("chars") or 0)
             stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
+            # Come `chars`: quello che conta e' il tentativo consegnato, non
+            # la somma con quelli buttati via.
+            _tagliate = out.get("chunks_difettosi") or []
+            stats["code_tagliate"] = len(_tagliate)
+            if _tagliate:
+                _LOG.warning(
+                    "capitolo consegnato con %d code ancora tagliate "
+                    "(chunk %s): il worker ha esaurito i suoi ritentativi",
+                    len(_tagliate),
+                    ", ".join(str(i) for i in _tagliate[:10]))
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []
