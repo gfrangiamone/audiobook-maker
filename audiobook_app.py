@@ -7444,7 +7444,15 @@ def _synth_running_gemini_audit_records():
             parts = voice.split(":")
             model_key = parts[1] if len(parts) >= 3 else "?"
             info = job.get("info")
-            language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
+            # Lingua della GENERAZIONE TTS (voce scelta dall'utente), non quella
+            # dei metadata del libro: stessa fonte del record persistito
+            # (`generation_engine._audit_language`), altrimenti la riga "running"
+            # mostrava la lingua del libro e cambiava valore a job concluso
+            # (es. libro con dc:language sporco -> "c").
+            try:
+                language = generation_engine._audit_language(job, info) or ""
+            except Exception:
+                language = (getattr(info, "language", "") or "").split("-")[0].lower() if info else ""
             payment = job.get("payment") or {}
             charged = float(payment.get("total_eur", 0) or 0)
             if charged <= 0:

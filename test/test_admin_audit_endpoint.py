@@ -152,6 +152,34 @@ def test_running_gemini_row_uses_pricing_cost_not_real_cost_for_drift(monkeypatc
         audiobook_app.jobs.pop("Jliveposit", None)
 
 
+def test_running_gemini_row_language_is_tts_language_not_book_metadata(monkeypatch):
+    """La riga LIVE deve riportare la lingua della GENERAZIONE TTS (voce scelta
+    in UI, `gen_lang`/`opt_lang`), non `info.language` dei metadata del libro:
+    altrimenti un libro con dc:language sporco ("c") o una voce in lingua
+    diversa dal testo mostravano una lingua che cambiava a job concluso, quando
+    subentra il record persistito scritto da `_audit_language`."""
+    import audiobook_app
+
+    class _Info:
+        language = "c"
+
+    audiobook_app.jobs["Jlivelang"] = {
+        "status": "generating",
+        "voice": "gemini:flash25:Puck",
+        "rate": "+0%",
+        "gen_lang": "de",
+        "info": _Info(),
+        "gemini_actual": {"chars": 10, "google_cost_eur": 0.1,
+                          "audio_seconds": 1.0, "model_key": "flash25"},
+    }
+    try:
+        recs = audiobook_app._synth_running_gemini_audit_records()
+        rec = next(r for r in recs if r["job_id"] == "Jlivelang")
+        assert rec["language"] == "de"
+    finally:
+        audiobook_app.jobs.pop("Jlivelang", None)
+
+
 def test_admin_audit_aggregate_delta_pct_uses_pricing_cost_not_real_cost(
         client, admin_headers, monkeypatch, tmp_path):
     """F4: l'endpoint /admin/api/gemini_cost_audit deve dividere
