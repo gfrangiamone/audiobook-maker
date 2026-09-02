@@ -214,7 +214,14 @@ def _hard_split_oversized(s, max_chars, max_bytes):
     merged = []
     cur = ""
     for p in parts:
-        cand = (cur + p) if cur else p
+        # Il breakpoint latino si porta via lo spazio che seguiva la virgola
+        # (`(?<=[,;:])\s+` lo consuma): rimettendo insieme due pezzi va
+        # restituito, o al TTS arriva «tra cui,pubblicati da Garzanti,Danny»
+        # dove il testo diceva «tra cui, pubblicati da Garzanti, Danny». Il
+        # breakpoint CJK e' a larghezza zero, non aveva spazi da consumare:
+        # li' i pezzi si riattaccano come stavano.
+        giunto = " " if cur and cur[-1] in ",;:" else ""
+        cand = (cur + giunto + p) if cur else p
         if _within(cand, max_chars, max_bytes):
             cur = cand
         else:
