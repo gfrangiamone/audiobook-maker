@@ -3359,6 +3359,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
             "code_tagliate": 0,
+            # Quanto e' servita la verifica delle code sul worker: chunk
+            # ascoltati, ritentativi necessari, quelli a cui si e'
+            # rinunciato per il tetto, e i giri spesi. Il digest quotidiano
+            # vive di questi quattro numeri.
+            "verifica_chunk": 0, "verifica_sospetti": 0,
+            "verifica_rinunciati": 0, "verifica_giri": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -3441,6 +3447,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         _va["code_tagliate"] = int(
                             _va.get("code_tagliate", 0) or 0) + int(
                                 stats.get("code_tagliate", 0) or 0)
+                        # Stesso `.get` difensivo: un job aperto prima di
+                        # queste chiavi le trova assenti, non a zero.
+                        for _k in ("verifica_chunk", "verifica_sospetti",
+                                   "verifica_rinunciati", "verifica_giri"):
+                            _va[_k] = int(_va.get(_k, 0) or 0) + int(
+                                stats.get(_k, 0) or 0)
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
@@ -4023,6 +4035,18 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_bounced": int(actual.get("bounced", 0) or 0),
             "worker_failed_chunks": int(actual.get("failed_chunks", 0) or 0),
             "worker_code_tagliate": int(actual.get("code_tagliate", 0) or 0),
+            # I ritentativi delle code tagliate, come li conta il worker.
+            # `sospetti` sono quelli giudicati necessari, `rinunciati` quelli
+            # mai tentati perche' erano troppi, `code_tagliate` quelli
+            # rimasti difettosi alla consegna (rinunciati compresi): i
+            # riusciti si ricavano per differenza, e nessuno dei tre da'
+            # solo la misura giusta.
+            "worker_verify_chunks": int(actual.get("verifica_chunk", 0) or 0),
+            "worker_verify_sospetti": int(
+                actual.get("verifica_sospetti", 0) or 0),
+            "worker_verify_rinunciati": int(
+                actual.get("verifica_rinunciati", 0) or 0),
+            "worker_verify_giri": int(actual.get("verifica_giri", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:

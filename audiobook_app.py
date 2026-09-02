@@ -478,7 +478,8 @@ if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
     _try_send_admin_digest, _send_payment_receipt_email, ADMIN_EMAIL,
-    BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
+    BASE_URL, ADMIN_DIGEST_INTERVAL_SEC, _try_send_voxcpm_digest,
+    VOXCPM_DIGEST
 )
 
 EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
@@ -16931,6 +16932,11 @@ def _cleanup_loop():
         # Flush pending admin digest (rate-limited: max 1/hour)
         _try_send_admin_digest()
 
+        # Il digest quotidiano VoxCPM: decide da se' se c'e' un giorno
+        # arretrato da riepilogare, e nella grande maggioranza dei giri non
+        # fa nulla.
+        _try_send_voxcpm_digest()
+
         # Ultimo passo del ciclo: restituisce al SO l'heap liberato dalla purga
         # appena fatta (rate-limited a MALLOC_TRIM_INTERVAL_SEC).
         try:
@@ -17056,6 +17062,8 @@ def _ensure_background_threads():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
+        print(f"[startup] VoxCPM daily digest: "
+              f"{'on' if VOXCPM_DIGEST else 'off (ABM_VOXCPM_DIGEST=0)'}")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
 

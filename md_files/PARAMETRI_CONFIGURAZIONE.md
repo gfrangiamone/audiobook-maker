@@ -414,6 +414,10 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
 | `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
+| `ABM_VOXCPM_DIGEST` | `1` Digest quotidiano dei ritentativi delle code tagliate, spedito a `ABM_ADMIN_EMAIL` una volta per giornata (sempre quella di **ieri**, in UTC: un giorno ancora aperto darebbe conti parziali). Valori falsi: `0`/`false`/`off`/`no`. Senza `ABM_ADMIN_EMAIL` o senza SMTP non parte comunque. Il giorno gia' spedito e' segnato in `voxcpm_digest_last.txt` dentro `ABM_DATA_DIR`, cosi' un riavvio non salta ne' duplica una giornata. | `email_service.py` | 41 |
+
+I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure».
+
 
 ### 3.6 Cleanup (pulizia automatica)
 

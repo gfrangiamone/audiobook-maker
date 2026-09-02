@@ -6,6 +6,7 @@ Funzioni:
   - _send_email: invio HTML email via SMTP
   - _admin_notify_generation: accodamento evento per digest admin
   - _try_send_admin_digest: invio digest se rate limit permette
+  - _try_send_voxcpm_digest: digest quotidiano dei ritentativi VoxCPM
   - _send_payment_receipt_email: ricevuta pagamento PayPal
   - _send_voucher_email: email buono rimborso (ottimizzazione testo AI)
   - _send_gemini_failed_refund_email: notifica fallimento generazione voci PREMIUM + rimborso
@@ -34,6 +35,11 @@ BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
 ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
 ADMIN_DIGEST_INTERVAL_SEC = 24 * 60 * 60  # 24 ore tra un digest e il successivo
+
+# Il digest quotidiano VoxCPM: acceso quando c'e' un admin a cui mandarlo,
+# spegnibile senza toccare l'altro digest.
+VOXCPM_DIGEST = os.environ.get("ABM_VOXCPM_DIGEST", "1").strip().lower() not in (
+    "0", "false", "off", "no")
 
 _admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}
 _admin_queue_lock = threading.Lock()
@@ -279,6 +285,50 @@ Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del
         with _admin_queue_lock:
             _admin_queue.extend(events)
         print(f"[admin] Digest send failed, {count} events re-queued: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Digest quotidiano VoxCPM
+# ---------------------------------------------------------------------------
+
+def _try_send_voxcpm_digest():
+    """Manda all'admin il riepilogo dei ritentativi VoxCPM di ieri.
+
+    Chiamata a ogni giro del ciclo di pulizia: il giorno da spedire lo decide
+    `voxcpm_digest.giorno_arretrato`, che legge un marker su disco. Quindi il
+    ritmo non dipende da quando il server e' stato avviato, e un riavvio non
+    salta ne' duplica una giornata.
+
+    Un giorno senza job VoxCPM viene marcato come fatto senza spedire nulla:
+    una mail che dice «niente da dire» ogni mattina si smette di leggerla, e
+    con lei si smette di leggere quelle che qualcosa da dire ce l'hanno.
+    """
+    if not (VOXCPM_DIGEST and ADMIN_EMAIL and _smtp_available()):
+        return
+    try:
+        import voxcpm_digest
+    except ImportError:
+        return
+    try:
+        giorno = voxcpm_digest.giorno_arretrato()
+        if not giorno:
+            return
+        r = voxcpm_digest.riepilogo(giorno)
+        if not r["job_totali"]:
+            # Marcato comunque: domani si guarda domani, non di nuovo ieri.
+            voxcpm_digest.segna_inviato(giorno)
+            return
+        _send_email(ADMIN_EMAIL, voxcpm_digest.oggetto(r), voxcpm_digest.html(r))
+        # Solo dopo l'invio riuscito: se la mail non parte, il giorno resta
+        # arretrato e il prossimo giro riprova.
+        voxcpm_digest.segna_inviato(giorno)
+        print(f"[voxcpm] Digest {giorno} inviato a {ADMIN_EMAIL}: "
+              f"{r['necessari']} ritentativi necessari, {r['riusciti']} "
+              f"riusciti, {r['falliti']} falliti, {r['non_tentati']} non "
+              f"tentati")
+    except Exception as e:
+        # Il digest non deve mai fermare il ciclo di pulizia che lo chiama.
+        print(f"[voxcpm] Digest non inviato (non-fatal): {e}")
 
 
 # ---------------------------------------------------------------------------

@@ -854,7 +854,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
-        `bytes` e `runpod`,
+        `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
+        `verifica_giri`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -891,6 +892,18 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # meta', e senza questo numero il difetto arriva nell'M4B senza
              # che nessuno lo sappia.
              "code_tagliate": 0,
+             # Le tre misure che dicono quanto e' costata la verifica e
+             # quanto e' servita. `code_tagliate` da solo conta i falliti
+             # ma non i tentati: un capitolo con zero code tagliate puo'
+             # aver richiesto sei ritentativi o nessuno, e la differenza e'
+             # esattamente cio' che dice se la verifica sta lavorando.
+             "verifica_chunk": 0,       # chunk passati sotto l'ASR
+             "verifica_sospetti": 0,    # ritentativi giudicati necessari
+             # Necessari ma mai tentati: sopra il tetto (VERIFY_MAX_FRAC) il
+             # worker rigenera solo i rotti conclamati. Sono difettosi
+             # quanto i falliti, ma nessun tentativo li ha mancati.
+             "verifica_rinunciati": 0,
+             "verifica_giri": 0,        # giri di rigenerazione spesi
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -973,6 +986,18 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     "(chunk %s): il worker ha esaurito i suoi ritentativi",
                     len(_tagliate),
                     ", ".join(str(i) for i in _tagliate[:10]))
+            # Come `chars`: le misure sono quelle del tentativo consegnato.
+            # Il blocco manca se la verifica era spenta o se il worker e'
+            # di una versione precedente, e allora restano gli zeri.
+            _ver = out.get("verify") or {}
+            if _ver:
+                stats["verifica_chunk"] = int(
+                    _ver.get("chunks_verificati") or 0)
+                stats["verifica_sospetti"] = len(
+                    _ver.get("sospetti_iniziali") or [])
+                stats["verifica_rinunciati"] = len(
+                    _ver.get("rinunciati") or [])
+                stats["verifica_giri"] = int(_ver.get("giri") or 0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []
