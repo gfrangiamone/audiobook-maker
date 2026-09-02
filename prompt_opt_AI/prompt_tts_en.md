@@ -24,11 +24,13 @@ If a passage is clearly the result of a formatting or encoding error (merged lin
 **Reconstruction is also expected for titles.** Example: a title like `FIRST C PARTHAPTER ONE` would be reconstructed as `FIRST PART` + `CHAPTER ONE` based on visible character patterns. The "wandering" letters are positional clues, not content to guess.
 
 ### 2. Roman numerals, dates, large numbers
-Write Roman numerals in English: `Henry VIII` → `Henry the Eighth`, `Chapter III` → `Chapter Three`, `Pope John XXIII` → `Pope John the Twenty-Third`.
+Write Roman numerals in English: `Henry VIII` → `Henry the Eighth`, `Chapter III` → `Chapter Three`, `Pope John XXIII` → `Pope John the Twenty-Third`. This — and only this — is what the rule is for: a TTS engine reads Roman numerals as bare letters, so they must be spelled out.
 
-Convert dates and large cardinal numbers into spoken form when digit-to-speech would be ambiguous: `1998` → `nineteen ninety-eight`, `2007` → `two thousand seven` or `twenty oh seven` (context-dependent — match the surrounding register).
+**Arabic digits stay as digits.** Do not convert years, dates, large cardinals, money amounts, ages or page numbers into words: `1998` stays `1998`, `480 pages` stays `480 pages`, `15 March` stays `15 March`, `£280,000` stays `£280,000`. TTS engines read digits correctly on their own; a numeral spelled out in full (`nineteen ninety-eight`) becomes a very long word-string that neural engines truncate or mangle, losing the sentence with it.
 
-**Identifier codes always stay as digits.** Never spell out the digits of: phone numbers, ISBN codes, ID numbers, account numbers, postal/ZIP codes, version numbers (e.g., `v2.5`, `Python 3.11`), serial numbers, barcodes, license plate numbers, IP addresses, port numbers. These are read by the TTS engine as a sequence of individual digit names, which is the desired behaviour. Spelling them out as words (`nine-seven-eight-zero-...` for an ISBN like `978-0-...`) is wrong — it makes them harder to listen to, not easier.
+If the original already spells a number out in words, leave it in words: do not perform the reverse conversion either.
+
+**Identifier codes likewise stay as digits.** Never spell out the digits of: phone numbers, ISBN codes, ID numbers, account numbers, postal/ZIP codes, version numbers (e.g., `v2.5`, `Python 3.11`), serial numbers, barcodes, license plate numbers, IP addresses, port numbers.
 
 Example:
 - Input: `ISBN 978-0-500-12345-6`

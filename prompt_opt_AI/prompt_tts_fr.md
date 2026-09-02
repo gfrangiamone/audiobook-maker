@@ -10,7 +10,7 @@ NE traduis AUCUNE partie du texte en italien, anglais, espagnol, allemand ou tou
 
 Les noms propres étrangers et les emprunts intentionnels déjà présents dans l'entrée (par exemple, `Van Eyck`, `Holbein`, `New York`) doivent être préservés tels quels dans leur langue d'origine. Ils ne doivent pas non plus être traduits.
 
-Les seules transformations autorisées sont celles spécifiées par les règles ci-dessous : changements de ponctuation, division de phrases, marques d'accent pour la désambiguïsation, expansion des nombres en français, substitution de symboles par leurs équivalents parlés en français. Ne change jamais la langue des mots eux-mêmes.
+Les seules transformations autorisées sont celles spécifiées par les règles ci-dessous : changements de ponctuation, division de phrases, marques d'accent pour la désambiguïsation, développement des chiffres romains en toutes lettres, substitution de symboles par leurs équivalents parlés en français. Ne change jamais la langue des mots eux-mêmes.
 
 Si un seul mot de la sortie n'apparaîtrait pas dans un texte fluide écrit par un francophone natif, c'est une fuite linguistique et doit être corrigée.
 
@@ -36,9 +36,13 @@ Si un passage résulte clairement d'une erreur de formatage ou d'encodage (ligne
 **La reconstruction est attendue aussi pour les titres.** Les lettres "errantes" sont des indices positionnels, pas du contenu à deviner.
 
 ### 2. Chiffres romains, dates, grands nombres
-Écris les chiffres romains en français : `Louis XIV` → `Louis Quatorze`, `Chapitre III` → `Chapitre Trois`, `Henri VIII` → `Henri Huit`.
+Écris les chiffres romains en français : `Louis XIV` → `Louis Quatorze`, `Chapitre III` → `Chapitre Trois`, `Henri VIII` → `Henri Huit`. C'est — et c'est tout — l'objet de cette règle : le TTS lit les chiffres romains comme des lettres, il faut donc les développer.
 
-Convertis les dates et grands cardinaux en forme écrite quand la lecture chiffrée serait ambiguë : `1998` → `mille neuf cent quatre-vingt-dix-huit`, `1789` → `mille sept cent quatre-vingt-neuf`. Laisse les numéros de téléphone, codes d'identification, numéros de compte sous forme chiffrée.
+**Les chiffres arabes restent des chiffres.** Ne convertis pas en toutes lettres les années, dates, grands cardinaux, montants, âges ni numéros de page : `1998` reste `1998`, `480 pages` reste `480 pages`, `15 mars` reste `15 mars`, `280 000 euros` reste `280 000 euros`. Les moteurs TTS lisent correctement les chiffres tout seuls ; un nombre écrit en toutes lettres (`mille neuf cent quatre-vingt-dix-huit`) devient au contraire une très longue chaîne de mots que les moteurs neuronaux tronquent ou déforment, emportant la phrase avec elle.
+
+Si l'original écrit déjà un nombre en toutes lettres, laisse-le en toutes lettres : ne fais pas non plus la conversion inverse.
+
+Laisse également inchangés les numéros de téléphone, codes d'identification, numéros de compte, ISBN, codes postaux, numéros de version (`v2.5`, `Python 3.11`), adresses IP : ne les développe pas et ne sépare pas leurs chiffres un à un.
 
 **Prudence avec les séquences en majuscules qui ressemblent à des chiffres romains sans en être.** Laisse inchangés noms propres et identifiants : `Xi Jinping`, `vi` (l'éditeur), `MIX` (titre d'album). Convertis seulement quand le contexte indique sans ambiguïté une séquence ou un rang numérique.
 

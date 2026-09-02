@@ -10,7 +10,7 @@ NO traduzcas ninguna parte del texto al italiano, inglés, francés, alemán u o
 
 Los nombres propios extranjeros y los préstamos lingüísticos intencionales ya presentes en la entrada (por ejemplo, `Greco`, `Holbein`, `New York`) deben conservarse tal cual en su idioma original. Tampoco deben traducirse.
 
-Las únicas transformaciones permitidas son las especificadas en las reglas siguientes: cambios de puntuación, división de oraciones, verificación de tildes existentes, expansión de números en español, sustitución de símbolos por sus equivalentes hablados en español. Nunca cambies el idioma de las palabras en sí.
+Las únicas transformaciones permitidas son las especificadas en las reglas siguientes: cambios de puntuación, división de oraciones, verificación de tildes existentes, expansión de los números romanos en español, sustitución de símbolos por sus equivalentes hablados en español. Nunca cambies el idioma de las palabras en sí.
 
 Si una sola palabra del resultado no aparecería en un texto fluido escrito por un hablante nativo de español, es una fuga lingüística y debe corregirse.
 
@@ -36,16 +36,23 @@ Si un pasaje resulta claramente de un error de formato o codificación (líneas 
 **La reconstrucción se espera también para títulos.** Las letras "errantes" son pistas posicionales, no contenido para adivinar.
 
 ### 2. Números romanos, fechas, números grandes
-Escribe los romanos en español: `Felipe II` → `Felipe Segundo`, `siglo XVI` → `siglo dieciséis`, `Capítulo III` → `Capítulo Tercero`, `Juan Pablo II` → `Juan Pablo Segundo`.
+Escribe los romanos en español: `Felipe II` → `Felipe Segundo`, `siglo XVI` → `siglo dieciséis`, `Capítulo III` → `Capítulo Tercero`, `Juan Pablo II` → `Juan Pablo Segundo`. Este — y solo este — es el propósito de la regla: el TTS lee los números romanos como letras sueltas, así que hay que desarrollarlos.
 
-Convierte a palabras escritas en español todos estos casos:
-- Años: `1998` → `mil novecientos noventa y ocho`, `2026` → `dos mil veintiséis`
-- Cardinales grandes: `180 obras` → `ciento ochenta obras`, `460 páginas` → `cuatrocientas sesenta páginas`
-- Fechas: `15 de marzo` → `quince de marzo`, `30 de septiembre` → `treinta de septiembre`
-- Importes monetarios: `15 euros` → `quince euros`, `280.000 euros` → `doscientos ochenta mil euros`
-- Edades: `18 años` → `dieciocho años`
+**Los dígitos árabes se quedan como dígitos.** No conviertas a palabras años, fechas, cardinales grandes, importes, edades ni números de página:
 
-**Mantén como dígitos solamente:** números de teléfono, códigos de identificación (DNI, NIE), códigos ISBN/ISSN, números de cuenta bancaria, direcciones IP, números de versión (`v2.5`), códigos postales.
+- Años: `1998` se queda `1998`, `2026` se queda `2026`
+- Cardinales grandes: `180 obras` se queda `180 obras`, `460 páginas` se queda `460 páginas`
+- Fechas: `15 de marzo` se queda `15 de marzo`, `30 de septiembre` se queda `30 de septiembre`
+- Importes monetarios: `15 euros` se queda `15 euros`, `280.000 euros` se queda `280.000 euros`
+- Edades: `18 años` se queda `18 años`
+
+Los motores TTS leen bien los dígitos por sí solos; un número escrito en palabras (`mil novecientos noventa y ocho`) se convierte en una cadena larguísima que los motores neuronales truncan o deforman, y se pierde la frase entera.
+
+Si el original ya trae el número en palabras, déjalo en palabras: tampoco hagas la conversión inversa.
+
+**Mantén igualmente como dígitos:** números de teléfono, códigos de identificación (DNI, NIE), códigos ISBN/ISSN, números de cuenta bancaria, direcciones IP, números de versión (`v2.5`), códigos postales. No los desarrolles ni separes sus cifras una a una.
+
+**Cuidado con las secuencias en mayúsculas que parecen números romanos pero no lo son.** Deja sin cambios nombres propios e identificadores: `Xi Jinping`, `vi` (el editor), `MIX` (título de álbum). Convierte solo cuando el contexto indique inequívocamente una secuencia o un rango numérico.
 
 ### 3. Abreviaturas y siglas
 Expande abreviaturas que el TTS pronunciaría mal. Deja sin cambios siglas universalmente leídas como palabras: `OTAN`, `ONU`, `UNESCO`, `RENFE`, `SIDA`, `OVNI`.

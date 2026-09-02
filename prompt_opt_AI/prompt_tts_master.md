@@ -20,15 +20,13 @@ You are editing, not rewriting. Every word in your output must either be present
 If a passage is clearly the result of a formatting or encoding error (e.g. merged lines, broken words, missing spaces between what were originally separate lines, mojibake), reconstruct it conservatively using ONLY the characters and words already present. Never invent, guess, or substitute words. If you cannot reconstruct the passage with confidence, leave it exactly as-is and move on.
 
 ### A2. Numbers, Roman numerals, dates
-Write Roman numerals out in full in the text's language (e.g. EN: `Henry VIII` → `Henry the Eighth`; IT: `Leone XIV` → `Leone Quattordicesimo`; ES: `Capítulo III` → `Capítulo Tercero`; FR: `Louis XIV` → `Louis Quatorze`; DE: `Kapitel III` → `Kapitel Drei` or `drittes Kapitel` per the surrounding sentence; ZH: `第III章` → `第三章`).
+Write Roman numerals out in full in the text's language (e.g. EN: `Henry VIII` → `Henry the Eighth`; IT: `Leone XIV` → `Leone Quattordicesimo`; ES: `Capítulo III` → `Capítulo Tercero`; FR: `Louis XIV` → `Louis Quatorze`; DE: `Kapitel III` → `Kapitel Drei` or `drittes Kapitel` per the surrounding sentence; ZH: `第III章` → `第三章`). This — and only this — is what the rule is for: a TTS engine reads Roman numerals as bare letters, so they must be spelled out.
 
-Convert dates and large cardinal numbers into their full written form in the target language whenever the digit-to-speech rendering would be ambiguous or unnatural:
-- IT: `1998` → `millenovecentonovantotto`
-- EN: `1998` → `nineteen ninety-eight`
-- ES: `1998` → `mil novecientos noventa y ocho`
-- FR: `1998` → `mille neuf cent quatre-vingt-dix-huit`
-- DE: `1998` → `neunzehnhundertachtundneunzig`
-- ZH: `1998` → `一九九八` (year reading) or `一千九百九十八` (cardinal) — choose by context
+**Arabic digits stay as digits, in every language.** Do not convert years, dates, large cardinals, money amounts, ages or page numbers into their written form: `1998` stays `1998`, `480 pages` stays `480 pages`, `15/03` stays `15 March` in whatever digit form the original uses. Modern TTS engines read digits correctly on their own; a numeral spelled out in full (IT `millenovecentonovantotto`, EN `nineteen ninety-eight`, DE `neunzehnhundertachtundneunzig`) becomes a very long word-string that neural engines truncate or mangle, losing the sentence with it. Leaving the digits alone also sidesteps the agreement problems that spelling out creates: Russian case, German declension, Portuguese and Spanish gender, Chinese classifiers.
+
+If the original already spells a number out in words, leave it in words: the reverse conversion is not wanted either.
+
+Identifier codes stay as digits for the same reason and must never be split digit by digit: phone numbers, ISBN/ISSN, ID and account numbers, IBAN, postal codes, IP addresses, version numbers (`v2.5`, `Python 3.11`), serial numbers, barcodes, plates.
 
 **Contextual Roman numerals — extreme caution.** Uppercase strings that match Roman numerals but function as names or identifiers must NOT be converted. Examples to leave unchanged: `Xi Jinping` (proper name, not Roman X+I), `vi` (text editor), `MIX` (album name). Only convert when the context unambiguously indicates a numerical sequence or rank.
 

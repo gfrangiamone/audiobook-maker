@@ -790,11 +790,36 @@ _LLM_PREAMBLE_RE = re.compile(
 )
 
 
+# Igiene tipografica dell'output LLM. Il modello ogni tanto riconsegna la
+# punteggiatura attaccata alla parola dopo ("Garzanti,Danny l'eletto") o
+# staccata da quella prima ("Garzanti , Danny"), dove l'originale era
+# corretto. Nessun motore TTS ci inciampa, ma il testo ottimizzato e' anche
+# quello che l'utente rilegge e che finisce nell'.abm: lo spazio torna al suo
+# posto qui, perche' dopo l'LLM nessuno stadio guarda piu' la tipografia.
+#
+# Solo virgola, punto e virgola e due punti seguiti da una lettera: i decimali
+# (1,50), le migliaia (280.000) e gli orari (12:30) hanno una cifra dopo, gli
+# URL (http://) un carattere non alfabetico, e restano intatti. Il punto resta
+# fuori: spezzerebbe le sigle puntate (C.E.O.) che i prompt chiedono. Le
+# lingue che non spaziano le parole (cinese, giapponese) usano la
+# punteggiatura a larghezza piena, non questa; il lookahead le esclude
+# comunque.
+_LLM_SPAZIO_MANCANTE_RE = re.compile(r"([,;:])(?=[^\W\d_])(?![\u3040-\u9fff])")
+_LLM_SPAZIO_DI_TROPPO_RE = re.compile(r"[ \t]+([,;:.!?])")
+
+
+def _igiene_tipografica(text: str) -> str:
+    """Rimette gli spazi attorno alla punteggiatura dove l'LLM li ha spostati."""
+    text = _LLM_SPAZIO_DI_TROPPO_RE.sub(r"\1", text)
+    return _LLM_SPAZIO_MANCANTE_RE.sub(r"\1 ", text)
+
+
 def _sanitize_llm_output(text: str) -> str:
     """Rimuove contaminazioni tipiche dell'output LLM prima di passarlo al TTS.
 
     1) Preamboli/postfazioni meta
     2) Paragrafi/righe duplicate consecutive
+    3) Igiene tipografica degli spazi attorno alla punteggiatura
     """
     if not text:
         return text
@@ -859,7 +884,8 @@ def _sanitize_llm_output(text: str) -> str:
             out_lines.append(ln)
         final_paragraphs.append("\n".join(out_lines))
 
-    return "\n\n".join(final_paragraphs).strip()
+    # 5) Igiene tipografica
+    return _igiene_tipografica("\n\n".join(final_paragraphs).strip())
 
 
 class _PromptLeakError(Exception):
@@ -3332,6 +3358,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         job.setdefault("voxcpm_actual", {
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
+            "code_tagliate": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -3409,6 +3436,11 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         _va["redone"] += int(stats.get("redone", 0) or 0)
                         _va["bounced"] += int(stats.get("bounced", 0) or 0)
                         _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
+                        # `.get`, come per `runpod`: un job aperto da una
+                        # versione precedente non ha questa chiave.
+                        _va["code_tagliate"] = int(
+                            _va.get("code_tagliate", 0) or 0) + int(
+                                stats.get("code_tagliate", 0) or 0)
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
@@ -3422,7 +3454,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
-                            "bounced": 0, "failed_chunks": 0, "bytes": 0,
+                            "bounced": 0, "failed_chunks": 0,
+                            "code_tagliate": 0, "bytes": 0,
                             "runpod": []}
             # I capitoli tornano in ordine di completamento, non di indice: il
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
@@ -3989,6 +4022,7 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_redone": int(actual.get("redone", 0) or 0),
             "worker_bounced": int(actual.get("bounced", 0) or 0),
             "worker_failed_chunks": int(actual.get("failed_chunks", 0) or 0),
+            "worker_code_tagliate": int(actual.get("code_tagliate", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:

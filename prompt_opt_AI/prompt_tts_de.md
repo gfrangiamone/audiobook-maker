@@ -10,7 +10,7 @@ Die Ausgabe MUSS auf **Deutsch** sein. Der Text, den du erhältst, ist bereits a
 
 Fremdsprachliche Eigennamen und beabsichtigte Lehnwörter, die bereits in der Eingabe vorhanden sind (z. B. `Cranach`, `Holbein`, `New York`), müssen unverändert in ihrer Originalsprache erhalten bleiben. Sie sollen ebenfalls nicht übersetzt werden.
 
-Die einzigen erlaubten Umformungen sind die durch die untenstehenden Regeln festgelegten: Interpunktionsänderungen, Satzteilungen, Akzentsetzung zur Disambiguierung, Zahlenausschreibung auf Deutsch, Symbolersetzung durch deutsche gesprochene Entsprechungen. Ändere niemals die Sprache der Wörter selbst.
+Die einzigen erlaubten Umformungen sind die durch die untenstehenden Regeln festgelegten: Interpunktionsänderungen, Satzteilungen, Akzentsetzung zur Disambiguierung, Ausschreibung römischer Zahlen auf Deutsch, Symbolersetzung durch deutsche gesprochene Entsprechungen. Ändere niemals die Sprache der Wörter selbst.
 
 Wenn auch nur ein Wort in der Ausgabe nicht in einem flüssigen Text eines deutschen Muttersprachlers vorkommen würde, ist das ein Sprach-Leak und muss korrigiert werden.
 
@@ -37,21 +37,23 @@ Wenn ein Abschnitt eindeutig das Resultat eines Formatierungs- oder Kodierungsfe
 
 ### 2. Römische Zahlen, Daten, große Zahlen
 
-Schreibe römische Zahlen auf Deutsch aus, mit korrekter Kasusflexion je nach Kontext: `Heinrich VIII` → `Heinrich der Achte` (Nominativ) / `Heinrich den Achten` (Akkusativ), `Friedrich III.` → `Friedrich der Dritte` / `Friedrich den Dritten`, `Kapitel III` → `Kapitel Drei` oder `drittes Kapitel` (kontextabhängig), `Papst Johannes Paul II` → `Papst Johannes Paul der Zweite`, `16. Jahrhundert` → `sechzehntes Jahrhundert` / `sechzehnten Jahrhundert`.
+Schreibe römische Zahlen auf Deutsch aus, mit korrekter Kasusflexion je nach Kontext: `Heinrich VIII` → `Heinrich der Achte` (Nominativ) / `Heinrich den Achten` (Akkusativ), `Friedrich III.` → `Friedrich der Dritte` / `Friedrich den Dritten`, `Kapitel III` → `Kapitel Drei` oder `drittes Kapitel` (kontextabhängig), `Papst Johannes Paul II` → `Papst Johannes Paul der Zweite`. Das — und nur das — ist der Zweck dieser Regel: die TTS-Engine liest römische Zahlen als einzelne Buchstaben, deshalb müssen sie ausgeschrieben werden.
 
-**Konvertiere ALLE folgenden Fälle in geschriebene deutsche Form:**
+**Arabische Ziffern bleiben Ziffern.** Schreibe die folgenden Fälle NICHT in Worten aus:
 
-- **Jahreszahlen**: `1998` → `neunzehnhundertachtundneunzig`, `2026` → `zweitausendsechsundzwanzig`, `1531` → `fünfzehnhunderteinunddreißig`
-- **Große Kardinalzahlen** (über etwa 20): `190 Werke` → `einhundertneunzig Werke`, `480 Seiten` → `vierhundertachtzig Seiten`, `290.000 Euro` → `zweihundertneunzigtausend Euro`
-- **Datumsangaben mit Tageszahl**: `15. März` → `fünfzehnter März` / `fünfzehnten März` (Kasus je nach Satzbau), `30. September` → `dreißigster September` / `dreißigsten September`
-- **Geldbeträge**: `16 Euro` → `sechzehn Euro`, `1,50 €` → `ein Euro fünfzig`
-- **Altersangaben**: `18 Jahren` → `achtzehn Jahren`, `unter 18` → `unter achtzehn`
-- **Seitenzahlen, Bandnummern, Ordinalia in Prosa**: `Band 5` → `Band fünf` oder `fünfter Band`
-- **Jahrhundertangaben**: `16. Jahrhundert` → `sechzehntes Jahrhundert` / `sechzehnten Jahrhundert`
+- **Jahreszahlen**: `1998` bleibt `1998`, `2026` bleibt `2026`, `1531` bleibt `1531`
+- **Große Kardinalzahlen**: `190 Werke` bleibt `190 Werke`, `480 Seiten` bleibt `480 Seiten`, `290.000 Euro` bleibt `290.000 Euro`
+- **Datumsangaben mit Tageszahl**: `15. März` bleibt `15. März`, `30. September` bleibt `30. September`
+- **Geldbeträge**: `16 Euro` bleibt `16 Euro`, `1,50 €` bleibt `1,50 €`
+- **Altersangaben**: `18 Jahren` bleibt `18 Jahren`, `unter 18` bleibt `unter 18`
+- **Seitenzahlen, Bandnummern**: `Band 5` bleibt `Band 5`
+- **Jahrhundertangaben**: `16. Jahrhundert` bleibt `16. Jahrhundert`
 
-Beachte die deutsche Kasusflexion bei ausgeschriebenen Zahlwörtern: nach `am`, `vom`, `bis zum` werden Datumsangaben dekliniert (`am fünfzehnten März`), nach `der`, `die`, `das` werden Ordinalia angepasst.
+TTS-Engines lesen Ziffern von sich aus korrekt; eine ausgeschriebene Zahl (`neunzehnhundertachtundneunzig`) wird dagegen zu einer sehr langen Wortkette, die neuronale Engines abschneiden oder verstümmeln — der ganze Satz geht dabei verloren. Der Kasusflexion entgeht man auf diesem Weg ohnehin.
 
-**Nur als Ziffern belassen:**
+Steht die Zahl im Original bereits ausgeschrieben, lass sie ausgeschrieben: die umgekehrte Umwandlung ist ebenfalls nicht erwünscht.
+
+**Ebenso als Ziffern belassen:**
 
 - Telefonnummern
 - ID-Codes (Personalausweisnummern, Steuer-ID, Kontonummern, IBAN)
