@@ -175,3 +175,76 @@ def test_blocklist_reasons_cover_unfunded_families(isolated_store, monkeypatch):
         with pytest.raises(payment.UnfundedCaptureError):
             payment.capture_and_store_order(oid, job_id=f"job{i}")
         assert payment._payments[oid]["pending_unfunded"] is True
+
+# --------------- gate preventivo in fase di creazione ordine ----------------
+
+class _FakeCreateResponse:
+    def __init__(self, payload):
+        self.status_code = 201
+        self._payload = payload
+        self.text = str(payload)
+        self.headers = {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def _capture_create_payload(monkeypatch):
+    """Intercetta il payload inviato a /v2/checkout/orders."""
+    sent = {}
+    monkeypatch.setattr(payment, "_paypal_get_access_token", lambda: "tok")
+
+    import requests
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent["json"] = kwargs.get("json")
+        return _FakeCreateResponse({"id": "ORD_NEW", "status": "CREATED"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    return sent
+
+
+def test_create_order_requires_immediate_payment(isolated_store, monkeypatch):
+    """Gli strumenti non a compensazione immediata (eCheck) sono bloccati a monte."""
+    monkeypatch.setattr(payment, "PAYPAL_IMMEDIATE_PAYMENT", True)
+    sent = _capture_create_payload(monkeypatch)
+
+    payment._paypal_create_order(3.67, "Audiobook Maker", custom_id="jobE")
+
+    pm = sent["json"]["application_context"]["payment_method"]
+    assert pm["payee_preferred"] == "IMMEDIATE_PAYMENT_REQUIRED"
+    assert pm["payer_selected"] == "PAYPAL"
+
+
+def test_create_order_immediate_payment_can_be_disabled(isolated_store, monkeypatch):
+    """Kill-switch env: se PayPal rifiutasse la preferenza si torna indietro senza deploy."""
+    monkeypatch.setattr(payment, "PAYPAL_IMMEDIATE_PAYMENT", False)
+    sent = _capture_create_payload(monkeypatch)
+
+    payment._paypal_create_order(3.67, "Audiobook Maker")
+
+    assert "payment_method" not in sent["json"]["application_context"]
+
+
+# ------------------------- spiegazione all'utente ---------------------------
+
+def test_unfunded_i18n_key_in_all_languages():
+    from pathlib import Path
+    import re
+    text = Path("templates/_fragments/i18n_data.js").read_text(encoding="utf-8")
+    found = re.findall(r'pay_paypal_unfunded:"([^"]+)"', text)
+    assert len(found) == 7, f"expected 7 languages, found {len(found)}"
+    assert all(v.strip() for v in found)
+
+
+def test_frontend_shows_dedicated_unfunded_message():
+    from pathlib import Path
+    js = Path("static/js/app.js").read_text(encoding="utf-8")
+    assert "d.paypal_issue==='UNFUNDED_PENDING'" in js
+    assert "pay_paypal_unfunded" in js
+    # il ramo dedicato precede quello generico del rifiuto emittente
+    assert js.index("pay_paypal_unfunded") < js.index("pay_paypal_declined")

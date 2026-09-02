@@ -290,6 +290,15 @@ UNFUNDED_PENDING_REASONS = {
     if r.strip()
 }
 
+# Gate a monte: chiede a PayPal di accettare solo strumenti a compensazione
+# immediata (blocca eCheck/addebito bancario gia' in fase di checkout, prima
+# che l'ordine sia approvato). Disattivabile via env se PayPal dovesse
+# rifiutare la preferenza per un account/paese specifico.
+PAYPAL_IMMEDIATE_PAYMENT = (
+    os.environ.get("ABM_PAYPAL_IMMEDIATE_PAYMENT", "1").strip().lower()
+    not in ("0", "false", "no", "off")
+)
+
 # Rate limit voucher_validate
 # IP -> list[timestamps] (sliding window). Limiti: 5/min, 30/ora.
 # Email -> (fail_count, lockout_until) dopo N fallimenti consecutivi.
@@ -822,6 +831,17 @@ def _paypal_create_order(amount_eur, description, custom_id=None):
             "shipping_preference": "NO_SHIPPING",
         },
     }
+    if PAYPAL_IMMEDIATE_PAYMENT:
+        # Gate preventivo sugli strumenti non immediati (eCheck / addebito su
+        # conto bancario): con IMMEDIATE_PAYMENT_REQUIRED PayPal non consente al
+        # pagante di completare l'ordine con uno strumento che si compensa in
+        # giorni. Il filtro sul payment_status alla capture resta come rete di
+        # sicurezza (vedi UNFUNDED_PENDING_REASONS): questo evita che il caso si
+        # presenti del tutto.
+        payload["application_context"]["payment_method"] = {
+            "payer_selected": "PAYPAL",
+            "payee_preferred": "IMMEDIATE_PAYMENT_REQUIRED",
+        }
     if custom_id:
         payload["purchase_units"][0]["custom_id"] = custom_id[:127]
     r = requests.post(
