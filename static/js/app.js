@@ -564,6 +564,7 @@ function lockUI(){
   });
   // Show cancel area
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='';
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   _updateGenNoticeWarning();
 }
 function unlockUI(){
@@ -1664,7 +1665,9 @@ function _openPayModalCtx(ctx) {
   const vc = document.getElementById('geminiPayVoucherCode'); if (vc) vc.value = '';
   const ve = document.getElementById('geminiPayVoucherEmail');
   if (ve && typeof lastVoucherEmail === 'string') ve.value = lastVoucherEmail;
-  switchPayTab('voucher');
+  // PayPal e' il metodo usato dalla quasi totalita' dei paganti: il popup
+  // si apre gia' sul suo pannello, il buono resta a un click.
+  switchPayTab('paypal');
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = false;
 }
@@ -1793,7 +1796,15 @@ async function renderPaypalGeminiButtons(){
           // l'utente sceglie un'altra carta/metodo invece di restare bloccato.
           // UNFUNDED_PENDING: capture accettata da PayPal ma non finanziata
           // (eCheck) -> stesso trattamento del rifiuto emittente.
-          if(d.retryable&&(d.paypal_issue==='INSTRUMENT_DECLINED'||d.paypal_issue==='UNFUNDED_PENDING')&&actions&&typeof actions.restart==='function'){
+          if(d.paypal_issue==='UNFUNDED_PENDING'){
+            // eCheck / addebito bancario: spiegazione dedicata (non e' un
+            // rifiuto della banca, e' uno strumento non a compensazione
+            // immediata) e riapertura del checkout quando possibile.
+            _payPaypalErr((typeof t==='function'&&t('pay_paypal_unfunded'))||'This payment method (bank debit / eCheck) is not accepted: it takes days to clear and can be reversed by the bank. Please pay by card or with your PayPal balance.');
+            if(d.retryable&&actions&&typeof actions.restart==='function')return actions.restart();
+            return;
+          }
+          if(d.retryable&&d.paypal_issue==='INSTRUMENT_DECLINED'&&actions&&typeof actions.restart==='function'){
             _payPaypalErr((typeof t==='function'&&t('pay_paypal_declined'))||'Payment declined — choose another card or payment method');
             return actions.restart();
           }
@@ -1816,7 +1827,11 @@ async function renderPaypalGeminiButtons(){
 
 function switchPayTab(tab) {
   document.querySelectorAll('.pay-tab').forEach(el => {
-    el.classList.toggle('active', el.dataset.paytab === tab);
+    const on = (el.dataset.paytab === tab);
+    el.classList.toggle('active', on);
+    // role="tab": senza aggiornare aria-selected lo screen reader annuncia
+    // sempre la tab di default del markup come selezionata.
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   const pv = document.getElementById('payPanelVoucher');
   if (pv) pv.hidden = (tab !== 'voucher');
@@ -3313,6 +3328,7 @@ function _showWizProgress(){
   const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='none';
   const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='none';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.add('visible');
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   const pBar=document.getElementById('pBar');if(pBar)pBar.style.width='0%';
   const pPct=document.getElementById('pPct');if(pPct)pPct.textContent='0%';
   const pMsg=document.getElementById('pMsg');if(pMsg)pMsg.textContent=t('starting');
@@ -3791,6 +3807,34 @@ async function _showTransferQr(jobId, imgId, boxId, _attempt){
   if(img){ img.src = d.qr; }
   if(box){ box.hidden = false; }
   if(d.token){ _bindTransferButtonForMobile(boxId, d.token); }
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
+}
+
+// Posizione del bottone "Trasferisci sull'app" (solo quello del pannello di
+// avanzamento, #transferStartArea):
+//   - box email che chiede ancora l'indirizzo -> accanto al box (riga email);
+//   - box email gia' risolto (conferma verde, o mai mostrato) e annullo
+//     visibile -> a destra del bottone "Annulla ...", che altrimenti resta da
+//     solo a tutta larghezza con il QR centrato sopra.
+// Sposta il NODO, quindi il bottone conserva handler, QR gia' caricato e stato.
+function _syncTransferBtnPlacement(){
+  const area = document.getElementById('transferStartArea');
+  if(!area) return;
+  const slot = document.getElementById('transferCancelSlot');
+  const row = document.querySelector('.email-transfer-row');
+  const emailArea = document.getElementById('emailLateArea');
+  const cnA = document.getElementById('cnA');
+  const askingEmail = !!(emailArea && emailArea.classList.contains('visible')
+                         && emailArea.querySelector('#notifyEmailLate'));
+  const cancelVisible = !!(cnA && cnA.style.display !== 'none' && !cnA.hidden);
+  const besideCancel = !askingEmail && cancelVisible;
+  if(besideCancel && slot){
+    if(area.parentNode !== slot) slot.appendChild(area);
+    slot.hidden = area.hidden;
+  }else{
+    if(row && area.parentNode !== row) row.appendChild(area);
+    if(slot) slot.hidden = true;
+  }
 }
 
 // Popup col QR ingrandito, aperto dal bottone "Trasferisci sull'app". Il QR e`
@@ -4167,6 +4211,7 @@ function cancelOptimization(){
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   const aiOptCard=document.getElementById('aiOptCard');if(aiOptCard)aiOptCard.style.display='';
   const summaryBox=document.getElementById('summaryBox');if(summaryBox)summaryBox.style.display='';
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;btnGen.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
@@ -4346,6 +4391,7 @@ function _completeCancelUI(){
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   const genActiveNotice=document.getElementById('generationActiveNotice');if(genActiveNotice)genActiveNotice.style.display='none';
   const emailLateArea=document.getElementById('emailLateArea');if(emailLateArea)emailLateArea.classList.remove('visible');
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   const aiOptCard2=document.getElementById('aiOptCard');if(aiOptCard2)aiOptCard2.style.display='';
   const summaryBox2=document.getElementById('summaryBox');if(summaryBox2)summaryBox2.style.display='';
   document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
@@ -4687,6 +4733,7 @@ async function goBackToChapters(){
   const dlA=document.getElementById('dlA');if(dlA)dlA.style.display='none';
   const genDet=document.getElementById('genDetails');if(genDet){genDet.style.display='none';genDet.innerHTML='';}
   ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
@@ -4780,6 +4827,7 @@ function resetAll(){
   const _p5d=document.getElementById('panel5Desc');if(_p5d)_p5d.setAttribute('data-t','p5_desc');
   const genDet=document.getElementById('genDetails');if(genDet){genDet.style.display='none';genDet.innerHTML='';}
   ['transferStartArea','transferDoneArea'].forEach(function(id){var b=document.getElementById(id);if(b)b.hidden=true;});
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
   ['transferStartImg','transferDoneImg'].forEach(function(id){var im=document.getElementById(id);if(im)im.src='';});
   const btnD=document.getElementById('btnD');if(btnD){btnD.style.display='none';btnD.innerHTML='&#x2B07;&#xFE0F; <span data-t="btn_dl">'+t('btn_dl')+'</span>';}
   const btnM=document.getElementById('btnM');if(btnM)btnM.style.display='none';
@@ -4872,6 +4920,8 @@ function _setEmailLateConfirm(area,msg){
   span.style.fontSize='.84rem';
   span.textContent=msg;
   area.appendChild(span);
+  // Il box non chiede piu' l'indirizzo: il bottone QR si affianca all'annullo.
+  try{ _syncTransferBtnPlacement(); }catch(_e){}
 }
 
 function _resetEmailLateArea(){
@@ -4887,6 +4937,7 @@ function _resetEmailLateArea(){
       const input=document.getElementById('notifyEmailLate');
       if(input)input.value='';
     }
+    try{ _syncTransferBtnPlacement(); }catch(_e){}
   }
   // Riattiva input e bottone eventualmente disabilitati dall'auto-batch del job
   // precedente (_lockEmailLateBoxAutoBatch), cosi' il job successivo riparte con

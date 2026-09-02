@@ -81,3 +81,33 @@ def test_i18n_has_mobile_transfer_cta():
     # label secondaria iOS presente in tutti i 7 blocchi
     assert i18n.count("transfer_open_in_app:") == 7
     assert "Apri nell'app" in i18n
+
+
+HTML_HEAD = Path("templates/_fragments/html_head.html").read_text(encoding="utf-8")
+CSS = Path("static/css/style.css").read_text(encoding="utf-8")
+
+
+def test_transfer_button_moves_beside_cancel_when_email_confirmed():
+    """Confermata l'email, il box sparisce e il bottone "Trasferisci sull'app"
+    non deve restare centrato da solo sopra un annullo a tutta larghezza: viene
+    spostato in #transferCancelSlot, a destra del bottone di annullo."""
+    m = re.search(r"function _syncTransferBtnPlacement\([^)]*\)\{.*?\n}",
+                  APP_JS, re.DOTALL)
+    assert m, "_syncTransferBtnPlacement non trovata"
+    body = m.group(0)
+    assert "transferCancelSlot" in body
+    assert "emailLateArea" in body and "notifyEmailLate" in body
+    # Sposta il nodo (conserva QR gia' scaricato e handler), non lo ricrea.
+    assert "appendChild" in body
+    # Lo slot e' fratello di #cnA: sopravvive agli innerHTML fatti su #cnA.
+    assert 'id="transferCancelSlot"' in HTML_HEAD
+    assert 'class="cancel-transfer-row"' in HTML_HEAD
+    assert HTML_HEAD.index('id="cnA"') < HTML_HEAD.index('id="transferCancelSlot"')
+    assert ".cancel-transfer-row{display:flex" in CSS
+
+
+def test_email_confirm_triggers_transfer_button_replacement():
+    m = re.search(r"function _setEmailLateConfirm\([^)]*\)\{.*?\n}",
+                  APP_JS, re.DOTALL)
+    assert m, "_setEmailLateConfirm non trovata"
+    assert "_syncTransferBtnPlacement" in m.group(0)

@@ -186,3 +186,18 @@ def test_payment_happens_at_generate_not_at_toggle():
     snippet_g = APP[start_g:start_g + 4000]
     assert "_showPaymentModal" in snippet_g
     assert "_loadLlmPaymentConfig" in snippet_g
+
+
+def test_pay_modal_opens_on_paypal_tab():
+    """_openPayModalCtx deve aprire il popup sul pannello PayPal (metodo
+    dominante), non su quello del buono."""
+    assert "switchPayTab('paypal')" in APP
+    assert "switchPayTab('voucher')" not in APP
+
+
+def test_switch_pay_tab_syncs_aria_selected():
+    """role=\"tab\": senza aggiornare aria-selected lo screen reader annuncia
+    sempre la linguetta di default del markup."""
+    body = APP[APP.index("function switchPayTab"):]
+    body = body[:body.index(chr(10) + "function ", 1)]
+    assert "aria-selected" in body

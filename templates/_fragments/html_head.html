@@ -670,7 +670,12 @@ __REVIEWS_LD__
         </div>
       </div>
 
-      <!-- Cancel area (shown during generation) -->
+      <!-- Cancel area (shown during generation). Il wrapper affianca il bottone
+           "Trasferisci sull'app": quando il box email non chiede piu' nulla
+           (email gia' confermata) il QR viene spostato in #transferCancelSlot,
+           che e' FRATELLO di #cnA e non viene distrutto dagli innerHTML che il
+           JS fa su #cnA (retry / proceed / cancel). -->
+      <div class="cancel-transfer-row" id="cancelTransferRow">
       <div id="cnA" style="margin-top:16px;display:none">
         <button class="btn btn-outline" id="btnC">
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
@@ -680,6 +685,8 @@ __REVIEWS_LD__
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           <span data-t="btn_cancel_opt"></span>
         </button>
+      </div>
+      <div id="transferCancelSlot" hidden></div>
       </div>
     </section>
 
@@ -1032,21 +1039,21 @@ __REVIEWS_LD__
           </div>
         </div>
         <div class="pay-tabs" role="tablist">
-          <button type="button" class="pay-tab active" id="payTabVoucher" data-paytab="voucher"
-                  role="tab" aria-selected="true" aria-controls="payPanelVoucher" data-t="pay_tab_voucher">Buono</button>
-          <button type="button" class="pay-tab" id="payTabPaypal" data-paytab="paypal"
-                  role="tab" aria-selected="false" aria-controls="payPanelPaypal" data-t="pay_tab_paypal">PayPal</button>
+          <button type="button" class="pay-tab active" id="payTabPaypal" data-paytab="paypal"
+                  role="tab" aria-selected="true" aria-controls="payPanelPaypal" data-t="pay_tab_paypal">PayPal</button>
+          <button type="button" class="pay-tab" id="payTabVoucher" data-paytab="voucher"
+                  role="tab" aria-selected="false" aria-controls="payPanelVoucher" data-t="pay_tab_voucher">Buono</button>
         </div>
-        <div class="pay-tab-panel" id="payPanelVoucher" role="tabpanel" aria-labelledby="payTabVoucher">
+        <div class="pay-tab-panel" id="payPanelPaypal" role="tabpanel" aria-labelledby="payTabPaypal">
+          <div id="paypalGeminiContainer"></div>
+          <div class="pay-error" id="payPaypalError" role="alert"></div>
+        </div>
+        <div class="pay-tab-panel" id="payPanelVoucher" role="tabpanel" aria-labelledby="payTabVoucher" hidden>
           <label for="geminiPayVoucherCode" data-t="pay_voucher_code">Codice buono</label>
           <input type="text" id="geminiPayVoucherCode" autocomplete="off" placeholder="XXXX-XXXX-XXXX">
           <label for="geminiPayVoucherEmail" data-t="pay_voucher_email">Email (verifica)</label>
           <input type="email" id="geminiPayVoucherEmail" autocomplete="email" placeholder="you@email.com">
           <div class="pay-error" id="payVoucherError" role="alert"></div>
-        </div>
-        <div class="pay-tab-panel" id="payPanelPaypal" role="tabpanel" aria-labelledby="payTabPaypal" hidden>
-          <div id="paypalGeminiContainer"></div>
-          <div class="pay-error" id="payPaypalError" role="alert"></div>
         </div>
         <p class="pay-email-notice" id="payEmailNotice" data-t="pay_email_notice"
            style="font-size:.82em;color:var(--txd);margin-top:12px;line-height:1.4">Riceverai l'audiolibro via email all'indirizzo del pagamento quando sarà pronto: puoi chiudere la pagina dopo l'avvio.</p>

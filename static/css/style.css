@@ -700,6 +700,16 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .email-transfer-row>#transferStartArea:not([hidden]){display:flex}
 .email-transfer-row>#transferStartArea .btn{white-space:normal;text-align:center}
 
+/* Riga: bottone "Annulla ..." + bottone "Trasferisci sull'app" a destra.
+   Il QR viene spostato qui (#transferCancelSlot) quando il box email non
+   chiede piu' l'indirizzo: altrimenti resterebbe da solo, centrato, sopra un
+   bottone di annullo a tutta larghezza. */
+.cancel-transfer-row{display:flex;gap:12px;align-items:stretch}
+.cancel-transfer-row>#cnA{flex:1 1 auto;min-width:0}
+.cancel-transfer-row>#transferCancelSlot:not([hidden]){display:flex;margin-top:16px;flex:0 0 auto}
+.cancel-transfer-row>#transferCancelSlot>#transferStartArea{display:flex;margin:0}
+.cancel-transfer-row>#transferCancelSlot .btn{height:100%;white-space:normal;text-align:center}
+
 /* Alert di errore dentro l'area di avanzamento / pannello finale: nessun
    ingombro quando vuoti. */
 /* NB: mai display:none quando vuoti — showPErr() sceglie il contenitore in base
@@ -784,6 +794,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .email-transfer-row>.email-late-area.visible,
   .email-transfer-row>#transferStartArea{flex:1 1 100%}
   .email-transfer-row>#transferStartArea .btn{width:100%}
+  /* Schermo stretto: annulla e trasferimento impilati, entrambi a tutta larghezza. */
+  .cancel-transfer-row{flex-direction:column;gap:0}
+  .cancel-transfer-row>#transferCancelSlot .btn{width:100%}
   .email-late-area input[type=email]{min-width:auto}
 }
 @media(max-width:400px){

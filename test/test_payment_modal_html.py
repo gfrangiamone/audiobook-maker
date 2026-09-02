@@ -181,3 +181,20 @@ def test_tr_name_field_has_spinner_wrapper():
     assert 'id="trOutNameWrap"' in HTML
     assert 'class="tr-name-field"' in HTML
     assert 'class="tr-name-spinner"' in HTML
+
+
+def test_paypal_tab_comes_first_and_is_default():
+    """PayPal e' il metodo usato dalla quasi totalita' dei paganti: deve essere
+    la prima linguetta, quella attiva, e il suo pannello quello visibile
+    all'apertura (il voucher resta a un click)."""
+    assert HTML.index('id="payTabPaypal"') < HTML.index('id="payTabVoucher"')
+    assert HTML.index('id="payPanelPaypal"') < HTML.index('id="payPanelVoucher"')
+    paypal_tab = HTML[HTML.index('id="payTabPaypal"'):][:220]
+    assert 'aria-selected="true"' in paypal_tab
+    voucher_tab = HTML[HTML.index('id="payTabVoucher"'):][:220]
+    assert 'aria-selected="false"' in voucher_tab
+    # Pannello PayPal visibile, pannello voucher nascosto nel markup iniziale.
+    paypal_panel = HTML[HTML.index('id="payPanelPaypal"'):]
+    assert 'hidden' not in paypal_panel[:paypal_panel.index('>')]
+    voucher_panel = HTML[HTML.index('id="payPanelVoucher"'):]
+    assert 'hidden' in voucher_panel[:voucher_panel.index('>')]
