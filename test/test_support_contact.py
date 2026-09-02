@@ -111,8 +111,10 @@ def test_send_failure_returns_502(client, monkeypatch):
 def captured(monkeypatch):
     box = {}
 
-    def _fake(to_addr, subject, html_body, reply_to=None):
-        box.update(to=to_addr, subject=subject, body=html_body, reply_to=reply_to)
+    def _fake(to_addr, subject, html_body, reply_to=None, from_addr=None,
+              from_name=None):
+        box.update(to=to_addr, subject=subject, body=html_body,
+                   reply_to=reply_to, from_addr=from_addr, from_name=from_name)
         return True
 
     monkeypatch.setattr(email_service, "_send_email", _fake)
@@ -126,6 +128,10 @@ def test_support_email_goes_to_support_box_with_reply_to(captured, monkeypatch):
     assert ok is True
     assert captured["to"] == "support@audiobook-maker.com"
     assert captured["reply_to"] == "utente@example.com"
+    # In mailbox si vede l'email dell'utente, ma solo come nome visualizzato:
+    # l'indirizzo resta il nostro, cosi' SPF/DKIM/DMARC restano allineati.
+    assert captured["from_addr"] is None
+    assert captured["from_name"] == "utente@example.com (via Audiobook Maker)"
     assert "Titolo" in captured["subject"]
 
 
@@ -212,3 +218,109 @@ def test_app_js_wires_support_form():
     assert "closeSupportModal" in js
     # i placeholder del form devono seguire il cambio lingua
     assert "[data-t-ph]" in js.split("function applyI18n")[1].split("function setLang")[0]
+
+
+# ── _send_email: header From di terze parti + fallback ────────────────
+
+class _FakeSMTP:
+    """Relay fittizio: registra (envelope_from, to, raw) di ogni sendmail.
+
+    ``refuse_from`` fa rifiutare al relay i mittenti diversi da quello passato,
+    come farebbe TurboSMTP se non accettasse un From di dominio terzo.
+    """
+    calls = []
+    refuse_from = None
+
+    def __init__(self, host, port, timeout=None):
+        pass
+
+    def ehlo(self):
+        pass
+
+    def starttls(self):
+        pass
+
+    def login(self, user, password):
+        pass
+
+    def sendmail(self, envelope_from, to_addr, raw):
+        import smtplib
+        _FakeSMTP.calls.append((envelope_from, to_addr, raw))
+        if _FakeSMTP.refuse_from and f"From: {_FakeSMTP.refuse_from}" in raw:
+            raise smtplib.SMTPSenderRefused(550, b"not allowed", envelope_from)
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def fake_smtp(monkeypatch):
+    import smtplib
+    _FakeSMTP.calls = []
+    _FakeSMTP.refuse_from = None
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    monkeypatch.setattr(email_service, "SMTP_HOST", "smtp.test")
+    monkeypatch.setattr(email_service, "SMTP_PORT", 587)
+    monkeypatch.setattr(email_service, "SMTP_USER", "user")
+    monkeypatch.setattr(email_service, "SMTP_PASS", "pass")
+    monkeypatch.setattr(email_service, "SMTP_FROM", "noreply@audiobook-maker.com")
+    monkeypatch.setattr(email_service, "BASE_URL", "https://audiobook-maker.com")
+    return _FakeSMTP
+
+
+def _headers(raw):
+    from email import message_from_string
+    return message_from_string(raw)
+
+
+def test_from_header_is_user_email_envelope_stays_authenticated(fake_smtp):
+    ok = email_service._send_email(
+        "support@audiobook-maker.com", "oggetto", "<p>corpo</p>",
+        reply_to="utente@example.com", from_addr="utente@example.com")
+    assert ok is True
+    envelope_from, to_addr, raw = fake_smtp.calls[0]
+    # busta SMTP: resta l'indirizzo autenticato sul relay (SPF/DKIM intatti)
+    assert envelope_from == "noreply@audiobook-maker.com"
+    msg = _headers(raw)
+    assert msg["From"] == "utente@example.com"
+    assert msg["Sender"] == "noreply@audiobook-maker.com"
+    assert msg["Reply-To"] == "utente@example.com"
+
+
+def test_invalid_from_falls_back_to_default_sender(fake_smtp):
+    ok = email_service._send_email(
+        "support@audiobook-maker.com", "oggetto", "<p>corpo</p>",
+        from_addr="non-un-indirizzo")
+    assert ok is True
+    msg = _headers(fake_smtp.calls[0][2])
+    assert msg["From"] == "noreply@audiobook-maker.com"
+    assert msg["Sender"] is None
+
+
+def test_relay_refusing_third_party_from_is_retried_with_default(fake_smtp):
+    fake_smtp.refuse_from = "utente@example.com"
+    ok = email_service._send_email(
+        "support@audiobook-maker.com", "oggetto", "<p>corpo</p>",
+        reply_to="utente@example.com", from_addr="utente@example.com")
+    assert ok is True
+    assert len(fake_smtp.calls) == 2
+    retry = _headers(fake_smtp.calls[1][2])
+    assert retry["From"] == "noreply@audiobook-maker.com"
+    # la risposta torna comunque all'utente
+    assert retry["Reply-To"] == "utente@example.com"
+
+
+def test_from_name_keeps_our_address_and_shows_user(fake_smtp):
+    ok = email_service._send_email(
+        "support@audiobook-maker.com", "oggetto", "<p>corpo</p>",
+        reply_to="utente@example.com",
+        from_name="utente@example.com (via Audiobook Maker)")
+    assert ok is True
+    envelope_from, _to, raw = fake_smtp.calls[0]
+    assert envelope_from == "noreply@audiobook-maker.com"
+    msg = _headers(raw)
+    assert msg["From"] == ('"utente@example.com (via Audiobook Maker)" '
+                           "<noreply@audiobook-maker.com>")
+    # indirizzo allineato al nostro dominio: nessun Sender aggiuntivo
+    assert msg["Sender"] is None
+    assert msg["Reply-To"] == "utente@example.com"

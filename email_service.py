@@ -200,16 +200,28 @@ def _esc_html(value, max_len=None):
     return _html.escape(s, quote=True)
 
 
-def _send_email(to_addr, subject, html_body, reply_to=None):
+def _send_email(to_addr, subject, html_body, reply_to=None, from_addr=None,
+                from_name=None):
     """Send an HTML email via SMTP. Returns True on success.
 
-    ``reply_to``: indirizzo opzionale per l'header Reply-To. Usato dal form di
-    assistenza, dove il mittente SMTP resta ``SMTP_FROM`` (autenticato) ma la
-    risposta deve tornare all'utente che ha aperto la richiesta.
+    ``reply_to``: indirizzo opzionale per l'header Reply-To.
+    ``from_name``: nome visualizzato del mittente (``Nome <indirizzo>``). Non
+    tocca l'indirizzo, quindi SPF/DKIM/DMARC restano allineati al nostro
+    dominio: e' il modo sicuro per far vedere in mailbox chi ha scritto.
+    ``from_addr``: indirizzo opzionale per l'header From (RFC 5322). Il mittente
+    di BUSTA (SMTP MAIL FROM) resta sempre ``SMTP_FROM``, unico indirizzo
+    autenticato sul relay: cambia solo l'intestazione mostrata dal client di
+    posta, e viene aggiunto ``Sender: SMTP_FROM`` come richiede l'RFC quando i
+    due differiscono.
+    ATTENZIONE: con un From di dominio terzo il messaggio non e' piu' allineato
+    a SPF/DKIM del nostro dominio e i domini con DMARC ``p=quarantine/reject``
+    finiscono in spam o vengono rifiutati; preferire ``from_name``. Se il relay
+    lo rifiuta si ritenta una volta con ``SMTP_FROM``, cosi' l'email non va persa.
     """
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
+    from email.utils import formataddr
 
     if not _smtp_available():
         print(f"[email] SMTP not configured, cannot send to {to_addr}", flush=True)
@@ -225,53 +237,90 @@ def _send_email(to_addr, subject, html_body, reply_to=None):
         print(f"[email] Refused invalid recipient: {to_addr_clean!r}", flush=True)
         return False
 
-    msg = MIMEMultipart("alternative")
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_addr_clean
-    msg["Subject"] = subject_clean
-    if reply_to:
-        reply_clean = _sanitize_header(reply_to, max_len=320)
-        if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', reply_clean):
-            msg["Reply-To"] = reply_clean
+    # From personalizzato: stessa validazione stretta del destinatario, altrimenti
+    # si ricade sul mittente di default (mai fidarsi del valore che arriva dal client).
+    from_header = SMTP_FROM
+    if from_addr:
+        from_clean = _sanitize_header(from_addr, max_len=320)
+        if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', from_clean):
+            from_header = from_clean
         else:
-            print(f"[email] Ignored invalid Reply-To: {reply_clean!r}", flush=True)
-    # Disable TurboSMTP link/open tracking to avoid redirect issues
-    msg["X-TurboSMTP-Tracking"] = "0"
-    msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+            print(f"[email] Ignored invalid From: {from_clean!r}", flush=True)
+    # Il nome visualizzato puo' contenere testo dell'utente: via i CR/LF e poi
+    # quoting/encoding RFC a carico di formataddr.
+    from_name_clean = _sanitize_header(from_name, max_len=200) if from_name else ""
+
+    def _build(sender_addr):
+        msg = MIMEMultipart("alternative")
+        msg["From"] = formataddr((from_name_clean, sender_addr)) if from_name_clean else sender_addr
+        msg["To"] = to_addr_clean
+        msg["Subject"] = subject_clean
+        if sender_addr != SMTP_FROM:
+            # RFC 5322 §3.6.2: quando From non e' chi trasmette davvero.
+            msg["Sender"] = SMTP_FROM
+        if reply_to:
+            reply_clean = _sanitize_header(reply_to, max_len=320)
+            if _re_email.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', reply_clean):
+                msg["Reply-To"] = reply_clean
+            else:
+                print(f"[email] Ignored invalid Reply-To: {reply_clean!r}", flush=True)
+        # Disable TurboSMTP link/open tracking to avoid redirect issues
+        msg["X-TurboSMTP-Tracking"] = "0"
+        msg["X-SMTPAPI"] = '{"filters":{"clicktrack":{"settings":{"enable":0}},"opentrack":{"settings":{"enable":0}}}}'
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        return msg
+
+    def _deliver(raw):
+        """Apre la connessione, invia e chiude. Solleva l'eccezione al chiamante."""
+        # Non usiamo `with smtplib.SMTP(...) as server:` perché `__exit__` chiama
+        # QUIT e ne attende la risposta: alcuni relay (TurboSMTP osservato 2026-05)
+        # accettano il messaggio ma non rispondono al QUIT, lasciando il thread
+        # bloccato senza che il timeout del socket scatti in modo affidabile.
+        # Inviamo, poi chiudiamo il socket direttamente saltando QUIT.
+        server = None
+        try:
+            if SMTP_PORT == 465:
+                server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_FROM, to_addr_clean, raw)
+            else:
+                server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+                server.ehlo()
+                if SMTP_PORT != 25:
+                    server.starttls()
+                    server.ehlo()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_FROM, to_addr_clean, raw)
+        finally:
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    pass
 
     print(f"[email] Connecting to {SMTP_HOST}:{SMTP_PORT} for {to_addr_clean}...", flush=True)
     t0 = time.time()
-    # Non usiamo `with smtplib.SMTP(...) as server:` perché `__exit__` chiama
-    # QUIT e ne attende la risposta: alcuni relay (TurboSMTP osservato 2026-05)
-    # accettano il messaggio ma non rispondono al QUIT, lasciando il thread
-    # bloccato senza che il timeout del socket scatti in modo affidabile.
-    # Inviamo, poi chiudiamo il socket direttamente saltando QUIT.
-    server = None
     try:
-        if SMTP_PORT == 465:
-            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30)
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
-        else:
-            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
-            server.ehlo()
-            if SMTP_PORT != 25:
-                server.starttls()
-                server.ehlo()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, to_addr_clean, msg.as_string())
+        _deliver(_build(from_header).as_string())
         print(f"[email] Sent to {to_addr_clean} in {time.time()-t0:.1f}s: {subject_clean}", flush=True)
         return True
+    except (smtplib.SMTPSenderRefused, smtplib.SMTPDataError,
+            smtplib.SMTPRecipientsRefused) as e:
+        if from_header == SMTP_FROM:
+            print(f"[email] Failed to send to {to_addr_clean} after {time.time()-t0:.1f}s: {type(e).__name__}: {e}", flush=True)
+            return False
+        # Il relay ha rifiutato il From di terze parti: riprova col mittente di default.
+        print(f"[email] Relay refused From {from_header!r} ({type(e).__name__}: {e}); retry with {SMTP_FROM}", flush=True)
+        try:
+            _deliver(_build(SMTP_FROM).as_string())
+            print(f"[email] Sent to {to_addr_clean} in {time.time()-t0:.1f}s (fallback From): {subject_clean}", flush=True)
+            return True
+        except Exception as e2:
+            print(f"[email] Failed to send to {to_addr_clean} after {time.time()-t0:.1f}s: {type(e2).__name__}: {e2}", flush=True)
+            return False
     except Exception as e:
         print(f"[email] Failed to send to {to_addr_clean} after {time.time()-t0:.1f}s: {type(e).__name__}: {e}", flush=True)
         return False
-    finally:
-        if server is not None:
-            try:
-                server.close()
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -288,9 +337,14 @@ def send_support_request(user_email, plan, book_title, download_link, message,
                          ui_lang="", ip_hash=""):
     """Inoltra a ``SUPPORT_EMAIL`` una richiesta di assistenza dal sito.
 
-    Il mittente SMTP resta ``SMTP_FROM`` (l'unico indirizzo autenticato sul
-    relay): l'email dell'utente finisce in ``Reply-To``, cosi' rispondere dalla
-    casella di assistenza torna direttamente a chi ha scritto.
+    In mailbox il mittente mostrato e' l'email dell'utente (gia' obbligatoria e
+    validata dall'endpoint), messa nel NOME visualizzato: ``utente@x.it (via
+    Audiobook Maker) <noreply@audiobook-maker.com>``. L'indirizzo resta il
+    nostro, quindi SPF/DKIM/DMARC restano allineati: settembre 2026 queste
+    email finivano in spam perche' l'inoltro MX della casella di assistenza
+    rompe SPF, e un ``From`` di dominio terzo avrebbe peggiorato la
+    classificazione (o fatto rifiutare i mittenti con DMARC ``p=reject``).
+    ``Reply-To`` porta la risposta all'utente.
     Ogni valore proveniente dal client viene HTML-escapato: il corpo finisce in
     una mailbox reale e non deve poter iniettare markup.
     Ritorna True se l'email e' stata accettata dal relay.
@@ -330,7 +384,9 @@ def send_support_request(user_email, plan, book_title, download_link, message,
     )
     short_title = (book_title or "senza titolo")[:60]
     subject = f"[ABM Support] {plan or '-'} - {short_title}"
-    return _send_email(SUPPORT_EMAIL, subject, body, reply_to=user_email)
+    from_label = f"{_sanitize_header(user_email, 320)} (via Audiobook Maker)"
+    return _send_email(SUPPORT_EMAIL, subject, body,
+                       reply_to=user_email, from_name=from_label)
 
 
 # ---------------------------------------------------------------------------
