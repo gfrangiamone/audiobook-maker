@@ -176,6 +176,10 @@ NON_CONTENT_TITLES = {
     # Copertina
     "frontespizio", "title page", "cover", "copertina",
     "half title", "halftitle",
+    # Quarta di copertina / sinossi
+    "quarta di copertina", "risvolto di copertina", "risvolto",
+    "back cover", "quatrième de couverture", "quatrieme de couverture",
+    "klappentext", "contraportada", "plot summary",
     # Bibliografia
     "bibliografia", "bibliography", "bibliographie", "bibliografía",
     "riferimenti bibliografici", "references", "riferimenti",

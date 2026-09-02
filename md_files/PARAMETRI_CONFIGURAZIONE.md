@@ -467,6 +467,8 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 |-----------|--------|------|------|
 | `NON_CONTENT_FILENAMES_EXACT` | Set di 15+ nomi file esatti da escludere (toc, nav, cover, colophon...) | `epub_to_tts.py` | 112 |
 | `NON_CONTENT_FILENAMES_SUBSTR` | Set di 8 sottostringhe filename da escludere | `epub_to_tts.py` | 120 |
+| `NON_CONTENT_TITLE_PHRASES` | Lista canonica di titoli di apparato critico da escludere (indice, colophon, frontespizio, **quarta di copertina**, dedica, bibliografia, note, glossario, appendice, informazioni autore, ringraziamenti, errata). Match per **parola intera**; condivisa con `_is_title_content` e riusata da `pdf_to_tts.NON_CONTENT_TITLES` | `epub_to_tts.py` | 131 |
+| `NON_CONTENT_TITLE_EXACT` | Set di 6 titoli ambigui (`trama`, `sinossi`, `synopsis`, `sinopsis`, `resumen`, `blurb`) validi solo come **titolo intero**: intitolano la quarta di copertina ma sono parole comuni, e «La trama del destino» è un capitolo vero | `epub_to_tts.py` | 216 |
 
 ### 4.4 Pulizia testo
 
@@ -500,7 +502,7 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `CAPTION_PATTERNS` | Lista di 6 regex multilingua per didascalie figure/tabelle | `pdf_to_tts.py` | 117 |
-| `NON_CONTENT_TITLES` | Set di 80+ titoli di sezioni non-contenuto da escludere (multilingua) | `pdf_to_tts.py` | 141 |
+| `NON_CONTENT_TITLES` | Set di 90+ titoli di sezioni non-contenuto da escludere (multilingua, quarta di copertina inclusa) | `pdf_to_tts.py` | 167 |
 | `FOOTNOTE_SUPERSCRIPT_RE` | Regex compilata per footnote nel testo | `pdf_to_tts.py` | 180 |
 | `PAGE_NUMBER_RE` | Regex compilata: `r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$"` | `pdf_to_tts.py` | 185 |
 | `MIN_REPEAT_FOR_HEADER` | `3` (minimo ripetizioni per header/footer statistico) | `pdf_to_tts.py` | 188 |
