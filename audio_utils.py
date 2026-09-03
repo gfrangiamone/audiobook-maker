@@ -442,8 +442,14 @@ def _generate_silence_mp3(output_path, duration_sec=3):
     return os.path.exists(output_path)
 
 
-def _concatenate_mp3(parts, output):
-    """Concatena una lista di file MP3 in un singolo file output."""
+def _concatenate_mp3(parts, output, extra_tags=None):
+    """Concatena una lista di file MP3 in un singolo file output.
+
+    `extra_tags` (dict) finisce nei tag ID3v2 del risultato: li scrive lo stesso
+    comando di concat, che con `-c copy` non ricodifica nulla. Il fallback
+    binario (ffmpeg assente) resta senza tag: senza ffmpeg non c'e' modo di
+    scrivere ID3, e la concat grezza e' gia' un ripiego.
+    """
     try:
         import subprocess
         list_file = output + ".filelist.txt"
@@ -452,7 +458,7 @@ def _concatenate_mp3(parts, output):
                 f.write(f"file '{p}'\n")
         result = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", list_file, "-c", "copy", output],
+             "-i", list_file, "-c", "copy"] + _extra_tag_args(extra_tags) + [output],
             capture_output=True, **_TEXT_UTF8_LENIENT, **_SUBPROCESS_FLAGS
         )
         os.remove(list_file)
@@ -683,6 +689,45 @@ def _escape_ffmeta(s):
             .replace(';', '\\;').replace('#', '\\#').replace('\n', ' '))
 
 
+# ---------------------------------------------------------------------------
+# Tag di generazione (parametri che hanno prodotto l'audio)
+# ---------------------------------------------------------------------------
+# Scritti su ogni file consegnato all'utente (MP3 unico, MP3 di capitolo, M4B)
+# come tag custom del container: TXXX in ID3v2 per l'MP3, atomi udta per l'M4B.
+# Il muxer MP4 scarta silenziosamente le chiavi non standard se non gli si passa
+# `-movflags +use_metadata_tags`, quindi per l'M4B il flag e' obbligatorio.
+_EXTRA_TAG_MAX_CHARS = 300
+
+
+def _sanitize_extra_tags(extra_tags):
+    """Normalizza i tag custom in una lista [(chiave, valore)] per ffmpeg.
+
+    Chiavi ridotte a [a-z0-9_] minuscolo, valori su riga singola e troncati a
+    _EXTRA_TAG_MAX_CHARS: un a-capo o un '=' in un valore romperebbe il tag, e
+    le istruzioni di stile arrivano dall'utente.
+    """
+    out = []
+    for k, v in (extra_tags or {}).items():
+        if v is None:
+            continue
+        key = "".join(c for c in str(k) if c.isalnum() or c == "_").lower()
+        if not key:
+            continue
+        val = " ".join(str(v).split())[:_EXTRA_TAG_MAX_CHARS].strip()
+        if not val:
+            continue
+        out.append((key, val))
+    return out
+
+
+def _extra_tag_args(extra_tags):
+    """Opzioni CLI `-metadata k=v` per i tag custom (lista vuota se non ce ne sono)."""
+    args = []
+    for k, v in _sanitize_extra_tags(extra_tags):
+        args += ["-metadata", f"{k}={v}"]
+    return args
+
+
 def _build_ffmetadata_text(chapters=None, title=None, author=None,
                            year=None, genre=None, description=None):
     """Costruisce il contenuto di un file ;FFMETADATA1 (tag globali + capitoli).
@@ -729,7 +774,7 @@ def _build_ffmetadata_text(chapters=None, title=None, author=None,
 
 def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=None,
                         cover_path=None, date=None, language=None,
-                        description=None, genre="Audiobook"):
+                        description=None, genre="Audiobook", extra_tags=None):
     """Converte un file MP3 in M4B (AAC) con metadati capitoli e cover usando ffmpeg.
 
     Scrive nel file M4B i seguenti tag (tutti quelli disponibili):
@@ -747,6 +792,10 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
       [stream-level, -metadata:s:a:0 CLI]
       - language        ← codice ISO 639-2/B 3-lettere (es. "ita", "eng")
                           Per MP4/M4B il tag language è per-stream, non globale.
+      [format-level, -metadata CLI + -movflags +use_metadata_tags]
+      - extra_tags      ← parametri di generazione (motore, voce, accento,
+                          velocità, stile): chiavi non standard, che il muxer
+                          MP4 scarterebbe senza use_metadata_tags.
 
     Nota: il tag `encoder` NON viene impostato perché ffmpeg lo sovrascrive sempre
     con il proprio valore (es. "Lavf62.3.100").
@@ -841,7 +890,13 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
             # Codec AAC: bitrate adattivo rilevato dall'MP3 sorgente (default 48k = edge-tts)
             if c_idx == -1:
                 c += ["-vn"]
-            c += ["-c:a", "aac", "-b:a", aac_bitrate, "-f", "ipod", m4b_path]
+            c += ["-c:a", "aac", "-b:a", aac_bitrate]
+            # Tag custom: dopo -map_metadata per non essere sovrascritti, e con
+            # use_metadata_tags perche' il muxer MP4 ignora le chiavi non standard.
+            _xt = _extra_tag_args(extra_tags)
+            if _xt:
+                c += ["-movflags", "+use_metadata_tags"] + _xt
+            c += ["-f", "ipod", m4b_path]
             return c
 
         # Nessun tetto a tempo fisso sull'encode: si sorveglia lo STALLO dell'output.
@@ -1706,7 +1761,7 @@ def _discard_failed_output(output_path, tag):
 
 
 def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
-               sample_width=2, bitrate="64k", gap_ms=0):
+               sample_width=2, bitrate="64k", gap_ms=0, extra_tags=None):
     """Concatena raw PCM e codifica in MP3 con singola passata ffmpeg.
 
     Args:
@@ -1715,6 +1770,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
         sample_rate, channels, sample_width: formato sorgente.
         bitrate: bitrate MP3 (es. '64k').
         gap_ms: silenzio inter-chunk in ms (vedi pcm_concat).
+        extra_tags: dict di tag custom (ID3v2 TXXX) coi parametri di generazione.
 
     Returns:
         True se ok, False se nessun input, se ffmpeg fallisce o se l'MP3
@@ -1743,6 +1799,7 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
             "-i", tmp_pcm,
             "-c:a", "libmp3lame",
             "-b:a", bitrate,
+        ] + _extra_tag_args(extra_tags) + [
             output_path,
         ]
         ok, stderr_tail, reason = _run_ffmpeg_encode(
@@ -1769,7 +1826,8 @@ def pcm_to_mp3(pcm_paths, output_path, sample_rate=24000, channels=1,
 def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
                    sample_width=2, bitrate="96k", chapters=None, title=None,
                    author=None, cover_path=None, date=None, language=None,
-                   description=None, genre="Audiobook", gap_ms=0):
+                   description=None, genre="Audiobook", gap_ms=0,
+                   extra_tags=None):
     """Codifica PCM concatenato direttamente in M4B (AAC) con capitoli/cover/metadati.
 
     Vantaggio vs pcm_to_mp3 + mp3_to_m4b: una sola encode AAC (no doppia lossy).
@@ -1780,6 +1838,8 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         bitrate: AAC bitrate (default '96k' mono).
         chapters: [{'title', 'start' ms, 'end' ms}, ...] opzionale.
         title/author/cover_path/date/language/description/genre: metadati M4B.
+        extra_tags: dict di tag custom (parametri di generazione) scritti negli
+            atomi udta; richiedono `-movflags +use_metadata_tags`.
 
     Returns:
         True se ok, False altrimenti.
@@ -1851,7 +1911,13 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
         cmd.extend(["-c:a", "aac", "-b:a", bitrate])
         if lang_iso:
             cmd.extend(["-metadata:s:a:0", f"language={lang_iso}"])
-        cmd.extend(["-metadata", "media_type=2", "-f", "ipod", output_path])
+        cmd.extend(["-metadata", "media_type=2"])
+        # Tag custom: DOPO -map_metadata (che altrimenti li sovrascriverebbe) e
+        # con use_metadata_tags, senza il quale il muxer MP4 li scarta in silenzio.
+        _xt = _extra_tag_args(extra_tags)
+        if _xt:
+            cmd.extend(["-movflags", "+use_metadata_tags"] + _xt)
+        cmd.extend(["-f", "ipod", output_path])
 
         # ffmpeg stampa per primi banner di versione + 'configuration: ...' che
         # occupano facilmente 1-2 KB. La riga utile (es. "Conversion failed!",

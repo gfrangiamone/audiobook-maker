@@ -3298,6 +3298,121 @@ def _audit_language(job, info):
     return (fallback.split("-")[0].lower() if fallback else "")
 
 
+# ---------------------------------------------------------------------------
+# Tag di generazione incisi nei file audio consegnati
+# ---------------------------------------------------------------------------
+# Etichette pubbliche dei motori non premium: la voce standard non ha un
+# "modello" da esporre all'utente, ha il motore che l'ha sintetizzata.
+_ENGINE_PUBLIC_LABEL = {
+    "edge": "Microsoft Edge Neural TTS",
+    "google": "Google Cloud TTS Chirp3-HD",
+}
+
+
+def _speed_label(rate):
+    """'+10%' -> '1.10x (+10%)'. Ritorna '' se il rate non e' interpretabile."""
+    raw = (str(rate) or "").strip()
+    if not raw:
+        return ""
+    try:
+        pct = float(raw.replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        return raw
+    return "%.2fx (%s)" % (1.0 + pct / 100.0, raw if raw.startswith(("+", "-")) else "+" + raw)
+
+
+def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=None):
+    """Parametri che hanno prodotto l'audio, come tag custom del file.
+
+    Vengono incisi in OGNI file consegnato all'utente (MP3 unico, MP3 di
+    capitolo dello ZIP, M4B, MP3 parziale del rimborso): chi riceve il file
+    deve poter risalire a motore, voce, lingua, accento, velocita' e stile
+    senza dover ritrovare il job. Best-effort: qualunque errore qui non deve
+    impedire la consegna, quindi il chiamante riceve al peggio i soli tag base.
+    """
+    tags = {}
+    try:
+        tags["abm_app"] = "Audiobook Maker"
+        try:
+            from version import __version__ as _v
+            tags["abm_app"] = "Audiobook Maker v%s" % _v
+        except Exception:
+            pass
+        # encoded_by e' standard (TENC in ID3v2): ffmpeg lo lascia intatto,
+        # a differenza di `encoder` che riscrive sempre col proprio valore.
+        tags["encoded_by"] = tags["abm_app"]
+
+        engine = _engine_for_voice(voice)
+        voice_id = voice or ""
+        voice_name = voice_id
+        model_label = _ENGINE_PUBLIC_LABEL.get(engine, "")
+        language = ""
+        accent = ""
+
+        if engine == "gemini" and gemini_tts is not None:
+            try:
+                # parse_voice_id -> (model_key, model_full_id, voice_name)
+                _mk, _, _vn = gemini_tts.parse_voice_id(voice_id)
+                voice_name = _vn or voice_id
+                model_label = (gemini_tts.GEMINI_MODELS.get(_mk) or {}).get("label") or _mk
+            except Exception:
+                pass
+            language = _audit_language(job, info)
+            # L'accento inciso e' quello EFFETTIVAMENTE applicato: senza scelta
+            # esplicita la direttiva usa il default della lingua, non "nessuno".
+            try:
+                opts = gemini_tts.accent_options(language)
+                if opts:
+                    codes = dict(opts)
+                    chosen = (job.get("gemini_accent") or "").strip().lower()
+                    if chosen not in codes:
+                        chosen = opts[0][0]
+                    accent = "%s (%s)" % (chosen, codes[chosen])
+            except Exception:
+                pass
+        elif engine == "speechify":
+            try:
+                _mk, _vn, _loc = speechify_tts.parse_voice_id(voice_id)
+                _disp = getattr(speechify_tts, "_display_name", None)
+                voice_name = (_disp(_vn) if callable(_disp) else _vn) or voice_id
+                model_label = getattr(speechify_tts, "MODEL_LABEL", "") or _mk
+                # Per Simba l'accento non e' un parametro a se': e' la locale
+                # della voce scelta (il dropdown accento filtra le voci).
+                language = _loc or ""
+                accent = _loc or ""
+            except Exception:
+                pass
+        else:
+            # Edge/Google: la locale e' nel nome stesso della voce (it-IT-DiegoNeural).
+            parts = voice_id.replace("gcloud:", "").split("-")
+            if len(parts) >= 2:
+                language = "-".join(parts[:2])
+
+        if not language:
+            language = _audit_language(job, info) or (getattr(info, "language", "") or "")
+
+        tags["abm_model"] = model_label
+        tags["abm_voice"] = voice_name
+        tags["abm_voice_id"] = voice_id
+        tags["abm_language"] = language
+        if accent:
+            tags["abm_accent"] = accent
+        _speed = _speed_label(rate)
+        if _speed:
+            tags["abm_speed"] = _speed
+        _style = (style_instruction or job.get("gemini_style_instruction") or "").strip()
+        if _style:
+            tags["abm_style"] = _style
+        _emotion = (emotion or job.get("speechify_emotion") or "").strip()
+        if _emotion:
+            tags["abm_emotion"] = _emotion
+        if job.get("ai_optimized"):
+            tags["abm_text_optimized"] = "yes"
+    except Exception as _e:
+        print("[_generation_tags] non-fatal: %s" % _e, flush=True)
+    return tags
+
+
 def _check_margin_anomalies(job_id, job, rec, est, provider, threshold_eur):
     """Rilevatore A POSTERIORI sul margine di un job PREMIUM. Best-effort,
     non-fatale, senza alcun effetto sul job (che qui e' gia' terminato).
@@ -4683,6 +4798,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     # primo chunk sintetizzato; default 48000. Per Gemini resta 24000.
     _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
 
+    # Parametri di generazione incisi nei metadati di OGNI file consegnato
+    # (MP3 unico, MP3 di capitolo dello ZIP, M4B, MP3 parziale del rimborso).
+    gen_tags = _generation_tags(job, info, voice, rate,
+                                style_instruction=gemini_style_instruction,
+                                emotion=speechify_emotion)
+
     # Direttiva di accento (solo Gemini): ancora TUTTI i chunk allo stesso accento.
     # Senza, ogni chiamata stateless puo` scegliere una variante regionale diversa
     # (es. inglese US su un chunk, UK sul successivo). La lingua di riferimento e'
@@ -5293,7 +5414,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     # viene fermato dalla guardia a fondo funzione invece di
                     # consegnare mezzo audiolibro.
                     _mp3_ok = pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter,
-                                         sample_rate=_pcm_sr)
+                                         sample_rate=_pcm_sr, extra_tags=gen_tags)
                     print(f"[{job_id}] PCM->MP3 merged: ok={_mp3_ok}, {final_mp3}, "
                           f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}, "
                           f"gap_ms={gap_ms_inter}")
@@ -5355,6 +5476,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                 description=getattr(info, "description", None),
                                 gap_ms=gap_ms_inter,
                                 sample_rate=_pcm_sr,
+                                extra_tags=gen_tags,
                             ):
                                 job["output_m4b"] = final_m4b
                                 job["m4b_failed"] = False
@@ -5380,14 +5502,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         # troncato spacciandolo per completo e' esattamente il difetto
                         # che ha colpito il job 9dmJT_... (2026-08-16).
                         _mp3_ok = pcm_to_mp3(all_parts, final_mp3, gap_ms=gap_ms_inter,
-                                             sample_rate=_pcm_sr)
+                                             sample_rate=_pcm_sr, extra_tags=gen_tags)
                         print(f"[{job_id}] M4B failed, fallback MP3: ok={_mp3_ok}, "
                               f"{final_mp3}, "
                               f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
             else:
                 # Edge/Google: percorso storico (chunk MP3 -> concat MP3 -> eventuale M4B)
                 final_mp3 = str(output_dir / f"{safe_name}.mp3")
-                _concatenate_mp3(all_parts, final_mp3)
+                _concatenate_mp3(all_parts, final_mp3, extra_tags=gen_tags)
                 print(f"[{job_id}] MP3 merged: {final_mp3}, "
                       f"size={os.path.getsize(final_mp3) if os.path.exists(final_mp3) else 0}")
 
@@ -5447,7 +5569,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                            cover_path=cover_path,
                                                            date=getattr(info, "date", None),
                                                            language=getattr(info, "language", None),
-                                                           description=getattr(info, "description", None)):
+                                                           description=getattr(info, "description", None),
+                                                           extra_tags=gen_tags):
                                 job["output_m4b"] = final_m4b
                                 job["m4b_failed"] = False
                                 break  # Success!
@@ -5561,13 +5684,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                         if use_pcm:
                             if not pcm_to_mp3(current_chapter_parts, mp3_path,
-                                              gap_ms=gap_ms_inter, sample_rate=_pcm_sr):
+                                              gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
+                                              extra_tags=gen_tags):
                                 # Capitolo non codificabile (o troncato): lo ZIP
                                 # risulterebbe incompleto senza che nulla lo segnali.
                                 raise _AssemblyError(
                                     f"chapter {out_num} ({ch.title!r}) encode failed")
                         else:
-                            _concatenate_mp3(current_chapter_parts, mp3_path)
+                            _concatenate_mp3(current_chapter_parts, mp3_path, extra_tags=gen_tags)
                         mp3_files.append(mp3_path)
 
                         duration = _get_audio_duration_ms(mp3_path)
@@ -5627,11 +5751,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 mp3_path = str(output_dir / f"{out_num:03d}_{safe_title}.mp3")
                 if use_pcm:
                     if not pcm_to_mp3(current_chapter_parts, mp3_path,
-                                      gap_ms=gap_ms_inter, sample_rate=_pcm_sr):
+                                      gap_ms=gap_ms_inter, sample_rate=_pcm_sr,
+                                      extra_tags=gen_tags):
                         raise _AssemblyError(
                             f"chapter {out_num} ({ch.title!r}) encode failed")
                 else:
-                    _concatenate_mp3(current_chapter_parts, mp3_path)
+                    _concatenate_mp3(current_chapter_parts, mp3_path, extra_tags=gen_tags)
                 mp3_files.append(mp3_path)
 
                 duration = _get_audio_duration_ms(mp3_path)
@@ -5765,6 +5890,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                                            on_phase=_m4b_phase_cb,
                                                            status_out=_m4b_status,
                                                            chapters=m4b_chapters or None,
+                                                           extra_tags=gen_tags,
                                                            title=info.title, author=info.author or None,
                                                            cover_path=cover_path):
                                 job["output_m4b"] = final_m4b
@@ -6076,7 +6202,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                         partial_mp3 = output_dir / f"{job_id}_partial.mp3"
                         output_dir.mkdir(parents=True, exist_ok=True)
                         gap = gemini_tts.inter_chunk_gap_ms() if gemini_tts is not None else 100
-                        ok = pcm_to_mp3(pcm_files, str(partial_mp3), gap_ms=gap)
+                        ok = pcm_to_mp3(pcm_files, str(partial_mp3), gap_ms=gap,
+                                        extra_tags=_generation_tags(
+                                            job, info, voice, job.get("rate", "+0%")))
                         if ok and partial_mp3.exists() and partial_mp3.stat().st_size > 0:
                             partial_audio_delivered = True
                             token = str(uuid.uuid4())
