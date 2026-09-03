@@ -1,10 +1,28 @@
 """Giudice LLM: prompt da sole feature, parsing del verdetto, fail-open, worker."""
 import json
+import queue
 
 import pytest
 
 import abuse_watch as aw
 import generation_engine as ge
+
+
+@pytest.fixture(autouse=True)
+def _isolated_queue():
+    """Un worker reale puo' essere vivo sul modulo globale (avviato da
+    _ensure_background_threads all'import di audiobook_app in altri test file
+    della stessa sessione): sgancia ogni gruppo residuo e svuota la coda
+    condivisa prima di ciascun test, cosi' nessun consumatore in background
+    puo' rubare gli item scriptati per _FakeClient (issue #1)."""
+    with aw._lock:
+        aw._queued.clear()
+    while True:
+        try:
+            aw._queue.get_nowait()
+        except queue.Empty:
+            break
+    yield
 
 
 class _Msg:
@@ -141,16 +159,20 @@ def test_judge_skips_when_llm_unavailable(env, monkeypatch):
 
 
 def test_worker_process_calls_back_and_dedups_queue(env, monkeypatch):
+    """Non passa dalla coda condivisa del modulo (un worker reale altrove nella
+    sessione la consumerebbe concorrentemente, issue #1): simula direttamente
+    lo stato 'accodato' e verifica il dedup attraverso `_queued`."""
     g = _suspicious_group()
     fake = _FakeClient(json.dumps({"verdict": "abuse", "confidence": 0.95, "scope": "group",
                                    "cids": [], "reason": "r"}))
     monkeypatch.setattr(ge, "_llm_client", fake)
-    assert aw.enqueue(g, "a") is True
-    assert aw.enqueue(g, "b") is False                   # gia' in coda
+    with aw._lock:
+        aw._queued.add(g)
     seen = []
     v = aw._process(g, "a", lambda grp, verdict: seen.append((grp, verdict["verdict"])))
     assert v["verdict"] == "abuse" and seen == [(g, "abuse")]
-    assert aw.enqueue(g, "a") is True                    # sganciato dopo _process
+    with aw._lock:
+        assert g not in aw._queued             # sganciato a fine giudizio (issue #6, finally)
     assert aw._process(g, "a", lambda *_: seen.append("again")) is None   # verdetto valido: no rigiudizio
     assert seen == [(g, "abuse")] and len(fake.calls) == 1
 
