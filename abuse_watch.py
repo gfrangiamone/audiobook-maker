@@ -535,6 +535,11 @@ def _parse_verdict(text):
         return json.loads(text)
     except Exception:
         pass
+    # Strip markdown fence if present (```json ... ``` or ``` ... ```)
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if len(lines) > 2 and lines[-1].strip() == "```":
+            text = "\n".join(lines[1:-1]).strip()
     a, b = text.find("{"), text.rfind("}")
     if a != -1 and b > a:
         try:
@@ -564,39 +569,46 @@ def _call_llm(user, timeout):
 def judge(group, timeout=20.0, attempts=2):
     """Verdetto del giudice, gia' persistito con set_verdict. None = fail-open
     (LLM assente, timeout, risposta malformata): registrato come 'unjudged'."""
-    import generation_engine as ge
     try:
-        available = bool(ge._llm_available())
-    except Exception:
-        available = False
-    if not available:
-        record_judgement_failed(group, "llm_unavailable")
-        return None
-    built = build_prompt(group)
-    if built is None:
-        return None
-    user, alias = built
-    last_err = "malformed"
-    for i in range(max(1, attempts)):
+        import generation_engine as ge
         try:
-            raw = _parse_verdict(_call_llm(user, timeout))
-            if isinstance(raw, dict) and raw.get("verdict") in VERDICTS:
-                cids = [alias[c] for c in (raw.get("cids") or [])
-                        if isinstance(c, str) and c in alias]
-                scope = "group" if raw.get("scope") == "group" else "cids"
-                kind = raw["verdict"]
-                if kind == "abuse" and scope == "cids" and not cids:
-                    kind = "inconclusive"
-                return set_verdict(group, {"verdict": kind, "confidence": raw.get("confidence"),
-                                           "scope": scope, "cids": cids,
-                                           "reason": raw.get("reason")})
-            last_err = "malformed"
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {str(e)[:120]}"
-        if i + 1 < attempts:
-            time.sleep(1.0)
-    record_judgement_failed(group, last_err)
-    return None
+            available = bool(ge._llm_available())
+        except Exception:
+            available = False
+        if not available:
+            record_judgement_failed(group, "llm_unavailable")
+            return None
+        built = build_prompt(group)
+        if built is None:
+            return None
+        user, alias = built
+        last_err = "malformed"
+        for i in range(max(1, attempts)):
+            try:
+                raw = _parse_verdict(_call_llm(user, timeout))
+                if isinstance(raw, dict) and raw.get("verdict") in VERDICTS:
+                    cids = [alias[c] for c in (raw.get("cids") or [])
+                            if isinstance(c, str) and c in alias]
+                    scope = "group" if raw.get("scope") == "group" else "cids"
+                    kind = raw["verdict"]
+                    if kind == "abuse" and scope == "cids" and not cids:
+                        kind = "inconclusive"
+                    return set_verdict(group, {"verdict": kind, "confidence": raw.get("confidence"),
+                                               "scope": scope, "cids": cids,
+                                               "reason": raw.get("reason")})
+                last_err = "malformed"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:120]}"
+            if i + 1 < attempts:
+                time.sleep(1.0)
+        record_judgement_failed(group, last_err)
+        return None
+    except Exception:
+        try:
+            record_judgement_failed(group, "judge_error")
+        except Exception:
+            pass
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -656,8 +668,12 @@ def _worker(on_verdict):
 def start_worker(on_verdict):
     """Avvia (una volta) il thread del giudice. `on_verdict(group, verdict)`."""
     global _worker_started
-    if _worker_started:
-        return
-    _worker_started = True
-    threading.Thread(target=_worker, args=(on_verdict,), daemon=True,
-                     name="abuse-judge").start()
+    try:
+        with _lock:
+            if _worker_started:
+                return
+            _worker_started = True
+            threading.Thread(target=_worker, args=(on_verdict,), daemon=True,
+                             name="abuse-judge").start()
+    except Exception:
+        pass

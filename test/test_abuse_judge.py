@@ -166,3 +166,17 @@ def test_worker_process_survives_callback_error(env, monkeypatch):
 
     v = aw._process(g, "a", _boom)
     assert v["verdict"] == "clean" and aw.verdict_for(g)["verdict"] == "clean"
+
+
+def test_judge_survives_build_prompt_error(env, monkeypatch):
+    g = _suspicious_group()
+    monkeypatch.setattr(aw, "build_prompt", lambda *_: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert aw.judge(g) is None
+    assert aw.dossier(g) is not None
+
+
+def test_parse_verdict_accepts_markdown_fence(env):
+    text = '```json\n{"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["cid_1"], "reason": "test"}\n```'
+    v = aw._parse_verdict(text)
+    assert v["verdict"] == "abuse" and v["confidence"] == 0.95
+    assert v["scope"] == "cids" and v["cids"] == ["cid_1"]
