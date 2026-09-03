@@ -1070,6 +1070,7 @@ standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
 | `ABM_ABUSE_GATE_DAILY` | Soglia `QUOTA_GATE`/24h del segnale S3. Floor 1. | `5` | `abuse_watch._gate_daily` |
 | `ABM_ABUSE_CHARS_DAILY` | Soglia caratteri/24h del segnale S4 (quota mensile / 4). Floor 1. | `2500000` | `abuse_watch._chars_daily` |
 | `ABM_ABUSE_VERDICT_TTL_DAYS` | Validità del verdetto persistito. Con kill spenta è forzata a 1 giorno. Floor 1. | `14` | `abuse_watch.verdict_ttl_sec` |
+| `ABM_ABUSE_MAX_CIDS_PER_GROUP` | Cap dei cid tracciati per gruppo nel dossier: oltre soglia, evict dei meno attivi di recente (per `last_ts`), mai del cid corrente. Floor 2. | `25` | `abuse_watch._max_cids_per_group` |
 
 ---
 
