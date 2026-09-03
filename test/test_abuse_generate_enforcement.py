@@ -136,3 +136,103 @@ def test_analyzed_status_does_not_refund_quota(env):
            "cancelled": True, "abuse_terminated": True}
     generation_engine._set_job_status(job, "analyzed")
     assert ftq.month_table().get(CID, {}).get("chars") == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/generate: 403 pre-claim, dossier, marcatori, progress
+# ---------------------------------------------------------------------------
+
+def _post(client, job_id, **extra):
+    payload = {"job_id": job_id, "voice": VOICE, "rate": "+0%", "single_file": True,
+               "output_format": "mp3"}
+    payload.update(extra)
+    return client.post("/api/generate", json=payload)
+
+
+def test_403_only_for_cid_in_scope(env, client):
+    g = _abuse_verdict([CID])
+    job = _mk_job("abz-1")
+    r = _post(client, "abz-1")
+    assert r.status_code == 403 and r.get_json()["error_code"] == "job_terminated"
+    assert "quota" not in r.get_json()["error"].lower()
+    assert job["status"] == "analyzed" and env["run"] == []
+    assert "QUOTA_ABUSE_BLOCK" in _ops(env)
+    assert aw.digest_data()[0]["blocks"] == 1
+    # altro cid dello stesso /24, fuori scope: passa
+    _mk_job("abz-2", client_id=OTHER)
+    client.set_cookie("abm_cid", OTHER)
+    r = _post(client, "abz-2")
+    assert r.status_code == 200 and [c[0] for c in env["run"]] == ["abz-2"]
+    assert audiobook_app.jobs["abz-2"]["abuse_group"] == g
+
+
+def test_paid_or_premium_job_never_blocked(env, client):
+    _abuse_verdict([CID])
+    job = _mk_job("abz-3")
+    job["payment_amount_eur"] = 1.0
+    r = _post(client, "abz-3")
+    assert r.status_code == 200 and "QUOTA_ABUSE_BLOCK" not in _ops(env)
+
+
+def test_kill_disabled_means_no_403(env, client, monkeypatch):
+    _abuse_verdict([CID])
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
+    _mk_job("abz-4")
+    assert _post(client, "abz-4").status_code == 200
+
+
+def test_generate_records_dossier_and_resets_markers(env, client):
+    job = _mk_job("abz-5")
+    job["abuse_terminated"] = True
+    job["abuse_kept_until"] = time.time() + 100
+    r = _post(client, "abz-5")
+    assert r.status_code == 200
+    assert "abuse_terminated" not in job and "abuse_kept_until" not in job
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["generate"] == 1 and d["cids"][CID]["chars"] == 100
+    assert d["all"]["voices"] == {VOICE: 1} and d["all"]["langs"] == {"en": 1}
+    assert len(d["all"]["files"]) == 1
+
+
+def test_quota_block_and_gate_feed_the_dossier(env, client):
+    _mk_job("abz-6", n_chars=1500)
+    r = _post(client, "abz-6")
+    assert r.status_code == 402
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["quota_block"] == 1 and aw.signals_for(aw.group_key(IP, CID))["S1"]
+    job = audiobook_app.jobs["abz-6"]
+    job["notify_email"] = "u@example.com"
+    job["email_registered"] = True
+    r = _post(client, "abz-6", quota_ack=True)
+    assert r.status_code == 200
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["quota_gate"] == 1 and d["cids"][CID]["generate"] == 1
+
+
+def test_register_email_feeds_the_dossier(env, client):
+    _mk_job("abz-7")
+    r = client.post("/api/register_email", json={"job_id": "abz-7", "email": "Who@Example.com"})
+    assert r.status_code == 200
+    d = aw.dossier(aw.group_key(IP, CID))
+    assert d["cids"][CID]["email"] == 1 and len(d["all"]["emails"]) == 1
+    raw = (env["dir"] / "_abuse_dossiers.json").read_text(encoding="utf-8")
+    assert "example.com" not in raw.lower()
+
+
+def test_second_signal_enqueues_judgement(env, client, monkeypatch):
+    queued = []
+    monkeypatch.setattr(aw, "enqueue", lambda g, c="": queued.append((g, c)) or True)
+    g = aw.group_key(IP, CID)
+    aw.record_event(g, OTHER, "quota_block", {})           # S1 (+ S2 col cid del test)
+    _mk_job("abz-8")
+    assert _post(client, "abz-8").status_code == 200
+    assert queued == [(g, CID)]
+
+
+def test_progress_reports_job_terminated(env, client):
+    job = _mk_job("abz-9")
+    job["cancelled"] = True
+    job["abuse_terminated"] = True
+    r = client.get("/api/progress/abz-9")
+    body = r.get_data(as_text=True)
+    assert '"status": "cancelled"' in body and '"error_code": "job_terminated"' in body

@@ -125,6 +125,7 @@ import push_service
 import metrics_store
 import free_quota
 import free_tts_quota
+import abuse_watch
 import output_reuse
 import privacy_content
 import support_content
@@ -4027,6 +4028,29 @@ def _power_users_data():
                                   month_ym=now.strftime("%Y-%m"))
     return {"rows": rows, "min_jobs": POWER_USER_JOBS_PER_DAY,
             "quota_limit_chars": free_tts_quota.limit_chars(), "window_hours": 24}
+
+
+# ---------------------------------------------------------------------------
+# Moderazione anti-abuso della quota voci standard (abuse_watch)
+# ---------------------------------------------------------------------------
+
+def _abuse_group_of(job):
+    return abuse_watch.group_key(job.get("client_ip", ""), job.get("client_id", ""))
+
+
+def _abuse_note(job_id, job, kind, **data):
+    """Aggiorna il dossier anti-abuso e, al secondo segnale, accoda il giudizio.
+    Best-effort: mai bloccante per il chiamante."""
+    try:
+        cid = job.get("client_id", "")
+        group = _abuse_group_of(job)
+        data.setdefault("filename", job.get("original_filename", ""))
+        data.setdefault("lang", getattr(job.get("info"), "language", "") or "")
+        abuse_watch.record_event(group, cid, kind, data)
+        if abuse_watch.needs_judgement(group, cid):
+            abuse_watch.enqueue(group, cid)
+    except Exception as e:
+        print(f"[{job_id}] abuse_watch {kind} failed (non-fatal): {e}", flush=True)
 
 
 # Register funnel + power user providers with email_service (injection — avoids circular import)
@@ -11152,6 +11176,26 @@ def api_generate():
     # ancora il job senza voce e classificherebbe free una richiesta Gemini.
     _premium_req = (_is_gemini_voice(voice) or _is_speechify_voice(voice)
                     or generation_engine.is_premium_job(job))
+    # Moderazione anti-abuso: cid nello scope di un verdetto `abuse` valido
+    # (abuse_watch). Mai su job premium/pagati. Il messaggio non spiega il
+    # perche': spiegare le feature insegnerebbe al bot come aggirarle.
+    _abuse_group = _abuse_group_of(job)
+    if not _premium_req:
+        try:
+            _abuse_blocked = abuse_watch.is_blocked(_abuse_group, client_id)
+        except Exception:
+            _abuse_blocked = False
+        if _abuse_blocked:
+            try:
+                abuse_watch.record_block(_abuse_group, client_id)
+            except Exception:
+                pass
+            _log_activity(job_id, job.get("original_filename", ""), "QUOTA_ABUSE_BLOCK",
+                          client_id, client_ip, voice,
+                          browser_lang=job.get("browser_lang", ""))
+            print(f"[{job_id}] abuse_watch: job rifiutato (gruppo {_abuse_group})", flush=True)
+            return jsonify({"error": "Processing interrupted.",
+                            "error_code": "job_terminated"}), 403
     with _jobs_lock:
         if job["status"] not in ("analyzed", "optimized"):
             _refund_payment_on_orphan(job_id, job, "status_conflict")
@@ -11200,6 +11244,9 @@ def api_generate():
         # _gen_owner_cid), cosi' il transfer verso l'app mobile non libera
         # il posto occupato dalla generazione ancora in corso.
         job["gen_owner_cid"] = client_id
+        job["abuse_group"] = _abuse_group
+        job.pop("abuse_terminated", None)
+        job.pop("abuse_kept_until", None)
 
     # Batch mobile: il job sopravvive a schermo bloccato (no auto-cancel per
     # heartbeat, la guardia salta se email_registered) e al COMPLETE crea il
@@ -11306,6 +11353,7 @@ def api_generate():
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_BLOCK",
                               client_id, client_ip, voice,
                               browser_lang=job.get("browser_lang", ""))
+                _abuse_note(job_id, job, "quota_block", chars=selected_chars, voice=voice)
                 print(f"[{job_id}] free TTS quota: {_ftq_dec['used_chars']:,}+"
                       f"{selected_chars:,} > {_ftq_dec['limit_chars']:,} chars "
                       f"-> email gate", flush=True)
@@ -11386,6 +11434,7 @@ def api_generate():
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_GATE",
                               client_id, client_ip, voice,
                               browser_lang=job.get("browser_lang", ""))
+                _abuse_note(job_id, job, "quota_gate", chars=_ftq_chars, voice=voice)
         except Exception as _ftq_err:
             print(f"[{job_id}] free_tts_quota consume failed (non-fatal): {_ftq_err}",
                   flush=True)
@@ -11420,6 +11469,7 @@ def api_generate():
                   browser_lang=job.get("browser_lang", ""),
                   epoch=job.get("gen_epoch"),
                   platform=job.get("platform", ""))
+    _abuse_note(job_id, job, "generate", chars=selected_chars, voice=voice)
     _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
@@ -11538,6 +11588,10 @@ def api_progress(job_id):
                 break
             if job.get("status") == "cancelled" or job.get("cancelled"):
                 payload["status"] = "cancelled"
+                if job.get("abuse_terminated"):
+                    # Kill della moderazione anti-abuso: il frontend mostra il
+                    # messaggio neutro invece di "Generazione annullata".
+                    payload["error_code"] = "job_terminated"
                 # Espone metadati cancel volontario voci PREMIUM: refund summary
                 # (paid/retained/refund/progress) + link al MP3 parziale se
                 # generato. Vedi T7 generation_engine.py:_CancelledError branch.
@@ -11837,6 +11891,7 @@ def api_register_email():
     job["notify_lang"] = data.get("lang", "en")
     # Keep job alive indefinitely while generating (disable heartbeat-based cleanup)
     job["email_registered"] = True
+    _abuse_note(job_id, job, "email", email=email)
     # Marker 'pending' su disco: protegge la dir dal cleanup orfani di altri worker
     # per tutta la lavorazione, finché _send_completion_email lo sovrascriverà
     # con il timestamp.
