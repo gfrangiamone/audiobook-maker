@@ -35,6 +35,11 @@ Il primo `QUOTA_BLOCK` di `36e901e8` è delle 15:09:47. Il secondo cookie nasce
 **2 minuti e 20 secondi dopo**, e da lì i due vengono usati alternati nella stessa
 sessione. Effetto collaterale: raddoppia anche `MAX_CONCURRENT_PER_CLIENT`, 2 → 4.
 
+`_client_emails.json` mostra che i due cid hanno registrato **due indirizzi
+distinti**, su due provider di posta gratuiti diversi: alla rotazione del cookie
+ha accompagnato un'email nuova, ripassando il gate da capo. È la misura di quanto
+vale ciascuna chiave in §1 — la sola che intercetta questo caso è `net`.
+
 ### Impatto misurato
 
 Totale reale dell'IP: **~21M caratteri in 2,5 giorni** contro un tetto di
@@ -89,7 +94,10 @@ def identity_keys(client_id, ip, email):
 
 - `net`: l'IP viene troncato al `/24` (IPv4) o al `/64` (IPv6) **prima**
   dell'hash. IP malformato o assente ⇒ chiave omessa.
-- `mail`: lowercase + strip prima dell'hash. Assente ⇒ chiave omessa.
+- `mail`: lowercase + strip prima dell'hash. Assente ⇒ chiave omessa. Non è la
+  chiave che regge il caso misurato (l'utente ha cambiato anche email); serve per
+  la rotazione pigra — cookie nuovo, stessa email — che è la più frequente, e
+  costa quanto una riga di codice.
 - `cid`: invariato rispetto a oggi, incluso il fallback `_anon`.
 
 Il file `_free_tts_quota.json` non cambia schema: le tre chiavi convivono nello
