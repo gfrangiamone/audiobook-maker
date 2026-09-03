@@ -465,3 +465,199 @@ def digest_data(window_sec=_DAY_SEC):
         })
     rows.sort(key=lambda r: (r["kills"], r["blocks"], r["chars_24h"]), reverse=True)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Giudice LLM (pattern di community_moderator: client riusato da generation_engine)
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """You are the abuse moderator of a free web service that converts e-books into audiobooks with standard neural voices. Standard voices have a monthly free character quota per browser cookie ("cid"). Some users evade the quota by rotating cookies, registering fresh throwaway emails and switching networks, converting hundreds of books at zero revenue.
+
+You receive ONLY aggregated behavioural features for one network group (same hashed /24 subnet) with a breakdown per cid alias (cid_1, cid_2, ...). No text, no identities.
+
+Signals: S1 = quota exhausted this month; S2 = two or more cids in the group; S3 = many quota-gate acceptances in 24h; S4 = very high character volume in 24h.
+
+Judge VOLUME and SPEED, not identities:
+- Innocent: a handful of books per month across two cookies (device change), varied voices/languages/hours across cids. Diversity of voices, languages, active hours and emails between cids is the signature of a SHARED NETWORK (home NAT, mobile carrier-grade NAT hosting thousands of users), not of a single actor. S2 and S4 fire routinely on mobile /24 ranges: this alone is never abuse.
+- Abuse: dozens of distinct files in a day or two, one voice and one language across cids, new emails appearing right after quota blocks, cids created minutes after a block, continuous activity at machine-like pace.
+
+Be conservative: when in doubt answer "inconclusive". Use "scope": "group" ONLY if the cids share voice, language and hour pattern AND new emails/cids appear in bursts right after blocks; otherwise use "scope": "cids" and list only the guilty aliases.
+
+Answer with a single JSON object and nothing else:
+{"verdict": "abuse" | "clean" | "inconclusive", "confidence": 0.0-1.0, "scope": "cids" | "group", "cids": ["cid_1", ...], "reason": "one short sentence"}"""
+
+
+def _bucket_features(b, now):
+    gen_24h = _in_window(b.get("recent_generate"), now, _DAY_SEC, index=0)
+    recent = sorted(float(t) for t in (b.get("recent") or []))
+    gaps = [recent[i + 1] - recent[i] for i in range(len(recent) - 1)]
+    first, last = float(b.get("first_ts") or 0), float(b.get("last_ts") or 0)
+    voices = sorted(b.get("voices", {}).items(), key=lambda kv: -kv[1])[:3]
+    langs = sorted(b.get("langs", {}).items(), key=lambda kv: -kv[1])[:3]
+    return {
+        "generate_total": int(b.get("generate", 0)),
+        "generate_24h": len(gen_24h),
+        "chars_total": int(b.get("chars", 0)),
+        "chars_24h": sum(int(c) for _ts, c in gen_24h),
+        "quota_gate_total": int(b.get("quota_gate", 0)),
+        "quota_gate_24h": len(_in_window(b.get("recent_gate"), now, _DAY_SEC)),
+        "quota_block_total": int(b.get("quota_block", 0)),
+        "email_registrations": int(b.get("email", 0)),
+        "distinct_emails": len(b.get("emails") or []),
+        "distinct_files": len(b.get("files") or []),
+        "top_voices": [[v, int(n)] for v, n in voices],
+        "top_languages": [[l, int(n)] for l, n in langs],
+        "quota_exhausted": bool(b.get("quota_exhausted_ts")),
+        "active_hours_utc": sorted({time.gmtime(t).tm_hour for t in recent}),
+        "span_hours": round((last - first) / 3600, 1) if first and last else 0,
+        "median_gap_minutes": round(sorted(gaps)[len(gaps) // 2] / 60, 1) if gaps else None,
+    }
+
+
+def build_prompt(group):
+    """(json_utente, alias_map) da sole feature; None se il gruppo non esiste."""
+    g = dossier(group)
+    if not g:
+        return None
+    now = time.time()
+    alias = {f"cid_{i + 1}": cid for i, cid in enumerate(sorted(g.get("cids", {}).keys()))}
+    feats = {
+        "signals": _signals(g, now),
+        "group": dict(_bucket_features(g["all"], now), distinct_cids=len(alias)),
+        "cids": {a: _bucket_features(g["cids"][cid], now) for a, cid in alias.items()},
+    }
+    return json.dumps(feats, ensure_ascii=True, separators=(",", ":")), alias
+
+
+def _parse_verdict(text):
+    text = (text or "").strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    a, b = text.find("{"), text.rfind("}")
+    if a != -1 and b > a:
+        try:
+            return json.loads(text[a:b + 1])
+        except Exception:
+            return None
+    return None
+
+
+def _call_llm(user, timeout):
+    import generation_engine as ge
+    client = ge._llm_client
+    if client is None:
+        raise RuntimeError("LLM client not configured")
+    resp = client.chat.completions.create(
+        model=ge.LLM_MODEL,
+        messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                  {"role": "user", "content": user}],
+        max_tokens=400,
+        temperature=0.0,
+        timeout=timeout,
+        extra_body=ge.THINKING_OFF_BODY,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def judge(group, timeout=20.0, attempts=2):
+    """Verdetto del giudice, gia' persistito con set_verdict. None = fail-open
+    (LLM assente, timeout, risposta malformata): registrato come 'unjudged'."""
+    import generation_engine as ge
+    try:
+        available = bool(ge._llm_available())
+    except Exception:
+        available = False
+    if not available:
+        record_judgement_failed(group, "llm_unavailable")
+        return None
+    built = build_prompt(group)
+    if built is None:
+        return None
+    user, alias = built
+    last_err = "malformed"
+    for i in range(max(1, attempts)):
+        try:
+            raw = _parse_verdict(_call_llm(user, timeout))
+            if isinstance(raw, dict) and raw.get("verdict") in VERDICTS:
+                cids = [alias[c] for c in (raw.get("cids") or [])
+                        if isinstance(c, str) and c in alias]
+                scope = "group" if raw.get("scope") == "group" else "cids"
+                kind = raw["verdict"]
+                if kind == "abuse" and scope == "cids" and not cids:
+                    kind = "inconclusive"
+                return set_verdict(group, {"verdict": kind, "confidence": raw.get("confidence"),
+                                           "scope": scope, "cids": cids,
+                                           "reason": raw.get("reason")})
+            last_err = "malformed"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {str(e)[:120]}"
+        if i + 1 < attempts:
+            time.sleep(1.0)
+    record_judgement_failed(group, last_err)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Coda a giudice singolo
+# ---------------------------------------------------------------------------
+
+_queue = queue.Queue()
+_queued = set()
+_worker_started = False
+
+
+def enqueue(group, cid=""):
+    """Accoda il gruppo (dedup finche' non viene processato). True se accodato."""
+    if not group:
+        return False
+    with _lock:
+        if group in _queued:
+            return False
+        _queued.add(group)
+    _queue.put((group, str(cid or "")))
+    return True
+
+
+def _process(group, cid, on_verdict):
+    """Un giro del worker, sincrono: rigiudica solo se serve ancora, poi
+    consegna il verdetto al callback (errori del callback non fermano il worker)."""
+    with _lock:
+        _queued.discard(group)
+    try:
+        if not needs_judgement(group, cid):
+            return None
+        v = judge(group)
+        print(f"[abuse] judge {group}: "
+              f"{(v or {}).get('verdict', 'unjudged')} "
+              f"conf={(v or {}).get('confidence', 0):.2f} scope={(v or {}).get('scope', '-')}",
+              flush=True)
+        if v is not None and on_verdict is not None:
+            try:
+                on_verdict(group, v)
+            except Exception as e:
+                print(f"[abuse] on_verdict failed (non-fatal): {e}", flush=True)
+        return v
+    except Exception as e:
+        print(f"[abuse] judge worker error (non-fatal): {e}", flush=True)
+        return None
+
+
+def _worker(on_verdict):
+    while True:
+        group, cid = _queue.get()
+        try:
+            _process(group, cid, on_verdict)
+        finally:
+            _queue.task_done()
+
+
+def start_worker(on_verdict):
+    """Avvia (una volta) il thread del giudice. `on_verdict(group, verdict)`."""
+    global _worker_started
+    if _worker_started:
+        return
+    _worker_started = True
+    threading.Thread(target=_worker, args=(on_verdict,), daemon=True,
+                     name="abuse-judge").start()
