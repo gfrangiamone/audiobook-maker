@@ -4053,6 +4053,50 @@ def _abuse_note(job_id, job, kind, **data):
         print(f"[{job_id}] abuse_watch {kind} failed (non-fatal): {e}", flush=True)
 
 
+def _abuse_apply_verdict(group, verdict):
+    """Callback del worker di giudizio: su verdetto `abuse` sopra soglia uccide
+    i job IN CORSO dei cid nello scope, non pagati e a voce standard, con la
+    meccanica di cancel esistente (`cancelled` + marcatore `abuse_terminated`,
+    letto da _check_cancelled e dal ramo _CancelledError). Ritorna il numero
+    di job uccisi."""
+    if not isinstance(verdict, dict) or verdict.get("verdict") != "abuse":
+        return 0
+    try:
+        conf = float(verdict.get("confidence") or 0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    if not abuse_watch.kill_enabled() or conf < abuse_watch.confidence_threshold():
+        print(f"[abuse] verdetto abuse su {group} senza kill "
+              f"(enable={abuse_watch.kill_enabled()}, conf={conf:.2f})", flush=True)
+        return 0
+    scope_cids = set(verdict.get("cids") or [])
+    killed = []
+    with _jobs_lock:
+        for jid, job in list(jobs.items()):
+            if job.get("status") != "generating" or job.get("abuse_terminated"):
+                continue
+            if job.get("abuse_group") != group or job.get("client_id") not in scope_cids:
+                continue
+            if generation_engine.is_premium_job(job):
+                continue
+            job["abuse_terminated"] = True
+            job["cancelled"] = True
+            killed.append((jid, job))
+    for jid, job in killed:
+        try:
+            _log_activity(jid, job.get("original_filename", ""), "QUOTA_ABUSE_KILL",
+                          job.get("client_id", ""), job.get("client_ip", ""),
+                          job.get("voice", ""), browser_lang=job.get("browser_lang", ""))
+        except Exception:
+            pass
+        try:
+            abuse_watch.record_kill(group, job.get("client_id", ""), jid)
+        except Exception:
+            pass
+        print(f"[{jid}] abuse kill (gruppo {group}, conf {conf:.2f})", flush=True)
+    return len(killed)
+
+
 # Register funnel + power user providers with email_service (injection — avoids circular import)
 try:
     import email_service as _email_service
@@ -17728,6 +17772,15 @@ def _ensure_background_threads():
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
+    # Moderazione anti-abuso: worker di giudizio a giudice singolo. All'avvio
+    # con kill accesa i verdetti maturati in osservazione vengono azzerati.
+    try:
+        _cleared = abuse_watch.arm_on_startup()
+        if _cleared:
+            print(f"[startup] abuse_watch: kill armata, {_cleared} verdetti azzerati", flush=True)
+        abuse_watch.start_worker(_abuse_apply_verdict)
+    except Exception as _aw_err:
+        print(f"[startup] abuse_watch init failed (non-fatal): {_aw_err}", flush=True)
     if google_tts is not None:
         threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
     
@@ -17759,6 +17812,10 @@ def _ensure_background_threads():
         print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
+    print(f"[startup] Abuse moderation: "
+          f"{'kill ON' if abuse_watch.kill_enabled() else 'observation only'} "
+          f"(confidence >= {abuse_watch.confidence_threshold():.2f}, "
+          f"keep {abuse_watch.keep_hours()}h)")
 
 _init_log_dedup()
 _ensure_background_threads()

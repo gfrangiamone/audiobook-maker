@@ -236,3 +236,44 @@ def test_progress_reports_job_terminated(env, client):
     r = client.get("/api/progress/abz-9")
     body = r.get_data(as_text=True)
     assert '"status": "cancelled"' in body and '"error_code": "job_terminated"' in body
+
+
+# ---------------------------------------------------------------------------
+# Kill in corsa (_abuse_apply_verdict)
+# ---------------------------------------------------------------------------
+
+def _running(job_id, client_id=CID, group=None):
+    job = _mk_job(job_id, client_id=client_id, status="generating")
+    job["abuse_group"] = group or aw.group_key(IP, CID)
+    job["voice"] = VOICE
+    return job
+
+
+def test_apply_verdict_kills_only_unpaid_in_scope_running(env):
+    g = aw.group_key(IP, CID)
+    verdict = {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": [CID]}
+    victim = _running("abz-k1")
+    other_cid = _running("abz-k2", client_id=OTHER)
+    paid = _running("abz-k3"); paid["payment_token"] = "tok"
+    idle = _mk_job("abz-k4"); idle["abuse_group"] = g
+    other_group = _running("abz-k5", group="net:elsewhere")
+    assert audiobook_app._abuse_apply_verdict(g, verdict) == 1
+    assert victim["abuse_terminated"] is True and victim["cancelled"] is True
+    for j in (other_cid, paid, idle, other_group):
+        assert not j.get("abuse_terminated") and not j.get("cancelled")
+    assert _ops(env).count("QUOTA_ABUSE_KILL") == 1
+    assert aw.digest_data()[0]["kills"] == 1
+    assert audiobook_app._abuse_apply_verdict(g, verdict) == 0      # idempotente
+
+
+def test_apply_verdict_respects_confidence_switch_and_kind(env, monkeypatch):
+    g = aw.group_key(IP, CID)
+    job = _running("abz-k6")
+    low = {"verdict": "abuse", "confidence": 0.5, "scope": "group", "cids": [CID]}
+    assert audiobook_app._abuse_apply_verdict(g, low) == 0
+    clean = {"verdict": "clean", "confidence": 1.0, "scope": "group", "cids": [CID]}
+    assert audiobook_app._abuse_apply_verdict(g, clean) == 0
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
+    high = {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": [CID]}
+    assert audiobook_app._abuse_apply_verdict(g, high) == 0
+    assert not job.get("cancelled") and "QUOTA_ABUSE_KILL" not in _ops(env)
