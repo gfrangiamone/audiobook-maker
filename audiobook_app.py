@@ -1543,6 +1543,7 @@ def _reenqueue_orphan(job_id, rec):
         # Stima ex-ante per l'audit premium: senza, il record riporta costo
         # stimato 0 e l'alert di margine attribuisce il job a "sotto soglia".
         job[_gate["estimate_key"]] = _gate["estimate"]
+    _abuse_reset_recovery_markers(job)
     with _jobs_lock:
         jobs[job_id] = job
     if _gate and _gate.get("quota_charge") is not None and free_quota.limit_eur() > 0:
@@ -4034,8 +4035,26 @@ def _power_users_data():
 # Moderazione anti-abuso della quota voci standard (abuse_watch)
 # ---------------------------------------------------------------------------
 
+_ABUSE_GROUP_RE = re.compile(r"^(net|cid):[0-9a-f]{16,64}$")
+
+
 def _abuse_group_of(job):
     return abuse_watch.group_key(job.get("client_ip", ""), job.get("client_id", ""))
+
+
+def _abuse_reset_recovery_markers(job):
+    """Reset dei marcatori anti-abuso su un job ricostruito dal recovery, che
+    bypassa /api/generate (unico altro punto che li resetta al claim). Senza
+    questo, un job recuperato erediterebbe abuse_terminated/abuse_kept_until
+    da un descrittore precedente e non avrebbe abuse_group per essere
+    riconosciuto dal kill loop. Fail-open: mai bloccante per il recovery."""
+    try:
+        job.pop("abuse_terminated", None)
+        job.pop("abuse_kept_until", None)
+        job["abuse_group"] = _abuse_group_of(job)
+    except Exception as e:
+        print(f"[recover] abuse marker reset failed (non-fatal): {e}", flush=True)
+    return job
 
 
 def _abuse_note(job_id, job, kind, **data):
@@ -4046,8 +4065,8 @@ def _abuse_note(job_id, job, kind, **data):
         group = _abuse_group_of(job)
         data.setdefault("filename", job.get("original_filename", ""))
         data.setdefault("lang", getattr(job.get("info"), "language", "") or "")
-        abuse_watch.record_event(group, cid, kind, data)
-        if abuse_watch.needs_judgement(group, cid):
+        group_data = abuse_watch.record_event(group, cid, kind, data)
+        if abuse_watch.needs_judgement(group, cid, group_data=group_data):
             abuse_watch.enqueue(group, cid)
     except Exception as e:
         print(f"[{job_id}] abuse_watch {kind} failed (non-fatal): {e}", flush=True)
@@ -4108,6 +4127,20 @@ def _abuse_keep_state(job, now):
     except (TypeError, ValueError):
         return None
     return "hold" if now < kept else "expired"
+
+
+def _abuse_cleanup_decision(job, now, has_active_token):
+    """Decisione pura per il ramo 'analyzed' di _cleanup_loop su un job ucciso
+    dalla moderazione anti-abuso (`_abuse_keep_state` non None): 'hold' finche'
+    dentro la finestra di retention forense; 'remove' a finestra scaduta senza
+    download token attivi; 'pass' a finestra scaduta con un token ancora
+    attivo (si tiene la work_dir per non rompere un link valido)."""
+    ak = _abuse_keep_state(job, now)
+    if ak == "hold":
+        return "hold"
+    if ak == "expired":
+        return "pass" if has_active_token else "remove"
+    return "pass"
 
 
 def _abuse_digest_data():
@@ -9729,6 +9762,8 @@ def admin_abuse_clear(group):
     Nessun refund: il job non era pagato."""
     if not _admin_auth_ok(_admin_auth_from_request()):
         return jsonify({"error": "forbidden"}), 403
+    if not _ABUSE_GROUP_RE.match(group or ""):
+        return jsonify({"error": "invalid group"}), 400
     try:
         cleared = bool(abuse_watch.clear_verdict(group))
     except Exception as e:
@@ -17495,11 +17530,10 @@ def _cleanup_loop():
                     # Job ucciso dalla moderazione anti-abuso: la work_dir
                     # resta per il ripristino da console (ABM_ABUSE_KEEP_HOURS),
                     # poi via come un analyzed qualunque.
-                    _ak = _abuse_keep_state(job, now)
-                    if _ak == "hold":
-                        continue
-                    if _ak == "expired":
-                        if not _has_active_download_tokens(jid, now):
+                    if _abuse_keep_state(job, now) is not None:
+                        _decision = _abuse_cleanup_decision(
+                            job, now, _has_active_download_tokens(jid, now))
+                        if _decision == "remove":
                             to_remove.append((jid, "abuse retention expired"))
                         continue
                     last_poll = job.get("last_poll", job.get("start_time", now))

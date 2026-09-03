@@ -194,6 +194,19 @@ def test_generate_records_dossier_and_resets_markers(env, client):
     assert len(d["all"]["files"]) == 1
 
 
+def test_abuse_reset_recovery_markers_clears_stale_flags(env):
+    """Il recovery bypassa /api/generate (che resetta questi marker al claim):
+    _abuse_reset_recovery_markers deve fare lo stesso lavoro sul job
+    ricostruito, cosi' un job rilanciato non eredita marker di un kill
+    precedente e resta riconoscibile dal kill loop (abuse_group)."""
+    job = {"client_ip": IP, "client_id": CID,
+           "abuse_terminated": True, "abuse_kept_until": time.time() + 100}
+    out = audiobook_app._abuse_reset_recovery_markers(job)
+    assert out is job
+    assert "abuse_terminated" not in job and "abuse_kept_until" not in job
+    assert job["abuse_group"] == aw.group_key(IP, CID)
+
+
 def test_quota_block_and_gate_feed_the_dossier(env, client):
     _mk_job("abz-6", n_chars=1500)
     r = _post(client, "abz-6")
@@ -291,6 +304,66 @@ def test_abuse_keep_state(env):
     assert audiobook_app._abuse_keep_state({"abuse_kept_until": now - 1}, now) == "expired"
 
 
+def test_abuse_cleanup_decision_hold_remove_pass(env):
+    now = time.time()
+    assert audiobook_app._abuse_cleanup_decision({}, now, False) == "pass"           # non ucciso per abuso
+    held = {"abuse_kept_until": now + 60}
+    assert audiobook_app._abuse_cleanup_decision(held, now, False) == "hold"
+    expired_no_token = {"abuse_kept_until": now - 1}
+    assert audiobook_app._abuse_cleanup_decision(expired_no_token, now, False) == "remove"
+    expired_with_token = {"abuse_kept_until": now - 1}
+    assert audiobook_app._abuse_cleanup_decision(expired_with_token, now, True) == "pass"
+
+
+def test_cleanup_loop_analyzed_branch_uses_abuse_cleanup_decision(env, tmp_path, monkeypatch):
+    """Integrazione: il ramo 'analyzed' di _cleanup_loop passa davvero dalla
+    decisione pura _abuse_cleanup_decision (issue #10) invece di duplicarne la
+    logica inline. Tutto cio' che e' fuori dal ramo abuso e' no-op: il target
+    e' l'instradamento, non l'intero giro di cleanup."""
+    monkeypatch.setattr(audiobook_app, "UPLOAD_DIR", tmp_path)
+    for fn in ("_cleanup_expired_shares", "_merge_tokens_from_disk", "_log_memory_stats",
+               "_try_send_admin_digest", "_malloc_trim", "_reconcile_cold_offload",
+               "_evict_hot_local"):
+        monkeypatch.setattr(audiobook_app, fn, lambda *a, **k: None)
+    removed = []
+    monkeypatch.setattr(audiobook_app, "_cleanup_job",
+                        lambda jid, reason="": removed.append((jid, reason)))
+
+    calls = []
+    real_decision = audiobook_app._abuse_cleanup_decision
+
+    def _spy(job, now, has_active_token):
+        calls.append((job.get("_tag"), has_active_token))
+        return real_decision(job, now, has_active_token)
+
+    monkeypatch.setattr(audiobook_app, "_abuse_cleanup_decision", _spy)
+
+    now = time.time()
+    held = _mk_job("abz-cl-hold")
+    held["abuse_kept_until"] = now + 3600
+    held["_tag"] = "held"
+    expired = _mk_job("abz-cl-expired")
+    expired["abuse_kept_until"] = now - 10
+    expired["_tag"] = "expired"
+
+    n_sleeps = [0]
+
+    def _sleep(_sec):
+        n_sleeps[0] += 1
+        if n_sleeps[0] >= 2:
+            raise SystemExit("stop after one _cleanup_loop pass")
+
+    monkeypatch.setattr(audiobook_app.time, "sleep", _sleep)
+
+    with pytest.raises(SystemExit):
+        audiobook_app._cleanup_loop()
+
+    assert {t for t, _tok in calls} == {"held", "expired"}     # il ramo e' passato dalla decisione pura
+    assert ("expired", False) in calls
+    assert "abz-cl-hold" in audiobook_app.jobs                 # hold: mai in to_remove
+    assert removed == [("abz-cl-expired", "abuse retention expired")]
+
+
 def test_admin_clear_endpoint(env, client, monkeypatch):
     g = _abuse_verdict([CID])
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
@@ -304,3 +377,18 @@ def test_admin_clear_endpoint(env, client, monkeypatch):
     # dopo il ripristino il cid rigenera normalmente
     _mk_job("abz-c1")
     assert _post(client, "abz-c1").status_code == 200
+
+
+def test_admin_clear_endpoint_rejects_invalid_group(env, client, monkeypatch):
+    """Il path param non validato finiva pari pari in un print(): %0A inietta
+    una newline nel log di processo (forgiatura di righe di log)."""
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
+    r = client.post("/admin/api/abuse/clear/net:%0Aforged",
+                     headers={"X-Admin-Token": "tok-test"})
+    assert r.status_code == 400 and r.get_json() == {"error": "invalid group"}
+    r = client.post("/admin/api/abuse/clear/not-a-group",
+                     headers={"X-Admin-Token": "tok-test"})
+    assert r.status_code == 400 and r.get_json() == {"error": "invalid group"}
+    # senza token: 403 prima ancora della validazione del formato
+    r = client.post("/admin/api/abuse/clear/net:%0Aforged")
+    assert r.status_code == 403
