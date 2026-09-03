@@ -1,262 +1,219 @@
-# Contenimento dell'abuso della quota voci standard
+# Moderazione LLM dell'abuso della quota voci standard
 
 Data: 2026-09-03
 Stato: design approvato
+
+> Sostituisce integralmente la versione precedente di questo file (strategia a
+> corsia spot e multi-chiave, abbandonata dopo review): resta nella storia git,
+> non è più il design di riferimento.
 
 ## Problema
 
 La quota mensile di caratteri sulle voci standard (`free_tts_quota.py`, deployata
 il 2026-09-01 con il commit `396534f`) non limita nulla. Due falle indipendenti,
-entrambe misurate in produzione sul client `36e901e8-71d`.
+entrambe misurate in produzione sul client `36e901e8-71d`:
 
-### 1. Il gate email è un click
+1. **Il gate email è un click.** `QUOTA_GATE` non è un rifiuto: marca un job
+   **accettato oltre quota**. Il modale frontend preriempie l'email da
+   `localStorage.abm_v_email` e richiama `retryGeneration()` da solo: dalla
+   seconda volta in poi il gate costa un click e ~2 secondi. Settembre 2026:
+   **26 `QUOTA_BLOCK` → 26 `QUOTA_GATE`**, rapporto 1:1, nessun blocco effettivo.
+   Contatore a **19.218.930 / 10.000.000** caratteri.
+2. **La quota è per-cookie.** Un secondo cid `61991d18-e7c` è comparso dallo
+   stesso IP **2 minuti e 20 secondi dopo** il primo `QUOTA_BLOCK`, con bucket
+   azzerato. `_client_emails.json` mostra che i due cid hanno registrato due
+   indirizzi distinti, su due provider gratuiti diversi: alla rotazione del
+   cookie ha accompagnato un'email nuova, ripassando il gate da capo.
 
-`QUOTA_GATE` non è un rifiuto: marca un job **accettato oltre quota**
-(`audiobook_app.py:11357`). Il rifiuto è `QUOTA_BLOCK`, un `402` che il frontend
-converte in un modale. Ma `_handleTtsQuotaGate` (`static/js/app.js:4191`)
-preriempie il campo email da `localStorage.abm_v_email`, e `_submitTtsQuotaGate`
-chiama `retryGeneration()` da solo dopo `register_email`: dalla seconda volta in
-poi il gate costa **un click e ~2 secondi**.
-
-Settembre 2026, `36e901e8-71d`: **26 `QUOTA_BLOCK` → 26 `QUOTA_GATE`**, rapporto
-1:1. Nessun blocco effettivo. Contatore a **19.218.930 / 10.000.000** caratteri.
-
-### 2. La quota si azzera cambiando cookie
-
-`_quota_client_id()` (`audiobook_app.py:732`) legge solo `abm_cid`. Dall'IP
-`175.141.179.118`:
-
-| client_id | primo evento | quota consumata |
-|---|---|---|
-| `36e901e8-71d` | 2026-08-08 | 19,2M |
-| `61991d18-e7c` | **2026-09-02 15:12:07** | 1,75M (bucket nuovo) |
-
-Il primo `QUOTA_BLOCK` di `36e901e8` è delle 15:09:47. Il secondo cookie nasce
-**2 minuti e 20 secondi dopo**, e da lì i due vengono usati alternati nella stessa
-sessione. Effetto collaterale: raddoppia anche `MAX_CONCURRENT_PER_CLIENT`, 2 → 4.
-
-`_client_emails.json` mostra che i due cid hanno registrato **due indirizzi
-distinti**, su due provider di posta gratuiti diversi: alla rotazione del cookie
-ha accompagnato un'email nuova, ripassando il gate da capo. È la misura di quanto
-vale ciascuna chiave in §1 — la sola che intercetta questo caso è `net`.
-
-### Impatto misurato
-
-Totale reale dell'IP: **~21M caratteri in 2,5 giorni** contro un tetto di
-10M/mese. 113 `GENERATE` su 2030 di tutto settembre — **un client su 760 = 5,6%
-del traffico**. Escalation da 2 libri/giorno (8 agosto) a 47/giorno (1-2
-settembre). Coda assembly: 15 encode osservati, attesa media 135s, quattro sopra
-i 120s, **uno a 506s con 6 job accodati**. Un job ha girato 22.394s (6h12').
-
-Voce sempre `zh-CN-XiaoxiaoNeural` (standard, gratuita): **ricavo zero**. Il costo
-non è di provider ma di CPU, banda, storage e reputazione dell'endpoint edge-tts.
+Impatto misurato: ~21M caratteri in 2,5 giorni contro un tetto di 10M/mese, 113
+`GENERATE` su 2030 di tutto settembre (un client su 760 = 5,6% del traffico),
+escalation da 2 a 47 libri/giorno, code in assembly fino a 506s, un job di
+22.394s. Voce sempre `zh-CN-XiaoxiaoNeural` (standard, gratuita): ricavo zero.
 
 ## Vincolo di progetto
 
 Nessuna identità gratuita è difendibile: cookie, IP ed email gratuite sono tutti
-rinnovabili in minuti, e questo utente lo ha dimostrato in 2'20". L'obiettivo non
-è impedire, è **rendere l'abuso poco redditizio a costo nullo per gli altri 759
-client**. Da qui la scelta di degradare anziché rifiutare.
+rinnovabili in minuti, e questo utente lo ha dimostrato in 2'20". Qualunque
+regola fissa per-identità è aggirabile per costruzione. L'obiettivo non è
+impedire, è **rendere l'abuso poco redditizio** — e la valuta che un bot paga
+davvero è il **lavoro accumulato**: se ogni rotazione di identità distrugge i job
+del giorno, il throughput crolla.
 
-Scartata esplicitamente la verifica email con codice oltre quota: l'attrito
-colpirebbe i lettori legittimi (2 client su 760 hanno superato la quota a
-settembre, lo 0,26%) e reggerebbe pochi minuti contro chi ha già rotato un cookie.
-Resta disponibile come escalation futura.
+Da qui la scelta di un **giudice, non una regola**: un LLM valuta il dossier
+comportamentale del gruppo. L'atto di aggirare — la rotazione del cookie,
+l'email nuova, il cambio di rete — diventa esso stesso una feature di abuso. Un
+bot di massa non può più usare il suo strumento migliore senza innescare il
+giudizio; resta aggirabile da un umano dedicato e paziente, e questo è il
+compromesso dichiarato.
 
 ## Decisioni
 
 | Aspetto | Scelta |
 |---|---|
-| Chiave quota | massimo fra `cid`, `net` (IP /24 hashato), `mail` (email hashata) |
-| Tetto `cid` e `mail` | `L` = `ABM_FREE_TTS_QUOTA_CHARS_PER_MONTH` (10M) |
-| Tetto `net` | `3L` (`ABM_FREE_TTS_QUOTA_NET_MULTIPLIER`, tolleranza NAT) |
-| Superamento | il job resta gratuito, entra in corsia spot |
-| Freni corsia spot | concorrenza 1, riserva di capacità 2, cooldown 7200s |
-| Gate email | **invariato**: la modalità batch è desiderabile, non è la leva |
-| Esito del freno | `429 quota_throttled` con `retry_after_sec` |
-| Privacy | nessun IP o email in chiaro su disco: solo `sha256(ABM_IP_SALT + valore)[:16]` |
+| Identità | gruppo = IP `/24` hashato (fallback: cid se IP assente) — raggruppatore del dossier, non gate |
+| Dossier | feature aggregate per gruppo in `_abuse_dossiers.json`, nessun testo di libro |
+| Segnali sospetti | S1 quota esaurita; S2 ≥2 cid distinti; S3 ≥5 `QUOTA_GATE`/24h; S4 ≥2,5M chars/24h |
+| Trigger giudizio | ≥2 segnali distinti nel dossier e nessun verdetto valido |
+| Giudice | DeepSeek, client riusato da `generation_engine` (pattern di `community_moderator`) |
+| Kill automatica | solo `verdict=abuse` ∧ `confidence≥0.9` ∧ job senza pagamento incassato ∧ voce standard |
+| Kill in corsa | stop del thread (meccanica heartbeat esistente), status `error`, niente refund |
+| Job successivi del gruppo | rifiuto 403 pre-claim con messaggio neutro, senza spiegare il perché |
+| Quarantena | file del job in `data/quarantine/<job_id>/` per 24h, ripristino dall'admin |
+| Digest | sezione «Casi di abuso» nel digest giornaliero esistente, con motivazioni |
+| Fail-open | LLM giù o timeout = nessuna kill, caso nel digest come «non giudicato» |
+| Privacy | al provider solo feature numeriche/categoriali; nessun IP, email o titolo in chiaro |
 
-Fuori ambito: le voci premium (già protette da `free_quota` a valore) e la
-traduzione libri.
+Fuori ambito: voci premium e traduzione libri (mai uccidere un pagante), pannello
+admin dedicato (il digest + blocklist bastano; rimandabile).
 
 ## Architettura
 
-### 1. `free_tts_quota.py` — chiave multipla
+### 1. `abuse_watch.py` — nuovo modulo foglia
 
-Il modulo resta **foglia** (stdlib + `community_store.atomic_write_json`);
-l'hashing entra qui con `hashlib`, non viene delegato ad `audiobook_app`, così
-tutti i punti di enforcement condividono una sola normalizzazione.
+Stdlib + JSON con lock, sul modello di `free_tts_quota`. Il giudizio LLM è una
+funzione sincrona `judge(summary)` che riceve il client dal `configure()` di
+`audiobook_app`, come fa `community_moderator`.
 
-```python
-def identity_keys(client_id, ip, email):
-    """['cid:<raw>', 'net:<h16>', 'mail:<h16>'] — solo le chiavi disponibili."""
-```
+API del modulo:
 
-- `net`: l'IP viene troncato al `/24` (IPv4) o al `/64` (IPv6) **prima**
-  dell'hash. IP malformato o assente ⇒ chiave omessa.
-- `mail`: lowercase + strip prima dell'hash. Assente ⇒ chiave omessa. Non è la
-  chiave che regge il caso misurato (l'utente ha cambiato anche email); serve per
-  la rotazione pigra — cookie nuovo, stessa email — che è la più frequente, e
-  costa quanto una riga di codice.
-- `cid`: invariato rispetto a oggi, incluso il fallback `_anon`.
+- `group_key(ip)` — `net:<sha256(ABM_IP_SALT + ip/24)[:16]>`; IP malformato o
+  assente ⇒ `cid:<raw>`.
+- `record_event(group, kind, data)` — `kind` ∈ `{generate, quota_gate,
+  quota_block, email}`. Aggiorna il dossier: conteggi, chars cumulati, cid
+  distinti, email distinte, distribuzione voci (top 3), lingua dominante,
+  timestamps degli ultimi 10 eventi. Retention dossier: 60 giorni.
+- `signals_for(group)` — booleani S1-S4 ricalcolati sul dossier. S4 è il segnale
+  che la rotazione non elude: ruotare il cookie prima di esaurire la quota
+  lascia intatti S1-S3, ma il volume del gruppo resta.
+- `needs_judgement(group)` — ≥2 segnali distinti e nessun verdetto valido.
+- `set_verdict(group, verdict)` / `verdict_for(group)` — verdetto persistito nel
+  dossier: `{verdict, confidence, reason, ts}`. TTL `ABM_ABUSE_VERDICT_TTL_DAYS`
+  (14); rivalutazione se il gruppo genera dopo il TTL o se gli eventi crescono
+  del 25% post-verdetto. `verdict=clean` ⇒ nessuna kill, rigiudizio solo se
+  compare un segnale nuovo.
+- `quarantine_job(job_id, group, verdict)` — sposta i file del job (non copia) e
+  scrive `verdict.json` accanto. `restore_job(job_id)` riporta i file e il job
+  allo stato pre-kill (senza refund: il job non era pagato). `purge_expired()`
+  rimuove oltre `ABM_ABUSE_QUARANTINE_HOURS`.
 
-Il file `_free_tts_quota.json` non cambia schema: le tre chiavi convivono nello
-stesso dizionario del mese, distinte dal prefisso. La compattazione a
-`_KEEP_MONTHS = 3` resta invariata.
+**Prompt del giudice** (costruito solo con feature, mai con testo utente):
+istruzioni di conservatorismo esplicite — «in dubbio, non uccidere» — output
+JSON `{verdict: abuse|clean|inconclusive, confidence: 0-1, reason: str}`. Il
+dossier è compatto (1-2K token): il costo per gruppo è nell'ordine dei
+millesimi di euro, e con il verdetto cached sono una-due chiamate al giorno per
+l'intera utenza sospetta.
 
-Firme aggiornate:
+Il criterio di giudizio è volume e velocità, non le identità: 8 libri in un mese
+con due cookie (cambio device) è innocuo; 103 libri in 2,5 giorni con due cookie,
+due email e una voce sola no. Il giudice decide sul dossier completo — è il
+motivo per cui serve un giudice e non una regola fissa.
 
-- `consume(keys, chars, job_id, gated=False)` — incrementa **tutte** le chiavi.
-  L'idempotenza per `job_id` resta per-chiave: se una chiave ha già addebitato
-  quel job, quella chiave non viene toccata (retry della stessa generazione).
-- `decision(keys, chars, job_id=None)` — esaurita se **almeno una** chiave sfora
-  il proprio tetto. Aggiunge al dizionario di ritorno `"key"` (la chiave che ha
-  fatto scattare l'esito) e `"kind"` (`cid` | `net` | `mail`), per il log e per
-  il messaggio all'utente.
-- `refund(keys, job_id)` — storna su tutte le chiavi.
-- `limit_for(kind)` — `3L` per `net`, `L` altrove.
+### 2. `audiobook_app.py` — punti di aggancio
 
-Le vecchie firme a singolo `client_id` restano accettate (una stringa viene
-promossa a lista di una chiave), così `used_chars()`, `job_charged()`,
-`snapshot()` e `month_table()` continuano a funzionare come oggi — insieme ai
-pannelli admin che li usano.
+- **`/api/generate` pre-claim**: se `verdict_for(group)` è `abuse` valido e il
+  job non ha pagamento incassato né voce premium ⇒ `403` con
+  `error_code: "job_terminated"` e `_log_activity(..., "QUOTA_ABUSE_BLOCK", ...)`.
+  Il job resta in `analyzed`/`optimized` come gli altri rifiuti pre-claim.
+- **Dopo `QUOTA_GATE`/`QUOTA_BLOCK` e dopo il claim del `GENERATE`**:
+  `record_event(...)`, poi se `needs_judgement(group)` si accoda il gruppo al
+  worker di giudizio.
+- **Worker di giudizio** in `_ensure_background_threads()`: coda interna a
+  giudice singolo, timeout HTTP 20s + 1 retry. Su verdetto `abuse` valido
+  chiama il callback `on_abuse_verdict` per i job del gruppo **in corso**: stop
+  del thread con la meccanica di cancellazione esistente, `job["status"]="error"`,
+  `job["error_code"]="job_terminated"`, **nessun refund** (percorso dedicato,
+  non passa da `finalize`), file in quarantena,
+  `_log_activity(..., "QUOTA_ABUSE_KILL", ...)`. I job premium o pagati del
+  gruppo vengono saltati.
+- **Digest giornaliero**: nuova sezione — gruppo, segnali, verdetto,
+  confidence, reason, job uccisi in corsa, rifiuti 403 nelle 24h, quarantena
+  attiva. Solo hash, mai IP o email in chiaro nel canale email. Se
+  `ABM_ADMIN_EMAIL` è vuoto il kill automatico è disattivato (solo giudizio in
+  log): nessuna azione distruttiva senza audit.
+- **Cleanup loop**: purge della quarantena scaduta.
 
-### 2. `audiobook_app.py` — corsia spot
+Il `403` non spiega mai il perché: il frontend mostra un messaggio neutro
+(§4). Un messaggio esplicativo insegnerebbe al bot quali feature lo hanno
+tradito.
 
-`_quota_client_id()` resta la sorgente unica del `cid`. Accanto nasce
-`_quota_identity(job)`, che restituisce le tre chiavi da `job["client_id"]`,
-`job["client_ip"]` e `job["notify_email"]`.
+### 3. Frontend
 
-I tre freni si applicano in `/api/generate`, **prima** del claim atomico dello
-stato, solo quando `decision()` è esaurita e la voce non è premium:
+Gestione di `error_code === "job_terminated"` accanto ai rami di errore
+esistenti, con chiave i18n in `i18n_data.js` e nei 7 file `i18n/*.json`:
 
-1. **Concorrenza 1** — `ABM_QUOTA_THROTTLE_CONCURRENCY` (default 1) sostituisce
-   `MAX_CONCURRENT_PER_CLIENT` per le identità oltre quota. Il conteggio dei job
-   attivi passa dal `cid` all'identità: due cookie dallo stesso `/24` non fanno
-   due slot.
-2. **Riserva di capacità** — rifiuto se
-   `_active_generating_total_unlocked() >= MAX_CONCURRENT_GLOBAL - ABM_QUOTA_THROTTLE_RESERVE`
-   (default 2). A macchina carica gli ultimi due slot restano ai client in quota;
-   a macchina scarica il job parte subito.
-3. **Distanziamento** — rifiuto se l'ultimo avvio oltre quota della stessa
-   identità è più recente di `ABM_QUOTA_THROTTLE_COOLDOWN_SEC` (default 7200).
-   Gli ultimi avvii stanno in una mappa in memoria `{key: monotonic}`, potata
-   alla scadenza: un riavvio del processo regala un giro, che è accettabile e
-   preferibile a un altro file di stato da mantenere coerente.
+> «Elaborazione interrotta. Se pensi che sia un errore, contattaci.»
 
-Tutti e tre rispondono:
+Nessun nome di provider, nessun riferimento alla quota o alla moderazione.
 
-```json
-{"error": "...", "error_code": "quota_throttled", "retry_after_sec": 6840,
- "reason": "cooldown" | "capacity" | "concurrency"}
-```
+### 4. Quota e gate esistenti
 
-con `429` e header `Retry-After`. Il job torna a `analyzed`/`optimized` come già
-fanno gli altri rami di rifiuto, e — invariante da rispettare — **nessun freno
-può scattare dopo il consumo della quota o dopo un pagamento incassato**: tutti e
-tre stanno a monte del punto di consumo, che resta l'unico punto di partenza
-certa.
-
-`ABM_QUOTA_THROTTLE_ENABLE=0` calcola e logga la decisione senza applicarla
-(modalità osservazione, vedi Rollout).
-
-### 3. `assembly_queue.py` — priorità
-
-Nuovo livello `PRIORITY_THROTTLED = -10` accanto a `PRIORITY_NORMAL = 0` e
-`PRIORITY_PREMIUM = 10`. Il modulo dichiara già livelli numerici «per gradazioni
-future»: la meccanica della coda non cambia. L'anti-starvation resta quella
-esistente — dopo `ABM_ASSEMBLY_STARVE_SEC` (900s) il waiter guadagna
-`+PRIORITY_PREMIUM` (`assembly_queue.py:143`) — e su un throttled porta `-10` a
-`0`, cioè alla pari con i job normali, mai sopra. Nessun job resta fermo
-indefinitamente e nessun throttled scavalca un pagante.
-`generation_engine._assembly_priority` restituisce il nuovo livello quando il job
-porta il marcatore `job["_quota_throttled"]`.
-
-### 4. Osservabilità e interruttore
-
-- **Activity log**: nuova operazione `QUOTA_THROTTLE`, accanto a `QUOTA_GATE` e
-  `QUOTA_BLOCK`, con il `reason` nel campo file. `user_stats.power_users` la
-  conta in `throttle_24h`.
-- **Digest admin**: due righe di allerta nuove — un'identità sopra `2×` la quota
-  (`ABM_ADMIN_QUOTA_ALERT_MULTIPLIER`), e `≥2` cid distinti che generano dallo
-  stesso `/24` nel mese. Il caso del 02/09 sarebbe arrivato al digest successivo
-  invece che dopo 21M caratteri.
-- **Blocklist**: `_blocklist.json` nella data dir, `{key: {reason, until, ts}}`
-  con `key` in forma `cid:` o `net:`. Controllata in `/api/analyze` e
-  `/api/generate` → `403 blocked`. Gestione dal pannello utenti di
-  `/admin/log-activity`, con l'auth esistente (header `X-Admin-Token` o cookie
-  `abm_admin_session`; **mai** il token in query string).
-
-### 5. Frontend
-
-Il modale della quota resta quello. Si aggiunge il ramo `quota_throttled` nei due
-punti che oggi gestiscono `free_tts_quota_exhausted` (`static/js/app.js:3194` e
-`3625`), con una nuova chiave i18n in `i18n_data.js` e nei 7 file `i18n/*.json`:
-
-> «Oltre il limite mensile i libri vengono elaborati con la capacità disponibile.
-> Prossimo avvio possibile fra circa {0}.»
-
-Nessun nome di provider nel testo, coerentemente con la convenzione UI del
-progetto.
+Restano **invariati**: `free_tts_quota.py` non cambia, nessuna multi-chiave,
+nessuna corsia spot. Il superamento della quota non è più l'ultima parola: è il
+segnale S1 che, con un secondo segnale, apre il giudizio.
 
 ## Effetto atteso
 
-Sul comportamento osservato: da **47 libri/giorno a ~12**, concentrati nelle ore
-scariche. Spariscono le code da 6 job che oggi fanno attendere 506s gli altri
-client. Nessun client in quota vede alcuna differenza — solo un miglioramento
-delle attese in coda assembly.
+Sul caso misurato: il secondo cid compare 2'20" dopo il primo blocco ⇒ S2
+scatta lo stesso giorno del superamento della quota ⇒ il giudizio parte il primo
+giorno dell'escalation. Da lì i job del gruppo vengono rifiutati. Per continuare
+il bot deve cambiare IP — e rigenerare i job persi. Ogni rotazione distrugge il
+lavoro accumulato: è il costo che la quota e i freni non riuscivano a imporre.
+
+Il giorno dopo, il digest consegna all'admin il gruppo e la motivazione: la
+blocklist manuale resta la leva terminale per i casi che insistono.
 
 ## Gestione errori
 
 | Situazione | Comportamento |
 |---|---|
-| `_free_tts_quota.json` corrotto o illeggibile | `decision()` ritorna `allowed` (fail-open, come oggi): la quota non deve mai bloccare il servizio |
-| `ABM_IP_SALT` non impostato | default `abm-default-salt-v1`, come il resto dell'app |
-| IP assente o malformato | chiave `net` omessa, le altre due decidono |
-| Blocklist illeggibile | fail-open, nessun 403 |
-| `MAX_CONCURRENT_GLOBAL = 0` (illimitato) | freno 2 disattivato, gli altri due restano |
+| LLM giù o timeout | fail-open: nessuna kill, caso nel digest come «non giudicato» |
+| `confidence < 0.9` o `verdict=inconclusive` | nessuna kill, voce nel digest |
+| Job con pagamento incassato o voce premium | mai ucciso, mai rifiutato |
+| `ABM_ADMIN_EMAIL` vuoto | kill automatica disattivata, solo giudizio in log |
+| `_abuse_dossiers.json` corrotto | fail-open, il dossier riparte da zero |
+| IP assente | gruppo `cid:`, nessun errore |
 
 ## Test
 
 Nuovi file in `test/`:
 
-- `test_free_tts_quota_multikey.py` — chiavi generate correttamente (incluso
-  `/24` e `/64`); `consume` incrementa tutte le chiavi; idempotenza per-chiave sul
-  `job_id`; `decision` esaurita quando sfora **solo** `net`; tetto `3L` su `net`;
-  `refund` storna ovunque; retrocompatibilità della firma a stringa.
-- `test_quota_throttle.py` — i tre freni scattano e restituiscono `429`
-  `quota_throttled` con il `reason` giusto; il job torna in `analyzed`; nessun
-  freno scatta per voce premium o pagamento incassato; nessun freno scatta dopo
-  il consumo della quota; `ABM_QUOTA_THROTTLE_ENABLE=0` logga senza applicare.
-- `test_quota_blocklist.py` — `403` su cid e su net, scadenza onorata, fail-open.
+- `test_abuse_watch.py` — dossier: eventi aggregati, segnali S1/S2/S3, trigger
+  al secondo segnale, nessun trigger al primo; verdetto persistito, TTL e
+  rivalutazione; `clean` senza kill; quarantena, purge e restore.
+- `test_abuse_generate_enforcement.py` — 403 `job_terminated` solo con verdetto
+  `abuse` valido; mai su job pagato/premium; fail-open con dossier corrotto;
+  kill in corsa: thread fermato, status `error`, nessun refund, file in
+  quarantena.
+- `test_abuse_judge.py` — prompt costruito solo da feature (nessun testo
+  utente), parsing del verdetto JSON, fail-open su risposta malformata.
 
-I test esistenti `test_free_tts_quota.py` e `test_free_tts_quota_gate.py` devono
-passare **invariati**: il gate email non cambia comportamento.
+I test esistenti della quota (`test_free_tts_quota*.py`,
+`test_free_quota_*.py`) devono passare **invariati**: la quota non cambia.
 
 ## Rollout
 
-1. **Osservazione** — deploy con `ABM_QUOTA_THROTTLE_ENABLE=0`. La decisione
-   multi-chiave viene calcolata e scritta a log (`QUOTA_THROTTLE` con
-   `reason=observe`) ma non applicata. Due giorni bastano per contare quanti
-   client innocenti la chiave `net` intercetterebbe.
-2. **Accensione** — `ABM_QUOTA_THROTTLE_ENABLE=1` se i falsi positivi da NAT sono
-   accettabili; altrimenti si alza prima `ABM_FREE_TTS_QUOTA_NET_MULTIPLIER`.
-3. **Blocklist** — resta la leva manuale per i casi che sfuggono comunque.
+1. **Osservazione** — deploy con `ABM_ABUSE_LLM_ENABLE=0`: i dossier si
+   popolano, i giudizi girano e finiscono in log e digest, nessuna kill. Serve a
+   tarare la soglia di confidenza sui casi reali prima che qualunque azione
+   distruttiva sia possibile.
+2. **Accensione** — `ABM_ABUSE_LLM_ENABLE=1` quando i verdetti osservati sono
+   in linea con il caso noto (nessun `abuse` su client legittimi).
+3. **Blocklist** — resta la leva manuale per i gruppi confermati dal digest.
 
 ## File toccati
 
-`free_tts_quota.py`, `audiobook_app.py`, `assembly_queue.py`,
-`generation_engine.py`, `user_stats.py`, `email_service.py`,
-`static/js/app.js`, `templates/_fragments/i18n_data.js`, `i18n/*.json`,
+`abuse_watch.py` (nuovo), `audiobook_app.py`, `email_service.py`,
+`user_stats.py` (op di log nei pannelli), `static/js/app.js`,
+`templates/_fragments/i18n_data.js`, `i18n/*.json`,
 `md_files/PARAMETRI_CONFIGURAZIONE.md`, più i tre nuovi file di test.
 
 ## Nuove variabili d'ambiente
 
 | Variabile | Descrizione | Default |
 |---|---|---|
-| `ABM_FREE_TTS_QUOTA_NET_MULTIPLIER` | Moltiplicatore del tetto sulla chiave `net` (tolleranza NAT) | `3` |
-| `ABM_QUOTA_THROTTLE_ENABLE` | `0` = sola osservazione (calcola e logga, non applica) | `1` |
-| `ABM_QUOTA_THROTTLE_CONCURRENCY` | Job contemporanei per identità oltre quota | `1` |
-| `ABM_QUOTA_THROTTLE_RESERVE` | Slot globali riservati ai client in quota | `2` |
-| `ABM_QUOTA_THROTTLE_COOLDOWN_SEC` | Distanza minima fra due avvii oltre quota | `7200` |
-| `ABM_ADMIN_QUOTA_ALERT_MULTIPLIER` | Soglia di allerta nel digest, in multipli della quota | `2` |
+| `ABM_ABUSE_LLM_ENABLE` | Interruttore del kill automatico (0 = solo giudizio in log e digest) | `0` |
+| `ABM_ABUSE_LLM_CONFIDENCE` | Soglia minima di confidenza per la kill | `0.9` |
+| `ABM_ABUSE_QUARANTINE_HOURS` | Retention dei file dei job uccisi, per il ripristino | `24` |
+| `ABM_ABUSE_GATE_DAILY` | Soglia `QUOTA_GATE`/24h per il segnale S3 | `5` |
+| `ABM_ABUSE_CHARS_DAILY` | Soglia caratteri/24h per il segnale S4 (quota/4) | `2500000` |
+| `ABM_ABUSE_VERDICT_TTL_DAYS` | Validità del verdetto persistito | `14` |
