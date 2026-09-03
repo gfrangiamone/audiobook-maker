@@ -406,19 +406,20 @@ __REVIEWS_LD__
       </div>
 
       <div class="tab-panel" id="tabPremium" role="tabpanel" hidden aria-labelledby="tabPremiumBtn">
-        <div class="form-row">
-          <div class="form-group">
+        <div class="form-row premium-top-row">
+          <div class="form-group" id="premLangGroup">
             <label for="vlPremium" data-t="lbl_lang">Lingua</label>
             <select id="vlPremium"></select>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="premModelGroup">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
             <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
           </div>
-        </div>
-        <div class="form-row" id="geminiAccentRow" hidden>
-          <div class="form-group" style="flex:1 1 100%">
+          <!-- Accento: nella stessa .form-row di lingua/modello. Su desktop va a capo
+               (flex-basis 100%) restando sotto le due select; su schermo stretto la
+               riga diventa colonna e l'ordine CSS lo porta subito sotto la lingua. -->
+          <div class="form-group" id="geminiAccentRow" hidden>
             <label for="geminiAccent" data-t="lbl_accent">Accento di lettura</label>
             <select id="geminiAccent"></select>
             <div class="model-rate-hint" data-t="accent_hint"></div>

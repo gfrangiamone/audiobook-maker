@@ -594,6 +594,14 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .form-row[hidden]{display:none}
 .form-group{flex:1;min-width:180px}
 
+/* Riga lingua/modello/accento del tab PREMIUM: l'accento sta nella stessa riga,
+   ma occupa tutta la larghezza e va quindi a capo sotto le due select (desktop).
+   Su schermo stretto (.form-row in colonna) l'ordine lo colloca subito sotto la
+   lingua, prima del modello. */
+.premium-top-row #premLangGroup{order:1}
+.premium-top-row #premModelGroup{order:2}
+.premium-top-row #geminiAccentRow{flex:1 1 100%;order:3}
+
 /* ═══ SPEED SLIDER (mockup-inspired) ═══ */
 .speed-slider-group{flex:1;min-width:200px}
 .speed-label-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
@@ -768,6 +776,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .wizard-steps{gap:4px;padding:6px 12px 0}
   .wizard-connector{width:20px}
   .form-row{flex-direction:column;gap:14px}
+  .premium-top-row #geminiAccentRow{order:2}
+  .premium-top-row #premModelGroup{order:3}
   .panel-footer{flex-direction:column-reverse;gap:14px;align-items:stretch}
   .panel-footer .left,.panel-footer .right{flex:auto;justify-content:center;flex-wrap:wrap}
   .book-info-bar{gap:14px}
