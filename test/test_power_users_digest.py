@@ -106,3 +106,15 @@ def test_digest_html_includes_power_block(monkeypatch):
     finally:
         es.set_power_users_provider(None)
     assert "pu-1" in sent.get("html", "")
+
+
+def test_power_users_counts_abuse_ops(tmp_path):
+    since = datetime(2026, 8, 30, 12, 0, 0)
+    lines = [_line(f"g{i}", f"2026-08-30 {13 + i}:00:00", "b.epub", "GENERATE", "bad", "5.5.5.5")
+             for i in range(5)]
+    lines.append(_line("k1", "2026-08-30 19:00:00", "b.epub", "QUOTA_ABUSE_KILL", "bad", "5.5.5.5"))
+    lines.append(_line("k2", "2026-08-30 19:05:00", "b.epub", "QUOTA_ABUSE_BLOCK", "bad", "5.5.5.5"))
+    lines.append(_line("k3", "2026-08-01 19:05:00", "b.epub", "QUOTA_ABUSE_BLOCK", "bad", "5.5.5.5"))
+    p = _write_log(tmp_path, lines)
+    rows = user_stats.power_users([p], since, min_jobs=5)
+    assert rows[0]["client_id"] == "bad" and rows[0]["abuse_24h"] == 2

@@ -604,7 +604,7 @@ def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=Non
                 if u is None:
                     u = users[key] = {
                         "jobs_24h": 0, "reuse_24h": 0, "premium_24h": 0,
-                        "gate_24h": 0, "block_24h": 0, "books_month": 0,
+                        "gate_24h": 0, "block_24h": 0, "abuse_24h": 0, "books_month": 0,
                         "starts_month": 0, "ips": set(), "platforms": Counter(),
                         "sources": Counter(), "langs": Counter(),
                     }
@@ -637,6 +637,9 @@ def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=Non
                 elif op == "QUOTA_BLOCK":
                     if recent:
                         u["block_24h"] += 1
+                elif op in ("QUOTA_ABUSE_KILL", "QUOTA_ABUSE_BLOCK"):
+                    if recent:
+                        u["abuse_24h"] += 1
                 elif op == "ANALYZE":
                     src = grey_source(fn)
                     if src and in_month:
@@ -658,6 +661,7 @@ def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=Non
             "premium_24h": u["premium_24h"],
             "gate_24h": u["gate_24h"],
             "block_24h": u["block_24h"],
+            "abuse_24h": u["abuse_24h"],
             "books_month": u["books_month"],
             "starts_month": u["starts_month"],
             "chars_month": int(q.get("chars", 0) or 0),

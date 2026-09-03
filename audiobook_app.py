@@ -4110,11 +4110,24 @@ def _abuse_keep_state(job, now):
     return "hold" if now < kept else "expired"
 
 
+def _abuse_digest_data():
+    """Righe per la sezione «Casi di abuso» del digest admin (24h)."""
+    try:
+        rows = abuse_watch.digest_data(ADMIN_DIGEST_INTERVAL_SEC)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return {"rows": rows, "window_hours": max(1, int(ADMIN_DIGEST_INTERVAL_SEC // 3600)),
+            "kill_enabled": abuse_watch.kill_enabled()}
+
+
 # Register funnel + power user providers with email_service (injection — avoids circular import)
 try:
     import email_service as _email_service
     _email_service.set_funnel_provider(lambda: _funnel_data(_last_n_days(30)))
     _email_service.set_power_users_provider(_power_users_data)
+    _email_service.set_abuse_provider(_abuse_digest_data)
 except Exception:
     pass
 

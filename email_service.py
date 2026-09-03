@@ -118,6 +118,8 @@ def _power_users_block_html():
         if int(r.get("reuse_24h") or 0):
             jobs_txt += f" (riusi {int(r['reuse_24h'])})"
         gate_txt = f"{int(r.get('gate_24h') or 0)} / {int(r.get('block_24h') or 0)}"
+        if int(r.get("abuse_24h") or 0):
+            gate_txt += f" &middot; abuso {int(r['abuse_24h'])}"
         chars = int(r.get("chars_month") or 0)
         chars_txt = f"{chars:,}"
         if lim:
@@ -150,6 +152,72 @@ def _power_users_block_html():
         "<p style='color:#999;font-size:11px;margin:4px 0 0'>Avvii = GENERATE + REUSE a voce standard; "
         "gate = job accettati oltre quota con email, rifiuti = 402 senza email; fonti = indizio dal nome file.</p>"
     )
+
+
+# ---------------------------------------------------------------------------
+# Abuse digest provider hook (iniettato da audiobook_app — nessun import circolare)
+# ---------------------------------------------------------------------------
+
+_abuse_provider = None  # callable() -> {"rows": [...], "window_hours": int, "kill_enabled": bool} | None
+
+
+def set_abuse_provider(fn):
+    global _abuse_provider
+    _abuse_provider = fn
+
+
+def _abuse_block_html():
+    """Sezione «Casi di abuso quota» del digest: gruppi con giudizio, kill o
+    rifiuto 403 nella finestra (abuse_watch.digest_data). Solo hash di rete e
+    contatori: mai IP, email o titoli nel canale email. '' se il provider
+    manca, fallisce o non ha righe."""
+    fn = _abuse_provider
+    if not fn:
+        return ""
+    try:
+        d = fn() or {}
+    except Exception:
+        return ""
+    rows = d.get("rows") or []
+    if not rows:
+        return ""
+    hours = int(d.get("window_hours") or 24)
+    mode = "kill attiva" if d.get("kill_enabled") else "solo osservazione"
+    th = "padding:6px 8px;text-align:left;font-size:12px;color:#555;white-space:nowrap"
+    td = "padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;vertical-align:top"
+    trs = ""
+    for r in rows:
+        sig = " ".join(k for k, v in sorted((r.get("signals") or {}).items()) if v) or "-"
+        verd = str(r.get("verdict") or "")
+        if verd:
+            verd += f" ({float(r.get('confidence') or 0):.2f}, {r.get('scope') or '-'})"
+        else:
+            verd = "-"
+        unj = int(r.get("unjudged") or 0)
+        if unj:
+            verd += f" &middot; non giudicato x{unj}"
+        chars = int(r.get("chars_24h") or 0)
+        trs += (
+            f"<tr><td style='{td};font-family:monospace'>{_esc_html(r.get('group', ''), 40)}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('cids_n') or 0)}</td>"
+            f"<td style='{td};text-align:center'>{_esc_html(sig)}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('generate_24h') or 0)} / {chars:,}</td>"
+            f"<td style='{td}'>{_esc_html(verd)}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('kills') or 0)}</td>"
+            f"<td style='{td};text-align:center'>{int(r.get('blocks') or 0)}</td>"
+            f"<td style='{td};color:#666'>{_esc_html(r.get('reason', ''), 160)}</td></tr>"
+        )
+    return f"""
+<h3 style="margin:24px 0 8px;font-size:15px;color:#1a3c5e">Casi di abuso quota ({mode}, ultime {hours}h)</h3>
+<table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd">
+<thead><tr style="background:#f0f5fa">
+<th style="{th}">Gruppo</th><th style="{th};text-align:center">cid</th>
+<th style="{th};text-align:center">Segnali</th><th style="{th};text-align:center">Avvii / caratteri 24h</th>
+<th style="{th}">Verdetto</th><th style="{th};text-align:center">Kill</th>
+<th style="{th};text-align:center">Rifiuti</th><th style="{th}">Motivazione</th>
+</tr></thead><tbody>{trs}</tbody></table>
+<p style="color:#888;font-size:11px;margin:6px 0 0">Solo hash di rete e contatori: nessun IP, email o titolo.
+Ripristino di un gruppo: <code>POST /admin/api/abuse/clear/&lt;gruppo&gt;</code> con header X-Admin-Token.</p>"""
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +519,7 @@ def _try_send_admin_digest():
 
     funnel_block = _funnel_block_html()
     power_block = _power_users_block_html()
+    abuse_block = _abuse_block_html()
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
@@ -470,6 +539,7 @@ def _try_send_admin_digest():
 </table>
 {funnel_block}
 {power_block}
+{abuse_block}
 <p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio \u00e8 generato automaticamente da Audiobook Maker.
 Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
 </body></html>"""
