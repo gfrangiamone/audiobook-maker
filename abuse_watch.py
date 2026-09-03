@@ -40,7 +40,11 @@ _JUDGEMENTS_KEEP = 20
 _KILLS_KEEP = 50
 _BLOCKS_KEEP = 200
 _DEFAULT_SALT = "abm-default-salt-v1"
-_PII_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_PII_RE = re.compile(
+    r"[\w.+-]+@[\w-]+\.[\w.-]+|\b\d{1,3}(?:\.\d{1,3}){3}\b"
+    r"|\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b"
+)
+_GROUP_SCOPE_ACTIVE_SEC = 7 * _DAY_SEC  # scope="group": solo i cid attivi negli ultimi 7 giorni
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +96,10 @@ def _gate_daily():
 
 def _chars_daily():
     return _env_int("ABM_ABUSE_CHARS_DAILY", 2_500_000, floor=1)
+
+
+def _max_cids_per_group():
+    return _env_int("ABM_ABUSE_MAX_CIDS_PER_GROUP", 25, floor=2)
 
 
 def _data_dir():
@@ -206,9 +214,11 @@ def _apply(bucket, kind, data, now):
 
 
 def record_event(group, cid, kind, data=None):
-    """Aggiorna il dossier del gruppo e del cid. `kind` fuori da KINDS: no-op."""
+    """Aggiorna il dossier del gruppo e del cid. `kind` fuori da KINDS: no-op.
+    Ritorna il dizionario del gruppo aggiornato (per evitare una seconda
+    lettura sul chiamante), `None` se non applicabile o su errore."""
     if kind not in KINDS or not group:
-        return
+        return None
     data = data if isinstance(data, dict) else {}
     cid = str(cid or "")
     with _lock:
@@ -219,7 +229,26 @@ def record_event(group, cid, kind, data=None):
         _apply(g["all"], kind, data, now)
         if cid:
             _apply(g["cids"].setdefault(cid, _new_bucket()), kind, data, now)
+            _evict_stale_cids(g, keep=cid)
         _save(d)
+        return json.loads(json.dumps(g))
+
+
+def _evict_stale_cids(g, keep=""):
+    """Se il gruppo supera ABM_ABUSE_MAX_CIDS_PER_GROUP cid, elimina i meno
+    attivi di recente (per `last_ts`), senza mai evictare `keep` (il cid
+    appena registrato)."""
+    cids = g.get("cids") or {}
+    limit = _max_cids_per_group()
+    if len(cids) <= limit:
+        return
+    order = sorted(
+        (c for c in cids if c != keep),
+        key=lambda c: float(cids[c].get("last_ts") or 0),
+    )
+    n_to_evict = len(cids) - limit
+    for c in order[:n_to_evict]:
+        cids.pop(c, None)
 
 
 def dossier(group):
@@ -287,11 +316,14 @@ def verdict_for(group):
     return _valid_verdict(g, time.time()) if g else None
 
 
-def needs_judgement(group, cid=""):
+def needs_judgement(group, cid="", group_data=None):
     """Vero con >=2 segnali e nessun verdetto valido; con verdetto `abuse` se
     `cid` e' fuori dallo scope (rotazione post-verdetto); con `clean` solo se
-    compare un segnale nuovo; altrimenti se gli eventi sono cresciuti del 25%."""
-    g = dossier(group)
+    compare un segnale nuovo; altrimenti se gli eventi sono cresciuti del 25%.
+
+    `group_data`, se fornito (es. dal ritorno di `record_event`), evita una
+    seconda lettura del dossier sul percorso caldo di /api/generate."""
+    g = group_data if group_data is not None else dossier(group)
     if not g:
         return False
     now = time.time()
@@ -324,7 +356,9 @@ def set_verdict(group, verdict):
         known = list(g.get("cids", {}).keys())
         scope = "group" if verdict.get("scope") == "group" else "cids"
         if scope == "group":
-            cids = known
+            active = [c for c in known
+                      if now - float(g["cids"][c].get("last_ts") or 0) <= _GROUP_SCOPE_ACTIVE_SEC]
+            cids = active or known
         else:
             cids = [c for c in (verdict.get("cids") or []) if isinstance(c, str) and c in known]
         try:
@@ -634,9 +668,10 @@ def enqueue(group, cid=""):
 
 def _process(group, cid, on_verdict):
     """Un giro del worker, sincrono: rigiudica solo se serve ancora, poi
-    consegna il verdetto al callback (errori del callback non fermano il worker)."""
-    with _lock:
-        _queued.discard(group)
+    consegna il verdetto al callback (errori del callback non fermano il worker).
+    Il dedup (`_queued`) si chiude a fine giudizio, non all'inizio: un evento
+    arrivato durante i 20-40s della chiamata LLM non deve rimettere in coda
+    lo stesso gruppo per un secondo giudizio identico."""
     try:
         if not needs_judgement(group, cid):
             return None
@@ -654,6 +689,9 @@ def _process(group, cid, on_verdict):
     except Exception as e:
         print(f"[abuse] judge worker error (non-fatal): {e}", flush=True)
         return None
+    finally:
+        with _lock:
+            _queued.discard(group)
 
 
 def _worker(on_verdict):

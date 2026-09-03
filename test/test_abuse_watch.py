@@ -224,6 +224,63 @@ def test_growth_formula_base_4_events(env):
     assert aw.needs_judgement(g, "a") is True
 
 
+def test_cid_eviction_caps_group_at_max(env, monkeypatch):
+    """26 cid -> resta il tetto (default 25): il meno attivo di recente
+    (cid-0) e' evictato, il cid appena registrato (cid-25) resta sempre."""
+    g = aw.group_key("9.9.9.9", "cid-0")
+    real_time = time.time
+    t = [real_time()]
+    monkeypatch.setattr(aw.time, "time", lambda: t[0])
+    for i in range(26):
+        aw.record_event(g, f"cid-{i}", "generate", {"chars": 10})
+        t[0] += 1
+    d = aw.dossier(g)
+    assert len(d["cids"]) == 25
+    assert "cid-0" not in d["cids"]
+    assert "cid-25" in d["cids"]
+
+
+def test_cid_eviction_floor_and_custom_limit(env, monkeypatch):
+    monkeypatch.setenv("ABM_ABUSE_MAX_CIDS_PER_GROUP", "1")   # floor 2
+    assert aw._max_cids_per_group() == 2
+    g = aw.group_key("9.9.9.9", "x")
+    _gen(g, "x")
+    _gen(g, "y")
+    _gen(g, "z")
+    assert len(aw.dossier(g)["cids"]) == 2
+    assert "z" in aw.dossier(g)["cids"]                       # l'ultimo mai evictato
+
+
+def test_verdict_group_scope_restricted_to_active_cids(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "stale")
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # oltre 7 giorni
+    _gen(g, "fresh")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group", "cids": []})
+    assert v["cids"] == ["fresh"]
+    assert aw.is_blocked(g, "fresh") is True
+    assert aw.is_blocked(g, "stale") is False
+
+
+def test_verdict_group_scope_falls_back_to_all_known_if_none_active(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a"); _gen(g, "b")
+    real_time = time.time
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # entrambi ormai stale
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group", "cids": []})
+    assert sorted(v["cids"]) == ["a", "b"]                    # nessun attivo -> fallback a tutti i noti
+
+
+def test_needs_judgement_uses_passed_group_data_without_reload(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    aw.record_event(g, "a", "quota_block", {"chars": 10})
+    group_data = aw.record_event(g, "b", "generate", {"chars": 10})
+    assert group_data is not None
+    monkeypatch.setattr(aw, "_load", lambda: (_ for _ in ()).throw(AssertionError("must not reload")))
+    assert aw.needs_judgement(g, "b", group_data=group_data) is True     # S1 + S2, nessuna rilettura
+
+
 def test_reason_field_scrubs_pii(env):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a")
@@ -236,3 +293,13 @@ def test_reason_field_scrubs_pii(env):
     assert "bob@example.com" not in stored["reason"]
     assert "1.2.3.4" not in stored["reason"]
     assert "[redacted]" in stored["reason"]
+
+
+def test_reason_field_scrubs_ipv6(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "cids",
+                           "cids": ["a"], "reason": "seen from 2001:db8::1 same actor"})
+    assert "2001:db8::1" not in v["reason"]
+    assert "same actor" in v["reason"]
+    assert "[redacted]" in v["reason"]
