@@ -1043,7 +1043,33 @@ Contromisure all'uso massivo delle voci STANDARD (gratuite) da parte di pochi cl
 |----|--------|
 | `QUOTA_BLOCK` | `/api/generate` rifiutato per quota esaurita (nessuna email registrata / nessun ack) |
 | `QUOTA_GATE` | job oltre quota avviato dopo il gate email |
+| `QUOTA_ABUSE_KILL` | job in corso ucciso dal verdetto abuso (kill attiva) |
+| `QUOTA_ABUSE_BLOCK` | 403 pre-claim per cid bloccato dal verdetto abuso |
 | `REUSE` | avvio servito con l'output di un job identico (`run_reuse`) |
+
+---
+
+## 18. Moderazione anti-abuso della quota voci standard (`abuse_watch.py`)
+
+Design: `docs/superpowers/specs/2026-09-03-quota-containment-design.md`. Dossier
+comportamentale per gruppo (IP /24 hashato con `ABM_IP_SALT`, fallback cid) in
+`ABM_DATA_DIR/_abuse_dossiers.json` (retention 60 giorni). Segnali: S1 quota
+esaurita, S2 ≥2 cid, S3 ≥`ABM_ABUSE_GATE_DAILY` QUOTA_GATE/24h, S4
+≥`ABM_ABUSE_CHARS_DAILY` caratteri/24h. Dal secondo segnale il giudice DeepSeek
+(client di `generation_engine`, timeout 20s, 1 retry, fail-open) emette un
+verdetto per cid. Kill in corsa e 403 pre-claim solo con
+`verdict=abuse ∧ confidence ≥ soglia ∧ cid nello scope ∧ job non pagato ∧ voce
+standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
+`POST /admin/api/abuse/clear/<gruppo>` (header `X-Admin-Token`).
+
+| Variabile | Descrizione | Default | Sorgente |
+|---|---|---|---|
+| `ABM_ABUSE_KILL_ENABLE` | Interruttore di kill e 403 (`0` = solo giudizio in log e digest). Richiede anche `ABM_ADMIN_EMAIL` non vuoto. Al primo avvio con `1` i verdetti maturati in osservazione vengono azzerati. | `0` | `abuse_watch.kill_enabled` |
+| `ABM_ABUSE_LLM_CONFIDENCE` | Soglia minima di confidenza del verdetto per kill e 403 | `0.9` | `abuse_watch.confidence_threshold` |
+| `ABM_ABUSE_KEEP_HOURS` | Conservazione della work_dir (chunk inclusi) dei job uccisi, per il ripristino con riuso chunk. Floor 1. | `24` | `abuse_watch.keep_hours` |
+| `ABM_ABUSE_GATE_DAILY` | Soglia `QUOTA_GATE`/24h del segnale S3. Floor 1. | `5` | `abuse_watch._gate_daily` |
+| `ABM_ABUSE_CHARS_DAILY` | Soglia caratteri/24h del segnale S4 (quota mensile / 4). Floor 1. | `2500000` | `abuse_watch._chars_daily` |
+| `ABM_ABUSE_VERDICT_TTL_DAYS` | Validità del verdetto persistito. Con kill spenta è forzata a 1 giorno. Floor 1. | `14` | `abuse_watch.verdict_ttl_sec` |
 
 ---
 
