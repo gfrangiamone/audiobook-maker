@@ -4097,6 +4097,19 @@ def _abuse_apply_verdict(group, verdict):
     return len(killed)
 
 
+def _abuse_keep_state(job, now):
+    """'hold' finche' la work_dir del job ucciso va conservata, 'expired'
+    oltre `abuse_kept_until`, None se il job non e' stato ucciso per abuso."""
+    kept = job.get("abuse_kept_until")
+    if not kept:
+        return None
+    try:
+        kept = float(kept)
+    except (TypeError, ValueError):
+        return None
+    return "hold" if now < kept else "expired"
+
+
 # Register funnel + power user providers with email_service (injection — avoids circular import)
 try:
     import email_service as _email_service
@@ -9694,6 +9707,21 @@ def api_admin_google_tts_status():
             response["diagnose"] = {"error": "diagnose_monitoring not available"}
 
     return jsonify(response)
+
+
+@app.route("/admin/api/abuse/clear/<group>", methods=["POST"])
+def admin_abuse_clear(group):
+    """Ripristino di un gruppo bloccato dalla moderazione anti-abuso: azzera il
+    verdetto. L'utente rilancia dal job in `analyzed` con riuso dei chunk.
+    Nessun refund: il job non era pagato."""
+    if not _admin_auth_ok(_admin_auth_from_request()):
+        return jsonify({"error": "forbidden"}), 403
+    try:
+        cleared = bool(abuse_watch.clear_verdict(group))
+    except Exception as e:
+        return jsonify({"error": f"clear failed: {e}"}), 500
+    print(f"[admin] abuse_watch clear {group}: {'ok' if cleared else 'no verdict'}", flush=True)
+    return jsonify({"ok": True, "group": group, "cleared": cleared})
 
 
 @app.route("/api/admin/load_stats")
@@ -17451,6 +17479,16 @@ def _cleanup_loop():
                     continue
 
                 if status == "analyzed":
+                    # Job ucciso dalla moderazione anti-abuso: la work_dir
+                    # resta per il ripristino da console (ABM_ABUSE_KEEP_HOURS),
+                    # poi via come un analyzed qualunque.
+                    _ak = _abuse_keep_state(job, now)
+                    if _ak == "hold":
+                        continue
+                    if _ak == "expired":
+                        if not _has_active_download_tokens(jid, now):
+                            to_remove.append((jid, "abuse retention expired"))
+                        continue
                     last_poll = job.get("last_poll", job.get("start_time", now))
                     if (now - last_poll) > CLEANUP_HEARTBEAT_TIMEOUT_SEC * 30:
                         # Non rimuovere job con download token ancora attivi

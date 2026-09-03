@@ -277,3 +277,30 @@ def test_apply_verdict_respects_confidence_switch_and_kind(env, monkeypatch):
     high = {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": [CID]}
     assert audiobook_app._abuse_apply_verdict(g, high) == 0
     assert not job.get("cancelled") and "QUOTA_ABUSE_KILL" not in _ops(env)
+
+
+# ---------------------------------------------------------------------------
+# Cleanup della retention e ripristino admin
+# ---------------------------------------------------------------------------
+
+def test_abuse_keep_state(env):
+    now = time.time()
+    assert audiobook_app._abuse_keep_state({}, now) is None
+    assert audiobook_app._abuse_keep_state({"abuse_kept_until": "junk"}, now) is None
+    assert audiobook_app._abuse_keep_state({"abuse_kept_until": now + 60}, now) == "hold"
+    assert audiobook_app._abuse_keep_state({"abuse_kept_until": now - 1}, now) == "expired"
+
+
+def test_admin_clear_endpoint(env, client, monkeypatch):
+    g = _abuse_verdict([CID])
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
+    r = client.post(f"/admin/api/abuse/clear/{g}")
+    assert r.status_code == 403 and aw.verdict_for(g) is not None
+    r = client.post(f"/admin/api/abuse/clear/{g}", headers={"X-Admin-Token": "tok-test"})
+    assert r.status_code == 200 and r.get_json() == {"ok": True, "group": g, "cleared": True}
+    assert aw.verdict_for(g) is None
+    r = client.post(f"/admin/api/abuse/clear/{g}", headers={"X-Admin-Token": "tok-test"})
+    assert r.get_json()["cleared"] is False
+    # dopo il ripristino il cid rigenera normalmente
+    _mk_job("abz-c1")
+    assert _post(client, "abz-c1").status_code == 200
