@@ -58,7 +58,7 @@ compromesso dichiarato.
 | Trigger giudizio | ≥2 segnali distinti e nessun verdetto valido; **cid nuovo** in gruppo con verdetto `abuse` ⇒ rigiudizio |
 | Giudice | DeepSeek, client riusato da `generation_engine` (pattern di `community_moderator`) |
 | Kill automatica | solo `verdict=abuse` ∧ `confidence≥0.9` ∧ cid nello scope ∧ job senza pagamento incassato ∧ voce standard |
-| Kill in corsa | flag `job["cancelled"]` esistente + marcatore `abuse_terminated`; terminale `cancelled` (mai `error`) |
+| Kill in corsa | flag `job["cancelled"]` esistente + marcatore `abuse_terminated`; il ramo cancel chiude su `analyzed` + flag (il progress lo espone come `cancelled`), mai `error` |
 | Job successivi | rifiuto 403 pre-claim con messaggio neutro, senza spiegare il perché |
 | Work dir del job ucciso | **conservata** 24h (nessuno spostamento): il ripristino è un rilancio con riuso chunk |
 | Digest | sezione «Casi di abuso» nel digest admin esistente (24h), con motivazioni |
@@ -138,13 +138,20 @@ l'intera utenza sospetta, una in più per ogni rotazione.
   standard: `job["abuse_terminated"]=True`, poi `job["cancelled"]=True`. Il
   resto lo fa la meccanica esistente: `_check_cancelled` (`generation_engine`)
   legge il flag prima del test `email_registered`, quindi ferma anche i job
-  batch; il ramo `_CancelledError` esegue i refund (no-op su job non pagato) e
-  chiude su terminale `cancelled`, che **non** storna la quota — `error` la
-  stornerebbe (`_set_job_status`), e restituire i caratteri a chi viene ucciso
-  per abuso riaprirebbe il bucket. `_log_activity(..., "QUOTA_ABUSE_KILL", ...)`.
+  batch; il ramo `_CancelledError` esegue i refund (no-op su job non pagato),
+  marca il descrittore batch `failed` e chiude su `analyzed` con il flag
+  `cancelled` (il progress SSE lo espone come `cancelled`). Quel path **non**
+  storna la quota — solo il terminale `error` la stornerebbe
+  (`_set_job_status`), e restituire i caratteri a chi viene ucciso per abuso
+  riaprirebbe il bucket. Il worker scrive
+  `_log_activity(..., "QUOTA_ABUSE_KILL", ...)`; il ramo cancel continua a
+  scrivere il suo `CANCEL`.
 - **Ramo `_CancelledError` di `run_generation`** — unica modifica in
-  `generation_engine`: con `abuse_terminated` salta il `rmtree` della work_dir
-  e posa `job["abuse_kept_until"]`. I `chunk_*.pcm` restano in posizione.
+  `generation_engine`: con `abuse_terminated` salta sia l'`unlink` dei
+  `chunk_*.pcm` sia il `rmtree` della work_dir, e posa
+  `job["abuse_kept_until"]`. I chunk restano in posizione per il riuso.
+  Al rilancio da `/api/generate` i marcatori `abuse_terminated` e
+  `abuse_kept_until` vengono rimossi dal job.
 - **Progress SSE**: con `abuse_terminated` il payload riporta
   `error_code: "job_terminated"`, così il frontend distingue la kill dal cancel
   utente.
@@ -168,7 +175,9 @@ tradito.
 
 Gestione di `error_code === "job_terminated"` — sia nel `403` di `/api/generate`
 sia nel payload del progress — accanto ai rami di errore esistenti, con chiave
-i18n in `i18n_data.js` e nei 7 file `i18n/*.json`:
+i18n `job_terminated_msg` in `templates/_fragments/i18n_data.js` per le 7
+lingue (it/en/fr/es/de/zh/hi; le stringhe UI vivono solo lì, `i18n/` contiene
+solo `download_pages.json`):
 
 > «Elaborazione interrotta. Se pensi che sia un errore, contattaci.»
 
@@ -220,9 +229,10 @@ Nuovi file in `test/`:
   `clear_verdict`.
 - `test_abuse_generate_enforcement.py` — 403 `job_terminated` solo con cid nello
   scope di un verdetto `abuse` valido; mai su job pagato/premium; fail-open con
-  dossier corrotto; kill in corsa: flag posati, terminale `cancelled`, **quota
-  non stornata**, work_dir conservata con `abuse_kept_until`; progress con
-  `job_terminated`; cleanup rimuove la work_dir scaduta.
+  dossier corrotto; kill in corsa: flag posati, job chiuso su `analyzed` +
+  `cancelled`, **quota non stornata**, chunk e work_dir conservati con
+  `abuse_kept_until`; progress con `job_terminated`; cleanup rimuove la
+  work_dir scaduta.
 - `test_abuse_judge.py` — prompt costruito solo da feature (nessun testo
   utente, nessuna email o IP in chiaro), parsing del verdetto JSON con `scope`,
   fail-open su risposta malformata, kill disattivata con `ABM_ADMIN_EMAIL` vuoto
@@ -250,8 +260,7 @@ passare **invariati**.
 `abuse_watch.py` (nuovo), `audiobook_app.py`, `generation_engine.py` (solo il
 ramo `_CancelledError`), `email_service.py`, `user_stats.py` (op di log nei
 pannelli), `static/js/app.js`, `templates/_fragments/i18n_data.js`,
-`i18n/*.json`, `md_files/PARAMETRI_CONFIGURAZIONE.md`, più i tre nuovi file di
-test.
+`md_files/PARAMETRI_CONFIGURAZIONE.md`, più i tre nuovi file di test.
 
 ## Nuove variabili d'ambiente
 
