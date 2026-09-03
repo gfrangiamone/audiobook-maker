@@ -16,6 +16,10 @@ import threading
 import time
 import wave
 
+# Interruttore per modello (ABM_SIMBA32_ENABLE, default abilitato).
+# voice_utils e' modulo foglia: nessun rischio di import circolare.
+from voice_utils import premium_model_enabled as _premium_model_enabled
+
 # === Gate di concorrenza globale (limite abbonamento) =======================
 # Un permesso per chiamata API. Ogni synthesize acquisisce/rilascia uno slot;
 # l'invariante `active <= max_concurrency()` vale su tutti i job/client del
@@ -243,12 +247,25 @@ def _display_name(voice_name):
     return base.replace("_", " ").strip().title()
 
 
+def model_enabled():
+    """True se il modello Speechify e' abilitato (ABM_SIMBA32_ENABLE).
+
+    Default abilitato: serve un valore esplicitamente falso per spegnerlo.
+    Il gate vale su catalogo e ingressi HTTP; la sintesi dei job gia' avviati
+    o in recovery non ne risente.
+    """
+    return _premium_model_enabled(MODEL_ID)
+
+
 def get_voices(ui_lang="en"):
     """Catalogo voci per l'UI. Solo inglese (chiave 'en').
 
     Returns: {"en": [voice_entry, ...]} — Female prima, poi Male (coerente col
     combo Edge). Ogni entry porta id `speechify:simba-3.2:<voiceId>`.
+    Vuoto ({}) se il modello e' spento via ABM_SIMBA32_ENABLE=false.
     """
+    if not model_enabled():
+        return {}
     sorted_voices = sorted(
         VOICES,
         key=lambda v: (0 if v["gender"] == "Female" else 1, v["id"]),

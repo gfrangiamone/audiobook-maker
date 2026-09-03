@@ -518,6 +518,26 @@ LLM_OPT_GROWTH_TOLERANCE = max(0.0, LLM_OPT_GROWTH_TOLERANCE)
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
+# Interruttore per modello PREMIUM (ABM_<MODELLO>_ENABLE, default abilitato).
+from voice_utils import voice_model_enabled as _voice_model_enabled
+from voice_utils import voice_model_key as _voice_model_key
+
+
+def _premium_model_gate(voice):
+    """Risposta 400 se la voce appartiene a un modello PREMIUM disattivato.
+
+    Il modello si spegne con `ABM_<MODELLO>_ENABLE=false` (default abilitato):
+    ABM_FLASH25_ENABLE, ABM_FLASH31_ENABLE, ABM_SIMBA32_ENABLE. Il gate copre
+    solo gli ingressi HTTP (anteprima, stime, ordine PayPal, generazione,
+    ottimizzazione con auto-generate): i job gia' registrati o pagati
+    proseguono, cosi' spegnere un modello non trasforma un lavoro in corso in
+    un rimborso. Ritorna None quando la voce e' ammessa.
+    """
+    if _voice_model_enabled(voice):
+        return None
+    return jsonify({"error": "voice_model_disabled",
+                    "error_code": "voice_model_disabled",
+                    "model_key": _voice_model_key(voice)}), 400
 
 
 def _max_text_chars_for_voice(voice):
@@ -10008,6 +10028,9 @@ def api_preview_audio(job_id):
         return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
 
     voice = request.args.get("voice", "it-IT-IsabellaNeural")
+    _gate = _premium_model_gate(voice)
+    if _gate is not None:
+        return _gate
     rate  = request.args.get("rate",  "+0%")
     style = (request.args.get("style") or "").strip()[:200]
     accent = (request.args.get("accent") or "").strip()[:8]
@@ -10523,6 +10546,11 @@ def api_generate():
     read_round_parens = bool(data.get("read_round_parens", False))
     read_square_brackets = bool(data.get("read_square_brackets", False))
 
+    # Modello PREMIUM spento via ABM_<MODELLO>_ENABLE=false. Valutato prima
+    # dei check di configurazione: e' la ragione piu' specifica del rifiuto.
+    _gate = _premium_model_gate(voice)
+    if _gate is not None:
+        return _gate
     # Refuse Gemini voices when the module is missing or the API key is not configured.
     if _is_gemini_voice(voice):
         if gemini_tts is None or not gemini_tts.is_available():
@@ -12830,6 +12858,9 @@ def api_gemini_estimate():
 
     if not _is_gemini_voice(voice_id):
         return jsonify({"error": "voice_id must be a Gemini voice"}), 400
+    _gate = _premium_model_gate(voice_id)
+    if _gate is not None:
+        return _gate
     with _jobs_lock:
         job = jobs.get(job_id)
     if not job:
@@ -12893,6 +12924,9 @@ def api_combined_estimate():
     # conteggio chunk/caratteri e quindi la stima costo e il preflight PREMIUM.
     read_round_parens = bool(data.get("read_round_parens", False))
     read_square_brackets = bool(data.get("read_square_brackets", False))
+    _gate = _premium_model_gate(voice_id)
+    if _gate is not None:
+        return _gate
 
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -13090,6 +13124,12 @@ def api_paypal_create_order_gemini():
         requested_amount = float(data.get("amount_eur") or 0)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid amount_eur"}), 400
+    # Nessun ordine PayPal per un modello PREMIUM spento: il gate sta prima
+    # della creazione dell'ordine, cosi' non si incassa per un servizio che
+    # /api/generate rifiuterebbe.
+    _gate = _premium_model_gate(voice_id)
+    if _gate is not None:
+        return _gate
 
     with _jobs_lock:
         job = jobs.get(job_id)
@@ -13289,6 +13329,12 @@ def api_optimize():
     if _voice_in and not _VOICE_ID_RE.match(_voice_in):
         return jsonify({"error": "Invalid voice id.",
                         "error_code": "invalid_voice"}), 400
+    # La voce arriva qui per il ramo auto-generate: se il modello PREMIUM e'
+    # spento, meglio rifiutare subito che far pagare l'ottimizzazione e
+    # inciampare poi in /api/generate.
+    _gate = _premium_model_gate(_voice_in)
+    if _gate is not None:
+        return _gate
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
         if sc == 404:

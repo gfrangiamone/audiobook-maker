@@ -765,7 +765,7 @@ function _applyPremiumAvailability(){
     for(const k in voices){
       const list=(voices[k]&&voices[k].voices)||[];
       for(const v of list){
-        if(v&&typeof v.id==='string'&&v.id.startsWith('gemini:')){hasPremium=true;break;}
+        if(v&&typeof v.id==='string'&&(v.id.startsWith('gemini:')||v.id.startsWith('speechify:'))){hasPremium=true;break;}
       }
       if(hasPremium)break;
     }
@@ -953,11 +953,14 @@ function syncLanguageOptions(){
   if(!src||!dst)return;
   const currentVal=src.value;
   // Filtra: una lingua entra nel Premium dropdown solo se voices[lang].voices
-  // contiene almeno una voce con id che inizia per "gemini:".
+  // contiene almeno una voce premium ("gemini:" o "speechify:"). Speechify
+  // conta perché con tutti i modelli Gemini spenti via ABM_<MODELLO>_ENABLE
+  // l'inglese resta comunque servito da Simba.
   const hasPremium=lc=>{
     const v=voices&&voices[lc];
     if(!v||!Array.isArray(v.voices))return false;
-    return v.voices.some(x=>x&&typeof x.id==='string'&&x.id.startsWith('gemini:'));
+    return v.voices.some(x=>x&&typeof x.id==='string'&&
+      (x.id.startsWith('gemini:')||x.id.startsWith('speechify:')));
   };
   // Mantieni l'ordine di #vl (priorità it, en, fr, de, es, pt poi alfabetico).
   const ordered=[];
@@ -967,18 +970,22 @@ function syncLanguageOptions(){
   // Conta le voci Gemini DISTINTE per lingua (non le entry duplicate per
   // model_key): nella UI Premium l'utente sceglie prima il modello e poi la
   // voce, quindi il count rilevante è quello delle voci uniche disponibili.
-  const geminiCount=lc=>{
+  // Fallback su Speechify solo quando non c'è alcuna voce Gemini per quella
+  // lingua (tutti i modelli Gemini spenti): nel caso normale il numero
+  // mostrato resta quello delle sole voci Gemini, come prima.
+  const countByPrefix=(lc,prefix)=>{
     const v=voices&&voices[lc];
     if(!v||!Array.isArray(v.voices))return 0;
     const names=new Set();
     for(const x of v.voices){
-      if(x&&typeof x.id==='string'&&x.id.startsWith('gemini:')){
+      if(x&&typeof x.id==='string'&&x.id.startsWith(prefix)){
         const parts=x.id.split(':');
         names.add(parts[parts.length-1]);
       }
     }
     return names.size;
   };
+  const geminiCount=lc=>countByPrefix(lc,'gemini:')||countByPrefix(lc,'speechify:');
   while(dst.firstChild)dst.removeChild(dst.firstChild);
   for(const o of ordered){
     const clone=o.cloneNode(true);
@@ -1097,9 +1104,19 @@ function updModelsPremium(){
   vmEl.innerHTML='';
   const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
   const isEnglish=(lang==='en');
-  // Modelli Gemini (sempre presenti). Le etichette usano i18n se disponibili.
-  addOpt('flash25', t('lbl_model_flash25')||'Standard');
-  addOpt('flash31', t('lbl_model_flash31')||'Avanzato');
+  // Modelli Gemini: derivati dal catalogo /api/voices, non hardcoded. Un
+  // modello spento lato server (ABM_<MODELLO>_ENABLE=false) non ha voci nel
+  // catalogo e quindi sparisce anche dal selettore. Le etichette usano i18n
+  // se disponibili, altrimenti la model_label del catalogo.
+  const langVoices=(voices&&voices[lang]&&Array.isArray(voices[lang].voices))?voices[lang].voices:[];
+  const seenModels=new Set();
+  for(const v of langVoices){
+    if(!v||typeof v.id!=='string'||!v.id.startsWith('gemini:'))continue;
+    const mk=v.id.split(':')[1];
+    if(!mk||seenModels.has(mk))continue;
+    seenModels.add(mk);
+    addOpt(mk, t('lbl_model_'+mk)||v.model_label||mk);
+  }
   if(isEnglish){
     // Speechify Simba disponibile solo se il catalogo espone voci speechify per 'en'.
     const en=voices&&voices['en'];
@@ -1114,7 +1131,7 @@ function updModelsPremium(){
   let target=null;
   if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
   else if(prev && vmEl.querySelector('option[value="'+prev+'"]')) target=prev;
-  else target=vmEl.options.length?vmEl.options[0].value:'flash25';
+  else target=vmEl.options.length?vmEl.options[0].value:'';
   vmEl.value=target;
 }
 

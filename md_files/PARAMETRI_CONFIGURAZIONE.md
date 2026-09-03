@@ -739,6 +739,29 @@ Il prezzo esposto all'utente per `flash31` può incorporare parte del risparmio 
 | `ABM_CF_CREDIT_TOPUP_FEE` | `0.05` | Commissione di ricarica del credito AI Gateway, come frazione (`0.05` = 5%) — **non** è il credito: si ricava dalla ricevuta come `(importo pagato − credito accreditato) / credito accreditato`. Il credito si paga comprandolo, non spendendolo: il costo reale per ABM è la tariffa nuda maggiorata di questa commissione (`_cf_effective(rate) = rate * (1 + fee)`), applicata solo al calcolo interno del margine — non è un costo separato in fattura. File: `gemini_tts.py:_cf_topup_fee` (666). |
 | `ABM_GEMINI_CF_SAVING_TO_CUSTOMER_PCT` | `50.0` | Quota percentuale del risparmio Cloudflare (rispetto al costo Google puro) ceduta al cliente nel prezzo finale, clampata a `[0, 100]`. Formula in `pricing_rates()`: `tariffa_utente = google - (google - cf_effettivo) * share`. `0` → listino esposto identico a oggi (Google puro, il risparmio resta interno); `100` → tutto il risparmio va al cliente. File: `gemini_tts.py:cf_saving_share` (671). |
 
+### 7.11 Interruttori per modello PREMIUM (`voice_utils.py`)
+
+Ogni modello PREMIUM ha un proprio interruttore `ABM_<MODELLO>_ENABLE`. **Default abilitato**: la variabile serve solo a spegnere, e va valorizzata esplicitamente a `0` / `false` / `no` / `off` (case-insensitive, spazi ignorati). Qualunque altro valore — inclusi vuoto e valore assente — lascia il modello attivo.
+
+| Variabile | Default | Modello | Descrizione |
+|-----------|---------|---------|-------------|
+| `ABM_FLASH25_ENABLE` | *(abilitato)* | `flash25` (Gemini 2.5 Flash TTS) | A `false` il modello sparisce dal catalogo `/api/voices` e dal selettore PREMIUM, e gli ingressi HTTP che lo nominano rispondono `400 {"error_code": "voice_model_disabled"}`. File: `voice_utils.py:premium_model_enabled`, `gemini_tts.py:enabled_model_keys`. |
+| `ABM_FLASH31_ENABLE` | *(abilitato)* | `flash31` (Gemini 3.1 Flash TTS) | Come sopra. Con entrambi i modelli Gemini spenti il catalogo Gemini è vuoto; il tab PREMIUM resta visibile solo se Speechify è attivo (l'inglese continua a essere servito da Simba). |
+| `ABM_SIMBA32_ENABLE` | *(abilitato)* | `simba-3.2` (Speechify) | A `false` `speechify_tts.get_voices()` restituisce `{}`. Non tocca `ABM_SPEECHIFY_API_KEY` né la contabilità. |
+
+Il nome della variabile si ricava dal `model_key` togliendo i caratteri non alfanumerici e maiuscolando: `simba-3.2` → `ABM_SIMBA32_ENABLE` (`voice_utils.premium_model_env_name`).
+
+**Perimetro del gate** — copre esattamente due superfici:
+
+1. **Catalogo voci**: `gemini_tts.get_voices()` salta i modelli spenti, `speechify_tts.get_voices()` ritorna vuoto. Il frontend deriva il selettore modelli dal catalogo (`updModelsPremium`, `static/js/app.js`), quindi non serve alcuna modifica lato UI per nascondere un modello.
+2. **Ingressi HTTP** (`_premium_model_gate`, `audiobook_app.py`): `/api/preview_audio`, `/api/gemini_estimate`, `/api/combined_estimate`, `/api/paypal_create_order_gemini`, `/api/optimize`, `/api/generate` → `400 voice_model_disabled`. Sull'ordine PayPal il gate sta **prima** della creazione dell'ordine: non si incassa per un modello che `/api/generate` rifiuterebbe.
+
+**Fuori dal gate, di proposito**: sintesi (`synthesize`), `parse_voice_id`, pricing/audit, recovery dei job batch. Un job già registrato o già pagato prosegue e viene consegnato anche se il modello viene spento nel frattempo — spegnere un modello non deve trasformare lavori in corso in rimborsi. Per fermare *tutto* il PREMIUM in modo immediato resta il kill-switch admin (`/admin/api/gemini_kill_switch`, §7.6), che agisce su `is_available()`.
+
+**Applicazione**: le env sono lette a ogni chiamata, ma in produzione vivono nell'unit systemd → il cambio richiede `systemctl restart`. Dopo il restart la cache voci si ricostruisce da sola.
+
+---
+
 ---
 
 ## 8. Speechify TTS (Simba-3.2, voci PREMIUM inglese) (`speechify_tts.py`)
@@ -749,6 +772,7 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 
 | Variabile | Descrizione | Default | Sorgente |
 |-----------|-------------|---------|----------|
+| `ABM_SIMBA32_ENABLE` | Interruttore del modello Simba-3.2 (default abilitato: serve `false`/`0`/`no`/`off` esplicito per spegnerlo). A `false` le voci Simba spariscono dal catalogo e gli ingressi HTTP che le nominano rispondono `400 voice_model_disabled`. Vedi §7.11. | *(abilitato)* | `voice_utils.py` `premium_model_enabled()`, `speechify_tts.py` `model_enabled()` |
 | `ABM_SPEECHIFY_API_KEY` | API key Speechify. Se vuota l'engine è disabilitato (`is_available()` → False: voci Simba assenti dal catalogo, stime/pagamenti Premium rispondono 503). Solo variabile d'ambiente, mai esposta in UI o log. | *(vuoto)* | `speechify_tts.py` `api_key()` (139) |
 | `ABM_SPEECHIFY_MAX_CONCURRENCY` | Concorrenza API **globale** (limite abbonamento): numero massimo di chiamate simultanee verso l'API Speechify su **tutti** i job del processo. Floor a 1. | `3` | `speechify_tts.py` `max_concurrency()` (149) |
 | `ABM_SPEECHIFY_PER_JOB_CONCURRENCY` | Chiamate API simultanee per **singolo** job. Floor a 1. Se il gate globale è saturo, il job attende in modo trasparente ("in attesa") senza fallire. | `1` | `speechify_tts.py` `per_job_concurrency()` (154) |

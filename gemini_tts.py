@@ -18,6 +18,8 @@ from pathlib import Path
 
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
+# Interruttore per modello (ABM_<MODELLO>_ENABLE, default abilitato).
+from voice_utils import premium_model_enabled as _premium_model_enabled
 # Primitivo condiviso di scrittura JSON atomica (tmp + fsync + os.replace).
 # NB: set_admin_disabled (kill-switch) NON lo usa di proposito: ha un proprio
 # protocollo write+verifica+retry (hardening incidente 2026-06).
@@ -905,11 +907,29 @@ def build_accent_directive(language, accent_code=None):
     return ""
 
 
+def model_enabled(model_key):
+    """True se il modello Gemini e' abilitato (ABM_<MODELLO>_ENABLE)."""
+    return _premium_model_enabled(model_key)
+
+
+def enabled_model_keys():
+    """Model key Gemini attualmente offerti, nell'ordine di GEMINI_MODELS.
+
+    Un modello spento resta pienamente funzionante lato sintesi/accounting
+    (job gia' pagati o in recovery proseguono): sparisce solo dal catalogo e
+    dagli ingressi HTTP.
+    """
+    return [k for k in GEMINI_MODELS if model_enabled(k)]
+
+
 def get_voices():
     """Catalogo voci Gemini per lingua.
 
     Le voci Gemini sono multilingue: ogni voce appare sotto ogni lingua UI
     supportata. 30 voci x 2 modelli = 60 entry per lingua.
+
+    I modelli disattivati via `ABM_<MODELLO>_ENABLE=false` non compaiono nel
+    catalogo (vedi enabled_model_keys()).
 
     Returns:
         dict {lang_code: [voice_entry, ...]}
@@ -921,10 +941,15 @@ def get_voices():
         GEMINI_VOICE_NAMES,
         key=lambda n: (0 if GEMINI_VOICE_GENDER.get(n) == "Female" else 1, n),
     )
+    enabled = enabled_model_keys()
     for lang in SUPPORTED_UI_LANGUAGES:
         locale = _LANG_LOCALE.get(lang, lang)
         lang_voices = []
         for model_key, model_info in GEMINI_MODELS.items():
+            # Modello spento dall'admin via ABM_<MODELLO>_ENABLE=false: fuori
+            # dal catalogo, quindi invisibile nella UI e in /api/voices.
+            if model_key not in enabled:
+                continue
             for voice_name in sorted_names:
                 gender = GEMINI_VOICE_GENDER.get(voice_name, "")
                 lang_voices.append({
