@@ -39,6 +39,7 @@ import cancel_policy
 import chunk_reuse
 import free_tts_quota
 import output_reuse
+import abuse_watch
 import storage_backend
 import storage_tiering
 import translation_core
@@ -2451,6 +2452,43 @@ def _mark_pending_failed(job_id, reason=""):
     except Exception as e:
         print(f"[{job_id}] pending_jobs.mark_failed failed (non-fatal): {e}",
               flush=True)
+
+
+def _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered):
+    """Pulizia della work_dir dopo un cancel.
+
+    Job ucciso dalla moderazione anti-abuso (`abuse_terminated`): chunk e
+    work_dir restano al loro posto per `ABM_ABUSE_KEEP_HOURS` (marcatore
+    `abuse_kept_until`, letto dal cleanup loop di audiobook_app): il
+    ripristino da console e' un rilancio con riuso dei chunk. Altrimenti:
+    via i PCM/prompt intermedi e, se non e' stato consegnato audio parziale,
+    tutta la work_dir (comportamento storico del ramo _CancelledError).
+    """
+    try:
+        if not work_dir.exists():
+            return
+        if job.get("abuse_terminated"):
+            job["abuse_kept_until"] = time.time() + abuse_watch.keep_hours() * 3600
+            print(f"[{job_id}] abuse kill: work_dir conservata fino a "
+                  f"{job['abuse_kept_until']:.0f}", flush=True)
+            return
+        # Conserva l'MP3 parziale finche' il token download e' vivo:
+        # rimuoviamo solo i PCM/sub-dir intermedi, non output_dir.
+        for p in work_dir.glob("chunk_*.pcm"):
+            try: p.unlink()
+            except OSError: pass
+        for p in work_dir.glob("prompt*.txt"):
+            try: p.unlink()
+            except OSError: pass
+        sil = work_dir / "_silence.pcm"
+        if sil.exists():
+            try: sil.unlink()
+            except OSError: pass
+        # Se NON e' stato consegnato audio parziale, rimuovi tutta la work_dir.
+        if not partial_audio_delivered:
+            shutil.rmtree(str(work_dir), ignore_errors=True)
+    except Exception:
+        pass
 
 
 def _refund_gemini_payment(job_id, job, reason, retained_eur: float = 0.0):
@@ -6400,25 +6438,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             _mark_pending_failed(job_id, "cancelled")
             _set_job_status(job, "analyzed")
             job["progress_message"] = "Cancelled"
-            try:
-                if work_dir.exists():
-                    # Conserva l'MP3 parziale finche' il token download e' vivo:
-                    # rimuoviamo solo i PCM/sub-dir intermedi, non output_dir.
-                    for p in work_dir.glob("chunk_*.pcm"):
-                        try: p.unlink()
-                        except OSError: pass
-                    for p in work_dir.glob("prompt*.txt"):
-                        try: p.unlink()
-                        except OSError: pass
-                    sil = work_dir / "_silence.pcm"
-                    if sil.exists():
-                        try: sil.unlink()
-                        except OSError: pass
-                    # Se NON e' stato consegnato audio parziale, rimuovi tutta la work_dir.
-                    if not partial_audio_delivered:
-                        shutil.rmtree(str(work_dir), ignore_errors=True)
-            except Exception:
-                pass
+            _cancel_cleanup_workdir(job, job_id, work_dir, partial_audio_delivered)
 
         print(f"[{job_id}] Generation cancelled, resources freed"
               f"{' (stale)' if not still_current else ''}.")
