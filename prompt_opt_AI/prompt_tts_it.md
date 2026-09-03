@@ -8,7 +8,7 @@ L'output deve essere in **italiano**. Il testo che ricevi è già in italiano e 
 
 Non tradurre. Non riformulare in altra lingua. Non sostituire parole italiane con sinonimi di altra origine. Se incontri parole straniere intenzionali nel testo (nomi propri, prestiti, citazioni), lasciale invariate nella lingua originale — ma non tradurle né in italiano né in altre lingue.
 
-L'unica trasformazione consentita è quella prevista dalle regole sotto: punteggiatura, accenti per disambiguazione, espansione numeri, sostituzione simboli. Mai cambiare la lingua delle parole.
+L'unica trasformazione consentita è quella prevista dalle regole sotto: punteggiatura, accenti per disambiguazione, scioglimento dei numeri romani, sostituzione simboli. Mai cambiare la lingua delle parole.
 
 
 ## REGOLA CRITICA — LEGGI PRIMA DI TUTTO
@@ -34,11 +34,13 @@ Se un passaggio è chiaramente il risultato di un errore di formattazione o codi
 **Tentativo di ricostruzione SI è obbligatorio anche per i titoli.** Esempio: `PRIMA C PARTEHIBA CITY BLUES` → ricostruisci come `PRIMA PARTE` + `CHIBA CITY BLUES` (separati su due righe). La C "vagabonda" e la sequenza `PARTEHIBA` indicano chiaramente uno split fra `PARTE` e `CHIBA` con la C iniziale di `CHIBA` finita nel posto sbagliato.
 
 ### 2. Numeri romani e date
-Scrivi i numeri romani per esteso in italiano: `Leone XIV` → `Leone Quattordicesimo`, `Capitolo III` → `Capitolo Terzo`, `Enrico VIII` → `Enrico Ottavo`.
+Scrivi i numeri romani per esteso in italiano: `Leone XIV` → `Leone Quattordicesimo`, `Capitolo III` → `Capitolo Terzo`, `Enrico VIII` → `Enrico Ottavo`. Questo — e solo questo — è lo scopo della regola: il TTS legge i numeri romani come lettere, quindi vanno sciolti.
 
-Converti date e numeri cardinali grandi in forma scritta quando il TTS rischierebbe di leggerli in modo ambiguo: `1998` → `millenovecentonovantotto`. 
-EVITA di tradurre numeri grandi in una sequenza di singoli numeri: 14000->uno-quattro-zero-zero-zero, piuttosto lasciali invariati. 
-Lascia invariati codici, codici fiscali, partite IVA, numeri di telefono.
+**Le cifre arabe restano cifre.** Non convertire in lettere anni, date, cardinali, importi, età, numeri di pagina: `1998` resta `1998`, `480 pagine` resta `480 pagine`, `15 marzo` resta `15 marzo`, `280.000 euro` resta `280.000 euro`. I motori TTS leggono correttamente le cifre da soli; un numerale scritto per esteso (`millenovecentonovantotto`) diventa invece una parola lunghissima che i motori neurali troncano o storpiano, e la frase si perde.
+
+Se l'originale ha già il numero scritto in lettere, lascialo in lettere: non fare nemmeno la conversione inversa.
+
+Lascia invariati anche codici, codici fiscali, partite IVA, numeri di telefono, ISBN, numeri di versione (`v2.5`, `Python 3.11`), codici postali, indirizzi IP: non espanderli e non separarne le cifre una a una.
 
 **Cautela su sequenze maiuscole che sembrano numeri romani.** Lascia invariati nomi e identificatori che coincidono con numeri romani ma non lo sono (`Xi Jinping`, `vi` come editor, `MIX` come titolo album). Converti solo quando il contesto indica chiaramente una sequenza numerica o un rango.
 

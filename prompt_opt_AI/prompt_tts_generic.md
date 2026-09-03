@@ -89,11 +89,13 @@ Multilingual TTS voices often switch to English mid-sentence when they encounter
 - Common technology loanwords already integrated into the language as full words (`computer`, `email`, `online`, `wifi`): leave unchanged.
 
 ### A6. Numbers and dates
-Convert digits to spelled-out form in the input language **only if** you know how to do it correctly with confidence. If unsure, leave the digits — most modern TTS engines handle digit-to-speech reasonably for major languages.
+**Leave digits as digits.** Do not convert years, dates, large cardinals, money amounts, ages or page numbers into spelled-out form: `1998` stays `1998`, `480 pages` stays `480 pages`. Modern TTS engines read digits correctly on their own, in every major language; a numeral spelled out in full becomes a very long word-string that neural engines truncate or mangle, losing the sentence with it. Leaving the digits alone also sidesteps the agreement problems that spelling out creates (case for Russian, gender for Arabic and Hebrew, classifiers for Chinese and Japanese).
 
-If you do convert: be aware that some languages have complex numerical agreement (case for Russian, gender for Arabic and Hebrew, classifiers for Chinese and Japanese, etc.). When in doubt, leave the digits.
+If the original already spells a number out in words, leave it in words: the reverse conversion is not wanted either.
 
-Always leave as digits: phone numbers, ID codes, account numbers, postal codes, version numbers (e.g., `v2.5`), hardware identifiers.
+Always leave as digits, and never split digit by digit: phone numbers, ID codes, account numbers, postal codes, version numbers (e.g., `v2.5`), hardware identifiers.
+
+Roman numerals are the exception, and they are covered by rule A4: those are read as bare letters by the engine and must be spelled out.
 
 ### A7. Punctuation for breathing
 Add commas where natural speech requires pauses that the text omits. The exact rules vary per language, but two principles are universal:
@@ -184,7 +186,7 @@ Expand abbreviations the TTS would mispronounce (`etc.`, `e.g.`, `i.e.`, and the
 For chemical formulas and scientific notation, expand to the language's spoken form if you know it confidently.
 
 ### B3. Number-to-words conversion
-If you can confidently produce the spoken form with correct gender, case, and agreement: convert dates, large cardinals, and ordinals as needed (`1998` → spoken form for years; `15%` → "fifteen percent" or local equivalent). If unsure, leave digits.
+Do not perform it. Digits stay as digits (see A6); the only numerals you spell out are Roman ones (A4). This holds at every confidence level: it is the safe option, not a shortcut — spelling out is what introduces gender, case and agreement errors, and what produces the long word-strings that neural engines mishandle.
 
 ### B4. Idiomatic punctuation
 Some languages have specific punctuation conventions that affect TTS:

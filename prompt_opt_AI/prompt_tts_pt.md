@@ -37,21 +37,22 @@ A reconstrução é esperada também para títulos. As letras "errantes" são pi
 
 ### 2. Numerais romanos, datas, números grandes
 
-Escreve os numerais romanos em português: `Dom Pedro II` → `Dom Pedro Segundo`, `Henrique VIII` → `Henrique Oitavo`, `Capítulo III` → `Capítulo Terceiro`, `Papa João Paulo II` → `Papa João Paulo Segundo`, `século XVI` → `século dezasseis` (PT-PT) / `século dezesseis` (PT-BR).
+Escreve os numerais romanos em português: `Dom Pedro II` → `Dom Pedro Segundo`, `Henrique VIII` → `Henrique Oitavo`, `Capítulo III` → `Capítulo Terceiro`, `Papa João Paulo II` → `Papa João Paulo Segundo`, `século XVI` → `século dezasseis` (PT-PT) / `século dezesseis` (PT-BR). É este — e só este — o propósito da regra: o TTS lê os numerais romanos como letras soltas, por isso têm de ser desenvolvidos.
 
-**Converte TODOS os seguintes casos em forma escrita em português:**
+**Os dígitos árabes ficam como dígitos.** NÃO converte em palavras os seguintes casos:
 
-- **Anos**: `1998` → `mil novecentos e noventa e oito`, `2026` → `dois mil e vinte e seis`, `1592` → `mil quinhentos e noventa e dois`
-- **Cardinais grandes** (acima de 20 ou 30): `180 obras` → `cento e oitenta obras`, `460 páginas` → `quatrocentas e sessenta páginas`, `280.000 euros` → `duzentos e oitenta mil euros`
-- **Datas com dia numérico**: `15 de março` → `quinze de março`, `30 de setembro` → `trinta de setembro`
-- **Montantes monetários**: `15 €` → `quinze euros`, `R$ 250` → `duzentos e cinquenta reais`, `1,50 €` → `um euro e cinquenta cêntimos` (PT-PT) / `um euro e cinquenta centavos` (PT-BR)
-- **Idades**: `18 anos` → `dezoito anos`, `menores de 18` → `menores de dezoito`
-- **Páginas, volumes, ordinais em prosa**: `volume 5` → `volume cinco` ou `quinto volume`
-- **Séculos**: `século XVI` → `século dezasseis` (PT-PT) / `século dezesseis` (PT-BR)
+- **Anos**: `1998` fica `1998`, `2026` fica `2026`, `1592` fica `1592`
+- **Cardinais grandes**: `180 obras` fica `180 obras`, `460 páginas` fica `460 páginas`, `280.000 euros` fica `280.000 euros`
+- **Datas com dia numérico**: `15 de março` fica `15 de março`, `30 de setembro` fica `30 de setembro`
+- **Montantes monetários**: `15 €` fica `15 €`, `R$ 250` fica `R$ 250`, `1,50 €` fica `1,50 €`
+- **Idades**: `18 anos` fica `18 anos`, `menores de 18` fica `menores de 18`
+- **Páginas, volumes**: `volume 5` fica `volume 5`
 
-Atende ao acordo de género nos numerais quando aplicável: `duzentas páginas` (feminino, porque "páginas" é feminino), `duzentos euros` (masculino).
+Os motores TTS leem bem os dígitos por si próprios; um número escrito por extenso (`mil novecentos e noventa e oito`) torna-se uma cadeia de palavras longuíssima que os motores neuronais truncam ou deformam, levando a frase inteira com ela. Por este caminho evita-se também o acordo de género.
 
-**Mantém apenas como dígitos:**
+Se o original já traz o número por extenso, deixa-o por extenso: a conversão inversa também não é desejada.
+
+**Mantém igualmente como dígitos:**
 
 - Números de telefone
 - Códigos de identificação (BI, CC, NIF em PT-PT; CPF, RG em PT-BR)

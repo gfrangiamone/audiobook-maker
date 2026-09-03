@@ -820,11 +820,36 @@ _LLM_PREAMBLE_RE = re.compile(
 )
 
 
+# Igiene tipografica dell'output LLM. Il modello ogni tanto riconsegna la
+# punteggiatura attaccata alla parola dopo ("Garzanti,Danny l'eletto") o
+# staccata da quella prima ("Garzanti , Danny"), dove l'originale era
+# corretto. Nessun motore TTS ci inciampa, ma il testo ottimizzato e' anche
+# quello che l'utente rilegge e che finisce nell'.abm: lo spazio torna al suo
+# posto qui, perche' dopo l'LLM nessuno stadio guarda piu' la tipografia.
+#
+# Solo virgola, punto e virgola e due punti seguiti da una lettera: i decimali
+# (1,50), le migliaia (280.000) e gli orari (12:30) hanno una cifra dopo, gli
+# URL (http://) un carattere non alfabetico, e restano intatti. Il punto resta
+# fuori: spezzerebbe le sigle puntate (C.E.O.) che i prompt chiedono. Le
+# lingue che non spaziano le parole (cinese, giapponese) usano la
+# punteggiatura a larghezza piena, non questa; il lookahead le esclude
+# comunque.
+_LLM_SPAZIO_MANCANTE_RE = re.compile(r"([,;:])(?=[^\W\d_])(?![぀-鿿])")
+_LLM_SPAZIO_DI_TROPPO_RE = re.compile(r"[ \t]+([,;:.!?])")
+
+
+def _igiene_tipografica(text: str) -> str:
+    """Rimette gli spazi attorno alla punteggiatura dove l'LLM li ha spostati."""
+    text = _LLM_SPAZIO_DI_TROPPO_RE.sub(r"\1", text)
+    return _LLM_SPAZIO_MANCANTE_RE.sub(r"\1 ", text)
+
+
 def _sanitize_llm_output(text: str) -> str:
     """Rimuove contaminazioni tipiche dell'output LLM prima di passarlo al TTS.
 
     1) Preamboli/postfazioni meta
     2) Paragrafi/righe duplicate consecutive
+    3) Igiene tipografica degli spazi attorno alla punteggiatura
     """
     if not text:
         return text
@@ -889,7 +914,8 @@ def _sanitize_llm_output(text: str) -> str:
             out_lines.append(ln)
         final_paragraphs.append("\n".join(out_lines))
 
-    return "\n\n".join(final_paragraphs).strip()
+    # 5) Igiene tipografica
+    return _igiene_tipografica("\n\n".join(final_paragraphs).strip())
 
 
 class _PromptLeakError(Exception):
