@@ -43,6 +43,42 @@ def test_abuse_block_escapes_reason():
     es.set_abuse_provider(None)
 
 
+def test_digest_sent_with_abuse_only_rows_and_empty_queue(monkeypatch):
+    """Un gruppo solo bloccato (403, mai un job in coda) non deve restare
+    invisibile solo perche' _admin_queue e' vuota (issue #8)."""
+    sent = {}
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(html=html))
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setattr(es, "_admin_last_sent", 0.0)
+    monkeypatch.setattr(es, "_admin_queue", [])
+    es.set_funnel_provider(None)
+    es.set_power_users_provider(None)
+    es.set_abuse_provider(lambda: {"rows": _rows()[:1], "window_hours": 24, "kill_enabled": True})
+    try:
+        es._try_send_admin_digest()
+    finally:
+        es.set_abuse_provider(None)
+    assert "net:abcdef0123456789" in sent.get("html", "")
+
+
+def test_digest_not_sent_with_empty_queue_and_no_abuse_rows(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(html=html))
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setattr(es, "_admin_last_sent", 0.0)
+    monkeypatch.setattr(es, "_admin_queue", [])
+    es.set_funnel_provider(None)
+    es.set_power_users_provider(None)
+    es.set_abuse_provider(lambda: {"rows": [], "window_hours": 24, "kill_enabled": True})
+    try:
+        es._try_send_admin_digest()
+    finally:
+        es.set_abuse_provider(None)
+    assert sent == {}
+
+
 def test_audiobook_app_provider_wraps_abuse_watch(monkeypatch, tmp_path):
     import abuse_watch as aw
     import audiobook_app

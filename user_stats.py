@@ -651,7 +651,7 @@ def power_users(paths, since, min_jobs=5, quota_table=None, top=10, month_ym=Non
     qt = quota_table or {}
     rows = []
     for key, u in users.items():
-        if u["jobs_24h"] < max(1, int(min_jobs or 1)):
+        if u["jobs_24h"] < max(1, int(min_jobs or 1)) and u["abuse_24h"] <= 0:
             continue
         q = qt.get(key) if isinstance(qt.get(key), dict) else {}
         rows.append({

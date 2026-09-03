@@ -166,17 +166,26 @@ def set_abuse_provider(fn):
     _abuse_provider = fn
 
 
-def _abuse_block_html():
+def _abuse_provider_data():
+    """Interroga il provider abuso una sola volta. Fail-open: `None` se il
+    provider manca o fallisce (equivale a 'nessuna riga')."""
+    fn = _abuse_provider
+    if not fn:
+        return None
+    try:
+        return fn() or {}
+    except Exception:
+        return None
+
+
+def _abuse_block_html(data=None):
     """Sezione «Casi di abuso quota» del digest: gruppi con giudizio, kill o
     rifiuto 403 nella finestra (abuse_watch.digest_data). Solo hash di rete e
     contatori: mai IP, email o titoli nel canale email. '' se il provider
-    manca, fallisce o non ha righe."""
-    fn = _abuse_provider
-    if not fn:
-        return ""
-    try:
-        d = fn() or {}
-    except Exception:
+    manca, fallisce o non ha righe. `data`, se fornito, evita di richiamare
+    il provider una seconda volta nello stesso invio del digest."""
+    d = _abuse_provider_data() if data is None else data
+    if not d:
         return ""
     rows = d.get("rows") or []
     if not rows:
@@ -488,8 +497,13 @@ def _try_send_admin_digest():
     global _admin_last_sent
     if not ADMIN_EMAIL or not _smtp_available():
         return
+    # Calcolato una sola volta per invio: un gruppo solo bloccato (403, mai un
+    # job in coda) non deve restare invisibile solo perche' _admin_queue e'
+    # vuota (issue #8).
+    _abuse_data = _abuse_provider_data()
+    _abuse_rows = (_abuse_data or {}).get("rows") or []
     with _admin_queue_lock:
-        if not _admin_queue:
+        if not _admin_queue and not _abuse_rows:
             return
         now = time.time()
         if (now - _admin_last_sent) < ADMIN_DIGEST_INTERVAL_SEC:
@@ -519,7 +533,7 @@ def _try_send_admin_digest():
 
     funnel_block = _funnel_block_html()
     power_block = _power_users_block_html()
-    abuse_block = _abuse_block_html()
+    abuse_block = _abuse_block_html(_abuse_data or {})
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>

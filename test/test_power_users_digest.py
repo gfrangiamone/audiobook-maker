@@ -118,3 +118,16 @@ def test_power_users_counts_abuse_ops(tmp_path):
     p = _write_log(tmp_path, lines)
     rows = user_stats.power_users([p], since, min_jobs=5)
     assert rows[0]["client_id"] == "bad" and rows[0]["abuse_24h"] == 2
+
+
+def test_power_users_visible_below_min_jobs_with_abuse_events(tmp_path):
+    """Un cid con pochi GENERATE (sotto min_jobs) ma con kill/block anti-abuso
+    deve restare visibile nel pannello power user (issue #9): il criterio
+    abuse_24h > 0 e' una OR indipendente dalla soglia jobs_24h."""
+    since = datetime(2026, 8, 30, 12, 0, 0)
+    lines = [_line("g1", "2026-08-30 13:00:00", "b.epub", "GENERATE", "sneaky", "6.6.6.6")]
+    lines.append(_line("k1", "2026-08-30 13:05:00", "b.epub", "QUOTA_ABUSE_KILL", "sneaky", "6.6.6.6"))
+    p = _write_log(tmp_path, lines)
+    rows = user_stats.power_users([p], since, min_jobs=5)
+    assert [r["client_id"] for r in rows] == ["sneaky"]
+    assert rows[0]["jobs_24h"] == 1 and rows[0]["abuse_24h"] == 1
