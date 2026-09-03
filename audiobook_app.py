@@ -4035,7 +4035,10 @@ def _power_users_data():
 # Moderazione anti-abuso della quota voci standard (abuse_watch)
 # ---------------------------------------------------------------------------
 
-_ABUSE_GROUP_RE = re.compile(r"^(net|cid):[0-9a-f]{16,64}$")
+# net:<hash> è sempre sha256(salt+ip)[:16] esadecimale; cid:<...> è invece
+# l'abm_cid grezzo (uuid4[:12], contiene trattini) usato come fallback quando
+# manca l'IP: niente whitespace/caratteri di controllo in entrambi i rami.
+_ABUSE_GROUP_RE = re.compile(r"^(net:[0-9a-f]{16,64}|cid:[A-Za-z0-9._-]{1,64})$")
 
 
 def _abuse_group_of(job):

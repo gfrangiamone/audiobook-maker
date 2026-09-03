@@ -381,9 +381,14 @@ def test_admin_clear_endpoint(env, client, monkeypatch):
 
 def test_admin_clear_endpoint_rejects_invalid_group(env, client, monkeypatch):
     """Il path param non validato finiva pari pari in un print(): %0A inietta
-    una newline nel log di processo (forgiatura di righe di log)."""
+    una newline nel log di processo (forgiatura di righe di log). Il ramo
+    net: resta solo esadecimale; il ramo cid: accetta l'abm_cid grezzo (con
+    trattini) ma non whitespace/caratteri di controllo."""
     monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
     r = client.post("/admin/api/abuse/clear/net:%0Aforged",
+                     headers={"X-Admin-Token": "tok-test"})
+    assert r.status_code == 400 and r.get_json() == {"error": "invalid group"}
+    r = client.post("/admin/api/abuse/clear/cid:abc%0Adef",
                      headers={"X-Admin-Token": "tok-test"})
     assert r.status_code == 400 and r.get_json() == {"error": "invalid group"}
     r = client.post("/admin/api/abuse/clear/not-a-group",
@@ -392,3 +397,16 @@ def test_admin_clear_endpoint_rejects_invalid_group(env, client, monkeypatch):
     # senza token: 403 prima ancora della validazione del formato
     r = client.post("/admin/api/abuse/clear/net:%0Aforged")
     assert r.status_code == 403
+
+
+def test_admin_clear_endpoint_accepts_raw_cid_group(env, client, monkeypatch):
+    """Il fallback cid: usa l'abm_cid grezzo (uuid4[:12], con trattini), non un
+    hash esadecimale: deve superare la validazione e arrivare a
+    abuse_watch.clear_verdict (issue #5 follow-up)."""
+    monkeypatch.setattr(audiobook_app, "ADMIN_TOKEN", "tok-test")
+    group = "cid:36e901e8-71d4-4a2b-9c1e-123456789abc"
+    r = client.post(f"/admin/api/abuse/clear/{group}",
+                     headers={"X-Admin-Token": "tok-test"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["group"] == group and "cleared" in body
