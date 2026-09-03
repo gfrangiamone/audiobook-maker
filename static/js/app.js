@@ -3145,6 +3145,12 @@ async function startCombinedGeneration(combinedPaymentToken){
           const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
           _showSelTooLargeModal(gd.chars_selected,gd.chars_limit);unlockUI();return;
         }
+        if(gd.error_code==='job_terminated'){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
+          unlockUI();generating=false;return;
+        }
         if(gd.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(gd);return;}
         if(gd.error_code==='server_busy'){
           const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -3576,6 +3582,12 @@ async function startGen(){
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
         showErr('s3err',d.error);unlockUI();return;
       }
+      if(d.error_code==='job_terminated'){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        showErr('s3err',t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.');
+        unlockUI();generating=false;return;
+      }
       if(d.error_code==='free_tts_quota_exhausted'){_handleTtsQuotaGate(d);return;}
       if(d.error_code==='free_quota_exhausted'||d.error_code==='payment_required'){
         // Path di retry/generazione post-ottimizzazione standalone: senza
@@ -3961,7 +3973,17 @@ function listenProgress(){
         }
         return;
       }
-      if(d.status==='cancelled'){es.close();_hideJobRunningModal(true,myJobId);document.getElementById('pMsg').textContent=t('cancelled_msg');document.getElementById('pMsg').style.color='var(--err)';document.getElementById('cnA').style.display='none';unlockUI();generating=false;_renderGeminiCancelSummary(d);return}
+      if(d.status==='cancelled'){
+        es.close();_hideJobRunningModal(true,myJobId);
+        // Kill della moderazione anti-abuso: messaggio neutro, mai il perche'.
+        const _cmsg=d.error_code==='job_terminated'
+          ?(t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.')
+          :t('cancelled_msg');
+        document.getElementById('pMsg').textContent=_cmsg;document.getElementById('pMsg').style.color='var(--err)';
+        document.getElementById('cnA').style.display='none';unlockUI();generating=false;
+        if(d.error_code!=='job_terminated')_renderGeminiCancelSummary(d);
+        return
+      }
 
       const pct=d.progress_total>0?Math.round(d.progress_current/d.progress_total*100):0;
       window._sseLastProgressPct=pct;
