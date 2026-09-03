@@ -224,3 +224,241 @@ def dossier(group):
     with _lock:
         g = _load()["groups"].get(group)
     return json.loads(json.dumps(g)) if g is not None else None
+
+
+# ---------------------------------------------------------------------------
+# Segnali S1-S4 e trigger del giudizio
+# ---------------------------------------------------------------------------
+
+def _events_total(g):
+    b = g.get("all", {})
+    return sum(int(b.get(k, 0)) for k in KINDS)
+
+
+def _in_window(items, now, window, index=None):
+    out = []
+    for it in items or []:
+        ts = it[index] if index is not None else it
+        try:
+            if now - float(ts) < window:
+                out.append(it)
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _signals(g, now):
+    """S1 quota esaurita (gate/block nell'ultimo mese); S2 >=2 cid; S3 >=N
+    QUOTA_GATE/24h; S4 >=M caratteri/24h. S4 e' il segnale che la rotazione
+    del cookie non elude: il volume del gruppo resta."""
+    b = g.get("all", {})
+    qts = float(b.get("quota_exhausted_ts") or 0)
+    s1 = qts > 0 and (now - qts) < _QUOTA_S1_WINDOW_SEC
+    s2 = len(g.get("cids", {})) >= 2
+    s3 = len(_in_window(b.get("recent_gate"), now, _DAY_SEC)) >= _gate_daily()
+    chars_24h = sum(int(c) for _ts, c in _in_window(b.get("recent_generate"), now, _DAY_SEC, index=0))
+    s4 = chars_24h >= _chars_daily()
+    return {"S1": bool(s1), "S2": bool(s2), "S3": bool(s3), "S4": bool(s4)}
+
+
+def signals_for(group):
+    g = dossier(group)
+    if not g:
+        return {"S1": False, "S2": False, "S3": False, "S4": False}
+    return _signals(g, time.time())
+
+
+def _valid_verdict(g, now):
+    v = g.get("verdict")
+    if not isinstance(v, dict) or v.get("verdict") not in VERDICTS:
+        return None
+    try:
+        if now - float(v.get("ts", 0)) > verdict_ttl_sec():
+            return None
+    except (TypeError, ValueError):
+        return None
+    return v
+
+
+def verdict_for(group):
+    g = dossier(group)
+    return _valid_verdict(g, time.time()) if g else None
+
+
+def needs_judgement(group, cid=""):
+    """Vero con >=2 segnali e nessun verdetto valido; con verdetto `abuse` se
+    `cid` e' fuori dallo scope (rotazione post-verdetto); con `clean` solo se
+    compare un segnale nuovo; altrimenti se gli eventi sono cresciuti del 25%."""
+    g = dossier(group)
+    if not g:
+        return False
+    now = time.time()
+    sig = _signals(g, now)
+    n_sig = sum(1 for x in sig.values() if x)
+    v = _valid_verdict(g, now)
+    if v is None:
+        return n_sig >= 2
+    if v["verdict"] == "abuse" and cid and cid not in (v.get("cids") or []):
+        return True
+    if v["verdict"] == "clean":
+        old = v.get("signals") or {}
+        return any(sig[k] and not old.get(k) for k in sig)
+    grown = _events_total(g) > int(v.get("events_at_verdict", 0) * 1.25)
+    return n_sig >= 2 and grown
+
+
+# ---------------------------------------------------------------------------
+# Verdetti, blocco, ripristino
+# ---------------------------------------------------------------------------
+
+def set_verdict(group, verdict):
+    """Normalizza e persiste il verdetto. `scope=group` allarga `cids` a tutti
+    i cid noti al momento del verdetto; `scope=cids` tiene solo cid noti."""
+    verdict = verdict if isinstance(verdict, dict) else {}
+    with _lock:
+        d = _load()
+        now = time.time()
+        g = d["groups"].setdefault(group, _new_group(now))
+        known = list(g.get("cids", {}).keys())
+        scope = "group" if verdict.get("scope") == "group" else "cids"
+        if scope == "group":
+            cids = known
+        else:
+            cids = [c for c in (verdict.get("cids") or []) if isinstance(c, str) and c in known]
+        try:
+            conf = min(1.0, max(0.0, float(verdict.get("confidence") or 0)))
+        except (TypeError, ValueError):
+            conf = 0.0
+        kind = verdict.get("verdict")
+        if kind not in VERDICTS:
+            kind = "inconclusive"
+        v = {"verdict": kind, "confidence": conf, "scope": scope, "cids": cids,
+             "reason": str(verdict.get("reason") or "")[:500], "ts": now,
+             "signals": _signals(g, now), "events_at_verdict": _events_total(g)}
+        g["verdict"] = v
+        _push(g["judgements"], {"ts": now, "outcome": kind, "confidence": conf,
+                                "scope": scope, "cids_n": len(cids), "reason": v["reason"]},
+              _JUDGEMENTS_KEEP)
+        g["updated"] = now
+        _save(d)
+        return json.loads(json.dumps(v))
+
+
+def record_judgement_failed(group, reason=""):
+    """Fail-open: nessun verdetto; il caso resta nel digest come 'non giudicato'."""
+    with _lock:
+        d = _load()
+        now = time.time()
+        g = d["groups"].setdefault(group, _new_group(now))
+        _push(g["judgements"], {"ts": now, "outcome": "unjudged", "confidence": 0.0,
+                                "scope": "", "cids_n": 0, "reason": str(reason)[:200]},
+              _JUDGEMENTS_KEEP)
+        g["updated"] = now
+        _save(d)
+
+
+def is_blocked(group, cid):
+    """Vero solo con kill accesa, verdetto `abuse` valido sopra soglia e cid nello scope."""
+    if not cid or not kill_enabled():
+        return False
+    v = verdict_for(group)
+    return bool(v and v["verdict"] == "abuse"
+                and float(v.get("confidence") or 0) >= confidence_threshold()
+                and cid in (v.get("cids") or []))
+
+
+def clear_verdict(group):
+    """Ripristino da console admin (e azzeramento all'accensione)."""
+    with _lock:
+        d = _load()
+        g = d["groups"].get(group)
+        if not g or not g.get("verdict"):
+            return False
+        g["verdict"] = None
+        _push(g["judgements"], {"ts": time.time(), "outcome": "cleared", "confidence": 0.0,
+                                "scope": "", "cids_n": 0, "reason": "admin"},
+              _JUDGEMENTS_KEEP)
+        _save(d)
+        return True
+
+
+def record_kill(group, cid, job_id):
+    with _lock:
+        d = _load()
+        now = time.time()
+        g = d["groups"].setdefault(group, _new_group(now))
+        _push(g["kills"], {"ts": now, "cid": str(cid or ""), "job_id": str(job_id or "")}, _KILLS_KEEP)
+        _save(d)
+
+
+def record_block(group, cid):
+    with _lock:
+        d = _load()
+        now = time.time()
+        g = d["groups"].setdefault(group, _new_group(now))
+        _push(g["blocks"], {"ts": now, "cid": str(cid or "")}, _BLOCKS_KEEP)
+        _save(d)
+
+
+def arm_on_startup():
+    """Al primo avvio con kill accesa azzera i verdetti maturati in osservazione:
+    le kill partono solo da giudizi emessi con il prompt definitivo. Con kill
+    spenta disarma, cosi' la prossima accensione azzera di nuovo. Ritorna il
+    numero di verdetti azzerati."""
+    with _lock:
+        d = _load()
+        armed = bool(d["meta"].get("kill_armed"))
+        enabled = kill_enabled()
+        if enabled and not armed:
+            n = 0
+            for g in d["groups"].values():
+                if g.get("verdict"):
+                    g["verdict"] = None
+                    n += 1
+            d["meta"]["kill_armed"] = True
+            d["meta"]["kill_armed_ts"] = time.time()
+            _save(d)
+            return n
+        if not enabled and armed:
+            d["meta"]["kill_armed"] = False
+            _save(d)
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Dati per il digest admin
+# ---------------------------------------------------------------------------
+
+def digest_data(window_sec=_DAY_SEC):
+    """Righe della sezione «Casi di abuso»: solo gruppi con giudizio, kill o
+    403 nella finestra. Solo hash e contatori: mai IP, email o titoli."""
+    with _lock:
+        d = _load()
+    now = time.time()
+    since = now - window_sec
+    rows = []
+    for key, g in d.get("groups", {}).items():
+        kills = [k for k in g.get("kills", []) if float(k.get("ts", 0) or 0) >= since]
+        blocks = [b for b in g.get("blocks", []) if float(b.get("ts", 0) or 0) >= since]
+        judg = [j for j in g.get("judgements", []) if float(j.get("ts", 0) or 0) >= since]
+        if not (kills or blocks or judg):
+            continue
+        v = _valid_verdict(g, now) or {}
+        b = g.get("all", {})
+        gen_24h = _in_window(b.get("recent_generate"), now, _DAY_SEC, index=0)
+        rows.append({
+            "group": key,
+            "signals": _signals(g, now),
+            "cids_n": len(g.get("cids", {})),
+            "verdict": v.get("verdict", ""),
+            "confidence": float(v.get("confidence", 0.0) or 0.0),
+            "scope": v.get("scope", ""),
+            "reason": v.get("reason", ""),
+            "kills": len(kills),
+            "blocks": len(blocks),
+            "unjudged": sum(1 for j in judg if j.get("outcome") == "unjudged"),
+            "generate_24h": len(gen_24h),
+            "chars_24h": sum(int(c) for _ts, c in gen_24h),
+        })
+    rows.sort(key=lambda r: (r["kills"], r["blocks"], r["chars_24h"]), reverse=True)
+    return rows

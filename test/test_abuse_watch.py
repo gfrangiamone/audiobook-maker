@@ -79,3 +79,132 @@ def test_write_failure_is_fail_open(env, monkeypatch):
     g = aw.group_key("3.3.3.3", "a")
     # Must not raise despite write failure
     aw.record_event(g, "a", "generate", {"chars": 100})
+
+
+def test_signals_s1_to_s4(env, monkeypatch):
+    monkeypatch.setenv("ABM_ABUSE_GATE_DAILY", "3")
+    monkeypatch.setenv("ABM_ABUSE_CHARS_DAILY", "5000")
+    g = aw.group_key("9.9.9.9", "a")
+    assert aw.signals_for(g) == {"S1": False, "S2": False, "S3": False, "S4": False}
+    _gen(g, "a", chars=1000)
+    assert not any(aw.signals_for(g).values())
+    aw.record_event(g, "a", "quota_block", {"chars": 1000})
+    assert aw.signals_for(g)["S1"] is True
+    _gen(g, "b", chars=1000)
+    assert aw.signals_for(g)["S2"] is True
+    for _ in range(3):
+        aw.record_event(g, "b", "quota_gate", {"chars": 1000})
+    assert aw.signals_for(g)["S3"] is True
+    assert aw.signals_for(g)["S4"] is False
+    _gen(g, "b", chars=3000)
+    assert aw.signals_for(g)["S4"] is True
+
+
+def test_needs_judgement_from_second_signal(env):
+    g = aw.group_key("9.9.9.9", "a")
+    aw.record_event(g, "a", "quota_block", {"chars": 10})
+    assert aw.needs_judgement(g, "a") is False          # solo S1
+    _gen(g, "b", chars=10)
+    assert aw.needs_judgement(g, "b") is True           # S1 + S2
+    aw.set_verdict(g, {"verdict": "clean", "confidence": 0.8, "scope": "cids",
+                       "cids": ["a", "b"], "reason": "shared network"})
+    assert aw.needs_judgement(g, "a") is False          # clean valido
+    _gen(g, "c", chars=10)
+    assert aw.needs_judgement(g, "c") is False          # nessun segnale nuovo
+    for _ in range(5):
+        aw.record_event(g, "c", "quota_gate", {"chars": 10})
+    assert aw.needs_judgement(g, "c") is True           # S3 e' nuovo rispetto al verdetto
+
+
+def test_verdict_scope_cids_vs_group_and_new_cid(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a"); _gen(g, "b")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": "0.95", "scope": "cids",
+                           "cids": ["a", "ghost"], "reason": "bot"})
+    assert v["cids"] == ["a"] and v["confidence"] == 0.95
+    assert aw.is_blocked(g, "a") is True and aw.is_blocked(g, "b") is False
+    assert aw.needs_judgement(g, "a") is False
+    assert aw.needs_judgement(g, "b") is True           # cid fuori scope -> rigiudizio
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.99, "scope": "group",
+                           "cids": [], "reason": "same actor"})
+    assert sorted(v["cids"]) == ["a", "b"]
+    assert aw.is_blocked(g, "b") is True
+    _gen(g, "c")
+    assert aw.is_blocked(g, "c") is False and aw.needs_judgement(g, "c") is True
+
+
+def test_low_confidence_or_inconclusive_never_blocks(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.7, "scope": "cids", "cids": ["a"]})
+    assert aw.is_blocked(g, "a") is False
+    aw.set_verdict(g, {"verdict": "inconclusive", "confidence": 1.0, "scope": "group", "cids": []})
+    assert aw.is_blocked(g, "a") is False
+    aw.set_verdict(g, {"verdict": "nonsense", "confidence": 1.0, "scope": "group"})
+    assert aw.verdict_for(g)["verdict"] == "inconclusive"
+
+
+def test_verdict_ttl_and_growth_reevaluation(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    for _ in range(4):
+        _gen(g, "a")
+    aw.record_event(g, "a", "quota_block", {})
+    _gen(g, "b")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert aw.needs_judgement(g, "a") is False
+    for _ in range(2):
+        _gen(g, "a")                                    # +25% eventi (6 -> 8)
+    assert aw.needs_judgement(g, "a") is True
+    real_time = time.time
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 15 * 86400)
+    assert aw.verdict_for(g) is None and aw.is_blocked(g, "a") is False
+
+
+def test_kill_switch_and_admin_email_gate(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
+    assert aw.is_blocked(g, "a") is True
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
+    assert aw.kill_enabled() is False and aw.is_blocked(g, "a") is False
+    assert aw.verdict_ttl_sec() == 86400                # osservazione: TTL 1 giorno
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "1")
+    monkeypatch.setenv("ABM_ADMIN_EMAIL", "")
+    assert aw.kill_enabled() is False and aw.is_blocked(g, "a") is False
+
+
+def test_clear_verdict_and_arm_on_startup(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
+    assert aw.clear_verdict(g) is True and aw.verdict_for(g) is None
+    assert aw.clear_verdict(g) is False
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
+    assert aw.arm_on_startup() == 0
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
+    monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "1")
+    assert aw.arm_on_startup() == 1                     # primo avvio con kill: azzera
+    assert aw.verdict_for(g) is None
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
+    assert aw.arm_on_startup() == 0                     # gia' armato: non tocca
+    assert aw.verdict_for(g) is not None
+
+
+def test_digest_data_only_hashes_and_counts(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a", chars=500, fn="Secret.epub")
+    aw.record_event(g, "a", "email", {"email": "who@example.com"})
+    assert aw.digest_data() == []                       # nessun giudizio/kill/403
+    aw.record_judgement_failed(g, "timeout")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.93, "scope": "cids",
+                       "cids": ["a"], "reason": "103 files in 2 days"})
+    aw.record_kill(g, "a", "job-1")
+    aw.record_block(g, "a")
+    rows = aw.digest_data()
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["group"] == g and r["verdict"] == "abuse" and r["scope"] == "cids"
+    assert r["kills"] == 1 and r["blocks"] == 1 and r["unjudged"] == 1
+    assert r["cids_n"] == 1 and r["generate_24h"] == 1 and r["chars_24h"] == 500
+    blob = json.dumps(rows)
+    assert "9.9.9" not in blob and "example.com" not in blob and "Secret" not in blob
