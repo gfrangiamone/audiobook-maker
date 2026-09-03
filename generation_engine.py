@@ -116,6 +116,7 @@ LLM_INTER_CHUNK_SLEEP_SEC = _env_float("ABM_LLM_INTER_CHUNK_SLEEP_SEC", 0.5)
 LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
+LLM_EMPTY_MAX_RETRIES = _env_int("ABM_LLM_EMPTY_MAX_RETRIES", 2)
 
 # --- Thinking / reasoning ---------------------------------------------------
 # ATTENZIONE: sull'API DeepSeek (deepseek-v4-pro / deepseek-v4-flash) il
@@ -896,6 +897,18 @@ class _PromptLeakError(Exception):
     """
 
 
+class _EmptyOutputError(Exception):
+    """Sollevata quando la chiamata LLM non ha prodotto testo.
+
+    Caso reale osservato il 3 settembre 2026: il capitolo piu' lungo di
+    «Fuga dalla liberta'» (68.473 char) e' tornato vuoto dallo stream, e
+    la stringa vuota valeva come ottimizzazione riuscita: il capitolo
+    spariva dal libro, entrava vuoto nella cache .abm e non ripassava mai
+    piu' dal modello. Un capitolo non ottimizzato si sente, un capitolo
+    mancante no.
+    """
+
+
 _LEAK_PREFIX_LEN = 120      # char di "fingerprint" presi dal capo del prompt
 _LEAK_PREFIX_MIN = 60       # soglia minima utile per evitare match casuali su prompt cortissimi
 _LEAK_SEARCH_WINDOW = 400   # finestra iniziale dell'output in cui cercare il prefix (tollera heading saltati)
@@ -1034,6 +1047,7 @@ def _call_llm(user_content, job=None, max_retries=None):
     ]
     last_exc = None
     leak_attempts = 0
+    empty_attempts = 0
     attempt = 0
     # Loop con due budget indipendenti:
     # - `attempt` -> retry transient (network/5xx/429), consuma slot solo su Exception
@@ -1104,6 +1118,34 @@ def _call_llm(user_content, job=None, max_retries=None):
                     )
                 print(f"  [LLM] sanitized output: removed {removed} chars of meta/duplicates")
 
+            # Uno stream che chiude senza contenuto non e' un'ottimizzazione
+            # riuscita: e' una chiamata da rifare. Senza questo controllo la
+            # stringa vuota risaliva fino al chiamante e cancellava il
+            # capitolo. Budget suo, come quello anti-leak: un modello che
+            # tace non e' un modello che sbaglia rete.
+            if user_content.strip() and not cleaned.strip():
+                if job is not None and partial_streamed > 0:
+                    job["opt_streamed_chars"] = max(
+                        0, job.get("opt_streamed_chars", 0) - partial_streamed)
+                # I token del tentativo muto sono stati fatturati lo stesso:
+                # si contano prima di buttarne via l'output (stesso pattern
+                # del ramo prompt-leak).
+                if job is not None and isinstance(job.get("opt_usage"), dict) and call_usage is not None:
+                    job["opt_usage"]["prompt_tokens"] += int(
+                        getattr(call_usage, "prompt_tokens", 0) or 0)
+                    job["opt_usage"]["completion_tokens"] += int(
+                        getattr(call_usage, "completion_tokens", 0) or 0)
+                if empty_attempts < LLM_EMPTY_MAX_RETRIES:
+                    empty_attempts += 1
+                    print(f"  [LLM] risposta vuota (attempt {empty_attempts}/"
+                          f"{LLM_EMPTY_MAX_RETRIES}), ritento")
+                    time.sleep(1.0)
+                    continue
+                print(f"  [LLM] risposta vuota anche dopo "
+                      f"{LLM_EMPTY_MAX_RETRIES} tentativi - rinuncio")
+                raise _EmptyOutputError(
+                    "LLM returned no text for a non-trivial input")
+
             # Detection prompt-leak. Su match: scarica chars accumulati e ritenta
             # con parametri degradati. Esauriti i tentativi -> _PromptLeakError
             # che il chiamante traduce in fallback all'input originale.
@@ -1140,6 +1182,8 @@ def _call_llm(user_content, job=None, max_retries=None):
                     job["opt_usage"]["estimated"] = True
             return cleaned
         except _PromptLeakError:
+            raise
+        except _EmptyOutputError:
             raise
         except _CancelledError:
             raise
@@ -1244,6 +1288,24 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
             leaked_preview=leaked_preview,
         )
 
+    def _record_empty(chunk_idx, chunk_text):
+        if job is not None:
+            job.setdefault("opt_empty_chapters", []).append({
+                "chapter_num": chapter_num,
+                "chunk_index": chunk_idx,
+                "ts": time.time(),
+            })
+        _write_llm_audit(
+            job=job,
+            job_id=(job.get("job_id") if job else None),
+            chapter_num=chapter_num,
+            chapter_title=chapter_title,
+            chunk_index=chunk_idx,
+            outcome="empty_output_fallback",
+            chars_input=len(chunk_text),
+            chars_output=0,
+        )
+
     # Always chunk based on output-safe size so LLM response fits in MAX_TOKENS
     if len(text) <= LLM_SAFE_OUTPUT_CHUNK:
         print(f"  {label} LLM single call ({len(text):,} chars)")
@@ -1252,6 +1314,10 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
         except _PromptLeakError:
             print(f"  {label} prompt-leak fallback: returning original chapter text")
             _record_leak(None, text)
+            return text
+        except _EmptyOutputError:
+            print(f"  {label} empty-output fallback: returning original chapter text")
+            _record_empty(None, text)
             return text
 
     chunks = _split_text_into_chunks(text, LLM_SAFE_OUTPUT_CHUNK)
@@ -1276,6 +1342,10 @@ def _optimize_chapter_text(text, chapter_num=None, total_chapters=None, job=None
         except _PromptLeakError:
             print(f"  {label} prompt-leak fallback on chunk {i+1}/{len(chunks)}: using original chunk")
             _record_leak(i, chunk)
+            results.append(chunk)
+        except _EmptyOutputError:
+            print(f"  {label} empty-output fallback on chunk {i+1}/{len(chunks)}: using original chunk")
+            _record_empty(i, chunk)
             results.append(chunk)
         if i < len(chunks) - 1:
             time.sleep(LLM_INTER_CHUNK_SLEEP_SEC)  # rate limiting tra chunk

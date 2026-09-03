@@ -8,6 +8,27 @@ sempre su prompt_tts_generic.md anche se l'utente leggeva in italiano.
 import generation_engine
 
 
+# Lo stream finto emette una riga di testo e non uno stream vuoto: da quando
+# `_call_llm` tratta la risposta muta come una chiamata da rifare (vedi
+# test_llm_empty_output.py), uno stream vuoto alzerebbe _EmptyOutputError
+# prima che questi test possano guardare la lingua del prompt.
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+    reasoning_content = None
+
+
+class _Choice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+
+
+class _Event:
+    def __init__(self, content):
+        self.choices = [_Choice(content)]
+        self.usage = None
+
+
 def _capture_prompt_lang(monkeypatch):
     """Intercetta _get_llm_prompt e ritorna la lista di lang richiesti."""
     requested = []
@@ -26,7 +47,7 @@ def test_opt_lang_used_for_gemini_voice(monkeypatch):
     requested = _capture_prompt_lang(monkeypatch)
 
     class _FakeStream:
-        def __iter__(self): return iter([])
+        def __iter__(self): return iter([_Event("testo ottimizzato")])
         def close(self): pass
     class _FakeChat:
         def create(self, **kw): return _FakeStream()
@@ -46,7 +67,7 @@ def test_opt_lang_overrides_voice_extraction(monkeypatch):
     requested = _capture_prompt_lang(monkeypatch)
 
     class _FakeStream:
-        def __iter__(self): return iter([])
+        def __iter__(self): return iter([_Event("testo ottimizzato")])
         def close(self): pass
     class _FakeChat:
         def create(self, **kw): return _FakeStream()
@@ -66,7 +87,7 @@ def test_fallback_to_voice_extraction_when_no_opt_lang(monkeypatch):
     requested = _capture_prompt_lang(monkeypatch)
 
     class _FakeStream:
-        def __iter__(self): return iter([])
+        def __iter__(self): return iter([_Event("testo ottimizzato")])
         def close(self): pass
     class _FakeChat:
         def create(self, **kw): return _FakeStream()
@@ -86,7 +107,7 @@ def test_gemini_voice_without_opt_lang_does_not_corrupt_lang(monkeypatch):
     requested = _capture_prompt_lang(monkeypatch)
 
     class _FakeStream:
-        def __iter__(self): return iter([])
+        def __iter__(self): return iter([_Event("testo ottimizzato")])
         def close(self): pass
     class _FakeChat:
         def create(self, **kw): return _FakeStream()
