@@ -117,6 +117,44 @@ def test_le_code_non_possono_essere_meno_dei_rinunciati(digest, tmp_path):
     assert (r["tentati"], r["riusciti"], r["falliti"]) == (0, 0, 0)
 
 
+def test_gli_allarmi_spenti_dai_numeri_si_sommano(digest, tmp_path):
+    """I ritentativi che la regola dei numeri ha evitato di comprare.
+
+    Non sono difetti recuperati: sono difetti che non c'erano. Restano fuori
+    da necessari, tentati e falliti, e vivono in una colonna loro — che
+    serve ad accorgersi se la regola smette di lavorare.
+    """
+    _scrivi(tmp_path, [_rec("numeri", worker_code_tagliate=1,
+                            worker_verify_chunks=200,
+                            worker_verify_sospetti=3,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=1,
+                            worker_verify_numerali=24,
+                            worker_verify_falsi_numerali=9)])
+    r = digest.riepilogo(GIORNO)
+    assert (r["numerali"], r["falsi_numerali"]) == (24, 9)
+    assert (r["necessari"], r["tentati"], r["falliti"]) == (3, 3, 1)
+    assert r["job_senza_numeri"] == 0
+
+
+def test_il_worker_di_ieri_e_cieco_solo_sui_numeri(digest, tmp_path):
+    """Un worker che misura i ritentativi ma non ancora i numeri.
+
+    I suoi conti sui ritentativi valgono tutti; i suoi allarmi da grafia
+    sono diventati rigenerazioni vere, e il digest lo dichiara invece di
+    mettere uno zero che sembrerebbe «nessun numero in giro».
+    """
+    _scrivi(tmp_path, [_rec("vecchio", worker_code_tagliate=2,
+                            worker_verify_chunks=90,
+                            worker_verify_sospetti=4,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=2)])
+    r = digest.riepilogo(GIORNO)
+    assert r["job_senza_numeri"] == 1
+    assert (r["numerali"], r["falsi_numerali"]) == (0, 0)
+    assert r["tentati"] == 4
+
+
 # ---------------------------------------------------------------------------
 # Cosa entra nel conto
 # ---------------------------------------------------------------------------
@@ -225,6 +263,23 @@ def test_l_html_porta_i_quattro_numeri_e_l_avviso_sui_ciechi(digest, tmp_path):
     assert "su 120 chunk ascoltati" in corpo
     assert "1 job su 2 vengono da un worker" in corpo
     assert "ABM_VOXCPM_DIGEST=0" in corpo
+
+
+def test_l_html_dice_quanti_allarmi_hanno_spento_i_numeri(digest, tmp_path):
+    _scrivi(tmp_path, [
+        _rec("numeri", worker_code_tagliate=1, worker_verify_chunks=200,
+             worker_verify_sospetti=3, worker_verify_rinunciati=0,
+             worker_verify_giri=1, worker_verify_numerali=24,
+             worker_verify_falsi_numerali=9),
+        _rec("vecchio", worker_code_tagliate=0, worker_verify_chunks=50,
+             worker_verify_sospetti=1, worker_verify_rinunciati=0,
+             worker_verify_giri=1),
+    ])
+    corpo = digest.html(digest.riepilogo(GIORNO))
+    assert "numeri riconosciuti" in corpo
+    assert "su 24 code con un numero" in corpo
+    assert "taciuto <strong>9</strong>" in corpo
+    assert "1 job vengono da un worker precedente" in corpo
 
 
 def test_l_html_non_si_fida_del_job_id(digest, tmp_path):

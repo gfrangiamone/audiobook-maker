@@ -855,7 +855,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
-        `verifica_giri`, `bytes` e `runpod`,
+        `verifica_giri`, `verifica_numerali`, `verifica_falsi_numerali`,
+        `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -904,6 +905,14 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # quanto i falliti, ma nessun tentativo li ha mancati.
              "verifica_rinunciati": 0,
              "verifica_giri": 0,        # giri di rigenerazione spesi
+             # Gli allarmi che il rilevatore ha visto e taciuto perche' la
+             # coda conteneva un numero: l'ASR scrive «1967» dove il testo
+             # dice «millenovecentosessantasette», e senza questa regola il
+             # chunk sano si ricomprava tre volte. Contarli e' l'unico modo
+             # di accorgersi se la regola smette di funzionare — una lingua
+             # nuova, una grafia che le tabelle non conoscono.
+             "verifica_numerali": 0,        # code con un numero dentro
+             "verifica_falsi_numerali": 0,  # di quelle, allarmi spenti
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -998,6 +1007,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["verifica_rinunciati"] = len(
                     _ver.get("rinunciati") or [])
                 stats["verifica_giri"] = int(_ver.get("giri") or 0)
+                stats["verifica_numerali"] = int(
+                    _ver.get("numerali") or 0)
+                stats["verifica_falsi_numerali"] = int(
+                    _ver.get("falsi_numerali") or 0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []

@@ -75,6 +75,18 @@ def riepilogo(giorno):
         "falliti": 0,
         "giri": 0,
         "code_tagliate": 0,
+        # La regola dei numeri: `numerali` sono le code dove un numero
+        # c'era, `falsi_numerali` quelle in cui il confronto sarebbe
+        # scattato per la sola differenza di grafia — l'ASR scrive «1967»
+        # dove il testo dice «millenovecentosessantasette». Sono ritentativi
+        # non comprati, e il giorno in cui questo numero crolla a zero senza
+        # motivo vuol dire che una lingua nuova e' passata sotto il naso
+        # delle tabelle.
+        "numerali": 0,
+        "falsi_numerali": 0,
+        # Job di un worker che misurava i ritentativi ma non ancora i
+        # numeri: cieco solo su queste due colonne.
+        "job_senza_numeri": 0,
         "job": [],
     }
     for rec in _record_del_giorno(giorno):
@@ -102,6 +114,12 @@ def riepilogo(giorno):
         tot["riusciti"] += riusciti
         tot["falliti"] += falliti
         tot["giri"] += int(rec.get("worker_verify_giri", 0) or 0)
+        if "worker_verify_numerali" in rec:
+            tot["numerali"] += int(rec.get("worker_verify_numerali", 0) or 0)
+            tot["falsi_numerali"] += int(
+                rec.get("worker_verify_falsi_numerali", 0) or 0)
+        else:
+            tot["job_senza_numeri"] += 1
         if tagliate:
             tot["job_con_difetti"] += 1
         if necessari or tagliate:
@@ -256,7 +274,24 @@ def html(r):
         + _riquadro("falliti", r["falliti"], "#c62828",
                     "%d giri di rigenerazione" % r["giri"])
         + _riquadro("non tentati", r["non_tentati"], "#ef6c00",
-                    "oltre il tetto dei sospetti"))
+                    "oltre il tetto dei sospetti")
+        + _riquadro("numeri riconosciuti", r["falsi_numerali"], "#6a4c93",
+                    "su %d code con un numero" % r["numerali"]))
+
+    numeri = ""
+    if r["falsi_numerali"] or r["numerali"]:
+        numeri = ('<p style="color:#555;font-size:13px;margin:10px 4px 0">'
+                  "La regola dei numeri ha taciuto <strong>%d</strong> "
+                  "allarmi su %d code che contenevano un numero: sono "
+                  "ritentativi che nessuno ha comprato, perche' l'unica "
+                  "differenza era la grafia (l'ASR scrive «1967» dove il "
+                  "testo dice «millenovecentosessantasette»).</p>"
+                  % (r["falsi_numerali"], r["numerali"]))
+    if r["job_senza_numeri"]:
+        numeri += ('<p style="color:#888;font-size:12px;margin:6px 4px 0">'
+                   "%d job vengono da un worker precedente alla regola dei "
+                   "numeri: i loro allarmi da grafia sono diventati "
+                   "ritentativi veri.</p>" % r["job_senza_numeri"])
 
     ciechi = ""
     if r["job_senza_misure"]:
@@ -275,7 +310,7 @@ def html(r):
         "con almeno una coda ancora tagliata (<strong>%d</strong> chunk in "
         "tutto).</p>" % (r["job_totali"], r["job_con_difetti"],
                          r["code_tagliate"])
-        + _tabella_job(r) + ciechi)
+        + _tabella_job(r) + numeri + ciechi)
     return _pagina(r, corpo)
 
 
@@ -297,7 +332,11 @@ def _pagina(r, corpo):
         "take solo se è migliore del vecchio. Quando i sospetti superano "
         "ABM_VOXCPM_VERIFY_MAX_FRAC rigenera soltanto i rotti conclamati: gli "
         "altri restano fra i «non tentati». L'audio viene "
-        "consegnato in ogni caso.</p>"
+        "consegnato in ogni caso. Prima di confrontare, il worker riduce a un "
+        "segno unico i numeri di entrambe le code — cifre, lettere e simboli "
+        "— perché altrimenti «1967» e «millenovecentosessantasette» "
+        "sembrerebbero una coda mancante: quelle sono le code contate fra i "
+        "«numeri riconosciuti».</p>"
         '<p style="color:#999;font-size:12px;padding:0 4px">Messaggio '
         "automatico di Audiobook Maker. Per disattivarlo: ABM_VOXCPM_DIGEST=0 "
         "nella configurazione del server.</p></body></html>"

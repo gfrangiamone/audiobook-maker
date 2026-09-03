@@ -3365,6 +3365,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # vive di questi quattro numeri.
             "verifica_chunk": 0, "verifica_sospetti": 0,
             "verifica_rinunciati": 0, "verifica_giri": 0,
+            # E di due che dicono quanto lavora la regola dei numeri: le
+            # code dove un numero c'era, e quante di quelle avrebbero fatto
+            # scattare un allarme se l'ASR non avesse il vizio di riscrivere
+            # «millenovecentosessantasette» come «1967». Sono ritentativi
+            # non comprati.
+            "verifica_numerali": 0, "verifica_falsi_numerali": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -3450,7 +3456,9 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         # Stesso `.get` difensivo: un job aperto prima di
                         # queste chiavi le trova assenti, non a zero.
                         for _k in ("verifica_chunk", "verifica_sospetti",
-                                   "verifica_rinunciati", "verifica_giri"):
+                                   "verifica_rinunciati", "verifica_giri",
+                                   "verifica_numerali",
+                                   "verifica_falsi_numerali"):
                             _va[_k] = int(_va.get(_k, 0) or 0) + int(
                                 stats.get(_k, 0) or 0)
                         # `setdefault`: un job aperto da una versione
@@ -4047,6 +4055,13 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_verify_rinunciati": int(
                 actual.get("verifica_rinunciati", 0) or 0),
             "worker_verify_giri": int(actual.get("verifica_giri", 0) or 0),
+            # Gli allarmi che la regola dei numeri ha spento prima che
+            # diventassero ritentativi. Non sono difetti evitati: sono
+            # difetti che non c'erano.
+            "worker_verify_numerali": int(
+                actual.get("verifica_numerali", 0) or 0),
+            "worker_verify_falsi_numerali": int(
+                actual.get("verifica_falsi_numerali", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:
