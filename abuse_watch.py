@@ -143,7 +143,10 @@ def _save(d):
     for key in [k for k, g in groups.items()
                 if now - float(g.get("updated", now) or now) > _RETENTION_SEC]:
         groups.pop(key, None)
-    atomic_write_json(_dossier_file(), d)
+    try:
+        atomic_write_json(_dossier_file(), d)
+    except Exception:
+        pass
 
 
 def _new_bucket():

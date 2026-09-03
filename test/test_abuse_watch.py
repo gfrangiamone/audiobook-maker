@@ -71,3 +71,11 @@ def test_retention_prunes_old_groups(env, monkeypatch):
     g_new = aw.group_key("2.2.2.2", "b")
     _gen(g_new, "b")
     assert aw.dossier(g_old) is None and aw.dossier(g_new) is not None
+
+
+def test_write_failure_is_fail_open(env, monkeypatch):
+    """Verify that persist errors never escape record_event()."""
+    monkeypatch.setattr(aw, "atomic_write_json", lambda path, data: (_ for _ in ()).throw(OSError("disk full")))
+    g = aw.group_key("3.3.3.3", "a")
+    # Must not raise despite write failure
+    aw.record_event(g, "a", "generate", {"chars": 100})
