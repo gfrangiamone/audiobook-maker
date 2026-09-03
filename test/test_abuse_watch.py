@@ -208,3 +208,31 @@ def test_digest_data_only_hashes_and_counts(env):
     assert r["cids_n"] == 1 and r["generate_24h"] == 1 and r["chars_24h"] == 500
     blob = json.dumps(rows)
     assert "9.9.9" not in blob and "example.com" not in blob and "Secret" not in blob
+
+
+def test_growth_formula_base_4_events(env):
+    """Verify growth trigger at exactly 25% with integer arithmetic (5*4 >= 4*5)."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_block", {})
+    _gen(g, "b")
+    # events_at_verdict = 4 (2 generate + 1 quota_block from "a", 1 generate from "b")
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert aw.needs_judgement(g, "a") is False
+    _gen(g, "a")  # +1 event, total = 5; 5*4 >= 4*5 → 20 >= 20 → True
+    assert aw.needs_judgement(g, "a") is True
+
+
+def test_reason_field_scrubs_pii(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "cids",
+                           "cids": ["a"], "reason": "mail bob@example.com from 1.2.3.4 same actor"})
+    assert "bob@example.com" not in v["reason"]
+    assert "1.2.3.4" not in v["reason"]
+    assert "same actor" in v["reason"]
+    stored = aw.verdict_for(g)
+    assert "bob@example.com" not in stored["reason"]
+    assert "1.2.3.4" not in stored["reason"]
+    assert "[redacted]" in stored["reason"]

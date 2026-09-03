@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ _JUDGEMENTS_KEEP = 20
 _KILLS_KEEP = 50
 _BLOCKS_KEEP = 200
 _DEFAULT_SALT = "abm-default-salt-v1"
+_PII_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+|\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +305,7 @@ def needs_judgement(group, cid=""):
     if v["verdict"] == "clean":
         old = v.get("signals") or {}
         return any(sig[k] and not old.get(k) for k in sig)
-    grown = _events_total(g) > int(v.get("events_at_verdict", 0) * 1.25)
+    grown = _events_total(g) * 4 >= int(v.get("events_at_verdict", 0) or 0) * 5
     return n_sig >= 2 and grown
 
 
@@ -332,8 +334,9 @@ def set_verdict(group, verdict):
         kind = verdict.get("verdict")
         if kind not in VERDICTS:
             kind = "inconclusive"
+        reason = _PII_RE.sub("[redacted]", str(verdict.get("reason") or ""))[:500]
         v = {"verdict": kind, "confidence": conf, "scope": scope, "cids": cids,
-             "reason": str(verdict.get("reason") or "")[:500], "ts": now,
+             "reason": reason, "ts": now,
              "signals": _signals(g, now), "events_at_verdict": _events_total(g)}
         g["verdict"] = v
         _push(g["judgements"], {"ts": now, "outcome": kind, "confidence": conf,
