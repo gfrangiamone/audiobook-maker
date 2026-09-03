@@ -2785,6 +2785,31 @@ def _log_activity(session_id, filename, operation, client_id='', client_ip='', v
             pass
 
 
+def _job_original_filename(job_id):
+    """Nome del file originale di un job, per gli eventi di log che non lo hanno
+    a portata di mano (TRANSFER, copie admin).
+
+    Il job può non essere più in RAM (restart/cleanup): in quel caso ripiega sul
+    download token, che porta con sé lo snapshot del nome. Stringa vuota se non
+    ricostruibile: il parser del log conserva comunque il titolo già noto della
+    sessione.
+    """
+    if not job_id:
+        return ""
+    with _jobs_lock:
+        job = jobs.get(job_id)
+        if job:
+            name = job.get("original_filename", "")
+            if name:
+                return name
+    for tinfo in list(_download_tokens.values()):
+        if isinstance(tinfo, dict) and tinfo.get("job_id") == job_id:
+            name = tinfo.get("original_filename", "")
+            if name:
+                return name
+    return ""
+
+
 def _cold_op(operation):
     """Nome dell'evento per un download risolto con redirect 302 alla copia cold.
 
@@ -3869,7 +3894,11 @@ def _parse_log_sessions(ym):
                 if dt >= s["last_dt"]:
                     s["last_dt"] = dt
                     s["last_op"] = operation
-                s["filename"] = filename
+                # Solo se valorizzato: gli eventi di servizio (TRANSFER,
+                # ADMIN_COPY*) loggano filename vuoto e altrimenti cancellavano
+                # il titolo del libro dalla card della sessione.
+                if filename:
+                    s["filename"] = filename
                 s["events"].append(operation)
                 if client_id:
                     s["client_id"] = client_id
@@ -12112,8 +12141,9 @@ def api_transfer_claim(token):
         # job non più in memoria e nessun token (es. scaduto): nulla da agganciare
         return jsonify({"error": "job_unavailable", "error_code": "job_unavailable"}), 410
     if moved or changed:
-        _log_activity(job_id, "", "TRANSFER", client_id=cid,
-                      client_ip=_get_client_ip(), platform=_client_platform())
+        _log_activity(job_id, _job_original_filename(job_id), "TRANSFER",
+                      client_id=cid, client_ip=_get_client_ip(),
+                      platform=_client_platform())
     return jsonify({"ok": True, "job_id": job_id})
 
 

@@ -113,3 +113,16 @@ def test_mobile_filter_js_logic(monkeypatch):
     html = _page_with_log(monkeypatch, [])
     assert "card.dataset.platform" in html
     assert "card.dataset.transferred" in html
+
+
+def test_transfer_keeps_book_title(monkeypatch):
+    """Il TRANSFER logga filename vuoto: il titolo del libro deve restare nella card."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f'SID_KEEP # {ts} # "Il Nome della Rosa.epub" # GENERATE # cid3 # 1.2.3.6 # en-US-JennyNeural # en # ',
+        f'SID_KEEP # {ts} # "" # TRANSFER # cid3 # 1.2.3.6 # # en # ',
+    ]
+    html = _page_with_log(monkeypatch, lines)
+    assert "Il Nome della Rosa" in html
+    assert 'data-transferred="1"' in html
