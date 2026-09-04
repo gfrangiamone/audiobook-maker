@@ -388,8 +388,27 @@ Il mobile assume `edge` quando il campo manca. Il catalogo servito oggi
 contiene 322 voci edge e **1.635 voci a pagamento** (1.440 gemini, 187 voxcpm,
 8 speechify) nella stessa risposta. Se `engine` sparisse o venisse rinominato,
 il mobile non fallirebbe: **mostrerebbe le 1.635 voci a pagamento come
-gratuite**. Non è un difetto estetico, è una fuga di voci a pagamento. Il §9.2
-tocca `/api/voices` (riga 7939): l'invariante va tenuta sotto tiro proprio lì.
+gratuite**. Il §9.2 tocca `/api/voices` (riga 7939): l'invariante va tenuta
+sotto tiro proprio lì.
+
+**Non è però un varco verso la generazione gratuita.** Il cancello del
+pagamento non guarda il catalogo: `/api/generate` riclassifica la voce dal
+**prefisso del suo id** — `voice_utils.is_gemini_voice` e sorelle, tre
+`startswith` — e senza `payment_token` risponde `402 payment_required`
+(`audiobook_app.py:10373`). Il campo `engine` non compare in nessuno dei
+percorsi di cassa, né in `is_premium_job`. E poiché `_VOICE_ID_RE` accetta
+qualunque id, un client può già oggi chiedere una voce premium senza passare
+dal catalogo: se il cancello dipendesse da `/api/voices` sarebbe aggirabile
+adesso, senza toccare nulla.
+
+Il danno di una rottura di I1 è quindi commerciale e di esperienza, non di
+sicurezza: l'utente mobile sceglierebbe una voce che l'app non è in grado di
+pagare — non ha un flusso di pagamento — e resterebbe con un 402 che non sa
+spiegare. L'unico punto dove si spenderebbe davvero è la **quota gratuita**:
+quando `_premium_quota_decision` dichiara `is_free` il job parte e il costo del
+fornitore è nostro. È spesa reale, limitata dal tetto per `client_id` — quel
+tetto è già risultato aggirabile (caso 36e901e8) e la moderazione `abuse_watch`
+è in produzione in sola osservazione.
 
 **I2 — `lang` deve restare facoltativo in `/api/generate`.** Il mobile **non lo
 manda**: il suo body è `job_id`, `voice`, `output_format`, `rate`,
