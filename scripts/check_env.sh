@@ -61,12 +61,6 @@ check_var "ABM_SMTP_FROM"       "optional" "Mittente email" "SMTP_USER o noreply
 check_var "ABM_ADMIN_EMAIL"     "required" "Email per digest amministrativo" ""
 echo ""
 
-echo "--- GOOGLE CLOUD TTS ---"
-check_var "ABM_GOOGLE_CREDENTIALS_FILE"    "required" "Path file JSON credenziali Google" ""
-check_var "ABM_GOOGLE_TTS_MONTHLY_LIMIT"   "optional" "Limite caratteri/mese Google TTS" "1000000"
-check_var "ABM_GOOGLE_TTS_RECONCILE_INTERVAL" "optional" "Intervallo riconciliazione usage (sec)" "1800"
-echo ""
-
 echo "--- DEEPSEEK LLM (ottimizzazione testo AI) ---"
 check_var "ABM_DEEPSEEK_API_KEY"           "required" "API key DeepSeek per ottimizzazione AI" ""
 check_var "ABM_MAX_CONCURRENT_LLM_PER_CLIENT" "optional" "Max job LLM concorrenti per client" "1"
@@ -92,18 +86,6 @@ check_var "ABM_MAX_CONCURRENT_PER_CLIENT"  "optional" "Max job concorrenti per c
 echo ""
 
 echo "--- VERIFICHE FILE ---"
-
-# Controlla file credenziali Google
-GOOGLE_CREDS=$(grep 'Environment="ABM_GOOGLE_CREDENTIALS_FILE=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_GOOGLE_CREDENTIALS_FILE=\(.*\)"/\1/')
-if [ -n "$GOOGLE_CREDS" ]; then
-    if [ -f "$GOOGLE_CREDS" ]; then
-        echo "[OK] File credenziali Google esiste: $GOOGLE_CREDS"
-    else
-        echo "[!!] File credenziali Google NON TROVATO: $GOOGLE_CREDS"
-    fi
-else
-    echo "[!!] ABM_GOOGLE_CREDENTIALS_FILE non impostata, impossibile verificare il file"
-fi
 
 # Controlla directory dati
 DATA_DIR=$(grep 'Environment="ABM_DATA_DIR=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_DATA_DIR=\(.*\)"/\1/')
