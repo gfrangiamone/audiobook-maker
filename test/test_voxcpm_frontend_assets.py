@@ -1,8 +1,14 @@
 """Il tab premium sa di VoxCPM: markup, filtri, campione al posto dell'anteprima.
 
-Asserzioni statiche sul sorgente, come test_speechify_frontend_assets.py: nel
-progetto non c'e' un runner JS, e questi test difendono la presenza dei
-meccanismi, non il loro comportamento a runtime.
+Asserzioni statiche sul sorgente, come test_speechify_frontend_assets.py:
+difendono la presenza dei meccanismi nel markup e nel JS del tab, non il loro
+comportamento a runtime.
+
+Un runner JS ora c'e': `node --test "test/js/**/*.test.js"` esegue la cascata
+lingua -> modello -> accento -> voce come funzione pura (test/js/, avvolto in
+pytest da test_js_cascade.py). Quello che ancora non c'e' e' un DOM: il
+cablaggio col DOM resta verificabile solo per lettura del sorgente, ed e'
+quello che sta qui.
 """
 import re
 from pathlib import Path
