@@ -2454,7 +2454,7 @@ function fillPreview(d){
   const chAll=document.getElementById('chAll');
   if(chAll)chAll.checked=true;
   updateSelection();
-  _updateVoiceChip();checkVoiceMismatch();
+  _updateVoiceChip();
 }
 
 function updateSelection(){
@@ -5091,12 +5091,11 @@ var _origApplyI18n=applyI18n;
 applyI18n=function(){
   _origApplyI18n();
   updateShareLinks();
-  checkVoiceMismatch();
   _updateVoiceChip();
   if(typeof voices!=='undefined' && Object.keys(voices).length>0) applyBookLanguage();
 };
 
-// ═══════════════════ VOICE CHIP + MISMATCH ═══════════════════
+// ═══════════════════ VOICE CHIP ═══════════════════
 function _updateVoiceChip(){
   const chip=document.getElementById('voiceChip');
   const chipTxt=document.getElementById('voiceChipTxt');
@@ -5121,79 +5120,6 @@ function _updateVoiceChip(){
   const _lbl={it:'✏️ Cambia',en:'✏️ Change',fr:'✏️ Modifier',es:'✏️ Cambiar',de:'✏️ Ändern',zh:'✏️ 更改'};
   chipLink.textContent=_lbl[cl]||_lbl.en;
   chip.classList.add('vis');
-}
-
-function checkVoiceMismatch(){
-  const banner=document.getElementById('voiceMismatch');
-  if(!banner)return;
-  if(!bookData||!bookData.language){banner.style.display='none';return;}
-  const bookLang=bookData.language.split('-')[0].toLowerCase();
-  // Only warn for well-known, unambiguous language codes
-  const known=['it','en','fr','es','de','zh','hi','pt','nl','pl','ru','ja','ko'];
-  if(!known.includes(bookLang)){banner.style.display='none';return;}
-  const voiceLang=document.getElementById('vl').value;
-  if(bookLang===voiceLang){banner.style.display='none';return;}
-  const _names={
-    it:{it:'italiano',en:'Italian',fr:'italien',es:'italiano',de:'Italienisch',zh:'意大利语',hi:'इतालवी'},
-    en:{it:'inglese',en:'English',fr:'anglais',es:'inglés',de:'Englisch',zh:'英语',hi:'अंग्रेज़ी'},
-    fr:{it:'francese',en:'French',fr:'français',es:'francés',de:'Französisch',zh:'法语',hi:'फ़्रेंच'},
-    es:{it:'spagnolo',en:'Spanish',fr:'espagnol',es:'español',de:'Spanisch',zh:'西班牙语',hi:'स्पेनिश'},
-    de:{it:'tedesco',en:'German',fr:'allemand',es:'alemán',de:'Deutsch',zh:'德语',hi:'जर्मन'},
-    zh:{it:'cinese',en:'Chinese',fr:'chinois',es:'chino',de:'Chinesisch',zh:'中文',hi:'चीनी'},
-    hi:{it:'hindi',en:'Hindi',fr:'hindi',es:'hindi',de:'Hindi',zh:'印地语',hi:'हिन्दी'},
-    pt:{it:'portoghese',en:'Portuguese',fr:'portugais',es:'portugués',de:'Portugiesisch',zh:'葡萄牙语',hi:'पुर्तगाली'},
-    ru:{it:'russo',en:'Russian',fr:'russe',es:'ruso',de:'Russisch',zh:'俄语',hi:'रूसी'},
-    ja:{it:'giapponese',en:'Japanese',fr:'japonais',es:'japonés',de:'Japanisch',zh:'日语',hi:'जापानी'},
-    ko:{it:'coreano',en:'Korean',fr:'coréen',es:'coreano',de:'Koreanisch',zh:'韩语',hi:'कोरियाई'},
-    nl:{it:'olandese',en:'Dutch',fr:'néerlandais',es:'neerlandés',de:'Niederländisch',zh:'荷兰语',hi:'डच'},
-    pl:{it:'polacco',en:'Polish',fr:'polonais',es:'polaco',de:'Polnisch',zh:'波兰语',hi:'पोलिश'},
-  };
-  const dn=(_names[bookLang]||{})[cl]||bookLang;
-  const _fix=`<a class="vm-link" onclick="autoFixVoice('${bookLang}')">`;
-  const _msgs={
-    it:`⚠️ Il libro sembra in <strong>${dn}</strong>, ma hai selezionato una voce in un'altra lingua. ${_fix}Seleziona voce ${dn} →</a>`,
-    en:`⚠️ The book appears to be in <strong>${dn}</strong>, but a different voice language is selected. ${_fix}Switch to ${dn} voice →</a>`,
-    fr:`⚠️ Le livre semble être en <strong>${dn}</strong>, mais une autre langue de voix est sélectionnée. ${_fix}Passer en voix ${dn} →</a>`,
-    es:`⚠️ El libro parece estar en <strong>${dn}</strong>, pero está seleccionado otro idioma de voz. ${_fix}Cambiar a voz ${dn} →</a>`,
-    de:`⚠️ Das Buch scheint auf <strong>${dn}</strong> zu sein, aber eine andere Stimmensprache ist gewählt. ${_fix}Zu ${dn}-Stimme wechseln →</a>`,
-    zh:`⚠️ 本书似乎是<strong>${dn}</strong>，但选择了不同语言的语音。${_fix}切换到${dn}语音 →</a>`,
-    hi:`⚠️ यह पुस्तक <strong>${dn}</strong> में लगती है, लेकिन किसी अन्य भाषा की आवाज़ चुनी गई है। ${_fix}${dn} आवाज़ पर स्विच करें →</a>`,
-  };
-  banner.innerHTML=_msgs[cl]||_msgs.en;
-  banner.style.display='';
-}
-
-function autoFixVoice(langCode){
-  const sel=document.getElementById('vl');
-  if(!sel||!sel.querySelector('option[value="'+langCode+'"]'))return;
-  sel.value=langCode;
-  updVoices();
-  // Propaga la lingua anche al tab PREMIUM: i selettori Premium
-  // (vlPremium/vvPremium) sono distinti da quelli Standard, quindi senza questa
-  // propagazione il click sul warning cambiava solo le voci Standard e la voce
-  // Premium restava nella lingua sbagliata (il fix sembrava non funzionare).
-  const prem=document.getElementById('vlPremium');
-  if(prem&&Array.from(prem.options).some(o=>o.value===langCode)){
-    prem.value=langCode;
-    if(typeof updVoicesPremium==='function')updVoicesPremium();
-  }else if(wizardState&&wizardState.audioTab==='premium'){
-    // La lingua del libro non ha voci Premium: ripiega sul tab Standard, dove la
-    // voce è già stata impostata nella lingua corretta, così la selezione resta
-    // coerente con il warning.
-    if(typeof switchAudioTab==='function')switchAudioTab('standard');
-  }
-  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
-  goToAudioSettings();
-  // Brief highlight sui selettori del tab attivo per confermare il cambio.
-  const isPrem=wizardState&&wizardState.audioTab==='premium';
-  const langEl=isPrem?document.getElementById('vlPremium'):document.getElementById('vl');
-  const voiceEl=isPrem?document.getElementById('vvPremium'):document.getElementById('vv');
-  [langEl,voiceEl].forEach(el=>{
-    if(!el)return;
-    el.style.transition='box-shadow .25s';
-    el.style.boxShadow='0 0 0 3px var(--ac)';
-    setTimeout(()=>{el.style.boxShadow='none'},1400);
-  });
 }
 
 function goToAudioSettings(){goToStep(3)}
