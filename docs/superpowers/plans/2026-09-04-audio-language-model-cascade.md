@@ -22,6 +22,7 @@
 - **I3 — la forma di `/api/voices` non cambia.** Chiavi di primo livello = codici lingua con `name` e `voices[]`; chiavi `_*` = metadati; per voce servono `id`, `name`, `gender`, `locale`, `engine`.
 - **NON rimuovere** `google_cost_eur`, `google_cost_actual`, `pricing_cost_actual`, `margin_eur_actual` in `generation_engine.py:3663-3736`: sono campi di costo generici con fallback per i job storici.
 - **Nessun `git push`.** Solo commit locali, fino a collaudo manuale fatto e confermato dall'utente.
+- **Mai `git add -A`, `git add .`, `git commit -a`.** Il working tree contiene modifiche di altre sessioni che lavorano sulla stessa copia (`.gitignore`, `version.py`, `voxcpm_catalog.py`, `md_files/`, `test/fixtures/` e altri): uno `add` generico se le porterebbe dentro. Ogni commit elenca i suoi path. Vietati anche `git reset`, `git checkout -- .`, `git stash` e `git stash pop`.
 
 ---
 
@@ -336,7 +337,8 @@ Expected: nessun fallimento nuovo rispetto alla baseline dello Step 2. Confronta
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
+git add audiobook_app.py generation_engine.py tts_split.py gemini_tts.py test/test_engine_dispatch.py test/test_atomic_json_store.py test/test_assembly_priority.py test/test_tts_split_pcm.py
+git rm google_tts.py
 git commit -m "refactor(tts): elimina Google HD dal backend
 
 is_available() restituiva False incondizionatamente da 63c1ef6: il
@@ -405,7 +407,7 @@ Expected: verde. `test/test_app_js_tab_logic.py` legge `app.js` come testo: se u
 - [ ] **Step 7: Commit**
 
 ```bash
-git add -A
+git add static/js/app.js templates/_fragments/i18n_data.js static/css/style.css
 git commit -m "refactor(ui): elimina Google HD dal pannello voci
 
 Il tab Standard resta con un motore solo: e' cio' che rende inutile la
@@ -1379,7 +1381,7 @@ Caricare un EPUB italiano. Expected: sopra i tab si legge «Lingua del libro: It
 - [ ] **Step 12: Commit**
 
 ```bash
-git add -A
+git add static/js/app.js templates/_fragments/html_head.html templates/_fragments/i18n_data.js static/css/style.css test/test_app_js_tab_logic.py
 git commit -m "feat(audio): la lingua esce dai tab e diventa stato del libro
 
 Sparivano fillLangs() e syncLanguageOptions(): la seconda elencava le
@@ -1439,7 +1441,7 @@ Expected: verde.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
+git add static/js/app.js static/css/style.css
 git commit -m "refactor(audio): via il banner di mismatch e la sua auto-correzione
 
 Esisteva solo perche' le due combo lingua potevano divergere. Con una
@@ -1579,7 +1581,7 @@ Expected: verde.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A
+git add static/js/app.js templates/_fragments/html_head.html templates/_fragments/i18n_data.js
 git commit -m "feat(audio): l'utente puo' correggere la lingua del libro
 
 Elenca l'unione delle lingue disponibili dicendo quali hanno voci a
@@ -1690,7 +1692,7 @@ Expected: verde su entrambi. Annotare il totale dei test.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A
+git add -f docs/MANUAL_TESTS_AUDIO_LANGUAGE.md && git add version.py md_files/PARAMETRI_CONFIGURAZIONE.md
 git commit -m "docs: collaudo manuale della lingua del libro, versione 3.49.0
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
