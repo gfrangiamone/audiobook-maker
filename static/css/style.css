@@ -1131,7 +1131,25 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
                        background:var(--srf,#fff); color:var(--tx,#222); font-size:.9rem; }
 .pay-error { color:#c0392b; font-size:.8rem; margin-top:6px; min-height:18px; }
 .payment-modal .btn-primary { background:var(--ac,#a07d3a); color:#fff;
-                              border:0; padding:8px 14px; border-radius:6px; cursor:pointer; }
-.payment-modal .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+                              border:0; padding:11px 26px; border-radius:6px; cursor:pointer;
+                              font-size:1rem; font-weight:700; letter-spacing:.2px;
+                              box-shadow:0 2px 10px rgba(0,0,0,.22);
+                              transition:transform .12s ease, box-shadow .12s ease; }
+.payment-modal .btn-primary:hover:not(:disabled) { transform:translateY(-1px);
+                              box-shadow:0 5px 16px rgba(0,0,0,.30); }
+.payment-modal .btn-primary:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+/* Pagamento incassato: Conferma e' l'unica azione rimasta. Il bottone pulsa e
+   mostra la barra del countdown di auto-conferma (--cd = tempo residuo, 100%->0%),
+   cosi' l'utente non lascia il job pagato e mai avviato. */
+.payment-modal .btn-primary.pay-armed {
+  background:linear-gradient(90deg, rgba(255,255,255,.32) var(--cd,100%), rgba(255,255,255,0) var(--cd,100%)),
+             var(--ac,#a07d3a);
+  animation:payArmedPulse 1.1s ease-in-out infinite; }
+@keyframes payArmedPulse {
+  0%,100% { box-shadow:0 0 0 0 rgba(160,125,58,.70); }
+  50%     { box-shadow:0 0 0 11px rgba(160,125,58,0); } }
+@media (prefers-reduced-motion:reduce){
+  .payment-modal .btn-primary { transition:none; }
+  .payment-modal .btn-primary.pay-armed { animation:none; box-shadow:0 0 0 3px rgba(160,125,58,.55); } }
 .payment-modal .btn-secondary { background:transparent; color:var(--tx,#222);
                                 border:1px solid var(--brd,#ccc); padding:8px 14px; border-radius:6px; cursor:pointer; }

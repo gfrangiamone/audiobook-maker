@@ -1678,6 +1678,7 @@ function _openPayModalCtx(ctx) {
   if (pErr) pErr.textContent = '';
   const btn = document.getElementById('btnPayConfirm');
   if (btn) btn.disabled = true;
+  _disarmPayConfirm();  // nuova sessione modal: nessun countdown ereditato
   _geminiPayCaptured = false;  // nuova sessione modal: nessun capture ancora
   const vc = document.getElementById('geminiPayVoucherCode'); if (vc) vc.value = '';
   const ve = document.getElementById('geminiPayVoucherEmail');
@@ -1717,7 +1718,45 @@ function openPaymentModal(estimate) {
 // True dopo onPayConfirm nella sessione modal corrente: distingue la chiusura
 // post-conferma dall'annullo (X / Annulla). Reset a ogni _openPayModalCtx.
 let _payConfirmed = false;
+
+// ─── Auto-conferma post-pagamento ───
+// Incassato il pagamento, l'unica azione rimasta e' Conferma: il bottone pulsa,
+// mostra un countdown visibile e allo scadere si preme da solo. Evita i job
+// pagati e mai avviati perche' l'utente non si accorge del bottone.
+const PAY_AUTOCONFIRM_MS = 5000;
+let _payAutoTimer = null;
+function _payConfirmLabel(){ return (typeof t === 'function' && t('pay_confirm')) || 'Conferma'; }
+function _disarmPayConfirm(){
+  if (_payAutoTimer) { clearInterval(_payAutoTimer); _payAutoTimer = null; }
+  const btn = document.getElementById('btnPayConfirm');
+  if (!btn) return;
+  btn.classList.remove('pay-armed');
+  btn.style.removeProperty('--cd');
+  btn.textContent = _payConfirmLabel();
+}
+function _armPayConfirm(){
+  const btn = document.getElementById('btnPayConfirm');
+  if (!btn) return;
+  if (_payAutoTimer) { clearInterval(_payAutoTimer); _payAutoTimer = null; }
+  btn.disabled = false;
+  btn.classList.add('pay-armed');
+  const deadline = Date.now() + PAY_AUTOCONFIRM_MS;
+  const tick = () => {
+    // Modale chiuso (X / Annulla) o token sparito: nessun auto-click.
+    const modal = document.getElementById('geminiPayModal');
+    if (!document.body.contains(btn) || (modal && modal.hidden) || !_payState.token) { _disarmPayConfirm(); return; }
+    const left = deadline - Date.now();
+    if (left <= 0) { _disarmPayConfirm(); onPayConfirm(); return; }
+    const pct = Math.max(0, Math.min(100, (left / PAY_AUTOCONFIRM_MS) * 100));
+    btn.style.setProperty('--cd', pct.toFixed(1) + '%');
+    btn.textContent = _payConfirmLabel() + ' (' + Math.ceil(left / 1000) + ')';
+  };
+  tick();
+  _payAutoTimer = setInterval(tick, 100);
+}
+
 function closePaymentModal() {
+  _disarmPayConfirm();
   const modal = document.getElementById('geminiPayModal');
   if (modal) modal.hidden = true;
   // Chiusura senza conferma = annullo: notifica il flusso chiamante (una sola
@@ -1777,7 +1816,11 @@ async function renderPaypalGeminiButtons(){
       // Anti doppio-addebito: se un capture è gia' andato a buon fine in questa
       // sessione, NON creare un secondo ordine. L'utente deve premere Conferma.
       if(_geminiPayCaptured){
-        _payPaypalErr((typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma');
+        const _e=document.getElementById('payPaypalError');
+        if(_e){_e.style.color='#27ae60';_e.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
+        // onError non deve coprire l'avviso verde con un rosso "Errore PayPal".
+        _payKeepNotice=true;
+        _armPayConfirm();  // ri-arma il countdown: l'utente sta cercando il bottone
         throw new Error('payment already captured');
       }
       // Endpoint e body dal contesto del flusso corrente (_payCtx). Il server
@@ -1828,7 +1871,9 @@ async function renderPaypalGeminiButtons(){
           _payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
         _geminiPayCaptured=true;  // capture ok: blocca ulteriori creazioni ordine
         _payState.token=d.payment_token;_payState.method='paypal';
-        const btn=document.getElementById('btnPayConfirm');if(btn)btn.disabled=false;
+        // Bottone in evidenza + countdown di auto-conferma: il pagamento e' gia'
+        // incassato, restare fermi sul modale non ha alcun senso per l'utente.
+        _armPayConfirm();
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
       }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
     },
@@ -1906,6 +1951,7 @@ async function validateVoucherForPayment() {
 }
 
 function onPayConfirm() {
+  _disarmPayConfirm();  // click manuale: ferma il countdown di auto-conferma
   if (!_payState.token) return;
   const _cb = _payCtx && _payCtx.onConfirm;
   const _tok = _payState.token;
