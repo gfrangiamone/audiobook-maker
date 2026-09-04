@@ -407,6 +407,15 @@ __REVIEWS_LD__
         </div>
       </div>
 
+      <!-- Il motivo per cui il tab PREMIUM e' spento sta FUORI dai tab-panel:
+           applyBookLanguage() disabilita il bottone e riporta l'utente su
+           Standard nello stesso istante, quindi dentro #tabPremium questo
+           avviso non sarebbe mai visibile. Stessa forma di #cascadeNote: un
+           avviso a tutta larghezza sotto la tab-bar. -->
+      <div id="premiumOffRow" hidden>
+        <div class="al al-w" id="premiumOffMsg"></div>
+      </div>
+
       <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
         <div class="form-row" id="stdAccentRow" hidden>
           <div class="form-group" style="flex:1 1 100%">
@@ -429,9 +438,6 @@ __REVIEWS_LD__
             <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
           </div>
-        </div>
-        <div class="form-row" id="premiumOffRow" hidden>
-          <div class="al al-w" id="premiumOffMsg"></div>
         </div>
         <div class="form-row" id="geminiAccentRow" hidden>
           <div class="form-group" style="flex:1 1 100%">

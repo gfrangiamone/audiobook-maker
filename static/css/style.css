@@ -1014,6 +1014,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
                  margin-bottom:-2px; cursor:pointer; font-weight:700; color:var(--txm,#9e9890);
                  transition:color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
 .tab-bar .tab.active { color:var(--accent,#a07d3a); border-bottom-color:var(--accent,#a07d3a); }
+/* Tab spento (btn.disabled da applyBookLanguage(): la lingua del libro non ha
+   voci a pagamento). Senza questa regola il bottone e' graficamente identico a
+   uno attivo e sembra rotto: il motivo lo scrive #premiumOffRow, qui si dice
+   soltanto che non e' cliccabile. */
+.tab-bar .tab:disabled { opacity:.45; cursor:not-allowed; }
 /* Tab "Voci PREMIUM": stessa estetica del tab Standard; l'enfasi premium
    è concentrata sulla stella iniziale (dorata), così il tab non sembra
    selezionato quando in realtà è inattivo. */
