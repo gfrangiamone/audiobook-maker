@@ -86,7 +86,7 @@ def test_il_modello_compare_fra_i_premium():
     modelli = _estrai_funzione(CASCATA, "modelliPer")
     assert "'voxcpm'" in modelli, "il modello VOXCPM2 non e' piu' nella cascata"
     corpo = _estrai_funzione(JS, "applyBookLanguage")
-    assert "esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
+    assert "of esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
     assert "_isVoxcpmModelSelected" in JS
     assert "_isVoxcpmVoiceId" in JS
 

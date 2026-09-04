@@ -44,7 +44,7 @@ def test_appjs_has_model_population():
     assert "speechify:simba-3.2:" in modelli, "il filtro non guarda piu' il prefisso dell'id"
     assert "'en'" in modelli, "il modello Express non e' piu' legato all'inglese"
     corpo = _estrai_funzione(js, "applyBookLanguage")
-    assert "esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
+    assert "of esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
 
 
 def test_appjs_toggle_and_payload():
