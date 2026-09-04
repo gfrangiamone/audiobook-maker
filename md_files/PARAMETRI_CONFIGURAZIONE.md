@@ -31,9 +31,8 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 115 |
 | `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 116 |
 | `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 163 |
-| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — dal 2026-05-26 usato **anche** dal backend Vertex AI Gemini TTS (non più solo da Google Cloud TTS): un unico service account autentica entrambe le integrazioni quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `google_tts.py` | 69 |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
-| `ABM_GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (1M caratteri/mese, free tier Google Cloud TTS) | `google_tts.py` | 33 |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — usato dal backend Vertex AI del motore Gemini TTS (e dalla traduzione libro via Vertex) quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `gemini_tts.py` | 221 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra; valorizzata anche automaticamente a partire da `ABM_GOOGLE_CREDENTIALS_FILE`) | `gemini_tts.py` | 2202 |
 | `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 115 |
 | `ABM_PAYPAL_SECRET` | `""` (PayPal REST API secret; con auto-strip whitespace) | `audiobook_app.py` | 116 |
 | `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 117 |
@@ -516,18 +515,6 @@ I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si
 
 ---
 
-## 6. Google Cloud TTS (`google_tts.py`)
-
-| Parametro | Valore | File | Riga |
-|-----------|--------|------|------|
-| `GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (da `ABM_GOOGLE_TTS_MONTHLY_LIMIT`) | `google_tts.py` | 33 |
-| `VOICES_CACHE_TTL` | `3600` (1 ora, cache voci Google) | `google_tts.py` | 42 |
-| `_usage_file_path` | `Path(data_dir) / "google_tts_usage.json"` | `google_tts.py` | 51 |
-| `_MONITORING_STABILIZATION_LAG_SEC` | `900` (15 min, intervallo escluso dalle query Cloud Monitoring per usare solo metriche stabilizzate) | `google_tts.py` | 380 |
-| `_MAX_CHARS_PER_REQUEST` | `2200` (bound massimo caratteri/richiesta TTS per sanity check, = `CHUNK_MAX_CHARS` + 10% tolleranza) | `google_tts.py` | 610 |
-
----
-
 ## 7. Gemini TTS (`gemini_tts.py`)
 
 Modulo `gemini_tts.py` indipendente da Chirp3-HD. Usa SDK `google-genai`, account separato. Native output PCM 24kHz mono 16-bit → AAC per M4B diretto (niente MP3 intermedio).
@@ -982,7 +969,6 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
-| Google Cloud TTS (`google_tts.py`) | 5 |
 | Gemini TTS (`gemini_tts.py`) | 15 |
 | Speechify TTS (`speechify_tts.py`) | 9 |
 | Versione (`version.py`) | 2 |
@@ -990,4 +976,4 @@ Endpoint admin: `GET /api/admin/load_stats?window=24h|7d|28d|month` (richiede au
 | Nuovi moduli v3.8.0 | 6 |
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
-| **Totale** | **121** |
+| **Totale** | **116** |
