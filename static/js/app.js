@@ -5122,8 +5122,6 @@ function _updateVoiceChip(){
   chip.classList.add('vis');
 }
 
-function goToAudioSettings(){goToStep(3)}
-
 function _computeSelectedChars(){
   if(!bookData||!Array.isArray(bookData.chapters))return 0;
   const sel=new Set(_getSelectedChapterIndexes());
