@@ -401,7 +401,6 @@ _GUIDE_BODY_EN = {
 <li><strong>Spanish</strong>: Elvira, Alvaro — fluent Spanish narration</li>
 <li><strong>Chinese</strong>: Xiaoxiao, Yunyang — natural Mandarin speech</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD is also available for even higher quality (first 1 million characters free per month).</p>
 </section>
 
 <section>
@@ -523,14 +522,13 @@ _GUIDE_BODY_EN = {
 <thead><tr><th>TTS Engine</th><th>Voices</th><th>Languages</th><th>Cost</th><th>Best For</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>Free</td><td>General audiobook creation, most natural free voices</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>1M chars free/month, then paid</td><td>Premium quality, expressive narration</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>Freemium (limited)</td><td>Quick article reading, mobile use</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>Freemium (limited)</td><td>Dyslexia support, education</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>Custom</td><td>30+</td><td>10K chars free/month</td><td>Ultra-realistic voice cloning</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>5K chars free/month</td><td>Multi-language, voice variety</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker uses Microsoft Edge TTS by default</strong> — it's completely free, has no usage limits, and offers 400+ voices. Google TTS Chirp3-HD is available for users who want premium quality. Unlike Speechify or NaturalReader, Audiobook Maker has <strong>no paywalls, no registration, and no usage caps</strong>.</p>
+<p><strong>Audiobook Maker uses Microsoft Edge TTS by default</strong> — it's completely free, has no usage limits, and offers 400+ voices. Unlike Speechify or NaturalReader, Audiobook Maker has <strong>no paywalls, no registration, and no usage caps</strong>.</p>
 </section>
 
 <section>
@@ -600,19 +598,19 @@ _GUIDE_BODY_EN = {
 <section>
 <h2>Frequently Asked Questions</h2>
 <details><summary>Is AI text-to-speech good enough for audiobooks?</summary>
-<p>Yes. Modern neural TTS (like Microsoft Edge TTS and Google Chirp3-HD) is remarkably natural. Most listeners can't tell the difference from a human narrator for non-fiction. For fiction with multiple characters and emotional range, human narration is still superior — but the gap is closing fast.</p>
+<p>Yes. Modern neural TTS (like Microsoft Edge TTS) is remarkably natural. Most listeners can't tell the difference from a human narrator for non-fiction. For fiction with multiple characters and emotional range, human narration is still superior — but the gap is closing fast.</p>
 </details>
 <details><summary>Can I use AI-generated audiobooks commercially?</summary>
 <p>Yes, with caveats. Microsoft Edge TTS and Google TTS allow commercial use of generated audio. However, platforms like Audible (ACX) currently require human narration for new submissions. AI audiobooks can be sold on other platforms or used for personal projects, YouTube videos, and educational content.</p>
 </details>
 <details><summary>How many characters can I convert for free?</summary>
-<p>With Microsoft Edge TTS: unlimited. There are no usage caps or quotas. With Google Cloud TTS Chirp3-HD: 1 million characters per month free, then standard Google Cloud pricing applies.</p>
+<p>With Microsoft Edge TTS: unlimited. There are no usage caps or quotas.</p>
 </details>
 <details><summary>Does Audiobook Maker work offline?</summary>
 <p>The hosted version at audiobook-maker.com requires an internet connection. However, the software is open source — you can install it on your own computer or server and run it locally with full offline capability.</p>
 </details>
 <details><summary>What's the best TTS voice for audiobooks?</summary>
-<p>For English, the top Edge TTS voices are <strong>Aria</strong> (warm female), <strong>Davis</strong> (deep male), and <strong>Jenny</strong> (friendly female). For premium quality, Google Chirp3-HD offers the most expressive neural voices. <a href="/">Try the free preview on Audiobook Maker</a> to find your favorite.</p>
+<p>For English, the top Edge TTS voices are <strong>Aria</strong> (warm female), <strong>Davis</strong> (deep male), and <strong>Jenny</strong> (friendly female). <a href="/">Try the free preview on Audiobook Maker</a> to find your favorite.</p>
 </details>
 </section>
 """,
@@ -859,7 +857,6 @@ _GUIDE_BODY_IT = {
 <li><strong>Spagnolo</strong>: Elvira, Alvaro — narrazione spagnola fluente</li>
 <li><strong>Cinese</strong>: Xiaoxiao, Yunyang — parlato mandarino naturale</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD è disponibile per qualità ancora superiore (primo milione di caratteri gratuito al mese).</p>
 </section>
 
 <section>
@@ -981,14 +978,13 @@ _GUIDE_BODY_IT = {
 <thead><tr><th>Motore TTS</th><th>Voci</th><th>Lingue</th><th>Costo</th><th>Ideale Per</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>Gratis</td><td>Creazione audiolibri generale, migliori voci gratuite</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>1M caratteri gratis/mese, poi a pagamento</td><td>Qualità premium, narrazione espressiva</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>Freemium (limitato)</td><td>Lettura rapida articoli, uso mobile</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>Freemium (limitato)</td><td>Supporto dislessia, istruzione</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>Personalizzate</td><td>30+</td><td>10K caratteri gratis/mese</td><td>Clonazione voce ultra-realistica</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>5K caratteri gratis/mese</td><td>Multi-lingua, varietà voci</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker utilizza Microsoft Edge TTS come predefinito</strong> — è completamente gratuito, non ha limiti di utilizzo e offre oltre 400 voci. Google TTS Chirp3-HD è disponibile per chi desidera qualità premium. A differenza di Speechify o NaturalReader, Audiobook Maker <strong>non ha paywall, non richiede registrazione e non ha limiti di utilizzo</strong>.</p>
+<p><strong>Audiobook Maker utilizza Microsoft Edge TTS come predefinito</strong> — è completamente gratuito, non ha limiti di utilizzo e offre oltre 400 voci. A differenza di Speechify o NaturalReader, Audiobook Maker <strong>non ha paywall, non richiede registrazione e non ha limiti di utilizzo</strong>.</p>
 </section>
 
 <section>
@@ -1058,19 +1054,19 @@ _GUIDE_BODY_IT = {
 <section>
 <h2>Domande Frequenti</h2>
 <details><summary>Il text-to-speech AI è abbastanza buono per gli audiolibri?</summary>
-<p>Sì. I moderni TTS neurali (come Microsoft Edge TTS e Google Chirp3-HD) sono notevolmente naturali. La maggior parte degli ascoltatori non distingue la differenza da un narratore umano per la saggistica. Per la narrativa con più personaggi e gamma emotiva, la narrazione umana è ancora superiore — ma il divario si sta rapidamente colmando.</p>
+<p>Sì. I moderni TTS neurali (come Microsoft Edge TTS) sono notevolmente naturali. La maggior parte degli ascoltatori non distingue la differenza da un narratore umano per la saggistica. Per la narrativa con più personaggi e gamma emotiva, la narrazione umana è ancora superiore — ma il divario si sta rapidamente colmando.</p>
 </details>
 <details><summary>Posso usare audiolibri generati con AI a fini commerciali?</summary>
 <p>Sì, con alcune precisazioni. Microsoft Edge TTS e Google TTS consentono l'uso commerciale dell'audio generato. Tuttavia, piattaforme come Audible (ACX) richiedono attualmente la narrazione umana per i nuovi invii. Gli audiolibri AI possono essere venduti su altre piattaforme o utilizzati per progetti personali, video YouTube e contenuti educativi.</p>
 </details>
 <details><summary>Quanti caratteri posso convertire gratuitamente?</summary>
-<p>Con Microsoft Edge TTS: illimitati. Non ci sono limiti o quote di utilizzo. Con Google Cloud TTS Chirp3-HD: 1 milione di caratteri al mese gratuiti, poi si applicano le tariffe standard di Google Cloud.</p>
+<p>Con Microsoft Edge TTS: illimitati. Non ci sono limiti o quote di utilizzo.</p>
 </details>
 <details><summary>Audiobook Maker funziona offline?</summary>
 <p>La versione ospitata su audiobook-maker.com richiede una connessione internet. Tuttavia, il software è open source — puoi installarlo sul tuo computer o server ed eseguirlo localmente con piena capacità offline.</p>
 </details>
 <details><summary>Qual è la migliore voce TTS per audiolibri in italiano?</summary>
-<p>Le migliori voci Edge TTS per l'italiano sono <strong>Isabella</strong> (femminile calda), <strong>Diego</strong> (maschile profondo) ed <strong>Elsa</strong> (femminile chiara). Per qualità premium, Google Chirp3-HD offre le voci neurali più espressive. <a href="/">Prova l'anteprima gratuita su Audiobook Maker</a> per trovare la tua preferita.</p>
+<p>Le migliori voci Edge TTS per l'italiano sono <strong>Isabella</strong> (femminile calda), <strong>Diego</strong> (maschile profondo) ed <strong>Elsa</strong> (femminile chiara). <a href="/">Prova l'anteprima gratuita su Audiobook Maker</a> per trovare la tua preferita.</p>
 </details>
 </section>
 """,
@@ -1322,7 +1318,6 @@ _GUIDE_BODY_FR = {
 <li><strong>Espagnol</strong> : Elvira, Alvaro — narration espagnole fluide</li>
 <li><strong>Chinois</strong> : Xiaoxiao, Yunyang — discours mandarin naturel</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD est également disponible pour une qualité encore supérieure (premier million de caractères gratuit par mois).</p>
 </section>
 
 <section>
@@ -1444,14 +1439,13 @@ _GUIDE_BODY_FR = {
 <thead><tr><th>Moteur TTS</th><th>Voix</th><th>Langues</th><th>Coût</th><th>Idéal Pour</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>Gratuit</td><td>Création générale de livres audio, meilleures voix gratuites</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>1M caractères gratuits/mois, puis payant</td><td>Qualité premium, narration expressive</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>Freemium (limité)</td><td>Lecture rapide d'articles, usage mobile</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>Freemium (limité)</td><td>Soutien à la dyslexie, éducation</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>Personnalisées</td><td>30+</td><td>10K caractères gratuits/mois</td><td>Clonage vocal ultra-réaliste</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>5K caractères gratuits/mois</td><td>Multi-langue, variété de voix</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker utilise Microsoft Edge TTS par défaut</strong> — il est entièrement gratuit, n'a pas de limites d'utilisation et offre plus de 400 voix. Google TTS Chirp3-HD est disponible pour ceux qui souhaitent une qualité premium. Contrairement à Speechify ou NaturalReader, Audiobook Maker <strong>n'a pas de paywall, ne nécessite pas d'inscription et n'a pas de limites d'utilisation</strong>.</p>
+<p><strong>Audiobook Maker utilise Microsoft Edge TTS par défaut</strong> — il est entièrement gratuit, n'a pas de limites d'utilisation et offre plus de 400 voix. Contrairement à Speechify ou NaturalReader, Audiobook Maker <strong>n'a pas de paywall, ne nécessite pas d'inscription et n'a pas de limites d'utilisation</strong>.</p>
 </section>
 
 <section>
@@ -1499,19 +1493,19 @@ _GUIDE_BODY_FR = {
 <section>
 <h2>Questions Fréquentes</h2>
 <details><summary>La synthèse vocale IA est-elle assez bonne pour les livres audio ?</summary>
-<p>Oui. Les TTS neuronales modernes (comme Microsoft Edge TTS et Google Chirp3-HD) sont remarquablement naturelles. La plupart des auditeurs ne font pas la différence avec un narrateur humain pour les ouvrages non fictionnels. Pour la fiction avec plusieurs personnages et une gamme émotionnelle, la narration humaine reste supérieure — mais l'écart se comble rapidement.</p>
+<p>Oui. Les TTS neuronales modernes (comme Microsoft Edge TTS) sont remarquablement naturelles. La plupart des auditeurs ne font pas la différence avec un narrateur humain pour les ouvrages non fictionnels. Pour la fiction avec plusieurs personnages et une gamme émotionnelle, la narration humaine reste supérieure — mais l'écart se comble rapidement.</p>
 </details>
 <details><summary>Puis-je utiliser des livres audio générés par IA à des fins commerciales ?</summary>
 <p>Oui, avec quelques précisions. Microsoft Edge TTS et Google TTS autorisent l'utilisation commerciale de l'audio généré. Cependant, des plateformes comme Audible (ACX) exigent actuellement une narration humaine pour les nouvelles soumissions. Les livres audio IA peuvent être vendus sur d'autres plateformes ou utilisés pour des projets personnels, des vidéos YouTube et du contenu éducatif.</p>
 </details>
 <details><summary>Combien de caractères puis-je convertir gratuitement ?</summary>
-<p>Avec Microsoft Edge TTS : illimité. Il n'y a pas de limites ni de quotas d'utilisation. Avec Google Cloud TTS Chirp3-HD : 1 million de caractères par mois gratuits, puis les tarifs standard de Google Cloud s'appliquent.</p>
+<p>Avec Microsoft Edge TTS : illimité. Il n'y a pas de limites ni de quotas d'utilisation.</p>
 </details>
 <details><summary>Audiobook Maker fonctionne-t-il hors ligne ?</summary>
 <p>La version hébergée sur audiobook-maker.com nécessite une connexion internet. Cependant, le logiciel est open source — vous pouvez l'installer sur votre ordinateur ou serveur et l'exécuter localement avec toutes les capacités hors ligne.</p>
 </details>
 <details><summary>Quelle est la meilleure voix TTS pour les livres audio en français ?</summary>
-<p>Les meilleures voix Edge TTS pour le français sont <strong>Denise</strong> (féminine chaleureuse) et <strong>Henri</strong> (masculin clair). Pour une qualité premium, Google Chirp3-HD offre les voix neuronales les plus expressives. <a href="/">Essayez l'aperçu gratuit sur Audiobook Maker</a> pour trouver votre préférée.</p>
+<p>Les meilleures voix Edge TTS pour le français sont <strong>Denise</strong> (féminine chaleureuse) et <strong>Henri</strong> (masculin clair). <a href="/">Essayez l'aperçu gratuit sur Audiobook Maker</a> pour trouver votre préférée.</p>
 </details>
 </section>
 """,
@@ -1759,7 +1753,6 @@ _GUIDE_BODY_ES = {
 <li><strong>Español</strong>: Elvira, Álvaro — narración fluida en español</li>
 <li><strong>Chino</strong>: Xiaoxiao, Yunyang — habla mandarín natural</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD también está disponible para una calidad aún mayor (primer millón de caracteres gratis al mes).</p>
 </section>
 
 <section>
@@ -1881,14 +1874,13 @@ _GUIDE_BODY_ES = {
 <thead><tr><th>Motor TTS</th><th>Voces</th><th>Idiomas</th><th>Coste</th><th>Ideal Para</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>Gratis</td><td>Creación general de audiolibros, mejores voces gratuitas</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>1M caracteres gratis/mes, luego de pago</td><td>Calidad premium, narración expresiva</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>Freemium (limitado)</td><td>Lectura rápida de artículos, uso móvil</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>Freemium (limitado)</td><td>Apoyo a la dislexia, educación</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>Personalizadas</td><td>30+</td><td>10K caracteres gratis/mes</td><td>Clonación de voz ultra-realista</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>5K caracteres gratis/mes</td><td>Multi-idioma, variedad de voces</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker utiliza Microsoft Edge TTS por defecto</strong> — es completamente gratuito, no tiene límites de uso y ofrece más de 400 voces. Google TTS Chirp3-HD está disponible para quienes desean calidad premium. A diferencia de Speechify o NaturalReader, Audiobook Maker <strong>no tiene paywall, no requiere registro y no tiene límites de uso</strong>.</p>
+<p><strong>Audiobook Maker utiliza Microsoft Edge TTS por defecto</strong> — es completamente gratuito, no tiene límites de uso y ofrece más de 400 voces. A diferencia de Speechify o NaturalReader, Audiobook Maker <strong>no tiene paywall, no requiere registro y no tiene límites de uso</strong>.</p>
 </section>
 
 <section>
@@ -1936,19 +1928,19 @@ _GUIDE_BODY_ES = {
 <section>
 <h2>Preguntas Frecuentes</h2>
 <details><summary>¿Es el texto a voz con IA suficientemente bueno para audiolibros?</summary>
-<p>Sí. Los TTS neuronales modernos (como Microsoft Edge TTS y Google Chirp3-HD) son notablemente naturales. La mayoría de los oyentes no distingue la diferencia con un narrador humano para no ficción. Para ficción con múltiples personajes y rango emocional, la narración humana sigue siendo superior — pero la brecha se está cerrando rápidamente.</p>
+<p>Sí. Los TTS neuronales modernos (como Microsoft Edge TTS) son notablemente naturales. La mayoría de los oyentes no distingue la diferencia con un narrador humano para no ficción. Para ficción con múltiples personajes y rango emocional, la narración humana sigue siendo superior — pero la brecha se está cerrando rápidamente.</p>
 </details>
 <details><summary>¿Puedo usar audiolibros generados con IA con fines comerciales?</summary>
 <p>Sí, con algunas precisiones. Microsoft Edge TTS y Google TTS permiten el uso comercial del audio generado. Sin embargo, plataformas como Audible (ACX) requieren actualmente narración humana para nuevos envíos. Los audiolibros con IA pueden venderse en otras plataformas o usarse para proyectos personales, videos de YouTube y contenido educativo.</p>
 </details>
 <details><summary>¿Cuántos caracteres puedo convertir gratis?</summary>
-<p>Con Microsoft Edge TTS: ilimitados. No hay límites ni cuotas de uso. Con Google Cloud TTS Chirp3-HD: 1 millón de caracteres al mes gratis, luego se aplican las tarifas estándar de Google Cloud.</p>
+<p>Con Microsoft Edge TTS: ilimitados. No hay límites ni cuotas de uso.</p>
 </details>
 <details><summary>¿Funciona Audiobook Maker sin conexión?</summary>
 <p>La versión alojada en audiobook-maker.com requiere conexión a internet. Sin embargo, el software es de código abierto — puedes instalarlo en tu ordenador o servidor y ejecutarlo localmente con plena capacidad sin conexión.</p>
 </details>
 <details><summary>¿Cuál es la mejor voz TTS para audiolibros en español?</summary>
-<p>Las mejores voces Edge TTS para español son <strong>Elvira</strong> (femenina clara) y <strong>Álvaro</strong> (masculino fluido). Para calidad premium, Google Chirp3-HD ofrece las voces neuronales más expresivas. <a href="/">Prueba la vista previa gratuita en Audiobook Maker</a> para encontrar tu favorita.</p>
+<p>Las mejores voces Edge TTS para español son <strong>Elvira</strong> (femenina clara) y <strong>Álvaro</strong> (masculino fluido). <a href="/">Prueba la vista previa gratuita en Audiobook Maker</a> para encontrar tu favorita.</p>
 </details>
 </section>
 """,
@@ -2196,7 +2188,6 @@ _GUIDE_BODY_DE = {
 <li><strong>Spanisch</strong>: Elvira, Alvaro — fließende spanische Erzählung</li>
 <li><strong>Chinesisch</strong>: Xiaoxiao, Yunyang — natürliches Mandarin</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD ist ebenfalls für noch höhere Qualität verfügbar (erste 1 Million Zeichen pro Monat kostenlos).</p>
 </section>
 
 <section>
@@ -2318,14 +2309,13 @@ _GUIDE_BODY_DE = {
 <thead><tr><th>TTS-Engine</th><th>Stimmen</th><th>Sprachen</th><th>Kosten</th><th>Ideal für</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>Kostenlos</td><td>Allgemeine Hörbucherstellung, beste kostenlose Stimmen</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>1 Mio. Zeichen kostenlos/Monat, dann kostenpflichtig</td><td>Premium-Qualität, ausdrucksstarke Erzählung</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>Freemium (begrenzt)</td><td>Schnelles Artikellesen, mobile Nutzung</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>Freemium (begrenzt)</td><td>Legasthenie-Unterstützung, Bildung</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>Benutzerdefiniert</td><td>30+</td><td>10K Zeichen kostenlos/Monat</td><td>Ultra-realistisches Stimmklonen</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>5K Zeichen kostenlos/Monat</td><td>Mehrsprachig, Stimmenvielfalt</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker verwendet standardmäßig Microsoft Edge TTS</strong> — völlig kostenlos, keine Nutzungsbeschränkungen, über 400 Stimmen. Google TTS Chirp3-HD ist für Premium-Qualität verfügbar. Anders als Speechify oder NaturalReader hat Audiobook Maker <strong>keine Paywall, keine Anmeldepflicht und keine Nutzungsbeschränkungen</strong>.</p>
+<p><strong>Audiobook Maker verwendet standardmäßig Microsoft Edge TTS</strong> — völlig kostenlos, keine Nutzungsbeschränkungen, über 400 Stimmen. Anders als Speechify oder NaturalReader hat Audiobook Maker <strong>keine Paywall, keine Anmeldepflicht und keine Nutzungsbeschränkungen</strong>.</p>
 </section>
 
 <section>
@@ -2373,19 +2363,19 @@ _GUIDE_BODY_DE = {
 <section>
 <h2>Häufig gestellte Fragen</h2>
 <details><summary>Ist KI-Text-to-Speech gut genug für Hörbücher?</summary>
-<p>Ja. Moderne neuronale TTS (wie Microsoft Edge TTS und Google Chirp3-HD) sind bemerkenswert natürlich. Die meisten Hörer können bei Sachbüchern keinen Unterschied zu einem menschlichen Sprecher feststellen. Für Belletristik mit mehreren Charakteren und emotionaler Bandbreite ist menschliche Erzählung noch überlegen — aber der Abstand schließt sich schnell.</p>
+<p>Ja. Moderne neuronale TTS (wie Microsoft Edge TTS) sind bemerkenswert natürlich. Die meisten Hörer können bei Sachbüchern keinen Unterschied zu einem menschlichen Sprecher feststellen. Für Belletristik mit mehreren Charakteren und emotionaler Bandbreite ist menschliche Erzählung noch überlegen — aber der Abstand schließt sich schnell.</p>
 </details>
 <details><summary>Kann ich KI-generierte Hörbücher kommerziell nutzen?</summary>
 <p>Ja, mit einigen Einschränkungen. Microsoft Edge TTS und Google TTS erlauben die kommerzielle Nutzung des generierten Audios. Plattformen wie Audible (ACX) verlangen jedoch derzeit menschliche Erzählung für neue Einreichungen. KI-Hörbücher können auf anderen Plattformen verkauft oder für persönliche Projekte, YouTube-Videos und Bildungsinhalte verwendet werden.</p>
 </details>
 <details><summary>Wie viele Zeichen kann ich kostenlos konvertieren?</summary>
-<p>Mit Microsoft Edge TTS: unbegrenzt. Es gibt keine Nutzungsbeschränkungen oder Kontingente. Mit Google Cloud TTS Chirp3-HD: 1 Million Zeichen pro Monat kostenlos, danach gelten die Standardpreise von Google Cloud.</p>
+<p>Mit Microsoft Edge TTS: unbegrenzt. Es gibt keine Nutzungsbeschränkungen oder Kontingente.</p>
 </details>
 <details><summary>Funktioniert Audiobook Maker offline?</summary>
 <p>Die gehostete Version auf audiobook-maker.com benötigt eine Internetverbindung. Die Software ist jedoch Open Source — Sie können sie auf Ihrem Computer oder Server installieren und lokal mit voller Offline-Fähigkeit ausführen.</p>
 </details>
 <details><summary>Was ist die beste TTS-Stimme für deutsche Hörbücher?</summary>
-<p>Die besten Edge-TTS-Stimmen für Deutsch sind <strong>Katja</strong> (warm, weiblich) und <strong>Conrad</strong> (klar, männlich). Für Premium-Qualität bietet Google Chirp3-HD die ausdrucksstärksten neuronalen Stimmen. <a href="/">Testen Sie die kostenlose Vorschau auf Audiobook Maker</a>, um Ihre bevorzugte Stimme zu finden.</p>
+<p>Die besten Edge-TTS-Stimmen für Deutsch sind <strong>Katja</strong> (warm, weiblich) und <strong>Conrad</strong> (klar, männlich). <a href="/">Testen Sie die kostenlose Vorschau auf Audiobook Maker</a>, um Ihre bevorzugte Stimme zu finden.</p>
 </details>
 </section>
 """,
@@ -2633,7 +2623,6 @@ _GUIDE_BODY_ZH = {
 <li><strong>西班牙语</strong>：Elvira, Alvaro — 流畅的西班牙语朗读</li>
 <li><strong>中文</strong>：晓晓, 云扬 — 自然的普通话语音</li>
 </ul>
-<p>Google Cloud TTS Chirp3-HD也可提供更高质量（每月前100万字符免费）。</p>
 </section>
 
 <section>
@@ -2755,14 +2744,13 @@ _GUIDE_BODY_ZH = {
 <thead><tr><th>TTS引擎</th><th>语音数</th><th>语言数</th><th>费用</th><th>最适合</th></tr></thead>
 <tbody>
 <tr><td><strong>Microsoft Edge TTS</strong></td><td>400+</td><td>50+</td><td>免费</td><td>通用有声书创作，最佳免费语音</td></tr>
-<tr><td><strong>Google Cloud TTS (Chirp3-HD)</strong></td><td>50+</td><td>30+</td><td>每月100万字符免费，超出后付费</td><td>高级品质，富有表现力的朗读</td></tr>
 <tr><td><strong>Speechify</strong></td><td>30+</td><td>20+</td><td>免费增值（有限）</td><td>快速文章阅读，移动端使用</td></tr>
 <tr><td><strong>NaturalReader</strong></td><td>100+</td><td>20+</td><td>免费增值（有限）</td><td>阅读障碍支持，教育用途</td></tr>
 <tr><td><strong>ElevenLabs</strong></td><td>自定义</td><td>30+</td><td>每月1万字符免费</td><td>超逼真语音克隆</td></tr>
 <tr><td><strong>Play.ht</strong></td><td>800+</td><td>140+</td><td>每月5千字符免费</td><td>多语言，语音多样性</td></tr>
 </tbody>
 </table>
-<p><strong>Audiobook Maker默认使用Microsoft Edge TTS</strong> — 完全免费，无使用限制，提供400多种语音。Google TTS Chirp3-HD适用于需要高级品质的用户。与Speechify或NaturalReader不同，Audiobook Maker<strong>没有付费墙、无需注册、无使用限制</strong>。</p>
+<p><strong>Audiobook Maker默认使用Microsoft Edge TTS</strong> — 完全免费，无使用限制，提供400多种语音。与Speechify或NaturalReader不同，Audiobook Maker<strong>没有付费墙、无需注册、无使用限制</strong>。</p>
 </section>
 
 <section>
@@ -2810,19 +2798,19 @@ _GUIDE_BODY_ZH = {
 <section>
 <h2>常见问题</h2>
 <details><summary>AI文字转语音的音质足以制作有声书吗？</summary>
-<p>是的。现代神经TTS（如Microsoft Edge TTS和Google Chirp3-HD）声音非常自然。对于非虚构作品，大多数听众无法分辨与人类旁白的区别。对于有多个角色和情感范围的小说，人类旁白仍然更优 — 但差距正在迅速缩小。</p>
+<p>是的。现代神经TTS（如Microsoft Edge TTS）声音非常自然。对于非虚构作品，大多数听众无法分辨与人类旁白的区别。对于有多个角色和情感范围的小说，人类旁白仍然更优 — 但差距正在迅速缩小。</p>
 </details>
 <details><summary>我可以将AI生成的有声书用于商业用途吗？</summary>
 <p>可以，但有一些限制。Microsoft Edge TTS和Google TTS允许将生成的音频用于商业用途。然而，像Audible（ACX）这样的平台目前要求新提交的作品使用人类旁白。AI有声书可以在其他平台上销售或用于个人项目、YouTube视频和教育内容。</p>
 </details>
 <details><summary>我可以免费转换多少个字符？</summary>
-<p>使用Microsoft Edge TTS：无限。没有使用限制或配额。使用Google Cloud TTS Chirp3-HD：每月100万字符免费，超出后适用Google Cloud标准资费。</p>
+<p>使用Microsoft Edge TTS：无限。没有使用限制或配额。</p>
 </details>
 <details><summary>Audiobook Maker可以离线使用吗？</summary>
 <p>audiobook-maker.com上托管的版本需要互联网连接。但该软件是开源的 — 您可以将其安装在自己的计算机或服务器上，以完整的离线能力在本地运行。</p>
 </details>
 <details><summary>什么是最好的中文有声书TTS语音？</summary>
-<p>最好的中文Edge TTS语音是<strong>晓晓</strong>（温暖女声）和<strong>云扬</strong>（清晰男声）。对于高级品质，Google Chirp3-HD提供最具表现力的神经语音。<a href="/">在Audiobook Maker上免费试听预览</a>，找到您最喜欢的语音。</p>
+<p>最好的中文Edge TTS语音是<strong>晓晓</strong>（温暖女声）和<strong>云扬</strong>（清晰男声）。<a href="/">在Audiobook Maker上免费试听预览</a>，找到您最喜欢的语音。</p>
 </details>
 </section>
 """,

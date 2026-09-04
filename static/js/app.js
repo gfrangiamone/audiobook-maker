@@ -241,7 +241,6 @@ function detectLang(){
 // ═══════════════════ STATE ═══════════════════
 let voices={},bookData=null,jobId=null,singleFile=true,generating=false,jobDone=false,hbInterval=null,_analyzedHbInterval=null,isTxtFile=false,emailRegistered=false;
 let previewListened=false,_langWarnResolve=null;
-let _googleTtsBudget=null; // {available, chars_remaining, chars_limit} or null
 let aiOptEnabled=false,llmAvailable=false,optimizedChapters=[];
 let wizMode='audio'; // 'audio' | 'translate'
 let trPaymentToken=null,trEstimate=null,trEmailRegistered=false,trAutoOutName='';
@@ -697,13 +696,6 @@ async function loadVoices(){
     try{ data=JSON.parse(txt); }
     catch(parseErr){return;}
     if(!data||typeof data!=='object')return;
-    if(data._google_tts){
-        _googleTtsBudget=data._google_tts;
-        delete data._google_tts;
-    }
-    else{
-        _googleTtsBudget=null;
-    }
     // Stato Premium (capability/admin_disabled) salvato in variabile dedicata
     // e rimosso dal dict, cosi` fillLangs() non lo tratta come una lingua.
     if(data._premium_status){
@@ -990,57 +982,25 @@ function syncLanguageOptions(){
   if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
   else if(typeof updVoicesPremium==='function')updVoicesPremium();
 }
-function _isGoogleVoice(id){return id&&id.startsWith('gcloud:')}
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
-function _googleTtsAffordable(){
-  // True se Google TTS è disponibile e ha caratteri sufficienti per il libro corrente.
-  // Se non c'è ancora un libro analizzato, basta che il budget non sia esaurito.
-  if(!_googleTtsBudget||!_googleTtsBudget.available)return false;
-  const remaining=_googleTtsBudget.chars_remaining||0;
-  if(remaining<=0)return false;
-  const bookChars=(bookData&&bookData.total_chars)||0;
-  if(bookChars>0&&bookChars>remaining)return false;
-  return true;
-}
 function updVoices(){
   const lc=document.getElementById('vl').value,sel=document.getElementById('vv');
   const oldVoice=sel.value;
   sel.innerHTML='';
   if(!voices[lc])return;
   const lang=voices[lc];
-  // Separa voci per engine, edge prima poi google
+  // Il tab Standard ha un solo engine: edge.
   // SKIP gemini in Standard tab — voci premium gestite da updVoicesPremium()
   const edgeVoices=lang.voices.filter(v=>{
     if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
     return (v.engine||'edge')==='edge';
   });
-  // Mostra le voci Google solo se il budget mensile copre il libro corrente
-  const googleVoices=_googleTtsAffordable()?lang.voices.filter(v=>{
-    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
-    return v.engine==='google';
-  }):[];
   let lg='';
   // Voci Microsoft Edge
   for(const v of edgeVoices){
     if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender}
     const o=document.createElement('option');o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
     sel.lastElementChild.appendChild(o);
-  }
-  // Voci Google HD (se presenti)
-  if(googleVoices.length>0){
-    lg='';
-    for(const v of googleVoices){
-      if(v.gender!==lg){
-        const g=document.createElement('optgroup');
-        const gLabel=v.gender==='Female'?'♀':(v.gender==='Male'?'♂':'⚥');
-        g.label=gLabel+' Google HD';
-        sel.appendChild(g);lg=v.gender;
-      }
-      const o=document.createElement('option');o.value=v.id;
-      o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+') ★';
-      o.classList.add('gcloud-voice');
-      sel.lastElementChild.appendChild(o);
-    }
   }
   // Voci Gemini TTS NON inserite nella select Standard (vedi tab Premium).
   // Preserve user's prior voice selection if still available in the rebuilt list.
@@ -3385,13 +3345,6 @@ async function startCombinedGeneration(combinedPaymentToken){
           showErr('s3err',t('concurrent_limit')||gd.error);
           unlockUI();return;
         }
-        if(gd.error_code==='google_tts_budget'){
-          document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||gd.error);
-          document.getElementById('pMsg').style.color='var(--err)';
-          document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-          document.getElementById('btnRetryWiz').onclick=retryGeneration;
-          unlockUI();return;
-        }
         if(gd.error_code==='free_quota_exhausted'||gd.error_code==='payment_required'){
           _handlePremiumPaymentRequired(gd);return;
         }
@@ -3818,11 +3771,6 @@ async function startGen(){
         const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
         showErr('s3err',t('concurrent_limit')||d.error);
         unlockUI();return
-      }
-      if(d.error_code==='google_tts_budget'){
-        document.getElementById('pMsg').innerHTML=(t('google_tts_budget_err')||d.error);document.getElementById('pMsg').style.color='var(--err)';
-        document.getElementById('cnA').innerHTML='<button class="btn btn-ok" id="btnRetryWiz">🔄 '+(t('btn_retry')||'Retry generation')+'</button>';
-        document.getElementById('btnRetryWiz').onclick=retryGeneration;unlockUI();return
       }
       if(d.error_code==='gemini_overload'){
         unlockUI();generating=false;
@@ -5255,9 +5203,7 @@ function _updateVoiceChip(){
                          .trim();
   }
   if(!langName){chip.classList.remove('vis');return;}
-  const isGV=_isGoogleVoice(vv.value);
-  const engineTag=isGV?' [Google HD]':'';
-  chipTxt.textContent=langName+(voiceName?' — '+voiceName:'')+ engineTag;
+  chipTxt.textContent=langName+(voiceName?' — '+voiceName:'');
   const _lbl={it:'✏️ Cambia',en:'✏️ Change',fr:'✏️ Modifier',es:'✏️ Cambiar',de:'✏️ Ändern',zh:'✏️ 更改'};
   chipLink.textContent=_lbl[cl]||_lbl.en;
   chip.classList.add('vis');

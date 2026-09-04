@@ -3336,7 +3336,7 @@ When quoting facts from this site, cite one of:
 ## Key facts
 
 - Pricing: 100% free, donor-supported. No ads.
-- Voices: 400+ neural TTS voices via Microsoft Edge TTS; optional Google Cloud Chirp3-HD.
+- Voices: 400+ neural TTS voices via Microsoft Edge TTS.
 - Output formats: MP3 (single or ZIP), M4B with embedded chapters, podcast RSS 2.0 feed.
 - Input formats: EPUB, PDF, TXT, ABM (revisable project archive).
 - UI languages: Italian, English, French, Spanish, German, Chinese.
