@@ -97,48 +97,39 @@ def test_generate_pretende_il_pagamento_sulle_voci_premium():
     assert '"error": "payment_required"' in sorgente
 
 
-def test_generate_accetta_body_senza_lang(monkeypatch, tmp_path):
+def test_generate_ha_il_ripiego_su_lang_assente():
     """I2: il mobile non manda `lang`. Il server deve ripiegare, non rifiutare.
 
-    Body reale del client Flutter (abm_api_client.dart): job_id, voice,
-    output_format, rate, selected_chapters, batch_mode.
+    Variante statica, non la simulazione della richiesta HTTP: per arrivare
+    davvero al ripiego bisognerebbe attraversare l'intero preflight di
+    pagamento premium (quota gratuita, budget Google, RPD, invio email di
+    notifica) — provato con una richiesta vera fatta collaborare con mock a
+    catena, arriva a destinazione ma innesca effetti collaterali reali fuori
+    dal controllo del test (un invio email effettivo osservato durante la
+    verifica). Per una voce standard (non premium, come quella che manda il
+    client Flutter) il ramo che legge `lang` non viene nemmeno attraversato:
+    non e' un varco, e' semplicemente irraggiungibile da quella richiesta.
+
+    Verifica quindi la proprieta' strutturale invece del comportamento a
+    runtime: dentro il corpo di `api_generate` (da `def api_generate():`
+    alla prossima `def ` a colonna 0, cosi' un `data["lang"]` diretto altrove
+    nel modulo non fa fallire questo test) deve esistere il ripiego
+    `data.get("lang")` e non deve esistere nessun accesso diretto
+    `data["lang"]` (che solleverebbe KeyError quando il campo manca).
     """
-    import json
+    import pathlib
 
-    app = audiobook_app.app
-    app.config["TESTING"] = True
+    sorgente = pathlib.Path("audiobook_app.py").read_text(encoding="utf-8")
+    righe = sorgente.splitlines()
+    inizio = next(i for i, r in enumerate(righe) if r.startswith("def api_generate("))
+    fine = next(i for i in range(inizio + 1, len(righe)) if righe[i].startswith("def "))
+    corpo = "\n".join(righe[inizio:fine])
 
-    avviati = {}
-
-    def _finto_avvio(*args, **kwargs):
-        avviati["chiamato"] = True
-
-    monkeypatch.setattr(
-        audiobook_app.threading, "Thread",
-        lambda *a, **k: type("T", (), {"start": lambda self: _finto_avvio(),
-                                       "daemon": True})(),
-        raising=False,
+    assert 'data.get("lang")' in corpo, (
+        "sparito il ripiego su `lang` assente in api_generate: il mobile "
+        "non manda quel campo e la richiesta verrebbe rifiutata"
     )
-
-    with app.test_client() as client:
-        resp = client.post(
-            "/api/generate",
-            data=json.dumps({
-                "job_id": "job-inesistente",
-                "voice": "it-IT-IsabellaNeural",
-                "output_format": "mp3",
-                "rate": "+0%",
-                "selected_chapters": [0],
-                "batch_mode": True,
-            }),
-            content_type="application/json",
-        )
-
-    # Il job non esiste: 404/400 sono risposte legittime. Cio' che NON deve
-    # accadere e' un rifiuto per `lang` mancante (400 con quel messaggio) o un
-    # 500 da KeyError.
-    assert resp.status_code != 500, f"500 su body senza lang: {resp.data[:400]}"
-    corpo = resp.get_data(as_text=True).lower()
-    assert "lang" not in corpo or "missing" not in corpo, (
-        f"/api/generate sembra pretendere `lang`: {corpo[:400]}"
+    assert 'data["lang"]' not in corpo, (
+        'api_generate legge data["lang"] senza ripiego: KeyError quando il '
+        "mobile non lo manda"
     )
