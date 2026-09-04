@@ -380,6 +380,22 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 [data-theme="dark"] .al-w{color:#f0c060;background:rgba(234,179,8,.07);border-color:rgba(234,179,8,.25)}
 .al-ok{background:rgba(34,197,94,.08);color:#166534;border:1px solid rgba(34,197,94,.3)}
 [data-theme="dark"] .al-ok{color:#6ee7b7;background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.2)}
+/* Nota informativa della cascata audio (#cascadeNote): dice cosa e' cambiato
+   quando la lingua del libro cambia la selezione di modello/accento/voce. */
+.al-i{background:var(--acs);color:var(--ac);border:1px solid var(--ac)}
+/* ═══ Lingua del libro (pannello Impostazioni audio) ═══
+   Non e' una scelta: e' una proprieta' del libro, quindi si legge, non si
+   sceglie. `--fg2`/`--warn`/`--bd` non esistono nel tema: si usano gli
+   equivalenti gia' in uso (--txd testo attenuato, --brd bordo) e la stessa
+   coppia di colori di `.al-w` per lo stato "lingua ipotizzata". */
+.book-lang-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.book-lang-label{color:var(--txd)}
+.book-lang-src{color:var(--txd);font-size:.9em}
+.book-lang-src.is-warn{color:#856d10}
+[data-theme="dark"] .book-lang-src.is-warn{color:#f0c060}
+.icon-btn{background:none;border:1px solid var(--brd);border-radius:6px;
+          cursor:pointer;padding:2px 8px;line-height:1.6;color:var(--tx)}
+.icon-btn:hover{border-color:var(--ac);color:var(--ac)}
 .voice-chip{margin-top:10px;font-size:.8rem;display:none;align-items:flex-start;gap:6px;flex-wrap:wrap;line-height:1.4;max-width:100%}
 .voice-chip.vis{display:flex}
 .vc-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;background:var(--acs);border:1px solid var(--ac);border-radius:20px;color:var(--ac);font-weight:600;white-space:normal;word-break:break-word;max-width:100%;line-height:1.3}

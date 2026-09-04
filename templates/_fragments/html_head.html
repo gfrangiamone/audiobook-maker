@@ -382,7 +382,17 @@ __REVIEWS_LD__
       <h2 id="panel3Heading" data-t="s2_title"></h2>
       <p class="subtitle" data-t="p3_subtitle"></p>
 
-      <div id="voiceMismatch" class="al al-w" style="display:none"></div>
+      <div class="book-lang-row" id="bookLangRow">
+        <span class="book-lang-label" data-t="lbl_book_lang"></span>
+        <strong class="book-lang-name" id="bookLangName"></strong>
+        <span class="book-lang-src" id="bookLangSrc"></span>
+        <!-- `hidden` fino al Task 8, che porta openForceLangModal(): fra i due
+             commit il pulsante esisterebbe senza la sua funzione. -->
+        <button type="button" id="forceLangBtn" class="icon-btn" hidden
+                data-t-title="tip_force_lang" aria-haspopup="dialog"
+                onclick="openForceLangModal()">&#9881;</button>
+      </div>
+      <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
       <div class="tab-bar-wrap" style="position:relative">
         <div class="tab-bar" role="tablist" style="margin-bottom:12px">
@@ -398,24 +408,30 @@ __REVIEWS_LD__
       </div>
 
       <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
-        <div class="form-row">
-          <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
-          <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
+        <div class="form-row" id="stdAccentRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="stdAccent" data-t="lbl_accent_std"></label>
+            <select id="stdAccent"></select>
+          </div>
         </div>
-
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="vv" data-t="lbl_voice"></label>
+            <select id="vv"><option data-t="voice_ph"></option></select>
+          </div>
+        </div>
       </div>
 
       <div class="tab-panel" id="tabPremium" role="tabpanel" hidden aria-labelledby="tabPremiumBtn">
         <div class="form-row">
-          <div class="form-group">
-            <label for="vlPremium" data-t="lbl_lang">Lingua</label>
-            <select id="vlPremium"></select>
-          </div>
-          <div class="form-group">
+          <div class="form-group" style="flex:1 1 100%">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
             <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
           </div>
+        </div>
+        <div class="form-row" id="premiumOffRow" hidden>
+          <div class="al al-w" id="premiumOffMsg"></div>
         </div>
         <div class="form-row" id="geminiAccentRow" hidden>
           <div class="form-group" style="flex:1 1 100%">
