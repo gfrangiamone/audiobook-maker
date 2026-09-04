@@ -399,16 +399,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.tab-bar .tab').forEach(btn=>{
     btn.addEventListener('click',()=>switchAudioTab(btn.dataset.tab));
   });
-  const vlPrem=document.getElementById('vlPremium');
-  if(vlPrem)vlPrem.addEventListener('change',()=>{
-    const src=document.getElementById('vl');
-    if(src){src.value=vlPrem.value;updVoices();}
-    if(typeof updModelsPremium==='function')updModelsPremium();
-    updVoicesPremium();
-    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
-    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
-    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
-  });
+  // Niente piu' gestore della lingua premium: la lingua non e' una scelta
+  // dell'utente dentro i tab, e' una proprieta' del libro (bookLangState) e
+  // la cascata di applyBookLanguage() ripopola modello/accento/voce.
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
     // _onPremiumModelChanged() gestisce il toggle stile/emozioni, ripopola
@@ -657,13 +650,9 @@ async function analyzeEpub(file){
     const isAbmFile=(d.file_type==='abm');
     llmAvailable=!!d.llm_available;optimizedChapters=d.optimized_chapters||[];aiOptEnabled=false;
     _updateAiOptUI();
-    if(d.language){
-      const lc=d.language.split('-')[0].toLowerCase();
-      const sel=document.getElementById('vl');
-      if(sel.querySelector('option[value="'+lc+'"]')){sel.value=lc;}
-    }
-    updVoices();
-    if(typeof syncLanguageOptions==='function')syncLanguageOptions();
+    // La lingua del libro arriva da /api/analyze (language + language_source):
+    // qui si registra nello stato e la cascata ricostruisce modello/accento/voce.
+    initBookLanguage();
     const _vOut=document.getElementById('vOut');
     _applyOutputOptionsForType(isTxtFile);
     document.getElementById('fgOut').style.display='';
@@ -697,7 +686,7 @@ async function loadVoices(){
     catch(parseErr){return;}
     if(!data||typeof data!=='object')return;
     // Stato Premium (capability/admin_disabled) salvato in variabile dedicata
-    // e rimosso dal dict, cosi` fillLangs() non lo tratta come una lingua.
+    // e rimosso dal dict, cosi` la cascata non lo tratta come una lingua.
     if(data._premium_status){
         _premiumStatus=data._premium_status;
         delete data._premium_status;
@@ -715,7 +704,7 @@ async function loadVoices(){
     voices=data;
     _applyPremiumAvailability();
     _applyTranslateAvailability();
-    fillLangs();
+    initBookLanguage();
   }catch(e){
     /* swallow: see comment above */
   }
@@ -850,189 +839,172 @@ function _showPremiumMaintenanceModal(){
   overlay.addEventListener('click',(e)=>{if(e.target===overlay)close();});
   document.body.appendChild(overlay);
 }
-function fillLangs(){
-  const sel=document.getElementById('vl');
-  if(!sel) return;
-  const oldVal = sel.value;
-  sel.innerHTML='';
-  
-  // Ordine alfabetico basato sul nome tradotto. Il `count` mostrato accanto al
-  // nome riflette solo le voci effettivamente visibili nel tab Standard: voci
-  // gemini: escluse (vivono nel tab Premium), altrimenti "(64)" comparirebbe
-  // identico tra i due tab anche quando in Standard si vedono 4 voci Edge.
-  const sortedLangs = Object.entries(voices).map(([c, l]) => {
-    let ln = c;
-    if (L[cl] && L[cl].langs && L[cl].langs[c]) {
-      ln = L[cl].langs[c];
-    } else if (L['en'] && L['en'].langs && L['en'].langs[c]) {
-      ln = L['en'].langs[c];
-    } else {
-      ln = l.name || c;
-    }
-    const standardCount = (Array.isArray(l.voices) ? l.voices : []).filter(v => !(v && typeof v.id === 'string' && v.id.startsWith('gemini:'))).length;
-    return { code: c, name: ln, count: standardCount };
-  }).sort((a, b) => a.name.localeCompare(b.name, cl));
+/* Lingua del libro: non e' una scelta dell'utente, e' una proprieta' del
+   libro. `source` dice da dove viene, e serve a decidere se avvisare prima
+   di generare: 'metadata' e 'detected' arrivano dal server, 'assumed' e'
+   il ripiego sul locale dell'interfaccia quando il server non l'ha trovata,
+   'forced' e' la correzione manuale. */
+let bookLangState={code:'',source:'unknown'};
 
-  for(const l of sortedLangs){
-    const o=document.createElement('option');
-    o.value=l.code;
-    o.textContent=l.name+' ('+l.count+')';
-    sel.appendChild(o);
-  }
-  sel.onchange=()=>{
-    updVoices();
-    const dst=document.getElementById('vlPremium');
-    if(dst){
-      // Propaga la lingua al tab Premium solo se compatibile con il catalogo
-      // Gemini; altrimenti lascia la precedente selezione Premium intatta
-      // (evita il side-effect "value=stringa non presente" che azzera il select).
-      const ok=Array.from(dst.options).some(o=>o.value===sel.value);
-      if(ok){
-        dst.value=sel.value;
-        // La lingua premium è cambiata: ricostruisci i modelli e risincronizza
-        // le righe dipendenti dal modello. Simba è solo inglese, quindi
-        // passando a una lingua non-EN updModelsPremium NON ripropone Simba e
-        // il modello torna a Gemini. Senza questo il modello resterebbe su
-        // Simba anche per lingue incompatibili (es. italiano).
-        if(typeof updModelsPremium==='function')updModelsPremium();
-        if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
-        else updVoicesPremium&&updVoicesPremium();
-      }else{
-        updVoicesPremium&&updVoicesPremium();
-      }
-    }
-    // La lingua entra nella stima (cluster rate-log + ratio chars/token).
-    if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
-  };
-
-  if(oldVal && voices[oldVal]) sel.value = oldVal;
-  else {
-    // Pre-selezione logica:
-    let defaultLang = 'it';
-    if(bookData && bookData.language) {
-      defaultLang = bookData.language.split('-')[0].toLowerCase();
-    } else if(voices[cl]) {
-      defaultLang = cl;
-    }
-    if(voices[defaultLang]) sel.value=defaultLang;
-    else if(Object.keys(voices).length>0) sel.value=Object.keys(voices)[0];
-  }
-
-  updVoices();
-  syncLanguageOptions();
+function _langLabel(code){
+  if(L[cl]&&L[cl].langs&&L[cl].langs[code])return L[cl].langs[code];
+  if(L['en']&&L['en'].langs&&L['en'].langs[code])return L['en'].langs[code];
+  const d=voices&&voices[code];
+  return (d&&d.name)||code;
 }
 
-// Popola il selettore #vlPremium SOLO con le lingue per cui esiste almeno una
-// voce Premium (id `gemini:`). Le lingue Edge che Gemini non supporta vengono
-// escluse: l'utente le vede comunque nel tab Standard, mentre nel tab Premium
-// il dropdown elenca esclusivamente l'offerta effettiva di Gemini TTS.
-// Va chiamata dopo aver popolato #vl in fillLangs(), così la pre-selezione
-// corrente di #vl viene rispettata (con fallback alla prima lingua disponibile
-// se quella corrente non ha voci Premium).
-function syncLanguageOptions(){
-  const src=document.getElementById('vl');
-  const dst=document.getElementById('vlPremium');
-  if(!src||!dst)return;
-  const currentVal=src.value;
-  // Filtra: una lingua entra nel Premium dropdown solo se voices[lang].voices
-  // contiene almeno una voce con id che inizia per "gemini:".
-  const hasPremium=lc=>{
-    const v=voices&&voices[lc];
-    if(!v||!Array.isArray(v.voices))return false;
-    return v.voices.some(x=>x&&typeof x.id==='string'&&x.id.startsWith('gemini:'));
-  };
-  // Mantieni l'ordine di #vl (priorità it, en, fr, de, es, pt poi alfabetico).
-  const ordered=[];
-  for(const o of src.options){
-    if(hasPremium(o.value))ordered.push(o);
-  }
-  // Conta le voci Gemini DISTINTE per lingua (non le entry duplicate per
-  // model_key): nella UI Premium l'utente sceglie prima il modello e poi la
-  // voce, quindi il count rilevante è quello delle voci uniche disponibili.
-  const geminiCount=lc=>{
-    const v=voices&&voices[lc];
-    if(!v||!Array.isArray(v.voices))return 0;
-    const names=new Set();
-    for(const x of v.voices){
-      if(x&&typeof x.id==='string'&&x.id.startsWith('gemini:')){
-        const parts=x.id.split(':');
-        names.add(parts[parts.length-1]);
-      }
-    }
-    return names.size;
-  };
-  while(dst.firstChild)dst.removeChild(dst.firstChild);
-  for(const o of ordered){
-    const clone=o.cloneNode(true);
-    // Riscrive "Italiano (64)" → "Italiano (30)" per riflettere il numero di
-    // voci Gemini effettive (regardless of model). Mantiene il nome tradotto
-    // dell'opzione di origine senza re-eseguire la lookup i18n.
-    const baseName=(o.textContent||'').replace(/\s*\(\d+\)\s*$/,'');
-    clone.textContent=baseName+' ('+geminiCount(o.value)+')';
-    dst.appendChild(clone);
-  }
-  // Pre-selezione: rispetta #vl se compatibile, altrimenti prima disponibile.
-  if(ordered.some(o=>o.value===currentVal))dst.value=currentVal;
-  else if(ordered.length>0)dst.value=ordered[0].value;
-  if(typeof updModelsPremium==='function')updModelsPremium();
-  // updModelsPremium può forzare il modello a Simba (default EN) via .value, che
-  // NON emette 'change': sincronizza esplicitamente i controlli dipendenti dal
-  // modello (riga accento/emozione/stile). Senza, su un nuovo libro la riga
-  // accento Simba resta nascosta finché l'utente non cambia modello a mano.
-  if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
-  else if(typeof updVoicesPremium==='function')updVoicesPremium();
+/* Le chiavi `_*` di /api/voices sono metadati (_voxcpm, ...), non lingue:
+   non devono mai finire scelte come ripiego. */
+function _primaLinguaCatalogo(){
+  const ks=Object.keys(voices||{});
+  for(const k of ks){if(k.charAt(0)!=='_')return k;}
+  return '';
 }
-function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
-function updVoices(){
-  const lc=document.getElementById('vl').value,sel=document.getElementById('vv');
-  const oldVoice=sel.value;
-  sel.innerHTML='';
-  if(!voices[lc])return;
-  const lang=voices[lc];
-  // Il tab Standard ha un solo engine: edge.
-  // SKIP gemini in Standard tab — voci premium gestite da updVoicesPremium()
-  const edgeVoices=lang.voices.filter(v=>{
-    if(v.id&&v.id.startsWith('gemini:'))return false; // SKIP gemini in Standard tab
-    return (v.engine||'edge')==='edge';
+
+/* Legge la lingua dalla risposta di analyze. Quando il server non l'ha
+   trovata si ripiega sul locale dell'interfaccia — ma marcandolo, perche' e'
+   la marcatura a far scattare l'avviso in _validateLanguage(). */
+function initBookLanguage(){
+  // Il server emette 'metadata' | 'detected' | 'unknown'; una risposta vecchia
+  // rimasta in cache non emette il campo affatto. Tutto cio' che non e'
+  // 'metadata' ne' 'detected' vale come lingua NON accertata.
+  const raw=(bookData&&bookData.language_source)||'unknown';
+  const src=(raw==='metadata'||raw==='detected')?raw:'unknown';
+  let code=((bookData&&bookData.language)||'').split('-')[0].toLowerCase();
+  if(src==='unknown'||!code||!voices[code]){
+    code=(voices&&voices[cl])?cl:_primaLinguaCatalogo();
+    bookLangState={code:code,source:'assumed'};
+  }else{
+    bookLangState={code:code,source:src};
+  }
+  applyBookLanguage();
+}
+
+/* Chiama la cascata e riversa il risultato nel DOM. Nessuna decisione qui:
+   e' un renderer. */
+function applyBookLanguage(){
+  if(!bookLangState.code)return;
+  const esito=resolveAudioSelection({
+    lang:bookLangState.code,
+    catalog:voices,
+    current:{
+      tab:(wizardState&&wizardState.audioTab)||'standard',
+      standardAccent:document.getElementById('stdAccent')?.value||'',
+      standardVoice:document.getElementById('vv')?.value||'',
+      model:document.getElementById('vmPremium')?.value||'',
+      premiumAccent:document.getElementById('geminiAccent')?.value||'',
+      premiumVoice:document.getElementById('vvPremium')?.value||''
+    }
   });
+
+  // Riga lingua del libro
+  const nm=document.getElementById('bookLangName');
+  if(nm)nm.textContent=_langLabel(bookLangState.code);
+  const sr=document.getElementById('bookLangSrc');
+  if(sr){
+    sr.textContent=t('lang_src_'+bookLangState.source)||'';
+    sr.classList.toggle('is-warn',bookLangState.source==='assumed');
+  }
+
+  // Tab PREMIUM: spento con il motivo, se la lingua non ha voci a pagamento
+  const btn=document.getElementById('tabPremiumBtn');
+  if(btn)btn.disabled=!esito.premiumEnabled;
+  const offRow=document.getElementById('premiumOffRow');
+  const offMsg=document.getElementById('premiumOffMsg');
+  if(offRow)offRow.hidden=esito.premiumEnabled;
+  if(offMsg&&!esito.premiumEnabled){
+    offMsg.textContent=(t('premium_no_lang')||'')
+      .replace('{lang}',_langLabel(bookLangState.code));
+  }
+  if(!esito.premiumEnabled&&wizardState&&wizardState.audioTab==='premium'){
+    switchAudioTab('standard');
+  }
+
+  // Tab Standard: accento (solo se >1) e voci
+  const accRow=document.getElementById('stdAccentRow');
+  const accSel=document.getElementById('stdAccent');
+  if(accRow&&accSel){
+    if(esito.standard.accents.length<2){
+      accRow.hidden=true;accSel.innerHTML='';accSel.value='';
+    }else{
+      accSel.innerHTML='';
+      for(const loc of esito.standard.accents){
+        const o=document.createElement('option');
+        o.value=loc;o.textContent=loc;accSel.appendChild(o);
+      }
+      accSel.value=esito.standard.accent;
+      accRow.hidden=false;
+      accSel.onchange=()=>{applyBookLanguage();_onPreviewParamsChanged();};
+    }
+  }
+  _renderStandardVoices(esito.standard);
+
+  // Tab PREMIUM: modello (solo se >1), poi le righe dipendenti
+  const vm=document.getElementById('vmPremium');
+  if(vm&&esito.premiumEnabled){
+    vm.innerHTML='';
+    for(const m of esito.premium.models){
+      const o=document.createElement('option');
+      o.value=m;o.textContent=_modelLabel(m);vm.appendChild(o);
+    }
+    vm.value=esito.premium.model;
+    const vmRow=vm.closest('.form-row');
+    if(vmRow)vmRow.hidden=esito.premium.models.length<2;
+    if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+  }
+
+  _showCascadeNote(esito.changes);
+  if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+}
+
+/* Etichette dei modelli. Nessun nome di fornitore: sono etichette di
+   prodotto, non di motore. */
+function _modelLabel(m){
+  if(m==='voxcpm')return t('lbl_model_voxcpm')||'Audiobook Maker (VOXCPM2)';
+  if(m==='flash25')return t('lbl_model_flash25')||'Standard';
+  if(m==='flash31')return t('lbl_model_flash31')||'Avanzato';
+  if(m==='simba-3.2')return t('lbl_model_simba')||'Express';
+  return m;
+}
+
+/* Voci del tab Standard, raggruppate per genere come prima. L'elenco arriva
+   gia' filtrato dalla cascata: qui dentro non si riconosce piu' nessun
+   motore, ne' per campo `engine` ne' per prefisso di id. */
+function _renderStandardVoices(std){
+  const sel=document.getElementById('vv');
+  if(!sel)return;
+  sel.innerHTML='';
   let lg='';
-  // Voci Microsoft Edge
-  for(const v of edgeVoices){
-    if(v.gender!==lg){const g=document.createElement('optgroup');g.label=v.gender==='Female'?'♀':'♂';sel.appendChild(g);lg=v.gender}
-    const o=document.createElement('option');o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
+  for(const v of std.voices){
+    if(v.gender!==lg){
+      const g=document.createElement('optgroup');
+      g.label=v.gender==='Female'?'♀':'♂';
+      sel.appendChild(g);lg=v.gender;
+    }
+    const o=document.createElement('option');
+    o.value=v.id;o.textContent=v.gender_icon+' '+v.name+' ('+v.locale+')';
     sel.lastElementChild.appendChild(o);
   }
-  // Voci Gemini TTS NON inserite nella select Standard (vedi tab Premium).
-  // Preserve user's prior voice selection if still available in the rebuilt list.
-  // Setting sel.value to a non-existent option silently fails (sel.value becomes ''),
-  // so we can detect a real restore by comparing back.
-  let restored=false;
-  if(oldVoice){
-    sel.value=oldVoice;
-    restored=(sel.value===oldVoice);
-  }
-  if(!restored){
-    const dv=edgeVoices.find(v=>v.id.includes('Isabella')||v.id.includes('Guy')||v.id.includes('Davis'))||edgeVoices[0]||lang.voices[0];
-    if(dv)sel.value=dv.id;
-  }
-  // Su cambio voce: _onPreviewParamsChanged() gestisce il reset dello stato
-  // anteprima in base alla signature dei parametri (no cache su nuove combo,
-  // restore se gia` generata in passato). Sostituisce _resetPreviewState().
-  sel.onchange=()=>{_updateVoiceChip();checkVoiceMismatch();_onPreviewParamsChanged();};
-  _updateVoiceChip();checkVoiceMismatch();
-  // Reset speed to "Normal" (+0%) only when the voice actually changed (language change or first build).
-  // When the previous selection is preserved (e.g. applyI18n→fillLangs→updVoices triggered by a modal),
-  // keep the user's current speed.
-  if(!restored){
-    var vrSel2=document.getElementById('vr');
-    if(vrSel2)vrSel2.value='+0%';
-    var ss=document.getElementById('speedSlider');
-    if(ss)ss.value=0;
-    var sl=document.getElementById('speedLabel');
-    if(sl)sl.textContent=t('sp_n');
-  }
+  sel.value=std.voice;
+  sel.onchange=()=>{_updateVoiceChip();_onPreviewParamsChanged();};
+  _updateVoiceChip();
 }
 
+/* La nota di cosa e' cambiato. L'elenco arriva dalla cascata: non si
+   ricostruisce con confronti sparsi. */
+function _showCascadeNote(changes){
+  const box=document.getElementById('cascadeNote');
+  if(!box)return;
+  if(!changes||!changes.length){box.hidden=true;box.textContent='';return;}
+  const pezzi=[];
+  if(changes.some(c=>c.what==='tab'||c.what==='model'))pezzi.push(t('note_model_reset'));
+  if(changes.some(c=>c.what==='voice'))pezzi.push(t('note_voice_reset'));
+  if(changes.some(c=>c.what==='accent'))pezzi.push(t('note_accent_reset'));
+  box.textContent=(t('note_lang_set')||'').replace('{lang}',_langLabel(bookLangState.code))
+                  +' '+pezzi.join(' ');
+  box.hidden=false;
+}
+function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
 
 // Popola #vmPremium in base alla lingua premium corrente. Dove il catalogo
@@ -1041,10 +1013,9 @@ function updVoices(){
 // modello non compare affatto. Sull'inglese senza VoxCPM la proposta resta
 // "Simba (English)" (id modello 'simba-3.2'), con la stessa regola di prima.
 function updModelsPremium(){
-  const vlEl=document.getElementById('vlPremium');
   const vmEl=document.getElementById('vmPremium');
   if(!vmEl)return;
-  const lang=(vlEl&&vlEl.value)||'it';
+  const lang=bookLangState.code||'it';
   const prev=vmEl.value;
   vmEl.innerHTML='';
   const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
@@ -1172,8 +1143,7 @@ function _populateSpeechifyAccents(){
 // dei dropdown: cosi' un accento compare se e solo se esiste una voce che
 // lo porta.
 function _voxcpmVoicesForLang(){
-  const vlEl=document.getElementById('vlPremium');
-  const lang=(vlEl&&vlEl.value)||'it';
+  const lang=bookLangState.code||'it';
   const d=voices&&voices[lang];
   const arr=(d&&Array.isArray(d.voices))?d.voices:[];
   return arr.filter(v=>v&&_isVoxcpmVoiceId(v.id));
@@ -1387,7 +1357,6 @@ function _populateSpeechifyEmotions(){
 }
 
 function updVoicesPremium(){
-  const vlEl=document.getElementById('vlPremium');
   const vmEl=document.getElementById('vmPremium');
   const sel=document.getElementById('vvPremium');
   if(!sel)return;
@@ -1452,7 +1421,7 @@ function updVoicesPremium(){
     return;
   }
   // --- Ramo Gemini (esistente) ---
-  const lang=(vlEl&&vlEl.value)||'it';
+  const lang=bookLangState.code||'it';
   const modelKey=(vmEl&&vmEl.value)||'flash25';
   sel.innerHTML='';
   // Costruisce la lista voci Premium da voices[lang].voices filtrando per engine=gemini
@@ -1700,8 +1669,7 @@ function getEstimateCacheKey(){
   const aiOpt=document.getElementById('aiToggle')?.checked?'1':'0';
   const chapters=(typeof _getSelectedChapterIndexes==='function'?_getSelectedChapterIndexes():[]).join(',');
   const rate=document.getElementById('vr')?.value||'+0%';
-  const langEl=(tab==='premium')?document.getElementById('vlPremium'):document.getElementById('vl');
-  const lang=(langEl&&langEl.value)||cl||'';
+  const lang=bookLangState.code||cl||'';
   const pf=getParenFlags();
   const paren=(pf.read_round_parens?'1':'0')+(pf.read_square_brackets?'1':'0');
   return (jobId||'')+'|'+tab+'|'+model+'|'+aiOpt+'|'+rate+'|'+lang+'|'+chapters+'|'+paren;
@@ -1717,12 +1685,9 @@ async function _doCombinedEstimate(){
   const voiceId=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
   const selected=(typeof _getSelectedChapterIndexes==='function')?_getSelectedChapterIndexes():[];
   if(!selected||selected.length===0){renderEstimate(null);return;}
-  // Lingua TTS scelta in "Impostazioni audio": prevale su metadata libro
-  // per stima durata/costo (cluster rate-log + ratio chars/token).
-  const selLangEl=(wizardState.audioTab==='premium')
-    ?document.getElementById('vlPremium')
-    :document.getElementById('vl');
-  const selLang=(selLangEl&&selLangEl.value)||cl||'';
+  // Lingua del libro (bookLangState): entra nella stima durata/costo
+  // (cluster rate-log + ratio chars/token).
+  const selLang=bookLangState.code||cl||'';
   const payload={
     job_id:jobId,
     voice_id:voiceId||'',
@@ -1932,8 +1897,7 @@ function openPaymentModal(estimate) {
     paypal: {
       endpoint: '/api/paypal_create_order_gemini',
       buildBody: () => {
-        const _selLangEl = (wizardState.audioTab === 'premium') ? document.getElementById('vlPremium') : document.getElementById('vl');
-        const _selLang = (_selLangEl && _selLangEl.value) || cl || '';
+        const _selLang = bookLangState.code || cl || '';
         return { job_id: jobId, voice_id: (typeof getCurrentVoiceId === 'function') ? getCurrentVoiceId() : '', selected_chapters: (typeof _getSelectedChapterIndexes === 'function') ? _getSelectedChapterIndexes() : [], ai_opt_enabled: !!document.getElementById('aiToggle')?.checked, rate: document.getElementById('vr')?.value || '+0%', lang: _selLang, amount_eur: _payState.total };
       },
     },
@@ -2120,12 +2084,9 @@ const _ACCENT_CATALOG={
   ar:[['eg','accent_ar_eg'],['sa','accent_ar_sa'],['ae','accent_ar_ae']]
 };
 
-// Lingua TTS premium corrente (combo vlPremium), normalizzata a 2 lettere.
+// Lingua TTS premium corrente = lingua del libro, normalizzata a 2 lettere.
 function _premiumLang(){
-  try{
-    const el=document.getElementById('vlPremium');
-    return (el&&el.value?el.value:'').split('-')[0].toLowerCase();
-  }catch(_){return '';}
+  return bookLangState.code;
 }
 
 // Valore accento selezionato (solo se il dropdown e' visibile). '' = default lato server.
@@ -2190,17 +2151,10 @@ function _buildPreviewUrl(){
   const style=_isGeminiVoiceId(voice)
     ? ((document.getElementById('geminiStyle')?.value||'').trim().slice(0,200))
     : '';
-  // Lingua TTS scelta dall'utente: il backend la usa per il rate sample
-  // empirico (gemini_tts_rate_log) cosi' i campioni vengono raggruppati
-  // per lingua REALE della voce, non per metadata libro.
-  let _selLang='';
-  try{
-    const _audioTab=(typeof wizardState!=='undefined'&&wizardState&&wizardState.audioTab)?wizardState.audioTab:'';
-    const _el=(_audioTab==='premium')
-      ?document.getElementById('vlPremium')
-      :document.getElementById('vl');
-    _selLang=(_el&&_el.value)?_el.value:'';
-  }catch(_){ _selLang=''; }
+  // Lingua del libro: il backend la usa per il rate sample empirico
+  // (gemini_tts_rate_log) cosi' i campioni vengono raggruppati per lingua
+  // REALE della voce.
+  const _selLang=bookLangState.code||'';
   let u='/api/preview_audio/'+bookData.job_id
     +'?voice='+encodeURIComponent(voice)
     +'&rate='+encodeURIComponent(rate);
@@ -2910,14 +2864,11 @@ async function adoptTranslation(){
     const btnAdopt=document.getElementById('btnTrAdopt');
     if(btnAdopt)btnAdopt.style.display='none';
     _renderChaptersAfterAdopt(d);
-    // Riallinea la voce alla nuova lingua del libro
-    if(bookData&&bookData.language){
-      const lc=bookData.language.split('-')[0].toLowerCase();
-      const vlSel=document.getElementById('vl');
-      if(vlSel&&vlSel.querySelector('option[value="'+lc+'"]'))vlSel.value=lc;
-    }
     goToStep(3); // pannello voci (audio)
-    fillLangs(); // ripreseleziona la lingua = nuova lingua del libro
+    // La traduzione adottata E' la nuova lingua del libro: viene dai metadati
+    // della forma tradotta, non da un'ipotesi.
+    bookLangState={code:(d.language||'').split('-')[0].toLowerCase(),source:'metadata'};
+    applyBookLanguage();
   }catch(e){alert('Error: '+e.message)}
 }
 
@@ -3020,7 +2971,7 @@ async function _fetchCostEstimate(){
   }
   try{
     let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-    const selLang=document.getElementById('vl').value||cl;
+    const selLang=bookLangState.code||cl;
     url.searchParams.append('lang',selLang);
     // Collect selected chapters
     _getSelectedChapterIndexes().forEach(idx=>url.searchParams.append('selected_chapters',idx));
@@ -3173,17 +3124,9 @@ function _showPaymentModal(costEur,chars,orderOpts){
 
 async function _validateLanguage() {
   if(!bookData) return true;
-  // 1. Case: Language unknown (no metadata and no AI detection)
-  if(!bookData.language && !previewListened) {
-    return await _showLangWarning();
-  }
-  // 2. Case: Mismatch between detected/metadata language and selected voice
-  const bookLang = bookData.language ? bookData.language.split('-')[0].toLowerCase() : '';
-  const voiceLang = (wizardState.audioTab === 'premium')
-    ? document.getElementById('vlPremium').value
-    : document.getElementById('vl').value;
-  if(bookLang && voiceLang && bookLang !== voiceLang && !previewListened) {
-    // Show the same warning modal (it asks to verify voice/language)
+  // La lingua e' ipotizzata (il server non l'ha trovata e nessuno l'ha
+  // corretta): chiedi conferma prima di spendere una generazione.
+  if(bookLangState.source==='assumed' && !previewListened) {
     return await _showLangWarning();
   }
   return true;
@@ -3222,9 +3165,7 @@ async function startCombinedGeneration(combinedPaymentToken){
     var paymentToken=combinedPaymentToken||null;
     try{
       let url=new URL('/api/optimize_estimate/'+jobId, window.location.origin);
-      const selLang=(wizardState.audioTab==='premium')
-        ?document.getElementById('vlPremium').value||cl
-        :document.getElementById('vl').value||cl;
+      const selLang=bookLangState.code||cl;
       url.searchParams.append('lang',selLang);
       // Passa la voce cosi' il server applica il cap corretto (Gemini ha MAX_GEMINI_TEXT_CHARS piu' restrittivo).
       const _voiceForEst=(typeof getCurrentVoiceId==='function')?getCurrentVoiceId():'';
@@ -3248,10 +3189,7 @@ async function startCombinedGeneration(combinedPaymentToken){
     lockUI();
     try{
       console.log('[startCombinedGeneration] preparing /api/optimize payload', {jobId, paymentToken: !!paymentToken, selectedChapters, audioTab: wizardState.audioTab});
-      const selLangEl=(wizardState.audioTab==='premium')
-        ?document.getElementById('vlPremium')
-        :document.getElementById('vl');
-      const selLang=(selLangEl&&selLangEl.value)||cl;
+      const selLang=bookLangState.code||cl;
       _rememberLastLang(selLang);
       const vrEl=document.getElementById('vr');
       const voiceId=getCurrentVoiceId();
@@ -3308,9 +3246,7 @@ async function startCombinedGeneration(combinedPaymentToken){
     _setCancelButtonMode('gen');
     lockUI();
     try{
-      var _genLang=(wizardState.audioTab==='premium')
-        ?(document.getElementById('vlPremium')?.value||cl)
-        :(document.getElementById('vl')?.value||cl);
+      var _genLang=bookLangState.code||cl;
       _rememberLastLang(_genLang);
       var genPayload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang,...getParenFlags()};
       if(selectedChapters)genPayload.selected_chapters=selectedChapters;
@@ -3730,9 +3666,7 @@ async function startGen(){
   _setCancelButtonMode('gen');
   lockUI();
   try{
-    const _genLang2=(wizardState.audioTab==='premium')
-      ?(document.getElementById('vlPremium')?.value||cl)
-      :(document.getElementById('vl')?.value||cl);
+    const _genLang2=bookLangState.code||cl;
     _rememberLastLang(_genLang2);
     const payload={job_id:jobId,voice:getCurrentVoiceId(),rate:document.getElementById('vr').value,single_file:singleFile,output_format:outputFormat,podcast_base_url:podcastBaseUrl,lang:_genLang2,...getParenFlags()};
     if(selectedChapters)payload.selected_chapters=selectedChapters;
@@ -5180,7 +5114,7 @@ applyI18n=function(){
   updateShareLinks();
   checkVoiceMismatch();
   _updateVoiceChip();
-  if(typeof voices!=='undefined' && Object.keys(voices).length>0) fillLangs();
+  if(typeof voices!=='undefined' && Object.keys(voices).length>0) applyBookLanguage();
 };
 
 // ═══════════════════ VOICE CHIP + MISMATCH ═══════════════════
@@ -5189,10 +5123,11 @@ function _updateVoiceChip(){
   const chipTxt=document.getElementById('voiceChipTxt');
   const chipLink=document.getElementById('voiceChipLink');
   if(!chip||!chipTxt||!chipLink)return;
-  const vl=document.getElementById('vl');
   const vv=document.getElementById('vv');
-  if(!vl||!vv||!vl.value||!vl.options[vl.selectedIndex]){chip.classList.remove('vis');return;}
-  const langName=vl.options[vl.selectedIndex].text.replace(/\s*\(\d+\)\s*$/,'');
+  if(!vv||!bookLangState.code){chip.classList.remove('vis');return;}
+  // La lingua non ha piu' una combo da cui leggere l'etichetta: e' quella
+  // del libro, tradotta nella lingua dell'interfaccia.
+  const langName=_langLabel(bookLangState.code);
   let voiceName=vv.options[vv.selectedIndex]?vv.options[vv.selectedIndex].text:'';
   if(voiceName){
     // Clean up voice name: remove "Microsoft", "Online (Natural)", and all "(...)" parts

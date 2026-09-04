@@ -1,15 +1,18 @@
 """Regressione: la riga accento Simba deve comparire anche su un nuovo libro,
 senza dover cambiare modello a mano.
 
-Difetto: updModelsPremium() imposta il modello a Simba (default inglese) via
-.value, che NON emette un evento 'change'; i controlli dipendenti dal modello
-(riga accento/emozione/stile) vengono sincronizzati solo da _onPremiumModelChanged().
-syncLanguageOptions() e switchAudioTab('premium') NON lo invocavano, quindi
-ri-analizzando un secondo libro la riga accento restava nascosta finché l'utente
-non cambiava modello.
+Difetto: il modello premium viene impostato via .value, che NON emette un
+evento 'change'; i controlli dipendenti dal modello (riga accento/emozione/
+stile) vengono sincronizzati solo da _onPremiumModelChanged(). Il percorso che
+ripopolava il tab premium al cambio di lingua NON lo invocava, quindi
+ri-analizzando un secondo libro la riga accento restava nascosta finche'
+l'utente non cambiava modello.
 
 Fix: entrambi i percorsi che (ri)popolano/mostrano i controlli premium devono
 chiamare _onPremiumModelChanged() per allineare le righe al modello corrente.
+Da quando la lingua e' una proprieta' del libro, il primo dei due e'
+applyBookLanguage() — il renderer della cascata lingua -> modello -> accento
+-> voce, che ha preso il posto di syncLanguageOptions().
 """
 import os
 import re
@@ -42,10 +45,10 @@ def _func_body(src, name):
     raise AssertionError("corpo funzione non bilanciato: " + name)
 
 
-def test_sync_language_options_resyncs_premium_model():
-    body = _func_body(_app_js(), "syncLanguageOptions")
+def test_apply_book_language_resyncs_premium_model():
+    body = _func_body(_app_js(), "applyBookLanguage")
     assert "_onPremiumModelChanged" in body, \
-        "syncLanguageOptions non risincronizza i controlli dipendenti dal modello"
+        "applyBookLanguage non risincronizza i controlli dipendenti dal modello"
 
 
 def test_switch_audio_tab_resyncs_premium_model():
