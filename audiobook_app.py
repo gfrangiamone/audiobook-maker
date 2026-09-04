@@ -9028,6 +9028,20 @@ def _safe_upload_name(original_name, ext):
     return f"{root}.{ext}" if ext else root
 
 
+def _derive_language_source(language, language_detected):
+    """Provenienza della lingua del libro, per il client.
+
+    `metadata` = scritta nel file (dc:language dell'EPUB, metadati del PDF).
+    `detected` = dedotta dall'IA leggendo il testo.
+    `unknown`  = nessuna delle due: il client ripieghera' sul locale
+                 dell'interfaccia e marchera' la lingua come ipotizzata,
+                 il che fa scattare l'avviso prima della generazione.
+    """
+    if not (language or "").strip():
+        return "unknown"
+    return "detected" if language_detected else "metadata"
+
+
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
     # Rate-limit IP-based: previene spam upload / DoS.
@@ -9137,6 +9151,7 @@ def api_analyze():
                 "job_id": existing_jid, "title": info.title, "author": info.author,
                 "language": info.language,
                 "language_detected": existing_job.get("language_detected", False),
+                "language_source": existing_job.get("language_source", "unknown"),
                 "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
                 "has_cover": bool(existing_job.get("cover_thumb")),
                 "total_chapters": len(info.chapters), "total_words": info.total_words,
@@ -9189,7 +9204,9 @@ def api_analyze():
                          "client_id": _get_client_id(), "client_ip": _get_client_ip(),
                          "browser_lang": _get_browser_lang(),
                          "optimized_chapters": [], "file_hash": file_hash,
-                         "language_detected": language_detected}
+                         "language_detected": language_detected,
+                         "language_source": _derive_language_source(
+                             info.language, language_detected)}
 
     # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
@@ -9301,6 +9318,7 @@ def api_analyze():
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
         "language_detected": language_detected,
+        "language_source": _derive_language_source(info.language, language_detected),
         "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
