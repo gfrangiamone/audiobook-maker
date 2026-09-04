@@ -386,9 +386,7 @@ __REVIEWS_LD__
         <span class="book-lang-label" data-t="lbl_book_lang"></span>
         <strong class="book-lang-name" id="bookLangName"></strong>
         <span class="book-lang-src" id="bookLangSrc"></span>
-        <!-- `hidden` fino al Task 8, che porta openForceLangModal(): fra i due
-             commit il pulsante esisterebbe senza la sua funzione. -->
-        <button type="button" id="forceLangBtn" class="icon-btn" hidden
+        <button type="button" id="forceLangBtn" class="icon-btn"
                 data-t-title="tip_force_lang" aria-haspopup="dialog"
                 onclick="openForceLangModal()">&#9881;</button>
       </div>
@@ -1037,6 +1035,24 @@ __REVIEWS_LD__
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-g" onclick="_langWarnResolve(false)" data-t="lang_warn_cancel"></button>
           <button class="btn btn-ok" onclick="_langWarnResolve(true)" data-t="lang_warn_confirm"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FORCE BOOK LANGUAGE MODAL -->
+  <div class="modal-overlay" id="forceLangModal" role="dialog" aria-modal="true" aria-labelledby="forceLangTitle" onclick="if(event.target===this)closeForceLangModal()">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <span data-t="force_lang_title" id="forceLangTitle"></span>
+        <button class="modal-close" onclick="closeForceLangModal()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 14px;line-height:1.6;font-size:.92rem" data-t="force_lang_hint"></p>
+        <select id="forceLangSelect" size="12" style="width:100%"></select>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-g" onclick="closeForceLangModal()" data-t="force_lang_cancel"></button>
+          <button class="btn btn-ok" onclick="confirmForceLang()" data-t="force_lang_ok"></button>
         </div>
       </div>
     </div>
