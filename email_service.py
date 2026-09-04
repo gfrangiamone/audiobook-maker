@@ -516,7 +516,18 @@ def _try_send_admin_digest():
     # Build and send digest email
     from datetime import datetime
     count = len(events)
-    subject = f"\U0001f4da Audiobook Maker: {count} nuov{'o' if count == 1 else 'i'} libr{'o' if count == 1 else 'i'} in elaborazione"
+    n_abuse = len(_abuse_rows)
+    abuse_tag = f"{n_abuse} cas{'o' if n_abuse == 1 else 'i'} di abuso"
+    if count == 0:
+        # Invio abuse-only: l'oggetto dice il motivo reale, non "0 nuovi libri".
+        subject = f"\u26a0\ufe0f Audiobook Maker: {abuse_tag}"
+        intro = f"Nessuna elaborazione avviata \u2014 {abuse_tag}"
+    else:
+        subject = f"\U0001f4da Audiobook Maker: {count} nuov{'o' if count == 1 else 'i'} libr{'o' if count == 1 else 'i'} in elaborazione"
+        intro = f"{count} elaborazion{'e' if count == 1 else 'i'} avviat{'a' if count == 1 else 'e'}"
+        if n_abuse:
+            subject += f" \u00b7 {abuse_tag}"
+            intro += f" \u00b7 {abuse_tag}"
 
     rows = ""
     for e in events:
@@ -537,7 +548,7 @@ def _try_send_admin_digest():
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
-<p style="margin:8px 0 0;opacity:.85">{count} elaborazion{'e' if count == 1 else 'i'} avviat{'a' if count == 1 else 'e'} \u2014 {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+<p style="margin:8px 0 0;opacity:.85">{intro} \u2014 {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
 </div>
 <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #ddd;border-top:none">
 <thead><tr style="background:#f0f5fa">

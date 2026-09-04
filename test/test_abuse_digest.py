@@ -62,6 +62,47 @@ def test_digest_sent_with_abuse_only_rows_and_empty_queue(monkeypatch):
     assert "net:abcdef0123456789" in sent.get("html", "")
 
 
+def test_digest_abuse_only_subject_names_abuse_not_zero_books(monkeypatch):
+    """Con coda vuota l'oggetto non deve dire "0 nuovi libri"."""
+    sent = {}
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(subj=subj, html=html))
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setattr(es, "_admin_last_sent", 0.0)
+    monkeypatch.setattr(es, "_admin_queue", [])
+    es.set_funnel_provider(None)
+    es.set_power_users_provider(None)
+    es.set_abuse_provider(lambda: {"rows": _rows()[:1], "window_hours": 24, "kill_enabled": True})
+    try:
+        es._try_send_admin_digest()
+    finally:
+        es.set_abuse_provider(None)
+    assert "0 nuovi libri" not in sent["subj"]
+    assert "1 caso di abuso" in sent["subj"]
+    assert "0 elaborazioni" not in sent["html"]
+    assert "Nessuna elaborazione avviata" in sent["html"]
+
+
+def test_digest_with_events_and_abuse_rows_keeps_books_subject(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(subj=subj, html=html))
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setattr(es, "_admin_last_sent", 0.0)
+    ev = {"timestamp": "10:00", "title": "T", "author": "A", "filename": "f.epub",
+          "chapters": 1, "words": 10, "duration_est": "1m", "voice": "v"}
+    monkeypatch.setattr(es, "_admin_queue", [ev])
+    es.set_funnel_provider(None)
+    es.set_power_users_provider(None)
+    es.set_abuse_provider(lambda: {"rows": _rows()[:1], "window_hours": 24, "kill_enabled": True})
+    try:
+        es._try_send_admin_digest()
+    finally:
+        es.set_abuse_provider(None)
+    assert "1 nuovo libro in elaborazione" in sent["subj"]
+    assert "1 caso di abuso" in sent["subj"]
+
+
 def test_digest_not_sent_with_empty_queue_and_no_abuse_rows(monkeypatch):
     sent = {}
     monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(html=html))
