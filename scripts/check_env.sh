@@ -61,6 +61,10 @@ check_var "ABM_SMTP_FROM"       "optional" "Mittente email" "SMTP_USER o noreply
 check_var "ABM_ADMIN_EMAIL"     "required" "Email per digest amministrativo" ""
 echo ""
 
+echo "--- VOCI PREMIUM (backend Vertex) ---"
+check_var "ABM_GOOGLE_CREDENTIALS_FILE"    "required" "Path file JSON credenziali del backend Vertex" ""
+echo ""
+
 echo "--- DEEPSEEK LLM (ottimizzazione testo AI) ---"
 check_var "ABM_DEEPSEEK_API_KEY"           "required" "API key DeepSeek per ottimizzazione AI" ""
 check_var "ABM_MAX_CONCURRENT_LLM_PER_CLIENT" "optional" "Max job LLM concorrenti per client" "1"
@@ -86,6 +90,18 @@ check_var "ABM_MAX_CONCURRENT_PER_CLIENT"  "optional" "Max job concorrenti per c
 echo ""
 
 echo "--- VERIFICHE FILE ---"
+
+# Controlla file credenziali del backend Vertex (voci PREMIUM)
+VERTEX_CREDS=$(grep 'Environment="ABM_GOOGLE_CREDENTIALS_FILE=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_GOOGLE_CREDENTIALS_FILE=\(.*\)"/\1/')
+if [ -n "$VERTEX_CREDS" ]; then
+    if [ -f "$VERTEX_CREDS" ]; then
+        echo "[OK] File credenziali Vertex esiste: $VERTEX_CREDS"
+    else
+        echo "[!!] File credenziali Vertex NON TROVATO: $VERTEX_CREDS"
+    fi
+else
+    echo "[!!] ABM_GOOGLE_CREDENTIALS_FILE non impostata: le voci PREMIUM non partono"
+fi
 
 # Controlla directory dati
 DATA_DIR=$(grep 'Environment="ABM_DATA_DIR=' "$OVERRIDE" 2>/dev/null | sed 's/.*Environment="ABM_DATA_DIR=\(.*\)"/\1/')
