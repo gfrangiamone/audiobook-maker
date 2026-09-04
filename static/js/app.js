@@ -1019,6 +1019,47 @@ function _showCascadeNote(changes,linguaCambiata){
   box.textContent=pezzi.join(' ');
   box.hidden=false;
 }
+
+/* Elenco: l'unione di tutte le lingue dei modelli disponibili. Il motore
+   gratuito le copre tutte, quindi sono tutte quelle del catalogo. Accanto a
+   ciascuna si dice se ha voci a pagamento, cosi' la scelta e' informata
+   prima di farla invece che scoperta dopo. */
+function openForceLangModal(){
+  const sel=document.getElementById('forceLangSelect');
+  if(!sel)return;
+  sel.innerHTML='';
+  const righe=Object.keys(voices)
+    .filter(c=>!c.startsWith('_'))
+    .map(c=>({code:c,name:_langLabel(c),
+              premium:resolveAudioSelection({lang:c,catalog:voices,current:{}}).premiumEnabled}))
+    .sort((a,b)=>a.name.localeCompare(b.name,cl));
+  for(const r of righe){
+    const o=document.createElement('option');
+    o.value=r.code;
+    o.textContent=r.name+(r.premium?' — '+(t('force_lang_premium_yes')||''):'');
+    sel.appendChild(o);
+  }
+  sel.value=bookLangState.code;
+  applyI18n();
+  document.getElementById('forceLangModal').classList.add('open');
+}
+
+function closeForceLangModal(){
+  document.getElementById('forceLangModal').classList.remove('open');
+}
+
+function confirmForceLang(){
+  const sel=document.getElementById('forceLangSelect');
+  const scelta=sel&&sel.value;
+  closeForceLangModal();
+  if(!scelta||scelta===bookLangState.code)return;
+  // L'utente ha dichiarato lui la lingua: da qui in poi e' affidabile, e
+  // l'avviso prima della generazione non ha piu' ragione di scattare.
+  bookLangState={code:scelta,source:'forced'};
+  _rememberLastLang(scelta);
+  applyBookLanguage();   // preserva il preservabile e scrive la nota
+}
+
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
 
