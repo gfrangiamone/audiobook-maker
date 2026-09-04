@@ -604,7 +604,8 @@ const CATALOGO = {
   en: {name: 'English', voices: [
     {id: 'en-US-AvaNeural', name: 'Ava', gender: 'Female', locale: 'en-US', engine: 'edge'},
     {id: 'en-GB-SoniaNeural', name: 'Sonia', gender: 'Female', locale: 'en-GB', engine: 'edge'},
-    {id: 'gemini:flash25:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini'},
+    {id: 'gemini:flash25:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini', model_key: 'flash25'},
+    {id: 'gemini:flash31:Puck', name: 'Puck', gender: 'Male', locale: 'en-US', engine: 'gemini', model_key: 'flash31'},
     {id: 'voxcpm:v2:en-US/Grace', name: 'Grace', gender: 'Female', locale: 'en-US', engine: 'voxcpm'},
     {id: 'speechify:simba-3.2:beatrice_32', name: 'Beatrice', gender: 'Female', locale: 'en-GB', engine: 'speechify'},
   ]},
@@ -639,6 +640,18 @@ test('inglese: quattro modelli, Simba incluso', () => {
   const r = resolveAudioSelection({lang: 'en', catalog: CATALOGO, current: {}});
   assert.deepStrictEqual(r.premium.models,
     ['voxcpm', 'flash25', 'flash31', 'simba-3.2']);
+});
+
+test('i due modelli Gemini non condividono le voci', () => {
+  /* Condividono il prefisso `gemini:` ma non l'id completo. Se il filtro
+     tornasse al solo prefisso corto, ogni modello mostrerebbe anche le voci
+     dell'altro e l'utente sceglierebbe una voce che il suo modello non ha. */
+  const std = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash25'}});
+  const avz = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
+  assert.deepStrictEqual(std.premium.voices.map(v => v.id), ['gemini:flash25:Puck']);
+  assert.deepStrictEqual(avz.premium.voices.map(v => v.id), ['gemini:flash31:Puck']);
 });
 
 test('inglese con modello Avanzato: quattro varianti di accento', () => {
@@ -809,19 +822,24 @@ function localiStandard(catalog, lang) {
   return out;
 }
 
-/* Voci premium per modello. Ogni modello ha il suo prefisso di id. */
+/* Voci premium per modello.
+ *
+ * L'id porta gia' il modello: gemini_tts.get_voices() emette
+ * `gemini:<model_key>:<Nome>`, quindi il prefisso completo separa i due
+ * modelli Gemini da solo. Il campo `model_key` c'e' anche nel catalogo, ma
+ * filtrare sull'id non dipende dalla sua presenza: se un domani sparisse, un
+ * filtro su model_key lascerebbe passare le voci di ENTRAMBI i modelli
+ * silenziosamente, mentre questo non restituisce nulla e il difetto si vede. */
 function vociPremium(catalog, lang, model) {
   var prefisso = model === 'voxcpm' ? 'voxcpm:'
                : model === 'simba-3.2' ? 'speechify:simba-3.2:'
-               : 'gemini:';
+               : 'gemini:' + model + ':';
   var out = [];
   var voci = _voci(catalog, lang);
   for (var i = 0; i < voci.length; i++) {
     var v = voci[i];
     var id = v && v.id;
     if (typeof id !== 'string' || id.indexOf(prefisso) !== 0) continue;
-    /* I due modelli Gemini condividono il prefisso: distinguili per model_key. */
-    if (prefisso === 'gemini:' && v.model_key && v.model_key !== model) continue;
     out.push(v);
   }
   return out;
@@ -930,7 +948,7 @@ if (typeof module !== 'undefined' && module.exports) {
 - [ ] **Step 4: Eseguire i test JS**
 
 Run: `node --test test/js/`
-Expected: 13 pass, 0 fail. Se `idempotente` fallisce, il colpevole è quasi sempre un `segna()` chiamato anche quando `from === to`: la guardia è dentro `segna`, verificare di non aver aggiunto push diretti a `changes`.
+Expected: 14 pass, 0 fail. Se `idempotente` fallisce, il colpevole è quasi sempre un `segna()` chiamato anche quando `from === to`: la guardia è dentro `segna`, verificare di non aver aggiunto push diretti a `changes`.
 
 - [ ] **Step 5: Scrivere il wrapper pytest**
 
@@ -983,7 +1001,7 @@ In `templates/_fragments/html_tail.html:3`, **prima** di `app.js` (gli script `d
 git add static/js/audio_cascade.js test/js/audio_cascade.test.js test/test_js_cascade.py templates/_fragments/html_tail.html
 git commit -m "feat(audio): la cascata lingua->modello->accento->voce, senza DOM
 
-Funzione pura in un file suo, con 13 test eseguiti da node:test (libreria
+Funzione pura in un file suo, con 14 test eseguiti da node:test (libreria
 standard, nessuna dipendenza nuova) e un wrapper perche' pytest resti
 l'unico comando d'ingresso.
 
@@ -1251,7 +1269,30 @@ function _showCascadeNote(changes){
 
 Aggiungere anche le 4 chiavi i18n usate qui (`note_lang_set`, `note_model_reset`, `note_voice_reset`, `note_accent_reset`) nei 7 locali. In italiano: `note_lang_set:"Lingua impostata su {lang}."`, `note_model_reset:"Modello e voce riportati al valore predefinito."`, `note_voice_reset:"Voce riportata al valore predefinito."`, `note_accent_reset:"Accento riportato al valore predefinito."`. In inglese: `"Language set to {lang}."`, `"Model and voice reset to the default."`, `"Voice reset to the default."`, `"Accent reset to the default."`.
 
-- [ ] **Step 4: Aggiornare i 32 lettori delle vecchie combo**
+- [ ] **Step 4: Eliminare `updVoices()` e redirigere i suoi call-site**
+
+`_renderStandardVoices()` la sostituisce, ma `updVoices()` (riga 1005) ha
+cinque chiamanti che vanno risolti nello stesso commit, altrimenti restano
+riferimenti a una funzione che non esiste più:
+
+| riga | contesto | cosa farne |
+|---|---|---|
+| 406 | handler che propagava la lingua premium alla combo standard | rimuovere l'intero handler: le due combo non esistono più |
+| 666 | inizializzazione | `applyBookLanguage();` |
+| 891, 929 | dentro `fillLangs()` | spariscono con `fillLangs()` |
+| 5310 | dentro `autoFixVoice()` | resta fino al Task 7, che elimina la funzione |
+
+Quindi: eliminare il corpo di `updVoices()`, sistemare 406 e 666, e lasciare
+`autoFixVoice()` intatta — è il Task 7 a portarla via. Se dopo questo step
+`grep -n "updVoices()" static/js/app.js` mostra ancora la riga 5310, è
+corretto: quel riferimento muore col Task 7.
+
+Fra i due commit `autoFixVoice()` contiene quindi una chiamata a una funzione
+inesistente, ma è **irraggiungibile**: la sua unica via d'accesso era il
+pulsante dentro `#voiceMismatch`, che questo stesso task ha appena tolto dal
+markup. Nessun percorso vivo può innescarla.
+
+- [ ] **Step 5: Aggiornare i 32 lettori delle vecchie combo**
 
 ```bash
 grep -n "getElementById('vl')\|getElementById('vlPremium')" static/js/app.js
@@ -1270,7 +1311,7 @@ Sostituire **ogni** occorrenza con `bookLangState.code`. Le sostituzioni non ban
 
 I payload continuano a mandare `lang`: è il canale su cui viaggia la forzatura (I2 riguarda il **server**, che deve tollerarne l'assenza — il client web lo manda comunque).
 
-- [ ] **Step 5: Aggiornare i punti di ingresso**
+- [ ] **Step 6: Aggiornare i punti di ingresso**
 
 - Riga 726: `fillLangs();` → `initBookLanguage();`
 - Riga 5235: `if(typeof voices!=='undefined' && ...) fillLangs();` → `... applyBookLanguage();`
@@ -1283,7 +1324,7 @@ I payload continuano a mandare `lang`: è il canale su cui viaggia la forzatura 
 
 - Riga 667: `syncLanguageOptions()` → rimuovere la chiamata.
 
-- [ ] **Step 6: Semplificare `_validateLanguage()`**
+- [ ] **Step 7: Semplificare `_validateLanguage()`**
 
 Con una lingua sola non c'è più un mismatch fra due combo: resta il solo caso della lingua ipotizzata.
 
@@ -1299,7 +1340,7 @@ async function _validateLanguage() {
 }
 ```
 
-- [ ] **Step 7: Stile della riga lingua**
+- [ ] **Step 8: Stile della riga lingua**
 
 In `static/css/style.css`:
 
@@ -1314,7 +1355,7 @@ In `static/css/style.css`:
 
 Se `--fg2`, `--warn` o `--bd` non esistono nel file, usare le variabili equivalenti già in uso (cercare `--err` e `--ac`, presenti in `autoFixVoice`).
 
-- [ ] **Step 8: Aggiornare i test a grep**
+- [ ] **Step 9: Aggiornare i test a grep**
 
 `test/test_app_js_tab_logic.py` cita `vlPremium` e `fillLangs`. **Non cancellare i test**: cambiarne l'oggetto. `test_validateLanguage_uses_vlPremium` diventa:
 
@@ -1326,16 +1367,16 @@ def test_validateLanguage_legge_lo_stato_unico_della_lingua():
     assert "vlPremium" not in corpo, "residuo della vecchia combo premium"
 ```
 
-- [ ] **Step 9: Eseguire tutto**
+- [ ] **Step 10: Eseguire tutto**
 
 Run: `python -m pytest test/ -q && node --test test/js/`
 Expected: verde su entrambi.
 
-- [ ] **Step 10: Verifica manuale nel browser**
+- [ ] **Step 11: Verifica manuale nel browser**
 
 Caricare un EPUB italiano. Expected: sopra i tab si legge «Lingua del libro: Italiano (dai metadati)»; il tab Standard mostra solo la voce (l'italiano ha un locale solo); il tab PREMIUM mostra tre modelli con VOXCPM2 selezionato; nessun errore in console.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add -A
