@@ -38,7 +38,7 @@ RADICE = pathlib.Path(__file__).resolve().parents[1]
 # salito. Cio' che deve restare impossibile e' che il numero SCENDA sotto la
 # protezione attuale (test spariti silenziosamente: rinominati, cancellati,
 # glob che non fa piu' match) — di quello il wrapper deve accorgersi.
-TEST_ATTESI = 18
+TEST_ATTESI = 22
 
 
 @pytest.mark.skipif(shutil.which("node") is None,

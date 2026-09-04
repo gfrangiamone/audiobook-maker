@@ -68,13 +68,6 @@ test('i due modelli Gemini non condividono le voci', () => {
   assert.deepStrictEqual(avz.premium.voices.map(v => v.id), ['gemini:flash31:Puck']);
 });
 
-test('inglese con modello Avanzato: quattro varianti di accento', () => {
-  const r = resolveAudioSelection({
-    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
-  assert.strictEqual(r.premium.model, 'flash31');
-  assert.strictEqual(r.premium.accents.length, 4);
-});
-
 test('svedese: premium spento, col motivo', () => {
   /* Parte da un `current` che sta davvero sul tab premium: solo cosi`
      l'assert sul tab tornato a 'standard' significa qualcosa (con
@@ -82,9 +75,8 @@ test('svedese: premium spento, col motivo', () => {
   const r = resolveAudioSelection({
     lang: 'sv', catalog: CATALOGO, current: {tab: 'premium', model: 'flash25'}});
   assert.strictEqual(r.premiumEnabled, false);
-  assert.strictEqual(r.premiumReason, 'no_premium_voices');
-  assert.strictEqual(r.tab, 'standard');
-  assert.ok(r.changes.some(c => c.what === 'tab' && c.to === 'standard'),
+  assert.ok(r.changes.some(c => c.what === 'tab' && c.to === 'standard'
+                             && c.reason === 'no_premium_voices'),
     'il downgrade forzato dal tab premium non e` segnalato in changes');
 });
 
@@ -114,7 +106,6 @@ test('it -> sv con VOXCPM2 attivo: si scende a Standard e lo si dice', () => {
   const r = resolveAudioSelection({
     lang: 'sv', catalog: CATALOGO,
     current: {tab: 'premium', model: 'voxcpm', premiumVoice: 'voxcpm:v2:it-IT/Bianca'}});
-  assert.strictEqual(r.tab, 'standard');
   const cambiati = r.changes.map(c => c.what);
   assert.ok(cambiati.includes('tab'), 'il cambio di tab non e` segnalato');
   assert.ok(cambiati.includes('model'), 'il cambio di modello non e` segnalato');
@@ -140,11 +131,10 @@ test('en -> it con Simba attivo: il modello non e` preservabile', () => {
 test('la cascata e` idempotente', () => {
   const primo = resolveAudioSelection({lang: 'en', catalog: CATALOGO, current: {}});
   const stato = {
-    tab: primo.tab,
+    tab: 'premium',
     standardAccent: primo.standard.accent,
     standardVoice: primo.standard.voice,
     model: primo.premium.model,
-    premiumAccent: primo.premium.accent,
     premiumVoice: primo.premium.voice,
   };
   const secondo = resolveAudioSelection({lang: 'en', catalog: CATALOGO, current: stato});
@@ -177,18 +167,6 @@ test('voce Speechify senza `engine`: niente fuga nel tab Standard', () => {
     'una voce Speechify senza `engine` e` finita nel tab Standard');
 });
 
-test('premium.accents e` una copia: mutarlo non tocca le chiamate successive', () => {
-  const primo = resolveAudioSelection({
-    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
-  const codiciOriginali = primo.premium.accents.map(c => c[0]);
-  primo.premium.accents.reverse();
-  primo.premium.accents.forEach(c => c.reverse());
-  const secondo = resolveAudioSelection({
-    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
-  assert.deepStrictEqual(secondo.premium.accents.map(c => c[0]), codiciOriginali,
-    'la tabella ACCENT_CATALOG condivisa e` stata corrotta da chi consuma il risultato');
-});
-
 test('it -> sv: una standardVoice non disponibile ricade con il motivo giusto', () => {
   const r = resolveAudioSelection({
     lang: 'sv', catalog: CATALOGO,
@@ -197,7 +175,7 @@ test('it -> sv: una standardVoice non disponibile ricade con il motivo giusto', 
   assert.deepStrictEqual(
     r.changes.find(c => c.what === 'voice'),
     {what: 'voice', from: 'it-IT-IsabellaNeural', to: 'sv-SE-SofieNeural',
-     reason: 'voice_unavailable_in_lang'});
+     reason: 'voice_unavailable_in_lang', dove: 'standard'});
 });
 
 test('spagnolo: scegliere un accento riduce davvero le voci Standard', () => {
@@ -258,4 +236,45 @@ test('inglese: un accento gia` scelto vince sulla voce preferita', () => {
     current: {standardAccent: 'en-GB', standardVoice: 'en-US-DavisNeural'}});
   assert.strictEqual(r.standard.accent, 'en-GB');
   assert.strictEqual(r.standard.voice, 'en-GB-SoniaNeural');
+});
+
+test('la voce premium scelta dall`utente sopravvive alla cascata', () => {
+  /* B1: `applyI18n()` -> `applyBookLanguage()` gira anche in mezzo alla
+     sequenza di generazione a pagamento, e ricostruisce #vvPremium. La
+     cascata e` la fonte di verita` che app.js riversa nel select dopo il
+     rebuild: se smettesse di preservare la voce in ingresso, l'audiolibro
+     pagato uscirebbe con una voce che l'utente non ha scelto. */
+  /* Catalogo esteso con una SECONDA voce flash31: con una sola voce per
+     modello «preservare la scelta» e «ripiegare sulla prima» danno lo stesso
+     risultato, e il test passerebbe anche su una cascata che la scelta la
+     butta via. La voce dell'utente e` la seconda, non la prima. */
+  const catalogo = {...CATALOGO, en: {...CATALOGO.en, voices: [
+    ...CATALOGO.en.voices,
+    {id: 'gemini:flash31:Kore', name: 'Kore', gender: 'Female',
+     locale: 'en-US', engine: 'gemini', model_key: 'flash31'},
+  ]}};
+  const r = resolveAudioSelection({
+    lang: 'en', catalog: catalogo,
+    current: {tab: 'premium', model: 'flash31',
+              premiumVoice: 'gemini:flash31:Kore'}});
+  assert.deepStrictEqual(r.premium.voices.map(v => v.id),
+    ['gemini:flash31:Puck', 'gemini:flash31:Kore']);
+  assert.strictEqual(r.premium.voice, 'gemini:flash31:Kore');
+  assert.ok(!r.changes.some(c => c.what === 'voice'),
+    'una voce premium ancora valida non deve comparire fra i cambiamenti');
+});
+
+test('il reset di una voce dice a quale tab appartiene', () => {
+  /* D3: la nota che l'utente legge parla del tab che ha davanti. Senza
+     `dove` chi sta sul tab PREMIUM leggerebbe l'annuncio del reset della
+     voce Standard, che non e` nemmeno sullo schermo. */
+  const r = resolveAudioSelection({
+    lang: 'it', catalog: CATALOGO,
+    current: {tab: 'premium', model: 'flash25',
+              standardVoice: 'en-US-AvaNeural',
+              premiumVoice: 'gemini:flash25:Puck'}});
+  const perTab = {};
+  for (const c of r.changes) if (c.what === 'voice') perTab[c.dove] = c.to;
+  assert.strictEqual(perTab.standard, 'it-IT-IsabellaNeural');
+  assert.strictEqual(perTab.premium, 'gemini:flash25:Achernar');
 });

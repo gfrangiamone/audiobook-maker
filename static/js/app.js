@@ -865,11 +865,14 @@ function _primaLinguaCatalogo(){
    trovata si ripiega sul locale dell'interfaccia — ma marcandolo, perche' e'
    la marcatura a far scattare l'avviso in _validateLanguage(). */
 function initBookLanguage(){
-  // Il server emette 'metadata' | 'detected' | 'unknown'; una risposta vecchia
-  // rimasta in cache non emette il campo affatto. Tutto cio' che non e'
-  // 'metadata' ne' 'detected' vale come lingua NON accertata.
+  // Il server emette 'metadata' | 'detected' | 'forced' | 'unknown'; una
+  // risposta vecchia rimasta in cache non emette il campo affatto. Tutto cio'
+  // che non e' una di quelle TRE provenienze vale come lingua NON accertata.
+  // 'forced' arriva dai job la cui lingua l'utente ha gia' deciso lui
+  // (adozione di una traduzione): riproporgli il modale di conferma
+  // significherebbe chiedergli di confermare la propria scelta.
   const raw=(bookData&&bookData.language_source)||'unknown';
-  const src=(raw==='metadata'||raw==='detected')?raw:'unknown';
+  const src=(raw==='metadata'||raw==='detected'||raw==='forced')?raw:'unknown';
   let code=((bookData&&bookData.language)||'').split('-')[0].toLowerCase();
   if(src==='unknown'||!code||!voices[code]){
     code=(voices&&voices[cl])?cl:_primaLinguaCatalogo();
@@ -914,13 +917,25 @@ function applyBookLanguage(){
     sr.classList.toggle('is-warn',bookLangState.source==='assumed');
   }
 
-  // Tab PREMIUM: spento con il motivo, se la lingua non ha voci a pagamento
+  // Tab PREMIUM: spento con il motivo, se la lingua non ha voci a pagamento.
+  //
+  // «Niente voci a pagamento» ha TRE cause, e tre messaggi diversi:
+  //   1. la lingua del libro non ne ha  -> questa funzione, #premiumOffRow;
+  //   2. kill-switch admin acceso       -> _showPremiumMaintenanceModal(), che
+  //      pretende un tab CLICCABILE (un <button disabled> non emette click);
+  //   3. istanza senza premium configurato -> nessun tab sullo schermo
+  //      (_applyPremiumAvailability() mette btn.hidden).
+  // Qui si conosce solo la prima. Quando comandano la seconda o la terza la
+  // cascata non tocca ne' `disabled` ne' l'avviso: darebbe alla lingua del
+  // libro la colpa di un guasto che non e' suo, e nel caso 2 renderebbe il
+  // popup di manutenzione irraggiungibile.
   const btn=document.getElementById('tabPremiumBtn');
-  if(btn)btn.disabled=!esito.premiumEnabled;
+  const gestitoAltrove=_premiumMaintenance||!!(btn&&btn.hidden);
+  if(btn&&!gestitoAltrove)btn.disabled=!esito.premiumEnabled;
   const offRow=document.getElementById('premiumOffRow');
   const offMsg=document.getElementById('premiumOffMsg');
-  if(offRow)offRow.hidden=esito.premiumEnabled;
-  if(offMsg&&!esito.premiumEnabled){
+  if(offRow)offRow.hidden=esito.premiumEnabled||gestitoAltrove;
+  if(offMsg&&!esito.premiumEnabled&&!gestitoAltrove){
     offMsg.textContent=(t('premium_no_lang')||'')
       .replace('{lang}',_langLabel(bookLangState.code));
   }
@@ -961,19 +976,41 @@ function applyBookLanguage(){
     const vmRow=vm.closest('.form-row');
     if(vmRow)vmRow.hidden=esito.premium.models.length<2;
     if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
+    /* _onPremiumModelChanged() ricostruisce #vvPremium da zero. La voce che
+       l'utente ha scelto la sa la cascata, che l'ha appena preservata: qui la
+       si riversa nel select. Senza questo, applyI18n() — che gira anche in
+       mezzo alla sequenza di generazione a pagamento — riporterebbe la
+       selezione alla prima <option>, in silenzio. */
+    const vp=document.getElementById('vvPremium');
+    const vocePrem=esito.premium.voice;
+    if(vp&&vocePrem&&Array.prototype.some.call(vp.options,o=>o.value===vocePrem)){
+      vp.value=vocePrem;
+      _allineaMemoriaVocePremium(vocePrem);
+    }
   }
 
   _showCascadeNote(esito.changes,linguaCambiata);
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
 
+/* Ripiego RAGGIUNGIBILE per una chiave i18n. `t(k)||ripiego` non funziona:
+   t() non ritorna mai un valore falsy — quando la chiave non esiste in
+   nessun locale ritorna la CHIAVE, che e' vera. Il segnale e' proprio quello.
+   Stessa forma gia' usata da _showPremiumMaintenanceModal(). */
+function _tOr(k,ripiego){
+  let v=k;
+  try{v=(typeof t==='function')?t(k):k;}catch(_e){}
+  return (v&&v!==k)?v:ripiego;
+}
+
 /* Etichette dei modelli. Nessun nome di fornitore: sono etichette di
-   prodotto, non di motore. */
+   prodotto, non di motore. I ripieghi sono in inglese, come ogni stringa che
+   l'i18n non copre: se scattano, scattano per tutti. */
 function _modelLabel(m){
-  if(m==='voxcpm')return t('lbl_model_voxcpm')||'Audiobook Maker (VOXCPM2)';
-  if(m==='flash25')return t('lbl_model_flash25')||'Standard';
-  if(m==='flash31')return t('lbl_model_flash31')||'Avanzato';
-  if(m==='simba-3.2')return t('lbl_model_simba')||'Express';
+  if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (VOXCPM2)');
+  if(m==='flash25')return _tOr('lbl_model_flash25','Standard');
+  if(m==='flash31')return _tOr('lbl_model_flash31','Advanced');
+  if(m==='simba-3.2')return _tOr('lbl_model_simba','Express (English only)');
   return m;
 }
 
@@ -1001,11 +1038,21 @@ function _renderStandardVoices(std){
 }
 
 /* La nota di cosa e' cambiato. L'elenco arriva dalla cascata: non si
-   ricostruisce con confronti sparsi. */
+   ricostruisce con confronti sparsi.
+
+   Due regole, oltre a quella sulla lingua:
+   - la nota parla SOLO del tab che l'utente ha davanti. Ogni cambiamento
+     porta `dove` ('standard' | 'premium' | '' = entrambi): annunciare il
+     reset della voce Standard a chi guarda il tab PREMIUM significa parlargli
+     di un controllo che non e' sullo schermo;
+   - note_model_reset dice gia' «Modello E VOCE riportati al valore
+     predefinito»: quando c'e' quella, la frase sulla voce si ripeterebbe. */
 function _showCascadeNote(changes,linguaCambiata){
   const box=document.getElementById('cascadeNote');
   if(!box)return;
   if(!changes||!changes.length){box.hidden=true;box.textContent='';return;}
+  const tabVisto=(wizardState&&wizardState.audioTab)||'standard';
+  const qui=c=>!c.dove||c.dove===tabVisto;
   const pezzi=[];
   /* «Lingua impostata su X» solo quando la lingua e' davvero cambiata: la
      cascata gira anche al cambio d'accento, e li' quella frase sarebbe
@@ -1013,9 +1060,15 @@ function _showCascadeNote(changes,linguaCambiata){
   if(linguaCambiata){
     pezzi.push((t('note_lang_set')||'').replace('{lang}',_langLabel(bookLangState.code)));
   }
-  if(changes.some(c=>c.what==='tab'||c.what==='model'))pezzi.push(t('note_model_reset'));
-  if(changes.some(c=>c.what==='voice'))pezzi.push(t('note_voice_reset'));
-  if(changes.some(c=>c.what==='accent'))pezzi.push(t('note_accent_reset'));
+  if(changes.some(c=>c.what==='tab'||c.what==='model')){
+    pezzi.push(t('note_model_reset'));
+  }else if(changes.some(c=>c.what==='voice'&&qui(c))){
+    pezzi.push(t('note_voice_reset'));
+  }
+  if(changes.some(c=>c.what==='accent'&&qui(c)))pezzi.push(t('note_accent_reset'));
+  /* Cambiamenti tutti nell'altro tab: niente da dire, e un riquadro vuoto
+     sarebbe peggio del silenzio. */
+  if(!pezzi.length){box.hidden=true;box.textContent='';return;}
   box.textContent=pezzi.join(' ');
   box.hidden=false;
 }
@@ -1094,6 +1147,20 @@ function _isVoxcpmModelSelected(){
 // scelta dell'utente si perde a ogni rebuild.
 let _voxcpmAccentSel='';
 let _voxcpmVoiceSel='';
+// Stessa memoria per il ramo Gemini di updVoicesPremium(), che ne era privo:
+// era l'unico dei tre a ricostruire #vvPremium senza ripristinare la scelta,
+// e la perdeva anche restando dentro il tab premium (B1).
+let _geminiVoiceSel='';
+
+/* Riallinea la memoria fuori dal DOM alla voce premium appena imposta al
+   select. Quale delle tre lo dice il PREFISSO dell'id, non il modello nella
+   combo: e' il prefisso a decidere di quale motore e' quella voce. */
+function _allineaMemoriaVocePremium(id){
+  if(typeof id!=='string'||!id)return;
+  if(id.startsWith('voxcpm:'))_voxcpmVoiceSel=id;
+  else if(id.startsWith('speechify:'))_speechifyVoiceSel=id;
+  else if(id.startsWith('gemini:'))_geminiVoiceSel=id;
+}
 
 // Mostra/nasconde i controlli in base al modello premium selezionato e
 // (ri)popola voci/emozioni/accento coerentemente.
@@ -1430,6 +1497,12 @@ function updVoicesPremium(){
   // --- Ramo Gemini (esistente) ---
   const lang=bookLangState.code||'it';
   const modelKey=(vmEl&&vmEl.value)||'flash25';
+  // Come nei rami VoxCPM e Simba: la scelta dell'utente vive fuori dal DOM,
+  // perche' il DOM qui sotto viene svuotato e ricostruito. Senza questa
+  // memoria il browser risceglie la prima <option> e la voce pagata cambia
+  // senza che nessuno lo dica (B1). Va LETTA PRIMA dello svuotamento: dopo,
+  // il ripiego su sel.value leggerebbe un select gia' vuoto.
+  const prevVoice=_geminiVoiceSel||sel.value;
   sel.innerHTML='';
   // Costruisce la lista voci Premium da voices[lang].voices filtrando per engine=gemini
   // e per modelKey (encoded nell'id come "gemini:<modelKey>:<voiceName>").
@@ -1459,7 +1532,11 @@ function updVoicesPremium(){
     const target=sel.lastElementChild&&sel.lastElementChild.tagName==='OPTGROUP'?sel.lastElementChild:sel;
     target.appendChild(opt);
   }
-  sel.onchange=()=>{_updateAccentDropdown();_onPreviewParamsChanged();};
+  // Ripristina la voce se e' ancora fra quelle del modello corrente; altrimenti
+  // resta la prima (giusto: quella voce, con questo modello, non esiste).
+  if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
+  _geminiVoiceSel=sel.value;
+  sel.onchange=()=>{_geminiVoiceSel=sel.value;_updateAccentDropdown();_onPreviewParamsChanged();};
   // Dropdown accento: dipende da lingua + voce premium correnti.
   if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.

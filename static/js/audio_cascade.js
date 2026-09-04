@@ -9,18 +9,16 @@
  * funzione riceve la lingua e decide COSA RESTA POSSIBILE, riportando in
  * `changes` cio' che ha dovuto spostare — che e' poi il testo che l'utente
  * legge quando forza la lingua.
+ *
+ * CONFINE — L'ACCENTO DEL TAB PREMIUM RESTA FUORI DA QUI.
+ * Lo producono tre popolatori per motore dentro app.js
+ * (`_populateVoxcpmAccents()`, `_populateSpeechifyAccents()`,
+ * `_updateAccentDropdown()`), ciascuno con il proprio catalogo: la cascata non
+ * lo calcola, non lo preserva e non lo segnala in `changes`. Calcolarlo qui
+ * senza che nessuno lo riversi nel DOM produrrebbe due verita' che sembrano
+ * una sola — e la piu' testata sarebbe quella che non gira. Della cascata
+ * premium restano i modelli e le voci, che app.js riversa davvero.
  */
-
-/* Varianti d'accento premium. Specchio di gemini_tts.ACCENT_VARIANTS. */
-var ACCENT_CATALOG = {
-  en: [['us', 'accent_en_us'], ['gb', 'accent_en_gb'], ['au', 'accent_en_au'], ['in', 'accent_en_in']],
-  es: [['es', 'accent_es_es'], ['419', 'accent_es_419']],
-  pt: [['br', 'accent_pt_br'], ['pt', 'accent_pt_pt']],
-  fr: [['fr', 'accent_fr_fr'], ['ca', 'accent_fr_ca']],
-  zh: [['cn', 'accent_zh_cn'], ['tw', 'accent_zh_tw']],
-  de: [['de', 'accent_de_de'], ['at', 'accent_de_at'], ['ch', 'accent_de_ch']],
-  ar: [['eg', 'accent_ar_eg'], ['sa', 'accent_ar_sa'], ['ae', 'accent_ar_ae']]
-};
 
 function _voci(catalog, lang) {
   var dati = catalog && catalog[lang];
@@ -140,15 +138,19 @@ function resolveAudioSelection(input) {
   var current = input.current || {};
   var lang = String(input.lang || '').split('-')[0].toLowerCase();
   var changes = [];
-  var segna = function (what, from, to, reason) {
+  /* `dove` dice a QUALE TAB appartiene il cambiamento ('standard' | 'premium';
+     '' = riguarda entrambi, come il downgrade di tab/modello). Serve alla nota
+     che l'utente legge: un reset di voce avvenuto nel tab che non ha davanti
+     e' un annuncio su qualcosa che non vede. */
+  var segna = function (what, from, to, reason, dove) {
     if (from === to) return;
-    changes.push({what: what, from: from || '', to: to || '', reason: reason});
+    changes.push({what: what, from: from || '', to: to || '', reason: reason,
+                  dove: dove || ''});
   };
 
   /* ── Modelli premium ─────────────────────────────────────────────── */
   var models = modelliPer(catalog, lang);
   var premiumEnabled = models.length > 0;
-  var premiumReason = premiumEnabled ? '' : 'no_premium_voices';
 
   var model = _preserva(current.model, models) || (models.length ? models[0] : '');
   if (current.model && model !== current.model) {
@@ -176,7 +178,8 @@ function resolveAudioSelection(input) {
                  || (accentiStd.length ? accentiStd[0] : '');
   }
   if (current.standardAccent && accentoStd !== current.standardAccent) {
-    segna('accent', current.standardAccent, accentoStd, 'accent_unavailable_in_lang');
+    segna('accent', current.standardAccent, accentoStd, 'accent_unavailable_in_lang',
+          'standard');
   }
   /* Con un solo locale il filtro non serve: mostra tutte le voci gratuite. */
   var vociStd = vociStandard(catalog, lang, accentiStd.length > 1 ? accentoStd : '');
@@ -187,41 +190,28 @@ function resolveAudioSelection(input) {
     voceStd = (prefVoce && prefVoce.id) || (idsStd.length ? idsStd[0] : '');
   }
   if (current.standardVoice && voceStd !== current.standardVoice) {
-    segna('voice', current.standardVoice, voceStd, 'voice_unavailable_in_lang');
+    segna('voice', current.standardVoice, voceStd, 'voice_unavailable_in_lang',
+          'standard');
   }
 
-  /* ── Accento e voce, tab PREMIUM ─────────────────────────────────── */
-  /* L'accento premium esiste solo per i modelli Gemini: VOXCPM2 e Simba
-     hanno cataloghi propri, gestiti da app.js fuori da questa cascata. */
-  var eGemini = (model === 'flash25' || model === 'flash31');
-  /* Copia, non riferimento: ACCENT_CATALOG e' condivisa fra tutte le
-     chiamate (e' anche su `window`). Un .reverse()/.sort() di chi consuma
-     il risultato non deve corrompere la tabella per la sessione intera. */
-  var accentiPrem = (eGemini && ACCENT_CATALOG[lang])
-    ? ACCENT_CATALOG[lang].map(function (coppia) { return coppia.slice(); })
-    : [];
-  var codiciPrem = [];
-  for (var k = 0; k < accentiPrem.length; k++) codiciPrem.push(accentiPrem[k][0]);
-  var accentoPrem = _preserva(current.premiumAccent, codiciPrem)
-                    || (codiciPrem.length ? codiciPrem[0] : '');
-
+  /* ── Voce del tab PREMIUM ────────────────────────────────────────── */
+  /* Solo la voce: l'accento premium sta fuori dalla cascata (vedi CONFINE
+     in testa al file). */
   var vociPrem = premiumEnabled ? vociPremium(catalog, lang, model) : [];
   var idsPrem = _idsDi(vociPrem);
   var vocePrem = _preserva(current.premiumVoice, idsPrem)
                  || (idsPrem.length ? idsPrem[0] : '');
   if (current.premiumVoice && vocePrem !== current.premiumVoice) {
-    segna('voice', current.premiumVoice, vocePrem, 'voice_unavailable_in_lang');
+    segna('voice', current.premiumVoice, vocePrem, 'voice_unavailable_in_lang',
+          'premium');
   }
 
   return {
     lang: lang,
     premiumEnabled: premiumEnabled,
-    premiumReason: premiumReason,
-    tab: tab,
     standard: {accents: accentiStd, accent: accentoStd,
                voices: vociStd, voice: voceStd},
     premium: {models: models, model: model,
-              accents: accentiPrem, accent: accentoPrem,
               voices: vociPrem, voice: vocePrem},
     changes: changes
   };
@@ -231,10 +221,8 @@ function resolveAudioSelection(input) {
    bundler), `module.exports` per node --test. */
 if (typeof window !== 'undefined') {
   window.resolveAudioSelection = resolveAudioSelection;
-  window.ACCENT_CATALOG = ACCENT_CATALOG;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {resolveAudioSelection: resolveAudioSelection,
-                    ACCENT_CATALOG: ACCENT_CATALOG,
                     modelliPer: modelliPer};
 }
