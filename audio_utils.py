@@ -464,7 +464,10 @@ def _concatenate_mp3(parts, output, extra_tags=None):
         os.remove(list_file)
         if result.returncode == 0:
             return
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, ValueError):
+        # ValueError: open() lo alza su un path con byte NUL e non discende da
+        # OSError. Senza questo ramo il thread del job muore in silenzio invece
+        # di degradare sulla concat binaria qui sotto.
         pass
     with open(output, "wb") as outf:
         for p in parts:
@@ -1448,6 +1451,12 @@ def truncate_filename(name, max_bytes=MAX_FILENAME_BYTES):
 def _safe_filename(name):
     """Sanitizza un nome file rimuovendo caratteri non consentiti."""
     import re
+    # I caratteri di controllo (NUL in testa) vanno via per primi: open() rifiuta
+    # un path con un byte NUL alzando ValueError, che non e' un OSError e quindi
+    # sfugge ai try/except dei chiamanti, uccidendo il thread del job a sintesi
+    # gia' completata. I PDF de-DRM-ati portano spesso un NUL nel titolo dei
+    # metadati (04/09/2026: sei generazioni identiche fallite in assembly).
+    name = re.sub(r'[\x00-\x1f\x7f]', '', name)
     # Remove filesystem forbidden chars and dots (dots break extension detection in downloads)
     name = re.sub(r'[<>:"/\\|?*.]', '', name)
     # Replace spaces with underscores
