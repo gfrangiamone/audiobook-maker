@@ -404,8 +404,6 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-link{margin-left:8px;color:var(--txd);cursor:pointer;font-size:.75rem;text-decoration:none;font-weight:500;white-space:nowrap;transition:color .15s;border-bottom:1px dotted var(--txm)}
 .vc-link:hover{color:var(--ac);border-bottom-color:var(--ac)}
 [data-theme="dark"] .vc-badge{background:rgba(240,160,80,.13)}
-.vm-link{color:inherit;font-weight:600;cursor:pointer;text-decoration:underline;white-space:nowrap}
-.vm-link:hover{opacity:.8}
 .lo{display:none;padding:32px;text-align:center}.lo.vis{display:block}
 .lo .tx{color:var(--txd);margin-top:12px;font-size:.9rem}
 .fi{animation:fi .4s ease}
