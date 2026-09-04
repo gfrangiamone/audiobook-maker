@@ -32,11 +32,13 @@ import pytest
 
 RADICE = pathlib.Path(__file__).resolve().parents[1]
 
-# Numero di test attesi in test/js/audio_cascade.test.js. Se cambia il
-# numero di test nel file, aggiornare qui: e' voluto che il wrapper si
-# accorga anche di test spariti silenziosamente (rinominati, cancellati,
-# glob che non fa piu' match), non solo di test che falliscono.
-TEST_ATTESI = 14
+# Numero MINIMO di test attesi in test/js/audio_cascade.test.js. E' un
+# pavimento, non un valore esatto: task futuri aggiungeranno altri test alla
+# cascata e non devono rompere questo wrapper solo perche' il conteggio e'
+# salito. Cio' che deve restare impossibile e' che il numero SCENDA sotto la
+# protezione attuale (test spariti silenziosamente: rinominati, cancellati,
+# glob che non fa piu' match) — di quello il wrapper deve accorgersi.
+TEST_ATTESI = 18
 
 
 @pytest.mark.skipif(shutil.which("node") is None,
@@ -56,8 +58,8 @@ def test_cascata_audio_js():
     eseguiti = int(m_tests.group(1)) if m_tests else 0
     falliti = int(m_fail.group(1)) if m_fail else -1  # -1: riepilogo non trovato
 
-    assert esito.returncode == 0 and eseguiti == TEST_ATTESI and falliti == 0, (
-        f"cascata JS: attesi {TEST_ATTESI} test eseguiti e 0 falliti, "
+    assert esito.returncode == 0 and eseguiti >= TEST_ATTESI and falliti == 0, (
+        f"cascata JS: attesi almeno {TEST_ATTESI} test eseguiti e 0 falliti, "
         f"trovati {eseguiti} eseguiti e {falliti} falliti "
         f"(returncode={esito.returncode}). Rotti o spariti? Vedi output:\n"
         + output

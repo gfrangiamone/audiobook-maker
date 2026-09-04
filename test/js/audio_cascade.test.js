@@ -76,10 +76,16 @@ test('inglese con modello Avanzato: quattro varianti di accento', () => {
 });
 
 test('svedese: premium spento, col motivo', () => {
-  const r = resolveAudioSelection({lang: 'sv', catalog: CATALOGO, current: {}});
+  /* Parte da un `current` che sta davvero sul tab premium: solo cosi`
+     l'assert sul tab tornato a 'standard' significa qualcosa (con
+     `current: {}` il tab parte gia` da 'standard' e l'assert e` tautologico). */
+  const r = resolveAudioSelection({
+    lang: 'sv', catalog: CATALOGO, current: {tab: 'premium', model: 'flash25'}});
   assert.strictEqual(r.premiumEnabled, false);
   assert.strictEqual(r.premiumReason, 'no_premium_voices');
   assert.strictEqual(r.tab, 'standard');
+  assert.ok(r.changes.some(c => c.what === 'tab' && c.to === 'standard'),
+    'il downgrade forzato dal tab premium non e` segnalato in changes');
 });
 
 test('spagnolo: tre locali, riga accento visibile in Standard', () => {
@@ -152,4 +158,58 @@ test('lingua sconosciuta al catalogo: non esplode', () => {
   const r = resolveAudioSelection({lang: 'xx', catalog: CATALOGO, current: {}});
   assert.strictEqual(r.premiumEnabled, false);
   assert.deepStrictEqual(r.standard.voices, []);
+});
+
+test('voce Speechify senza `engine`: niente fuga nel tab Standard', () => {
+  /* L'invariante e` sul prefisso dell'id, mai sul campo vetrina `engine`. Se
+     un domani `engine` mancasse o fosse sbagliato su una voce a pagamento,
+     vociStandard non deve comunque lasciarla passare nel tab gratuito:
+     l'utente la sceglierebbe pensando sia gratis e si beccherebbe un 402. */
+  const senzaEngine = JSON.parse(JSON.stringify(CATALOGO));
+  const simba = senzaEngine.en.voices.find(v => v.id.indexOf('speechify:') === 0);
+  delete simba.engine;
+  /* L'accento forzato a quello del Simba (en-GB) evita che il filtro per
+     locale nasconda per caso la fuga: se non fosse per _ePremium, questa
+     e` proprio la richiesta che la farebbe comparire in Standard. */
+  const r = resolveAudioSelection({
+    lang: 'en', catalog: senzaEngine, current: {standardAccent: simba.locale}});
+  assert.ok(!r.standard.voices.some(v => v.id === simba.id),
+    'una voce Speechify senza `engine` e` finita nel tab Standard');
+});
+
+test('premium.accents e` una copia: mutarlo non tocca le chiamate successive', () => {
+  const primo = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
+  const codiciOriginali = primo.premium.accents.map(c => c[0]);
+  primo.premium.accents.reverse();
+  primo.premium.accents.forEach(c => c.reverse());
+  const secondo = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO, current: {tab: 'premium', model: 'flash31'}});
+  assert.deepStrictEqual(secondo.premium.accents.map(c => c[0]), codiciOriginali,
+    'la tabella ACCENT_CATALOG condivisa e` stata corrotta da chi consuma il risultato');
+});
+
+test('it -> sv: una standardVoice non disponibile ricade con il motivo giusto', () => {
+  const r = resolveAudioSelection({
+    lang: 'sv', catalog: CATALOGO,
+    current: {standardVoice: 'it-IT-IsabellaNeural'}});
+  assert.strictEqual(r.standard.voice, 'sv-SE-SofieNeural');
+  assert.deepStrictEqual(
+    r.changes.find(c => c.what === 'voice'),
+    {what: 'voice', from: 'it-IT-IsabellaNeural', to: 'sv-SE-SofieNeural',
+     reason: 'voice_unavailable_in_lang'});
+});
+
+test('spagnolo: scegliere un accento riduce davvero le voci Standard', () => {
+  const r = resolveAudioSelection({
+    lang: 'es', catalog: CATALOGO, current: {standardAccent: 'es-ES'}});
+  assert.deepStrictEqual(r.standard.voices.map(v => v.id), ['es-ES-ElviraNeural']);
+});
+
+test('italiano: un solo locale, il filtro accento e` saltato', () => {
+  /* Contraltare del test spagnolo: con un solo locale in gioco vociStandard
+     riceve locale='' e non deve scartare nessuna voce gratuita. */
+  const r = resolveAudioSelection({lang: 'it', catalog: CATALOGO, current: {}});
+  assert.deepStrictEqual(r.standard.voices.map(v => v.id).sort(),
+    ['it-IT-DiegoNeural', 'it-IT-IsabellaNeural']);
 });

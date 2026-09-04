@@ -35,6 +35,18 @@ function _haPrefisso(voci, prefisso) {
   return false;
 }
 
+/* Vero se l'id appartiene a un motore a pagamento. Stessa fonte di verita'
+   di modelliPer/vociPremium: mai il campo `engine` del catalogo, sempre il
+   prefisso dell'id — e' quello, non la vetrina, a decidere la cassa. Un
+   `engine` mancante o sbagliato su una voce a pagamento non deve mai farla
+   scivolare nel tab gratuito. */
+function _ePremium(id) {
+  if (typeof id !== 'string') return false;
+  return id.indexOf('gemini:') === 0
+      || id.indexOf('voxcpm:') === 0
+      || id.indexOf('speechify:') === 0;
+}
+
 /* Modelli premium disponibili per la lingua. L'ordine e' quello mostrato:
    VOXCPM2 primo dove c'e', poi i due Gemini, Simba in coda sull'inglese. */
 function modelliPer(catalog, lang) {
@@ -53,7 +65,7 @@ function vociStandard(catalog, lang, locale) {
   var voci = _voci(catalog, lang);
   for (var i = 0; i < voci.length; i++) {
     var v = voci[i];
-    if (!v || (v.engine || 'edge') !== 'edge') continue;
+    if (!v || _ePremium(v.id)) continue;
     if (locale && v.locale !== locale) continue;
     out.push(v);
   }
@@ -152,7 +164,12 @@ function resolveAudioSelection(input) {
   /* L'accento premium esiste solo per i modelli Gemini: VOXCPM2 e Simba
      hanno cataloghi propri, gestiti da app.js fuori da questa cascata. */
   var eGemini = (model === 'flash25' || model === 'flash31');
-  var accentiPrem = (eGemini && ACCENT_CATALOG[lang]) ? ACCENT_CATALOG[lang] : [];
+  /* Copia, non riferimento: ACCENT_CATALOG e' condivisa fra tutte le
+     chiamate (e' anche su `window`). Un .reverse()/.sort() di chi consuma
+     il risultato non deve corrompere la tabella per la sessione intera. */
+  var accentiPrem = (eGemini && ACCENT_CATALOG[lang])
+    ? ACCENT_CATALOG[lang].map(function (coppia) { return coppia.slice(); })
+    : [];
   var codiciPrem = [];
   for (var k = 0; k < accentiPrem.length; k++) codiciPrem.push(accentiPrem[k][0]);
   var accentoPrem = _preserva(current.premiumAccent, codiciPrem)
