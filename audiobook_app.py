@@ -13598,6 +13598,15 @@ def api_translate_adopt(job_id):
         ))
     info.chapters = new_chapters
     info.language = job.get("translated_lang", info.language)
+    # La provenienza della lingua segue la lingua. Senza questo, riaprendo lo
+    # stesso file il ramo del job gia' esistente risponderebbe con il
+    # language_source del libro ORIGINALE: su un PDF senza metadati la riga
+    # della lingua direbbe «non rilevata, ipotizzata» di una lingua che
+    # l'utente ha scelto lui, e il modale di conferma tornerebbe a sbarrargli
+    # la strada. 'forced' = scelta dall'utente; nulla e' stato rilevato
+    # dall'IA sulla forma adottata, quindi language_detected torna False.
+    job["language_source"] = "forced"
+    job["language_detected"] = False
     # Titolo tradotto dal batch titoli del job (se prodotto): cosi' i
     # metadati M4B/MP3, la pagina download e le email del percorso audio
     # usano il titolo nella lingua di destinazione.
