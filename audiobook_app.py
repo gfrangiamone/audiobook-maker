@@ -67,13 +67,6 @@ except ImportError:
     parse_pdf = None
     print("WARNING: pdf_to_tts.py not found  -  PDF support disabled.", file=sys.stderr)
 
-#  -  -  Google Cloud TTS (Chirp3-HD)  -  opzionale  -  -
-try:
-    import google_tts
-except ImportError:
-    google_tts = None
-    print("WARNING: google_tts.py not found  -  Google Cloud TTS disabled.", file=sys.stderr)
-
 #  -  -  Gemini TTS (Flash 2.5 / 3.1)  -  opzionale  -  -
 try:
     import gemini_tts
@@ -359,12 +352,6 @@ _DATA_DIR = os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
 UPLOAD_DIR = Path(_DATA_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Inizializza Google Cloud TTS (tracking utilizzo nella data dir)
-if google_tts is not None:
-    google_tts.init(_DATA_DIR)
-    # Forza l'invalidazione della cache voci locale per includere Google all'avvio
-    _voices_cache = None
-
 # Inizializza Gemini TTS (Flash 2.5/3.1)
 if gemini_tts is not None:
     try:
@@ -450,30 +437,6 @@ if gemini_tts is not None:
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
 
-
-def _has_active_google_tts_jobs():
-    """True se c'è almeno un job Google TTS in corso (caratteri prenotati ma
-    non ancora visibili al Cloud Monitoring). Usato per decidere se è sicuro
-    riconciliare al ribasso il contatore locale.
-    """
-    if google_tts is None:
-        return False
-    with _jobs_lock:
-        try:
-            for j in jobs.values():
-                if j.get("status") in ("queued", "running", "generating"):
-                    if j.get("google_tts_reserved", 0) > 0:
-                        return True
-                    voice = j.get("voice", "")
-                    if voice and google_tts.is_google_voice(voice):
-                        return True
-        except Exception:
-            return True  # safe default
-        return False
-
-
-if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
-    google_tts.set_active_jobs_callback(_has_active_google_tts_jobs)
 
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
@@ -2296,22 +2259,7 @@ async def _fetch_voices():
             "engine": "edge"
         })
 
-    # 2. Google TTS (Optional)
-    if google_tts is not None:
-        try:
-            # get_voices restituisce { "it": [ {...}, ... ], "en": [...] }
-            g_dict = google_tts.get_voices()
-            for lc_short, v_list in g_dict.items():
-                if lc_short not in languages:
-                    languages[lc_short] = {
-                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
-                        "voices": []
-                    }
-                languages[lc_short]["voices"].extend(v_list)
-        except Exception as e:
-            print(f"Error merging Google voices: {e}")
-
-    # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
+    # 2. Gemini TTS (Optional) — solo se effettivamente abilitato.
     # `gemini_tts is not None` significa solo che il modulo è importato;
     # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
     # NB: il branch GEMINI espone le voci nel tab "PREMIUM" (la rimozione
@@ -2335,7 +2283,7 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Gemini voices: {e}")
 
-    # 4. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
+    # 3. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
     if speechify_tts.is_available():
         try:
             spx_dict = speechify_tts.get_voices()  # -> {"en": [entry, ...]}
@@ -2349,7 +2297,7 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Speechify voices: {e}")
 
-    # 5. VoxCPM2 (opzionale) — gated su endpoint, chiave, tariffa e catalogo.
+    # 4. VoxCPM2 (opzionale) — gated su endpoint, chiave, tariffa e catalogo.
     if voxcpm_tts is not None and voxcpm_tts.is_available():
         try:
             vox_dict = voxcpm_catalog.get_voices()  # -> {"it": [entry, ...]}
@@ -2402,8 +2350,6 @@ def _invalidate_voices_cache():
     global _voices_cache
     with _voices_lock:
         _voices_cache = None
-    if google_tts is not None:
-        google_tts.invalidate_voices_cache()
 
 # ----------------------------------------------------------------------
 # HELPER CLASSES & PARSERS (Moved to generation_engine.py)
@@ -7936,14 +7882,6 @@ def admin_api_gemini_recalc_params():
 def api_voices():
     try:
         voices = get_voices()
-        # Includi info budget Google TTS come chiave speciale _google_tts
-        if google_tts is not None and google_tts.is_available():
-            used, remaining, limit = google_tts.get_usage()
-            voices["_google_tts"] = {
-                "available": remaining > 0,
-                "chars_remaining": remaining,
-                "chars_limit": limit,
-            }
         # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
         # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
         # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
@@ -9031,48 +8969,6 @@ loadFb();
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.route("/api/admin/google_tts_status")
-def api_admin_google_tts_status():
-    """Endpoint admin: stato dettagliato Google TTS (consumo locale + cloud).
-    Forza una riconciliazione on-demand se ?reconcile=1.
-    Richiede admin token: il path /admin/ implica scope ristretto e l'endpoint
-    espone metriche operative (caratteri consumati / limiti) che possono
-    rivelare la capacita' residua del servizio a competitor o attaccanti.
-    """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
-    if google_tts is None:
-        return jsonify({"error": "google_tts module not loaded"}), 503
-    if not google_tts.is_available():
-        return jsonify({"available": False, "reason": "credentials missing or SDK not installed"}), 200
-
-    used, remaining, limit = google_tts.get_usage()
-    response = {
-        "available": True,
-        "local": {
-            "chars_used": used,
-            "chars_remaining": remaining,
-            "chars_limit": limit,
-            "percent_used": round(100.0 * used / limit, 2) if limit else 0,
-        },
-        "monitoring": google_tts.get_reconcile_status(),
-    }
-
-    # Riconciliazione on-demand
-    if request.args.get("reconcile") == "1":
-        result = google_tts.reconcile_with_cloud_monitoring()
-        response["reconcile_result"] = result
-
-    # Diagnostica metriche Cloud Monitoring (per capire quale filtro usare)
-    if request.args.get("diagnose") == "1":
-        if hasattr(google_tts, "diagnose_monitoring"):
-            response["diagnose"] = google_tts.diagnose_monitoring()
-        else:
-            response["diagnose"] = {"error": "diagnose_monitoring not available"}
-
-    return jsonify(response)
-
-
 @app.route("/api/admin/load_stats")
 def api_admin_load_stats():
     """Statistiche di CARICO aggregate sulla finestra richiesta.
@@ -9556,7 +9452,6 @@ def api_preview_audio(job_id):
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
-    use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
     use_speechify_preview = _is_speechify_voice(voice) and speechify_tts.is_available()
     client_id = "anon"
@@ -9734,10 +9629,6 @@ def api_preview_audio(job_id):
                         os.remove(pcm_tmp)
                     except OSError:
                         pass
-        elif use_google_preview:
-            google_tts.synthesize(preview_text, voice, rate, str(preview_path))
-            # Deduce i caratteri dell'anteprima dal budget
-            google_tts.deduct_chars(len(preview_text))
         else:
             import edge_tts
             loop = asyncio.new_event_loop()
@@ -10023,8 +9914,8 @@ def api_generate():
     # Lo stash di quota vale SOLO per la richiesta corrente: azzeralo qui, in
     # testa al preflight premium e per qualunque voce. Fra i gate premium e la
     # pop che consuma (poco prima di thread.start()) restano uscite sincrone
-    # (429 concurrent_limit, 400 no chapters, 413 selection_too_large, 429
-    # google_tts_budget): senza questo reset un residuo sopravvivrebbe sul job
+    # (429 concurrent_limit, 400 no chapters, 413 selection_too_large):
+    # senza questo reset un residuo sopravvivrebbe sul job
     # in memoria e la richiesta successiva sullo stesso job_id consumerebbe
     # quota anche con voce standard (nessun gate premium) o dopo un pagamento
     # regolare (il ramo `else` non scrive lo stash e ereditava il vecchio).
@@ -10625,32 +10516,6 @@ def api_generate():
             "chars_selected": selected_chars,
             "chars_limit": max_text_chars,
         }), 413
-
-    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  -
-    # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
-    # parallele non possono passare lo stesso check. Il refund della parte
-    # non consumata avviene in run_generation in caso di errore/cancellazione.
-    if google_tts is not None and google_tts.is_google_voice(voice):
-        total_chars_needed = sum(ch.char_count for ch in info.chapters)
-        ok, remaining_after = google_tts.reserve_chars(total_chars_needed)
-        if not ok:
-            with _jobs_lock:
-                if job["status"] == "generating":
-                    job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
-            return jsonify({
-                "error": f"Google TTS monthly limit: {remaining_after:,} chars remaining, "
-                         f"but this book needs {total_chars_needed:,} chars.",
-                "error_code": "google_tts_budget",
-                "chars_needed": total_chars_needed,
-                "chars_remaining": remaining_after,
-            }), 429
-        # Memorizza i caratteri prenotati nel job per il refund
-        job["google_tts_reserved"] = total_chars_needed
-        print(f"[{job_id}] Google TTS: reserved {total_chars_needed:,} chars "
-              f"(remaining: {remaining_after:,})")
-        # Invalida la cache voci: se il budget si avvicina allo zero, le voci
-        # potrebbero scomparire al prossimo /api/voices
-        _invalidate_voices_cache()
 
     # Consumo quota: qui, non prima. Fra il claim atomico e questo punto ci
     # sono ancora uscite sincrone che abortiscono il job senza avviarlo
@@ -16976,7 +16841,6 @@ generation_engine.configure(
     download_tokens=_download_tokens,
     save_tokens_fn=_save_tokens,
     log_activity_fn=_log_activity,
-    google_tts_module=google_tts,
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,
     retention_sec=EMAIL_FILE_RETENTION_SEC,
@@ -16994,31 +16858,6 @@ else:
     print(f"[startup] PayPal payment disabled (ABM_PAYPAL_CLIENT_ID/SECRET not set)")
 _cleanup_started = False
 
-def _google_tts_reconcile_loop():
-    """Thread di background: riconcilia il contatore Google TTS con Cloud Monitoring
-    ogni GOOGLE_TTS_RECONCILE_INTERVAL_SEC secondi (default 30 minuti).
-    Le metriche di Cloud Monitoring hanno latenza ~5 min, quindi un intervallo
-    inferiore non porta beneficio."""
-    if google_tts is None:
-        return
-    # Attesa iniziale per non sovraccaricare lo startup
-    time.sleep(60)
-    while True:
-        try:
-            if google_tts.is_available():
-                result = google_tts.reconcile_with_cloud_monitoring()
-                if result is None:
-                    # Monitoring non disponibile: smettiamo di provarci
-                    print("[google-tts] Reconcile loop: monitoring unavailable, stopping")
-                    return
-        except Exception as e:
-            print(f"[google-tts] Reconcile loop error: {e}")
-        time.sleep(GOOGLE_TTS_RECONCILE_INTERVAL_SEC)
-
-
-GOOGLE_TTS_RECONCILE_INTERVAL_SEC = int(os.environ.get("ABM_GOOGLE_TTS_RECONCILE_INTERVAL", "1800"))
-
-
 def _ensure_background_threads():
     global _cleanup_started
     if _cleanup_started:
@@ -17033,9 +16872,7 @@ def _ensure_background_threads():
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
-    if google_tts is not None:
-        threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
-    
+
     # Verifica dipendenze audio (ffmpeg/ffprobe) per formato M4B
     ffmpeg_ok, ffprobe_ok = _check_audio_dependencies()
     if not ffmpeg_ok or not ffprobe_ok:

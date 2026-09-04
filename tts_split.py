@@ -10,7 +10,6 @@ Funzioni:
   - _plan_chunks: costruisce il piano di chunk per un intero BookInfo
   - _edge_tts_call: singola chiamata edge-tts con retry/backoff
   - generate_chunk_mp3: genera MP3 da testo via edge-tts (con anti-drift Multilingual)
-  - generate_chunk_mp3_google: genera MP3 da testo via Google Cloud TTS Chirp3-HD
 
 Dipende da audio_utils per _generate_silence_mp3 e _concatenate_mp3.
 """
@@ -28,11 +27,6 @@ import edge_tts
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
 from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
-
-try:
-    import google_tts
-except ImportError:
-    google_tts = None
 
 from audio_utils import _generate_silence_mp3, _concatenate_mp3
 
@@ -129,7 +123,7 @@ def _pick_chunk_max_chars(voice_id, language):
     modello riancora il timbro al campione solo all'inizio di ogni chunk, e su
     chunk lunghi la voce deriva. Il worker non rispezza i chunk che riceve.
 
-    Edge/Google: 2000 sempre (motori senza vincoli stringenti di RPD).
+    Edge: 2000 sempre (motore senza vincoli stringenti di RPD).
     """
     if _is_gemini_voice(voice_id):
         lang_code = (language or "").lower().split("-")[0]
@@ -443,7 +437,7 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
                Per voci Gemini su lingue CJK/Hindi/Arabo passare 1500.
-    max_bytes: cap byte UTF-8 opzionale (None per Edge/Google, MAX_BYTES_PER_CALL
+    max_bytes: cap byte UTF-8 opzionale (None per Edge, MAX_BYTES_PER_CALL
                meno margine di sicurezza per Gemini).
     strip_round/strip_square: se False, il testo tra parentesi tonde/quadre viene
                letto dal TTS invece di essere rimosso (default: rimuove entrambe).
@@ -1054,33 +1048,3 @@ def generate_chunk_pcm_speechify(text, voice_id, output_path, emotion=None,
           f"({len(clean)} chars). Last error: {last_error}")
     _generate_silence_pcm(output_path, duration_sec=1, sample_rate=48000)
     return _fail("synthesize_failed", str(last_error) if last_error else "")
-
-
-# ---------------------------------------------------------------------------
-# Google Cloud TTS generation
-# ---------------------------------------------------------------------------
-
-def generate_chunk_mp3_google(text, voice, rate, output_path, max_retries=3):
-    """Genera MP3 da testo via Google Cloud TTS Chirp3-HD con retry e fallback."""
-    clean = _sanitize_tts_text(text)
-    if clean is None:
-        _generate_silence_mp3(output_path, duration_sec=1)
-        return
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            google_tts.synthesize(clean, voice, rate, output_path)
-            return
-        except Exception as e:
-            last_error = e
-            snippet = clean[:60].replace('\n', ' ')
-            print(f"[google-tts] Attempt {attempt+1}/{max_retries} failed for chunk "
-                  f"({len(clean)} chars: \"{snippet}...\"): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-
-    print(f"[google-tts] WARNING: All {max_retries} attempts failed, "
-          f"generating silence ({len(clean)} chars). Last error: {last_error}")
-    _generate_silence_mp3(output_path, duration_sec=1)
-    return False

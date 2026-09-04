@@ -66,7 +66,7 @@ from audio_utils import (
     trim_pcm_trailing_silence, build_m4b_rebuild_kit,
 )
 from tts_split import (
-    _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
+    _plan_chunks, generate_chunk_mp3,
     _pick_chunk_max_chars, _pick_chunk_max_bytes,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
     generate_chunk_pcm_speechify,
@@ -190,7 +190,6 @@ _upload_dir = None      # Path to data directory
 _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
-_google_tts = None      # optional google_tts module
 _jobs_lock = None       # threading.Lock injected by configure(); guard _set_job_status before configure
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
@@ -441,14 +440,14 @@ def _set_job_status(job, status):
 
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
-              google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
+              invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
               lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None):
     """Inietta i riferimenti alle strutture dati condivise di audiobook_app.
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
-    global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
+    global _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
     global _build_descriptor, _send_push
     _jobs = jobs
@@ -456,7 +455,6 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _download_tokens = download_tokens
     _save_tokens = save_tokens_fn
     _log_activity = log_activity_fn
-    _google_tts = google_tts_module
     if invalidate_voices_cache_fn is not None:
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
@@ -2647,33 +2645,6 @@ def _refund_job_payment(job_id, job, reason="error"):
 
 
 # ---------------------------------------------------------------------------
-# Google TTS refund helper
-# ---------------------------------------------------------------------------
-
-def _google_tts_refund_unused(job_id, job):
-    """Restituisce al budget i caratteri Google TTS prenotati ma non consumati,
-    poi forza una riconciliazione con Cloud Monitoring."""
-    if _google_tts is None:
-        return
-    reserved = job.get("google_tts_reserved", 0)
-    consumed = job.get("processed_chars", 0)
-    if reserved > consumed:
-        unused = reserved - consumed
-        _google_tts.refund_chars(unused)
-        print(f"[{job_id}] Google TTS: refunded {unused:,} unused chars "
-              f"(reserved {reserved:,}, consumed {consumed:,})")
-        _invalidate_voices_cache()
-    # Forza riconciliazione immediata in thread separato per non bloccare il cleanup
-    def _do_reconcile():
-        try:
-            time.sleep(2)  # Piccolo delay per dare tempo all'API di registrare
-            _google_tts.reconcile_with_cloud_monitoring()
-        except Exception as e:
-            print(f"[{job_id}] Post-cancel reconcile error: {e}")
-    threading.Thread(target=_do_reconcile, daemon=True).start()
-
-
-# ---------------------------------------------------------------------------
 # run_optimization — background thread LLM
 # ---------------------------------------------------------------------------
 
@@ -3322,7 +3293,6 @@ def _engine_for_voice(voice):
       - "voxcpm:..."    -> VoxCPM2 su RunPod (PCM native, job per capitolo)
       - "speechify:..." -> Speechify Simba-3.2 (PCM native)
       - "gemini:..."  -> Gemini TTS (PCM native)
-      - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
       - altrimenti    -> Microsoft Edge TTS (MP3, default)
     """
     if not voice:
@@ -3333,8 +3303,6 @@ def _engine_for_voice(voice):
         return "speechify"
     if _is_gemini_voice(voice):
         return "gemini"
-    if _google_tts is not None and _google_tts.is_google_voice(voice):
-        return "google"
     return "edge"
 
 
@@ -4732,9 +4700,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     asyncio.set_event_loop(loop)
     start_time = time.time()
 
-    # Determina il motore TTS (3-way: edge / google / gemini)
+    # Determina il motore TTS
     engine = _engine_for_voice(voice)
-    use_google = (engine == "google")
     use_gemini = (engine == "gemini")
     use_speechify = (engine == "speechify")
     use_voxcpm = (engine == "voxcpm")
@@ -5214,17 +5181,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 return result, part_path
             else:
                 part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                if use_google:
-                    result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
-                else:
-                    try:
-                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                    except Exception as _edge_err:
-                        print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
-                        import traceback
-                        traceback.print_exc()
-                        _generate_silence_mp3(part_path, duration_sec=1)
-                        result = False
+                try:
+                    result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                except Exception as _edge_err:
+                    print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
+                    import traceback
+                    traceback.print_exc()
+                    _generate_silence_mp3(part_path, duration_sec=1)
+                    result = False
                 return result, part_path
 
         # Early-abort Gemini: soglia/campione minimo letti una volta per entrambi
@@ -5944,19 +5908,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         except Exception as _e_sweep:
             print(f"[{job_id}] work_dir leftover sweep failed (non-fatal): {_e_sweep}")
 
-        # Caratteri Google TTS: sistema delta tra prenotato e consumato
-        if use_google:
-            reserved = job.get("google_tts_reserved", 0)
-            consumed = job.get("processed_chars", 0)
-            if reserved > consumed:
-                _google_tts.refund_chars(reserved - consumed)
-                print(f"[{job_id}] Google TTS: refunded {reserved - consumed} chars "
-                      f"(reserved {reserved}, consumed {consumed})")
-            elif consumed > reserved:
-                _google_tts.deduct_chars(consumed - reserved)
-                print(f"[{job_id}] Google TTS: extra deduction {consumed - reserved} chars")
-            _invalidate_voices_cache()
-
         total_elapsed = time.time() - start_time
         job["progress_current"] = job["progress_total"]
         job["elapsed_seconds"] = round(total_elapsed)
@@ -6425,9 +6376,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             except Exception as _ref_err:
                 print(f"[{job_id}] VoxCPM cancel refund failed (non-fatal): {_ref_err}")
 
-        if use_google:
-            _google_tts_refund_unused(job_id, job)
-
         if still_current:
             # Cancel volontario = job concluso per il batch: senza questo mark
             # il recovery al riavvio rigenererebbe un job gia' rimborsato.
@@ -6634,12 +6582,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             except Exception as _ref_err:
                 print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_refunded")
-        # Refund caratteri Google TTS non consumati anche in caso di errore
-        if use_google:
-            try:
-                _google_tts_refund_unused(job_id, job)
-            except Exception as ref_err:
-                print(f"[{job_id}] Refund error: {ref_err}")
         import traceback
         traceback.print_exc()
     finally:

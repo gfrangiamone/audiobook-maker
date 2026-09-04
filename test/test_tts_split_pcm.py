@@ -111,13 +111,9 @@ def test_pick_chunk_max_chars_edge_voice():
     assert tts_split._pick_chunk_max_chars("it-IT-IsabellaNeural", "it") == 2000
 
 
-def test_pick_chunk_max_chars_google_voice():
-    assert tts_split._pick_chunk_max_chars("gcloud:it-IT-Chirp3-HD-Charon", "it") == 2000
-
-
 # Gemini: limite caratteri/chunk delegato a gemini_tts.get_max_chunk_chars(lang),
 # default 700 char per stabilità acustica (indipendente dalla lingua salvo override
-# env). Edge/Google restano a 2000. Cfr. tts_split._pick_chunk_max_chars.
+# env). Edge resta a 2000. Cfr. tts_split._pick_chunk_max_chars.
 def test_pick_chunk_max_chars_gemini_italian():
     import gemini_tts
     assert tts_split._pick_chunk_max_chars("gemini:flash25:Zephyr", "it") == gemini_tts.get_max_chunk_chars("it")
