@@ -145,6 +145,13 @@ continua a essere scritta nel campo `lang` già presente nei payload di
 `1220`, `2541`) e il recovery la rilegge (riga 1268): **la forzatura sopravvive
 a un riavvio senza scrivere una riga di codice server**.
 
+Il campo `lang` di `/api/generate` è già, per costruzione, un **override della
+lingua del libro**: `audiobook_app.py:10078` implementa la catena *client >
+metadati > `it`* proprio per non far divergere stima e addebito. La lingua
+forzata trova quindi un canale che esiste già e ha già la semantica giusta.
+Vincolo che ne discende, dettagliato in §10.2 come **I2**: `lang` deve restare
+**facoltativo**, perché l'app mobile non lo manda.
+
 ## 6. Struttura del pannello
 
 ### 6.1 Sopra i tab: la lingua del libro
@@ -349,18 +356,90 @@ campi di costo (§4) è esattamente ciò che li protegge.
 perché è ciò che rende la riga MODELLO del tab Standard inutile per D2, e va
 committata separatamente.
 
-## 10. App mobile
+## 10. App mobile: retrocompatibilità obbligatoria
 
-L'app mobile monta **solo le voci gratuite**: nessun modello premium abilitato.
-Non vede quindi il tab PREMIUM, né la riga MODELLO, né gli accenti premium. Di
-questo intervento le arrivano due cose sole:
+Verifica fatta sul repo `C:\dev\audiobook-maker-mobile` (Flutter, `dc62980`) il
+2026-09-04. **Gli agganci restano validi**, ma poggiano su tre invarianti che
+oggi nessun test protegge. L'aggiornamento delle app mobile non ha tempi certi:
+il backend deve restare compatibile con la versione **già pubblicata**, a tempo
+indefinito.
 
-1. **`language_source` nella risposta di analyze** — campo aggiuntivo,
-   retrocompatibile: un client che lo ignora si comporta come oggi.
-2. **Le 13 lingue multi-locale** valgono anche per lei: se in futuro esporrà la
+### 10.1 Cosa fa il mobile
+
+Non ha un tab PREMIUM: filtra il catalogo tenendo **solo** le voci gratuite
+(`voice.dart`, `edgeGroups()`), e ha una **propria combo delle lingue**
+(`voice_format_step.dart`) alimentata dai gruppi così ottenuti. La preselezione
+(`language_preselect.dart`) segue la priorità *lingua del libro → lingua UI →
+prima disponibile*: **la stessa politica** del ripiego `assumed` del §5.2. Il
+web e il mobile restano quindi coerenti nella sostanza; diverge solo la
+presentazione, e per una ragione precisa — senza modelli premium la lingua non
+ha una cascata a valle, quindi lì la combo non ha il difetto del §2.
+
+### 10.2 Le tre invarianti da non rompere
+
+**I1 — Ogni voce di `/api/voices` deve continuare a portare il campo
+`engine`.** È l'invariante più delicata dell'intero intervento:
+
+```dart
+engine: (j['engine'] ?? 'edge').toString(),
+```
+
+Il mobile assume `edge` quando il campo manca. Il catalogo servito oggi
+contiene 322 voci edge e **1.635 voci a pagamento** (1.440 gemini, 187 voxcpm,
+8 speechify) nella stessa risposta. Se `engine` sparisse o venisse rinominato,
+il mobile non fallirebbe: **mostrerebbe le 1.635 voci a pagamento come
+gratuite**. Non è un difetto estetico, è una fuga di voci a pagamento. Il §9.2
+tocca `/api/voices` (riga 7939): l'invariante va tenuta sotto tiro proprio lì.
+
+**I2 — `lang` deve restare facoltativo in `/api/generate`.** Il mobile **non lo
+manda**: il suo body è `job_id`, `voice`, `output_format`, `rate`,
+`selected_chapters`, `batch_mode`. Il server già ripiega
+(`audiobook_app.py:10078`):
+
+```python
+_ui_lang_pre = (data.get("lang") or "").strip().split("-")[0].lower()
+lang_pre = (_ui_lang_pre
+            or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
+            or "it")
+```
+
+Questa catena — *override del client > metadati del libro > `it`* — è
+esattamente il canale su cui poggia D6, e **conferma la scelta**: la lingua
+forzata non ha bisogno di un campo nuovo, quello che c'è è già un override
+dichiarato. Il rischio è l'opposto di quello che sembra: implementando la
+forzatura verrebbe naturale rendere `lang` obbligatorio o spostarne la
+semantica. **Non si può.** Il ramo di ripiego è ciò che tiene in piedi le app
+già pubblicate.
+
+**I3 — La forma di `/api/voices` non cambia.** Chiavi di primo livello = codici
+lingua, con `name` e `voices[]`; chiavi che iniziano con `_` = metadati,
+saltate. Per voce servono `id`, `name`, `gender`, `locale`, `engine`.
+
+### 10.3 Cosa arriva al mobile da questo intervento
+
+1. **`language_source` in analyze** — additivo e sicuro: `BookInfo.fromJson`
+   legge un insieme fisso di chiavi e ha già un test *«tollerante a campi
+   mancanti»*. Un client che lo ignora si comporta come oggi.
+2. **La rimozione di Google HD è innocua**: il mobile scartava già le voci
+   `engine == 'google'`, e `_google_tts` è una chiave `_`, saltata per
+   costruzione.
+3. **Le 13 lingue multi-locale** valgono anche per lei: se un giorno esporrà la
    scelta dell'accento, la regola «almeno due opzioni» è la stessa.
 
-Nessuna modifica richiesta lato mobile per questo rilascio.
+**Nessuna modifica richiesta lato mobile per questo rilascio.** Restano due
+residui cosmetici nel repo mobile, da segnalare a chi lo mantiene ma senza
+urgenza: il commento di `voice.dart` cita `_google_tts` fra i metadati di
+esempio, e la fixture di `voice_test.dart` contiene una voce `engine: 'google'`
+che dopo il §9.2 non esiste più in produzione. Il test continua a passare —
+verifica il filtro, non il catalogo reale.
+
+### 10.4 Un'osservazione fuori perimetro
+
+Per il mobile la catena di I2 termina su `"it"`: un libro inglese senza
+metadati, caricato da telefono, viene prezzato e registrato come italiano.
+Precede questo intervento e non lo riguarda — il mobile non ha voci a pagamento,
+quindi l'impatto è sull'audit, non sull'addebito. Lo si annota perché è emerso
+guardando la provenienza della lingua, non perché vada risolto qui.
 
 ## 11. Collaudo
 
@@ -414,6 +493,21 @@ da wrapper: lancia `node --test` e fallisce riportando l'output di Node.
   tendine ma un solo stato.
 - Adeguamento dei test toccati dal §9.2.
 
+**Due test nuovi a protezione del contratto mobile** (§10.2), che oggi non
+esistono:
+
+- **I1**: `/api/voices` emette `engine` su **ogni** voce di **ogni** lingua.
+  Il test attuale più vicino (`test_voices_endpoint.py:55`) controlla l'insieme
+  delle chiavi su **un solo campione gemini**, e si salta se il modulo gemini
+  non è importabile: non copre il caso che conta.
+- **I2**: `/api/generate` accetta un body **senza** `lang` e ripiega sui
+  metadati del libro. `test_mobile_api.py` copre identità client, device, job e
+  token, ma non questo.
+
+Sono due test da scrivere **prima** di toccare `/api/voices` nel §9.2: sono la
+rete che impedisce alla rimozione di Google HD di far trapelare le 1.635 voci a
+pagamento nelle app già pubblicate.
+
 ### 11.5 Collaudo manuale
 
 `docs/MANUAL_TESTS_AUDIO_LANGUAGE.md`, nello stile di
@@ -431,6 +525,9 @@ manuale del §11.5 è stato fatto dall'utente e confermato.
 
 Ordine dei commit:
 
+0. I due test a protezione del contratto mobile, I1 e I2 (§11.4). Vengono
+   **prima di tutto**: devono passare sul codice di oggi, così se un commit
+   successivo rompe il contratto delle app già pubblicate lo si scopre subito.
 1. Rimozione Google HD (§9.2), con i test adeguati.
 2. `language_source` nella risposta di analyze (§5.1), con i test.
 3. `resolveAudioSelection()` e i suoi test (§8, §11.3) — la funzione prima del
