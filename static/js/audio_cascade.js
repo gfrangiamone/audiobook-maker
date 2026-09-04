@@ -109,6 +109,25 @@ function _preserva(valore, disponibili) {
   return (valore && disponibili.indexOf(valore) !== -1) ? valore : null;
 }
 
+/* Voci gratuite preferite come default, nell'ordine. Il catalogo arriva in
+   ordine alfabetico di ShortName, quindi per l'inglese la prima voce e'
+   australiana: senza questa preferenza un libro inglese si aprirebbe su
+   en-AU e due sole voci, mentre il vecchio updVoices() proponeva una voce
+   americana. La preferenza e' sul NOME dentro l'id, non sul locale: e' la
+   stessa regola di prima, riportata qui dove si sceglie. */
+var VOCI_STANDARD_PREFERITE = ['Isabella', 'Guy', 'Davis'];
+
+function _vocePreferita(voci) {
+  for (var i = 0; i < voci.length; i++) {
+    var id = voci[i] && voci[i].id;
+    if (typeof id !== 'string') continue;
+    for (var k = 0; k < VOCI_STANDARD_PREFERITE.length; k++) {
+      if (id.indexOf(VOCI_STANDARD_PREFERITE[k]) !== -1) return voci[i];
+    }
+  }
+  return null;
+}
+
 function _idsDi(voci) {
   var out = [];
   for (var i = 0; i < voci.length; i++) out.push(voci[i].id);
@@ -146,16 +165,27 @@ function resolveAudioSelection(input) {
 
   /* ── Accento e voce, tab Standard ────────────────────────────────── */
   var accentiStd = localiStandard(catalog, lang);
-  var accentoStd = _preserva(current.standardAccent, accentiStd)
-                   || (accentiStd.length ? accentiStd[0] : '');
+  var accentoStd = _preserva(current.standardAccent, accentiStd);
+  if (!accentoStd) {
+    /* Nessun accento da conservare: e' la voce predefinita a decidere il
+       locale, non l'ordine del catalogo. Quando l'utente ha gia' scelto un
+       accento valido invece si rispetta quello, altrimenti sceglierlo non
+       servirebbe a niente. */
+    var prefLang = _vocePreferita(vociStandard(catalog, lang, ''));
+    accentoStd = (prefLang && prefLang.locale)
+                 || (accentiStd.length ? accentiStd[0] : '');
+  }
   if (current.standardAccent && accentoStd !== current.standardAccent) {
     segna('accent', current.standardAccent, accentoStd, 'accent_unavailable_in_lang');
   }
   /* Con un solo locale il filtro non serve: mostra tutte le voci gratuite. */
   var vociStd = vociStandard(catalog, lang, accentiStd.length > 1 ? accentoStd : '');
   var idsStd = _idsDi(vociStd);
-  var voceStd = _preserva(current.standardVoice, idsStd)
-                || (idsStd.length ? idsStd[0] : '');
+  var voceStd = _preserva(current.standardVoice, idsStd);
+  if (!voceStd) {
+    var prefVoce = _vocePreferita(vociStd);
+    voceStd = (prefVoce && prefVoce.id) || (idsStd.length ? idsStd[0] : '');
+  }
   if (current.standardVoice && voceStd !== current.standardVoice) {
     segna('voice', current.standardVoice, voceStd, 'voice_unavailable_in_lang');
   }

@@ -880,10 +880,18 @@ function initBookLanguage(){
   applyBookLanguage();
 }
 
+/* Ultima lingua che la nota ha annunciato. applyBookLanguage() gira anche
+   quando l'utente cambia solo l'accento o quando applyI18n() ridisegna il
+   pannello: senza questa memoria la nota direbbe «Lingua impostata su X»
+   anche allora, cioe' annuncerebbe un cambio che non c'e' stato. */
+let _linguaAnnunciata='';
+
 /* Chiama la cascata e riversa il risultato nel DOM. Nessuna decisione qui:
    e' un renderer. */
 function applyBookLanguage(){
   if(!bookLangState.code)return;
+  const linguaCambiata=(_linguaAnnunciata!==bookLangState.code);
+  _linguaAnnunciata=bookLangState.code;
   const esito=resolveAudioSelection({
     lang:bookLangState.code,
     catalog:voices,
@@ -930,7 +938,9 @@ function applyBookLanguage(){
       accSel.innerHTML='';
       for(const loc of esito.standard.accents){
         const o=document.createElement('option');
-        o.value=loc;o.textContent=loc;accSel.appendChild(o);
+        // Non il codice grezzo: _voxcpmLocaleLabel() rende 'it-IT' come
+        // «italiano (Italia)» e ripiega sul codice solo se non sa fare meglio.
+        o.value=loc;o.textContent=_voxcpmLocaleLabel(loc);accSel.appendChild(o);
       }
       accSel.value=esito.standard.accent;
       accRow.hidden=false;
@@ -953,7 +963,7 @@ function applyBookLanguage(){
     if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
   }
 
-  _showCascadeNote(esito.changes);
+  _showCascadeNote(esito.changes,linguaCambiata);
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
 
@@ -992,69 +1002,25 @@ function _renderStandardVoices(std){
 
 /* La nota di cosa e' cambiato. L'elenco arriva dalla cascata: non si
    ricostruisce con confronti sparsi. */
-function _showCascadeNote(changes){
+function _showCascadeNote(changes,linguaCambiata){
   const box=document.getElementById('cascadeNote');
   if(!box)return;
   if(!changes||!changes.length){box.hidden=true;box.textContent='';return;}
   const pezzi=[];
+  /* «Lingua impostata su X» solo quando la lingua e' davvero cambiata: la
+     cascata gira anche al cambio d'accento, e li' quella frase sarebbe
+     falsa. */
+  if(linguaCambiata){
+    pezzi.push((t('note_lang_set')||'').replace('{lang}',_langLabel(bookLangState.code)));
+  }
   if(changes.some(c=>c.what==='tab'||c.what==='model'))pezzi.push(t('note_model_reset'));
   if(changes.some(c=>c.what==='voice'))pezzi.push(t('note_voice_reset'));
   if(changes.some(c=>c.what==='accent'))pezzi.push(t('note_accent_reset'));
-  box.textContent=(t('note_lang_set')||'').replace('{lang}',_langLabel(bookLangState.code))
-                  +' '+pezzi.join(' ');
+  box.textContent=pezzi.join(' ');
   box.hidden=false;
 }
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
 // ═══════════════════ PREMIUM (Gemini) VOICE TAB ═══════════════════
-
-// Popola #vmPremium in base alla lingua premium corrente. Dove il catalogo
-// VoxCPM copre la lingua, "Audiobook Maker (VOXCPM2)" e' il primo modello
-// della lista e la proposta di default (§17.4); dove non la copre, il
-// modello non compare affatto. Sull'inglese senza VoxCPM la proposta resta
-// "Simba (English)" (id modello 'simba-3.2'), con la stessa regola di prima.
-function updModelsPremium(){
-  const vmEl=document.getElementById('vmPremium');
-  if(!vmEl)return;
-  const lang=bookLangState.code||'it';
-  const prev=vmEl.value;
-  vmEl.innerHTML='';
-  const addOpt=(val,label)=>{const o=document.createElement('option');o.value=val;o.textContent=label;vmEl.appendChild(o);};
-  const isEnglish=(lang==='en');
-  // VoxCPM2 per primo: presente in ogni lingua per cui il catalogo espone
-  // voci. A differenza di Simba non e' legato all'inglese, e a differenza
-  // di Gemini non e' sempre presente: se il motore non e' configurato,
-  // /api/voices non manda ne' le voci ne' _voxcpm.available, e il modello
-  // non compare (ne' qui ne' come default).
-  const _voxStatus=(voices&&voices._voxcpm)||null;
-  const _langData=voices&&voices[lang];
-  const _hasVox=!!(_voxStatus&&_voxStatus.available
-                   &&_langData&&Array.isArray(_langData.voices)
-                   &&_langData.voices.some(v=>v&&_isVoxcpmVoiceId(v.id)));
-  if(_hasVox){
-    addOpt('voxcpm',t('lbl_model_voxcpm')||'Audiobook Maker (VOXCPM2)');
-  }
-  // Modelli Gemini (sempre presenti). Le etichette usano i18n se disponibili.
-  addOpt('flash25', t('lbl_model_flash25')||'Standard');
-  addOpt('flash31', t('lbl_model_flash31')||'Avanzato');
-  if(isEnglish){
-    // Speechify Simba disponibile solo se il catalogo espone voci speechify per 'en'.
-    const en=voices&&voices['en'];
-    const arr=en&&Array.isArray(en.voices)?en.voices:[];
-    const hasSimba=arr.some(v=>v&&typeof v.id==='string'&&v.id.startsWith('speechify:simba-3.2:'));
-    if(hasSimba){
-      addOpt('simba-3.2', t('lbl_model_simba')||'Simba (English)');
-    }
-  }
-  // Default: VoxCPM dove c'e' (la stessa regola con cui Simba veniva
-  // proposto sull'inglese), poi Simba, poi la scelta precedente se ancora
-  // valida, poi il primo modello.
-  let target=null;
-  if(_hasVox) target='voxcpm';
-  else if(isEnglish && vmEl.querySelector('option[value="simba-3.2"]')) target='simba-3.2';
-  else if(prev && vmEl.querySelector('option[value="'+prev+'"]')) target=prev;
-  else target=vmEl.options.length?vmEl.options[0].value:'flash25';
-  vmEl.value=target;
-}
 
 // Accenti Speechify Simba: locale che filtrano le 8 voci _32 e valorizzano
 // il campo language inviato all'API.
@@ -1498,10 +1464,13 @@ function _premiumHintToday(){
   const day=String(d.getDate()).padStart(2,'0');
   return d.getFullYear()+'-'+m+'-'+day;
 }
-// La tab Premium è "utilizzabile" solo se visibile e non in manutenzione.
+// La tab Premium è "utilizzabile" solo se visibile, non disabilitata e non in
+// manutenzione. `disabled` è il secondo interruttore: applyBookLanguage() lo
+// usa quando la lingua del libro non ha voci a pagamento. Senza controllarlo,
+// badge e coachmark inviterebbero a una tab che non si apre.
 function _premiumTabAvailable(){
   const btn=document.getElementById('tabPremiumBtn');
-  return !!btn && !btn.hidden && !_premiumMaintenance;
+  return !!btn && !btn.hidden && !btn.disabled && !_premiumMaintenance;
 }
 function _showPremiumCoach(){
   const coach=document.getElementById('premiumCoach');
@@ -2866,8 +2835,18 @@ async function adoptTranslation(){
     _renderChaptersAfterAdopt(d);
     goToStep(3); // pannello voci (audio)
     // La traduzione adottata E' la nuova lingua del libro: viene dai metadati
-    // della forma tradotta, non da un'ipotesi.
-    bookLangState={code:(d.language||'').split('-')[0].toLowerCase(),source:'metadata'};
+    // della forma tradotta, non da un'ipotesi. Le stesse due guardie di
+    // initBookLanguage(): senza di loro un `language` vuoto o fuori catalogo
+    // lascerebbe `metadata` su una lingua che non c'e', applyBookLanguage()
+    // uscirebbe subito e ogni payload partirebbe con la lingua
+    // dell'interfaccia — senza che _validateLanguage() possa avvisare,
+    // perche' avvisa solo su 'assumed'.
+    const _codeTr=(d.language||'').split('-')[0].toLowerCase();
+    if(_codeTr&&voices[_codeTr]){
+      bookLangState={code:_codeTr,source:'metadata'};
+    }else{
+      bookLangState={code:(voices&&voices[cl])?cl:_primaLinguaCatalogo(),source:'assumed'};
+    }
     applyBookLanguage();
   }catch(e){alert('Error: '+e.message)}
 }

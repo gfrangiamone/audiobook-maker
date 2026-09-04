@@ -10,7 +10,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "templates/_fragments/html_head.html").read_text(encoding="utf-8")
 JS = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
+CASCATA = (ROOT / "static/js/audio_cascade.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/style.css").read_text(encoding="utf-8")
+
+
+def _estrai_funzione(src, nome):
+    """Corpo di `function nome(...)`, per bilanciamento di graffe."""
+    m = re.search(r"(?:async\s+)?function\s+" + re.escape(nome) + r"\s*\(", src)
+    assert m, "funzione %s non trovata" % nome
+    apertura = src.index("{", m.end())
+    profondita = 0
+    for i in range(apertura, len(src)):
+        if src[i] == "{":
+            profondita += 1
+        elif src[i] == "}":
+            profondita -= 1
+            if profondita == 0:
+                return src[apertura:i + 1]
+    raise AssertionError("corpo non bilanciato: %s" % nome)
 
 
 def test_il_markup_ha_il_campione_e_non_il_carattere():
@@ -62,8 +79,14 @@ def test_il_volume_sta_nella_testata_a_destra():
 
 
 def test_il_modello_compare_fra_i_premium():
+    # Il modello entra nel selettore dal percorso vivo: modelliPer() decide,
+    # applyBookLanguage() riversa. updModelsPremium() e' stata cancellata.
     assert "lbl_model_voxcpm" in JS
-    assert "updModelsPremium" in JS
+    assert "updModelsPremium" not in JS, "risorto il popolatore morto"
+    modelli = _estrai_funzione(CASCATA, "modelliPer")
+    assert "'voxcpm'" in modelli, "il modello VOXCPM2 non e' piu' nella cascata"
+    corpo = _estrai_funzione(JS, "applyBookLanguage")
+    assert "esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
     assert "_isVoxcpmModelSelected" in JS
     assert "_isVoxcpmVoiceId" in JS
 
@@ -119,18 +142,21 @@ def test_la_selezione_sopravvive_ai_rebuild():
 
 def test_voxcpm_e_il_primo_modello_proposto():
     # §17.4: dove la lingua ha voci in catalogo, «Audiobook Maker (VOXCPM2)»
-    # e' il primo modello della lista e la proposta di default (la stessa
-    # regola con cui Simba era proposto sull'inglese); dove non le ha, il
-    # modello resta nascosto (gia' verificato sopra).
-    i = JS.find("function updModelsPremium")
-    j = JS.find("\nfunction ", i + 1)
-    assert i != -1 and j != -1
-    corpo = JS[i:j]
-    i_vox = corpo.find("addOpt('voxcpm'")
-    i_gem = corpo.find("addOpt('flash25'")
-    assert i_vox != -1 and i_gem != -1 and i_vox < i_gem
-    assert "target='voxcpm'" in corpo
-    assert "Audiobook Maker (VOXCPM2)" in corpo
+    # e' il primo modello della lista e quindi la proposta di default; dove
+    # non le ha, il modello resta nascosto (gia' verificato sopra).
+    #
+    # La regola vive in modelliPer() (audio_cascade.js): l'ordine della lista
+    # E' il default, perche' resolveAudioSelection() ripiega su models[0]
+    # quando non c'e' una scelta precedente da conservare. Prima c'era anche
+    # un secondo popolatore in app.js, con un default DIVERSO: cancellato.
+    corpo = _estrai_funzione(CASCATA, "modelliPer")
+    i_vox = corpo.find("'voxcpm'")
+    i_gem = corpo.find("'flash25'")
+    assert i_vox != -1 and i_gem != -1 and i_vox < i_gem, \
+        "VOXCPM2 non e' piu' il primo modello della lista"
+    scelta = _estrai_funzione(CASCATA, "resolveAudioSelection")
+    assert "models[0]" in scelta, "il default non e' piu' il primo modello della lista"
+    assert "lbl_model_voxcpm" in JS, "l'etichetta del modello non passa piu' da i18n"
 
 
 def test_lo_slider_velocita_agisce_sulle_clip():

@@ -1,6 +1,27 @@
+import re
 from pathlib import Path
 
 HTML = Path("templates/_fragments/html_head.html").read_text(encoding="utf-8")
+
+
+def _estrai_funzione(src, nome):
+    """Corpo di `function nome(...)`, per bilanciamento di graffe.
+
+    Un `in` sul sorgente intero non distingue la funzione viva da un
+    residuo altrove: qui l'assert si ancora al corpo giusto.
+    """
+    m = re.search(r"(?:async\s+)?function\s+" + re.escape(nome) + r"\s*\(", src)
+    assert m, "funzione %s non trovata" % nome
+    apertura = src.index("{", m.end())
+    profondita = 0
+    for i in range(apertura, len(src)):
+        if src[i] == "{":
+            profondita += 1
+        elif src[i] == "}":
+            profondita -= 1
+            if profondita == 0:
+                return src[apertura:i + 1]
+    raise AssertionError("corpo non bilanciato: %s" % nome)
 
 def test_panel3_has_tab_bar():
     assert 'id="panel3"' in HTML
@@ -14,14 +35,21 @@ def test_panel3_has_two_tab_panels():
     assert 'role="tabpanel"' in HTML
 
 def test_panel3_premium_tab_has_model_selector():
-    # Il <select> del modello e' nel markup, ma le <option> (flash25/flash31 e,
-    # solo per l'inglese, simba-3.2) sono iniettate da updModelsPremium() in
-    # app.js — non piu' statiche nell'HTML (Speechify Simba-3.2).
+    # Il <select> del modello e' nel markup, ma le <option> le inietta il
+    # percorso vivo: modelliPer() (audio_cascade.js) decide QUALI modelli la
+    # lingua del libro ammette, applyBookLanguage() (app.js) li riversa in
+    # #vmPremium. updModelsPremium() non esiste piu'.
     assert 'id="vmPremium"' in HTML
     APPJS = Path("static/js/app.js").read_text(encoding="utf-8")
-    assert "updModelsPremium" in APPJS
-    assert "flash25" in APPJS
-    assert "flash31" in APPJS
+    CASCATA = Path("static/js/audio_cascade.js").read_text(encoding="utf-8")
+    assert "updModelsPremium" not in APPJS, "risorto il popolatore morto"
+    corpo = _estrai_funzione(APPJS, "applyBookLanguage")
+    assert "vmPremium" in corpo, "applyBookLanguage() non popola piu' #vmPremium"
+    assert "esito.premium.models" in corpo, "le option non vengono dalla cascata"
+    assert "_modelLabel" in corpo, "le option non passano dalle etichette i18n"
+    modelli = _estrai_funzione(CASCATA, "modelliPer")
+    assert "flash25" in modelli
+    assert "flash31" in modelli
 
 def test_panel3_premium_tab_has_style_textarea():
     assert 'id="geminiStyle"' in HTML

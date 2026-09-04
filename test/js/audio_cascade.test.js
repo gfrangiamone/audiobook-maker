@@ -213,3 +213,49 @@ test('italiano: un solo locale, il filtro accento e` saltato', () => {
   assert.deepStrictEqual(r.standard.voices.map(v => v.id).sort(),
     ['it-IT-DiegoNeural', 'it-IT-IsabellaNeural']);
 });
+
+/* Catalogo inglese nell'ordine vero di /api/voices: le voci Edge arrivano
+   alfabetiche per ShortName, quindi en-AU precede en-US. Con `accents[0]` e
+   `ids[0]` un libro inglese si aprirebbe su due voci australiane. */
+const CATALOGO_EN_ALFABETICO = {
+  en: {name: 'English', voices: [
+    {id: 'en-AU-NatashaNeural', name: 'Natasha', gender: 'Female', locale: 'en-AU', engine: 'edge'},
+    {id: 'en-AU-WilliamNeural', name: 'William', gender: 'Male', locale: 'en-AU', engine: 'edge'},
+    {id: 'en-GB-SoniaNeural', name: 'Sonia', gender: 'Female', locale: 'en-GB', engine: 'edge'},
+    {id: 'en-US-AvaNeural', name: 'Ava', gender: 'Female', locale: 'en-US', engine: 'edge'},
+    {id: 'en-US-DavisNeural', name: 'Davis', gender: 'Male', locale: 'en-US', engine: 'edge'},
+  ]},
+  sv: {name: 'Swedish', voices: [
+    {id: 'sv-SE-HilleviNeural', name: 'Hillevi', gender: 'Female', locale: 'sv-SE', engine: 'edge'},
+    {id: 'sv-SE-MattiasNeural', name: 'Mattias', gender: 'Male', locale: 'sv-SE', engine: 'edge'},
+    {id: 'sv-FI-SelmaNeural', name: 'Selma', gender: 'Female', locale: 'sv-FI', engine: 'edge'},
+  ]},
+};
+
+test('inglese: la voce preferita decide voce E accento, non l`ordine del catalogo', () => {
+  const r = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO_EN_ALFABETICO, current: {}});
+  assert.strictEqual(r.standard.voice, 'en-US-DavisNeural',
+    'la voce predefinita deve essere quella preferita, non la prima del catalogo');
+  assert.strictEqual(r.standard.accent, 'en-US',
+    'l`accento predefinito deve essere il locale della voce preferita');
+  assert.ok(r.standard.voices.some(v => v.id === 'en-US-DavisNeural'),
+    'la lista filtrata deve contenere la voce predefinita');
+});
+
+test('lingua senza voci preferite: resta la prima del catalogo', () => {
+  const r = resolveAudioSelection({
+    lang: 'sv', catalog: CATALOGO_EN_ALFABETICO, current: {}});
+  assert.strictEqual(r.standard.accent, 'sv-SE');
+  assert.strictEqual(r.standard.voice, 'sv-SE-HilleviNeural');
+});
+
+test('inglese: un accento gia` scelto vince sulla voce preferita', () => {
+  /* La preferenza vale come DEFAULT, non come correzione: chi ha appena
+     scelto en-GB non deve essere riportato su en-US. */
+  const r = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO_EN_ALFABETICO,
+    current: {standardAccent: 'en-GB', standardVoice: 'en-US-DavisNeural'}});
+  assert.strictEqual(r.standard.accent, 'en-GB');
+  assert.strictEqual(r.standard.voice, 'en-GB-SoniaNeural');
+});
