@@ -75,7 +75,12 @@ def kill_enabled():
 
 
 def confidence_threshold():
-    return _env_float("ABM_ABUSE_LLM_CONFIDENCE", 0.9)
+    """Il giudice non usa valori intermedi: emette 0.60 (inconclusive) e
+    0.85/0.90/0.95 (abuse). Con la soglia a 0.90 meta' dei veri positivi
+    finiva scartata — il 04/09/2026 sei verdetti `abuse` su tredici sono
+    usciti a 0.85 senza produrre nulla, e sul primo gruppo sono passati 45
+    minuti fra il primo verdetto di abuso e la prima kill."""
+    return _env_float("ABM_ABUSE_LLM_CONFIDENCE", 0.85)
 
 
 def keep_hours():
@@ -292,6 +297,27 @@ def _signals(g, now):
     return {"S1": bool(s1), "S2": bool(s2), "S3": bool(s3), "S4": bool(s4)}
 
 
+def _s4_weight():
+    return _env_int("ABM_ABUSE_S4_WEIGHT", 2, floor=1)
+
+
+def _signal_score(sig):
+    """Punteggio dei segnali per la soglia di `needs_judgement`. S4 pesa
+    `ABM_ABUSE_S4_WEIGHT` (default 2), gli altri 1.
+
+    Ragione: un cid nuovo su un IP mai visto azzera S1, S2 e S3 insieme
+    (quota fresca, un solo cid nel gruppo, zero QUOTA_GATE), quindi chi ruota
+    *IP* invece del solo cookie resterebbe per sempre a un segnale e non
+    verrebbe mai giudicato, per quanto volume macini. Osservato in produzione
+    il 04/09/2026: gruppo migrato su VPN otto minuti dopo la kill, nove libri
+    generati senza mai finire in coda al giudice. S4 e' l'unico segnale che
+    ne' la rotazione del cookie ne' quella dell'IP puo' eludere, percio' da
+    solo basta ad aprire il giudizio — non a decidere: la decisione resta
+    all'LLM, che sui /24 mobili ad alto volume risponde `clean`."""
+    w = _s4_weight()
+    return sum((w if k == "S4" else 1) for k, v in sig.items() if v)
+
+
 def signals_for(group):
     g = dossier(group)
     if not g:
@@ -317,7 +343,8 @@ def verdict_for(group):
 
 
 def needs_judgement(group, cid="", group_data=None):
-    """Vero con >=2 segnali e nessun verdetto valido; con verdetto `abuse` se
+    """Vero con punteggio segnali >=2 (S4 vale doppio, vedi `_signal_score`) e
+    nessun verdetto valido; con verdetto `abuse` se
     `cid` e' fuori dallo scope (rotazione post-verdetto); con `clean` solo se
     compare un segnale nuovo; altrimenti se gli eventi sono cresciuti del 25%.
 
@@ -328,7 +355,7 @@ def needs_judgement(group, cid="", group_data=None):
         return False
     now = time.time()
     sig = _signals(g, now)
-    n_sig = sum(1 for x in sig.values() if x)
+    n_sig = _signal_score(sig)
     v = _valid_verdict(g, now)
     if v is None:
         return n_sig >= 2
