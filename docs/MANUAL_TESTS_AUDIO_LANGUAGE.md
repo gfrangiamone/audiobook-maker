@@ -93,12 +93,12 @@ e dal DOM in `templates/_fragments/html_head.html` — non parafrasi.
    PREMIUM non sono disponibili in Svedese.», l'app torna sul tab «Voci
    Standard (gratis)», e sotto la riga della lingua compare la nota:
    «Lingua impostata su Svedese. Modello e voce riportati al valore
-   predefinito. Voce riportata al valore predefinito.»
-   La frase sulla voce compare due volte di seguito: una per il reset di
-   modello+voce, una per il reset della sola voce. È il testo letterale che
-   il codice produce (`_showCascadeNote()` in `static/js/app.js` accoda una
-   frase per ciascun tipo di cambiamento, senza deduplicare), non un errore
-   di battitura di questo documento._
+   predefinito.»
+   Due frasi in tutto, e la frase sulla voce NON si ripete: «Modello e voce
+   riportati al valore predefinito.» dice già che anche la voce è cambiata,
+   quindi `_showCascadeNote()` in `static/js/app.js` non accoda una seconda
+   volta la frase «Voce riportata al valore predefinito.» Se la leggi due
+   volte di seguito, è una regressione._
 2. Riapri il modale (⚙), scegli di nuovo «Italiano», clicca «Conferma».
    → _atteso: il pulsante «★ Voci PREMIUM» torna cliccabile (non più
    attenuato) — resta comunque sul tab «Voci Standard (gratis)» finché non
@@ -112,11 +112,20 @@ e dal DOM in `templates/_fragments/html_head.html` — non parafrasi.
    francese con lo stesso modale del punto 6.
    → _atteso: il menu MODELLO resta su «Avanzato» — esiste anche in
    francese. La riga della lingua dice «Francese» / «impostata da te». La
-   nota sotto dice «Lingua impostata su Francese. Voce riportata al valore
-   predefinito.» — non compare mai la frase sul modello, perché il modello
-   non è cambiato. La frase sulla voce compare comunque: cambiare la
-   lingua invalida anche la voce del tab «Voci Standard (gratis)», pur
-   restando quel tab non visibile in questo momento._
+   nota sotto dice soltanto «Lingua impostata su Francese.» — non compare la
+   frase sul modello, perché il modello non è cambiato, e non compare
+   nemmeno quella sulla voce: l'unica voce reimpostata è quella del tab
+   «Voci Standard (gratis)», che in questo momento non stai guardando, e la
+   nota parla solo del tab che hai davanti. La voce PREMIUM invece resta
+   quella che avevi scelto: le voci del modello «Avanzato» sono le stesse in
+   tutte le lingue._
+2. Senza forzare altro, clicca il tab «Voci Standard (gratis)» e guarda il
+   menu VOCE.
+   → _atteso: la voce Standard è effettivamente cambiata, ed è ora una voce
+   francese: il silenzio della nota al punto 1 non vuol dire che non sia
+   successo niente, vuol dire che non è successo niente nel tab che avevi
+   davanti. Se al punto 1 la nota avesse invece annunciato il reset di
+   questa voce, sarebbe stata la regressione D3._
 
 ## 8. L'avviso «niente voci PREMIUM» si vede con qualunque tab
 
