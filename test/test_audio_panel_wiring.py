@@ -39,6 +39,65 @@ def _corpo(nome, src=APP_JS):
     raise AssertionError("corpo non bilanciato: %s" % nome)
 
 
+def _codice(src):
+    """`src` senza commenti e senza spazi: la STRUTTURA, non il testo.
+
+    Serve perche' asserire su una sottostringa del sorgente non morde: una
+    mutazione che cancella la guardia o l'effetto ma lascia in vita il nome
+    (in un commento, in una definizione vicina) passa indisturbata. Sul
+    codice ripulito si puo' invece ritagliare lo *statement* e chiedergli di
+    contenere la condizione, non la parola.
+
+    Uno scanner e non una regex: appiattire gli spazi prima di togliere i
+    commenti incollerebbe la riga di codice successiva dentro un commento
+    `//`, e togliere i commenti con una regex taglierebbe a meta' una stringa
+    che contiene `//`.
+    """
+    fuori = []
+    i, n = 0, len(src)
+    apice = None
+    while i < n:
+        c = src[i]
+        if apice:
+            fuori.append(c)
+            if c == "\\" and i + 1 < n:
+                fuori.append(src[i + 1])
+                i += 2
+                continue
+            if c == apice:
+                apice = None
+            i += 1
+            continue
+        if c in "'\"`":
+            apice = c
+            fuori.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and src[i + 1] == "*":
+            fine = src.find("*/", i + 2)
+            i = n if fine < 0 else fine + 2
+            continue
+        fuori.append(c)
+        i += 1
+    return re.sub(r"\s+", "", "".join(fuori))
+
+
+def _guardia_di(piatto, posizione):
+    """Testo che precede `posizione` a partire dall'inizio dello statement.
+
+    Cioe' dall'ultimo `;` (o dall'inizio del corpo): comprende quindi l'`if`
+    che protegge l'assegnamento, blocco graffato incluso. E' su questo
+    ritaglio che si verifica che una guardia esista DAVVERO, e non solo che
+    il nome della variabile guardata compaia da qualche parte nel file.
+    """
+    taglio = piatto.rfind(";", 0, posizione)
+    return piatto[taglio + 1:posizione]
+
+
 def _blocco_elemento(html, id_elemento):
     """Testo interno dell'elemento con quell'id, per bilanciamento dei tag.
 
@@ -205,34 +264,77 @@ def test_il_ramo_gemini_ricorda_la_voce_scelta():
     passa in mezzo alla sequenza di generazione a PAGAMENTO: l'audiolibro
     esce con una voce che l'utente non ha scelto, e nessuna nota lo dice.
     I rami VoxCPM e Simba quella memoria ce l'hanno gia'.
+
+    Ricordare non basta: la memoria deve TORNARE nel select. Per questo
+    l'assert non cerca il nome `_geminiVoiceSel` ma l'assegnamento che
+    riapplica la voce ricordata dopo la ricostruzione, e la guardia che lo
+    protegge. Cancellare quella riga lasciando in vita la memoria e' la
+    regressione piu' naturale, e deve far diventare rosso questo test.
     """
     corpo = _corpo("updVoicesPremium")
-    gemini = corpo[corpo.index("Ramo Gemini"):]
-    assert "_geminiVoiceSel" in gemini, \
-        "il ramo Gemini ricostruisce #vvPremium senza nessuna memoria della scelta"
-    lettura = gemini.index("_geminiVoiceSel")
-    svuotamento = gemini.index("sel.innerHTML=''")
-    assert lettura < svuotamento, (
+    piatto = _codice(corpo[corpo.index("Ramo Gemini"):])
+    m = re.search(r"(?:const|let|var)(\w+)=_geminiVoiceSel\|\|sel\.value;", piatto)
+    assert m, (
+        "il ramo Gemini non legge piu' la memoria della voce in una variabile "
+        "prima di ricostruire #vvPremium"
+    )
+    memoria = m.group(1)
+    svuotamento = piatto.index("sel.innerHTML=''")
+    assert m.start() < svuotamento, (
         "la memoria viene letta DOPO sel.innerHTML='': il ripiego su sel.value "
         "leggerebbe un select gia' svuotato"
     )
-    assert gemini.rindex("_geminiVoiceSel") > svuotamento, \
+    coda = piatto[svuotamento:]
+    ripristino = re.search(r"sel\.value=" + memoria + r"\b", coda)
+    assert ripristino, (
+        "la voce ricordata non torna MAI nel select dopo la ricostruzione: la "
+        "memoria e' scritta e mai riapplicata, e il browser risceglie la prima "
+        "<option>"
+    )
+    guardia = _guardia_di(coda, ripristino.start())
+    assert "sel.options" in guardia and memoria in guardia, (
+        "il ripristino della voce non e' protetto dal controllo che quella voce "
+        "esista ancora fra le option del modello corrente: %r" % guardia
+    )
+    assert re.search(r"_geminiVoiceSel=sel\.value\b", coda), \
         "la memoria non viene riscritta dopo la ricostruzione"
-    assert "_geminiVoiceSel=sel.value" in gemini.split("sel.onchange")[1], \
+    assert "_geminiVoiceSel=sel.value" in piatto.split("sel.onchange")[1], \
         "l'onchange dell'utente non aggiorna la memoria della voce Gemini"
 
 
 def test_apply_book_language_riversa_la_voce_premium():
     """La cascata la voce premium la calcola E la preserva: se il renderer non
     la riversa nel select, il rebuild di _onPremiumModelChanged() vince e la
-    scelta dell'utente sparisce."""
-    corpo = _corpo("applyBookLanguage")
-    assert "esito.premium.voice" in corpo, \
-        "applyBookLanguage non riversa esito.premium.voice in #vvPremium"
-    dopo = corpo.index("_onPremiumModelChanged")
-    assert corpo.index("esito.premium.voice") > dopo, (
+    scelta dell'utente sparisce.
+
+    Non basta che `esito.premium.voice` compaia nel sorgente: il riversamento
+    dev'essere VIVO. Una guardia svuotata (`if(false)`) lascia la riga al suo
+    posto e il riversamento inerte, e questo test deve accorgersene.
+    """
+    piatto = _codice(_corpo("applyBookLanguage"))
+    dopo = piatto.index("_onPremiumModelChanged")
+    m = re.search(r"(?:const|let|var)(\w+)=esito\.premium\.voice;", piatto)
+    assert m, "applyBookLanguage non legge piu' la voce premium preservata dalla cascata"
+    assert m.start() > dopo, (
         "la voce premium viene riversata PRIMA del rebuild: "
         "_onPremiumModelChanged() la sovrascriverebbe"
+    )
+    voce = m.group(1)
+    scrittura = re.search(r"(\w+)\.value=" + voce + r"\b", piatto)
+    assert scrittura, (
+        "la voce premium preservata non viene MAI scritta nel select: il "
+        "riversamento e' presente nel sorgente ma inerte"
+    )
+    select = scrittura.group(1)
+    guardia = _guardia_di(piatto, scrittura.start())
+    assert voce in guardia and select + ".options" in guardia, (
+        "il riversamento non e' protetto dal controllo che quella voce esista "
+        "fra le option ricostruite, oppure la guardia e' stata svuotata: %r"
+        % guardia
+    )
+    assert "_allineaMemoriaVocePremium(" + voce + ")" in piatto, (
+        "il riversamento scrive il DOM senza riallineare la memoria fuori dal "
+        "DOM: il rebuild successivo ripristinerebbe la voce precedente"
     )
 
 
@@ -242,13 +344,29 @@ def test_il_tab_premium_non_viene_disabilitato_in_manutenzione():
     """Con il kill-switch admin acceso il tab deve restare CLICCABILE: e' il
     click ad aprire il popup «funzione in manutenzione», e un <button disabled>
     non emette click. Disabilitarlo lo rende irraggiungibile e al suo posto
-    l'utente legge che la colpa e' della lingua del suo libro."""
-    corpo = _corpo("applyBookLanguage")
-    assert "_premiumMaintenance" in corpo, \
-        "applyBookLanguage decide su premiumEnabled senza guardare la manutenzione"
-    assert corpo.index("_premiumMaintenance") < corpo.index(".disabled="), (
-        "lo stato di manutenzione viene letto DOPO aver scritto btn.disabled: "
-        "il popup di manutenzione resta irraggiungibile"
+    l'utente legge che la colpa e' della lingua del suo libro.
+
+    L'assert sta sulla GUARDIA dell'assegnamento, non sulla presenza del nome
+    `_premiumMaintenance` nel corpo: togliere `&&!gestitoAltrove` dall'`if`
+    lascia in vita sia il nome sia la variabile, e la regressione tornerebbe
+    in produzione con la suite verde.
+    """
+    piatto = _codice(_corpo("applyBookLanguage"))
+    m = re.search(r"(?:const|let|var)(\w+)=_premiumMaintenance\|\|", piatto)
+    assert m, (
+        "applyBookLanguage non ricava piu' da _premiumMaintenance la condizione "
+        "«lo spegnimento del tab lo decide qualcun altro»"
+    )
+    gestito = m.group(1)
+    assert piatto.count("btn.disabled=") == 1, (
+        "btn.disabled viene scritto %d volte: la guardia va verificata su "
+        "ciascuna" % piatto.count("btn.disabled=")
+    )
+    guardia = _guardia_di(piatto, piatto.index("btn.disabled="))
+    assert "!" + gestito in guardia, (
+        "btn.disabled viene scritto guardando solo la lingua del libro: in "
+        "manutenzione il tab tornerebbe disabled e il popup irraggiungibile. "
+        "Guardia trovata: %r" % guardia
     )
 
 
@@ -280,14 +398,35 @@ def test_la_nota_non_ripete_la_frase_sulla_voce():
 
 def test_la_nota_parla_del_tab_che_l_utente_guarda():
     """Il reset di una voce che sta nell'altro tab e' l'annuncio di un cambio
-    che l'utente non vede: la nota deve filtrare per wizardState.audioTab."""
-    corpo = _corpo("_showCascadeNote")
-    assert "audioTab" in corpo, \
-        "_showCascadeNote non guarda quale tab e' attivo"
-    assert "dove" in corpo, (
-        "_showCascadeNote non usa il tab di provenienza del cambiamento: "
-        "annuncerebbe il reset della voce Standard anche sul tab PREMIUM"
+    che l'utente non vede: la nota deve filtrare per wizardState.audioTab.
+
+    Definire il filtro non basta: va APPLICATO. Gli assert sotto ritagliano la
+    condizione di ciascuno dei due rami filtrabili e pretendono la chiamata al
+    predicato dentro quella condizione. Cercare la sottostringa `dove` non
+    morderebbe: sopravvive nella definizione del predicato anche quando
+    nessuno lo chiama piu'.
+    """
+    piatto = _codice(_corpo("_showCascadeNote"))
+    m_tab = re.search(r"(?:const|let|var)(\w+)=\(wizardState&&wizardState\.audioTab\)", piatto)
+    assert m_tab, "_showCascadeNote non guarda piu' quale tab e' attivo"
+    tab_visto = m_tab.group(1)
+    m_pred = re.search(r"(?:const|let|var)(\w+)=(\w+)=>([^;]+);", piatto)
+    assert m_pred, "_showCascadeNote non definisce piu' il predicato «e' il tab che guardo»"
+    predicato, parametro, corpo_pred = m_pred.group(1), m_pred.group(2), m_pred.group(3)
+    assert parametro + ".dove" in corpo_pred and tab_visto in corpo_pred, (
+        "il predicato non confronta piu' il tab di provenienza del cambiamento "
+        "con il tab attivo: %r" % corpo_pred
     )
+    for chiave in ("note_voice_reset", "note_accent_reset"):
+        posizione = piatto.index("t('" + chiave + "')")
+        inizio = piatto.rfind("changes.some(", 0, posizione)
+        assert inizio != -1, "%s non e' piu' deciso da changes.some(): %s" % (chiave, piatto)
+        condizione = piatto[inizio:posizione]
+        assert predicato + "(" + parametro + ")" in condizione, (
+            "%s viene mostrata senza filtrare sul tab attivo: annuncerebbe il "
+            "reset di un controllo che l'utente non ha davanti. Condizione: %r"
+            % (chiave, condizione)
+        )
 
 
 # ── M2: i ripieghi delle etichette scattano davvero, e sono in inglese ──
