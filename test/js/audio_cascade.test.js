@@ -50,10 +50,22 @@ test('italiano: un solo locale, niente riga accento in Standard', () => {
   assert.strictEqual(r.standard.accents.length, 1);
 });
 
-test('inglese: quattro modelli, Simba incluso', () => {
+test('inglese: quattro modelli, nell ordine mostrato', () => {
+  /* L ordine non e cosmetico: il primo della lista e anche il modello
+     predefinito. */
   const r = resolveAudioSelection({lang: 'en', catalog: CATALOGO, current: {}});
   assert.deepStrictEqual(r.premium.models,
-    ['voxcpm', 'flash25', 'flash31', 'simba-3.2']);
+    ['voxcpm', 'simba-3.2', 'flash25', 'flash31']);
+});
+
+test('inglese senza VoxCPM: il predefinito e Simba, non Gemini', () => {
+  /* Conseguenza voluta dell ordine: quando VOXCPM2 non c e, sull inglese
+     resta Simba in testa. */
+  const senzaVox = JSON.parse(JSON.stringify(CATALOGO));
+  senzaVox._voxcpm = {available: false, model_label: '', personas: []};
+  const r = resolveAudioSelection({lang: 'en', catalog: senzaVox, current: {}});
+  assert.deepStrictEqual(r.premium.models, ['simba-3.2', 'flash25', 'flash31']);
+  assert.strictEqual(r.premium.model, 'simba-3.2');
 });
 
 test('i due modelli Gemini non condividono le voci', () => {

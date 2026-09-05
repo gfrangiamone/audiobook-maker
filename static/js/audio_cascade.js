@@ -45,15 +45,16 @@ function _ePremium(id) {
       || id.indexOf('speechify:') === 0;
 }
 
-/* Modelli premium disponibili per la lingua. L'ordine e' quello mostrato:
-   VOXCPM2 primo dove c'e', poi i due Gemini, Simba in coda sull'inglese. */
+/* Modelli premium disponibili per la lingua. L'ordine e' quello mostrato
+   nel selettore, e il primo e' anche il predefinito: VOXCPM2, Simba, poi i
+   due Gemini. */
 function modelliPer(catalog, lang) {
   var voci = _voci(catalog, lang);
   var out = [];
   var voxAttivo = !!(catalog && catalog._voxcpm && catalog._voxcpm.available);
   if (voxAttivo && _haPrefisso(voci, 'voxcpm:')) out.push('voxcpm');
-  if (_haPrefisso(voci, 'gemini:')) { out.push('flash25'); out.push('flash31'); }
   if (lang === 'en' && _haPrefisso(voci, 'speechify:simba-3.2:')) out.push('simba-3.2');
+  if (_haPrefisso(voci, 'gemini:')) { out.push('flash25'); out.push('flash31'); }
   return out;
 }
 

@@ -1008,9 +1008,9 @@ function _tOr(k,ripiego){
    l'i18n non copre: se scattano, scattano per tutti. */
 function _modelLabel(m){
   if(m==='voxcpm')return _tOr('lbl_model_voxcpm','Audiobook Maker (VOXCPM2)');
-  if(m==='flash25')return _tOr('lbl_model_flash25','Standard');
-  if(m==='flash31')return _tOr('lbl_model_flash31','Advanced');
-  if(m==='simba-3.2')return _tOr('lbl_model_simba','Express (English only)');
+  if(m==='flash25')return _tOr('lbl_model_flash25','Gemini 2.5 TTS');
+  if(m==='flash31')return _tOr('lbl_model_flash31','Gemini 3.1 TTS');
+  if(m==='simba-3.2')return _tOr('lbl_model_simba','Simba 3.2');
   return m;
 }
 
@@ -1177,8 +1177,9 @@ function _onPremiumModelChanged(){
   if(emoRow)emoRow.hidden=!simba;
   if(sampleRow)sampleRow.hidden=!vox;
   if(vox){
+    // La visibilita' della riga la decide _populateVoxcpmAccents(): con un
+    // solo locale non c'e' niente da scegliere.
     _populateVoxcpmAccents();
-    if(accentRow)accentRow.hidden=false;
   }else if(simba){
     // Si lascia VoxCPM (verso Simba): la riga campione sparisce, e il player
     // non deve continuare a suonare invisibile dietro di essa.
@@ -1243,6 +1244,10 @@ function _populateVoxcpmAccents(){
   }
   acc.value=prev||(locali.length?locali[0]:'');
   _voxcpmAccentSel=acc.value;
+  // Un dropdown con un'unica voce non e' una scelta. Il valore resta
+  // impostato anche a riga nascosta: e' lui a filtrare le voci.
+  const row=document.getElementById('geminiAccentRow');
+  if(row)row.hidden=locali.length<2;
   acc.onchange=()=>{
     _voxcpmAccentSel=acc.value;
     updVoicesPremium();

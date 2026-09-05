@@ -394,7 +394,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .book-lang-src.is-warn{color:#856d10}
 [data-theme="dark"] .book-lang-src.is-warn{color:#f0c060}
 .icon-btn{background:none;border:1px solid var(--brd);border-radius:6px;
-          cursor:pointer;padding:2px 8px;line-height:1.6;color:var(--tx)}
+          cursor:pointer;padding:2px 10px;line-height:1.6;color:var(--tx);
+          display:inline-flex;align-items:center;gap:6px;font-size:.9em}
 .icon-btn:hover{border-color:var(--ac);color:var(--ac)}
 .voice-chip{margin-top:10px;font-size:.8rem;display:none;align-items:flex-start;gap:6px;flex-wrap:wrap;line-height:1.4;max-width:100%}
 .voice-chip.vis{display:flex}

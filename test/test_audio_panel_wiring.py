@@ -160,10 +160,17 @@ def test_il_tab_spento_si_vede_che_e_spento():
     assert "not-allowed" in regola
 
 
-# ── F2: nessun nome di fornitore nelle etichette dei modelli ──
+# ── I modelli premium si chiamano col loro nome ──
 
-PAROLE_VIETATE = ("gemini", "google", "speechify", "simba",
-                  "microsoft", "edge", "azure")
+# Decisione dell'utente del 05/09/2026, che rovescia la scelta precedente
+# di etichette neutre: chi paga deve riconoscere il motore che compra.
+# Sono nomi propri, quindi identici in tutte e sette le lingue.
+NOMI_MODELLI = {
+    "lbl_model_flash25": "Gemini 2.5 TTS",
+    "lbl_model_flash31": "Gemini 3.1 TTS",
+    "lbl_model_simba": "Simba 3.2",
+    "lbl_model_voxcpm": "Audiobook Maker (VOXCPM2)",
+}
 
 
 def _valori_lbl_model():
@@ -171,20 +178,21 @@ def _valori_lbl_model():
     return re.findall(r'(lbl_model_\w+)\s*:\s*"([^"]*)"', I18N)
 
 
-def test_nessun_nome_di_fornitore_nelle_etichette_dei_modelli():
-    """Il selettore #vmPremium mostra questi valori all'utente.
+def test_i_modelli_premium_mostrano_il_loro_nome_proprio():
+    """Un nome di prodotto non si traduce: lo stesso testo in ogni locale.
 
-    Il ripiego neutro scritto in _modelLabel() non entra mai in funzione,
-    perche' t() ritorna al peggio la chiave e mai un valore falsy: l'unico
-    posto dove la violazione si corregge e' il VALORE della chiave.
+    Il ripiego scritto in _modelLabel() non entra mai in funzione quando la
+    chiave c'e': l'unico posto dove questi nomi vivono e' il VALORE della
+    chiave, ed e' li' che vanno protetti.
     """
     trovati = _valori_lbl_model()
     assert trovati, "nessuna chiave lbl_model_* trovata"
-    for chiave, valore in trovati:
-        basso = valore.lower()
-        for parola in PAROLE_VIETATE:
-            assert parola not in basso, \
-                "%s espone il nome di un fornitore all'utente: %r" % (chiave, valore)
+    for chiave, atteso in NOMI_MODELLI.items():
+        valori = [v for k, v in trovati if k == chiave]
+        assert len(valori) == len(LOCALI), \
+            "%s ha %d valori, attesi %d" % (chiave, len(valori), len(LOCALI))
+        assert set(valori) == {atteso}, \
+            "%s non e' %r ovunque: %s" % (chiave, atteso, sorted(set(valori)))
 
 
 def test_le_etichette_dei_modelli_esistono_in_tutti_i_locali():
@@ -202,6 +210,7 @@ CHIAVI_PANNELLO_AUDIO = (
     "lang_src_metadata", "lbl_accent_std", "lbl_book_lang",
     "note_accent_reset", "note_lang_set", "note_model_reset",
     "note_voice_reset", "premium_no_lang", "tip_force_lang",
+    "force_lang_change",
 )
 
 
@@ -447,23 +456,33 @@ def test_i_ripieghi_delle_etichette_sono_raggiungibili():
     )
 
 
-def test_i_ripieghi_delle_etichette_sono_in_inglese():
-    """Vincolo globale: le stringhe non localizzate vanno in inglese. Un
-    ripiego italiano, se scattasse, scatterebbe per tutti."""
+def test_i_ripieghi_delle_etichette_sono_gli_stessi_nomi():
+    """Il ripiego scatta solo quando la chiave i18n manca: se dicesse un
+    nome diverso da quello del selettore, l'utente vedrebbe cambiare il nome
+    del modello proprio mentre qualcosa e' gia' rotto."""
     corpo = _corpo("_modelLabel")
-    ripieghi = re.findall(r"_tOr\('[^']*',\s*'([^']*)'\)", corpo)
-    assert set(ripieghi) == {
-        "Audiobook Maker (VOXCPM2)", "Standard", "Advanced",
-        "Express (English only)",
-    }, "ripieghi di _modelLabel cambiati o tradotti: %s" % sorted(ripieghi)
-    # Il divieto sui nomi dei fornitori vale su cio' che l'utente LEGGE: la
-    # chiave `lbl_model_simba` e' un identificatore e resta legittima, quindi
-    # si guardano i ripieghi uno per uno, non il corpo della funzione.
-    for ripiego in ripieghi:
-        for parola in PAROLE_VIETATE:
-            assert parola not in ripiego.lower(), (
-                "ripiego di _modelLabel con un nome di fornitore: %r" % ripiego
-            )
+    ripieghi = re.findall(r"_tOr\('([^']*)',\s*'([^']*)'\)", corpo)
+    assert dict(ripieghi) == NOMI_MODELLI, \
+        "ripieghi di _modelLabel disallineati dai nomi mostrati: %s" % sorted(ripieghi)
+
+
+# ── Un dropdown con una sola opzione non e' una scelta ──
+
+def test_l_accento_voxcpm_sparisce_quando_non_c_e_niente_da_scegliere():
+    """Gli altri modelli premium nascondono la riga accento quando la lingua
+    ha una sola variante; VOXCPM2 la teneva accesa sempre, mostrando una
+    tendina con dentro una voce sola."""
+    corpo = _codice(_corpo("_populateVoxcpmAccents"))
+    assert "row.hidden=locali.length<2" in corpo, (
+        "_populateVoxcpmAccents non lega piu' la visibilita' della riga "
+        "accento al numero di locali disponibili"
+    )
+    chiamante = _codice(_corpo("_onPremiumModelChanged"))
+    assert "_populateVoxcpmAccents();if(accentRow)accentRow.hidden=false" \
+        not in chiamante, (
+            "il ramo VOXCPM2 riaccende la riga accento subito dopo averla "
+            "fatta decidere a _populateVoxcpmAccents()"
+        )
 
 
 # ── M4: 'forced' e' una provenienza accertata quanto le altre due ──
