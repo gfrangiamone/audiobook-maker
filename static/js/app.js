@@ -2952,16 +2952,19 @@ async function adoptTranslation(){
     if(btnAdopt)btnAdopt.style.display='none';
     _renderChaptersAfterAdopt(d);
     goToStep(3); // pannello voci (audio)
-    // La traduzione adottata E' la nuova lingua del libro: viene dai metadati
-    // della forma tradotta, non da un'ipotesi. Le stesse due guardie di
-    // initBookLanguage(): senza di loro un `language` vuoto o fuori catalogo
-    // lascerebbe `metadata` su una lingua che non c'e', applyBookLanguage()
-    // uscirebbe subito e ogni payload partirebbe con la lingua
-    // dell'interfaccia — senza che _validateLanguage() possa avvisare,
-    // perche' avvisa solo su 'assumed'.
+    // La traduzione adottata E' la nuova lingua del libro, e non e' un'ipotesi:
+    // e' l'utente ad aver chiesto quella traduzione e ad averla adottata.
+    // 'forced' e' esattamente cio' che il server registra sul job dopo
+    // l'adozione: scrivere qui 'metadata' farebbe dire alla riga della lingua
+    // «dai metadati» adesso e «impostata da te» dopo il ricaricamento, sullo
+    // stesso libro. Le stesse due guardie di initBookLanguage(): senza di loro
+    // un `language` vuoto o fuori catalogo lascerebbe una provenienza accertata
+    // su una lingua che non c'e', applyBookLanguage() uscirebbe subito e ogni
+    // payload partirebbe con la lingua dell'interfaccia — senza che
+    // _validateLanguage() possa avvisare, perche' avvisa solo su 'assumed'.
     const _codeTr=(d.language||'').split('-')[0].toLowerCase();
     if(_codeTr&&voices[_codeTr]){
-      bookLangState={code:_codeTr,source:'metadata'};
+      bookLangState={code:_codeTr,source:'forced'};
     }else{
       bookLangState={code:(voices&&voices[cl])?cl:_primaLinguaCatalogo(),source:'assumed'};
     }
