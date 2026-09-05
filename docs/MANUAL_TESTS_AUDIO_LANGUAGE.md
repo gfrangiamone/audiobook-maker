@@ -86,38 +86,59 @@ e dal DOM in `templates/_fragments/html_head.html` — non parafrasi.
 ## 6. Forzatura, andata e ritorno
 
 1. EPUB italiano, tab «★ Voci PREMIUM», modello «Audiobook Maker
-   (VOXCPM2)». Clicca l'icona ⚙ accanto alla riga della lingua, apri il
-   modale «Forza la lingua del libro», scegli «Svedese» dall'elenco, clicca
-   «Conferma».
+   (VOXCPM2)». Clicca il bottone ⚙ «Cambia» accanto alla riga della lingua,
+   apri il modale «Forza la lingua del libro», scegli «Svedese» dall'elenco,
+   clicca «Conferma».
    → _atteso: il tab «★ Voci PREMIUM» si disabilita con l'avviso «Le voci
    PREMIUM non sono disponibili in Svedese.», l'app torna sul tab «Voci
    Standard (gratis)», e sotto la riga della lingua compare la nota:
-   «Lingua impostata su Svedese. Modello e voce riportati al valore
-   predefinito.»
-   Due frasi in tutto, e la frase sulla voce NON si ripete: «Modello e voce
-   riportati al valore predefinito.» dice già che anche la voce è cambiata,
-   quindi `_showCascadeNote()` in `static/js/app.js` non accoda una seconda
-   volta la frase «Voce riportata al valore predefinito.» Se la leggi due
-   volte di seguito, è una regressione._
-2. Riapri il modale (⚙), scegli di nuovo «Italiano», clicca «Conferma».
+   «Lingua impostata su Svedese. Le voci PREMIUM non coprono questa lingua:
+   ora sei sulle Voci Standard. Voce impostata su <nome della voce svedese
+   scelta dalla cascata>.»
+   Ogni frase nomina il valore nuovo. Se ne leggi una che dice «riportato al
+   valore predefinito», è una regressione: quella formula descriveva il
+   codice e non diceva all'utente che cosa avesse in mano adesso._
+2. Senza toccare altro, guarda la riga della lingua.
+   → _atteso: accanto a ⚙ «Cambia» è comparso un secondo bottone, ↩ «Riporta
+   a Italiano». Sul libro appena caricato non c'era: nasce solo quando la
+   lingua attiva è diversa da quella che il libro dichiara._
+3. Riapri il modale (⚙), scegli «Tedesco», conferma, e guarda di nuovo il
+   bottone di ritorno.
+   → _atteso: dice ancora ↩ «Riporta a Italiano», non «Riporta a Svedese».
+   Non è un «annulla l'ultima scelta»: riporta alla lingua dichiarata dal
+   libro, qualunque giro di forzature tu abbia fatto nel frattempo._
+4. Clicca ↩ «Riporta a Italiano».
+   → _atteso: la lingua torna «Italiano», la provenienza torna a dire «dai
+   metadati» (non «impostata da te»), il pulsante «★ Voci PREMIUM» torna
+   cliccabile e il bottone ↩ sparisce. Voce e modello si rifanno dalla
+   cascata come su un libro italiano appena caricato._
+5. Ripeti il punto 1 su un file di cui la riga della lingua dice «lingua
+   ipotizzata» (nessun metadato, testo troppo corto per il riconoscimento).
+   → _atteso: dopo la forzatura il bottone ↩ NON compare. Non c'è nessuna
+   «lingua del libro» a cui tornare: quella di partenza l'aveva tirata a
+   indovinare l'app, e un bottone che promettesse di ripristinarla starebbe
+   promettendo un dato che non esiste._
+6. Riapri il modale (⚙) sul libro del punto 4, scegli di nuovo «Italiano»,
+   clicca «Conferma».
    → _atteso: il pulsante «★ Voci PREMIUM» torna cliccabile (non più
    attenuato) — resta comunque sul tab «Voci Standard (gratis)» finché non
    lo clicchi tu, la forzatura non ci riporta automaticamente su PREMIUM.
    La riga della lingua ora mostra «impostata da te» al posto di «dai
-   metadati»._
+   metadati», e il bottone ↩ non c'è: la lingua attiva e quella del libro
+   coincidono, anche se ci sei arrivato forzandola._
 
 ## 7. Preservazione del modello
 
-1. EPUB italiano, tab «★ Voci PREMIUM», modello «Avanzato». Forza il
+1. EPUB italiano, tab «★ Voci PREMIUM», modello «Gemini 3.1 TTS». Forza il
    francese con lo stesso modale del punto 6.
-   → _atteso: il menu MODELLO resta su «Avanzato» — esiste anche in
+   → _atteso: il menu MODELLO resta su «Gemini 3.1 TTS» — esiste anche in
    francese. La riga della lingua dice «Francese» / «impostata da te». La
    nota sotto dice soltanto «Lingua impostata su Francese.» — non compare la
    frase sul modello, perché il modello non è cambiato, e non compare
    nemmeno quella sulla voce: l'unica voce reimpostata è quella del tab
    «Voci Standard (gratis)», che in questo momento non stai guardando, e la
    nota parla solo del tab che hai davanti. La voce PREMIUM invece resta
-   quella che avevi scelto: le voci del modello «Avanzato» sono le stesse in
+   quella che avevi scelto: le voci del modello «Gemini 3.1 TTS» sono le stesse in
    tutte le lingue._
 2. Senza forzare altro, clicca il tab «Voci Standard (gratis)» e guarda il
    menu VOCE.

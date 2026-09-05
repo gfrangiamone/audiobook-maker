@@ -846,6 +846,12 @@ function _showPremiumMaintenanceModal(){
    'forced' e' la correzione manuale. */
 let bookLangState={code:'',source:'unknown'};
 
+/* La lingua che il LIBRO dichiara, quando e' accertata ('metadata' o
+   'detected'). E' l'unico valore a cui #restoreLangBtn puo' riportare:
+   se il libro non l'aveva e l'app ha tirato a indovinare, non c'e'
+   niente a cui tornare e il bottone non compare. */
+let _langDalLibro=null;
+
 function _langLabel(code){
   if(L[cl]&&L[cl].langs&&L[cl].langs[code])return L[cl].langs[code];
   if(L['en']&&L['en'].langs&&L['en'].langs[code])return L['en'].langs[code];
@@ -877,8 +883,12 @@ function initBookLanguage(){
   if(src==='unknown'||!code||!voices[code]){
     code=(voices&&voices[cl])?cl:_primaLinguaCatalogo();
     bookLangState={code:code,source:'assumed'};
+    _langDalLibro=null;
   }else{
     bookLangState={code:code,source:src};
+    // 'forced' arriva da una scelta gia' fatta dall'utente: non e' un
+    // valore del libro a cui offrirgli di tornare.
+    _langDalLibro=(src==='forced')?null:{code:code,source:src};
   }
   applyBookLanguage();
 }
@@ -915,6 +925,19 @@ function applyBookLanguage(){
   if(sr){
     sr.textContent=t('lang_src_'+bookLangState.source)||'';
     sr.classList.toggle('is-warn',bookLangState.source==='assumed');
+  }
+  /* Il ritorno alla lingua del libro esiste solo se il libro una lingua
+     la dichiarava e se non e' gia' quella attiva. */
+  const rb=document.getElementById('restoreLangBtn');
+  if(rb){
+    const daRipristinare=!!(_langDalLibro
+                            &&_langDalLibro.code!==bookLangState.code);
+    rb.hidden=!daRipristinare;
+    const et=document.getElementById('restoreLangLabel');
+    if(daRipristinare&&et){
+      et.textContent=(t('restore_lang_btn')||'')
+        .replace('{lang}',_langLabel(_langDalLibro.code));
+    }
   }
 
   // Tab PREMIUM: spento con il motivo, se la lingua non ha voci a pagamento.
@@ -989,7 +1012,7 @@ function applyBookLanguage(){
     }
   }
 
-  _showCascadeNote(esito.changes,linguaCambiata);
+  _showCascadeNote(esito,linguaCambiata);
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
 }
 
@@ -1037,6 +1060,19 @@ function _renderStandardVoices(std){
   _updateVoiceChip();
 }
 
+/* Il nome che l'utente legge nella tendina, a partire dall'id che la
+   cascata ha scelto. Si guarda prima nella lista del tab da cui viene il
+   cambiamento; l'id, se non si trova, e' un ripiego onesto e visibile. */
+function _nomeVoce(esito,c){
+  const prem=(esito&&esito.premium&&esito.premium.voices)||[];
+  const std=(esito&&esito.standard&&esito.standard.voices)||[];
+  const liste=c.dove==='premium'?[prem,std]:[std,prem];
+  for(const lista of liste){
+    for(const v of lista){if(v&&v.id===c.to)return v.name||v.id;}
+  }
+  return c.to;
+}
+
 /* La nota di cosa e' cambiato. L'elenco arriva dalla cascata: non si
    ricostruisce con confronti sparsi.
 
@@ -1045,12 +1081,15 @@ function _renderStandardVoices(std){
      porta `dove` ('standard' | 'premium' | '' = entrambi): annunciare il
      reset della voce Standard a chi guarda il tab PREMIUM significa parlargli
      di un controllo che non e' sullo schermo;
-   - note_model_reset dice gia' «Modello E VOCE riportati al valore
-     predefinito»: quando c'e' quella, la frase sulla voce si ripeterebbe. */
-function _showCascadeNote(changes,linguaCambiata){
+   - ogni frase DICE IL VALORE nuovo, non che c'e' stato un ripristino.
+     «Riportato al valore predefinito» descrive il codice: chi legge vuole
+     sapere quale voce ha adesso, e le frasi cosi' scritte non si ripetono
+     fra loro perche' ognuna nomina una cosa diversa. */
+function _showCascadeNote(esito,linguaCambiata){
   const box=document.getElementById('cascadeNote');
   if(!box)return;
-  if(!changes||!changes.length){box.hidden=true;box.textContent='';return;}
+  const changes=(esito&&esito.changes)||[];
+  if(!changes.length){box.hidden=true;box.textContent='';return;}
   const tabVisto=(wizardState&&wizardState.audioTab)||'standard';
   const qui=c=>!c.dove||c.dove===tabVisto;
   const pezzi=[];
@@ -1060,12 +1099,24 @@ function _showCascadeNote(changes,linguaCambiata){
   if(linguaCambiata){
     pezzi.push((t('note_lang_set')||'').replace('{lang}',_langLabel(bookLangState.code)));
   }
-  if(changes.some(c=>c.what==='tab'||c.what==='model')){
-    pezzi.push(t('note_model_reset'));
-  }else if(changes.some(c=>c.what==='voice'&&qui(c))){
-    pezzi.push(t('note_voice_reset'));
+  /* Il tab e' cambiato sotto i piedi: si dice prima di parlare dei
+     controlli che stanno dentro. */
+  if(changes.some(c=>c.what==='tab'))pezzi.push(t('note_tab_std'));
+  /* Senza voci premium il modello nuovo e' la stringa vuota: annunciare
+     «modello impostato su niente» sarebbe peggio del silenzio. */
+  const cModello=changes.find(c=>c.what==='model'&&c.to);
+  if(cModello){
+    pezzi.push((t('note_model_set')||'').replace('{model}',_modelLabel(cModello.to)));
   }
-  if(changes.some(c=>c.what==='accent'&&qui(c)))pezzi.push(t('note_accent_reset'));
+  const cVoce=changes.find(c=>c.what==='voice'&&qui(c));
+  if(cVoce){
+    pezzi.push((t('note_voice_set')||'').replace('{voice}',_nomeVoce(esito,cVoce)));
+  }
+  const cAccento=changes.find(c=>c.what==='accent'&&qui(c));
+  if(cAccento){
+    pezzi.push((t('note_accent_set')||'')
+      .replace('{accent}',_voxcpmLocaleLabel(cAccento.to)));
+  }
   /* Cambiamenti tutti nell'altro tab: niente da dire, e un riquadro vuoto
      sarebbe peggio del silenzio. */
   if(!pezzi.length){box.hidden=true;box.textContent='';return;}
@@ -1111,6 +1162,16 @@ function confirmForceLang(){
   bookLangState={code:scelta,source:'forced'};
   _rememberLastLang(scelta);
   applyBookLanguage();   // preserva il preservabile e scrive la nota
+}
+
+/* L'uscita dalla forzatura. Non annulla l'ultima scelta: riporta alla
+   lingua che il libro dichiara, qualunque sia il giro di forzature fatto
+   nel frattempo, e con essa la provenienza che aveva. */
+function restoreBookLang(){
+  if(!_langDalLibro||_langDalLibro.code===bookLangState.code)return;
+  bookLangState={code:_langDalLibro.code,source:_langDalLibro.source};
+  _rememberLastLang(_langDalLibro.code);
+  applyBookLanguage();
 }
 
 function _isGeminiVoice(id){return id&&id.startsWith('gemini:')}
@@ -2973,6 +3034,9 @@ async function adoptTranslation(){
     }else{
       bookLangState={code:(voices&&voices[cl])?cl:_primaLinguaCatalogo(),source:'assumed'};
     }
+    // Il testo ADESSO e' in quella lingua: la lingua di partenza non e'
+    // piu' un posto dove tornare, e il bottone di ritorno mentirebbe.
+    _langDalLibro=null;
     applyBookLanguage();
   }catch(e){alert('Error: '+e.message)}
 }

@@ -143,3 +143,96 @@ def test_confirmForceLang_scrive_source_forced_e_propaga():
         "confirmForceLang non ricorda piu' l'ultima lingua scelta"
     assert "applyBookLanguage()" in corpo, \
         "confirmForceLang non richiama piu' la cascata: la nota non si aggiornerebbe"
+
+
+# ── Il ritorno alla lingua dichiarata dal libro ──
+
+# Richiesta dell'utente del 05/09/2026: dire «riportata al valore
+# predefinito» non basta, il ritorno dev'essere una cosa su cui si clicca,
+# e dev'essere li' per tutto il tempo in cui la lingua resta forzata.
+
+def test_le_chiavi_del_ritorno_sono_in_tutti_i_locali():
+    for chiave in ("restore_lang_btn", "tip_restore_lang"):
+        n = len(re.findall(r'\b%s\s*:' % chiave, I18N))
+        assert n == len(LOCALI), \
+            "%s definita %d volte, attese %d (una per locale)" % (chiave, n, len(LOCALI))
+
+
+def test_l_etichetta_del_ritorno_nomina_la_lingua():
+    """«Riporta a Francese» dice dove si va; «Riporta» da solo no."""
+    valori = re.findall(r'\brestore_lang_btn\s*:\s*"([^"]*)"', I18N)
+    assert len(valori) == len(LOCALI)
+    for valore in valori:
+        assert "{lang}" in valore, \
+            "restore_lang_btn non nomina piu' la lingua: %r" % valore
+
+
+def test_il_bottone_di_ritorno_nasce_nascosto_e_chiama_restoreBookLang():
+    """L'etichetta la scrive applyBookLanguage(), perche' contiene il nome
+    della lingua: un `data-t` la riscriverebbe a ogni cambio di lingua
+    dell'interfaccia, segnaposto compreso."""
+    tag = _tag_con_id(HTML, "restoreLangBtn")
+    assert re.search(r"\bhidden\b", tag), \
+        "#restoreLangBtn non nasce nascosto: comparirebbe su ogni libro"
+    assert 'onclick="restoreBookLang()"' in tag, "#restoreLangBtn non e' cliccabile"
+    assert 'data-t-title="tip_restore_lang"' in tag
+    assert "data-t=" not in tag, \
+        "l'etichetta di #restoreLangBtn viene riscritta da i18n: perderebbe il nome della lingua"
+
+
+def test_restoreBookLang_torna_alla_lingua_del_libro_non_alla_precedente():
+    """Non e' un «annulla»: dopo tre forzature di fila riporta comunque a
+    quella che il libro dichiara, con la provenienza che aveva."""
+    corpo = _estrai_funzione(APP_JS, "restoreBookLang")
+    assert re.search(
+        r"bookLangState=\{code:_langDalLibro\.code,source:_langDalLibro\.source\}",
+        corpo.replace(" ", "")
+    ), "restoreBookLang non ripristina piu' codice E provenienza del libro"
+    assert "_rememberLastLang(_langDalLibro.code)" in corpo, \
+        "restoreBookLang non ricorda la lingua ripristinata: il ricaricamento la riperderebbe"
+    assert "applyBookLanguage()" in corpo, \
+        "restoreBookLang non richiama la cascata: voce e modello resterebbero quelli della lingua forzata"
+
+
+def test_restoreBookLang_esce_se_non_c_e_niente_a_cui_tornare():
+    corpo = _estrai_funzione(APP_JS, "restoreBookLang").replace(" ", "")
+    assert re.search(
+        r"if\(!_langDalLibro\|\|_langDalLibro\.code===bookLangState\.code\)return;",
+        corpo
+    ), "manca (o e' cambiata) la guardia su «nessun valore del libro / gia' quello»"
+
+
+def test_una_lingua_indovinata_non_e_un_posto_dove_tornare():
+    """Il bottone promette la lingua «del libro»: offrirlo quando la lingua
+    l'ha tirata a indovinare l'app, o quando arriva da una forzatura
+    precedente, sarebbe una promessa falsa."""
+    corpo = _estrai_funzione(APP_JS, "initBookLanguage").replace(" ", "")
+    assert re.search(r"source:'assumed'\};\s*_langDalLibro=null;", corpo), \
+        "il ramo «lingua indovinata» non azzera piu' _langDalLibro"
+    assert re.search(r"_langDalLibro=\(src==='forced'\)\?null:", corpo), \
+        "una provenienza 'forced' viene offerta come lingua del libro"
+
+
+def test_una_traduzione_adottata_cancella_il_ritorno():
+    """Dopo l'adozione il testo E' nell'altra lingua: tornare alla lingua di
+    partenza darebbe voci giuste per un testo che non c'e' piu'."""
+    corpo = _estrai_funzione(APP_JS, "adoptTranslation").replace(" ", "")
+    assert re.search(r"_langDalLibro=null;\s*applyBookLanguage\(\);", corpo), \
+        "adoptTranslation non cancella _langDalLibro prima di far girare la cascata"
+
+
+def test_il_bottone_si_mostra_solo_quando_c_e_una_lingua_del_libro_diversa():
+    """La visibilita' si ricalcola nella cascata, non al click del modale: la
+    lingua cambia anche dall'adozione di una traduzione e dal caricamento di
+    un altro libro."""
+    corpo = _estrai_funzione(APP_JS, "applyBookLanguage").replace(" ", "")
+    assert re.search(
+        r"rb\.hidden=!daRipristinare",
+        corpo
+    ), "applyBookLanguage non decide piu' la visibilita' di #restoreLangBtn"
+    assert re.search(
+        r"daRipristinare=!!\(_langDalLibro\s*&&_langDalLibro\.code!==bookLangState\.code\)",
+        corpo
+    ), "la condizione di visibilita' del ritorno non e' piu' «il libro ne dichiara una diversa»"
+    assert "replace('{lang}',_langLabel(_langDalLibro.code))" in corpo, \
+        "l'etichetta del ritorno non nomina piu' la lingua del libro"

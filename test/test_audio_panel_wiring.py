@@ -208,9 +208,10 @@ def test_le_etichette_dei_modelli_esistono_in_tutti_i_locali():
 CHIAVI_PANNELLO_AUDIO = (
     "lang_src_assumed", "lang_src_detected", "lang_src_forced",
     "lang_src_metadata", "lbl_accent_std", "lbl_book_lang",
-    "note_accent_reset", "note_lang_set", "note_model_reset",
-    "note_voice_reset", "premium_no_lang", "tip_force_lang",
-    "force_lang_change",
+    "note_accent_set", "note_lang_set", "note_model_set",
+    "note_tab_std", "note_voice_set", "premium_no_lang",
+    "tip_force_lang", "force_lang_change",
+    "restore_lang_btn", "tip_restore_lang",
 )
 
 
@@ -394,19 +395,40 @@ def test_l_avviso_di_lingua_non_compare_su_un_tab_che_non_c_e():
 
 # ── D2/D3: la nota parla del tab che l'utente guarda, e non si ripete ──
 
-def test_la_nota_non_ripete_la_frase_sulla_voce():
-    """note_model_reset dice gia' «Modello E VOCE riportati al valore
-    predefinito»: con tre `if` indipendenti l'utente legge due volte che la
-    voce e' stata reimpostata."""
-    corpo = _corpo("_showCascadeNote")
-    assert re.search(r"note_model_reset[^;]*;\s*\}\s*else\s+if", corpo), (
-        "la frase sulla voce non e' in un ramo `else`: si ripete quando "
-        "note_model_reset l'ha gia' detto"
-    )
+# Ogni frase della nota porta il segnaposto del valore che annuncia. E' la
+# richiesta dell'utente del 05/09/2026: «Voce riportata al valore
+# predefinito» descrive il codice, non dice quale voce si ha adesso. E'
+# anche cio' che impedisce alle frasi di ripetersi fra loro, ora che sono
+# `if` indipendenti: ognuna nomina una cosa diversa.
+SEGNAPOSTO_NOTE = {
+    "note_lang_set": "{lang}",
+    "note_model_set": "{model}",
+    "note_voice_set": "{voice}",
+    "note_accent_set": "{accent}",
+}
+
+
+def test_ogni_frase_della_nota_nomina_il_valore_nuovo():
+    """Il segnaposto va difeso in due punti: nella stringa tradotta e nella
+    sostituzione. Se manca nella traduzione di un locale, la a capo di quella
+    lingua legge una frase monca; se manca nel codice, l'utente legge
+    «{voice}» a schermo."""
+    for chiave, segnaposto in SEGNAPOSTO_NOTE.items():
+        valori = re.findall(r'\b%s\s*:\s*"([^"]*)"' % chiave, I18N)
+        assert len(valori) == len(LOCALI), \
+            "%s definita in %d locali su %d" % (chiave, len(valori), len(LOCALI))
+        for valore in valori:
+            assert segnaposto in valore, \
+                "%s non nomina piu' il valore: %r" % (chiave, valore)
+    piatto = _codice(_corpo("_showCascadeNote"))
+    for chiave, segnaposto in SEGNAPOSTO_NOTE.items():
+        atteso = "t('%s')||'').replace('%s'" % (chiave, segnaposto)
+        assert atteso in piatto, \
+            "_showCascadeNote non sostituisce piu' %s in %s" % (segnaposto, chiave)
 
 
 def test_la_nota_parla_del_tab_che_l_utente_guarda():
-    """Il reset di una voce che sta nell'altro tab e' l'annuncio di un cambio
+    """Una voce che sta nell'altro tab e' l'annuncio di un cambio
     che l'utente non vede: la nota deve filtrare per wizardState.audioTab.
 
     Definire il filtro non basta: va APPLICATO. Gli assert sotto ritagliano la
@@ -426,10 +448,10 @@ def test_la_nota_parla_del_tab_che_l_utente_guarda():
         "il predicato non confronta piu' il tab di provenienza del cambiamento "
         "con il tab attivo: %r" % corpo_pred
     )
-    for chiave in ("note_voice_reset", "note_accent_reset"):
+    for chiave in ("note_voice_set", "note_accent_set"):
         posizione = piatto.index("t('" + chiave + "')")
-        inizio = piatto.rfind("changes.some(", 0, posizione)
-        assert inizio != -1, "%s non e' piu' deciso da changes.some(): %s" % (chiave, piatto)
+        inizio = piatto.rfind("changes.find(", 0, posizione)
+        assert inizio != -1, "%s non e' piu' deciso da changes.find(): %s" % (chiave, piatto)
         condizione = piatto[inizio:posizione]
         assert predicato + "(" + parametro + ")" in condizione, (
             "%s viene mostrata senza filtrare sul tab attivo: annuncerebbe il "

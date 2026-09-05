@@ -390,6 +390,13 @@ __REVIEWS_LD__
                 data-t-title="tip_force_lang" aria-haspopup="dialog"
                 onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
                 data-t="force_lang_change"></span></button>
+        <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
+             applyBookLanguage() lo mostra solo quando c'e' davvero un valore
+             del libro diverso da quello attivo, e ne scrive l'etichetta. -->
+        <button type="button" id="restoreLangBtn" class="icon-btn" hidden
+                data-t-title="tip_restore_lang"
+                onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
+                id="restoreLangLabel"></span></button>
       </div>
       <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
