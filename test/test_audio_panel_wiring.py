@@ -488,6 +488,59 @@ def test_i_ripieghi_delle_etichette_sono_gli_stessi_nomi():
         "ripieghi di _modelLabel disallineati dai nomi mostrati: %s" % sorted(ripieghi)
 
 
+def _con_definizioni(cond, piatto):
+    """`cond` piu' il corpo delle `const` che nomina.
+
+    Un assert sulla condizione non deve cadere solo perche' un pezzo di
+    quella condizione e' stato messo in una variabile una riga sopra: e'
+    la stessa logica, scritta meglio."""
+    testo = cond
+    for nome in set(re.findall(r"[A-Za-z_]\w*", cond)):
+        d = re.search(r"(?:const|let|var)%s=([^;]+);" % re.escape(nome), piatto)
+        if d:
+            testo += ";" + d.group(1)
+    return testo
+
+
+def test_il_box_di_ascolto_non_esce_dal_tab_premium():
+    """#voxcpmSampleRow sta FUORI da #tabPremium (deve stare sotto lo slider
+    della velocita'), quindi `tabPremium.hidden` non lo nasconde. E
+    _onPremiumModelChanged() gira anche mentre l'utente guarda le Voci
+    Standard, perche' applyBookLanguage() la chiama a ogni giro di cascata:
+    decidere col solo modello fa comparire il box d'ascolto VOXCPM2 in mezzo
+    alle voci gratuite."""
+    piatto = _codice(_corpo("_onPremiumModelChanged"))
+    m = re.search(r"sampleRow\.hidden=([^;]+);", piatto)
+    assert m, "_onPremiumModelChanged non decide piu' la visibilita' del box d'ascolto"
+    cond = _con_definizioni(m.group(1), piatto)
+    assert "vox" in cond, \
+        "la visibilita' del box d'ascolto non guarda piu' il modello: %r" % cond
+    assert "audioTab==='premium'" in cond, (
+        "il box d'ascolto viene mostrato guardando solo il modello: comparirebbe "
+        "nel tab Voci Standard, dove VOXCPM2 non c'entra. Condizione: %r" % cond
+    )
+
+
+def test_la_nota_tace_sui_controlli_con_una_sola_opzione():
+    """applyBookLanguage() nasconde la riga del modello e quella
+    dell'accento quando c'e' una sola opzione. La nota deve tacere sulle
+    stesse: «Accento impostato su islandese (Islanda)» annuncia una scelta
+    che non e' stata una scelta, su una tendina che non e' sullo schermo.
+    """
+    piatto = _codice(_corpo("_showCascadeNote"))
+    for chiave, lista in (("note_model_set", "models"),
+                          ("note_accent_set", "accents")):
+        posizione = piatto.index("t('" + chiave + "')")
+        inizio = piatto.rfind("if(", 0, posizione)
+        assert inizio != -1, "%s non e' piu' dentro un if" % chiave
+        cond = _con_definizioni(piatto[inizio:posizione], piatto)
+        assert "." + lista in cond and ">1" in cond, (
+            "%s viene annunciata senza controllare quante opzioni ha la "
+            "tendina: la riga e' nascosta e la frase parla di un controllo "
+            "che l'utente non ha davanti. Condizione: %r" % (chiave, cond)
+        )
+
+
 # ── Un dropdown con una sola opzione non e' una scelta ──
 
 def test_l_accento_voxcpm_sparisce_quando_non_c_e_niente_da_scegliere():

@@ -1102,10 +1102,18 @@ function _showCascadeNote(esito,linguaCambiata){
   /* Il tab e' cambiato sotto i piedi: si dice prima di parlare dei
      controlli che stanno dentro. */
   if(changes.some(c=>c.what==='tab'))pezzi.push(t('note_tab_std'));
+  /* Una tendina con una sola opzione non e' sullo schermo:
+     applyBookLanguage() ne nasconde la riga, in entrambi i casi qui
+     sotto. Annunciarne il valore parlerebbe di un controllo che
+     l'utente non ha davanti, e di una scelta che non e' stata una
+     scelta: in islandese l'accento e' uno solo, «Accento impostato su
+     islandese (Islanda)» non dice niente a nessuno. */
+  const modelli=(esito&&esito.premium&&esito.premium.models)||[];
+  const accenti=(esito&&esito.standard&&esito.standard.accents)||[];
   /* Senza voci premium il modello nuovo e' la stringa vuota: annunciare
      «modello impostato su niente» sarebbe peggio del silenzio. */
   const cModello=changes.find(c=>c.what==='model'&&c.to);
-  if(cModello){
+  if(cModello&&modelli.length>1){
     pezzi.push((t('note_model_set')||'').replace('{model}',_modelLabel(cModello.to)));
   }
   const cVoce=changes.find(c=>c.what==='voice'&&qui(c));
@@ -1113,7 +1121,7 @@ function _showCascadeNote(esito,linguaCambiata){
     pezzi.push((t('note_voice_set')||'').replace('{voice}',_nomeVoce(esito,cVoce)));
   }
   const cAccento=changes.find(c=>c.what==='accent'&&qui(c));
-  if(cAccento){
+  if(cAccento&&accenti.length>1){
     pezzi.push((t('note_accent_set')||'')
       .replace('{accent}',_voxcpmLocaleLabel(cAccento.to)));
   }
@@ -1236,7 +1244,15 @@ function _onPremiumModelChanged(){
   // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  if(sampleRow)sampleRow.hidden=!vox;
+  /* Il box d'ascolto vive FUORI da #tabPremium (deve stare sotto lo
+     slider della velocita', che lo influenza): tabPremium.hidden non lo
+     copre. E questa funzione gira anche mentre l'utente guarda le Voci
+     Standard — applyBookLanguage() la chiama a ogni giro di cascata per
+     ricostruire i controlli premium — quindi il modello da solo non
+     basta a decidere: senza il tab, il box comparirebbe fra le voci
+     gratuite, che con VOXCPM2 non c'entrano niente. */
+  const inPremium=!!(wizardState&&wizardState.audioTab==='premium');
+  if(sampleRow)sampleRow.hidden=!(vox&&inPremium);
   if(vox){
     // La visibilita' della riga la decide _populateVoxcpmAccents(): con un
     // solo locale non c'e' niente da scegliere.
