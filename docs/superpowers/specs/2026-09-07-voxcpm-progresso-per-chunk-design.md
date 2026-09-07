@@ -88,16 +88,69 @@ risposte `/status` mentre lo stato è `IN_PROGRESS`. È il canale ufficiale:
 nessuna infrastruttura nuova, nessun costo per messaggio, nessuna chiave da
 ripulire.
 
-### 4.1 La sonda che viene prima di tutto
+### 4.1 Quel che la sonda ha misurato
 
-**Il campo esatto in cui RunPod espone il payload parziale va confermato su un
-job reale prima di scrivere il resto.** La sonda è un job `generate` da pochi
-chunk, con una `progress_update` in `_one` e la stampa integrale delle
-risposte `/status` lato client. Costa un'accensione di worker e qualche minuto.
+La sonda e' stata eseguita su job reali contro l'endpoint di produzione il
+2026-09-07. Le risposte qui sotto non sono attese: sono misure.
 
-Esito atteso: il payload sotto `output`. Se il payload non arriva affatto, si
-ripiega sul **piano B** (§9) senza aver scritto né il plumbing del client né
-quello della barra.
+**Il payload parziale arriva, sotto `output`.** Durante `IN_PROGRESS`,
+`GET /v2/<endpoint>/status/<job_id>` restituisce esattamente cio' che il worker
+ha pubblicato:
+
+```
+t+41.8s  IN_PROGRESS  {"output": {"chunks_done": 0, "chunks_total": 8,
+                                  "phase": "generate"}, "status": "IN_PROGRESS"}
+t+44.5s  IN_PROGRESS  {"output": {"chunks_done": 8, "chunks_total": 8,
+                                  "phase": "verify"},   "status": "IN_PROGRESS"}
+t+49.5s  IN_PROGRESS  {"output": {"chunks_done": 8, "chunks_total": 8,
+                                  "phase": "deliver"},  "status": "IN_PROGRESS"}
+```
+
+Il piano B (§9) resta scritto ma non serve.
+
+**La POST vuole l'`Authorization`, e nessuno lo dice.** `progress_update`
+dell'SDK posta su `JOB_DONE_URL` attraverso una sessione aiohttp che porta gia'
+`Authorization: <RUNPOD_AI_API_KEY>` (valore nudo, senza `Bearer`), messa li' da
+`runpod/http_client.py::get_auth_header()`. Un pubblicatore che rifa' la POST a
+mano senza quell'header riceve **401** e non pubblica niente: misurato, sei POST
+rifiutate in silenzio, con la barra ferma e nessun errore visibile al chiamante.
+Chi scrive il codice definitivo copi gli header dell'SDK, non solo l'URL.
+
+**Il job non resta appeso.** Con il pubblicatore chiuso e atteso *prima* che la
+risposta parta, tutte le corse sono finite `COMPLETED`. E' la difesa contro
+runpod-python#250 (§9): un aggiornamento che arriva dopo il risultato riporta il
+job a `IN_PROGRESS` e ce lo lascia, e per noi vorrebbe dire `tetto_exec`,
+`VoxcpmBloccato`, capitolo rigenerato e GPU pagata due volte.
+
+**Il thread pubblicatore non muore di fame.** In un job da ~130s ha fatto 60
+giri regolari a passo di 2s: il ciclo che alimenta la GPU non lo soffoca, e non
+serve nessun accorgimento sul GIL.
+
+#### 4.1.1 I chunk chiudono a ondate, non a goccia
+
+```
+chunk chiusi a : 123.44  123.48 | 125.12  125.29 | 126.53  126.70 | 127.99  128.10
+```
+
+Otto chunk con `concurrency=2`: quattro ondate da due, a ~1,5s l'una dall'altra.
+La granularita' vera dell'avanzamento e' **l'ondata, cioe' `concurrency`**, non
+il singolo chunk. In produzione `ABM_VOXCPM_CONCURRENCY=24`, quindi un capitolo
+da 30 chunk avanza in **due scatti**, non in trenta passi. La barra sara' molto
+piu' informativa di adesso, ma non fluida: il design promette scatti piu' fitti
+del capitolo, non una progressione continua.
+
+#### 4.1.2 Il tratto piu' lungo non e' la generazione
+
+Nella stessa corsa, il primo chunk si e' chiuso a **t+123s** su un job di
+~130s: gli otto chunk sono usciti tutti negli ultimi cinque secondi. I 123
+secondi precedenti sono l'avvio del motore su worker freddo — il log del worker
+lo conferma (`pool pronto in 118.4s`).
+
+Ne segue un vincolo che la §4.2 recepisce: **se il worker pubblica solo
+`chunks_done/chunks_total`, su worker freddo l'utente vede la barra ferma a zero
+per due minuti** — lo stesso difetto che questo lavoro deve togliere, spostato
+di un livello. Il worker deve dichiarare la fase di avvio *prima* che esista un
+solo chunk, e il messaggio deve dirla.
 
 ### 4.2 Forma del payload
 
@@ -105,13 +158,19 @@ quello della barra.
 {"phase": "generate", "chunks_done": 47, "chunks_total": 96}
 ```
 
-`phase` assume tre valori, nell'ordine in cui il worker li attraversa:
+`phase` assume quattro valori, nell'ordine in cui il worker li attraversa:
 
 | `phase`    | quando                                                   |
 |------------|----------------------------------------------------------|
+| `warmup`   | il motore si carica: nessun chunk esiste ancora           |
 | `generate` | il ciclo che alimenta la GPU, un evento per chunk chiuso  |
 | `verify`   | i giri di rigenerazione delle code tagliate               |
 | `deliver`  | l'upload dell'audio su R2                                 |
+
+`warmup` non e' un di piu': su worker freddo dura piu' di tutto il resto messo
+insieme (§4.1.2), e va pubblicato appena il job viene preso in carico, prima
+che il pool sia pronto. In quella fase `chunks_done` vale 0 e `chunks_total` e'
+gia' noto, cosi' il client sa quante frasi arriveranno.
 
 Il payload è additivo e autodescrittivo: un consumatore che non lo riconosce
 lo ignora, e nulla di ciò che esiste oggi cambia forma.
@@ -140,11 +199,25 @@ or ""))` (handler.py:1837) tiene solo l'id, perché serviva alla chiave S3.
 - **Si autodisattiva.** `getattr(runpod.serverless, "progress_update", None)`;
   se manca, `_pubblica` diventa un no-op. Un'immagine con un SDK più vecchio
   continua a funzionare esattamente come oggi.
+- **Porta l'`Authorization` dell'SDK.** Se la pubblicazione non passa per
+  `progress_update` ma rifa' la POST, deve copiare gli header di
+  `runpod/http_client.py::get_auth_header()`: senza, l'endpoint risponde 401 e
+  la barra resta ferma senza che nessuno se ne accorga (§4.1).
 
-**I punti di chiamata.** In `_one`, dopo `results[i] = y` e dopo
-`caduti.append(i)` — un chunk caduto è comunque un chunk chiuso, e il silenzio
-di un secondo che il worker mette al suo posto occupa la sua fetta di capitolo
-come gli altri. Il contatore è un intero incrementato da coroutine dello stesso
+**Un thread, non le coroutine.** La sonda ha mostrato che pubblicare dal ciclo
+di generazione non basta: un pubblicatore a passo fisso su un thread proprio ha
+retto 60 giri in 130 secondi senza disturbare la GPU (§4.1), e soprattutto e'
+l'unico modo di far uscire l'avanzamento durante il `warmup`, quando nessuna
+coroutine di generazione e' ancora partita. Il thread legge un contatore e una
+fase sotto lock e pubblica solo quando la riga cambia; `chiudi()` lo ferma e lo
+**aspetta** prima che la risposta del job parta, che e' la difesa contro #250.
+
+**I punti di chiamata.** Una pubblicazione `warmup` appena il job e' preso in
+carico, prima del caricamento del pool: e' il tratto piu' lungo di tutti
+(§4.1.2) e oggi e' completamente muto. Poi in `_one`, dopo `results[i] = y` e
+dopo `caduti.append(i)` — un chunk caduto è comunque un chunk chiuso, e il
+silenzio di un secondo che il worker mette al suo posto occupa la sua fetta di
+capitolo come gli altri. Il contatore è un intero incrementato da coroutine dello stesso
 event loop, mai da thread diversi: non serve altra sincronizzazione. Poi una
 pubblicazione `verify` all'inizio dei giri di rigenerazione, e una `deliver`
 prima dell'upload.
@@ -252,6 +325,20 @@ Quando **tutti** i capitoli in volo hanno smesso di generare, il testo diventa:
 Sintesi vocale: 3 di 12 capitoli (rifinitura e consegna)
 ```
 
+E finche' **tutti** i capitoli in volo sono in `warmup` — nessun chunk ancora
+prodotto da nessuno — il testo dice quello che sta davvero succedendo:
+
+```
+Sintesi vocale: 3 di 12 capitoli (preparazione del motore vocale)
+```
+
+Non e' cosmesi: su worker freddo questa fase dura oltre due minuti (§4.1.2), ed
+e' proprio il tratto in cui oggi l'utente non ha alcun segno di vita. Vale la
+stessa regola di «tutti» della rifinitura, e per la stessa ragione: con due job
+paralleli in fasi diverse, alternare i messaggi darebbe un lampeggio senza
+informazione. La precedenza, quando le fasi si mescolano, e' al conteggio delle
+frasi: appena **un** capitolo in volo genera, il messaggio torna a contarle.
+
 «In volo» ha qui un significato preciso: i capitoli che hanno **un `ci` in
 `fasi` e non ancora uno in `consegnati`**, cioè quelli per cui almeno un
 avanzamento è arrivato e la future non è ancora tornata. I capitoli ancora in
@@ -295,6 +382,8 @@ niente: in quel caso `on_progress` non viene nemmeno costruito, e
 8. Il messaggio contiene capitoli e frasi nella forma del §7.3, e passa a
    «rifinitura e consegna» solo quando tutti i capitoli in volo hanno smesso di
    generare.
+8bis. Con tutti i capitoli in volo in `warmup` il messaggio dice «preparazione
+   del motore vocale»; appena **uno** genera, torna al conteggio delle frasi.
 9. A fine pre-pass `progress_current` vale quello di oggi: la modifica non
    sposta il punto d'arrivo, solo la strada.
 10. `peso_barra = 0` non scrive né `progress_current` né `progress_message`.
@@ -306,16 +395,24 @@ niente: in quel caso `on_progress` non viene nemmeno costruito, e
 **Worker — `abm-voxcpm-worker/tools/test_progress.py` (nuovo, senza GPU)**
 
 13. Con `progress_update` sostituita da un doppio, la sequenza delle fasi è
-    `generate…` → `verify` → `deliver`.
+    `warmup` → `generate…` → `verify` → `deliver`.
+13bis. La riga `warmup` esce **prima** che il pool sia pronto, non dopo: e' il
+    tratto piu' lungo del job su worker freddo (§4.1.2), e un test che si
+    limitasse all'ordine non lo distinguerebbe da una `warmup` pubblicata
+    tardi.
 14. Il freno rispetta `VOXCPM_PROGRESS_MIN_S`, e l'ultimo evento di ogni fase
     passa comunque.
 15. `VOXCPM_PROGRESS_MIN_S=0` non pubblica nulla.
 16. Un `progress_update` che solleva non fa fallire `_action_generate`, e il
     dizionario finale è identico a quello senza pubblicazione.
+17. `chiudi()` aspetta il thread: dopo il ritorno nessuna pubblicazione puo'
+    partire. E' il test che protegge da runpod-python#250, cioe' dal job che
+    resta appeso e fa pagare la GPU due volte.
 
 **Collaudo manuale** — una voce nuova in `docs/MANUAL_TESTS_VOXCPM.md`: libro
 da almeno tre capitoli, barra osservata per l'intera sintesi, conteggio frasi
-che cresce e non arretra mai, messaggio di rifinitura visibile, e il valore a
+che cresce e non arretra mai, messaggio di preparazione visibile all'avvio a
+freddo e messaggio di rifinitura visibile in fondo, e il valore a
 fine sintesi che coincide con quello delle generazioni precedenti.
 
 ## 9. Compatibilità, deploy, piano B
@@ -332,7 +429,12 @@ Il deploy dell'immagine può quindi precedere o seguire il rilascio di ABM in
 qualunque ordine, e `ABM_VOXCPM_PROGRESS=0` è l'interruttore che riporta tutto
 indietro senza toccare la GPU.
 
-**Piano B, se la sonda del §4.1 dice di no.** Il worker scrive un piccolo JSON
+**Il piano B non serve.** La sonda (§4.1) ha misurato il payload parziale in
+arrivo sotto `output`: si implementa il canale RunPod. Quel che segue resta
+scritto solo come ricaduta, se un domani RunPod smettesse di rimandare indietro
+gli aggiornamenti.
+
+Il worker scriverebbe un piccolo JSON
 su una chiave R2 (`voxcpm/<job_id>/progress.json`) ogni `VOXCPM_PROGRESS_MIN_S`
 secondi, e il client lo rilegge fra un poll e l'altro. Stesso payload, stessa
 barra, stessi test: cambia solo il trasporto. Costa una PUT ogni pochi secondi
