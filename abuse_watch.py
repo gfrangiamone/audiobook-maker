@@ -432,7 +432,11 @@ def needs_judgement(group, cid="", group_data=None):
     if v is None:
         return n_sig >= 2
     if v["verdict"] == "abuse" and cid and cid not in (v.get("cids") or []):
-        return True
+        # Sotto `scope=group` un cid *nato dopo* il verdetto e' gia' coperto da
+        # `_covered_by_group_scope`: rigiudicarlo ripaga la stessa domanda con
+        # un'altra chiamata LLM. Il 07/09/2026 un gruppo in rotazione ne ha
+        # innescate cinque identiche in 72 minuti.
+        return not _covered_by_group_scope(v, g, cid)
     if v["verdict"] == "clean":
         old = v.get("signals") or {}
         return any(sig[k] and not old.get(k) for k in sig)
@@ -508,14 +512,39 @@ def record_judgement_failed(group, reason=""):
         _save(d)
 
 
+def _covered_by_group_scope(v, g, cid):
+    """Vero se `cid` ricade in un verdetto `abuse` con `scope=group` pur non
+    essendo nella lista congelata al momento del giudizio.
+
+    `set_verdict` fotografa i cid noti e attivi: un cookie comparso *dopo* resta
+    fuori per sempre, anche quando il giudice ha stabilito che dietro l'intero
+    gruppo c'e' un attore solo. E' esattamente la rotazione che ha motivato la
+    condanna, quindi la estendiamo senza rigiudicare — l'LLM non ha nulla di
+    nuovo da valutare. Restano fuori i cid *preesistenti* al verdetto e non
+    attivi (vicini di NAT), che il taglio di `_GROUP_SCOPE_ACTIVE_SEC` aveva
+    deliberatamente escluso, e i cid mai visti (`first_ts` assente): chi arriva
+    su quel /24 senza precedenti nel dossier non e' rotazione dimostrata."""
+    if not cid or v.get("verdict") != "abuse" or v.get("scope") != "group":
+        return False
+    b = ((g or {}).get("cids") or {}).get(cid) or {}
+    try:
+        first = float(b.get("first_ts") or 0)
+        return first > 0 and first >= float(v.get("ts") or 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def is_blocked(group, cid):
-    """Vero solo con kill accesa, verdetto `abuse` valido sopra soglia e cid nello scope."""
+    """Vero solo con kill accesa, verdetto `abuse` valido sopra soglia e cid
+    nello scope — dove `scope=group` copre anche i cid nati dopo il verdetto."""
     if not cid or not kill_enabled():
         return False
-    v = verdict_for(group)
+    g = dossier(group)
+    v = _valid_verdict(g, time.time()) if g else None
     return bool(v and v["verdict"] == "abuse"
                 and float(v.get("confidence") or 0) >= confidence_threshold()
-                and cid in (v.get("cids") or []))
+                and (cid in (v.get("cids") or [])
+                     or _covered_by_group_scope(v, g, cid)))
 
 
 def clear_verdict(group):

@@ -131,7 +131,8 @@ def test_verdict_scope_cids_vs_group_and_new_cid(env):
     assert sorted(v["cids"]) == ["a", "b"]
     assert aw.is_blocked(g, "b") is True
     _gen(g, "c")
-    assert aw.is_blocked(g, "c") is False and aw.needs_judgement(g, "c") is True
+    # cid nato dopo un verdetto scope=group: coperto senza rigiudicare
+    assert aw.is_blocked(g, "c") is True and aw.needs_judgement(g, "c") is False
 
 
 def test_low_confidence_or_inconclusive_never_blocks(env):
@@ -387,3 +388,47 @@ def test_evasion_features_in_prompt_payload(env):
               "median_cid_lifespan_hours", "oldest_cid_age_hours",
               "admin_cleared_recently", "quota_evasion_evidence"):
         assert k in grp
+
+
+def test_group_scope_covers_cids_born_after_the_verdict(env, monkeypatch):
+    """Con `scope=group` la rotazione post-verdetto e' coperta senza una nuova
+    chiamata al giudice: e' il comportamento che ha motivato la condanna."""
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    _gen(g, "rotated")                                   # cookie nuovo dopo la condanna
+    assert aw.is_blocked(g, "rotated") is True
+    assert aw.needs_judgement(g, "rotated") is False     # nessun rigiudizio
+
+
+def test_group_scope_does_not_cover_unknown_or_preexisting_idle_cids(env, monkeypatch):
+    """Il vicino di NAT resta fuori: mai visto, oppure gia' presente e inattivo
+    quando `set_verdict` ha fotografato lo scope."""
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "idle")
+    aw.record_event(g, "idle", "quota_gate", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # idle ora e' stale
+    _gen(g, "active")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert v["cids"] == ["active"]
+    assert aw.is_blocked(g, "idle") is False             # preesistente e inattivo: escluso
+    assert aw.is_blocked(g, "mai-visto") is False        # nessun precedente nel dossier
+    assert aw.needs_judgement(g, "mai-visto") is True    # sconosciuto: si giudica
+
+
+def test_scope_cids_still_reopens_judgement_for_a_new_cid(env, monkeypatch):
+    """La soppressione vale solo per `scope=group`: con `scope=cids` il giudice
+    non si e' pronunciato sull'intero gruppo."""
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "cids", "cids": ["a"]})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    _gen(g, "b")
+    assert aw.is_blocked(g, "b") is False
+    assert aw.needs_judgement(g, "b") is True

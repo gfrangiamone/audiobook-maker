@@ -1085,6 +1085,20 @@ Un gruppo ripristinato da console porta `cleared_ts`: entro
 ripristino e lo rimanderebbero altrimenti in blocco al primo rigiudizio.
 Le stesse feature entrano nel payload del giudice (blocco `group` di
 `build_prompt`) con una regola esplicita nel `SYSTEM_PROMPT`.
+
+**Copertura dello scope `group`** (`abuse_watch._covered_by_group_scope`):
+`set_verdict` congela la lista dei cid attivi al momento del giudizio, quindi
+un cookie comparso *dopo* resterebbe fuori per sempre anche con
+`scope="group"`, cioè proprio quando il giudice ha stabilito che dietro il
+gruppo c'è un attore solo. Un cid il cui primo evento nel dossier è successivo
+al verdetto viene quindi bloccato **senza rigiudizio**: è la rotazione che ha
+motivato la condanna, l'LLM non ha nulla di nuovo da valutare. Restano fuori i
+cid preesistenti e inattivi (l'esclusione voluta di `_GROUP_SCOPE_ACTIVE_SEC`,
+vicini di NAT) e i cid mai visti, privi di `first_ts`: chi arriva su quel /24
+senza precedenti nel dossier non è rotazione dimostrata. Con `scope="cids"` il
+rigiudizio resta, perché il giudice non si è pronunciato sull'intero gruppo.
+Motivo: il 07/09/2026 un gruppo in rotazione ha innescato cinque giudizi
+identici in 72 minuti, tre dei quali su cookie creati pochi secondi prima.
 Motivo: il 06/09/2026 un utente reale (13 libri in 4 giorni, 2 cid stabili,
 modalità batch/email, zero `QUOTA_GATE` in assoluto) è stato bloccato perché
 il giudice vedeva solo volume e conteggio cid.
