@@ -3,8 +3,8 @@
   "catalog": "voci_inventate",
   "voice_count": 7,
   "languages": [
-    {"code": "it", "label": "italiano", "voices": 4, "locales": ["it-IT"]},
-    {"code": "en", "label": "inglese", "voices": 3, "locales": ["en-US", "en-GB"]}
+    {"code": "it", "label": "italiano", "voices": 4, "locales": ["it-IT"], "enabled": true},
+    {"code": "en", "label": "inglese", "voices": 3, "locales": ["en-US", "en-GB"], "enabled": true}
   ],
   "voices": [
     {

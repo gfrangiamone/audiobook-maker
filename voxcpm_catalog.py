@@ -117,11 +117,29 @@ def _normalize(raw):
     }
 
 
+def _lingue_attive(data):
+    """I codici lingua che il catalogo offre: `enabled` vero nel blocco
+    `languages`, e basta.
+
+    **Assente vuol dire spenta.** Il catalogo contiene piu' lingue di quante
+    ne siano collaudate: le voci di una lingua non attiva restano nel file ma
+    l'app non le mostra, non le lascia scegliere e non le accetta da un id
+    salvato. L'attivazione e' un atto deliberato nel repo del catalogo
+    (`tools/voice_prompts/lingue.py --attiva`), seguito dalla consegna della
+    cartella che ABM legge; qui si legge soltanto il risultato.
+    """
+    return {str(e.get("code") or "").strip()
+            for e in (data.get("languages") or [])
+            if isinstance(e, dict) and e.get("code") and e.get("enabled")}
+
+
 def _load():
-    """Legge e normalizza `voices.json`.
+    """Legge e normalizza `voices.json`, tenendo le sole lingue attive.
 
     Non solleva mai: catalogo assente o illeggibile significa motore non
-    disponibile, non app rotta (§9.4).
+    disponibile, non app rotta (§9.4). Anche un catalogo senza nemmeno una
+    lingua accesa vale motore assente: e' il comportamento voluto, non un
+    errore da segnalare all'utente.
     """
     path = os.path.join(catalog_dir(), "voices.json")
     try:
@@ -133,16 +151,28 @@ def _load():
     if not isinstance(data, dict):
         print(f"[voxcpm_catalog] voices.json è un {type(data).__name__}, atteso dict ({path})")
         return []
+    attive = _lingue_attive(data)
+    if not attive:
+        print(f"[voxcpm_catalog] nessuna lingua con `enabled` vero in {path}: "
+              f"nessuna voce offerta, il motore VoxCPM resta non disponibile")
+        return []
     out = []
+    spente = 0
     for raw in (data.get("voices") or []):
         try:
             rec = _normalize(raw)
-            if rec is not None:
-                out.append(rec)
+            if rec is None:
+                continue
+            if rec["lang"] not in attive:
+                spente += 1
+                continue
+            out.append(rec)
         except Exception as e:
             src_id = raw.get("id") if isinstance(raw, dict) else "<non-dict>"
             print(f"[voxcpm_catalog] voce scartata: {src_id} errore normalizzazione: {e}")
-    print(f"[voxcpm_catalog] {len(out)} voci caricate da {path}")
+    print(f"[voxcpm_catalog] {len(out)} voci caricate da {path} "
+          f"(lingue offerte: {', '.join(sorted(attive))}"
+          + (f"; {spente} voci di lingue non attive ignorate)" if spente else ")"))
     return out
 
 

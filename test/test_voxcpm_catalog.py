@@ -1,6 +1,6 @@
 """Lettura del catalogo di voci inventate VoxCPM.
 
-Il catalogo reale (`data/voci_inventate/voices.json`, 361 voci al 2026-08-28)
+Il catalogo reale (`voxcpm2/voci_inventate/voices.json`)
 e' una variabile indipendente: viene rigenerato mentre l'app evolve. Per D10 e
 la §12.1 della spec questa suite non lo apre mai — legge una fixture con la
 stessa forma e contenuto stabile.
@@ -104,6 +104,7 @@ def test_record_malformato_tra_validi_non_solleva(tmp_path, monkeypatch, capsys)
     # Un record con duration_s invalido non deve abbattere il catalogo intero
     import json
     data = {
+        "languages": [{"code": "it", "enabled": True}],
         "voices": [
             {
                 "id": "it-IT_m_buono", "name": "Buono", "name_is_invented": True,
@@ -213,6 +214,7 @@ def test_sample_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
     # poter servire file fuori dal catalogo.
     import json as _json
     cattivo = {
+        "languages": [{"code": "it", "enabled": True}],
         "voices": [{
             "id": "x_m_evasione", "name": "Evasione",
             "language": {"code": "it", "locale": "it-IT"},
@@ -289,6 +291,7 @@ def test_demo_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
     # percorso con .. non deve poter servire file fuori dal catalogo.
     import json as _json
     cattivo = {
+        "languages": [{"code": "it", "enabled": True}],
         "voices": [{
             "id": "x_m_evasione", "name": "Evasione",
             "language": {"code": "it", "locale": "it-IT"},
@@ -304,3 +307,79 @@ def test_demo_path_non_evade_dalla_cartella(tmp_path, monkeypatch):
     voxcpm_catalog.invalidate_cache()
     with pytest.raises(ValueError):
         voxcpm_catalog.demo_path("voxcpm:v2:it-IT/Evasione", "opening")
+# --- Le lingue offerte (`enabled` nel blocco `languages`) --------------
+
+
+def _catalogo(tmp_path, monkeypatch, lingue, locali=("it-IT", "en-GB")):
+    """Scrive un catalogo con due voci, una per locale, e ci punta il modulo.
+
+    `lingue` e' il blocco `languages` cosi' com'e': i test qui sotto lo
+    variano (flag acceso, spento, assente, blocco intero mancante).
+    """
+    import json as _json
+    voci = []
+    for loc in locali:
+        code = loc.split("-")[0]
+        voci.append({
+            "id": f"{loc}_f_voce", "name": f"Voce{code.upper()}",
+            "language": {"code": code, "locale": loc},
+            "gender": {"value": "f"},
+            "audio": {"file": f"{loc}/Voce.wav", "transcript": "testo",
+                      "duration_s": 12.0},
+            "description": {"persona": "warm-young", "role": "caldo"},
+        })
+    doc = {"voices": voci}
+    if lingue is not None:
+        doc["languages"] = lingue
+    (tmp_path / "voices.json").write_text(_json.dumps(doc), encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+
+
+def test_offre_le_sole_lingue_accese(tmp_path, monkeypatch):
+    # Il catalogo porta piu' lingue di quante ne siano collaudate: l'utente
+    # deve vedere solo quelle marcate `enabled` nel repo del catalogo.
+    _catalogo(tmp_path, monkeypatch, [{"code": "it", "enabled": True},
+                                      {"code": "en", "enabled": False}])
+    assert sorted(voxcpm_catalog.get_voices()) == ["it"]
+
+
+def test_lingua_senza_flag_e_spenta(tmp_path, monkeypatch):
+    # Assente vuol dire spenta: un lotto di voci nuove non si offre da solo.
+    _catalogo(tmp_path, monkeypatch, [{"code": "it", "enabled": True},
+                                      {"code": "en"}])
+    assert sorted(voxcpm_catalog.get_voices()) == ["it"]
+
+
+def test_id_di_lingua_spenta_rifiutato(tmp_path, monkeypatch):
+    # Un id salvato in un progetto vecchio, o un segnalibro, non deve poter
+    # riportare in gioco una lingua tolta dal selettore.
+    _catalogo(tmp_path, monkeypatch, [{"code": "it", "enabled": True},
+                                      {"code": "en", "enabled": False}])
+    assert voxcpm_catalog.parse_voice_id("voxcpm:v2:it-IT/VoceIT")["lang"] == "it"
+    with pytest.raises(ValueError):
+        voxcpm_catalog.parse_voice_id("voxcpm:v2:en-GB/VoceEN")
+
+
+def test_nessuna_lingua_accesa_nessuna_voce(tmp_path, monkeypatch, capsys):
+    # Zero lingue attive vale motore non disponibile (voxcpm_tts.is_available
+    # guarda proprio questa lista): comportamento voluto, ma scritto nel log.
+    _catalogo(tmp_path, monkeypatch, [{"code": "it"}, {"code": "en"}])
+    assert voxcpm_catalog.voices() == []
+    assert "nessuna lingua" in capsys.readouterr().out
+
+
+def test_senza_blocco_languages_nessuna_voce(tmp_path, monkeypatch, capsys):
+    # Un catalogo generato prima del flag non deve offrire tutto in blocco.
+    _catalogo(tmp_path, monkeypatch, None)
+    assert voxcpm_catalog.voices() == []
+    assert "nessuna lingua" in capsys.readouterr().out
+
+
+def test_voci_di_lingue_spente_contate_nel_log(tmp_path, monkeypatch, capsys):
+    _catalogo(tmp_path, monkeypatch, [{"code": "it", "enabled": True},
+                                      {"code": "en", "enabled": False}])
+    voxcpm_catalog.voices()
+    out = capsys.readouterr().out
+    assert "lingue offerte: it" in out
+    assert "1 voci di lingue non attive" in out
