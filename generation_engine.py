@@ -3469,10 +3469,17 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         istante fa.
         """
         in_volo = [ci for ci in fasi if ci not in consegnati]
-        frasi = sum(consegnati.values()) + sum(parziali[ci] for ci in in_volo)
+        # Il credito (punti e frasi) e chi e' "in volo" per la coda del
+        # messaggio sono due domande diverse. Un capitolo fallito esce da
+        # `fasi` (non deve trattenere la coda in eterno) ma resta in
+        # `parziali`: i suoi chunk sono stati generati per davvero, e la
+        # barra non puo' fingere che non siano mai esistiti togliendo un
+        # credito gia' mostrato all'utente.
+        con_credito = [ci for ci in parziali if ci not in consegnati]
+        frasi = sum(consegnati.values()) + sum(parziali[ci] for ci in con_credito)
         punti = peso_barra * (sum(consegnati.values())
                               + _QUOTA_CHUNK * sum(parziali[ci]
-                                                   for ci in in_volo))
+                                                   for ci in con_credito))
         if in_volo and all(fasi[ci] == "warmup" for ci in in_volo):
             # Su worker freddo il motore ci mette due minuti a caricarsi, e
             # oggi quel tratto e' completamente muto. La precedenza, quando
@@ -3574,13 +3581,18 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             except BaseException as e:
                 errori[posizione] = e
                 # Questo capitolo non arrivera' mai a `consegnati`: se la
-                # sua riga resta in `parziali`/`fasi`, resta "in volo" per
-                # sempre, e un capitolo superstite non vede mai finire la
-                # rifinitura (il morto conta ancora come "in generate").
-                ci_fallito = gruppi[posizione][0]
-                with barra:
-                    parziali.pop(ci_fallito, None)
-                    fasi.pop(ci_fallito, None)
+                # sua riga resta in `fasi`, resta "in volo" per sempre, e un
+                # capitolo superstite non vede mai finire la rifinitura (il
+                # morto conta ancora come "in generate"). Si toglie pero'
+                # SOLO da `fasi`: `parziali` resta, perche' i suoi chunk
+                # sono stati generati e fatturati per davvero, e togliere
+                # anche quello sottrarrebbe un credito gia' mostrato
+                # all'utente, facendo arretrare la barra.
+                if job is not None and peso_barra:
+                    ci_fallito = gruppi[posizione][0]
+                    with barra:
+                        fasi.pop(ci_fallito, None)
+                        _scrivi_barra()
                 continue
             for posto, i in enumerate(indici):
                 if posto == 0:

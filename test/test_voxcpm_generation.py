@@ -658,9 +658,13 @@ def test_quando_tutti_hanno_smesso_di_generare_il_messaggio_lo_dice(tmp_path, mo
 
 def test_capitolo_fallito_non_lascia_residui_in_fasi(tmp_path, monkeypatch):
     # Un capitolo che solleva (annullamento o VoxcpmJobError) non arriva mai
-    # a `consegnati`: se la sua riga resta in `parziali`/`fasi`, il capitolo
-    # superstite non vede mai finire il "tutti in volo sono in rifinitura",
-    # perche' il morto conta ancora come "in generate" per sempre.
+    # a `consegnati`: se la sua riga resta in `fasi`, il capitolo superstite
+    # non vede mai finire il "tutti in volo sono in rifinitura", perche' il
+    # morto conta ancora come "in generate" per sempre. (Giro 1: solo `fasi`
+    # si ripulisce alla raccolta dell'errore — `parziali` resta, perche' i
+    # suoi chunk sono stati generati per davvero e non vanno persi dalla
+    # barra; qui il credito del morto e' zero, quindi non c'e' nulla da
+    # perdere e la differenza non e' osservabile in questo scenario.)
     #
     # Ordine deterministico: ABM_VOXCPM_JOBS=1 esegue i capitoli in serie
     # sullo stesso thread executor, nell'ordine di sottomissione (quello del
@@ -701,5 +705,66 @@ def test_capitolo_fallito_non_lascia_residui_in_fasi(tmp_path, monkeypatch):
     messaggi = [m for _, m in job.storia]
     # Col residuo del capitolo morto ancora in `fasi`, il capitolo "buono" in
     # `deliver` non riesce mai a far dire "tutti in rifinitura": il difetto
-    # lo tiene incollato al conteggio delle frasi.
-    assert messaggi[2] == "Sintesi vocale: 0 di 2 capitoli (rifinitura e consegna)"
+    # lo tiene incollato al conteggio delle frasi. La ripulitura di `fasi`
+    # alla raccolta dell'errore aggiunge una scrittura in piu' alla serie
+    # (quella del pop stesso): la coda "rifinitura e consegna" del "buono"
+    # e' percio' il quarto valore, non il terzo.
+    assert messaggi[3] == "Sintesi vocale: 0 di 2 capitoli (rifinitura e consegna)"
+
+
+def test_capitolo_fallito_con_credito_non_abbassa_la_barra(tmp_path, monkeypatch):
+    # Giro 1 di correzione: un capitolo che fallisce DOPO aver accumulato
+    # credito parziale (chunk gia' generati, e gia' fatturati sulla GPU) non
+    # deve sottrarre quel credito alla barra. Col numero di job in volo di
+    # default (`voxcpm_tts.jobs_in_flight()` = 2) un fratello prosegue
+    # mentre il rotto viene raccolto: se la raccolta dell'errore togliesse
+    # "rotto" anche da `parziali` (non solo da `fasi`), il prossimo numero
+    # scritto sulla barra sarebbe piu' basso del precedente.
+    #
+    # Sincronizzazione: un Event assicura che il credito del "rotto" sia
+    # gia' sulla barra prima che il "buono" cominci a scrivere la sua; un
+    # breve `time.sleep` (stesso rischio, gia' giudicato accettabile, della
+    # prova sorella) da' al thread del job il tempo di raccogliere
+    # l'eccezione del "rotto" prima che il "buono" prosegua — cosi' il
+    # momento in cui il difetto si manifesterebbe (la prima scrittura del
+    # "buono" dopo la raccolta) e' quello osservato.
+    piano = [blocco("r1", 0), blocco("r2", 0), blocco("r3", 0),
+             blocco("r4", 0), blocco("b1", 1)]
+    rotto_pubblicato = threading.Event()
+
+    def doppio(chunks, voice_id, dest_path, **kw):
+        on_progress = kw.get("on_progress")
+        if chunks == ["r1", "r2", "r3", "r4"]:
+            if on_progress is not None:
+                # Credito non nullo: 3 chunk di 4, quello che il difetto
+                # sottrarrebbe alla barra.
+                on_progress({"phase": "generate", "chunks_done": 3,
+                             "chunks_total": 4})
+            rotto_pubblicato.set()
+            raise voxcpm_tts.VoxcpmJobError("capitolo perso")
+        rotto_pubblicato.wait(timeout=5)
+        time.sleep(0.15)
+        if on_progress is not None:
+            on_progress({"phase": "generate", "chunks_done": 1,
+                         "chunks_total": 1})
+            on_progress({"phase": "deliver", "chunks_done": 1,
+                         "chunks_total": 1})
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22")
+        return {"sample_rate": 48000, "chars": 1, "audio_seconds": 1.0,
+                "tts_seconds": 0.5, "jobs": 1, "redone": 0, "bounced": 0,
+                "failed_chunks": 0, "bytes": 2, "runpod": []}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", doppio)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "2")
+    job = JobSpiaFine()
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        generation_engine._voxcpm_pre_pass(
+            piano, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+            peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    # Non si assume un indice preciso: la serie e' prodotta da due thread e
+    # l'avvertimento sull'ordinamento vale anche qui. La proprieta' che
+    # conta, e che il difetto viola, e' che non arretra mai.
+    valori = [v for v, _ in job.storia]
+    assert valori == sorted(valori)
