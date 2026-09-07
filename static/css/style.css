@@ -1134,4 +1134,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .voxcpm-clip-btn:hover{border-color:var(--ac)}
 .voxcpm-clip-btn[data-playing="1"]{border-color:var(--ac);background:var(--acs)}
 .voxcpm-clip-ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:0 0 22px;border-radius:50%;background:var(--ac);color:#fff;font-size:.6rem;line-height:1}
-.voxcpm-clip-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* flex:1 1 auto — la frase si prende tutto lo spazio libero e spinge il
+   tondino del play contro il bordo destro: «cosa ascolti» a sinistra, «fai
+   partire» sempre nello stesso punto, riga dopo riga. min-width:0 tiene
+   viva l'ellissi, che senza di esso un figlio flex non ritaglia. */
+.voxcpm-clip-txt{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
