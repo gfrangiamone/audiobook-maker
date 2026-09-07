@@ -101,6 +101,30 @@ Parametri: `PARAMETRI_CONFIGURAZIONE.md` §3.6.2.
   output audio (`.epub`/`.txt` ora offloadabili); `_token_cold_available` considera
   `translated_path`.
 
+### Incidente 04/09/2026 (job `6t4YV4oSBMbxAyxjLB6T3Q`) — consegna persa dopo restart
+
+Traduzione completata ed emailata, ma la pagina `/dl/<token>` mostrava "traduzione
+pronta" **senza bottone**: file mai scaricabile, poi cancellato a fine retention.
+Quattro difetti concatenati, tutti corretti:
+
+1. **`_save_tokens` non persisteva `translated_path`/`translated_name`** (whitelist
+   dei campi). Al primo restart del servizio il token sopravviveva ma dimenticava
+   dove stava il file → nessun bottone. Stessa perdita per `output_m4b_fallback_zip`.
+2. **`run_translation` lanciava l'offload cold senza scrivere `.generation_complete`**:
+   il guard "quiet" di `_offload_to_cloud` (`_OFFLOAD_QUIET_SEC`, 180s) vedeva l'mtime
+   fresco e saltava sempre l'upload. Ora il marker precede lo spawn.
+3. **`_reconcile_cold_offload` scartava i job in stato `translated`/`optimized`**
+   (filtrava su `done|partial|error`): finché il job restava in RAM, la traduzione non
+   arrivava mai su cold. Ora quei due stati sono trattati come terminali.
+4. **Il cleanup degli output orfani non contava `translated_path`,
+   `optimized_abm_path`, `output_m4b_fallback_zip` fra i path referenziati** da un
+   token: la `output_<epoch>` risultava orfana pur avendo un token valido.
+
+Inoltre: la pagina `/dl` con `translated_available=False` non è più un vicolo cieco
+(avviso in 7 lingue + log `[dl] translated file NOT available`), e il cleanup loop ha
+finalmente un ramo `status == "translated"` (prima quei job non lasciavano mai `jobs`,
+tenendo in RAM tutti i capitoli tradotti).
+
 ## Frontend — punti di aggancio
 
 - `wizMode = 'audio' | 'translate'`: `goToStep()` risolve step 3→`panelT3` e

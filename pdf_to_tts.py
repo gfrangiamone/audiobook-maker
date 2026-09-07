@@ -975,12 +975,12 @@ def parse_pdf(pdf_path: str) -> BookInfo:
     testo come singolo capitolo (recovery di ultima istanza).
     """
     if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"File non trovato: {pdf_path}")
+        raise FileNotFoundError(f"File not found: {pdf_path}")
 
     doc = fitz.open(pdf_path)
 
     if doc.page_count == 0:
-        raise ValueError("Il PDF è vuoto (0 pagine)")
+        raise ValueError("PDF is empty (0 pages)")
 
     # ── Metadati ──
     info = BookInfo()
@@ -1074,7 +1074,12 @@ def parse_pdf(pdf_path: str) -> BookInfo:
     info.estimated_duration_minutes = info.total_words / 150  # ~150 parole/min
 
     if not info.chapters:
-        raise ValueError("Nessun contenuto testuale trovato nel PDF")
+        # Caso tipico: PDF fatto di sole immagini (scansione o foto convertite).
+        # Il codice "pdf_no_text" viene riconosciuto da /api/analyze e tradotto
+        # nella lingua dell'utente: qui resta un fallback in inglese, mai in
+        # italiano (un utente pakistano si e' visto un errore in italiano).
+        raise ValueError("pdf_no_text: no extractable text found in the PDF "
+                         "(image-only or scanned document)")
 
     return info
 

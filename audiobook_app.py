@@ -2326,6 +2326,17 @@ def _save_tokens():
                     "lang": info.get("lang", "en"),
                     "optimized_abm_path": info.get("optimized_abm_path", ""),
                     "optimized_abm_name": info.get("optimized_abm_name", ""),
+                    # Traduzione libro (download_type="translated"): senza questi
+                    # due campi il token sopravvive al restart ma DIMENTICA dove
+                    # sta il file, e /dl/<token> mostra la pagina "traduzione
+                    # pronta" SENZA bottone (incidente 04/09/2026, job
+                    # 6t4YV4oSBMbxAyxjLB6T3Q: restart 3h dopo l'email -> link
+                    # pagato e mai scaricabile).
+                    "translated_path": info.get("translated_path", ""),
+                    "translated_name": info.get("translated_name", ""),
+                    # Kit di ripiego M4B (ZIP con MP3 + capitoli): stessa classe
+                    # di perdita, il bottone spariva dopo un restart.
+                    "output_m4b_fallback_zip": info.get("output_m4b_fallback_zip", ""),
                     # Marker per scegliere retention: True se job ha generato con voce PREMIUM.
                     "is_gemini": bool(info.get("is_gemini", False)),
                     # Timestamp primo download reale del file via /dl/<token>/*.
@@ -10028,6 +10039,12 @@ def api_analyze():
             info = parse_epub(str(file_path))
     except Exception as e:
         label = "ABM" if is_abm else ("TXT" if is_txt else ("PDF" if is_pdf else "EPUB"))
+        # PDF di sole immagini (scansione, foto convertite): non e' un guasto ma
+        # un limite spiegabile. Codice stabile -> il frontend lo traduce nella
+        # lingua dell'utente (err_pdf_no_text), invece di sbattergli in faccia il
+        # messaggio grezzo dell'eccezione.
+        if "pdf_no_text" in str(e):
+            return jsonify({"error": "pdf_no_text"}), 400
         return jsonify({"error": f"{label} parse error: {e}"}), 400
 
     if not info.chapters:
@@ -15687,6 +15704,24 @@ def _render_dl_page(token, book_title, remaining_str, dl_type, lang="en", m4b_av
         type_label = tr_block.get("type_label") or _tr_type_fallback.get(lang, _tr_type_fallback["en"])
         if translated_available:
             audio_btn_html = f'<p><a href="/dl/{token}/translated" class="btn">{btn_label}</a></p>'
+        else:
+            # Nessun bottone = vicolo cieco: la pagina diceva "traduzione pronta"
+            # e non offriva nulla, lasciando l'utente a credere di aver sbagliato
+            # click (incidente 04/09/2026). Meglio dichiarare l'indisponibilita'.
+            _tr_unavail = {
+                "it": "Il file di questa traduzione non &egrave; pi&ugrave; disponibile. Contattaci rispondendo all&rsquo;email di consegna: rifacciamo la traduzione senza costi aggiuntivi.",
+                "en": "The file for this translation is no longer available. Reply to the delivery email and we will redo the translation at no extra cost.",
+                "fr": "Le fichier de cette traduction n&rsquo;est plus disponible. R&eacute;pondez &agrave; l&rsquo;email de livraison : nous refaisons la traduction sans frais suppl&eacute;mentaires.",
+                "es": "El archivo de esta traducci&oacute;n ya no est&aacute; disponible. Responde al email de entrega: rehacemos la traducci&oacute;n sin coste adicional.",
+                "de": "Die Datei dieser &Uuml;bersetzung ist nicht mehr verf&uuml;gbar. Antworte auf die Zustell-E-Mail: Wir erstellen die &Uuml;bersetzung ohne Zusatzkosten neu.",
+                "zh": "该译文文件已不可用。请回复交付邮件，我们将免费重新翻译。",
+                "hi": "&#2311;&#2360; &#2309;&#2344;&#2369;&#2357;&#2366;&#2342; &#2325;&#2368; &#2347;&#2364;&#2366;&#2311;&#2354; &#2309;&#2348; &#2313;&#2346;&#2354;&#2348;&#2381;&#2343; &#2344;&#2361;&#2368;&#2306; &#2361;&#2376;&#2404; &#2337;&#2367;&#2354;&#2367;&#2357;&#2352;&#2368; &#2311;&#2350;&#2375;&#2354; &#2325;&#2366; &#2313;&#2340;&#2381;&#2340;&#2352; &#2342;&#2375;&#2306;: &#2361;&#2350; &#2348;&#2367;&#2344;&#2366; &#2309;&#2340;&#2367;&#2352;&#2367;&#2325;&#2381;&#2340; &#2358;&#2369;&#2354;&#2381;&#2325; &#2325;&#2375; &#2309;&#2344;&#2369;&#2357;&#2366;&#2342; &#2342;&#2379;&#2348;&#2366;&#2352;&#2366; &#2325;&#2352;&#2375;&#2306;&#2327;&#2375;&#2404;",
+            }
+            _msg = _tr_unavail.get(lang, _tr_unavail["en"])
+            audio_btn_html = (
+                '<p style="color:#b00020;font-weight:600;line-height:1.5">'
+                f'&#9888;&#65039; {_msg}</p>')
+            print(f"[dl] translated file NOT available for token {token}", flush=True)
     elif dl_type == "optimized_abm":
         type_label = "Optimized Project (.abm)"
     elif dl_type == "podcast":
@@ -16726,8 +16761,13 @@ def _reconcile_cold_offload():
             # Salta i job ANCORA ATTIVI: offloaderanno al proprio COMPLETE.
             # Toccarli ora rischierebbe di copiare file mid-write (vedi F1);
             # _offload_to_cloud comunque rifiuta, ma evitiamo il log a ogni giro.
+            # "translated"/"optimized" sono stati TERMINALI quanto "done": senza
+            # includerli, gli output di traduzione e i .abm ottimizzati non
+            # venivano mai riconciliati finche' il job restava in memoria — e
+            # restavano single-tier (solo locale) a tempo indeterminato.
             _j = job_by_id.get(jdir.name)
-            if _j is not None and _j.get("status") not in ("done", "partial", "error"):
+            if _j is not None and _j.get("status") not in (
+                    "done", "partial", "error", "translated", "optimized"):
                 continue
             try:
                 for od in jdir.iterdir():
@@ -17568,6 +17608,22 @@ def _cleanup_loop():
                         to_remove.append((jid, reason))
                     continue
 
+                if status == "translated":
+                    # Senza questo ramo il job restava in `jobs` PER SEMPRE: i
+                    # capitoli tradotti (fino a ~1.5M caratteri) non uscivano
+                    # mai dalla RAM e la job dir veniva recuperata solo per via
+                    # traversa dal ramo token-orphan. Stessa forma di
+                    # "optimized": il token attivo comanda, quindi i file non
+                    # spariscono prima di quanto succeda gia' oggi.
+                    if _has_active_download_tokens(jid, now):
+                        continue
+                    tr_done = job.get("translated_at") or job.get("email_sent_at") or now
+                    _ret = _effective_retention_for_job(job)
+                    if (now - tr_done) > _ret:
+                        h = _ret // 3600
+                        to_remove.append((jid, f"translation retention expired ({h}h)"))
+                    continue
+
                 if status == "generating":
                     if has_email:
                         continue
@@ -17672,7 +17728,13 @@ def _cleanup_loop():
         with _tokens_lock:
             referenced_paths = set()
             for info in list(_download_tokens.values()):
-                for key in ("output_zip", "output_file", "output_m4b"):
+                # translated_path/optimized_abm_path/kit M4B: anche questi sono
+                # l'UNICO output referenziato da un token (traduzione, .abm,
+                # ripiego M4B). Senza di loro la relativa output_<epoch> risulta
+                # orfana e cancellabile pur avendo un token valido.
+                for key in ("output_zip", "output_file", "output_m4b",
+                            "output_m4b_fallback_zip", "optimized_abm_path",
+                            "translated_path"):
                     p = info.get(key) or ""
                     if p:
                         try:

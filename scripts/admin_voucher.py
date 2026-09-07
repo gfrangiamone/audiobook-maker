@@ -5,6 +5,12 @@ admin_voucher.py — CLI amministrativa per generare/gestire voucher promozional
 Zero esposizione web: opera DIRETTAMENTE sul file _vouchers.json dentro ABM_DATA_DIR.
 Da eseguire sul server con accesso filesystem (solitamente come utente del servizio).
 
+ATTENZIONE - le scritture (create/revoke) sono RIFIUTATE se il servizio e' acceso:
+audiobook_app carica _vouchers.json una sola volta all'avvio e lo riscrive dalla
+memoria a ogni salvataggio, quindi una modifica fatta qui a servizio vivo e'
+invisibile all'app e viene persa. A servizio acceso usa il pannello
+/admin/vouchers. Dettagli in _guard_running_app().
+
 Uso:
     python scripts/admin_voucher.py create --email user@example.com --amount 2.00 --days 180 --kind promo --note "Regalo lancio"
     python scripts/admin_voucher.py list [--email user@example.com] [--kind promo]
@@ -73,10 +79,94 @@ def _fmt_ts(ts: float | None) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Guardia: nessuna scrittura mentre il servizio e' vivo
+# ─────────────────────────────────────────────────────────────
+# audiobook_app chiama _load_vouchers() UNA SOLA VOLTA all'avvio e da li' tiene
+# tutto in RAM; ogni _save_vouchers() riscrive _vouchers.json dalla memoria.
+# Una scrittura fatta da qui a servizio acceso e' quindi: invisibile al
+# pannello /admin/vouchers (legge la RAM), inutilizzabile dal cliente (anche la
+# validazione legge la RAM) e destinata a sparire al primo salvataggio fatto
+# dall'app. Incidente 07/09/2026: voucher di rimborso creato da CLI, mai
+# esistito per il servizio. A servizio acceso l'unica via corretta e' il
+# pannello admin, che passa dal processo vivo e sa anche mandare l'email.
+_SERVICE_UNIT = os.environ.get("ABM_SERVICE_UNIT", "audiobook-maker.service")
+_APP_PROCESS_HINT = "audiobook_app.py"
+
+def _detect_running_app():
+    """Descrizione del processo app vivo, oppure None.
+
+    Best effort: se gli strumenti di sistema mancano (es. sviluppo su Windows)
+    la funzione NON inventa un rilevamento e lascia passare la scrittura."""
+    import shutil
+    import subprocess
+
+    systemctl = shutil.which("systemctl")
+    if systemctl:
+        try:
+            r = subprocess.run([systemctl, "is-active", _SERVICE_UNIT],
+                               capture_output=True, text=True, timeout=10)
+            if (r.stdout or "").strip() == "active":
+                return f"unita systemd {_SERVICE_UNIT} attiva"
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    pgrep = shutil.which("pgrep")
+    if pgrep:
+        try:
+            r = subprocess.run([pgrep, "-f", _APP_PROCESS_HINT],
+                               capture_output=True, text=True, timeout=10)
+            pids = " ".join((r.stdout or "").split())
+            if pids:
+                return f"processo {_APP_PROCESS_HINT} vivo (PID {pids})"
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    return None
+
+
+def _warn_if_running():
+    """Lettura: nessun blocco, ma il file su disco puo' essere piu' vecchio dello
+    stato in RAM del servizio (che salva solo quando cambia qualcosa)."""
+    where = _detect_running_app()
+    if where:
+        print(f"[nota] {where}: questi dati vengono dal file su disco e possono "
+              f"divergere da quelli del servizio. Fonte autorevole: /admin/vouchers.",
+              file=sys.stderr)
+
+
+def _guard_running_app(force):
+    """0 se si puo' scrivere, codice di uscita != 0 se la scrittura va rifiutata."""
+    where = _detect_running_app()
+    if not where:
+        return 0
+    if force:
+        print(f"[warn] {where}: procedo per --force. La modifica NON sara' vista "
+              f"dal servizio finche' non lo riavvii, e verra' persa al primo "
+              f"salvataggio dei voucher fatto dall'app.", file=sys.stderr)
+        _log("FORCE", where)
+        return 0
+    print(f"""error: {where}.
+Questa CLI scrive direttamente su _vouchers.json, ma il servizio tiene i voucher
+in memoria e riscrive il file a ogni salvataggio. Un voucher creato o revocato
+adesso:
+  - non comparirebbe in /admin/vouchers,
+  - verrebbe rifiutato al cliente che prova a usarlo,
+  - sparirebbe al primo salvataggio fatto dall'app.
+Usa il pannello /admin/vouchers: crea il voucher e mandalo via email col pulsante
+di notifica.
+Solo se il servizio e' davvero fermo (rilevamento sbagliato): ripeti con --force.""",
+          file=sys.stderr)
+    return 4
+
+
+# ─────────────────────────────────────────────────────────────
 # Commands
 # ─────────────────────────────────────────────────────────────
 
 def cmd_create(args) -> int:
+    rc = _guard_running_app(getattr(args, "force", False))
+    if rc:
+        return rc
     vouchers = _load()
     email = (args.email or "").lower().strip()
     if not email or "@" not in email:
@@ -147,6 +237,7 @@ def _remaining(v: dict) -> float:
 
 
 def cmd_list(args) -> int:
+    _warn_if_running()
     vouchers = _load()
     rows = []
     for code, v in vouchers.items():
@@ -184,6 +275,9 @@ def cmd_list(args) -> int:
 
 
 def cmd_revoke(args) -> int:
+    rc = _guard_running_app(getattr(args, "force", False))
+    if rc:
+        return rc
     vouchers = _load()
     code = args.code.strip().upper()
     if code not in vouchers:
@@ -204,6 +298,7 @@ def cmd_revoke(args) -> int:
 
 
 def cmd_show(args) -> int:
+    _warn_if_running()
     vouchers = _load()
     code = args.code.strip().upper()
     v = vouchers.get(code)
@@ -224,6 +319,8 @@ def main() -> int:
     pc.add_argument("--days", type=int, default=180, help="validità in giorni (default 180)")
     pc.add_argument("--kind", choices=["promo", "gift", "refund"], default="promo")
     pc.add_argument("--note", default="", help="nota libera (causale)")
+    pc.add_argument("--force", action="store_true",
+                    help="scrivi anche a servizio apparentemente acceso (vedi _guard_running_app)")
     pc.set_defaults(func=cmd_create)
 
     pl = sub.add_parser("list", help="elenca voucher")
@@ -235,6 +332,8 @@ def main() -> int:
     pr = sub.add_parser("revoke", help="revoca un voucher (marca come usato)")
     pr.add_argument("--code", required=True)
     pr.add_argument("--reason", default="")
+    pr.add_argument("--force", action="store_true",
+                    help="scrivi anche a servizio apparentemente acceso (vedi _guard_running_app)")
     pr.set_defaults(func=cmd_revoke)
 
     ps = sub.add_parser("show", help="mostra il record JSON completo di un voucher")

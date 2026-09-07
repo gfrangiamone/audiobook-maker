@@ -3211,6 +3211,9 @@ def run_translation(job_id):
             chars_total=total_chars, usage_report=usage.report(),
             outcome="completed")
         _set_job_status(job, "translated")
+        # Istante di completamento: lo consuma la retention del cleanup loop
+        # (ramo status == "translated"), come opt_completed_at per l'ottimizzato.
+        job["translated_at"] = time.time()
         # Marker di completamento durevole per /admin/log-activity: senza
         # questo evento una traduzione conclusa resta indistinguibile da una
         # cancellata dopo che il job lascia la memoria (es. restart server).
@@ -3220,7 +3223,16 @@ def run_translation(job_id):
                       f"{source}>{target}" + (" +AI" if optimize else ""),
                       job.get("browser_lang", ""))
 
-        # Offload cold (best-effort, come per gli output audio)
+        # Offload cold (best-effort, come per gli output audio).
+        # Il marker .generation_complete va scritto PRIMA dello spawn: il writer
+        # ha gia' chiuso il file, ma senza marker il guard F1 di
+        # _offload_to_cloud vede l'mtime fresco (< _OFFLOAD_QUIET_SEC) e salta
+        # l'upload — e il pass di reconcile non recuperava (stato "translated").
+        # Risultato osservato in prod: traduzioni mai copiate su cold storage.
+        try:
+            storage_tiering.mark_generation_complete(out_dir, time.time())
+        except Exception as _e:
+            _log(f"translation mark_generation_complete failed (non-fatal): {_e}")
         try:
             _spawn_cloud_offload(job_id, str(out_dir))
         except Exception as _e:

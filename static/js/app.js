@@ -640,6 +640,9 @@ async function analyzeEpub(file){
     // sensato invece di "JSON.parse: unexpected character".
     try{d=await r.json()}catch(_){d={error:'Error: HTTP '+r.status}}
     if(d.error==='file_too_large'){d.error=t('err_file_too_large',{size:(file.size/1048576).toFixed(1),mb:d.max_mb||window.ABM_MAX_UPLOAD_MB||50})}
+    // PDF di sole immagini: messaggio nella lingua dell'utente con la via d'uscita
+    // (OCR), non l'eccezione grezza del parser.
+    if(d.error==='pdf_no_text'){d.error=t('err_pdf_no_text')}
     if(d.error){showErr('aerr',d.error);lo.classList.remove('vis');hideUploadProgress();return}
     if(d.existing_job_id && d.is_running){
       jobId=d.existing_job_id;
