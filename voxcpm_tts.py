@@ -515,7 +515,7 @@ _TICK_ANNULLAMENTO_S = 1.0
 
 def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
             queue_timeout=None, clock=time.time, on_queue=None, cancelled=None,
-            on_billing=None):
+            on_billing=None, on_progress=None):
     """Sottomette il job e ne aspetta l'esito. Ritorna l'`output`.
 
     `/run` piu' polling su `/status`, mai `/runsync`: quello risponde 200 e
@@ -550,6 +550,11 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
             stanno nella risposta di `/status` e non nell'output del worker.
             Serve a `gpu_cost_usd`: senza, il costo resta una stima sui
             caratteri.
+        on_progress: callback opzionale `(riga)` chiamata a ogni sonda che
+            trova un avanzamento parziale del worker: `{"phase",
+            "chunks_done", "chunks_total"}`. Serve alla barra, che senza
+            questo si muove solo a capitolo consegnato. Un worker che non lo
+            pubblica non la fa chiamare mai.
 
     Raises:
         VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
@@ -564,7 +569,7 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
     try:
         return _attendi_esito(job_id, ses, sleep, attesa, tetto_exec,
                               tetto_coda, clock, on_queue, cancelled=cancelled,
-                              on_billing=on_billing)
+                              on_billing=on_billing, on_progress=on_progress)
     except BaseException:
         # Qualunque uscita che non sia il `return` di successo lascia un job
         # in volo, e RunPod lo fattura finche' gira: si cancella prima di
@@ -620,8 +625,35 @@ def _riga_costo(on_billing, st, out, job_id):
         _LOG.warning("riga di costo non registrata per il job %s", job_id)
 
 
+def _riga_avanzamento(on_progress, out, job_id):
+    """Consegna un avanzamento parziale al chiamante. Non solleva mai.
+
+    Passano solo le righe complete. Un `output` assente, di forma diversa o
+    con numeri assurdi non e' un errore da propagare: e' un worker di
+    un'altra versione, che di questo canale non sa niente, e la barra deve
+    solo restare ferma come faceva prima.
+
+    I `bool` sono esclusi apposta: in Python `True` e' un `int`, e un
+    `chunks_total` a `True` diventerebbe un denominatore di 1.
+    """
+    if not isinstance(out, dict):
+        return
+    fatti = out.get("chunks_done")
+    totale = out.get("chunks_total")
+    if not isinstance(totale, int) or isinstance(totale, bool) or totale <= 0:
+        return
+    if not isinstance(fatti, int) or isinstance(fatti, bool) or fatti < 0:
+        return
+    try:
+        on_progress({"phase": str(out.get("phase") or ""),
+                     "chunks_done": fatti, "chunks_total": totale})
+    except Exception:      # noqa: BLE001 - best effort, per definizione
+        _LOG.warning("avanzamento non registrato per il job %s", job_id)
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
-                    on_queue, cancelled=None, on_billing=None):
+                    on_queue, cancelled=None, on_billing=None,
+                    on_progress=None):
     """Il polling vero e proprio: isolato per poterlo avvolgere in un solo
     `try/except` che cancella il job su qualunque uscita non riuscita."""
     t0 = clock()
@@ -698,6 +730,11 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                 raise VoxcpmBloccato(testo, job_id)
             raise _errore_del_job(out, testo, job_id)
 
+        # Dopo il blocco degli stati terminali, non prima: nessun parziale
+        # puo' essere scambiato per un esito, e l'uscita dal ciclo resta
+        # governata dai soli COMPLETED/FAILED/CANCELLED/TIMED_OUT.
+        if on_progress is not None and stato == "IN_PROGRESS":
+            _riga_avanzamento(on_progress, st.get("output"), job_id)
         if t_run is None and on_queue is not None:
             on_queue(trascorso)
         _dormi_annullabile(sleep, attesa, cancelled, job_id, ses)

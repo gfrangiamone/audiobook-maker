@@ -408,3 +408,88 @@ def test_cancel_job_logga_se_la_cancellazione_non_e_confermata(caplog):
         voxcpm_tts.cancel_job("job-y", session=ses)   # non solleva
     assert "404" in caplog.text
     assert "chiave-di-prova" not in caplog.text
+
+
+def test_un_parziale_muove_la_callback_e_il_polling_continua():
+    # La regressione peggiore di tutta la modifica: un `output` parziale letto
+    # come esito chiuderebbe il job a meta' e consegnerebbe un capitolo
+    # inesistente. L'uscita resta governata dai soli stati terminali.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-1"})],
+        get=[FintaRisposta(body={"status": "IN_PROGRESS",
+                                 "output": {"phase": "generate",
+                                            "chunks_done": 3,
+                                            "chunks_total": 8}}),
+             FintaRisposta(body={"status": "IN_PROGRESS",
+                                 "output": {"phase": "deliver",
+                                            "chunks_done": 8,
+                                            "chunks_total": 8}}),
+             FintaRisposta(body={"status": "COMPLETED",
+                                 "output": {"audio_seconds": 42.0,
+                                            "failed_indices": []}})],
+    )
+    viste = []
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                             poll=0, on_progress=viste.append)
+    assert out == {"audio_seconds": 42.0, "failed_indices": []}
+    assert viste == [{"phase": "generate", "chunks_done": 3, "chunks_total": 8},
+                     {"phase": "deliver", "chunks_done": 8, "chunks_total": 8}]
+
+
+@pytest.mark.parametrize("parziale", [
+    None,                                        # nessun output
+    {"chunks_done": 3},                          # senza denominatore
+    {"chunks_done": 3, "chunks_total": 0},       # denominatore vuoto
+    {"chunks_done": -1, "chunks_total": 8},      # conteggio assurdo
+    {"chunks_done": "3", "chunks_total": "8"},   # numeri che non lo sono
+    [1, 2, 3],                                   # nemmeno un dizionario
+])
+def test_un_parziale_malformato_si_ignora_in_silenzio(parziale):
+    # Un worker di un'altra versione non e' un errore da propagare: e' un
+    # worker che non conosce questo canale, e la barra deve solo restare
+    # ferma.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-1"})],
+        get=[FintaRisposta(body={"status": "IN_PROGRESS",
+                                 "output": parziale}),
+             FintaRisposta(body={"status": "COMPLETED", "output": {}})],
+    )
+    viste = []
+    voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0,
+                       on_progress=viste.append)
+    assert viste == []
+
+
+def test_una_callback_che_esplode_non_si_porta_via_il_capitolo():
+    # Politica di `_riga_costo`: un di piu' che si rompe non deve mai
+    # sostituire l'esito vero, ne' cancellare una GPU gia' pagata.
+    def scoppia(_riga):
+        raise RuntimeError("la barra e' sparita")
+
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-1"})],
+        get=[FintaRisposta(body={"status": "IN_PROGRESS",
+                                 "output": {"phase": "generate",
+                                            "chunks_done": 1,
+                                            "chunks_total": 4}}),
+             FintaRisposta(body={"status": "COMPLETED",
+                                 "output": {"audio_seconds": 1.0}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                             poll=0, on_progress=scoppia)
+    assert out == {"audio_seconds": 1.0}
+
+
+def test_senza_callback_il_comportamento_non_cambia():
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-1"})],
+        get=[FintaRisposta(body={"status": "IN_PROGRESS",
+                                 "output": {"phase": "generate",
+                                            "chunks_done": 1,
+                                            "chunks_total": 4}}),
+             FintaRisposta(body={"status": "COMPLETED",
+                                 "output": {"audio_seconds": 1.0}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                             poll=0)
+    assert out == {"audio_seconds": 1.0}
