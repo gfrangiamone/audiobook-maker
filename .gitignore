@@ -8,7 +8,6 @@ _debug*
 *.env
 *.egg-info/
 firebase*
-data/
 md_files/
 mockup/
 scripts/
@@ -63,3 +62,6 @@ tts_kokoro_test.py
 
 # Artefatti dei run del banco di prova Cloudflare TTS
 out/
+
+# Catalogo voci VoxCPM impacchettato (740 MB di wav, importato da abm-voxcpm-worker)
+voxcpm2/

@@ -18,7 +18,7 @@ CATALOG_SCHEMA = "v2"
 _ID_PREFIX = "voxcpm:" + CATALOG_SCHEMA + ":"
 
 _DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "data", "voci_inventate")
+                            "voxcpm2", "voci_inventate")
 
 _lock = threading.Lock()
 _cache = None  # list[dict] | None

@@ -14,7 +14,7 @@ state provate.
 - `ABM_VOXCPM_ENDPOINT_ID` e `ABM_VOXCPM_API_KEY` di un endpoint attivo.
 - `ABM_VOXCPM_RATE_EUR_PER_MCHAR` e `ABM_VOXCPM_MIN_COST_EUR` ai valori
   commerciali decisi (§13 della spec: si fissano prima del deploy).
-- `data/voci_inventate/` presente, con `voices.json` e i `.wav`.
+- `voxcpm2/voci_inventate/` presente, con `voices.json` e i `.wav`.
 - Un EPUB breve: tre o quattro capitoli, meno di 20.000 caratteri. Un libro
   lungo qui non aggiunge informazione e costa GPU.
 
