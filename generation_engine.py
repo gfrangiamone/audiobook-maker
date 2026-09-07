@@ -3440,6 +3440,72 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             "runpod": [],
         })
 
+    # Quanto vale un capitolo, e quanto ne vale la coda. I chunk generati non
+    # sono il 100% del lavoro: dopo di loro restano i giri di rigenerazione
+    # delle code tagliate, l'upload su R2 e il download qui. La barra non deve
+    # inchiodarsi su un capitolo che sembra finito e non lo e'.
+    _QUOTA_CHUNK = 0.9
+
+    totale_frasi = sum(len(indici) for _, indici in gruppi)
+    consegnati = {}    # ci -> numero di chunk, scritto a future completata
+    parziali = {}      # ci -> chunk chiusi, scritto dalle callback
+    fasi = {}          # ci -> ultima fase vista, scritto dalle callback
+    # Le callback arrivano dai thread dell'executor, la consegna dal thread
+    # del job: numero e messaggio si scrivono sotto lo stesso lock, cosi' la
+    # coppia non puo' mai essere osservata mezza aggiornata.
+    barra = threading.Lock()
+
+    def _scrivi_barra():
+        """Riscrive numero e messaggio. Il lock lo prende il chiamante.
+
+        Il messaggio PRIMA del numero: chi osserva la barra reagisce al
+        numero, e deve trovare accanto il messaggio nuovo, non quello di un
+        istante fa.
+        """
+        in_volo = [ci for ci in fasi if ci not in consegnati]
+        frasi = sum(consegnati.values()) + sum(parziali[ci] for ci in in_volo)
+        punti = peso_barra * (sum(consegnati.values())
+                              + _QUOTA_CHUNK * sum(parziali[ci]
+                                                   for ci in in_volo))
+        if in_volo and all(fasi[ci] == "warmup" for ci in in_volo):
+            # Su worker freddo il motore ci mette due minuti a caricarsi, e
+            # oggi quel tratto e' completamente muto. La precedenza, quando
+            # le fasi si mescolano, e' al conteggio delle frasi: appena UN
+            # capitolo genera, il messaggio torna a contarle.
+            coda = "preparazione del motore vocale"
+        elif in_volo and all(fasi[ci] in ("verify", "deliver")
+                             for ci in in_volo):
+            # «Tutti» e non «almeno uno»: con due job paralleli, uno in
+            # rifinitura e uno in generazione, alternare i due messaggi
+            # darebbe un lampeggio senza informazione.
+            coda = "rifinitura e consegna"
+        else:
+            coda = (f"{frasi} di {totale_frasi} "
+                    f"fras{'e' if totale_frasi == 1 else 'i'}")
+        job["progress_message"] = (
+            f"Sintesi vocale: {len(consegnati)} di {len(gruppi)} "
+            f"capitol{'o' if len(gruppi) == 1 else 'i'} ({coda})")
+        job["progress_current"] = 2 + int(punti)
+
+    def _avanza(ci, n_chunk, riga):
+        """Un avanzamento del capitolo `ci`. Gira sui thread dell'executor.
+
+        Il denominatore e' quello di ABM: il worker scarta i chunk vuoti
+        prima di generare, quindi il suo conteggio puo' essere piu' piccolo,
+        e il peso del capitolo deve chiudere a `peso_barra * n` comunque.
+        """
+        fatti = min(int(riga.get("chunks_done") or 0), n_chunk)
+        with barra:
+            if ci in consegnati:
+                # La future e' gia' tornata: il capitolo vale il suo peso
+                # pieno, e una riga in ritardo non puo' rimetterlo in volo.
+                return
+            # Monotona: un capitolo rifatto riparte da `chunks_done = 0`, e
+            # la fase `verify` non porta un conteggio nuovo.
+            parziali[ci] = max(parziali.get(ci, 0), fatti)
+            fasi[ci] = str(riga.get("phase") or "")
+            _scrivi_barra()
+
     def _uno(gruppo):
         ci, indici = gruppo
         if cancelled is not None and cancelled():
@@ -3452,7 +3518,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 # Un job = un capitolo: la chiave e' univoca e permette di
                 # risalire dal file su R2 al job che l'ha prodotto.
                 key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
-                cancelled=cancelled)
+                cancelled=cancelled,
+                # Il payload del worker non porta l'indice di capitolo, e non
+                # deve: il capitolo e' un concetto di ABM. La callback lo sa
+                # perche' e' stata costruita per quello.
+                on_progress=((lambda riga: _avanza(ci, len(indici), riga))
+                             if job is not None and peso_barra else None))
         except voxcpm_tts.VoxcpmJobError:
             # Se il fallimento coincide con un annullamento gia' richiesto,
             # non e' un capitolo perso a ritentativi esauriti: e' la corsa fra
@@ -3490,8 +3561,6 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
         future_a_posizione = {_ex.submit(_uno, gruppo): posizione
                               for posizione, gruppo in enumerate(gruppi)}
         errori = {}
-        fatti_capitoli = 0
-        fatti_chunk = 0
         for fut in _cf.as_completed(future_a_posizione):
             posizione = future_a_posizione[fut]
             try:
@@ -3544,12 +3613,13 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
             # lettura, che a job paralleli sarebbe una mezza verita'.
             if job is not None and peso_barra:
-                fatti_capitoli += 1
-                fatti_chunk += len(indici)
-                job["progress_current"] = 2 + peso_barra * fatti_chunk
-                job["progress_message"] = (
-                    f"Sintesi vocale: {fatti_capitoli} di {len(gruppi)} "
-                    f"capitol{'o' if len(gruppi) == 1 else 'i'}")
+                with barra:
+                    # Il 10% che i chunk non coprivano scatta adesso: il PCM
+                    # e' davvero su disco.
+                    consegnati[ci] = len(indici)
+                    parziali.pop(ci, None)
+                    fasi.pop(ci, None)
+                    _scrivi_barra()
         if errori:
             prima_posizione = min(errori)
             raise errori[prima_posizione]

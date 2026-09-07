@@ -385,6 +385,133 @@ class JobSpia(dict):
         super().__setitem__(chiave, valore)
 
 
+class JobSpiaFine(dict):
+    """Un job che ricorda numero E messaggio a ogni scrittura della barra.
+
+    La coppia si osserva insieme perche' insieme viene scritta: un numero
+    aggiornato accanto a un messaggio vecchio e' esattamente il difetto che
+    il lock deve rendere impossibile.
+    """
+
+    def __init__(self):
+        super().__init__(progress_current=2, progress_message="")
+        self.storia = []
+
+    def __setitem__(self, chiave, valore):
+        super().__setitem__(chiave, valore)
+        if chiave == "progress_current":
+            self.storia.append((valore, self.get("progress_message")))
+
+
+class SintesiConAvanzamento:
+    """Come FintaSintesi, ma prima di consegnare pubblica un copione.
+
+    E' il worker che parla: il doppio deve poterlo imitare riga per riga,
+    fase per fase, perche' e' su quelle righe che la barra si muove.
+    """
+
+    def __init__(self, copione):
+        self.copione = list(copione)
+        self.chiamate = []
+
+    def __call__(self, chunks, voice_id, dest_path, **kw):
+        self.chiamate.append(list(chunks))
+        on_progress = kw.get("on_progress")
+        if on_progress is not None:
+            for riga in self.copione:
+                on_progress(dict(riga))
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
+                "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks), "runpod": []}
+
+
+def _con_copione(monkeypatch, copione):
+    """Installa il doppio che pubblica `copione` e rende la corsa seriale."""
+    f = SintesiConAvanzamento(copione)
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    return f
+
+
+def test_i_parziali_muovono_la_barra_prima_di_ogni_consegna(tmp_path, monkeypatch):
+    # Il difetto da togliere: con un capitolo da minuti, la barra non dava
+    # nessun segno di vita finche' il job non finiva.
+    _con_copione(monkeypatch, [
+        {"phase": "generate", "chunks_done": 1, "chunks_total": 2}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    # Un chunk chiuso vale il 90% del suo peso: 9 * 0,9 = 8,1 punti.
+    primo, messaggio = job.storia[0]
+    assert primo == 2 + int(8.1)
+    assert messaggio.startswith("Sintesi vocale: 0 di 3 capitoli")
+
+
+def test_un_avanzamento_che_arretra_non_abbassa_la_barra(tmp_path, monkeypatch):
+    # Due casi veri: un capitolo rifatto riparte da zero, e la fase `verify`
+    # non porta un conteggio nuovo. Una barra che arretra e' il difetto
+    # peggiore di una barra.
+    _con_copione(monkeypatch, [
+        {"phase": "generate", "chunks_done": 2, "chunks_total": 2},
+        {"phase": "generate", "chunks_done": 0, "chunks_total": 2}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    valori = [v for v, _ in job.storia]
+    assert valori == sorted(valori)
+
+
+def test_il_capitolo_consegnato_vale_esattamente_il_suo_peso(tmp_path, monkeypatch):
+    # Un solo capitolo, apposta: con piu' capitoli e un solo worker, il
+    # thread dell'executor puo' gia' aver pubblicato l'avanzamento del
+    # capitolo successivo prima che il thread del job consumi la consegna
+    # del precedente (l'esecutore non aspetta `as_completed` per ripartire).
+    # Isolare un capitolo tiene la prova sul fatto che conta: la consegna
+    # non lascia residuo del parziale che l'ha preceduta.
+    piano_singolo = [blocco("a", 0), blocco("b", 0),
+                     blocco("c", 0), blocco("d", 0)]
+    _con_copione(monkeypatch, [
+        {"phase": "generate", "chunks_done": 3, "chunks_total": 4}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        piano_singolo, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    valori = [v for v, _ in job.storia]
+    # Il parziale (3 chunk su 4) vale 0,9 del peso; la consegna chiude a 9*4
+    # esatti, non a 9*4 piu' quel che restava del parziale.
+    assert valori[0] == 2 + int(9 * 0.9 * 3)
+    assert valori[-1] == 2 + 9 * 4
+
+
+def test_un_worker_che_conta_piu_chunk_non_sfonda_il_capitolo(tmp_path, monkeypatch):
+    # Il worker scarta i chunk vuoti prima di generare, quindi il suo
+    # denominatore puo' essere diverso: la barra usa sempre il proprio.
+    _con_copione(monkeypatch, [
+        {"phase": "generate", "chunks_done": 99, "chunks_total": 99}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    assert max(v for v, _ in job.storia) <= 2 + 9 * 6
+    assert job["progress_current"] == 2 + 9 * 6
+
+
+def test_senza_avanzamenti_la_barra_e_quella_di_prima(tmp_path, sintesi_finta):
+    # Worker vecchio: nessuna riga parziale, nessuna callback. I valori
+    # devono essere identici a quelli di prima di questo canale.
+    job = JobSpia()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    assert job.storia == [2 + 9 * 2, 2 + 9 * 3, 2 + 9 * 6]
+
+
 def test_la_barra_avanza_a_ogni_capitolo_consegnato(tmp_path, sintesi_finta):
     # Il difetto: la barra restava a 2/(N+2) per tutto il tempo della sintesi
     # — cioe' per tutto il tempo del job — e si muoveva solo all'assemblaggio.
@@ -395,7 +522,7 @@ def test_la_barra_avanza_a_ogni_capitolo_consegnato(tmp_path, sintesi_finta):
     # Tre capitoli da 2, 1 e 3 chunk: la barra sale a ogni consegna, non tutta
     # insieme alla fine. Con ABM_VOXCPM_JOBS=1 l'ordine e' quello del piano.
     assert job.storia == [2 + 9 * 2, 2 + 9 * 3, 2 + 9 * 6]
-    assert job["progress_message"] == "Sintesi vocale: 3 di 3 capitoli"
+    assert job["progress_message"] == "Sintesi vocale: 3 di 3 capitoli (6 di 6 frasi)"
 
 
 def test_un_libro_di_un_capitolo_non_dice_capitoli(tmp_path, sintesi_finta):
@@ -403,7 +530,7 @@ def test_un_libro_di_un_capitolo_non_dice_capitoli(tmp_path, sintesi_finta):
     generation_engine._voxcpm_pre_pass(
         [blocco("a", 0)], VOCE, "+0%", tmp_path, "job-1", set(), job=job,
         peso_barra=generation_engine._VOXCPM_PESO_BARRA)
-    assert job["progress_message"] == "Sintesi vocale: 1 di 1 capitolo"
+    assert job["progress_message"] == "Sintesi vocale: 1 di 1 capitolo (1 di 1 frase)"
 
 
 def test_senza_peso_la_barra_resta_ferma(tmp_path, sintesi_finta):
