@@ -119,8 +119,7 @@ def _preview_ffmpeg_ok():
     return bool(_ok)
 from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
-    _strip_parenthetical, _normalize_shouting, _ensure_heading_pause,
-    _flatten_ws,
+    prepare_tts_text,
 )
 
 import assembly_queue
@@ -9277,9 +9276,17 @@ def api_analyze():
         return (target.text or "").strip()
 
     def _trim_preview(text, min_chars=400, max_chars=600):
-        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio."""
+        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio.
+
+        Normalizza prima di troncare, non dopo: `prepare_tts_text` ragiona per
+        riga, e questo testo esce di qui su una riga sola. Appiattirlo prima
+        significherebbe spegnere la pausa dopo il titolo — e l'anteprima voce
+        e` proprio il posto dove l'utente quella pausa la deve sentire.
+        Le parentesi qui restano: i flag di lettura li sceglie l'utente dopo,
+        e li applica l'endpoint dell'anteprima.
+        """
         import re as _re
-        text = _re.sub(r'\s+', ' ', text).strip()
+        text = prepare_tts_text(text, strip_round=False, strip_square=False)
         if len(text) <= max_chars:
             return text
         window = text[min_chars:max_chars]
@@ -9410,9 +9417,14 @@ def api_preview_audio(job_id):
                 valid = [c for c in sel_chs if _pv_text(c).strip()]
             if valid:
                 target = valid[1] if len(valid) > 1 else valid[0]
-                raw = _pv_text(target).strip()
                 import re as _re_pv
-                raw = _re_pv.sub(r"\s+", " ", raw).strip()
+                # Prepara qui, sul testo con i suoi a-capo: il troncamento a
+                # 600 char lavora poi su cio` che il motore leggera` davvero.
+                raw = prepare_tts_text(
+                    _pv_text(target),
+                    strip_round=not read_round_parens,
+                    strip_square=not read_square_brackets,
+                )
                 # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
                 if len(raw) > 600:
                     _win = raw[400:600]
@@ -9433,13 +9445,11 @@ def api_preview_audio(job_id):
     # dall'utente (default: rimuove tonde e quadre), normalizzazione del
     # maiuscolo, pausa dopo gli heading, appiattimento. Senza parita' l'utente
     # sceglierebbe la voce su una clip che suona diversa dall'audiolibro.
-    _prepared = _strip_parenthetical(
+    _prepared = prepare_tts_text(
         preview_text,
         strip_round=not read_round_parens,
         strip_square=not read_square_brackets,
-        flatten=False,
     )
-    _prepared = _flatten_ws(_ensure_heading_pause(_normalize_shouting(_prepared)))
     preview_text = _prepared or preview_text
 
     # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400

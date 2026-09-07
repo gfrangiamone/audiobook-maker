@@ -70,6 +70,7 @@ from tts_split import (
     _pick_chunk_max_chars, _pick_chunk_max_bytes,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
     generate_chunk_pcm_speechify,
+    prepare_tts_text, _normalize_shouting,
 )
 
 # ---------------------------------------------------------------------------
@@ -1430,12 +1431,21 @@ def _generate_optimized_abm(job_id):
         except Exception:
             safety_prompt = ""
 
+    # Lo snapshot deve essere la prova di cosa leggera` il motore, non del testo
+    # com'era prima: applichiamo la stessa preparazione di `_plan_chunks` con i
+    # flag parentesi del job (assenti in fase di ottimizzazione = default della
+    # generazione). Cosi` chi apre il .abm ritrova il maiuscolo gia' abbassato e
+    # il punto dopo il titolo, che e` esattamente cio` che sentira`.
+    strip_round = not job.get("read_round_parens", False)
+    strip_square = not job.get("read_square_brackets", False)
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
         for ch in info.chapters:
             if chapter_set and ch.index not in chapter_set:
                 continue
-            ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
+            ch_title = _normalize_shouting((ch.title or "").strip())
+            ch_safe = _safe_filename(ch_title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
 
             # Safety-net: se il testo del capitolo contiene un echo del system
@@ -1464,12 +1474,20 @@ def _generate_optimized_abm(job_id):
                     chars_output=len(ch_text_orig),
                     leaked_preview=ch_text_orig[:200],
                 )
+            else:
+                # `flatten=False`: il .abm si legge e si ri-carica come progetto,
+                # i paragrafi restano. Le parole sono comunque quelle del TTS.
+                # (Il placeholder di leak resta fuori: vive tra parentesi quadre
+                # e lo stripping lo cancellerebbe.)
+                ch_text_safe = prepare_tts_text(
+                    ch_text_safe, strip_round=strip_round,
+                    strip_square=strip_square, flatten=False)
 
             zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
             entry = {
                 "index": ch.index,
                 "filename": ch_filename,
-                "title": ch.title,
+                "title": ch_title,
                 "word_count": ch.word_count,
             }
             if prompt_leak_flag:
@@ -1499,6 +1517,13 @@ def _generate_optimized_abm(job_id):
             "original_filename": job.get("original_filename", ""),
             "ai_optimized": True,
             "ai_optimized_at": datetime.now(timezone.utc).isoformat(),
+            # Evidenza delle lavorazioni NON AI applicate al testo qui dentro.
+            "tts_text_prepared": {
+                "shouting_normalized": True,
+                "heading_pause": True,
+                "round_parens_read": bool(job.get("read_round_parens", False)),
+                "square_brackets_read": bool(job.get("read_square_brackets", False)),
+            },
             "chapters": chapters_manifest,
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))

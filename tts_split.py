@@ -558,6 +558,29 @@ def _ensure_heading_pause(text):
     return "\n".join(result)
 
 
+def prepare_tts_text(text, strip_round=True, strip_square=True, flatten=True):
+    """Catena unica di preparazione del testo prima del TTS.
+
+    L'ordine e` obbligato: `_normalize_shouting` e `_ensure_heading_pause`
+    ragionano per riga, quindi devono girare PRIMA dell'appiattimento. Chi
+    appiattisce a monte le disattiva senza accorgersene — su una riga sola non
+    esiste piu` un heading isolato, e il titolo resta incollato al paragrafo.
+    E` esattamente cosi` che l'anteprima voce e` rimasta indietro rispetto alla
+    generazione: questa funzione esiste per non avere piu` due catene da tenere
+    allineate a mano.
+
+    flatten: True (default) restituisce una riga sola, com'e` giusto per il
+        testo che va al motore. False conserva gli a-capo per chi il testo lo
+        deve mostrare — lo snapshot .abm — dove l'appiattimento sarebbe solo
+        una perdita di leggibilita`: le parole sono comunque le stesse.
+    """
+    prepared = _strip_parenthetical(text, strip_round=strip_round,
+                                    strip_square=strip_square, flatten=False)
+    prepared = _normalize_shouting(prepared)
+    prepared = _ensure_heading_pause(prepared)
+    return _flatten_ws(prepared) if flatten else prepared.strip()
+
+
 def _normalize_for_title_match(s):
     """Normalizza una stringa per fuzzy-match titolo: minuscolo, senza diacritici,
     senza punteggiatura/quote, whitespace compatto.
@@ -628,15 +651,8 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
     """
     plan = []
     for ch in info.chapters:
-        # Ordine obbligato: _normalize_shouting e _ensure_heading_pause
-        # ragionano per riga, quindi girano PRIMA dell'appiattimento (che qui
-        # resta l'ultimo passo, flatten=False sopra).
-        clean_text = _strip_parenthetical(ch.text, strip_round=strip_round,
-                                          strip_square=strip_square,
-                                          flatten=False)
-        clean_text = _normalize_shouting(clean_text)
-        clean_text = _ensure_heading_pause(clean_text)
-        clean_text = _flatten_ws(clean_text)
+        clean_text = prepare_tts_text(ch.text, strip_round=strip_round,
+                                      strip_square=strip_square)
         # Solo il testo letto dal TTS viene normalizzato: ch.title resta intatto
         # nel piano, e` il titolo che finisce nei metadati/capitoli del file.
         title = _normalize_shouting((ch.title or "").strip())
