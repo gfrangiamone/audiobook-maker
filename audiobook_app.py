@@ -119,7 +119,8 @@ def _preview_ffmpeg_ok():
     return bool(_ok)
 from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
-    _strip_parenthetical,
+    _strip_parenthetical, _normalize_shouting, _ensure_heading_pause,
+    _flatten_ws,
 )
 
 import assembly_queue
@@ -9427,13 +9428,19 @@ def api_preview_audio(job_id):
     if not preview_text:
         return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
 
-    # Applica lo stesso stripping parentesi della generazione finale, secondo i
-    # flag scelti dall'utente (default: rimuove tonde e quadre).
-    preview_text = _strip_parenthetical(
+    # Applica la stessa preparazione testo della generazione finale (stesso
+    # ordine di `_plan_chunks`): stripping parentesi secondo i flag scelti
+    # dall'utente (default: rimuove tonde e quadre), normalizzazione del
+    # maiuscolo, pausa dopo gli heading, appiattimento. Senza parita' l'utente
+    # sceglierebbe la voce su una clip che suona diversa dall'audiolibro.
+    _prepared = _strip_parenthetical(
         preview_text,
         strip_round=not read_round_parens,
         strip_square=not read_square_brackets,
-    ) or preview_text
+        flatten=False,
+    )
+    _prepared = _flatten_ws(_ensure_heading_pause(_normalize_shouting(_prepared)))
+    preview_text = _prepared or preview_text
 
     # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400
     # char) per contenere il costo per-token/per-carattere fatturato.

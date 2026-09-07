@@ -326,7 +326,15 @@ def _is_multilingual_voice(voice: str) -> bool:
 # Text preprocessing
 # ---------------------------------------------------------------------------
 
-def _strip_parenthetical(text, strip_round=True, strip_square=True):
+def _flatten_ws(text):
+    """Porta il testo su una riga sola: collassa ogni whitespace in uno spazio e
+    riattacca la punteggiatura rimasta staccata."""
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'\s+([,;:.!?])', r'\1', text)
+    return text.strip()
+
+
+def _strip_parenthetical(text, strip_round=True, strip_square=True, flatten=True):
     """Rimuove il contenuto tra parentesi tonde e/o quadre (anche annidate).
 
     strip_round:  se True rimuove il contenuto tra parentesi tonde ().
@@ -337,6 +345,12 @@ def _strip_parenthetical(text, strip_round=True, strip_square=True):
     differenza tra le modalita` e` la presenza/assenza del testo tra parentesi
     (nessun altro effetto collaterale sul testo). Default: rimuove entrambe
     (comportamento storico).
+
+    flatten: se True (default storico) il testo viene portato su una riga sola.
+        `_plan_chunks` passa False perche' le normalizzazioni successive
+        (`_normalize_shouting`, `_ensure_heading_pause`) ragionano per riga e
+        hanno bisogno degli a-capo: appiattisce lui alla fine. Con False gli
+        spazi DENTRO la riga vengono comunque collassati, gli a-capo no.
     """
     if strip_round or strip_square:
         prev = None
@@ -346,9 +360,179 @@ def _strip_parenthetical(text, strip_round=True, strip_square=True):
                 text = re.sub(r'\([^()]*\)', '', text)
             if strip_square:
                 text = re.sub(r'\[[^\[\]]*\]', '', text)
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\s+([,;:.!?])', r'\1', text)
+    if flatten:
+        return _flatten_ws(text)
+    text = re.sub(r'[^\S\n]+', ' ', text)
+    text = re.sub(r'[^\S\n]+([,;:.!?])', r'\1', text)
+    text = re.sub(r'[^\S\n]*\n[^\S\n]*', '\n', text)
     return text.strip()
+
+
+# Numero romano in forma stretta (IL, IC... non passano). Attenzione: matcha
+# anche la stringa vuota, i chiamanti devono escluderla.
+_ROMAN_RE = re.compile(r'^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$')
+
+# Parole che introducono una numerazione: solo dopo una di queste un token
+# romano corto (I, V, XI...) viene letto come numero e non come parola.
+_NUMBERING_WORDS = frozenset((
+    "capitolo", "capitoli", "cap", "parte", "libro", "tomo", "volume", "vol",
+    "sezione", "atto", "scena", "canto", "appendice",
+    "chapter", "part", "book", "act", "scene", "section", "appendix",
+    "capitulo", "capítulo", "seccion", "sección", "acto", "escena",
+    "kapitel", "teil", "buch", "abschnitt", "akt", "szene",
+    "chapitre", "partie", "livre", "acte", "scène",
+))
+
+_SENT_END_CHARS = '.!?…'
+
+
+def _word_core(token):
+    """Nucleo del token, senza la punteggiatura ai bordi.
+    «ADESSO,» -> «ADESSO», «"BASTA"» -> «BASTA», «L'AMORE» -> «L'AMORE»."""
+    return re.sub(r'^\W+|\W+$', '', token, flags=re.UNICODE)
+
+
+def _is_roman_numeral(core):
+    return bool(core) and bool(_ROMAN_RE.match(core))
+
+
+def _is_shouted_word(core):
+    """True se il token ha almeno 2 lettere e sono tutte maiuscole."""
+    letters = [c for c in core if c.isalpha()]
+    if len(letters) < 2:
+        return False
+    return all(c.isupper() for c in letters)
+
+
+def _line_is_shouted(line):
+    """True se la riga e` interamente maiuscola (heading urlato).
+
+    Una riga di una sola parola deve avere >=5 lettere: sotto quella soglia e`
+    piu` probabilmente una sigla (NATO, ONU) che un titolo.
+    """
+    letters = [c for c in line if c.isalpha()]
+    if not letters or not all(c.isupper() for c in letters):
+        return False
+    if len(line.split()) == 1:
+        return len(letters) >= 5
+    return len(letters) >= 4
+
+
+def _recapitalize(text):
+    """Rimette la maiuscola a inizio testo e dopo ogni terminatore di frase."""
+    chars = list(text)
+    need_upper = True
+    for i, c in enumerate(chars):
+        if need_upper and c.isalpha():
+            chars[i] = c.upper()
+            need_upper = False
+        elif c in _SENT_END_CHARS:
+            need_upper = True
+    return ''.join(chars)
+
+
+def _sentence_case_shouted_line(line):
+    """Porta a sentence case una riga interamente maiuscola.
+
+    I numeri romani di numerazione restano maiuscoli, ma solo dove il contesto
+    lo conferma: preceduti da una parola di numerazione («CAPITOLO XIV»), oppure
+    ultimo token della riga e lunghi almeno 3 caratteri («XVIII»). Senza questo
+    vincolo l'italiano si rovina: DI, MI, CI, VI, LI sono numeri romani validi e
+    «STORIA DI UN UOMO» diventerebbe «Storia DI un uomo».
+    """
+    tokens = re.split(r'(\s+)', line)
+    word_idx = [i for i, t in enumerate(tokens) if t.strip()]
+    out = list(tokens)
+    prev_core = ""
+    for pos, i in enumerate(word_idx):
+        core = _word_core(tokens[i])
+        is_last = (pos == len(word_idx) - 1)
+        keep_upper = _is_roman_numeral(core) and (
+            prev_core.lower() in _NUMBERING_WORDS
+            or (is_last and len(core) >= 3))
+        if not keep_upper:
+            out[i] = tokens[i].lower()
+        prev_core = core
+    return _recapitalize(''.join(out))
+
+
+def _is_caps_filler(core):
+    """True per una parola di una sola lettera maiuscola («E», «A», «I»).
+
+    Dentro una sequenza urlata fa parte dell'urlato («SEMPRE E COMUNQUE») e non
+    deve spezzarla; da sola pero` non ne apre una, o «una A maiuscola» finirebbe
+    per essere riscritta.
+    """
+    letters = [c for c in core if c.isalpha()]
+    return len(letters) == 1 and letters[0].isupper()
+
+
+def _lower_inline_shouted_runs(line):
+    """Abbassa le sequenze di 2+ parole maiuscole consecutive dentro una riga a
+    case misto (enfasi tipografica: «era VERAMENTE MOLTO stanco»).
+
+    La sequenza serve perche' un token maiuscolo isolato e` quasi sempre un
+    acronimo («la NASA ha confermato»), che il TTS deve continuare a sillabare.
+    """
+    tokens = re.split(r'(\s+)', line)
+    word_idx = [i for i, t in enumerate(tokens) if t.strip()]
+    cores = [_word_core(tokens[i]) for i in word_idx]
+    shouted = [_is_shouted_word(c) for c in cores]
+    filler = [_is_caps_filler(c) for c in cores]
+    out = list(tokens)
+    changed = False
+    pos = 0
+    while pos < len(word_idx):
+        if not shouted[pos]:
+            pos += 1
+            continue
+        # La sequenza si estende oltre i filler ma deve CHIUDERE su una parola
+        # urlata vera: «SEMPRE E COMUNQUE» si prende tutto, «SEMPRE E poi» no.
+        end = pos
+        real = 1
+        scan = pos
+        while scan + 1 < len(word_idx) and (shouted[scan + 1] or filler[scan + 1]):
+            scan += 1
+            if shouted[scan]:
+                end = scan
+                real += 1
+        if real >= 2:
+            for k in range(pos, end + 1):
+                out[word_idx[k]] = tokens[word_idx[k]].lower()
+            # La maiuscola torna solo se la sequenza apriva una frase. Il resto
+            # della riga ha la sua punteggiatura originale: un _recapitalize
+            # globale rovinerebbe le abbreviazioni («es. testo» -> «es. Testo»).
+            starts_sentence = (
+                pos == 0
+                or tokens[word_idx[pos - 1]].rstrip()[-1:] in _SENT_END_CHARS)
+            if starts_sentence:
+                out[word_idx[pos]] = _recapitalize(out[word_idx[pos]])
+            changed = True
+        pos = end + 1
+    return ''.join(out) if changed else line
+
+
+def _normalize_shouting(text):
+    """Normalizza il MAIUSCOLO, che i motori neurali leggono male (VoxCPM in
+    italiano su tutti: lo stesso titolo in minuscolo viene letto correttamente).
+
+    Riga per riga: se e` interamente maiuscola (heading urlato) va a sentence
+    case; altrimenti si abbassano solo le sequenze di 2+ parole maiuscole
+    consecutive (enfasi), lasciando intatti gli acronimi isolati.
+
+    L'ortografia dei nomi propri si perde («IL SIGNORE DEGLI ANELLI» ->
+    «Il signore degli anelli») ed e` accettabile: il case delle minuscole non
+    cambia la pronuncia, mentre il maiuscolo pieno la rovina.
+    """
+    if not text:
+        return text
+    out = []
+    for line in text.split("\n"):
+        if _line_is_shouted(line):
+            out.append(_sentence_case_shouted_line(line))
+        else:
+            out.append(_lower_inline_shouted_runs(line))
+    return "\n".join(out)
 
 
 def _ensure_heading_pause(text):
@@ -360,14 +544,14 @@ def _ensure_heading_pause(text):
     """
     lines = text.split("\n")
     result = []
-    for line in lines:
+    for idx, line in enumerate(lines):
         stripped = line.strip()
         if (stripped
                 and len(stripped) <= 120
                 and not re.search(r'[.!?\u2026:;]\s*$', stripped)):
-            idx = len(result)
-            prev_empty = (idx == 0) or (not result[-1].strip())
-            if prev_empty:
+            prev_empty = (idx == 0) or (not lines[idx - 1].strip())
+            next_empty = (idx == len(lines) - 1) or (not lines[idx + 1].strip())
+            if prev_empty and next_empty:
                 result.append(line.rstrip() + ".")
                 continue
         result.append(line)
@@ -444,18 +628,32 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
     """
     plan = []
     for ch in info.chapters:
+        # Ordine obbligato: _normalize_shouting e _ensure_heading_pause
+        # ragionano per riga, quindi girano PRIMA dell'appiattimento (che qui
+        # resta l'ultimo passo, flatten=False sopra).
         clean_text = _strip_parenthetical(ch.text, strip_round=strip_round,
-                                          strip_square=strip_square)
+                                          strip_square=strip_square,
+                                          flatten=False)
+        clean_text = _normalize_shouting(clean_text)
         clean_text = _ensure_heading_pause(clean_text)
+        clean_text = _flatten_ws(clean_text)
+        # Solo il testo letto dal TTS viene normalizzato: ch.title resta intatto
+        # nel piano, e` il titolo che finisce nei metadati/capitoli del file.
+        title = _normalize_shouting((ch.title or "").strip())
         # Titolo sintetico (placeholder "Section N" generato dal parser per uno
         # spine item senza titolo reale, es. front-matter): NON leggerlo, non e'
         # un titolo del libro. Altrimenti dedup heading: se il titolo compare
         # gia` in testa al testo (a meno di diacritici/punteggiatura/quote/
         # prefissi numerici), evita di prependerlo per non farlo leggere due volte.
-        if getattr(ch, "synthetic_title", False) or _title_already_in_text(ch.title, clean_text):
+        if (not title
+                or getattr(ch, "synthetic_title", False)
+                or _title_already_in_text(title, clean_text)):
             full_text = clean_text
         else:
-            full_text = f"{ch.title}.\n\n{clean_text}"
+            # Il punto serve a dare la pausa prima del corpo, ma solo se il
+            # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
+            sep = "" if re.search(r'[.!?…:;]$', title) else "."
+            full_text = f"{title}{sep}\n\n{clean_text}"
         chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
