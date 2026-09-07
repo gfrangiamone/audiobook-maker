@@ -504,7 +504,7 @@ __REVIEWS_LD__
         <div class="form-group" style="flex:1 1 100%">
           <div class="voxcpm-listen-box">
             <div class="voxcpm-listen-head">
-              <label data-t="voxcpm_sample_title">Ascolta la voce</label>
+              <label data-t="voxcpm_sample_title">Ascolta come suona questa voce</label>
               <div class="voxcpm-volume-row">
                 <span class="voxcpm-volume-ico" aria-hidden="true">&#128266;</span>
                 <input type="range" id="voxcpmVolume" min="0" max="100" step="1" value="100" aria-label="Volume">
@@ -521,8 +521,8 @@ __REVIEWS_LD__
                   <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
                 </button>
               </div>
-              <div class="model-rate-hint" data-t="voxcpm_demo_hint">
-                Clip audio generate con questa voce (non sono anteprima del tuo libro)
+              <div class="model-rate-hint" data-t-html="voxcpm_demo_hint">
+                Clip audio generate con questa voce <span class="voxcpm-hint-em">(non sono anteprima del tuo libro)</span>
               </div>
             </div>
             <div id="voxcpmSampleBlock" hidden>

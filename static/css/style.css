@@ -1139,3 +1139,6 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    partire» sempre nello stesso punto, riga dopo riga. min-width:0 tiene
    viva l'ellissi, che senza di esso un figlio flex non ritaglia. */
 .voxcpm-clip-txt{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* La parentesi che nega l'anteprima del libro: stesso accento dei bottoni di
+   ascolto, altrimenti si perde nel grigio della nota (§17.5). */
+.voxcpm-hint-em{color:var(--ac);font-weight:600}
