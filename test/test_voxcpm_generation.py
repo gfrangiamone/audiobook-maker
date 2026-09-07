@@ -608,3 +608,98 @@ def test_riuso_capitolo_completo_non_richiama_il_worker_ne_lo_fattura(tmp_path, 
     # chiamato per il capitolo 0, quindi non viene mai fatturato.
     assert [c["chunks"] for c in sintesi_finta.chiamate] == [["c"], ["d", "e", "f"]]
     assert 0 not in pre and 1 not in pre
+
+
+def test_finche_tutti_aspettano_il_motore_il_messaggio_lo_dice(tmp_path, monkeypatch):
+    # Su worker freddo questa fase dura piu' di due minuti, ed e' proprio il
+    # tratto in cui oggi l'utente non ha alcun segno di vita.
+    _con_copione(monkeypatch, [
+        {"phase": "warmup", "chunks_done": 0, "chunks_total": 2}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    assert job.storia[0] == (2, "Sintesi vocale: 0 di 3 capitoli "
+                                "(preparazione del motore vocale)")
+
+
+def test_appena_uno_genera_il_messaggio_torna_alle_frasi(tmp_path, monkeypatch):
+    _con_copione(monkeypatch, [
+        {"phase": "warmup", "chunks_done": 0, "chunks_total": 2},
+        {"phase": "generate", "chunks_done": 1, "chunks_total": 2}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        PIANO, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+        peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    messaggi = [m for _, m in job.storia]
+    assert "preparazione del motore vocale" in messaggi[0]
+    assert messaggi[1] == "Sintesi vocale: 0 di 3 capitoli (1 di 6 frasi)"
+
+
+def test_quando_tutti_hanno_smesso_di_generare_il_messaggio_lo_dice(tmp_path, monkeypatch):
+    # I chunk sono finiti ma il capitolo no: restano i giri di rigenerazione
+    # delle code tagliate e l'upload. La barra non deve inchiodarsi su un
+    # capitolo che sembra finito.
+    _con_copione(monkeypatch, [
+        {"phase": "generate", "chunks_done": 2, "chunks_total": 2},
+        {"phase": "verify", "chunks_done": 2, "chunks_total": 2},
+        {"phase": "deliver", "chunks_done": 2, "chunks_total": 2}])
+    job = JobSpiaFine()
+    generation_engine._voxcpm_pre_pass(
+        [blocco("a", 0), blocco("b", 0)], VOCE, "+0%", tmp_path, "job-1",
+        set(), job=job, peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    messaggi = [m for _, m in job.storia]
+    assert messaggi[0] == "Sintesi vocale: 0 di 1 capitolo (2 di 2 frasi)"
+    assert messaggi[1] == "Sintesi vocale: 0 di 1 capitolo (rifinitura e consegna)"
+    assert messaggi[2] == messaggi[1]
+    # A capitolo consegnato nessuno e' piu' in volo: tornano le frasi.
+    assert messaggi[-1] == "Sintesi vocale: 1 di 1 capitolo (2 di 2 frasi)"
+
+
+def test_capitolo_fallito_non_lascia_residui_in_fasi(tmp_path, monkeypatch):
+    # Un capitolo che solleva (annullamento o VoxcpmJobError) non arriva mai
+    # a `consegnati`: se la sua riga resta in `parziali`/`fasi`, il capitolo
+    # superstite non vede mai finire il "tutti in volo sono in rifinitura",
+    # perche' il morto conta ancora come "in generate" per sempre.
+    #
+    # Ordine deterministico: ABM_VOXCPM_JOBS=1 esegue i capitoli in serie
+    # sullo stesso thread executor, nell'ordine di sottomissione (quello del
+    # piano). Il capitolo "buono" attende un istante prima di pubblicare le
+    # sue righe, per dare al thread del job il tempo di drenare l'eccezione
+    # del capitolo "rotto" da `as_completed` — altrimenti i due thread
+    # correrebbero l'uno contro l'altro (vedi avvertimento sull'ordinamento
+    # nel task).
+    piano = [blocco("rotto", 0), blocco("buono", 1)]
+
+    def doppio(chunks, voice_id, dest_path, **kw):
+        on_progress = kw.get("on_progress")
+        if chunks == ["rotto"]:
+            if on_progress is not None:
+                on_progress({"phase": "generate", "chunks_done": 0,
+                             "chunks_total": 1})
+            raise voxcpm_tts.VoxcpmJobError("capitolo perso")
+        time.sleep(0.15)
+        if on_progress is not None:
+            on_progress({"phase": "generate", "chunks_done": 1,
+                         "chunks_total": 1})
+            on_progress({"phase": "deliver", "chunks_done": 1,
+                         "chunks_total": 1})
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22")
+        return {"sample_rate": 48000, "chars": 1, "audio_seconds": 1.0,
+                "tts_seconds": 0.5, "jobs": 1, "redone": 0, "bounced": 0,
+                "failed_chunks": 0, "bytes": 2, "runpod": []}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", doppio)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    job = JobSpiaFine()
+    with pytest.raises(voxcpm_tts.VoxcpmJobError):
+        generation_engine._voxcpm_pre_pass(
+            piano, VOCE, "+0%", tmp_path, "job-1", set(), job=job,
+            peso_barra=generation_engine._VOXCPM_PESO_BARRA)
+    messaggi = [m for _, m in job.storia]
+    # Col residuo del capitolo morto ancora in `fasi`, il capitolo "buono" in
+    # `deliver` non riesce mai a far dire "tutti in rifinitura": il difetto
+    # lo tiene incollato al conteggio delle frasi.
+    assert messaggi[2] == "Sintesi vocale: 0 di 2 capitoli (rifinitura e consegna)"

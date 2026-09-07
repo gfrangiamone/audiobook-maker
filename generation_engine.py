@@ -3403,10 +3403,16 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     questo, un job cancellato/fallito a meta' libro auditerebbe zero
     caratteri e zero costo, anche quando il worker ha davvero fatturato GPU.
 
-    `peso_barra`, se non nullo, fa avanzare `job["progress_current"]` di
-    `peso_barra` punti per chunk a ogni capitolo consegnato, e riscrive
-    `progress_message` col conto dei capitoli fatti. Zero (il default) lascia
-    la barra ferma: e' il comportamento per i chiamanti che non passano `job`.
+    `peso_barra`, se non nullo, governa quanto vale un capitolo sulla barra:
+    il 90% del suo peso avanza chunk per chunk, non appena il worker pubblica
+    un avanzamento parziale (fase e conto chunk), e il restante 10% scatta
+    tutto insieme alla consegna, quando il PCM del capitolo e' davvero su
+    disco. `progress_message` si riscrive insieme al numero, sotto lo stesso
+    lock, e porta in coda il conto delle frasi in volo o la fase in corso
+    ("preparazione del motore vocale" mentre tutti aspettano il motore,
+    "rifinitura e consegna" quando tutti hanno smesso di generare). Zero (il
+    default) lascia la barra ferma: e' il comportamento per i chiamanti che
+    non passano `job`.
 
     Raises:
         _CancelledError: annullamento richiesto.
@@ -3567,6 +3573,14 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 ci, indici, stats = fut.result()
             except BaseException as e:
                 errori[posizione] = e
+                # Questo capitolo non arrivera' mai a `consegnati`: se la
+                # sua riga resta in `parziali`/`fasi`, resta "in volo" per
+                # sempre, e un capitolo superstite non vede mai finire la
+                # rifinitura (il morto conta ancora come "in generate").
+                ci_fallito = gruppi[posizione][0]
+                with barra:
+                    parziali.pop(ci_fallito, None)
+                    fasi.pop(ci_fallito, None)
                 continue
             for posto, i in enumerate(indici):
                 if posto == 0:

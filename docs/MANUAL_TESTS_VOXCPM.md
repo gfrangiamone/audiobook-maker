@@ -105,6 +105,32 @@ dovesse ripetersi.
 6. Nel record JSONL del job compare `gpu_seconds`, coerente con la durata
    osservata della sintesi. → _atteso: sì_
 
+## 7bis. La barra si muove mentre il libro si legge
+
+Serve un libro da almeno tre capitoli e un endpoint senza worker caldi (la
+prima generazione della giornata va benissimo: l'avvio del motore è proprio
+quel che si vuole vedere dichiarato).
+
+1. Avvia una generazione con una voce PREMIUM e resta sulla pagina.
+2. **Nei primi due minuti** il messaggio deve dire «Sintesi vocale: 0 di N
+   capitoli (preparazione del motore vocale)». È il caricamento del motore
+   sulla GPU: prima di questo lavoro la barra qui restava muta.
+3. Poi il messaggio passa al conteggio delle frasi — «Sintesi vocale: 0 di N
+   capitoli (12 di 210 frasi)» — e il primo numero **cresce a scatti**, non
+   con continuità: il worker chiude i chunk a ondate, e ogni ondata è uno
+   scatto. Due o tre scatti per capitolo sono il comportamento atteso.
+4. Il numero delle frasi **non deve mai arretrare**, nemmeno quando un
+   capitolo viene rifatto.
+5. Verso la fine di ogni capitolo il messaggio diventa «(rifinitura e
+   consegna)»: sono i giri di rigenerazione delle code tagliate e l'upload.
+6. A sintesi finita la barra deve stare al 90% come nelle generazioni
+   precedenti: questo lavoro cambia il ritmo, non il punto d'arrivo.
+
+Se la barra resta ferma per l'intera sintesi e il libro esce comunque
+completo, il canale è muto ma innocuo: guarda `ABM_VOXCPM_PROGRESS`
+nell'unit systemd (a `0` è spento apposta) e la versione dell'immagine sul
+worker, che deve essere almeno quella del 2026-09-07.
+
 ## 8. Cosa fare se qualcosa non torna
 
 Prima di toccare il codice, guarda il log del worker su RunPod: la
