@@ -1065,6 +1065,29 @@ verdetto per cid. Kill in corsa e 403 pre-claim solo con
 standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
 `POST /admin/api/abuse/clear/<gruppo>` (header `X-Admin-Token`).
 
+**Guardia di evasione** (`abuse_watch._evasion_features`, applicata in
+`set_verdict`): S2 e S4 misurano *volume*, non evasione — un lettore che
+converte la propria bibliografia produce caratteri quanto un harvester.
+Il verdetto `abuse` viene declassato a `inconclusive` (nessun blocco, gruppo
+comunque sotto osservazione) se manca **ogni** traccia di evasione:
+
+- nessun `quota_gate`/`quota_block` mai registrato per il gruppo — non ha mai
+  raggiunto il limite, quindi non lo sta aggirando;
+- nessun cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva);
+- meno di `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
+  `_DISPOSABLE_LIFE_SEC` (2 h) e fermi da oltre `_DISPOSABLE_IDLE_SEC` (6 h)
+  — è la rotazione preventiva, che elude il gate senza mai toccarlo.
+
+Un gruppo ripristinato da console porta `cleared_ts`: entro
+`_CLEARED_WINDOW_SEC` (30 giorni) può tornare `abuse` solo con confidenza
+≥ `_CLEARED_MIN_CONF` (0.95), perché i contatori del dossier sopravvivono al
+ripristino e lo rimanderebbero altrimenti in blocco al primo rigiudizio.
+Le stesse feature entrano nel payload del giudice (blocco `group` di
+`build_prompt`) con una regola esplicita nel `SYSTEM_PROMPT`.
+Motivo: il 06/09/2026 un utente reale (13 libri in 4 giorni, 2 cid stabili,
+modalità batch/email, zero `QUOTA_GATE` in assoluto) è stato bloccato perché
+il giudice vedeva solo volume e conteggio cid.
+
 | Variabile | Descrizione | Default | Sorgente |
 |---|---|---|---|
 | `ABM_ABUSE_KILL_ENABLE` | Interruttore di kill e 403 (`0` = solo giudizio in log e digest). Richiede anche `ABM_ADMIN_EMAIL` non vuoto. Al primo avvio con `1` i verdetti maturati in osservazione vengono azzerati. | `0` | `abuse_watch.kill_enabled` |

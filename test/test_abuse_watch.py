@@ -119,6 +119,7 @@ def test_needs_judgement_from_second_signal(env):
 def test_verdict_scope_cids_vs_group_and_new_cid(env):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a"); _gen(g, "b")
+    aw.record_event(g, "a", "quota_gate", {})           # traccia di evasione: vedi _evasion_features
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": "0.95", "scope": "cids",
                            "cids": ["a", "ghost"], "reason": "bot"})
     assert v["cids"] == ["a"] and v["confidence"] == 0.95
@@ -163,6 +164,7 @@ def test_verdict_ttl_and_growth_reevaluation(env, monkeypatch):
 def test_kill_switch_and_admin_email_gate(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
     assert aw.is_blocked(g, "a") is True
     monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
@@ -176,6 +178,7 @@ def test_kill_switch_and_admin_email_gate(env, monkeypatch):
 def test_clear_verdict_and_arm_on_startup(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
     assert aw.clear_verdict(g) is True and aw.verdict_for(g) is None
     assert aw.clear_verdict(g) is False
@@ -194,6 +197,7 @@ def test_digest_data_only_hashes_and_counts(env):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a", chars=500, fn="Secret.epub")
     aw.record_event(g, "a", "email", {"email": "who@example.com"})
+    aw.record_event(g, "a", "quota_gate", {})
     assert aw.digest_data() == []                       # nessun giudizio/kill/403
     aw.record_judgement_failed(g, "timeout")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.93, "scope": "cids",
@@ -255,6 +259,7 @@ def test_verdict_group_scope_restricted_to_active_cids(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     real_time = time.time
     _gen(g, "stale")
+    aw.record_event(g, "stale", "quota_gate", {})
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # oltre 7 giorni
     _gen(g, "fresh")
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group", "cids": []})
@@ -266,6 +271,7 @@ def test_verdict_group_scope_restricted_to_active_cids(env, monkeypatch):
 def test_verdict_group_scope_falls_back_to_all_known_if_none_active(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a"); _gen(g, "b")
+    aw.record_event(g, "a", "quota_gate", {})
     real_time = time.time
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 8 * 86400)   # entrambi ormai stale
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "group", "cids": []})
@@ -303,3 +309,81 @@ def test_reason_field_scrubs_ipv6(env):
     assert "2001:db8::1" not in v["reason"]
     assert "same actor" in v["reason"]
     assert "[redacted]" in v["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Guardia di evasione (falso positivo del 06/09/2026: ricercatore bloccato)
+# ---------------------------------------------------------------------------
+
+def test_abuse_downgraded_without_any_evasion_trace(env):
+    """Volume alto su cid stabili che non hanno mai toccato la quota: nessuna
+    quota da evadere, quindi nessun blocco, per quanto sicuro sia il giudice."""
+    g = aw.group_key("9.9.9.9", "a")
+    for _ in range(20):
+        _gen(g, "a", chars=200000)
+    for _ in range(10):
+        _gen(g, "b", chars=200000)
+    ev = aw.evasion_for(g)
+    assert ev["quota_gate_ever"] is False and ev["quota_evasion_evidence"] is False
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.99, "scope": "group",
+                           "cids": [], "reason": "high volume"})
+    assert v["verdict"] == "inconclusive" and "evasione" in v["reason"]
+    assert aw.is_blocked(g, "a") is False and aw.is_blocked(g, "b") is False
+
+
+def test_disposable_cids_are_evasion_even_without_quota_gate(env, monkeypatch):
+    """Rotazione *preventiva*: cookie bruciati prima di esaurire la quota, che
+    quindi non lascia mai un QUOTA_GATE. La guardia non deve assolverla."""
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    for i in range(3):
+        t0 = real_time() + i * 86400
+        monkeypatch.setattr(aw.time, "time", lambda t0=t0: t0)
+        _gen(g, "burn-%d" % i)
+        monkeypatch.setattr(aw.time, "time", lambda t0=t0: t0 + 1800)
+        _gen(g, "burn-%d" % i)
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 4 * 86400)
+    ev = aw.evasion_for(g)
+    assert ev["disposable_cids"] == 3 and ev["quota_gate_ever"] is False
+    assert ev["quota_evasion_evidence"] is True
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert v["verdict"] == "abuse"
+
+
+def test_cid_born_after_a_block_is_evasion(env, monkeypatch):
+    g = aw.group_key("9.9.9.9", "a")
+    real_time = time.time
+    _gen(g, "a")
+    aw.record_block(g, "a")
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
+    _gen(g, "b")                                         # cid nato dopo il blocco
+    ev = aw.evasion_for(g)
+    assert ev["cids_born_after_last_block"] == 1 and ev["quota_evasion_evidence"] is True
+
+
+def test_admin_clear_raises_the_bar_for_reblocking(env):
+    """Il ripristino da console e' un giudizio umano: i contatori del dossier
+    sopravvivono, quindi senza questa guardia il gruppo tornerebbe bloccato al
+    primo rigiudizio."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    assert aw.is_blocked(g, "a") is True
+    assert aw.clear_verdict(g) is True
+    assert aw.evasion_for(g)["admin_cleared_recently"] is True
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.90, "scope": "group", "cids": []})
+    assert v["verdict"] == "inconclusive" and "admin" in v["reason"]
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.97, "scope": "group", "cids": []})
+    assert v["verdict"] == "abuse"                       # evidenza schiacciante: passa
+
+
+def test_evasion_features_in_prompt_payload(env):
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    payload, _alias = aw.build_prompt(g)
+    grp = json.loads(payload)["group"]
+    for k in ("quota_gate_ever", "cids_born_after_last_block", "disposable_cids",
+              "median_cid_lifespan_hours", "oldest_cid_age_hours",
+              "admin_cleared_recently", "quota_evasion_evidence"):
+        assert k in grp

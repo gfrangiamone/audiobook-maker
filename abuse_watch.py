@@ -45,6 +45,14 @@ _PII_RE = re.compile(
     r"|\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b"
 )
 _GROUP_SCOPE_ACTIVE_SEC = 7 * _DAY_SEC  # scope="group": solo i cid attivi negli ultimi 7 giorni
+# Evidenza di evasione (vedi `_evasion_features`): cid usa-e-getta = vissuto
+# breve e poi abbandonato; sotto _DISPOSABLE_MIN e' rumore (device cambiato,
+# cookie cancellato per caso), non rotazione.
+_DISPOSABLE_LIFE_SEC = 2 * 3600
+_DISPOSABLE_IDLE_SEC = 6 * 3600
+_DISPOSABLE_MIN = 2
+_CLEARED_WINDOW_SEC = 30 * _DAY_SEC   # quanto vale il ripristino admin come garanzia
+_CLEARED_MIN_CONF = 0.95              # confidenza minima per ri-bloccare dopo un ripristino
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +333,70 @@ def signals_for(group):
     return _signals(g, time.time())
 
 
+def _evasion_features(g, now):
+    """Tracce di *evasione* della quota, tenute distinte dal volume.
+
+    S2 e S4 misurano quanti cookie e quanti caratteri: un ricercatore che
+    converte la propria bibliografia ne produce quanto un harvester, percio'
+    da soli non separano i due casi. Cio' che definisce l'abuso e' aggirare
+    la quota, e lascia tracce sue:
+
+    - contatto con la quota (`quota_gate`/`quota_block`): chi non l'ha mai
+      esaurita non la sta evadendo;
+    - cid nati *dopo* l'ultimo blocco: rotazione reattiva;
+    - cid usa-e-getta: usati poche ore e abbandonati, la rotazione
+      preventiva che elude il gate senza mai toccarlo (caso 36e901e8).
+
+    Motivo: il 06/09/2026 un utente reale (13 libri in 4 giorni, 2 cid
+    stabili, batch/email, zero QUOTA_GATE in assoluto) e' stato bloccato
+    perche' il giudice vedeva solo volume e conteggio cid."""
+    cids = g.get("cids") or {}
+    b = g.get("all") or {}
+    last_block = max([float(b.get("quota_exhausted_ts") or 0)]
+                     + [float(x.get("ts") or 0) for x in (g.get("blocks") or [])]
+                     + [float(x.get("ts") or 0) for x in (g.get("kills") or [])])
+    born_after = disposable = 0
+    lifespans, ages = [], []
+    for c in cids.values():
+        first, last = float(c.get("first_ts") or 0), float(c.get("last_ts") or 0)
+        if not first:
+            continue
+        if last_block and first > last_block:
+            born_after += 1
+        life = max(0.0, last - first)
+        lifespans.append(life)
+        ages.append(now - first)
+        if (int(c.get("generate", 0) or 0) > 0 and life < _DISPOSABLE_LIFE_SEC
+                and (now - last) > _DISPOSABLE_IDLE_SEC):
+            disposable += 1
+    lifespans.sort()
+    ages.sort()
+    try:
+        cleared_age = now - float(g.get("cleared_ts") or 0)
+    except (TypeError, ValueError):
+        cleared_age = _CLEARED_WINDOW_SEC + 1
+    return {
+        "quota_gate_ever": bool(int(b.get("quota_gate", 0) or 0)
+                                or int(b.get("quota_block", 0) or 0)),
+        "cids_born_after_last_block": born_after,
+        "disposable_cids": disposable,
+        "median_cid_lifespan_hours": (round(lifespans[len(lifespans) // 2] / 3600, 1)
+                                      if lifespans else 0),
+        "oldest_cid_age_hours": round(ages[-1] / 3600, 1) if ages else 0,
+        "admin_cleared_recently": bool(g.get("cleared_ts")
+                                       and cleared_age < _CLEARED_WINDOW_SEC),
+        "quota_evasion_evidence": bool(int(b.get("quota_gate", 0) or 0)
+                                       or int(b.get("quota_block", 0) or 0)
+                                       or born_after
+                                       or disposable >= _DISPOSABLE_MIN),
+    }
+
+
+def evasion_for(group):
+    g = dossier(group)
+    return _evasion_features(g, time.time()) if g else None
+
+
 def _valid_verdict(g, now):
     v = g.get("verdict")
     if not isinstance(v, dict) or v.get("verdict") not in VERDICTS:
@@ -396,6 +468,21 @@ def set_verdict(group, verdict):
         if kind not in VERDICTS:
             kind = "inconclusive"
         reason = _PII_RE.sub("[redacted]", str(verdict.get("reason") or ""))[:500]
+        if kind == "abuse":
+            ev = _evasion_features(g, now)
+            # Guardia deterministica: il prompt chiede al giudice di guardare
+            # queste tracce, ma un LLM che vede volume alto tende comunque a
+            # rispondere `abuse`. Senza *nessuna* traccia di evasione non c'e'
+            # quota aggirata da difendere: si degrada a `inconclusive`, che
+            # lascia il gruppo sotto osservazione senza bloccarlo.
+            if not ev["quota_evasion_evidence"]:
+                kind = "inconclusive"
+                reason = ("[guard: nessuna traccia di evasione quota] " + reason)[:500]
+            elif ev["admin_cleared_recently"] and conf < _CLEARED_MIN_CONF:
+                # Un ripristino da console e' un giudizio umano: per ribaltarlo
+                # serve molto piu' della soglia ordinaria.
+                kind = "inconclusive"
+                reason = ("[guard: gruppo ripristinato da admin] " + reason)[:500]
         v = {"verdict": kind, "confidence": conf, "scope": scope, "cids": cids,
              "reason": reason, "ts": now,
              "signals": _signals(g, now), "events_at_verdict": _events_total(g)}
@@ -439,6 +526,11 @@ def clear_verdict(group):
         if not g or not g.get("verdict"):
             return False
         g["verdict"] = None
+        # I contatori del dossier sopravvivono al ripristino, quindi lo stesso
+        # gruppo torna in coda al giudice appena riprende a generare. `cleared_ts`
+        # rende il ripristino una garanzia a termine, non un semplice azzeramento
+        # (vedi la guardia in `set_verdict`).
+        g["cleared_ts"] = time.time()
         _push(g["judgements"], {"ts": time.time(), "outcome": "cleared", "confidence": 0.0,
                                 "scope": "", "cids_n": 0, "reason": "admin"},
               _JUDGEMENTS_KEEP)
@@ -538,9 +630,18 @@ You receive ONLY aggregated behavioural features for one network group (same has
 
 Signals: S1 = quota exhausted this month; S2 = two or more cids in the group; S3 = many quota-gate acceptances in 24h; S4 = very high character volume in 24h.
 
+The offence is EVADING THE QUOTA, not consuming it. High volume alone is not abuse: a researcher converting their own bibliography produces as many characters as a harvester. Evasion leaves its own traces, reported in the "group" block:
+- "quota_gate_ever": whether this group ever hit the quota at all. FALSE means the group has never even reached the limit, so there is nothing it could be evading.
+- "cids_born_after_last_block": cookies created after the group's last block — reactive rotation.
+- "disposable_cids": cookies used for a couple of hours and then abandoned — pre-emptive rotation that dodges the gate without ever touching it.
+- "median_cid_lifespan_hours" / "oldest_cid_age_hours": stable, long-lived cookies are what real users have.
+- "admin_cleared_recently": a human operator has already reviewed this group and declared it legitimate.
+
+HARD RULE: if "quota_gate_ever" is false AND "cids_born_after_last_block" is 0 AND "disposable_cids" is below 2, you MUST NOT answer "abuse", however large the volume. Answer "clean" or "inconclusive". If "admin_cleared_recently" is true, answer "abuse" only on overwhelming new evidence of rotation.
+
 Judge VOLUME and SPEED, not identities:
-- Innocent: a handful of books per month across two cookies (device change), varied voices/languages/hours across cids. Diversity of voices, languages, active hours and emails between cids is the signature of a SHARED NETWORK (home NAT, mobile carrier-grade NAT hosting thousands of users), not of a single actor. S2 and S4 fire routinely on mobile /24 ranges: this alone is never abuse.
-- Abuse: dozens of distinct files in a day or two, one voice and one language across cids, new emails appearing right after quota blocks, cids created minutes after a block, continuous activity at machine-like pace.
+- Innocent: a handful of books per month across two cookies (device change), varied voices/languages/hours across cids. Diversity of voices, languages, active hours and emails between cids is the signature of a SHARED NETWORK (home NAT, mobile carrier-grade NAT hosting thousands of users), not of a single actor. S2 and S4 fire routinely on mobile /24 ranges: this alone is never abuse. A steady few books per day from long-lived cookies that never hit the quota is a heavy but legitimate user.
+- Abuse: dozens of distinct files in a day or two, one voice and one language across cids, new emails appearing right after quota blocks, cids created minutes after a block, short-lived cookies replaced one after another, continuous activity at machine-like pace.
 
 Be conservative: when in doubt answer "inconclusive". Use "scope": "group" ONLY if the cids share voice, language and hour pattern AND new emails/cids appear in bursts right after blocks; otherwise use "scope": "cids" and list only the guilty aliases.
 
@@ -584,7 +685,8 @@ def build_prompt(group):
     alias = {f"cid_{i + 1}": cid for i, cid in enumerate(sorted(g.get("cids", {}).keys()))}
     feats = {
         "signals": _signals(g, now),
-        "group": dict(_bucket_features(g["all"], now), distinct_cids=len(alias)),
+        "group": dict(_bucket_features(g["all"], now), distinct_cids=len(alias),
+                      **_evasion_features(g, now)),
         "cids": {a: _bucket_features(g["cids"][cid], now) for a, cid in alias.items()},
     }
     return json.dumps(feats, ensure_ascii=True, separators=(",", ":")), alias

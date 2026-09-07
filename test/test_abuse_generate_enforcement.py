@@ -81,6 +81,9 @@ def _abuse_verdict(cids, scope="cids", confidence=0.95):
     g = aw.group_key(IP, CID)
     for c in cids:
         aw.record_event(g, c, "generate", {"chars": 10})
+        # Senza traccia di evasione la guardia di set_verdict declassa `abuse`
+        # a `inconclusive`: il gruppo deve aver toccato la quota.
+        aw.record_event(g, c, "quota_gate", {"chars": 10})
     aw.set_verdict(g, {"verdict": "abuse", "confidence": confidence, "scope": scope,
                        "cids": cids, "reason": "test"})
     return g
