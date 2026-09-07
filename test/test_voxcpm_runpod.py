@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+import voxcpm_catalog
 import voxcpm_tts
 
 
@@ -58,6 +59,14 @@ class FintaSessione:
 def endpoint_configurato(monkeypatch):
     monkeypatch.setenv("ABM_VOXCPM_ENDPOINT_ID", "ep-di-prova")
     monkeypatch.setenv("ABM_VOXCPM_API_KEY", "chiave-di-prova")
+    # Altri file di test puntano `ABM_VOXCPM_CATALOG_DIR` a un catalogo finto
+    # e ne invalidano la cache solo alla propria apertura, non alla chiusura:
+    # senza questo reset, i test di questo file che leggono il catalogo vero
+    # (`test_il_capitolo_inoltra_gli_avanzamenti` e affini) troverebbero,
+    # a seconda dell'ordine di raccolta, la cache ancora sporca di quel
+    # catalogo finto e senza le voci che qui servono.
+    monkeypatch.delenv("ABM_VOXCPM_CATALOG_DIR", raising=False)
+    voxcpm_catalog.invalidate_cache()
 
 
 def dormi_finto(_secondi):
@@ -442,6 +451,7 @@ def test_un_parziale_muove_la_callback_e_il_polling_continua():
     {"chunks_done": 3, "chunks_total": 0},       # denominatore vuoto
     {"chunks_done": -1, "chunks_total": 8},      # conteggio assurdo
     {"chunks_done": "3", "chunks_total": "8"},   # numeri che non lo sono
+    {"chunks_done": True, "chunks_total": 8},    # bool: e' un int, ma escluso
     [1, 2, 3],                                   # nemmeno un dizionario
 ])
 def test_un_parziale_malformato_si_ignora_in_silenzio(parziale):
@@ -460,9 +470,10 @@ def test_un_parziale_malformato_si_ignora_in_silenzio(parziale):
     assert viste == []
 
 
-def test_una_callback_che_esplode_non_si_porta_via_il_capitolo():
+def test_una_callback_che_esplode_non_si_porta_via_il_capitolo(caplog):
     # Politica di `_riga_costo`: un di piu' che si rompe non deve mai
-    # sostituire l'esito vero, ne' cancellare una GPU gia' pagata.
+    # sostituire l'esito vero, ne' cancellare una GPU gia' pagata. Ma deve
+    # lasciare traccia, come ogni altro best-effort in questo modulo.
     def scoppia(_riga):
         raise RuntimeError("la barra e' sparita")
 
@@ -475,9 +486,11 @@ def test_una_callback_che_esplode_non_si_porta_via_il_capitolo():
              FintaRisposta(body={"status": "COMPLETED",
                                  "output": {"audio_seconds": 1.0}})],
     )
-    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
-                             poll=0, on_progress=scoppia)
+    with caplog.at_level("WARNING"):
+        out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                                 poll=0, on_progress=scoppia)
     assert out == {"audio_seconds": 1.0}
+    assert "job-1" in caplog.text
 
 
 def test_senza_callback_il_comportamento_non_cambia():
@@ -493,3 +506,54 @@ def test_senza_callback_il_comportamento_non_cambia():
     out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
                              poll=0)
     assert out == {"audio_seconds": 1.0}
+
+
+def _sessione_di_un_capitolo(parziali):
+    """Un job che pubblica `parziali` e poi consegna un capitolo sano.
+
+    `audio_b64` non puo' essere la stringa vuota: `_consegna` la tratta come
+    "nessun audio" (§9.4) e farebbe fallire la consegna a prescindere
+    dall'avanzamento, che e' cio' che questi test vogliono osservare.
+    """
+    return FintaSessione(
+        post=[FintaRisposta(body={"id": "job-1"})],
+        get=[FintaRisposta(body={"status": "IN_PROGRESS", "output": p})
+             for p in parziali]
+            + [FintaRisposta(body={"status": "COMPLETED",
+                                   "output": {"failed_indices": [],
+                                              "sample_rate": 48000,
+                                              "chars": 3,
+                                              "audio_seconds": 1.0,
+                                              "tts_seconds": 0.5,
+                                              "audio_b64": "AAA="}})],
+    )
+
+
+def test_il_capitolo_inoltra_gli_avanzamenti(tmp_path, monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "clone_block",
+                        lambda voice_id: {"voice_latents": "AAAA"})
+    ses = _sessione_di_un_capitolo(
+        [{"phase": "warmup", "chunks_done": 0, "chunks_total": 2},
+         {"phase": "generate", "chunks_done": 2, "chunks_total": 2}])
+    viste = []
+    voxcpm_tts.synthesize_chapter(
+        ["uno", "due"], "voxcpm:v2:it-IT/Elena",
+        str(tmp_path / "ch.pcm"), session=ses, sleep=dormi_finto,
+        on_progress=viste.append)
+    assert [r["phase"] for r in viste] == ["warmup", "generate"]
+
+
+def test_l_interruttore_spegne_l_inoltro(tmp_path, monkeypatch):
+    # `ABM_VOXCPM_PROGRESS=0` riporta la barra al comportamento di prima
+    # senza toccare l'immagine sulla GPU.
+    monkeypatch.setenv("ABM_VOXCPM_PROGRESS", "0")
+    monkeypatch.setattr(voxcpm_tts, "clone_block",
+                        lambda voice_id: {"voice_latents": "AAAA"})
+    ses = _sessione_di_un_capitolo(
+        [{"phase": "generate", "chunks_done": 1, "chunks_total": 2}])
+    viste = []
+    voxcpm_tts.synthesize_chapter(
+        ["uno", "due"], "voxcpm:v2:it-IT/Elena",
+        str(tmp_path / "ch.pcm"), session=ses, sleep=dormi_finto,
+        on_progress=viste.append)
+    assert viste == []

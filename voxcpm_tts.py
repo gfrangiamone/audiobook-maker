@@ -446,6 +446,17 @@ def poll_seconds():
     return _f("ABM_VOXCPM_POLL_S", 2.0)
 
 
+def progress_enabled():
+    """Se il client debba ascoltare gli avanzamenti parziali del worker.
+
+    A zero la barra torna a muoversi solo a capitolo consegnato, come prima
+    di questo canale: e' l'interruttore da girare se il polling di `/status`
+    dovesse mai diventare un problema, e non richiede di ricostruire
+    l'immagine sulla GPU.
+    """
+    return _i("ABM_VOXCPM_PROGRESS", 1) != 0
+
+
 def _rimbalzo(out, testo):
     """Il rimbalzo si riconosce dal campo o, sulle immagini vecchie, dal testo."""
     return bool(out.get("bounced")) or "in spegnimento" in testo
@@ -867,7 +878,8 @@ def _cancella_intermedio(key):
 
 
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
-                       sleep=None, on_queue=None, cancelled=None):
+                       sleep=None, on_queue=None, cancelled=None,
+                       on_progress=None):
     """Sintetizza un capitolo intero come un solo job. Scrive il PCM grezzo.
 
     Un job per capitolo (§7.3): il costo sta nell'accensione del worker, non
@@ -887,6 +899,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         session, sleep, on_queue: inoltrati a `run_job`.
         cancelled: predicato senza argomenti. Se vero prima di sottomettere,
             il job non parte: e' il momento in cui la spesa comincia.
+        on_progress: callback opzionale degli avanzamenti parziali, inoltrata
+            a `run_job` e spenta da `ABM_VOXCPM_PROGRESS=0`. Un capitolo
+            rifatto ripubblica `chunks_done` da zero: la monotonia della
+            barra e' responsabilita' del chiamante, non di qui.
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
@@ -983,7 +999,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         try:
             out = run_job(payload, session=session, sleep=riposa,
                           on_queue=on_queue, cancelled=cancelled,
-                          on_billing=stats["runpod"].append)
+                          on_billing=stats["runpod"].append,
+                          on_progress=(on_progress if progress_enabled()
+                                       else None))
         except VoxcpmRimbalzato:
             # Respinto senza essere partito: si rifa' uguale. La concorrenza
             # resta quella e il contatore dei tentativi veri non si muove,
