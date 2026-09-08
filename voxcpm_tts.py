@@ -866,6 +866,27 @@ def _riassunto(out):
     return json.dumps(ridotto)[:300]
 
 
+# Ritentativi del download dell'intermedio da R2. Il capitolo e' gia'
+# sintetizzato e sta su R2: rifare la GET costa secondi, rifare il capitolo
+# costa minuti di GPU, e perdere il job costa il libro intero. Il 2026-09-08
+# un `ChunkedEncodingError` (connessione caduta a meta' corpo) al capitolo
+# 247 di 250 ha buttato via quattro ore di sintesi: da qui i tentativi.
+# La pausa raddoppia a ogni giro (2 s, 4 s): le URL firmate valgono minuti,
+# quindi l'attesa non le fa scadere.
+_SCARICA_TENTATIVI = 3
+_SCARICA_PAUSA_SEC = 2.0
+
+
+def _scarica_ritentabile(codice):
+    """Se un fallimento della GET merita un altro tentativo.
+
+    Senza codice HTTP (connessione caduta, corpo troncato, timeout) o con un
+    5xx/429 la causa e' transitoria. Un altro 4xx no: una firma scaduta o una
+    chiave assente restano tali, e ritentare rimanderebbe solo il verdetto.
+    """
+    return codice is None or codice >= 500 or codice == 429
+
+
 def _scarica(url, dest):
     """Scrive in `dest` il corpo di `url`, senza tenerlo tutto in memoria.
 
@@ -873,31 +894,45 @@ def _scarica(url, dest):
     una stringa moltiplicherebbe la memoria del server per il numero di
     capitoli in volo.
 
-    Un fallimento di rete esce come `VoxcpmJobError`, non come
+    Un fallimento di rete transitorio si ritenta (`_SCARICA_TENTATIVI`
+    volte, vedi `_scarica_ritentabile`); esaurite le prove, o su un errore
+    che non passera' da solo, esce come `VoxcpmJobError` e non come
     `requests.HTTPError`: e' il contratto dichiarato da `synthesize_chapter`,
     e chi chiama non deve conoscere il trasporto per capire cosa e' successo.
     Il messaggio non riporta `url`: e' una GET firmata, e finirebbe nei log.
     """
     tmp = dest + ".part"
-    try:
-        with requests.get(url, stream=True, timeout=300) as r:
-            r.raise_for_status()
-            with open(tmp, "wb") as f:
-                for pezzo in r.iter_content(chunk_size=1 << 20):
-                    if pezzo:
-                        f.write(pezzo)
-        os.replace(tmp, dest)
-    except requests.RequestException as e:
-        codice = getattr(getattr(e, "response", None), "status_code", None)
-        dettaglio = f"HTTP {codice}" if codice else type(e).__name__
-        raise VoxcpmJobError(
-            f"scaricamento del capitolo da R2 fallito: {dettaglio}") from e
-    finally:
-        # Un fallimento a meta' lascia un `.part` orfano: sul prossimo
-        # tentativo scriverebbe su un file gia' li', ingannando chi guarda
-        # solo la dimensione.
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    pausa = _SCARICA_PAUSA_SEC
+    for tentativo in range(1, _SCARICA_TENTATIVI + 1):
+        try:
+            with requests.get(url, stream=True, timeout=300) as r:
+                r.raise_for_status()
+                with open(tmp, "wb") as f:
+                    for pezzo in r.iter_content(chunk_size=1 << 20):
+                        if pezzo:
+                            f.write(pezzo)
+            os.replace(tmp, dest)
+            return
+        except requests.RequestException as e:
+            codice = getattr(getattr(e, "response", None), "status_code", None)
+            dettaglio = f"HTTP {codice}" if codice else type(e).__name__
+            if (not _scarica_ritentabile(codice)
+                    or tentativo >= _SCARICA_TENTATIVI):
+                raise VoxcpmJobError(
+                    f"scaricamento del capitolo da R2 fallito: {dettaglio}"
+                ) from e
+            _LOG.warning(
+                "scaricamento del capitolo da R2 fallito (%s), tentativo "
+                "%d di %d: riprovo fra %.0f s",
+                dettaglio, tentativo, _SCARICA_TENTATIVI, pausa)
+        finally:
+            # Un fallimento a meta' lascia un `.part` orfano: sul prossimo
+            # tentativo scriverebbe su un file gia' li', ingannando chi
+            # guarda solo la dimensione.
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        _dormi(pausa)
+        pausa *= 2
 
 
 def _cancella_intermedio(key):

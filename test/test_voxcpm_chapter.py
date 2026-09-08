@@ -338,11 +338,116 @@ def test_scarica_traduce_un_fallimento_di_rete_in_errore_di_dominio(tmp_path, mo
 
     monkeypatch.setattr(voxcpm_tts.requests, "get",
                         lambda *a, **kw: RispostaRotta())
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
     dest = str(tmp_path / "cap.pcm")
     with pytest.raises(voxcpm_tts.VoxcpmJobError):
         voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
     # Il .part parziale non deve restare in giro dopo un fallimento.
     assert not os.path.exists(dest + ".part")
+
+
+class _RispostaGet:
+    """Una GET finta: o consegna `corpo`, o fallisce come `errore` dice."""
+
+    def __init__(self, corpo=b"", errore=None):
+        self.corpo = corpo
+        self.errore = errore
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        if isinstance(self.errore, requests.HTTPError):
+            raise self.errore
+
+    def iter_content(self, chunk_size):
+        yield self.corpo[:2]
+        if self.errore is not None:
+            # La connessione cade a meta' corpo: e' esattamente il caso
+            # del 2026-09-08 (ChunkedEncodingError al capitolo 247/250).
+            raise self.errore
+        yield self.corpo[2:]
+
+
+def _get_a_sequenza(monkeypatch, risposte):
+    """`requests.get` che consegna `risposte` una per chiamata e le conta."""
+    chiamate = []
+    coda = list(risposte)
+
+    def get(url, **kw):
+        chiamate.append(url)
+        return coda.pop(0)
+
+    monkeypatch.setattr(voxcpm_tts.requests, "get", get)
+    return chiamate
+
+
+def _http_error(codice):
+    r = requests.Response()
+    r.status_code = codice
+    return requests.HTTPError(f"{codice}", response=r)
+
+
+def test_scarica_ritenta_una_connessione_caduta_a_meta(tmp_path, monkeypatch):
+    # Due cadute a meta' corpo e poi la consegna: il file arriva intero, con
+    # una pausa che raddoppia fra un tentativo e l'altro, e nessun .part
+    # sopravvive ai tentativi falliti.
+    pause = []
+    monkeypatch.setattr(voxcpm_tts, "_dormi", pause.append)
+    chiamate = _get_a_sequenza(monkeypatch, [
+        _RispostaGet(b"abcd", requests.exceptions.ChunkedEncodingError("x")),
+        _RispostaGet(b"abcd", requests.exceptions.ConnectionError("y")),
+        _RispostaGet(b"abcd"),
+    ])
+    dest = str(tmp_path / "cap.pcm")
+    voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert open(dest, "rb").read() == b"abcd"
+    assert len(chiamate) == 3
+    assert pause == [2.0, 4.0]
+    assert not os.path.exists(dest + ".part")
+
+
+def test_scarica_si_arrende_dopo_i_tentativi(tmp_path, monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    chiamate = _get_a_sequenza(monkeypatch, [
+        _RispostaGet(b"abcd", requests.exceptions.ChunkedEncodingError("x"))
+        for _ in range(voxcpm_tts._SCARICA_TENTATIVI)
+    ])
+    dest = str(tmp_path / "cap.pcm")
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert "ChunkedEncodingError" in str(e.value)
+    assert len(chiamate) == voxcpm_tts._SCARICA_TENTATIVI
+    assert not os.path.exists(dest)
+    assert not os.path.exists(dest + ".part")
+
+
+def test_scarica_non_ritenta_un_4xx(tmp_path, monkeypatch):
+    # Una firma scaduta o una chiave assente non passano da sole: un solo
+    # tentativo e il verdetto subito, senza pause.
+    pause = []
+    monkeypatch.setattr(voxcpm_tts, "_dormi", pause.append)
+    chiamate = _get_a_sequenza(monkeypatch, [
+        _RispostaGet(b"", _http_error(403)), _RispostaGet(b"abcd")])
+    dest = str(tmp_path / "cap.pcm")
+    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+        voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert "HTTP 403" in str(e.value)
+    assert len(chiamate) == 1
+    assert pause == []
+
+
+def test_scarica_ritenta_un_5xx(tmp_path, monkeypatch):
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    chiamate = _get_a_sequenza(monkeypatch, [
+        _RispostaGet(b"", _http_error(503)), _RispostaGet(b"abcd")])
+    dest = str(tmp_path / "cap.pcm")
+    voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert open(dest, "rb").read() == b"abcd"
+    assert len(chiamate) == 2
 
 
 def test_download_r2_troncato_e_un_errore(tmp_path, monkeypatch):
