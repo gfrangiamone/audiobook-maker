@@ -6,6 +6,8 @@ import pytest
 
 import abuse_watch as aw
 
+_COOLDOWN_HOP = aw._JUDGE_COOLDOWN_SEC + 10
+
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
@@ -22,6 +24,15 @@ def env(monkeypatch, tmp_path):
 def _gen(group, cid, chars=1000, voice="zh-CN-XiaoxiaoNeural", fn="book.epub", lang="zh"):
     aw.record_event(group, cid, "generate",
                     {"chars": chars, "voice": voice, "filename": fn, "lang": lang})
+
+
+def _age_verdict(group, seconds=_COOLDOWN_HOP):
+    """Retrodata il verdetto persistito: simula il tempo trascorso senza toccare
+    l'orologio globale. Serve dove il test verifica un *rigiudizio*, che la
+    finestra di `_JUDGE_COOLDOWN_SEC` sopprime nei primi minuti."""
+    d = aw._load()
+    d["groups"][group]["verdict"]["ts"] -= seconds
+    aw._save(d)
 
 
 def test_group_key_hashes_the_slash24(env):
@@ -108,6 +119,7 @@ def test_needs_judgement_from_second_signal(env):
     assert aw.needs_judgement(g, "b") is True           # S1 + S2
     aw.set_verdict(g, {"verdict": "clean", "confidence": 0.8, "scope": "cids",
                        "cids": ["a", "b"], "reason": "shared network"})
+    _age_verdict(g)
     assert aw.needs_judgement(g, "a") is False          # clean valido
     _gen(g, "c", chars=10)
     assert aw.needs_judgement(g, "c") is False          # nessun segnale nuovo
@@ -123,6 +135,7 @@ def test_verdict_scope_cids_vs_group_and_new_cid(env):
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": "0.95", "scope": "cids",
                            "cids": ["a", "ghost"], "reason": "bot"})
     assert v["cids"] == ["a"] and v["confidence"] == 0.95
+    _age_verdict(g)
     assert aw.is_blocked(g, "a") is True and aw.is_blocked(g, "b") is False
     assert aw.needs_judgement(g, "a") is False
     assert aw.needs_judgement(g, "b") is True           # cid fuori scope -> rigiudizio
@@ -131,6 +144,7 @@ def test_verdict_scope_cids_vs_group_and_new_cid(env):
     assert sorted(v["cids"]) == ["a", "b"]
     assert aw.is_blocked(g, "b") is True
     _gen(g, "c")
+    _age_verdict(g)
     # cid nato dopo un verdetto scope=group: coperto senza rigiudicare
     assert aw.is_blocked(g, "c") is True and aw.needs_judgement(g, "c") is False
 
@@ -153,6 +167,7 @@ def test_verdict_ttl_and_growth_reevaluation(env, monkeypatch):
     aw.record_event(g, "a", "quota_block", {})
     _gen(g, "b")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    _age_verdict(g)
     assert aw.needs_judgement(g, "a") is False
     for _ in range(2):
         _gen(g, "a")                                    # +25% eventi (6 -> 8)
@@ -224,6 +239,7 @@ def test_growth_formula_base_4_events(env):
     _gen(g, "b")
     # events_at_verdict = 4 (2 generate + 1 quota_block from "a", 1 generate from "b")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
+    _age_verdict(g)
     assert aw.needs_judgement(g, "a") is False
     _gen(g, "a")  # +1 event, total = 5; 5*4 >= 4*5 → 20 >= 20 → True
     assert aw.needs_judgement(g, "a") is True
@@ -415,6 +431,7 @@ def test_group_scope_does_not_cover_unknown_or_preexisting_idle_cids(env, monkey
     _gen(g, "active")
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
     assert v["cids"] == ["active"]
+    _age_verdict(g)
     assert aw.is_blocked(g, "idle") is False             # preesistente e inattivo: escluso
     assert aw.is_blocked(g, "mai-visto") is False        # nessun precedente nel dossier
     assert aw.needs_judgement(g, "mai-visto") is True    # sconosciuto: si giudica
@@ -432,3 +449,62 @@ def test_scope_cids_still_reopens_judgement_for_a_new_cid(env, monkeypatch):
     _gen(g, "b")
     assert aw.is_blocked(g, "b") is False
     assert aw.needs_judgement(g, "b") is True
+
+
+def test_judge_cooldown_suppresses_the_immediate_rejudgement(env):
+    """Due job dello stesso gruppo a pochi secondi di distanza pagavano due
+    chiamate LLM per lo stesso esito (07-08/09/2026: sei volte su 35 giudizi)."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_gate", {})
+    aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "cids",
+                       "cids": ["a"], "reason": "bot"})
+    _gen(g, "vicino")
+    assert aw.needs_judgement(g, "vicino") is False      # verdetto ancora fresco
+    _age_verdict(g)
+    assert aw.needs_judgement(g, "vicino") is True       # passata la finestra, si giudica
+
+
+def test_trigger_cid_born_after_the_block_enters_the_cids_scope(env, monkeypatch):
+    """Dopo una rotazione il giudice nomina il cookie con piu' volume, che e'
+    quello *abbandonato*: chi ha innescato il giudizio sta generando adesso."""
+    g = aw.group_key("9.9.9.9", "vecchio")
+    real_time = time.time
+    _gen(g, "vecchio")
+    aw.record_event(g, "vecchio", "quota_block", {})
+    monkeypatch.setattr(aw.time, "time", lambda: real_time() + 3600)
+    _gen(g, "nuovo")                                     # cookie di rotazione
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "cids",
+                           "cids": ["vecchio"], "reason": "rotation",
+                           "trigger_cid": "nuovo"})
+    assert sorted(v["cids"]) == ["nuovo", "vecchio"]
+    assert aw.is_blocked(g, "nuovo") is True
+    _age_verdict(g)
+    assert aw.needs_judgement(g, "nuovo") is False       # nello scope: niente rigiudizio
+
+
+def test_trigger_cid_preexisting_or_unknown_stays_out_of_scope(env):
+    """Il vicino di NAT c'era gia' prima del blocco: innescare un giudizio non
+    basta a condannarlo."""
+    g = aw.group_key("9.9.9.9", "vicino")
+    _gen(g, "vicino")                                    # presente prima del blocco
+    _gen(g, "a")
+    aw.record_event(g, "a", "quota_block", {})
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "cids",
+                           "cids": ["a"], "reason": "bot", "trigger_cid": "vicino"})
+    assert v["cids"] == ["a"]
+    assert aw.is_blocked(g, "vicino") is False
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.9, "scope": "cids",
+                           "cids": ["a"], "reason": "bot", "trigger_cid": "mai-visto"})
+    assert v["cids"] == ["a"]
+
+
+def test_trigger_cid_never_revives_an_abuse_downgraded_by_the_guard(env):
+    """La guardia di evasione viene prima: senza tracce non c'e' scope da
+    allargare."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.99, "scope": "cids",
+                           "cids": ["a"], "reason": "volume", "trigger_cid": "a"})
+    assert v["verdict"] == "inconclusive"
+    assert aw.is_blocked(g, "a") is False

@@ -1099,6 +1099,26 @@ senza precedenti nel dossier non è rotazione dimostrata. Con `scope="cids"` il
 rigiudizio resta, perché il giudice non si è pronunciato sull'intero gruppo.
 Motivo: il 07/09/2026 un gruppo in rotazione ha innescato cinque giudizi
 identici in 72 minuti, tre dei quali su cookie creati pochi secondi prima.
+
+**Cid che innesca il giudizio** (`abuse_watch.set_verdict`, ramo `scope="cids"`):
+il giudice guarda le feature storiche e nomina il cookie con più volume, che
+dopo una rotazione è quello **abbandonato**; a generare è il cookie nuovo. Il
+cid che ha innescato il giudizio viene quindi aggiunto allo scope, ma solo se
+è nato dopo l'ultimo blocco del gruppo (`_born_after_last_block`, lo stesso
+criterio di `cids_born_after_last_block`): chi era già su quel /24 prima del
+blocco è un vicino di NAT e resta fuori. La guardia di evasione viene prima,
+quindi un `abuse` declassato a `inconclusive` non allarga nulla. Motivo: il
+07/09/2026 un gruppo ha ruotato da app a web, si è visto condannare il cookie
+vecchio e ha completato il libro con quello nuovo.
+
+**Finestra fra due giudizi** (`_JUDGE_COOLDOWN_SEC`, 300 s): con un verdetto
+valido più recente della finestra, `needs_judgement` risponde sempre `False`.
+Due job dello stesso gruppo arrivati a pochi secondi l'uno dall'altro
+pagavano due chiamate LLM per lo stesso esito — fra il 07 e l'08/09/2026 sei
+volte su trentacinque giudizi, due delle quali a due e tre secondi di
+distanza. Il dedup della coda (`_queued`) non bastava, perché si chiude a fine
+giudizio e la chiamata al giudice può durare meno di tre secondi. Costo: al
+più cinque minuti di ritardo sul blocco di un cid che il verdetto non copriva.
 Motivo: il 06/09/2026 un utente reale (13 libri in 4 giorni, 2 cid stabili,
 modalità batch/email, zero `QUOTA_GATE` in assoluto) è stato bloccato perché
 il giudice vedeva solo volume e conteggio cid.

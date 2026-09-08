@@ -53,6 +53,9 @@ _DISPOSABLE_IDLE_SEC = 6 * 3600
 _DISPOSABLE_MIN = 2
 _CLEARED_WINDOW_SEC = 30 * _DAY_SEC   # quanto vale il ripristino admin come garanzia
 _CLEARED_MIN_CONF = 0.95              # confidenza minima per ri-bloccare dopo un ripristino
+# Due job dello stesso gruppo che arrivano a pochi secondi l'uno dall'altro
+# ponevano al giudice la stessa domanda due volte (vedi `needs_judgement`).
+_JUDGE_COOLDOWN_SEC = 300
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +336,28 @@ def signals_for(group):
     return _signals(g, time.time())
 
 
+def _last_block_ts(g):
+    """Ultimo momento in cui il gruppo ha incontrato la quota o e' stato fermato."""
+    g = g or {}
+    return max([float((g.get("all") or {}).get("quota_exhausted_ts") or 0)]
+               + [float(x.get("ts") or 0) for x in (g.get("blocks") or [])]
+               + [float(x.get("ts") or 0) for x in (g.get("kills") or [])])
+
+
+def _born_after_last_block(g, cid):
+    """Vero se `cid` e' comparso dopo l'ultimo blocco del gruppo: e' il profilo
+    del cookie creato per ripartire da zero, non quello del vicino di NAT che
+    era gia' li'."""
+    last_block = _last_block_ts(g)
+    if not last_block:
+        return False
+    try:
+        first = float((((g or {}).get("cids") or {}).get(cid) or {}).get("first_ts") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(first and first > last_block)
+
+
 def _evasion_features(g, now):
     """Tracce di *evasione* della quota, tenute distinte dal volume.
 
@@ -352,9 +377,7 @@ def _evasion_features(g, now):
     perche' il giudice vedeva solo volume e conteggio cid."""
     cids = g.get("cids") or {}
     b = g.get("all") or {}
-    last_block = max([float(b.get("quota_exhausted_ts") or 0)]
-                     + [float(x.get("ts") or 0) for x in (g.get("blocks") or [])]
-                     + [float(x.get("ts") or 0) for x in (g.get("kills") or [])])
+    last_block = _last_block_ts(g)
     born_after = disposable = 0
     lifespans, ages = [], []
     for c in cids.values():
@@ -431,6 +454,14 @@ def needs_judgement(group, cid="", group_data=None):
     v = _valid_verdict(g, now)
     if v is None:
         return n_sig >= 2
+    if (now - float(v.get("ts") or 0)) < _JUDGE_COOLDOWN_SEC:
+        # Un verdetto appena scritto e' gia' la risposta a questa domanda. Senza
+        # questa finestra due job dello stesso gruppo arrivati a distanza di
+        # pochi secondi pagavano due chiamate LLM per lo stesso esito: il
+        # 07-08/09/2026 e' successo sei volte su trentacinque giudizi, due a
+        # distanza di due e tre secondi. Il ritardo massimo che introduce e' di
+        # cinque minuti sul blocco di un cid che il verdetto non copriva.
+        return False
     if v["verdict"] == "abuse" and cid and cid not in (v.get("cids") or []):
         # Sotto `scope=group` un cid *nato dopo* il verdetto e' gia' coperto da
         # `_covered_by_group_scope`: rigiudicarlo ripaga la stessa domanda con
@@ -487,6 +518,20 @@ def set_verdict(group, verdict):
                 # serve molto piu' della soglia ordinaria.
                 kind = "inconclusive"
                 reason = ("[guard: gruppo ripristinato da admin] " + reason)[:500]
+        if kind == "abuse" and scope == "cids":
+            # Il giudice guarda le feature storiche e nomina il cid con piu'
+            # volume: dopo una rotazione quello e' il cookie *abbandonato*,
+            # mentre a generare e' il nuovo. Il 07/09/2026 un gruppo ha ruotato
+            # da app a web, si e' visto condannare il cookie vecchio e ha
+            # completato il libro con quello nuovo. Chi ha innescato il giudizio
+            # sta generando adesso: se e' nato dopo l'ultimo blocco (il profilo
+            # della rotazione, lo stesso criterio di `_evasion_features`) entra
+            # nello scope. Restano fuori i cid preesistenti, che sul quel /24
+            # c'erano gia' prima ed erano quindi vicini di NAT.
+            trigger = str(verdict.get("trigger_cid") or "")
+            if (trigger and trigger in known and trigger not in cids
+                    and _born_after_last_block(g, trigger)):
+                cids = cids + [trigger]
         v = {"verdict": kind, "confidence": conf, "scope": scope, "cids": cids,
              "reason": reason, "ts": now,
              "signals": _signals(g, now), "events_at_verdict": _events_total(g)}
@@ -758,9 +803,12 @@ def _call_llm(user, timeout):
     return (resp.choices[0].message.content or "").strip()
 
 
-def judge(group, timeout=20.0, attempts=2):
+def judge(group, timeout=20.0, attempts=2, cid=""):
     """Verdetto del giudice, gia' persistito con set_verdict. None = fail-open
-    (LLM assente, timeout, risposta malformata): registrato come 'unjudged'."""
+    (LLM assente, timeout, risposta malformata): registrato come 'unjudged'.
+
+    `cid` e' il cookie che ha innescato il giudizio: `set_verdict` lo usa per
+    non lasciare fuori dallo scope chi sta generando proprio ora."""
     try:
         import generation_engine as ge
         try:
@@ -787,7 +835,8 @@ def judge(group, timeout=20.0, attempts=2):
                         kind = "inconclusive"
                     return set_verdict(group, {"verdict": kind, "confidence": raw.get("confidence"),
                                                "scope": scope, "cids": cids,
-                                               "reason": raw.get("reason")})
+                                               "reason": raw.get("reason"),
+                                               "trigger_cid": cid})
                 last_err = "malformed"
             except Exception as e:
                 last_err = f"{type(e).__name__}: {str(e)[:120]}"
@@ -833,7 +882,7 @@ def _process(group, cid, on_verdict):
     try:
         if not needs_judgement(group, cid):
             return None
-        v = judge(group)
+        v = judge(group, cid=cid)
         print(f"[abuse] judge {group}: "
               f"{(v or {}).get('verdict', 'unjudged')} "
               f"conf={(v or {}).get('confidence', 0):.2f} scope={(v or {}).get('scope', '-')}",
