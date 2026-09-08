@@ -142,6 +142,10 @@ NON_CONTENT_TITLE_PHRASES = [
     # ── Copertina / Frontespizio ──
     "frontespizio", "title page", "cover", "copertina",
     "half title", "halftitle", "page de titre",
+    # ── Quarta di copertina / sinossi ──
+    "quarta di copertina", "risvolto di copertina", "risvolto",
+    "back cover", "quatrième de couverture", "quatrieme de couverture",
+    "klappentext", "contraportada", "plot summary",
     # ── Dedica / Epigrafe ──
     "dedica", "dedication", "dédicace", "dedicatoria",
     "epigrafe", "epigraph", "épigraphe",
@@ -204,6 +208,16 @@ def _is_backnote_toc_title(title) -> bool:
     return bool(_BACKNOTE_TITLE_RE.match(str(title)))
 
 
+# Titoli di apparato che valgono SOLO come titolo intero. "Trama" e
+# "Sinossi" intitolano la quarta di copertina, ma sono anche parole comuni:
+# "La trama del destino" e "Sinossi dei Vangeli" sono capitoli veri. Il match
+# per parola intera li scarterebbe tutti, quello esatto prende solo la
+# sezione di apparato.
+NON_CONTENT_TITLE_EXACT = {
+    "trama", "sinossi", "synopsis", "sinopsis", "resumen", "blurb",
+}
+
+
 def _title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     """True se il titolo corrisponde a una frase di apparato critico.
 
@@ -213,6 +227,9 @@ def _title_is_non_content(title, phrases=NON_CONTENT_TITLE_PHRASES):
     Per frasi multi-parola i confini si applicano agli estremi della frase.
     """
     tl = (title or "").lower()
+    # I titoli ambigui valgono solo per intero, non come parola.
+    if tl.strip().strip(".:;–—- ") in NON_CONTENT_TITLE_EXACT:
+        return True
     for skip in phrases:
         if re.search(r"(?<!\w)" + re.escape(skip) + r"(?!\w)", tl):
             return True
@@ -1011,6 +1028,11 @@ def is_content_chapter(text: str, title: str = "", lenient: bool = False) -> boo
             "prima edizione", "first published", "printed in",
             "stampato in", "finito di stampare", "tipografia",
             "isbn", "© ", "propriet", "vietata la riproduzione",
+            # Quasi nessun EPUB italiano usa il simbolo ©: scrive
+            # "Copyright 1999, 2002 Garzanti Libri". E il frontespizio
+            # porta quasi sempre il titolo originale dell'opera.
+            "copyright", "titolo originale", "original title",
+            "titre original", "título original",
         ]
         colophon_min = 3 if lenient else 2
         if sum(1 for s in colophon_signals if s in first_500) >= colophon_min:

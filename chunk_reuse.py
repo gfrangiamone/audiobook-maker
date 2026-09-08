@@ -29,7 +29,9 @@ SCHEMA_VERSION = 1
 # Motori per cui il riuso e' abilitato. Speechify e' escluso di proposito: la
 # pre-sintesi parallela popola `speechify_sample_rate` dal primo risultato API,
 # che un chunk riusato non produrrebbe (rischio di assembly a sample rate errato).
-REUSABLE_ENGINES = ("gemini", "edge", "google")
+# VoxCPM e' incluso ma con una regola diversa (vedi `_voxcpm_reusable_indices`):
+# il job e' per capitolo, non per chunk, quindi il riuso e' per capitolo intero.
+REUSABLE_ENGINES = ("gemini", "edge", "google", "voxcpm")
 
 
 def plan_sha(plan) -> str:
@@ -97,20 +99,28 @@ def matches(work_dir, fp: dict) -> bool:
     return bool(saved) and saved == fp
 
 
-def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str) -> set:
+def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str,
+                      plan=None) -> set:
     """Indici dei chunk gia' su disco che e' lecito riusare.
 
-    Un chunk e' riusabile se: (a) il manifest coincide con l'impronta corrente,
-    (b) il file esiste, non e' vuoto e — per il PCM 16 bit — ha dimensione pari,
-    (c) non e' quello di indice massimo fra i presenti. La condizione (c) scarta
-    l'ULTIMO file scritto, l'unico che al momento del crash poteva essere
-    troncato a meta' senza che si possa rilevarlo: costa una risintesi sola.
-    I chunk vengono scritti in ordine crescente, quindi un eventuale buco nella
-    sequenza (sweep parziale) non rende sospetti quelli che lo precedono."""
+    Per gemini/edge/google (per-chunk): un chunk e' riusabile se (a) il
+    manifest coincide con l'impronta corrente, (b) il file esiste, non e'
+    vuoto e — per il PCM 16 bit — ha dimensione pari, (c) non e' quello di
+    indice massimo fra i presenti. La condizione (c) scarta l'ULTIMO file
+    scritto, l'unico che al momento del crash poteva essere troncato a meta'
+    senza che si possa rilevarlo: costa una risintesi sola. I chunk vengono
+    scritti in ordine crescente, quindi un eventuale buco nella sequenza
+    (sweep parziale) non rende sospetti quelli che lo precedono.
+
+    Per voxcpm (per-capitolo, vedi `_voxcpm_reusable_indices`): la regola
+    sopra non si applica, perche' il job produce un PCM per capitolo e non
+    per chunk (i chunk di coda sono file vuoti per costruzione, non tronchi)."""
     if (fp or {}).get("engine") not in REUSABLE_ENGINES:
         return set()
     if not matches(work_dir, fp):
         return set()
+    if (fp or {}).get("engine") == "voxcpm":
+        return _voxcpm_reusable_indices(work_dir, total_chunks, ext, plan)
     base = str(work_dir)
     present = {}
     for i in range(total_chunks):
@@ -131,4 +141,48 @@ def reusable_indices(work_dir, fp: dict, total_chunks: int, ext: str) -> set:
         if ext == "pcm" and size % 2 != 0:
             continue  # PCM 16-bit: dimensione dispari = scrittura incompleta
         out.add(i)
+    return out
+
+
+def _voxcpm_reusable_indices(work_dir, total_chunks: int, ext: str,
+                              plan) -> set:
+    """Riuso VoxCPM: capitolo-atomico, non per chunk (§7.3 — un job e' un
+    capitolo, e il PCM che il worker restituisce non si ricuce a pezzi).
+
+    Un capitolo e' riusabile se e solo se: il file-parte del suo PRIMO chunk
+    esiste e non e' vuoto (l'audio del capitolo ci sta tutto li', scritto in
+    modo atomico da `_consegna` via .part + os.replace: se esiste con
+    size > 0 e' per forza completo, mai un troncamento a meta') E il
+    file-parte di OGNI chunk di coda esiste (puo' essere vuoto: e' cosi' che
+    deve essere per costruzione, non e' un segnale di crash). Se anche uno
+    solo manca, tutto il capitolo si rifa': non c'e' modo di riusare meta'
+    capitolo quando il worker restituisce un PCM indivisibile.
+
+    Senza `plan` (chiamante che non lo passa) non si riusa nulla: senza sapere
+    quali chunk appartengono a quale capitolo non si puo' applicare la regola."""
+    if not plan:
+        return set()
+    base = str(work_dir)
+    ordine = []
+    per_capitolo = {}
+    for i, blocco in enumerate(plan[:total_chunks]):
+        ci = blocco.get("chapter_index", 0)
+        if ci not in per_capitolo:
+            per_capitolo[ci] = []
+            ordine.append(ci)
+        per_capitolo[ci].append(i)
+    out = set()
+    for ci in ordine:
+        indici = per_capitolo[ci]
+        testa = indici[0]
+        head_path = os.path.join(base, f"chunk_{testa:06d}.{ext}")
+        try:
+            head_size = os.path.getsize(head_path)
+        except OSError:
+            continue
+        if head_size <= 0:
+            continue
+        if all(os.path.exists(os.path.join(base, f"chunk_{i:06d}.{ext}"))
+               for i in indici[1:]):
+            out.update(indici)
     return out

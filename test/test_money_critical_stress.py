@@ -50,6 +50,9 @@ def test_concurrent_voucher_consumption_no_overspend(monkeypatch, tmp_path):
     monkeypatch.setattr(payment, "_DATA_DIR", tmp_path)
     monkeypatch.setattr(payment, "_VOUCHERS_FILE", tmp_path / "_vouchers.json")
     monkeypatch.setattr(payment, "_vouchers", {})
+    # Bonus fissato: altrimenti ABM_VOUCHER_BONUS_PERCENT dell'ambiente decide
+    # la capienza del pool e la guardia anti-overspend non misura piu' il lock.
+    monkeypatch.setattr(payment, "VOUCHER_BONUS_PERCENT", 10)
 
     code, bonus_amount = payment._create_voucher(
         "u@x.it", 10.0, kind="test", note="stress"

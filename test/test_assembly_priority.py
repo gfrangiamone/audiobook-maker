@@ -258,7 +258,6 @@ def test_job_pagati_sono_premium(job):
 
 @pytest.mark.parametrize("job", [
     {"voice": "it-IT-DiegoNeural"},
-    {"voice": "gcloud:it-IT-Chirp3-HD-Aoede"},   # free tier Google, non pagato
     {"voice": "it-IT-DiegoNeural", "payment_amount_eur": 0},
     {"voice": "it-IT-DiegoNeural", "payment_token": "  "},
     {"voice": "it-IT-DiegoNeural", "payment_amount_eur": "n/a"},

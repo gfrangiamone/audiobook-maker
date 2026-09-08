@@ -403,3 +403,25 @@ def test_adopt_without_translated_title_keeps_original(client):
         r = client.post("/api/translate_adopt/TJ1")
     assert r.get_json()["title"] == "Libro"
     assert job["info"].title == "Libro"
+
+
+# -- Adopt e provenienza della lingua -------------------------------------------
+
+def test_adopt_marca_la_lingua_come_scelta_dall_utente(client):
+    """Dopo l'adozione la lingua del libro non e' piu' quella del file: e' quella
+    che l'utente ha ordinato. Se il job continuasse a dichiarare la provenienza
+    del libro ORIGINALE ('detected' su una lingua che non c'e' piu', o peggio
+    'unknown'), riaprendo lo stesso file il pannello audio ripeterebbe il modale
+    «lingua non rilevata, confermi?» su una scelta gia' fatta dall'utente.
+    """
+    job = _seed_translated(language_source="detected", language_detected=True)
+    with _own():
+        r = client.post("/api/translate_adopt/TJ1")
+    assert r.status_code == 200
+    assert job["language_source"] == "forced", (
+        "l'adopt non registra che la lingua l'ha scelta l'utente"
+    )
+    assert job["language_detected"] is False, (
+        "language_detected e' un booleano: sulla lingua adottata non e' stato "
+        "rilevato niente, l'ha decisa l'utente"
+    )

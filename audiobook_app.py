@@ -67,13 +67,6 @@ except ImportError:
     parse_pdf = None
     print("WARNING: pdf_to_tts.py not found  -  PDF support disabled.", file=sys.stderr)
 
-#  -  -  Google Cloud TTS (Chirp3-HD)  -  opzionale  -  -
-try:
-    import google_tts
-except ImportError:
-    google_tts = None
-    print("WARNING: google_tts.py not found  -  Google Cloud TTS disabled.", file=sys.stderr)
-
 #  -  -  Gemini TTS (Flash 2.5 / 3.1)  -  opzionale  -  -
 try:
     import gemini_tts
@@ -83,6 +76,17 @@ except ImportError:
 
 #  -  -  Speechify Simba-3.2 (PREMIUM, solo inglese)  -  opzionale  -  -
 import speechify_tts
+
+#  -  -  VoxCPM2 (voci inventate via RunPod, catalogo importato)  -  opzionale  -  -
+try:
+    import voxcpm_catalog
+    import voxcpm_tts
+except Exception as _voxcpm_err:      # noqa: BLE001
+    # Il catalogo e' un dato importato e il motore e' opzionale: se manca,
+    # l'app parte lo stesso con tre motori invece di quattro.
+    print(f"VoxCPM non disponibile: {_voxcpm_err}")
+    voxcpm_catalog = None
+    voxcpm_tts = None
 
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
@@ -115,7 +119,7 @@ def _preview_ffmpeg_ok():
     return bool(_ok)
 from tts_split import (
     _plan_chunks, _pick_chunk_max_chars, _pick_chunk_max_bytes,
-    _strip_parenthetical,
+    prepare_tts_text,
 )
 
 import assembly_queue
@@ -352,12 +356,6 @@ _DATA_DIR = os.environ.get("ABM_DATA_DIR", "/var/lib/audiobook-maker/data")
 UPLOAD_DIR = Path(_DATA_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Inizializza Google Cloud TTS (tracking utilizzo nella data dir)
-if google_tts is not None:
-    google_tts.init(_DATA_DIR)
-    # Forza l'invalidazione della cache voci locale per includere Google all'avvio
-    _voices_cache = None
-
 # Inizializza Gemini TTS (Flash 2.5/3.1)
 if gemini_tts is not None:
     try:
@@ -444,34 +442,11 @@ jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
 
 
-def _has_active_google_tts_jobs():
-    """True se c'è almeno un job Google TTS in corso (caratteri prenotati ma
-    non ancora visibili al Cloud Monitoring). Usato per decidere se è sicuro
-    riconciliare al ribasso il contatore locale.
-    """
-    if google_tts is None:
-        return False
-    with _jobs_lock:
-        try:
-            for j in jobs.values():
-                if j.get("status") in ("queued", "running", "generating"):
-                    if j.get("google_tts_reserved", 0) > 0:
-                        return True
-                    voice = j.get("voice", "")
-                    if voice and google_tts.is_google_voice(voice):
-                        return True
-        except Exception:
-            return True  # safe default
-        return False
-
-
-if google_tts is not None and hasattr(google_tts, "set_active_jobs_callback"):
-    google_tts.set_active_jobs_callback(_has_active_google_tts_jobs)
-
 from email_service import (
     _smtp_available, _send_email, _admin_notify_generation,
     _try_send_admin_digest, _send_payment_receipt_email, ADMIN_EMAIL,
-    BASE_URL, ADMIN_DIGEST_INTERVAL_SEC
+    BASE_URL, ADMIN_DIGEST_INTERVAL_SEC, _try_send_voxcpm_digest,
+    VOXCPM_DIGEST
 )
 
 EMAIL_FILE_RETENTION_SEC = int(os.environ.get("ABM_JOB_RETENTION_SEC", "64800"))  # 18h default
@@ -492,12 +467,18 @@ MAX_GEMINI_TEXT_CHARS = int(os.environ.get("ABM_MAX_GEMINI_TEXT_CHARS", "800000"
 # Voci Speechify (PREMIUM, solo inglese): stesso cap di Gemini per default,
 # override indipendente disponibile.
 MAX_SPEECHIFY_TEXT_CHARS = int(os.environ.get("ABM_MAX_SPEECHIFY_TEXT_CHARS", str(MAX_GEMINI_TEXT_CHARS)))
+# Cap caratteri VoxCPM. Allineato a quello Speechify: il limite non e' del
+# motore ma del portafoglio dell'utente e del tempo di attesa.
+MAX_VOXCPM_TEXT_CHARS = int(os.environ.get("ABM_MAX_VOXCPM_TEXT_CHARS",
+                                           str(MAX_SPEECHIFY_TEXT_CHARS)))
 
 # Whitelist charset per gli id voce ricevuti dal client (edge
 # "it-IT-IsabellaNeural", google "it-IT-Chirp3-HD-Zephyr", gemini
-# "gemini:flash25:Zephyr"). Difesa in profondita' contro stored XSS nelle
-# pagine admin e injection nel formato "#"-separato dell'Activity Log.
-_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,80}$")
+# "gemini:flash25:Zephyr", voxcpm "voxcpm:v2:it-IT/Stefano" — "/" separa
+# locale e nome nel catalogo di voci inventate). Difesa in profondita' contro
+# stored XSS nelle pagine admin e injection nel formato "#"-separato
+# dell'Activity Log.
+_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-/]{1,80}$")
 # Mese del business log (activity_YYYY-MM.log): vincola il nome file
 # costruito dal parametro utente.
 _YM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -539,13 +520,17 @@ def _premium_model_gate(voice):
     return jsonify({"error": "voice_model_disabled",
                     "error_code": "voice_model_disabled",
                     "model_key": _voice_model_key(voice)}), 400
+from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 
 
 def _max_text_chars_for_voice(voice):
     """Cap caratteri appropriato per la voce: Gemini -> MAX_GEMINI_TEXT_CHARS,
-    Speechify -> MAX_SPEECHIFY_TEXT_CHARS, altrimenti MAX_TEXT_CHARS."""
+    Speechify -> MAX_SPEECHIFY_TEXT_CHARS, VoxCPM -> MAX_VOXCPM_TEXT_CHARS,
+    altrimenti MAX_TEXT_CHARS."""
     if _is_gemini_voice(voice):
         return MAX_GEMINI_TEXT_CHARS
+    if _is_voxcpm_voice(voice):
+        return MAX_VOXCPM_TEXT_CHARS
     if _is_speechify_voice(voice):
         return MAX_SPEECHIFY_TEXT_CHARS
     return MAX_TEXT_CHARS
@@ -2611,22 +2596,7 @@ async def _fetch_voices():
             "engine": "edge"
         })
 
-    # 2. Google TTS (Optional)
-    if google_tts is not None:
-        try:
-            # get_voices restituisce { "it": [ {...}, ... ], "en": [...] }
-            g_dict = google_tts.get_voices()
-            for lc_short, v_list in g_dict.items():
-                if lc_short not in languages:
-                    languages[lc_short] = {
-                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
-                        "voices": []
-                    }
-                languages[lc_short]["voices"].extend(v_list)
-        except Exception as e:
-            print(f"Error merging Google voices: {e}")
-
-    # 3. Gemini TTS (Optional) — solo se effettivamente abilitato.
+    # 2. Gemini TTS (Optional) — solo se effettivamente abilitato.
     # `gemini_tts is not None` significa solo che il modulo è importato;
     # senza ABM_GEMINI_API_KEY le voci non vanno comunque mostrate.
     # NB: il branch GEMINI espone le voci nel tab "PREMIUM" (la rimozione
@@ -2650,7 +2620,7 @@ async def _fetch_voices():
         except Exception as e:
             print(f"Error merging Gemini voices: {e}")
 
-    # 4. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
+    # 3. Speechify Simba-3.2 (Optional, solo inglese) — gated su API key.
     if speechify_tts.is_available():
         try:
             spx_dict = speechify_tts.get_voices()  # -> {"en": [entry, ...]}
@@ -2663,6 +2633,23 @@ async def _fetch_voices():
                 languages[lc_short]["voices"].extend(v_list)
         except Exception as e:
             print(f"Error merging Speechify voices: {e}")
+
+    # 4. VoxCPM2 (opzionale) — gated su endpoint, chiave, tariffa e catalogo.
+    if voxcpm_tts is not None and voxcpm_tts.is_available():
+        try:
+            vox_dict = voxcpm_catalog.get_voices()  # -> {"it": [entry, ...]}
+            for lc_short, v_list in vox_dict.items():
+                if lc_short not in languages:
+                    # Il catalogo e' una variabile (D10): una lingua nuova
+                    # apre la sua sezione senza che nessuno rilasci codice.
+                    languages[lc_short] = {
+                        "name": LOCALE_NAMES.get(lc_short, lc_short.upper()),
+                        "voices": []
+                    }
+                languages[lc_short]["voices"].extend(v_list)
+        except Exception as e:
+            # Un catalogo illeggibile toglie un motore, non l'applicazione.
+            print(f"Error merging VoxCPM voices: {e}")
 
     # Sorting
     for lang in languages.values():
@@ -2700,8 +2687,6 @@ def _invalidate_voices_cache():
     global _voices_cache
     with _voices_lock:
         _voices_cache = None
-    if google_tts is not None:
-        google_tts.invalidate_voices_cache()
 
 # ----------------------------------------------------------------------
 # HELPER CLASSES & PARSERS (Moved to generation_engine.py)
@@ -3713,7 +3698,7 @@ When quoting facts from this site, cite one of:
 ## Key facts
 
 - Pricing: 100% free, donor-supported. No ads.
-- Voices: 400+ neural TTS voices via Microsoft Edge TTS; optional Google Cloud Chirp3-HD.
+- Voices: 400+ neural TTS voices via Microsoft Edge TTS.
 - Output formats: MP3 (single or ZIP), M4B with embedded chapters, podcast RSS 2.0 feed.
 - Input formats: EPUB, PDF, TXT, ABM (revisable project archive).
 - UI languages: Italian, English, French, Spanish, German, Chinese.
@@ -4288,13 +4273,14 @@ def admin_logs():
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
     # Sessioni che hanno realmente avviato la generazione del libro con voci
-    # PREMIUM (Gemini o Speechify/Simba: stessa tasca di pagamento/rimborso) —
-    # esclude le anteprime: richiediamo GENERATE in events.
+    # PREMIUM (Gemini, Speechify/Simba o VoxCPM: stessa tasca di
+    # pagamento/rimborso) — esclude le anteprime: richiediamo GENERATE in events.
     gemini_started = sum(
         1 for s in sessions.values()
         if "GENERATE" in s["events"] and (
             _is_gemini_voice(s.get("voice", ""))
             or _is_speechify_voice(s.get("voice", ""))
+            or _is_voxcpm_voice(s.get("voice", ""))
         )
     )
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
@@ -4521,7 +4507,8 @@ def admin_logs():
                 card_cls = "card"
             is_gemini_run = (
                 "GENERATE" in s["events"]
-                and (_is_gemini_voice(voice_raw) or _is_speechify_voice(voice_raw))
+                and (_is_gemini_voice(voice_raw) or _is_speechify_voice(voice_raw)
+                     or _is_voxcpm_voice(voice_raw))
             )
             session_platform = html_mod.escape(s.get("platform", "") or "")
             session_transferred = s.get("transferred", False)
@@ -6724,6 +6711,7 @@ def admin_audit_premium_page():
           <option value="flash25">Gemini 2.5 Flash TTS</option>
           <option value="flash31">Gemini 3.1 Flash TTS</option>
           <option value="simba-3.2">Simba 3.2 (PREMIUM EN)</option>
+          <option value="v2">VoxCPM v2 (PREMIUM)</option>
         </select>
       </div>
       <div>
@@ -7606,14 +7594,14 @@ _ACTIVE_JOB_STATUSES = ("queued", "running", "generating", "paused", "starting")
 
 
 def _synth_running_gemini_audit_records():
-    """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba) in forma
-    audit-shaped.
+    """Snapshot dei job PREMIUM attivi (Gemini + Speechify/Simba + VoxCPM) in
+    forma audit-shaped.
 
     Permette a /admin/audit-tts di mostrare una riga immediatamente all'avvio
     di una generazione Premium, aggiornata ad ogni refresh con i dati di costo
-    accumulati in `job["gemini_actual"]` (Gemini) o `job["speechify_actual"]`
-    (Simba). Quando il job termina, la riga "running" sparisce e viene
-    rimpiazzata dal record persistito nel JSONL.
+    accumulati in `job["gemini_actual"]` (Gemini), `job["speechify_actual"]`
+    (Simba) o `job["voxcpm_actual"]` (VoxCPM). Quando il job termina, la riga
+    "running" sparisce e viene rimpiazzata dal record persistito nel JSONL.
     """
     out = []
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -7629,7 +7617,8 @@ def _synth_running_gemini_audit_records():
             voice = job.get("voice") or job.get("opt_voice") or ""
             is_gem = _is_gemini_voice(voice)
             is_spe = _is_speechify_voice(voice)
-            if not (is_gem or is_spe):
+            is_vox = _is_voxcpm_voice(voice)
+            if not (is_gem or is_spe or is_vox):
                 continue
             parts = voice.split(":")
             model_key = parts[1] if len(parts) >= 3 else "?"
@@ -7674,6 +7663,26 @@ def _synth_running_gemini_audit_records():
                 chars_total = int(ga.get("chars", 0) or 0)
                 audio_seconds = float(ga.get("audio_seconds", 0) or 0)
                 pricing_cost_field = pricing_cost_actual
+            elif is_vox:
+                # Mirror di _write_voxcpm_audit: costo = tempo di GPU stimato
+                # dai caratteri col tariffario VoxCPM, mai quello di Speechify
+                # (altrimenti la riga live mostra costo 0 e delta_eur negativo
+                # quanto l'incasso, e sballa l'aggregato della pagina).
+                va = job.get("voxcpm_actual") or {}
+                chars_metered = int(va.get("chars", 0) or 0)
+                try:
+                    price = voxcpm_tts.compute_user_price_eur(chars_metered)
+                    provider_cost_actual = float(price.get("cost_usd", 0.0) or 0.0) * float(
+                        speechify_tts.usd_eur_rate())
+                    should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+                except Exception:
+                    provider_cost_actual = 0.0
+                    should_have_been = 0.0
+                if model_key == "?":
+                    model_key = "v2"
+                chars_total = chars_metered
+                audio_seconds = float(va.get("audio_seconds", 0) or 0)
+                pricing_cost_field = provider_cost_actual
             else:  # Speechify / Simba
                 sa = job.get("speechify_actual") or {}
                 metered = int(sa.get("billable_chars", 0) or 0) or int(sa.get("chars", 0) or 0)
@@ -8658,14 +8667,6 @@ def admin_api_gemini_recalc_params():
 def api_voices():
     try:
         voices = get_voices()
-        # Includi info budget Google TTS come chiave speciale _google_tts
-        if google_tts is not None and google_tts.is_available():
-            used, remaining, limit = google_tts.get_usage()
-            voices["_google_tts"] = {
-                "available": remaining > 0,
-                "chars_remaining": remaining,
-                "chars_limit": limit,
-            }
         # Stato voci PREMIUM: distingue "non configurato" (capability_ok=False)
         # da "spento per scelta admin" (admin_disabled=True). Serve alla UI per
         # mostrare il tab Premium con popup di manutenzione invece di nasconderlo,
@@ -8680,6 +8681,22 @@ def api_voices():
                 }
             except Exception:
                 pass
+        # Stato VoxCPM per il tab premium: se il motore non e' disponibile la
+        # UI non mostra il modello, invece di mostrarlo con la combo vuota.
+        # `personas` e' l'elenco dei CARATTERI presenti nel catalogo di oggi:
+        # arriva da li' e non da una costante, cosi' un carattere nuovo non
+        # richiede un rilascio (D10).
+        if voxcpm_tts is not None:
+            try:
+                disponibile = bool(voxcpm_tts.is_available())
+                voices["_voxcpm"] = {
+                    "available": disponibile,
+                    "model_label": voxcpm_catalog.MODEL_LABEL,
+                    "personas": voxcpm_catalog.personas() if disponibile else [],
+                }
+            except Exception:
+                voices["_voxcpm"] = {"available": False, "model_label": "",
+                                     "personas": []}
         # Disponibilita' traduzione libro: backend LLM configurato + modello di
         # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
         # bottone "Traduci" invece di farlo fallire dopo la selezione capitoli.
@@ -8690,6 +8707,62 @@ def api_voices():
         return jsonify(voices)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/voice_sample")
+def api_voice_sample():
+    """Il `.wav` di riferimento di una voce di catalogo.
+
+    Sostituisce l'anteprima di lettura per le voci VoxCPM (§5.2): l'anteprima
+    costerebbe un'accensione del worker per pochi secondi di audio, mentre il
+    campione e' un file che esiste gia' e che dice esattamente come suonera'
+    la voce, perche' e' proprio quello che il modello clonera'.
+
+    Non e' un file statico: il catalogo sta in una cartella importata e
+    configurabile, e solo `voxcpm_catalog` sa quali voci sono valide.
+    """
+    voice_id = (request.args.get("voice") or "").strip()
+    if voxcpm_catalog is None:
+        return jsonify({"error": "voxcpm non disponibile"}), 404
+    try:
+        percorso = voxcpm_catalog.sample_path(voice_id)
+    except ValueError as e:
+        # Id malformato, motore sbagliato, o voce non piu' in catalogo dopo una
+        # rigenerazione: dal punto di vista del browser sono la stessa cosa,
+        # una richiesta a cui non si puo' rispondere.
+        messaggio = str(e)
+        codice = 404 if "non presente nel catalogo" in messaggio else 400
+        return jsonify({"error": messaggio}), codice
+    except FileNotFoundError:
+        return jsonify({"error": "campione non disponibile"}), 404
+    return send_file(percorso, mimetype="audio/wav", conditional=True)
+
+
+@app.route("/api/voice_demo")
+def api_voice_demo():
+    """Una clip dimostrativa di una voce di catalogo (§17).
+
+    Le due clip generate — la frase comune a tutte le voci e la frase nelle
+    corde di questa — sono l'ascolto dell'utente in fase di scelta: prodotte
+    esattamente come sara' prodotto il libro, sono la promessa commerciale
+    della voce. Stesse regole del campione: il catalogo e' importato, i
+    percorsi non sono fidati.
+    """
+    voice_id = (request.args.get("voice") or "").strip()
+    clip_id = (request.args.get("clip") or "").strip()
+    if voxcpm_catalog is None:
+        return jsonify({"error": "voxcpm non disponibile"}), 404
+    try:
+        percorso = voxcpm_catalog.demo_path(voice_id, clip_id)
+    except ValueError as e:
+        # Id malformato -> 400; clip o voce che non ci sono (piu') -> 404,
+        # stesso criterio di /api/voice_sample.
+        messaggio = str(e)
+        codice = 404 if "non presente" in messaggio else 400
+        return jsonify({"error": messaggio}), codice
+    except FileNotFoundError:
+        return jsonify({"error": "clip non disponibile"}), 404
+    return send_file(percorso, mimetype="audio/wav", conditional=True)
 
 
 @app.route("/api/community/stats/today")
@@ -9727,48 +9800,6 @@ loadFb();
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
-@app.route("/api/admin/google_tts_status")
-def api_admin_google_tts_status():
-    """Endpoint admin: stato dettagliato Google TTS (consumo locale + cloud).
-    Forza una riconciliazione on-demand se ?reconcile=1.
-    Richiede admin token: il path /admin/ implica scope ristretto e l'endpoint
-    espone metriche operative (caratteri consumati / limiti) che possono
-    rivelare la capacita' residua del servizio a competitor o attaccanti.
-    """
-    if not _admin_auth_ok(_admin_auth_from_request()):
-        return jsonify({"error": "Unauthorized"}), 403
-    if google_tts is None:
-        return jsonify({"error": "google_tts module not loaded"}), 503
-    if not google_tts.is_available():
-        return jsonify({"available": False, "reason": "credentials missing or SDK not installed"}), 200
-
-    used, remaining, limit = google_tts.get_usage()
-    response = {
-        "available": True,
-        "local": {
-            "chars_used": used,
-            "chars_remaining": remaining,
-            "chars_limit": limit,
-            "percent_used": round(100.0 * used / limit, 2) if limit else 0,
-        },
-        "monitoring": google_tts.get_reconcile_status(),
-    }
-
-    # Riconciliazione on-demand
-    if request.args.get("reconcile") == "1":
-        result = google_tts.reconcile_with_cloud_monitoring()
-        response["reconcile_result"] = result
-
-    # Diagnostica metriche Cloud Monitoring (per capire quale filtro usare)
-    if request.args.get("diagnose") == "1":
-        if hasattr(google_tts, "diagnose_monitoring"):
-            response["diagnose"] = google_tts.diagnose_monitoring()
-        else:
-            response["diagnose"] = {"error": "diagnose_monitoring not available"}
-
-    return jsonify(response)
-
-
 @app.route("/admin/api/abuse/clear/<group>", methods=["POST"])
 def admin_abuse_clear(group):
     """Ripristino di un gruppo bloccato dalla moderazione anti-abuso: azzera il
@@ -9906,6 +9937,20 @@ def _safe_upload_name(original_name, ext):
     return f"{root}.{ext}" if ext else root
 
 
+def _derive_language_source(language, language_detected):
+    """Provenienza della lingua del libro, per il client.
+
+    `metadata` = scritta nel file (dc:language dell'EPUB, metadati del PDF).
+    `detected` = dedotta dall'IA leggendo il testo.
+    `unknown`  = nessuna delle due: il client ripieghera' sul locale
+                 dell'interfaccia e marchera' la lingua come ipotizzata,
+                 il che fa scattare l'avviso prima della generazione.
+    """
+    if not (language or "").strip():
+        return "unknown"
+    return "detected" if language_detected else "metadata"
+
+
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
     # Rate-limit IP-based: previene spam upload / DoS.
@@ -10015,6 +10060,7 @@ def api_analyze():
                 "job_id": existing_jid, "title": info.title, "author": info.author,
                 "language": info.language,
                 "language_detected": existing_job.get("language_detected", False),
+                "language_source": existing_job.get("language_source", "unknown"),
                 "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
                 "has_cover": bool(existing_job.get("cover_thumb")),
                 "total_chapters": len(info.chapters), "total_words": info.total_words,
@@ -10073,7 +10119,9 @@ def api_analyze():
                          "client_id": _get_client_id(), "client_ip": _get_client_ip(),
                          "browser_lang": _get_browser_lang(),
                          "optimized_chapters": [], "file_hash": file_hash,
-                         "language_detected": language_detected}
+                         "language_detected": language_detected,
+                         "language_source": _derive_language_source(
+                             info.language, language_detected)}
 
     # Extract cover thumbnail for preview (EPUB or ABM; PDF/TXT have no embedded cover)
     has_cover = False
@@ -10143,9 +10191,17 @@ def api_analyze():
         return (target.text or "").strip()
 
     def _trim_preview(text, min_chars=400, max_chars=600):
-        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio."""
+        """Tronca tra min e max caratteri a fine frase, oppure all'ultimo spazio.
+
+        Normalizza prima di troncare, non dopo: `prepare_tts_text` ragiona per
+        riga, e questo testo esce di qui su una riga sola. Appiattirlo prima
+        significherebbe spegnere la pausa dopo il titolo — e l'anteprima voce
+        e` proprio il posto dove l'utente quella pausa la deve sentire.
+        Le parentesi qui restano: i flag di lettura li sceglie l'utente dopo,
+        e li applica l'endpoint dell'anteprima.
+        """
         import re as _re
-        text = _re.sub(r'\s+', ' ', text).strip()
+        text = prepare_tts_text(text, strip_round=False, strip_square=False)
         if len(text) <= max_chars:
             return text
         window = text[min_chars:max_chars]
@@ -10185,6 +10241,7 @@ def api_analyze():
         "job_id": job_id, "title": info.title, "author": info.author,
         "language": info.language,
         "language_detected": language_detected,
+        "language_source": _derive_language_source(info.language, language_detected),
         "file_type": "abm" if is_abm else ("txt" if is_txt else ("pdf" if is_pdf else "epub")),
         "has_cover": has_cover,
         "total_chapters": len(info.chapters), "total_words": info.total_words,
@@ -10208,6 +10265,16 @@ def api_preview_audio(job_id):
     """
     if not job_id:
         return jsonify({"error": "Job non trovato"}), 404
+    voice = request.args.get("voice", "it-IT-IsabellaNeural")
+    if _is_voxcpm_voice(voice):
+        # §5.2: per VoxCPM l'anteprima e' sostituita dall'ascolto del campione
+        # (/api/voice_sample). Un'anteprima costerebbe l'accensione di un
+        # worker — circa tre minuti e il prezzo di un capitolo — per pochi
+        # secondi di audio. Il rifiuto esplicito serve anche a non far cadere
+        # la voce nel ramo Edge, che la leggerebbe con un'altra voce. Il
+        # controllo precede la verifica del job apposta: la sola voce VoxCPM
+        # basta a rifiutare, anche se il job non esiste ancora.
+        return jsonify({"error": "voxcpm_preview_unsupported"}), 400
     _job, _err, _sc = _check_job_owner(job_id)
     if _err is not None:
         return _err, _sc
@@ -10220,7 +10287,6 @@ def api_preview_audio(job_id):
     if not _allowed:
         return jsonify({"error": "rate_limit", "retry_after": _retry}), 429
 
-    voice = request.args.get("voice", "it-IT-IsabellaNeural")
     _gate = _premium_model_gate(voice)
     if _gate is not None:
         return _gate
@@ -10269,9 +10335,14 @@ def api_preview_audio(job_id):
                 valid = [c for c in sel_chs if _pv_text(c).strip()]
             if valid:
                 target = valid[1] if len(valid) > 1 else valid[0]
-                raw = _pv_text(target).strip()
                 import re as _re_pv
-                raw = _re_pv.sub(r"\s+", " ", raw).strip()
+                # Prepara qui, sul testo con i suoi a-capo: il troncamento a
+                # 600 char lavora poi su cio` che il motore leggera` davvero.
+                raw = prepare_tts_text(
+                    _pv_text(target),
+                    strip_round=not read_round_parens,
+                    strip_square=not read_square_brackets,
+                )
                 # Tronca tra 400 e 600 char a fine frase (riallinea a _trim_preview).
                 if len(raw) > 600:
                     _win = raw[400:600]
@@ -10287,13 +10358,17 @@ def api_preview_audio(job_id):
     if not preview_text:
         return jsonify({"error": "Nessun testo di anteprima disponibile"}), 400
 
-    # Applica lo stesso stripping parentesi della generazione finale, secondo i
-    # flag scelti dall'utente (default: rimuove tonde e quadre).
-    preview_text = _strip_parenthetical(
+    # Applica la stessa preparazione testo della generazione finale (stesso
+    # ordine di `_plan_chunks`): stripping parentesi secondo i flag scelti
+    # dall'utente (default: rimuove tonde e quadre), normalizzazione del
+    # maiuscolo, pausa dopo gli heading, appiattimento. Senza parita' l'utente
+    # sceglierebbe la voce su una clip che suona diversa dall'audiolibro.
+    _prepared = prepare_tts_text(
         preview_text,
         strip_round=not read_round_parens,
         strip_square=not read_square_brackets,
-    ) or preview_text
+    )
+    preview_text = _prepared or preview_text
 
     # Per Gemini e Speechify riduciamo il testo a ~20-30 sec di audio (250-400
     # char) per contenere il costo per-token/per-carattere fatturato.
@@ -10330,7 +10405,6 @@ def api_preview_audio(job_id):
     # Genera l'MP3 in un thread separato con timeout reale di 30 secondi.
     # concurrent.futures.Future.result(timeout=) interrompe l'attesa indipendentemente
     # da asyncio  -  risolve il caso in cui edge-tts si blocca sulla connessione TCP.
-    use_google_preview = google_tts is not None and google_tts.is_google_voice(voice)
     use_gemini_preview = gemini_tts is not None and _is_gemini_voice(voice)
     use_speechify_preview = _is_speechify_voice(voice) and speechify_tts.is_available()
     client_id = "anon"
@@ -10508,10 +10582,6 @@ def api_preview_audio(job_id):
                         os.remove(pcm_tmp)
                     except OSError:
                         pass
-        elif use_google_preview:
-            google_tts.synthesize(preview_text, voice, rate, str(preview_path))
-            # Deduce i caratteri dell'anteprima dal budget
-            google_tts.deduct_chars(len(preview_text))
         else:
             import edge_tts
             loop = asyncio.new_event_loop()
@@ -10751,6 +10821,9 @@ def api_generate():
     if _is_speechify_voice(voice):
         if not speechify_tts.is_available():
             return jsonify({"error": "speechify_not_configured"}), 400
+    if _is_voxcpm_voice(voice):
+        if voxcpm_tts is None or not voxcpm_tts.is_available():
+            return jsonify({"error": "voxcpm_not_configured"}), 400
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
@@ -10799,8 +10872,8 @@ def api_generate():
     # Lo stash di quota vale SOLO per la richiesta corrente: azzeralo qui, in
     # testa al preflight premium e per qualunque voce. Fra i gate premium e la
     # pop che consuma (poco prima di thread.start()) restano uscite sincrone
-    # (429 concurrent_limit, 400 no chapters, 413 selection_too_large, 429
-    # google_tts_budget): senza questo reset un residuo sopravvivrebbe sul job
+    # (429 concurrent_limit, 400 no chapters, 413 selection_too_large):
+    # senza questo reset un residuo sopravvivrebbe sul job
     # in memoria e la richiesta successiva sullo stesso job_id consumerebbe
     # quota anche con voce standard (nessun gate premium) o dopo un pagamento
     # regolare (il ramo `else` non scrive lo stash e ereditava il vecchio).
@@ -11170,8 +11243,14 @@ def api_generate():
     # Speechify non ha prenotazione budget ne' preflight RPD, quindi non va
     # chiamato alcun gemini_tts.* qui (ne' reserve_budget ne'
     # release_reservation: nulla e' stato prenotato in questo ramo).
-    if _is_speechify_voice(voice):
+    # VoxCPM entra qui e non in un terzo ramo: il percorso e' identico —
+    # stessa tasca job["payment"], stesso gate soglia/consumo token, nessun
+    # budget Google e nessun preflight RPD da rilasciare. Duplicare le
+    # novanta righe una terza volta darebbe tre copie da tenere allineate su
+    # un percorso di pagamento.
+    if _is_speechify_voice(voice) or _is_voxcpm_voice(voice):
         # TODO(refactor): estrarre un helper _consume_premium_payment condiviso col ramo gemini (duplicazione ~90 righe).
+        _is_vox = _is_voxcpm_voice(voice)
         info_pre = job.get("info")
         all_chs_pre = list(getattr(info_pre, "chapters", []) or [])
         sel = selected_chapters or []
@@ -11195,17 +11274,35 @@ def api_generate():
                 "chars_selected": _sel_chars_pre,
                 "chars_limit": _max_chars_pre,
             }), 413
-        # Speechify e' solo inglese: nessuna selezione lingua come nel ramo
-        # Gemini. Persisti comunque gen_lang="en" per coerenza con l'audit e
-        # con /api/combined_estimate.
-        job["gen_lang"] = "en"
-        try:
-            est_pre = speechify_tts.estimate_book_cost(chs_pre, language="en")
-            # Persisti la stima sul job: serve all'eventuale audit Speechify
-            # per popolare i campi *_est.
-            job["speechify_estimate"] = est_pre
-        except Exception as e:
-            return jsonify({"error": f"estimate failed: {e}"}), 500
+        if _is_vox:
+            # VoxCPM legge libri in piu' lingue (non solo inglese come
+            # Speechify): stessa priorita' UI > metadata > "it" usata da
+            # /api/combined_estimate, altrimenti la stima qui e quella vista
+            # dal client divergerebbero.
+            _ui_lang_pre = (data.get("lang") or "").strip().split("-")[0].lower()
+            lang_pre = (_ui_lang_pre
+                        or (getattr(info_pre, "language", "") or "").split("-")[0].lower()
+                        or "it")
+            job["gen_lang"] = lang_pre
+            try:
+                est_pre = voxcpm_tts.estimate_book_cost(chs_pre, language=lang_pre)
+                # Persisti la stima sul job: serve all'eventuale audit VoxCPM
+                # (Task 11) per popolare i campi *_est.
+                job["voxcpm_estimate"] = est_pre
+            except Exception as e:
+                return jsonify({"error": f"estimate failed: {e}"}), 500
+        else:
+            # Speechify e' solo inglese: nessuna selezione lingua come nel ramo
+            # Gemini. Persisti comunque gen_lang="en" per coerenza con l'audit e
+            # con /api/combined_estimate.
+            job["gen_lang"] = "en"
+            try:
+                est_pre = speechify_tts.estimate_book_cost(chs_pre, language="en")
+                # Persisti la stima sul job: serve all'eventuale audit Speechify
+                # per popolare i campi *_est.
+                job["speechify_estimate"] = est_pre
+            except Exception as e:
+                return jsonify({"error": f"estimate failed: {e}"}), 500
         # Fail-closed: vedi nota nel ramo Gemini.
         if not _assert_priced_on_real_text(job_id, chs_pre,
                                            est_pre.get("chars_total", 0)):
@@ -11253,7 +11350,8 @@ def api_generate():
                 }), 402
             try:
                 _pay_method = payment.consume_payment_token(
-                    payment_token, total_eur_pre, job_id, purpose="speechify"
+                    payment_token, total_eur_pre, job_id,
+                    purpose=("voxcpm" if _is_vox else "speechify")
                 )
             except ValueError as _pay_err:
                 return jsonify({"error": f"payment_invalid: {_pay_err}"}), 400
@@ -11266,9 +11364,12 @@ def api_generate():
                 "total_eur": total_eur_pre,
                 "method": _pay_method,
                 "ts": time.time(),
-                "speechify_est": est_pre,
                 "llm_eur": llm_eur_pre,
             }
+            if _is_vox:
+                job["payment"]["voxcpm_est"] = est_pre
+            else:
+                job["payment"]["speechify_est"] = est_pre
             _acq_src, _acq_plat = _acquisition_from_request()
             job["payment"]["acquisition_source"] = _acq_src
             job["payment"]["acquisition_platform"] = _acq_plat
@@ -11301,8 +11402,9 @@ def api_generate():
                     except Exception as _e:
                         print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
                               f"failed (non-fatal): {_e}", flush=True)
-                    print(f"[{job_id}] Paid Speechify job -> batch mode "
-                          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
+                    print(f"[{job_id}] Paid {'VoxCPM' if _is_vox else 'Speechify'} job "
+                          f"-> batch mode (notify {_pay_email}, heartbeat "
+                          f"disabilitato)", flush=True)
         # Stash emotion for run_generation (outer indent: vale per speechify,
         # non annidato nel ramo gemini).
         if speechify_emotion:
@@ -11315,6 +11417,7 @@ def api_generate():
     # richiesta va valutata qui a parte: is_premium_job() da sola vedrebbe
     # ancora il job senza voce e classificherebbe free una richiesta Gemini.
     _premium_req = (_is_gemini_voice(voice) or _is_speechify_voice(voice)
+                    or _is_voxcpm_voice(voice)
                     or generation_engine.is_premium_job(job))
     # Moderazione anti-abuso: cid nello scope di un verdetto `abuse` valido
     # (abuse_watch). Mai su job premium/pagati. Il messaggio non spiega il
@@ -11446,13 +11549,10 @@ def api_generate():
     #  -  -  Riuso di una generazione identica (voci standard, stesso client)  -  -
     # Impronta = testo dei capitoli selezionati + voce/rate/formato/parentesi.
     # Un hit serve i file del job sorgente (ancora in finestra calda) senza
-    # sintesi: niente quota caratteri, niente prenotazione Google. Mai per job
-    # premium/pagati; le voci Google restano escluse perche' il fallback di
-    # run_reuse su run_generation partirebbe senza prenotazione budget.
+    # sintesi: niente quota caratteri. Mai per job premium/pagati.
     _reuse_src = None
     job.pop("reuse_key", None)
-    if (not _premium_req and output_reuse.enabled()
-            and not (google_tts is not None and google_tts.is_google_voice(voice))):
+    if not _premium_req and output_reuse.enabled():
         try:
             _rk = output_reuse.compute_key(
                 info.chapters, voice, rate, output_format, single_file,
@@ -11510,32 +11610,6 @@ def api_generate():
             # sarebbe impassabile, quindi si lascia passare senza marcare.
             _ftq_gated = bool(_ftq_ack)
         job["_free_tts_quota_charge"] = (_ftq_cid, _ftq_key, selected_chars, _ftq_gated)
-
-    #  -  -  Pre-allocazione atomica budget Google Cloud TTS  -  -
-    # Verifica E deduce immediatamente i caratteri richiesti, così conversioni
-    # parallele non possono passare lo stesso check. Il refund della parte
-    # non consumata avviene in run_generation in caso di errore/cancellazione.
-    if _reuse_src is None and google_tts is not None and google_tts.is_google_voice(voice):
-        total_chars_needed = sum(ch.char_count for ch in info.chapters)
-        ok, remaining_after = google_tts.reserve_chars(total_chars_needed)
-        if not ok:
-            with _jobs_lock:
-                if job["status"] == "generating":
-                    job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
-            return jsonify({
-                "error": f"Google TTS monthly limit: {remaining_after:,} chars remaining, "
-                         f"but this book needs {total_chars_needed:,} chars.",
-                "error_code": "google_tts_budget",
-                "chars_needed": total_chars_needed,
-                "chars_remaining": remaining_after,
-            }), 429
-        # Memorizza i caratteri prenotati nel job per il refund
-        job["google_tts_reserved"] = total_chars_needed
-        print(f"[{job_id}] Google TTS: reserved {total_chars_needed:,} chars "
-              f"(remaining: {remaining_after:,})")
-        # Invalida la cache voci: se il budget si avvicina allo zero, le voci
-        # potrebbero scomparire al prossimo /api/voices
-        _invalidate_voices_cache()
 
     # Consumo quota: qui, non prima. Fra il claim atomico e questo punto ci
     # sono ancora uscite sincrone che abortiscono il job senza avviarlo
@@ -13216,12 +13290,41 @@ def api_combined_estimate():
             "margin_percent": est_spx["margin_percent"],
         }
 
+    voxcpm_eur = 0.0
+    voxcpm_breakdown = {}
+    if _is_voxcpm_voice(voice_id):
+        try:
+            est_vox = voxcpm_tts.estimate_book_cost(chs, language=lang)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        # list_price_eur, non user_price_eur: quest'ultimo e' gia' azzerato da
+        # voxcpm_tts se sotto la SUA soglia interna (stesso env var letto due
+        # volte). "voxcpm_eur" qui e' il prezzo di listino esposto in stima;
+        # l'unico punto che decide se e' gratis o no e' free_quota piu' sotto
+        # (is_free/total_eur), non questo campo.
+        # ATTENZIONE UI: il frontend deve renderizzare da `total_eur`/`is_free`
+        # nella risposta JSON, MAI da `voxcpm_eur` — qui e' listino grezzo, non
+        # il dovuto (puo' restare > 0 anche quando il job e' gratuito).
+        voxcpm_eur = round(est_vox.get("list_price_eur", 0.0), 2)
+        _premium_list_eur = round(est_vox.get("list_price_eur", 0.0), 2)
+        voxcpm_breakdown = {
+            "chars": est_vox["chars_total"],
+            "chars_total": est_vox["chars_total"],
+            "user_price_eur": est_vox["user_price_eur"],
+            "is_free": est_vox["is_free"],
+            "model_label": est_vox["model_label"],
+            # Il costo GPU misurato (§8.3) viaggia con la stima perche' e'
+            # quello che l'audit del Task 11 confronta col listino.
+            "cost_usd": est_vox["cost_usd"],
+        }
+
     # Quota ottimizzazione AI: sul ramo STANDALONE (voce standard, nessun
     # PREMIUM) l'importo mostrato DEVE applicare il floor minimo, come fanno
     # ordine PayPal/voucher/addebito. Sul ramo PREMIUM combinato la quota LLM
     # resta grezza (si somma al TTS, il pagamento e' del totale). Unica fonte:
     # payment.llm_price_eur (incidente stima 0,48 vs addebito 1,00).
-    _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
+    _has_premium = (_is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
+                    or _is_voxcpm_voice(voice_id))
     llm_eur = 0.0
     llm_breakdown = {}
     if ai_opt:
@@ -13235,7 +13338,7 @@ def api_combined_estimate():
             "floored": _lp["floored"],
         }
 
-    total = round(gemini_eur + speechify_eur + llm_eur, 2)
+    total = round(gemini_eur + speechify_eur + voxcpm_eur + llm_eur, 2)
     # Quota gratuita cumulativa per client: sul listino (TTS premium + quota LLM
     # combinata), non sul prezzo gia' azzerato sotto soglia. Sola lettura: qui
     # non si consuma nulla.
@@ -13262,7 +13365,9 @@ def api_combined_estimate():
     # un totale Speechify compreso tra le due soglie (soglia Speechify < Gemini)
     # risulterebbe is_free lato UI ma verrebbe respinto con 402 dal backend, con il
     # job bloccato a 0% (nessun payment token inviato). Vedi incidente 402 Speechify.
-    if _is_speechify_voice(voice_id):
+    if _is_voxcpm_voice(voice_id):
+        threshold = free_quota._premium_threshold_eur(voice_id)
+    elif _is_speechify_voice(voice_id):
         threshold = float(os.environ.get("ABM_SPEECHIFY_FREE_THRESHOLD_EUR", "0.50"))
     elif _is_gemini_voice(voice_id):
         threshold = float(os.environ.get("ABM_GEMINI_FREE_THRESHOLD_EUR", "0.50"))
@@ -13308,6 +13413,7 @@ def api_combined_estimate():
     return jsonify({
         "gemini_eur": gemini_eur,
         "speechify_eur": speechify_eur,
+        "voxcpm_eur": voxcpm_eur,
         "llm_eur": llm_eur,
         "total_eur": total,
         "is_free": _quota_dec["is_free"] if _quota_dec else (total <= threshold),
@@ -13317,6 +13423,7 @@ def api_combined_estimate():
         "rate_step": rate_step,
         "gemini_breakdown": gemini_breakdown,
         "speechify_breakdown": speechify_breakdown,
+        "voxcpm_breakdown": voxcpm_breakdown,
         "llm_breakdown": llm_breakdown,
         "gemini_overloaded": overload_info is not None,
         "gemini_overload_info": overload_info,
@@ -13426,7 +13533,20 @@ def api_paypal_create_order_gemini():
         speechify_eur = round(est["user_price_eur"], 2)
         _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
 
-    _has_premium = _is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
+    voxcpm_eur = 0.0
+    if _is_voxcpm_voice(voice_id):
+        try:
+            # `lang` gia' risolto sopra (UI > metadata > "it"), stessa
+            # priorita' di /api/combined_estimate: necessario per non
+            # produrre un amount mismatch server-side (Fix round 1).
+            est = voxcpm_tts.estimate_book_cost(chs, language=lang)
+        except Exception as e:
+            return jsonify({"error": f"estimate failed: {e}"}), 500
+        voxcpm_eur = round(est["user_price_eur"], 2)
+        _premium_list_eur = round(est.get("list_price_eur", 0.0), 2)
+
+    _has_premium = (_is_gemini_voice(voice_id) or _is_speechify_voice(voice_id)
+                    or _is_voxcpm_voice(voice_id))
     llm_eur = 0.0
     if ai_opt:
         chars = sum(len(getattr(c, "text", "") or "") for c in chs)
@@ -13436,7 +13556,7 @@ def api_paypal_create_order_gemini():
         # server-side amount check non produce falsi mismatch.
         llm_eur = payment.llm_price_eur(chars, is_combined=_has_premium)["due_eur"]
 
-    server_total = round(gemini_eur + speechify_eur + llm_eur, 2)
+    server_total = round(gemini_eur + speechify_eur + voxcpm_eur + llm_eur, 2)
     # Stesso punto di decisione di /api/combined_estimate: l'ordine PayPal deve
     # valere esattamente l'importo che il client ha visto (e che /api/generate
     # pretendera'), quota gratuita inclusa.
@@ -13701,8 +13821,21 @@ def api_optimize():
     _is_combined_speechify = (auto_generate
                               and _is_speechify_voice(data.get("voice", ""))
                               and speechify_tts.is_available())
+    # Stessa ragione del ramo Speechify sopra: il flusso auto_generate chiama
+    # run_generation direttamente e salta il preflight di /api/generate. Questo
+    # flag sopprime SOLO il gate standalone-LLM qui sotto: l'addebito vero e
+    # proprio (TTS VoxCPM + LLM) avviene nel blocco "Combined payment (LLM +
+    # VoxCPM in auto_generate flow)" piu' sotto (mirror del ramo Speechify).
+    # Prima di quel blocco, `_is_combined_voxcpm=True` senza un charge a valle
+    # lasciava passare un job VoxCPM gratis (ne' LLM ne' TTS incassati) — vedi
+    # task-10-report.md "Fix round 1".
+    _is_combined_voxcpm = (auto_generate
+                           and _is_voxcpm_voice(data.get("voice", ""))
+                           and voxcpm_tts is not None
+                           and voxcpm_tts.is_available())
     if (estimated_cost > LLM_FREE_THRESHOLD_EUR
-            and not _is_combined_gemini and not _is_combined_speechify):
+            and not _is_combined_gemini and not _is_combined_speechify
+            and not _is_combined_voxcpm):
         # Importo effettivo dovuto per l'ottimizzazione standalone: floor minimo
         # parametrico (ABM_LLM_MIN_COST_EUR). `estimated_cost` resta grezzo perche'
         # il ramo combinato piu' sotto lo somma alla quota TTS senza floor.
@@ -14094,6 +14227,150 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"speechify={_speechify_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total_spx:.2f}€ ({_consumed_method_spx})")
+
+    # ----- Combined payment (LLM + VoxCPM in auto_generate flow) -----
+    # Mirror LEAN del blocco Speechify sopra per le voci VoxCPM. Un unico
+    # token (PayPal order o voucher) copre LLM + TTS VoxCPM. Enforcement SEMPRE
+    # (anche senza token): il flusso auto-gen chiama run_generation diretto,
+    # bypassando il preflight pagamento di /api/generate. Senza questo blocco il
+    # TTS VoxCPM veniva regalato (margine negativo) ogni volta che la sola quota
+    # LLM cadeva sotto soglia — vedi task-10-report.md "Fix round 1". Lingua:
+    # stessa priorita' di /api/combined_estimate e del ramo Gemini sopra
+    # (UI > metadata libro > "it"), non fissa come per Speechify (solo inglese).
+    if _is_combined_voxcpm:
+        _combined_token_vox = (data.get("payment_token_combined")
+                               or data.get("payment_token") or "").strip()
+        _ui_lang_for_vox = (lang or "").split("-")[0].lower() if lang else ""
+        _lang_for_vox = (_ui_lang_for_vox
+                         or (getattr(info, "language", "") or "").split("-")[0].lower()
+                         or "it")
+        # Capitoli selezionati per la generazione (stessa logica frontend
+        # combined_estimate: subset se selected_chapters, altrimenti tutti).
+        _all_chs_vox = list(getattr(info, "chapters", []) or [])
+        _sel_list_vox = _parse_selected_chapters(data.get("selected_chapters"))
+        if _sel_list_vox:
+            _by_idx_vox = {ch.index: ch for ch in _all_chs_vox}
+            _chs_for_est_vox = [_by_idx_vox[i] for i in _sel_list_vox if i in _by_idx_vox]
+        else:
+            _chs_for_est_vox = _all_chs_vox
+        try:
+            _est_vox = voxcpm_tts.estimate_book_cost(_chs_for_est_vox, language=_lang_for_vox)
+            _voxcpm_eur_quota = round(_est_vox.get("user_price_eur", 0.0), 2)
+            _voxcpm_list_quota = round(_est_vox.get("list_price_eur", 0.0), 2)
+        except Exception as _e_est_vox:
+            print(f"[{job_id}] combined-payment voxcpm estimate failed: {_e_est_vox}")
+            _est_vox = None
+            _voxcpm_eur_quota = 0.0
+            _voxcpm_list_quota = 0.0
+        # Quota gratuita cumulativa sul LISTINO combinato (TTS + LLM).
+        _voice_vox = data.get("voice", "")
+        _quota_cid_vox = _quota_client_id(job)
+        _quota_dec_vox = _premium_quota_decision(
+            _quota_cid_vox, _voice_vox,
+            round(_voxcpm_list_quota + estimated_cost, 2), job_id,
+        )
+        _expected_total_vox = _quota_dec_vox["due_eur"]
+        _threshold_vox = _quota_dec_vox["threshold_eur"]
+        # Consumo immediato solo a quota attiva (vedi ramo Gemini sopra).
+        _fq_consumed_vox = False
+        if _quota_dec_vox["is_free"] and free_quota.limit_eur() > 0:
+            try:
+                free_quota.consume(_quota_cid_vox,
+                                   _quota_dec_vox["list_total_eur"], job_id)
+                _fq_consumed_vox = True
+            except Exception as _fq_err_vox:
+                print(f"[{job_id}] free_quota consume failed (non-fatal): {_fq_err_vox}")
+        _free_quota_log(job_id, _quota_dec_vox, charged=_fq_consumed_vox)
+        if not _quota_dec_vox["is_free"]:
+            if not _combined_token_vox:
+                if _quota_dec_vox["quota_exhausted"]:
+                    try:
+                        _log_activity(job_id, job.get("original_filename", ""),
+                                      "FREE_QUOTA_EXCEEDED",
+                                      client_id=job.get("client_id", ""),
+                                      client_ip=job.get("client_ip", ""),
+                                      voice=_voice_vox)
+                    except Exception:
+                        pass
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Payment required for generation.",
+                    "error_code": ("free_quota_exhausted"
+                                   if _quota_dec_vox["quota_exhausted"] else "payment_required"),
+                    "total_eur": _expected_total_vox,
+                    "voxcpm_eur": _voxcpm_eur_quota,
+                    "llm_eur": estimated_cost,
+                    "threshold_eur": _threshold_vox,
+                    "quota_used_eur": _quota_dec_vox["quota_used_eur"],
+                    "quota_limit_eur": _quota_dec_vox["quota_limit_eur"],
+                }), 402
+            # Validazione + consume del token combinato.
+            _consumed_vox = False
+            _consumed_method_vox = ""
+            _consumed_email_vox = ""
+            if _combined_token_vox in payment._payments:
+                with payment._payments_lock:
+                    _pay_vox = payment._payments.get(_combined_token_vox)
+                    if (_pay_vox and not _pay_vox.get("used")
+                            and float(_pay_vox.get("amount_eur", 0)) + 0.05
+                            >= _expected_total_vox):
+                        _pay_vox["used"] = True
+                        _pay_vox["used_at"] = time.time()
+                        _pay_vox["used_job_id"] = job_id
+                        _consumed_method_vox = "paypal"
+                        _consumed_email_vox = _pay_vox.get("email", "") or ""
+                        _consumed_vox = True
+                if _consumed_vox:
+                    _save_payments()
+            elif _combined_token_vox in payment._vouchers:
+                try:
+                    payment._voucher_consume(_combined_token_vox, _expected_total_vox,
+                                             job_id=job_id)
+                    _v_vox = payment._vouchers.get(_combined_token_vox, {})
+                    _consumed_method_vox = "voucher"
+                    _consumed_email_vox = _v_vox.get("email", "") or ""
+                    _consumed_vox = True
+                except ValueError as _vc_err_vox:
+                    print(f"[{job_id}] combined voucher consume failed: {_vc_err_vox}")
+            if not _consumed_vox:
+                print(f"[{job_id}] combined payment token "
+                      f"{_combined_token_vox[:12]}... not consumable "
+                      f"(expected_total={_expected_total_vox:.2f}€) -> 402")
+                _release_opt_claim()
+                return jsonify({
+                    "error": "Invalid or already-used payment token.",
+                    "error_code": "invalid_payment",
+                }), 402
+            # Stash payment per audit VoxCPM (Task 11) + refund su cancel/error
+            # (stessa "tasca" job["payment"] di Gemini/Speechify). total_eur =
+            # quota VoxCPM (la quota LLM e' in payment["llm_eur"]).
+            job["payment"] = {
+                "token": _combined_token_vox,
+                "total_eur": _voxcpm_eur_quota,
+                "method": _consumed_method_vox,
+                "ts": time.time(),
+                "voxcpm_est": _est_vox,
+                "llm_eur": float(estimated_cost),
+                "source": "combined_optimize_autogen",
+            }
+            _acq_src_vox, _acq_plat_vox = _acquisition_from_request()
+            job["payment"]["acquisition_source"] = _acq_src_vox
+            job["payment"]["acquisition_platform"] = _acq_plat_vox
+            if _acq_src_vox == "app":
+                try:
+                    metrics_store.incr("payment_from_app", _acq_plat_vox)
+                except Exception:
+                    pass
+            job["payment_token"] = _combined_token_vox
+            job["payment_type"] = _consumed_method_vox
+            job["payment_email"] = _consumed_email_vox
+            job["payment_amount_eur"] = _expected_total_vox
+            # Snapshot stima pre-LLM: allinea i campi *_est dell'audit al prezzo
+            # lockato in payment["total_eur"] (come per Gemini/Speechify).
+            job["voxcpm_estimate"] = _est_vox
+            print(f"[{job_id}] combined payment consumed at /api/optimize: "
+                  f"voxcpm={_voxcpm_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
+                  f"= {_expected_total_vox:.2f}€ ({_consumed_method_vox})")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).
@@ -14546,6 +14823,15 @@ def api_translate_adopt(job_id):
         ))
     info.chapters = new_chapters
     info.language = job.get("translated_lang", info.language)
+    # La provenienza della lingua segue la lingua. Senza questo, riaprendo lo
+    # stesso file il ramo del job gia' esistente risponderebbe con il
+    # language_source del libro ORIGINALE: su un PDF senza metadati la riga
+    # della lingua direbbe «non rilevata, ipotizzata» di una lingua che
+    # l'utente ha scelto lui, e il modale di conferma tornerebbe a sbarrargli
+    # la strada. 'forced' = scelta dall'utente; nulla e' stato rilevato
+    # dall'IA sulla forma adottata, quindi language_detected torna False.
+    job["language_source"] = "forced"
+    job["language_detected"] = False
     # Titolo tradotto dal batch titoli del job (se prodotto): cosi' i
     # metadati M4B/MP3, la pagina download e le email del percorso audio
     # usano il titolo nella lingua di destinazione.
@@ -17825,6 +18111,11 @@ def _cleanup_loop():
         # Flush pending admin digest (rate-limited: max 1/hour)
         _try_send_admin_digest()
 
+        # Il digest quotidiano VoxCPM: decide da se' se c'e' un giorno
+        # arretrato da riepilogare, e nella grande maggioranza dei giri non
+        # fa nulla.
+        _try_send_voxcpm_digest()
+
         # Ultimo passo del ciclo: restituisce al SO l'heap liberato dalla purga
         # appena fatta (rate-limited a MALLOC_TRIM_INTERVAL_SEC).
         try:
@@ -17864,7 +18155,6 @@ generation_engine.configure(
     download_tokens=_download_tokens,
     save_tokens_fn=_save_tokens,
     log_activity_fn=_log_activity,
-    google_tts_module=google_tts,
     invalidate_voices_cache_fn=_invalidate_voices_cache,
     jobs_lock=_jobs_lock,
     retention_sec=EMAIL_FILE_RETENTION_SEC,
@@ -17882,31 +18172,6 @@ if _paypal_available():
 else:
     print(f"[startup] PayPal payment disabled (ABM_PAYPAL_CLIENT_ID/SECRET not set)")
 _cleanup_started = False
-
-def _google_tts_reconcile_loop():
-    """Thread di background: riconcilia il contatore Google TTS con Cloud Monitoring
-    ogni GOOGLE_TTS_RECONCILE_INTERVAL_SEC secondi (default 30 minuti).
-    Le metriche di Cloud Monitoring hanno latenza ~5 min, quindi un intervallo
-    inferiore non porta beneficio."""
-    if google_tts is None:
-        return
-    # Attesa iniziale per non sovraccaricare lo startup
-    time.sleep(60)
-    while True:
-        try:
-            if google_tts.is_available():
-                result = google_tts.reconcile_with_cloud_monitoring()
-                if result is None:
-                    # Monitoring non disponibile: smettiamo di provarci
-                    print("[google-tts] Reconcile loop: monitoring unavailable, stopping")
-                    return
-        except Exception as e:
-            print(f"[google-tts] Reconcile loop error: {e}")
-        time.sleep(GOOGLE_TTS_RECONCILE_INTERVAL_SEC)
-
-
-GOOGLE_TTS_RECONCILE_INTERVAL_SEC = int(os.environ.get("ABM_GOOGLE_TTS_RECONCILE_INTERVAL", "1800"))
-
 
 def _ensure_background_threads():
     global _cleanup_started
@@ -17931,8 +18196,6 @@ def _ensure_background_threads():
         abuse_watch.start_worker(_abuse_apply_verdict)
     except Exception as _aw_err:
         print(f"[startup] abuse_watch init failed (non-fatal): {_aw_err}", flush=True)
-    if google_tts is not None:
-        threading.Thread(target=_google_tts_reconcile_loop, daemon=True).start()
     
     # Verifica dipendenze audio (ffmpeg/ffprobe) per formato M4B
     ffmpeg_ok, ffprobe_ok = _check_audio_dependencies()
@@ -17960,6 +18223,8 @@ def _ensure_background_threads():
         print(f"[startup] LLM text optimization enabled (Model: {LLM_MODEL})")
     if ADMIN_EMAIL:
         print(f"[startup] Admin digest enabled  ->  {ADMIN_EMAIL} (interval: {ADMIN_DIGEST_INTERVAL_SEC}s)")
+        print(f"[startup] VoxCPM daily digest: "
+              f"{'on' if VOXCPM_DIGEST else 'off (ABM_VOXCPM_DIGEST=0)'}")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
     print(f"[startup] Abuse moderation: "

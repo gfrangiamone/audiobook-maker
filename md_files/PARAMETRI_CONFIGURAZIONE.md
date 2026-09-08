@@ -30,20 +30,19 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 | `ABM_MAX_CONCURRENT_ASSEMBLY` | `max(1, cpu_count() - 1)` (encode FFmpeg finali ammessi in parallelo: PCM→AAC/MP3, MP3→M4B, ZIP). Non rifiuta job: li mette in coda | `assembly_queue.py` | 50 |
 | `ABM_ASSEMBLY_WAIT_TIMEOUT_SEC` | `1800` (attesa massima di uno slot di assembly; scaduta, il job procede comunque senza slot) | `assembly_queue.py` | 37 |
 | `ABM_ASSEMBLY_STARVE_SEC` | `900` (secondi in coda oltre i quali un job pesa quanto un PREMIUM: anti-starvation dei job gratuiti scavalcati dai pagati. `0` = priorita' pura, nessuna promozione) | `assembly_queue.py` | 87 |
-| `ABM_MEM_LOG_INTERVAL_SEC` | `300` (intervallo della riga `[mem]` nel cleanup loop) | `audiobook_app.py` | 15013 |
-| `ABM_MEM_WARN_AVAIL_MB` | `300` (sotto questa `MemAvailable` scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15014 |
-| `ABM_MEM_WARN_SWAP_PCT` | `80` (sopra questa percentuale di swap usata scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 15015 |
-| `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 104 |
-| `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 105 |
-| `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 152 |
-| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — dal 2026-05-26 usato **anche** dal backend Vertex AI Gemini TTS (non più solo da Google Cloud TTS): un unico service account autentica entrambe le integrazioni quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `google_tts.py` | 69 |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra) | `google_tts.py` | 70 |
-| `ABM_GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (1M caratteri/mese, free tier Google Cloud TTS) | `google_tts.py` | 33 |
-| `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 104 |
-| `ABM_PAYPAL_SECRET` | `""` (PayPal REST API secret; con auto-strip whitespace) | `audiobook_app.py` | 105 |
-| `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 106 |
-| `ABM_LLM_RATE_EUR_PER_MCHAR` | `1.10` (EUR per 1M char input, include markup + fee PayPal) | `audiobook_app.py` | 108 |
-| `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 109 |
+| `ABM_MEM_LOG_INTERVAL_SEC` | `300` (intervallo della riga `[mem]` nel cleanup loop) | `audiobook_app.py` | 16192 |
+| `ABM_MEM_WARN_AVAIL_MB` | `300` (sotto questa `MemAvailable` scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 16193 |
+| `ABM_MEM_WARN_SWAP_PCT` | `80` (sopra questa percentuale di swap usata scatta WARN + evento `MEMORY_PRESSURE`) | `audiobook_app.py` | 16194 |
+| `ABM_LLM_API_KEY` | `""` (vuoto, se vuoto l'ottimizzazione testo AI è disabilitata) | `audiobook_app.py` | 115 |
+| `ABM_LLM_MODEL` | `"deepseek-chat"` | `audiobook_app.py` | 116 |
+| `ABM_MAX_CONCURRENT_LLM_PER_CLIENT` | `1` | `audiobook_app.py` | 163 |
+| `ABM_GOOGLE_CREDENTIALS_FILE` | `""` (vuoto, oppure path al file JSON service account Google Cloud) — usato dal backend Vertex AI del motore Gemini TTS (e dalla traduzione libro via Vertex) quando `ABM_GEMINI_BACKEND` risolve a `vertex`. | `gemini_tts.py` | 221 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `""` (alternativa standard Google SDK al parametro sopra; valorizzata anche automaticamente a partire da `ABM_GOOGLE_CREDENTIALS_FILE`) | `gemini_tts.py` | 2202 |
+| `ABM_PAYPAL_CLIENT_ID` | `""` (PayPal REST API client ID per pagamenti LLM; con auto-strip whitespace) | `audiobook_app.py` | 115 |
+| `ABM_PAYPAL_SECRET` | `""` (PayPal REST API secret; con auto-strip whitespace) | `audiobook_app.py` | 116 |
+| `ABM_PAYPAL_MODE` | `"sandbox"` (sandbox\|live) | `audiobook_app.py` | 117 |
+| `ABM_LLM_RATE_EUR_PER_MCHAR` | `1.10` (EUR per 1M char input, include markup + fee PayPal) | `audiobook_app.py` | 119 |
+| `ABM_LLM_FREE_THRESHOLD_EUR` | `0.50` (EUR sotto i quali l'ottimizzazione è gratuita e liberamente testabile) | `audiobook_app.py` | 120 |
 | `ABM_LLM_MIN_COST_EUR` | `1.0` (floor EUR sull'importo dovuto per l'ottimizzazione AI **standalone**, applicato solo quando la stima supera `ABM_LLM_FREE_THRESHOLD_EUR`; sotto soglia resta gratis; non si applica alla quota LLM dei pagamenti combinati con voci PREMIUM) | `payment.py` | 58–62 |
 | `ABM_LLM_COST_USD_PER_MTOK` | `0.18` (Costo provider LLM per l'ottimizzazione AI del testo — parametro **unico blended in USD** per 1M token TOTALI prompt+completion; assorbe mix input/output e token in cache; convertito in EUR con `ABM_GEMINI_USD_EUR_RATE`; base costo audit /admin/audit-premium) | `payment.py` | 68–69 |
 | `ABM_FREE_QUOTA_EUR_PER_MONTH` | `2.00` (quota gratuita cumulativa per client, € di listino non fatturato per mese solare, sulle voci PREMIUM; `0` disattiva la feature) | `free_quota.py` | 40 |
@@ -72,10 +71,10 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `MAX_CONTENT_LENGTH` | da `ABM_MAX_UPLOAD_MB` (default `50` MB). Upload oltre il limite → `413` **JSON** `{"error":"file_too_large","max_mb":N}` via `@app.errorhandler(413)` (prima: pagina HTML Werkzeug → "JSON.parse: unexpected character" nel frontend). Il valore è anche iniettato nella pagina come `window.ABM_MAX_UPLOAD_MB` (`templates/index_page.py`, placeholder `__MAX_UPLOAD_MB__` in `html_tail.html`) per il pre-check dimensione file in `handleFile()` (`static/js/app.js`), che blocca l'upload lato client con messaggio i18n `err_file_too_large`. | `audiobook_app.py` | 231 |
-| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) — cap caratteri **standard** (edge-tts/Google) applicato ai capitoli **selezionati** in `/api/generate`, `/api/optimize` e `/api/optimize_estimate`; il libro viene analizzato e mostrato a prescindere dalla dimensione totale | `audiobook_app.py` | 308 |
-| `ABM_MAX_GEMINI_TEXT_CHARS` | `800000` — cap caratteri **PREMIUM/Gemini**, più basso per allinearsi a costi/throughput Gemini TTS. Selezione via `_max_text_chars_for_voice(voice)` → applicato dagli stessi 3 endpoint quando `voice` inizia per `gemini:`. Il frontend riceve entrambi i cap nella risposta upload (`max_text_chars`, `max_gemini_text_chars`) e usa quello attivo in base al tab audio (Standard vs PREMIUM) per il controllo `tryGoToAudioSettings`. | `audiobook_app.py` | 309 |
-| `ABM_LLM_OPT_GROWTH_TOLERANCE` | `0.05` (5%, accetta virgola decimale; clamp a ≥0) — tolleranza di crescita del testo dovuta all'**ottimizzazione AI**. Un libro entro il cap **prima** dell'ottimizzazione (precondizione garantita dal cap base in `/api/optimize` e `/api/optimize_estimate` sul testo originale) può superare il cap fino a questa frazione **dopo** l'espansione LLM ed essere comunque generato. Applicata via `_effective_max_text_chars(voice, job)` **solo** ai job `ai_optimized` nei check di generazione/pagamento (`/api/generate` cap generale + preflight Gemini, `/api/paypal_create_order_gemini`). Cap effettivo = `int(base × (1 + tolleranza))`. | `audiobook_app.py` | ~355 |
+| `MAX_CONTENT_LENGTH` | da `ABM_MAX_UPLOAD_MB` (default `50` MB). Upload oltre il limite → `413` **JSON** `{"error":"file_too_large","max_mb":N}` via `@app.errorhandler(413)` (prima: pagina HTML Werkzeug → "JSON.parse: unexpected character" nel frontend). Il valore è anche iniettato nella pagina come `window.ABM_MAX_UPLOAD_MB` (`templates/index_page.py`, placeholder `__MAX_UPLOAD_MB__` in `html_tail.html`) per il pre-check dimensione file in `handleFile()` (`static/js/app.js`), che blocca l'upload lato client con messaggio i18n `err_file_too_large`. | `audiobook_app.py` | 242 |
+| `ABM_MAX_TEXT_CHARS` | `1500000` (≈ 75-150 MB audio) — cap caratteri **standard** (edge-tts/Google) applicato ai capitoli **selezionati** in `/api/generate`, `/api/optimize` e `/api/optimize_estimate`; il libro viene analizzato e mostrato a prescindere dalla dimensione totale | `audiobook_app.py` | 319 |
+| `ABM_MAX_GEMINI_TEXT_CHARS` | `800000` — cap caratteri **PREMIUM/Gemini**, più basso per allinearsi a costi/throughput Gemini TTS. Selezione via `_max_text_chars_for_voice(voice)` → applicato dagli stessi 3 endpoint quando `voice` inizia per `gemini:`. Il frontend riceve entrambi i cap nella risposta upload (`max_text_chars`, `max_gemini_text_chars`) e usa quello attivo in base al tab audio (Standard vs PREMIUM) per il controllo `tryGoToAudioSettings`. | `audiobook_app.py` | 320 |
+| `ABM_LLM_OPT_GROWTH_TOLERANCE` | `0.05` (5%, accetta virgola decimale; clamp a ≥0) — tolleranza di crescita del testo dovuta all'**ottimizzazione AI**. Un libro entro il cap **prima** dell'ottimizzazione (precondizione garantita dal cap base in `/api/optimize` e `/api/optimize_estimate` sul testo originale) può superare il cap fino a questa frazione **dopo** l'espansione LLM ed essere comunque generato. Applicata via `_effective_max_text_chars(voice, job)` **solo** ai job `ai_optimized` nei check di generazione/pagamento (`/api/generate` cap generale + preflight Gemini, `/api/paypal_create_order_gemini`). Cap effettivo = `int(base × (1 + tolleranza))`. | `audiobook_app.py` | ~366 |
 
 ---
 
@@ -87,25 +86,25 @@ Parametri configurabili dall'esterno tramite variabili d'ambiente sul server.
 |-----------|--------|------|------|
 | `SCRIPT_DIR` | `Path(__file__).parent.resolve()` | `audiobook_app.py` | 33 |
 | `UPLOAD_DIR` | `Path(_DATA_DIR)` (derivato da `ABM_DATA_DIR`) | `audiobook_app.py` | 78 |
-| `_TOKENS_FILE` | `UPLOAD_DIR / "_download_tokens.json"` | `audiobook_app.py` | 157 |
-| `_CLIENT_EMAILS_FILE` | `UPLOAD_DIR / "_client_emails.json"` | `audiobook_app.py` | 894 |
+| `_TOKENS_FILE` | `UPLOAD_DIR / "_download_tokens.json"` | `audiobook_app.py` | 168 |
+| `_CLIENT_EMAILS_FILE` | `UPLOAD_DIR / "_client_emails.json"` | `audiobook_app.py` | 905 |
 
 ### 3.2 Email e notifiche
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `SMTP_HOST` | da `ABM_SMTP_HOST` | `audiobook_app.py` | 91 |
-| `SMTP_PORT` | da `ABM_SMTP_PORT` (int) | `audiobook_app.py` | 92 |
-| `SMTP_USER` | da `ABM_SMTP_USER` | `audiobook_app.py` | 93 |
-| `SMTP_PASS` | da `ABM_SMTP_PASS` | `audiobook_app.py` | 94 |
-| `SMTP_FROM` | da `ABM_SMTP_FROM` o fallback | `audiobook_app.py` | 95 |
-| `BASE_URL` | da `ABM_BASE_URL` (con rstrip) | `audiobook_app.py` | 96 |
-| `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) — retention voci standard | `audiobook_app.py` | 300 |
-| `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM/Gemini | `audiobook_app.py` | 301 |
-| `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 103 |
-| `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 104 |
-| `_client_emails` | `{}` dict `client_id → email`, persistito in `_client_emails.json`. Popolato da `/api/register_email`, letto da `gen._send_completion_email` come fallback se `job["notify_email"]` è vuoto | `audiobook_app.py` | 896 |
-| `_client_emails_lock` | `threading.Lock()` per accesso thread-safe alla mappa | `audiobook_app.py` | 897 |
+| `SMTP_HOST` | da `ABM_SMTP_HOST` | `audiobook_app.py` | 102 |
+| `SMTP_PORT` | da `ABM_SMTP_PORT` (int) | `audiobook_app.py` | 103 |
+| `SMTP_USER` | da `ABM_SMTP_USER` | `audiobook_app.py` | 104 |
+| `SMTP_PASS` | da `ABM_SMTP_PASS` | `audiobook_app.py` | 105 |
+| `SMTP_FROM` | da `ABM_SMTP_FROM` o fallback | `audiobook_app.py` | 106 |
+| `BASE_URL` | da `ABM_BASE_URL` (con rstrip) | `audiobook_app.py` | 107 |
+| `EMAIL_FILE_RETENTION_SEC` | da `ABM_JOB_RETENTION_SEC` (default `64800` = 18 ore) — retention voci standard | `audiobook_app.py` | 311 |
+| `GEMINI_FILE_RETENTION_SEC` | da `ABM_GEMINI_JOB_RETENTION_SEC` (default `172800` = 48 ore) — retention voci PREMIUM/Gemini | `audiobook_app.py` | 312 |
+| `ADMIN_EMAIL` | da `ABM_ADMIN_EMAIL` | `audiobook_app.py` | 114 |
+| `ADMIN_DIGEST_INTERVAL_SEC` | `86400` (24 ore) | `audiobook_app.py` | 115 |
+| `_client_emails` | `{}` dict `client_id → email`, persistito in `_client_emails.json`. Popolato da `/api/register_email`, letto da `gen._send_completion_email` come fallback se `job["notify_email"]` è vuoto | `audiobook_app.py` | 907 |
+| `_client_emails_lock` | `threading.Lock()` per accesso thread-safe alla mappa | `audiobook_app.py` | 908 |
 
 ### 3.2.1 Fallback email cross-job
 
@@ -128,8 +127,8 @@ Consumato in `generation_engine.py:_send_completion_email()` e `run_generation()
 | `MAX_CONCURRENT_GLOBAL` | da `ABM_MAX_CONCURRENT_GLOBAL` (default `6`) | `audiobook_app.py` | 588 |
 | `assembly_queue.MAX_CONCURRENT_ASSEMBLY` | da `ABM_MAX_CONCURRENT_ASSEMBLY` (default `max(1, cpu_count() - 1)`) | `assembly_queue.py` | 50 |
 | `assembly_queue.PRIORITY_NORMAL` / `PRIORITY_PREMIUM` | `0` / `10` (peso in coda di assembly; premium = voce Gemini/Speechify o job con pagamento incassato, vedi `generation_engine._assembly_priority`) | `assembly_queue.py` | 82-83 |
-| `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 115 |
-| `_CLIENT_COOKIE_MAX_AGE` | `31536000` (1 anno in secondi) | `audiobook_app.py` | 116 |
+| `_CLIENT_COOKIE_NAME` | `"abm_cid"` | `audiobook_app.py` | 126 |
+| `_CLIENT_COOKIE_MAX_AGE` | `31536000` (1 anno in secondi) | `audiobook_app.py` | 127 |
 | `_ANALYZE_RL_PER_MIN` | `5` upload `/api/analyze` / IP / minuto (sliding window) | `audiobook_app.py` | — |
 | `_ANALYZE_RL_PER_HOUR` | `30` upload `/api/analyze` / IP / ora | `audiobook_app.py` | — |
 | `_PREVIEW_RL_PER_MIN` | `20` preview `/api/preview_audio` / IP / minuto | `audiobook_app.py` | — |
@@ -159,13 +158,13 @@ Override env var: `ABM_ANALYZE_RL_PER_MIN`, `ABM_ANALYZE_RL_PER_HOUR`, `ABM_PREV
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `PAYPAL_API_BASE` | `https://api-m.sandbox.paypal.com` o `https://api-m.paypal.com` (auto da `ABM_PAYPAL_MODE`) | `audiobook_app.py` | 107 |
-| `_paypal_token_cache` | Dict in-memory per cache OAuth2 token (`access_token`, `expires_at`) | `audiobook_app.py` | 115 |
+| `PAYPAL_API_BASE` | `https://api-m.sandbox.paypal.com` o `https://api-m.paypal.com` (auto da `ABM_PAYPAL_MODE`) | `audiobook_app.py` | 118 |
+| `_paypal_token_cache` | Dict in-memory per cache OAuth2 token (`access_token`, `expires_at`) | `audiobook_app.py` | 126 |
 | `_payments` | Dict in-memory `{order_id: {...}}` persistito su `_payments.json` | `audiobook_app.py` | — |
 | `_vouchers` | Dict in-memory `{code: {...}}` persistito su `_vouchers.json` | `audiobook_app.py` | — |
-| `_PAYMENTS_FILE` | `UPLOAD_DIR / "_payments.json"` | `audiobook_app.py` | 343 |
-| `_VOUCHERS_FILE` | `UPLOAD_DIR / "_vouchers.json"` | `audiobook_app.py` | 344 |
-| `_PAID_OPT_DONE_FILE` | `UPLOAD_DIR / "_paid_opt_done.json"` (tracking job pagati completati per recovery) | `audiobook_app.py` | 345 |
+| `_PAYMENTS_FILE` | `UPLOAD_DIR / "_payments.json"` | `audiobook_app.py` | 354 |
+| `_VOUCHERS_FILE` | `UPLOAD_DIR / "_vouchers.json"` | `audiobook_app.py` | 355 |
+| `_PAID_OPT_DONE_FILE` | `UPLOAD_DIR / "_paid_opt_done.json"` (tracking job pagati completati per recovery) | `audiobook_app.py` | 356 |
 
 **Funzionamento pagamenti:**
 
@@ -413,16 +412,35 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `LANGUAGE_NAMES` | Dict di 60+ codici lingua -> nomi | `audiobook_app.py` | 555 |
+| `LANGUAGE_NAMES` | Dict di 60+ codici lingua -> nomi | `audiobook_app.py` | 566 |
+| `ABM_VOXCPM_CATALOG_DIR` | `voxcpm2/voci_inventate` — cartella del catalogo di voci inventate VoxCPM con `voices.json` e `.wav` dei campioni. Dato importato dal repo `abm-voxcpm-worker`: aggiornare significa sostituire la cartella, non toccare il codice. | `voxcpm_catalog.py` | 27 |
+| `ABM_VOXCPM_ENDPOINT_ID` | — Endpoint RunPod serverless del worker VoxCPM. Assente: il motore non compare fra i modelli. | `voxcpm_tts.py` | 53 |
+| `ABM_VOXCPM_API_KEY` | — Chiave API RunPod. Assente: il motore non compare fra i modelli. | `voxcpm_tts.py` | 57 |
+| `ABM_VOXCPM_RATE_EUR_PER_MCHAR` | — Tariffa di listino all'utente, EUR per milione di caratteri, fee di pagamento incluse. Assente o 0: il motore non compare (meglio nascosto che venduto a un prezzo non deciso). | `voxcpm_tts.py` | 61 |
+| `ABM_VOXCPM_FREE_THRESHOLD_EUR` | `0.50` Sotto questo importo il job è gratuito, come per Gemini e Speechify. | `voxcpm_tts.py` | 70 |
+| `ABM_VOXCPM_MIN_COST_EUR` | `0.50` Importo minimo fatturato per un job VoxCPM quando la quota gratuita mensile non copre. Si applica al residuo dopo la quota, mai al lordo. | `free_quota.py` | 164 |
+| `ABM_VOXCPM_COST_USD_PER_MCHAR` | `0.91` Costo GPU misurato (RTX 4090, 2026-08-04). **Ripiego**: alimenta l'audit del margine solo per i job senza righe di fattura RunPod (generati prima del §17.7). Mai il prezzo all'utente. | `voxcpm_tts.py` | 66 |
+| `ABM_VOXCPM_USD_PER_HOUR` | `0.69` Tariffa oraria in USD della scheda dell'endpoint RunPod — il default e' la RTX PRO 6000 Blackwell MIG 1g.24gb (4 vCPU, 47 GB RAM). Base del costo reale dell'audit del margine: i secondi di `executionTime` di ogni job piu' l'accensione dei worker svegliati dal libro. **Scriverla e' una dichiarazione**: se c'e', vale per tutti i job e il listino interno per scheda (MIG 0,69 / A40 1,22 / 4090 1,10 USD/h) non si consulta piu'. Assente: ogni job si paga alla tariffa della scheda su cui e' davvero girato, con 0,69 come ripiego per le schede fuori listino. Mai il prezzo all'utente. | `voxcpm_tts.py` | 119 |
+| `ABM_VOXCPM_CONCURRENCY` | `32` Chunk in volo dentro un singolo job del worker. | `voxcpm_tts.py` | 74 |
+| `ABM_VOXCPM_CHUNK_CHARS` | `300` Tetto di caratteri per chunk delle voci `voxcpm:` (clamp 40–2000). Il worker non rispezza i chunk ricevuti: oltre questo tetto il timbro deriva dentro il chunk. Deve coincidere con `ABM_VOXCPM_CHUNK_MAX_CHARS` dell'endpoint. | `voxcpm_tts.py` | 98 |
+| `ABM_VOXCPM_QUEUE_TIMEOUT_S` | `900` Quanto si aspetta in coda un job VoxCPM prima di dichiarare l'endpoint saturo. Scaduto, il job si cancella e non si ritenta. | `voxcpm_tts.py` | 245 |
+| `ABM_VOXCPM_JOB_TIMEOUT_S` | `1800` Quanto puo' durare l'esecuzione di un job VoxCPM. Scaduto, il job si cancella (RunPod fattura a secondi) e si ritenta. | `voxcpm_tts.py` | 249 |
+| `ABM_VOXCPM_POLL_S` | `2` Intervallo fra due sonde su `/status`. | `voxcpm_tts.py` | 253 |
+| `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
+| `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
+| `ABM_VOXCPM_DIGEST` | `1` Digest quotidiano dei ritentativi delle code tagliate, spedito a `ABM_ADMIN_EMAIL` una volta per giornata (sempre quella di **ieri**, in UTC: un giorno ancora aperto darebbe conti parziali). Valori falsi: `0`/`false`/`off`/`no`. Senza `ABM_ADMIN_EMAIL` o senza SMTP non parte comunque. Il giorno gia' spedito e' segnato in `voxcpm_digest_last.txt` dentro `ABM_DATA_DIR`, cosi' un riavvio non salta ne' duplica una giornata. | `email_service.py` | 41 |
+
+I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
+
 
 ### 3.6 Cleanup (pulizia automatica)
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `CLEANUP_GRACE_AFTER_DOWNLOAD_SEC` | `300` (5 min dopo download diretto) | `audiobook_app.py` | 3870 |
-| `CLEANUP_HEARTBEAT_TIMEOUT_SEC` | `60` (heartbeat perso = browser chiuso) | `audiobook_app.py` | 3871 |
-| `CLEANUP_INTERVAL_SEC` | `60` (check ogni 60 secondi) | `audiobook_app.py` | 3872 |
-| `CLEANUP_ORPHAN_DIR_AGE_SEC` | `7200` (2 ore, cartelle orfane rimosse) | `audiobook_app.py` | 3873 |
+| `CLEANUP_GRACE_AFTER_DOWNLOAD_SEC` | `300` (5 min dopo download diretto) | `audiobook_app.py` | 3898 |
+| `CLEANUP_HEARTBEAT_TIMEOUT_SEC` | `60` (heartbeat perso = browser chiuso) | `audiobook_app.py` | 3899 |
+| `CLEANUP_INTERVAL_SEC` | `60` (check ogni 60 secondi) | `audiobook_app.py` | 3900 |
+| `CLEANUP_ORPHAN_DIR_AGE_SEC` | `7200` (2 ore, cartelle orfane rimosse) | `audiobook_app.py` | 3901 |
 
 **Retention per stato (stato job → politica di conservazione):**
 
@@ -437,10 +455,10 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
-| `_SEO_DATA` | Dict con dati SEO per 6 lingue (it, en, fr, es, de, zh) | `audiobook_app.py` | 3749 |
-| `_SUPPORTED_LANGS` | `['it', 'en', 'fr', 'es', 'de', 'zh']` | `audiobook_app.py` | 3795 |
-| `HTML_TEMPLATES` | Dict di template HTML pre-renderizzati per lingua | `audiobook_app.py` | 3799 |
-| `HTML_TEMPLATE` | Fallback al template inglese | `audiobook_app.py` | 3809 |
+| `_SEO_DATA` | Dict con dati SEO per 6 lingue (it, en, fr, es, de, zh) | `audiobook_app.py` | 3777 |
+| `_SUPPORTED_LANGS` | `['it', 'en', 'fr', 'es', 'de', 'zh']` | `audiobook_app.py` | 3823 |
+| `HTML_TEMPLATES` | Dict di template HTML pre-renderizzati per lingua | `audiobook_app.py` | 3827 |
+| `HTML_TEMPLATE` | Fallback al template inglese | `audiobook_app.py` | 3837 |
 
 ---
 
@@ -467,6 +485,8 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 |-----------|--------|------|------|
 | `NON_CONTENT_FILENAMES_EXACT` | Set di 15+ nomi file esatti da escludere (toc, nav, cover, colophon...) | `epub_to_tts.py` | 112 |
 | `NON_CONTENT_FILENAMES_SUBSTR` | Set di 8 sottostringhe filename da escludere | `epub_to_tts.py` | 120 |
+| `NON_CONTENT_TITLE_PHRASES` | Lista canonica di titoli di apparato critico da escludere (indice, colophon, frontespizio, **quarta di copertina**, dedica, bibliografia, note, glossario, appendice, informazioni autore, ringraziamenti, errata). Match per **parola intera**; condivisa con `_is_title_content` e riusata da `pdf_to_tts.NON_CONTENT_TITLES` | `epub_to_tts.py` | 131 |
+| `NON_CONTENT_TITLE_EXACT` | Set di 6 titoli ambigui (`trama`, `sinossi`, `synopsis`, `sinopsis`, `resumen`, `blurb`) validi solo come **titolo intero**: intitolano la quarta di copertina ma sono parole comuni, e «La trama del destino» è un capitolo vero | `epub_to_tts.py` | 216 |
 
 ### 4.4 Pulizia testo
 
@@ -500,25 +520,13 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | Parametro | Valore | File | Riga |
 |-----------|--------|------|------|
 | `CAPTION_PATTERNS` | Lista di 6 regex multilingua per didascalie figure/tabelle | `pdf_to_tts.py` | 117 |
-| `NON_CONTENT_TITLES` | Set di 80+ titoli di sezioni non-contenuto da escludere (multilingua) | `pdf_to_tts.py` | 141 |
+| `NON_CONTENT_TITLES` | Set di 90+ titoli di sezioni non-contenuto da escludere (multilingua, quarta di copertina inclusa) | `pdf_to_tts.py` | 167 |
 | `FOOTNOTE_SUPERSCRIPT_RE` | Regex compilata per footnote nel testo | `pdf_to_tts.py` | 180 |
 | `PAGE_NUMBER_RE` | Regex compilata: `r"^\s*[-—–]?\s*\d{1,4}\s*[-—–]?\s*$"` | `pdf_to_tts.py` | 185 |
 | `MIN_REPEAT_FOR_HEADER` | `3` (minimo ripetizioni per header/footer statistico) | `pdf_to_tts.py` | 188 |
 | `MIN_TITLE_STRATEGY_COVERAGE` | `0.95` (copertura minima: una strategia di riconoscimento titoli che scarta >5% del testo estratto viene ignorata, si passa alla successiva) | `pdf_to_tts.py` | 200 |
 | `CHAPTER_DIVIDER_RE` / `is_chapter_marker_line()` | Regex multilingua per marcatori di suddivisione su riga isolata ("Chapter 4", "Capitolo III"/"Parte prima", "Première partie", "Erstes Kapitel", "Глава 1", "अध्याय १", "第2章"…), keyword+numero e numero+keyword, cardinali/ordinali; lingue allineate ai prompt in `prompt_opt_AI/` (de/en/es/fr/hi/it/pt/ru/zh). **Definito in `epub_to_tts.py`** (modulo base) e riusato da `pdf_to_tts.py` (alias `_line_is_chapter_marker`) come terzo segnale titolo oltre a font-size e grassetto | `epub_to_tts.py` | 883 / 886 |
 | Soglia ri-segmentazione EPUB | Costante inline `4`: se il parsing EPUB via TOC produce **< 4** capitoli di contenuto (escluse note/apparato), si ri-segmenta il testo per marcatori (`_resegment_chapters_by_markers`); con ≥ 4 ci si affida al TOC senza suddivisioni ulteriori. Non perde testo (sostituisce solo se produce più capitoli) | `epub_to_tts.py` | 1345 |
-
----
-
-## 6. Google Cloud TTS (`google_tts.py`)
-
-| Parametro | Valore | File | Riga |
-|-----------|--------|------|------|
-| `GOOGLE_TTS_MONTHLY_LIMIT` | `1000000` (da `ABM_GOOGLE_TTS_MONTHLY_LIMIT`) | `google_tts.py` | 33 |
-| `VOICES_CACHE_TTL` | `3600` (1 ora, cache voci Google) | `google_tts.py` | 42 |
-| `_usage_file_path` | `Path(data_dir) / "google_tts_usage.json"` | `google_tts.py` | 51 |
-| `_MONITORING_STABILIZATION_LAG_SEC` | `900` (15 min, intervallo escluso dalle query Cloud Monitoring per usare solo metriche stabilizzate) | `google_tts.py` | 380 |
-| `_MAX_CHARS_PER_REQUEST` | `2200` (bound massimo caratteri/richiesta TTS per sanity check, = `CHUNK_MAX_CHARS` + 10% tolleranza) | `google_tts.py` | 610 |
 
 ---
 
@@ -614,14 +622,14 @@ Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEM
 | `ABM_GEMINI_TRIM_TAIL_THRESHOLD` | `200` (soglia ampiezza int16 assoluta sotto cui un sample e` considerato "silenzio" durante il trim; 200 ≈ -44 dB. Range 0-32767. Valori troppo alti rischiano di tagliare l'attacco/coda di parola) |
 | `ABM_GEMINI_HTTP_TIMEOUT_MS` | `25000` (timeout HTTP in ms per le call su modello **`flash25`**; applicato per-call via `GenerateContentConfig.http_options=HttpOptions(timeout=...)`. Per preview il ThreadPoolExecutor timeout di 30s funge da secondo limite) |
 | `ABM_GEMINI_HTTP_TIMEOUT_MS_FLASH31` | `60000` (timeout HTTP in ms per le call su modello **`flash31`** — `gemini-3.1-flash-tts-preview`. Piu` lento di flash25 lato Google: RPM cap 3/300 vs 10/750 + audio gen piu` lenta. Senza maggiorazione i chunk normali finiscono in 504 `DEADLINE_EXCEEDED`. Selezione automatica via `_http_timeout_ms(model_key)` in `gemini_tts.py:1161`) |
-| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` (timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello `flash31`; vedi `audiobook_app.py:4934`. Deve essere ≥ HTTP timeout flash31 + buffer per non strozzare la call Google. flash25 resta hardcoded a 30s. Client JS legge il voice id e usa 70s sopra flash31 / 35s sopra flash25) |
+| `ABM_GEMINI_PREVIEW_TIMEOUT_SEC_FLASH31` | `65` (timeout in **secondi** del `ThreadPoolExecutor` wrapper in `/api/preview_audio` per modello `flash31`; vedi `audiobook_app.py:4962`. Deve essere ≥ HTTP timeout flash31 + buffer per non strozzare la call Google. flash25 resta hardcoded a 30s. Client JS legge il voice id e usa 70s sopra flash31 / 35s sopra flash25) |
 | `ABM_GEMINI_RATE_MODE` | `prompt` |
 | `ABM_GEMINI_MAX_FAILED_RATIO` | `0.05` (oltre questa frazione di chunk falliti il job va in `partial`) |
 | `ABM_GEMINI_REFUND_FAILED_RATIO` | `0.0` (oltre questa frazione il job va in `error` con refund integrale — `0.0` = qualsiasi chunk silenziato innesca il refund; impostare `>1` per disabilitare) |
 | `ABM_GEMINI_EARLY_ABORT_RATIO` | `0.30` (early-abort: durante la generazione Gemini, se la frazione di chunk silenziati sul campione processato supera questo valore, il job viene **interrotto subito** (non a fine libro) e instradato allo stesso path refund-qualità — `generation_engine._gemini_quality_refund` via eccezione `_GeminiQualityAbort`. Evita di macinare l'intero libro e bruciare token Gemini su un job già compromesso. Impostare `>1.0` per disabilitare. Vedi anche `ABM_GEMINI_EARLY_ABORT_MIN_CHUNKS`) |
 | `ABM_GEMINI_EARLY_ABORT_MIN_CHUNKS` | `15` (campione minimo di chunk processati prima che l'early-abort possa scattare: evita aborti su rumore iniziale di libri corti) |
 | `ABM_GEMINI_FORENSIC_RETENTION_DAYS` | `7` (giorni di retention forense della `work_dir` per i job Gemini falliti con refund — `kind` ∈ `quality`/`quota`/`budget`/`preflight`/`generic`. Marker JSON `.forensic_retain.json` scritto da `generation_engine._write_forensic_marker()` invocato in `_admin_alert_gemini_failure()` (linea ~1123); gate `audiobook_app._forensic_marker_protects()` (linea ~8956) applicato a `_cleanup_job` e ai tre branch orphan del cleanup loop. Sopravvive a restart del service. `0` = disabilita la retention forense (dir cancellata immediatamente al passaggio a `status=error`). La mail admin (`email_service._admin_notify_gemini_failure`) include link a `/admin/job/<job_id>/forensic.zip` — endpoint Flask `audiobook_app.admin_forensic_zip` che zippa on-the-fly la dir, gated da `ABM_ADMIN_TOKEN` via cookie HttpOnly o header `X-Admin-Token`) |
-| `ABM_GEMINI_CANCEL_LOCK_PCT` | `70` (soglia % di progresso oltre cui il cancel volontario di un job PREMIUM viene rifiutato da `/api/cancel` con HTTP 409 `cancel_locked_progress` + campo `lock_pct`; vedi `audiobook_app.py:5717`. Range valido `(0..100)`; valori `<=0` o `>=100` disabilitano il lock. Il client `static/js/app.js` disabilita preventivamente il pulsante "Cancel" sopra la stessa soglia hardcoded `_GEMINI_CANCEL_LOCK_PCT_CLIENT=70`; allineare se si cambia il server) |
+| `ABM_GEMINI_CANCEL_LOCK_PCT` | `70` (soglia % di progresso oltre cui il cancel volontario di un job PREMIUM viene rifiutato da `/api/cancel` con HTTP 409 `cancel_locked_progress` + campo `lock_pct`; vedi `audiobook_app.py:5745`. Range valido `(0..100)`; valori `<=0` o `>=100` disabilitano il lock. Il client `static/js/app.js` disabilita preventivamente il pulsante "Cancel" sopra la stessa soglia hardcoded `_GEMINI_CANCEL_LOCK_PCT_CLIENT=70`; allineare se si cambia il server) |
 
 ### 7.6 Note operative
 
@@ -637,7 +645,7 @@ Ordine di risoluzione: `ABM_GEMINI_AUDIO_TOKENS_PER_SECOND_<MODEL>` → `ABM_GEM
   - `retained > 0` → outcome audit `cancelled_partial`, refund parziale = `paid - retained`, MP3 parziale codificato dai `chunk_*.pcm` accumulati, token download creato, email `_send_gemini_cancelled_partial_email` (IT-only) inviata se email registrata e MP3 generato.
   - `retained == 0` → outcome audit `cancelled_refunded`, refund integrale, nessuna email custom (resta path legacy).
   - Refund PayPal → nuovo voucher bonus (codice in email); refund su voucher originale → riaccredito silenzioso.
-  - Job campi popolati: `cancel_meta = {paid_eur, retained_eur, refund_eur, progress_pct, partial_audio_delivered}` + `partial_download_url` + `partial_download_token`. Esposti via SSE `/api/progress/<job_id>` (`audiobook_app.py:5643+`) per rendering UI client.
+  - Job campi popolati: `cancel_meta = {paid_eur, retained_eur, refund_eur, progress_pct, partial_audio_delivered}` + `partial_download_url` + `partial_download_token`. Esposti via SSE `/api/progress/<job_id>` (`audiobook_app.py:5671+`) per rendering UI client.
   - Soglia anti-abuso: oltre `ABM_GEMINI_CANCEL_LOCK_PCT` (default 70%) `/api/cancel` ritorna HTTP 409 con `lock_pct`, il client mostra modal informativo invece di cancellare.
 
 ### 7.7 Audit log dei costi (`gemini_cost_audit.py`)
@@ -780,7 +788,7 @@ Engine TTS PREMIUM aggiuntivo, disponibile **solo per lingua inglese**. Modello 
 | `ABM_SPEECHIFY_COST_USD_PER_MCHAR` | Costo USD per 1M caratteri (listino provider). Accetta virgola decimale. | `11.18` | `speechify_tts.py` `cost_usd_per_mchar()` (158) |
 | `ABM_SPEECHIFY_MARGIN_PERCENT` | Ricarico % (margine netto operatore) applicato sul costo per determinare il prezzo utente. Accetta virgola decimale. | `60` | `speechify_tts.py` `margin_percent()` (162) |
 | `ABM_SPEECHIFY_FREE_THRESHOLD_EUR` | Soglia gratuità: sotto questo prezzo la voce PREMIUM è offerta senza pagamento. | `0.50` | `speechify_tts.py` `free_threshold_eur()` (166) |
-| `ABM_MAX_SPEECHIFY_TEXT_CHARS` | Cap caratteri testo per job con voce Speechify. Default = `ABM_MAX_GEMINI_TEXT_CHARS` (`800000`). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `speechify:`. | `800000` | `audiobook_app.py` `MAX_SPEECHIFY_TEXT_CHARS` (419) |
+| `ABM_MAX_SPEECHIFY_TEXT_CHARS` | Cap caratteri testo per job con voce Speechify. Default = `ABM_MAX_GEMINI_TEXT_CHARS` (`800000`). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `speechify:`. | `800000` | `audiobook_app.py` `MAX_SPEECHIFY_TEXT_CHARS` (430) |
 | `ABM_SPEECHIFY_CHUNK_CHARS` | Cap caratteri **testo** per chunk TTS. Clampato a `[200, 1850]` (`SAFE_MAX_CHUNK_CHARS`): il tetto garantisce che l'`input` SSML (testo + tag `build_ssml`) resti sotto il limite hard `2000` char dell'endpoint (oltre → HTTP 400 → chunk silenziato). Valori non validi → default. Usato da `tts_split._pick_chunk_max_chars` per le voci Speechify. | `1800` | `speechify_tts.py` `chunk_max_chars()` |
 | `ABM_SPEECHIFY_USE_STREAM` | Sceglie l'endpoint API: `false` = non-streaming `/v1/audio/speech` (JSON con `audio_data` base64); `true` = streaming `/v1/audio/stream` (corpo audio grezzo). Booleano: `1/true/yes/on`. In streaming `billable_characters_count` non è disponibile → fallback a `len(text)` per il reconcile (il costo è comunque riservato sui caratteri di input). | `false` | `speechify_tts.py` `use_stream_api()` |
 
@@ -939,16 +947,16 @@ Disabilitato se `ABM_FCM_CREDENTIALS_FILE` non è impostata; i fallimenti non so
 
 | Parametro | Valore | File | Riga | Note |
 |-----------|--------|------|------|------|
-| `_MAX_DEVICES_PER_CLIENT` | `5` | `audiobook_app.py` | 1382 | Device FCM massimi per client_id. I token registrati vengono mantenuti ordinati per recency: oltre `_MAX_DEVICES_PER_CLIENT` il più vecchio viene silenziosamente scartato. |
-| `_FCM_TOKEN_RE` | `r"^[A-Za-z0-9_:\-\.~%]{10,4096}$"` | `audiobook_app.py` | 1383 | Regex di validazione formato token FCM. Richiesta fallisce con `400` se il token non corrisponde. |
-| `_DEVICE_TOKENS_FILE` | `UPLOAD_DIR / "_device_tokens.json"` | `audiobook_app.py` | 1381 | File di persistenza dei token FCM registrati per client. Write atomico (tmp + rename). |
-| `_MOBILE_CID_RE` | `r"^[A-Za-z0-9_-]{8,64}$"` | `audiobook_app.py` | 572 | Regex di validazione del `client_id` letto dall'header `X-ABM-Cid`. Il CID mobile è preferito rispetto al cookie `abm_cid` se presente e valido. |
+| `_MAX_DEVICES_PER_CLIENT` | `5` | `audiobook_app.py` | 1393 | Device FCM massimi per client_id. I token registrati vengono mantenuti ordinati per recency: oltre `_MAX_DEVICES_PER_CLIENT` il più vecchio viene silenziosamente scartato. |
+| `_FCM_TOKEN_RE` | `r"^[A-Za-z0-9_:\-\.~%]{10,4096}$"` | `audiobook_app.py` | 1394 | Regex di validazione formato token FCM. Richiesta fallisce con `400` se il token non corrisponde. |
+| `_DEVICE_TOKENS_FILE` | `UPLOAD_DIR / "_device_tokens.json"` | `audiobook_app.py` | 1392 | File di persistenza dei token FCM registrati per client. Write atomico (tmp + rename). |
+| `_MOBILE_CID_RE` | `r"^[A-Za-z0-9_-]{8,64}$"` | `audiobook_app.py` | 583 | Regex di validazione del `client_id` letto dall'header `X-ABM-Cid`. Il CID mobile è preferito rispetto al cookie `abm_cid` se presente e valido. |
 
 ### 15.4 Flusso operativo
 
 - **Registrazione device**: `POST /api/device/register` — il client mobile invia `{fcm_token, job_ids[]}`. Il server valida il token (regex `_FCM_TOKEN_RE`), deduplica per `(token, cid)`, mantiene al massimo `_MAX_DEVICES_PER_CLIENT` entry per client, persiste su `_device_tokens.json`.
-- **Identificazione client mobile**: header `X-ABM-Cid` (validato da `_MOBILE_CID_RE` a `audiobook_app.py:572`). Se presente e valido viene preferito al cookie `abm_cid`, così l'app mobile non dipende dalla gestione cookie del browser.
-- **Invio notifiche**: `_push_job_event(job_id, event, title)` (`audiobook_app.py:1417`) — chiamata al completamento (`COMPLETE`) o all'errore (`ERROR`) di un job; chiama `push_service.send_push()` per ogni device del client. Token che restituiscono `unregistered` (HTTP 404 FCM) vengono rimossi automaticamente da `_device_tokens.json`.
+- **Identificazione client mobile**: header `X-ABM-Cid` (validato da `_MOBILE_CID_RE` a `audiobook_app.py:583`). Se presente e valido viene preferito al cookie `abm_cid`, così l'app mobile non dipende dalla gestione cookie del browser.
+- **Invio notifiche**: `_push_job_event(job_id, event, title)` (`audiobook_app.py:1428`) — chiamata al completamento (`COMPLETE`) o all'errore (`ERROR`) di un job; chiama `push_service.send_push()` per ogni device del client. Token che restituiscono `unregistered` (HTTP 404 FCM) vengono rimossi automaticamente da `_device_tokens.json`.
 - **Job del client**: `GET /api/my_jobs` — restituisce la lista dei job correnti associati al client_id (via header `X-ABM-Cid` o cookie), con stato e progresso. Usato dall'app mobile per aggiornare la UI al resume.
 
 ---
@@ -1145,7 +1153,6 @@ il giudice vedeva solo volume e conteggio cid.
 | Costanti applicative (`audiobook_app.py`) | 28 |
 | Costanti parsing EPUB (`epub_to_tts.py`) | 12 |
 | Costanti parsing PDF (`pdf_to_tts.py`) | 8 |
-| Google Cloud TTS (`google_tts.py`) | 5 |
 | Gemini TTS (`gemini_tts.py`) | 15 |
 | Speechify TTS (`speechify_tts.py`) | 9 |
 | Versione (`version.py`) | 2 |
@@ -1154,4 +1161,4 @@ il giudice vedeva solo volume e conteggio cid.
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
 | Quota voci standard / riuso / power user | 3 |
-| **Totale** | **124** |
+| **Totale** | **119** |

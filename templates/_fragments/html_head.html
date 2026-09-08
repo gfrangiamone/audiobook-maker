@@ -382,7 +382,23 @@ __REVIEWS_LD__
       <h2 id="panel3Heading" data-t="s2_title"></h2>
       <p class="subtitle" data-t="p3_subtitle"></p>
 
-      <div id="voiceMismatch" class="al al-w" style="display:none"></div>
+      <div class="book-lang-row" id="bookLangRow">
+        <span class="book-lang-label" data-t="lbl_book_lang"></span>
+        <strong class="book-lang-name" id="bookLangName"></strong>
+        <span class="book-lang-src" id="bookLangSrc"></span>
+        <button type="button" id="forceLangBtn" class="icon-btn"
+                data-t-title="tip_force_lang" aria-haspopup="dialog"
+                onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
+                data-t="force_lang_change"></span></button>
+        <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
+             applyBookLanguage() lo mostra solo quando c'e' davvero un valore
+             del libro diverso da quello attivo, e ne scrive l'etichetta. -->
+        <button type="button" id="restoreLangBtn" class="icon-btn" hidden
+                data-t-title="tip_restore_lang"
+                onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
+                id="restoreLangLabel"></span></button>
+      </div>
+      <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
       <div class="tab-bar-wrap" style="position:relative">
         <div class="tab-bar" role="tablist" style="margin-bottom:12px">
@@ -397,29 +413,40 @@ __REVIEWS_LD__
         </div>
       </div>
 
-      <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
-        <div class="form-row">
-          <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
-          <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
-        </div>
+      <!-- Il motivo per cui il tab PREMIUM e' spento sta FUORI dai tab-panel:
+           applyBookLanguage() disabilita il bottone e riporta l'utente su
+           Standard nello stesso istante, quindi dentro #tabPremium questo
+           avviso non sarebbe mai visibile. Stessa forma di #cascadeNote: un
+           avviso a tutta larghezza sotto la tab-bar. -->
+      <div id="premiumOffRow" hidden>
+        <div class="al al-w" id="premiumOffMsg"></div>
+      </div>
 
+      <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
+        <div class="form-row" id="stdAccentRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="stdAccent" data-t="lbl_accent_std"></label>
+            <select id="stdAccent"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="vv" data-t="lbl_voice"></label>
+            <select id="vv"><option data-t="voice_ph"></option></select>
+          </div>
+        </div>
       </div>
 
       <div class="tab-panel" id="tabPremium" role="tabpanel" hidden aria-labelledby="tabPremiumBtn">
-        <div class="form-row premium-top-row">
-          <div class="form-group" id="premLangGroup">
-            <label for="vlPremium" data-t="lbl_lang">Lingua</label>
-            <select id="vlPremium"></select>
-          </div>
-          <div class="form-group" id="premModelGroup">
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
             <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
           </div>
-          <!-- Accento: nella stessa .form-row di lingua/modello. Su desktop va a capo
-               (flex-basis 100%) restando sotto le due select; su schermo stretto la
-               riga diventa colonna e l'ordine CSS lo porta subito sotto la lingua. -->
-          <div class="form-group" id="geminiAccentRow" hidden>
+        </div>
+        <div class="form-row" id="geminiAccentRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
             <label for="geminiAccent" data-t="lbl_accent">Accento di lettura</label>
             <select id="geminiAccent"></select>
             <div class="model-rate-hint" data-t="accent_hint"></div>
@@ -470,6 +497,49 @@ __REVIEWS_LD__
             <option value="+20%" data-t="sp_f"></option>
             <option value="+30%" data-t="sp_vf"></option>
           </select>
+        </div>
+      </div>
+
+      <div class="form-row" id="voxcpmSampleRow" hidden>
+        <div class="form-group" style="flex:1 1 100%">
+          <div class="voxcpm-listen-box">
+            <div class="voxcpm-listen-head">
+              <label data-t="voxcpm_sample_title">Ascolta come suona questa voce</label>
+              <div class="voxcpm-volume-row">
+                <span class="voxcpm-volume-ico" aria-hidden="true">&#128266;</span>
+                <input type="range" id="voxcpmVolume" min="0" max="100" step="1" value="100" aria-label="Volume">
+              </div>
+            </div>
+            <div id="voxcpmDemoBlock" hidden>
+              <div class="voxcpm-clip-row">
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoCommonBtn">
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_common">La stessa frase per tutte le voci</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoStyledBtn" hidden>
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_styled">Una frase nelle corde di questa voce</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+              </div>
+              <div class="model-rate-hint" data-t-html="voxcpm_demo_hint">
+                Clip audio generate con questa voce <span class="voxcpm-hint-em">(non sono anteprima del tuo libro)</span>
+              </div>
+            </div>
+            <div id="voxcpmSampleBlock" hidden>
+              <div class="voxcpm-clip-row">
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmSampleBtn">
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_sample_listen">Campione della voce</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+              </div>
+              <div class="model-rate-hint" data-t="voxcpm_sample_hint">
+                Il campione da cui la voce viene clonata: il libro suonerà così.
+              </div>
+            </div>
+            <audio id="voxcpmDemoCommon" preload="none"></audio>
+            <audio id="voxcpmDemoStyled" preload="none"></audio>
+            <audio id="voxcpmSample" preload="none"></audio>
+          </div>
         </div>
       </div>
 
@@ -636,7 +706,7 @@ __REVIEWS_LD__
         </div>
         <!-- M4B conversion sub-bar -->
         <div id="m4bProgressWrap" style="display:none; margin-top:6px;">
-          <label style="font-size:0.85em; color:#666;">Conversione M4B: <span id="m4bPct">0%</span></label>
+          <label style="font-size:0.85em; color:#666;"><span data-t="m4b_label">M4B conversion:</span> <span id="m4bPct">0%</span></label>
           <progress id="m4bProgressBar" value="0" max="100" style="width:100%; height:6px; accent-color:#f97316;"></progress>
           <div id="m4bMsg" style="font-size:0.75em; color:#999; font-style:italic;"></div>
         </div>
@@ -1015,6 +1085,24 @@ __REVIEWS_LD__
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-g" onclick="_langWarnResolve(false)" data-t="lang_warn_cancel"></button>
           <button class="btn btn-ok" onclick="_langWarnResolve(true)" data-t="lang_warn_confirm"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FORCE BOOK LANGUAGE MODAL -->
+  <div class="modal-overlay" id="forceLangModal" role="dialog" aria-modal="true" aria-labelledby="forceLangTitle" onclick="if(event.target===this)closeForceLangModal()">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <span data-t="force_lang_title" id="forceLangTitle"></span>
+        <button class="modal-close" onclick="closeForceLangModal()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 14px;line-height:1.6;font-size:.92rem" data-t="force_lang_hint"></p>
+        <select id="forceLangSelect" size="12" style="width:100%"></select>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-g" onclick="closeForceLangModal()" data-t="force_lang_cancel"></button>
+          <button class="btn btn-ok" onclick="confirmForceLang()" data-t="force_lang_ok"></button>
         </div>
       </div>
     </div>
