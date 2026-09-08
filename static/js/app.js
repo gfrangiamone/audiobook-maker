@@ -1454,6 +1454,34 @@ function _loadVoxcpmSample(){
     if(sampleBlock)sampleBlock.hidden=false;
   }
   _applyVoxcpmListenParams();
+  _syncVoxcpmClipIcons();
+}
+
+// Le tre clip del box: bottone e player restano appaiati in una lista sola,
+// perche' l'icona del bottone dice lo stato del suo player e le due cose non
+// possono scollarsi.
+const _VOXCPM_CLIPS=[['voxcpmDemoCommonBtn','voxcpmDemoCommon'],
+                     ['voxcpmDemoStyledBtn','voxcpmDemoStyled'],
+                     ['voxcpmSampleBtn','voxcpmSample']];
+const _VOXCPM_AUDIO_IDS=_VOXCPM_CLIPS.map(c=>c[1]);
+
+// Riporta ogni icona allo stato vero del suo player.
+//
+// Non basta ascoltare gli eventi del player: cambiando voce si fa pause() e
+// subito dopo si cambia la sorgente, e il caricamento della nuova svuota la
+// coda degli eventi del player — l'evento 'pause' appena accodato sparisce
+// prima di essere consegnato. Senza questa risincronizzazione i bottoni
+// restano con l'icona di pausa su clip che non suonano piu'.
+function _syncVoxcpmClipIcons(){
+  for(const [btnId,audioId] of _VOXCPM_CLIPS){
+    const btn=document.getElementById(btnId);
+    const audio=document.getElementById(audioId);
+    if(!btn||!audio)continue;
+    const playing=!audio.paused&&!audio.ended;
+    const ico=btn.querySelector('.voxcpm-clip-ico');
+    if(ico)ico.textContent=playing?'\u23F8':'\u25B6';
+    btn.dataset.playing=playing?'1':'';
+  }
 }
 
 // I tre player del box condividono i controlli (§17.4): un solo volume e la
@@ -1463,7 +1491,6 @@ function _loadVoxcpmSample(){
 // generate alla stessa velocita' di base del libro, quindi lo slider e'
 // l'unica differenza fra clip e lettura. Sul campione di riferimento —
 // registrato, non generato — resta un'anteprima onesta dell'effetto.
-const _VOXCPM_AUDIO_IDS=['voxcpmDemoCommon','voxcpmDemoStyled','voxcpmSample'];
 function _voxcpmListenRate(){
   const vr=document.getElementById('vr');
   const pct=parseFloat(String((vr&&vr.value)||'+0%').replace('%','').replace('+',''))||0;
@@ -1484,10 +1511,7 @@ let _voxcpmListenWired=false;
 function _wireVoxcpmListen(){
   if(_voxcpmListenWired)return;
   _voxcpmListenWired=true;
-  const coppie=[['voxcpmDemoCommonBtn','voxcpmDemoCommon'],
-                ['voxcpmDemoStyledBtn','voxcpmDemoStyled'],
-                ['voxcpmSampleBtn','voxcpmSample']];
-  for(const [btnId,audioId] of coppie){
+  for(const [btnId,audioId] of _VOXCPM_CLIPS){
     const btn=document.getElementById(btnId);
     const audio=document.getElementById(audioId);
     if(!btn||!audio)continue;
@@ -1505,13 +1529,7 @@ function _wireVoxcpmListen(){
         audio.pause();
       }
     });
-    const ico=btn.querySelector('.voxcpm-clip-ico');
-    const aggiorna=()=>{
-      const playing=!audio.paused&&!audio.ended;
-      if(ico)ico.textContent=playing?'\u23F8':'\u25B6';
-      btn.dataset.playing=playing?'1':'';
-    };
-    for(const ev of ['play','pause','ended'])audio.addEventListener(ev,aggiorna);
+    for(const ev of ['play','pause','ended'])audio.addEventListener(ev,_syncVoxcpmClipIcons);
   }
   const vol=document.getElementById('voxcpmVolume');
   if(vol)vol.addEventListener('input',_applyVoxcpmListenParams);
@@ -1535,6 +1553,7 @@ function _pauseVoxcpmSample(){
     audio.removeAttribute('src');
     audio.load();
   }
+  _syncVoxcpmClipIcons();
 }
 
 function _populateSpeechifyEmotions(){
