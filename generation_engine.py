@@ -2674,6 +2674,31 @@ def _refund_job_payment(job_id, job, reason="error"):
 # run_optimization — background thread LLM
 # ---------------------------------------------------------------------------
 
+# Messaggi di avanzamento dell'ottimizzazione del testo.
+#
+# Stessa regola dei M4B_MSG_* di audio_utils.py: qui siamo nel processo di
+# generazione, che non sa in che lingua sta guardando chi legge. I messaggi
+# escono in inglese canonico e il client li traduce (mappa `SERVER_MSG_KEYS` in
+# static/js/app.js, chiavi `opt_*` in templates/_fragments/i18n_data.js).
+#
+# OPT_MSG_CHAPTER e' l'eccezione: porta dentro numeri e titolo, quindi non e'
+# una stringa fissa da mappare. Il client la riconosce con `OPT_CHAPTER_RE` e
+# ricompone la frase dagli stessi campi del payload da cui e' nata qui
+# (opt_current_chapter_num, opt_progress_total, opt_current_chapter).
+OPT_MSG_STARTING = "Starting optimization..."
+OPT_MSG_CHAPTER = "Optimizing chapter {n}/{total}: {title}..."
+OPT_MSG_FINALIZING = "Finalizing optimization..."
+OPT_MSG_ARCHIVE_MAKING = "Generating optimized project archive..."
+OPT_MSG_ARCHIVE_DONE = "Project archive created."
+OPT_MSG_ARCHIVE_UNAVAILABLE = "Project archive not available (non-critical)."
+OPT_MSG_DONE_PREPARING_AUDIO = "Optimization complete! Preparing audio generation..."
+OPT_MSG_EMAIL_SENDING = "Sending completion email..."
+OPT_MSG_EMAIL_SENT = "Completion email sent."
+OPT_MSG_DONE_EMAIL_ERROR = "Optimization complete (email error, retry manually)."
+OPT_MSG_DONE = "Optimization complete!"
+OPT_MSG_CANCELLED = "Optimization cancelled"
+
+
 def run_optimization(job_id, selected_chapters=None):
     """Background thread: optimize text of all chapters via LLM.
     If selected_chapters is provided (list of indices), only those are optimized.
@@ -2728,7 +2753,7 @@ def run_optimization(job_id, selected_chapters=None):
     job["opt_streamed_chars"] = 0
     job["opt_usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "estimated": False}
     job["opt_start_time"] = start_time
-    job["opt_progress_message"] = "Starting optimization..."
+    job["opt_progress_message"] = OPT_MSG_STARTING
 
     def _emit_finalization_progress(phase_name, fraction_done):
         """fraction_done: 0.0 -> 1.0 within finalization phase"""
@@ -2751,10 +2776,8 @@ def run_optimization(job_id, selected_chapters=None):
             job["opt_current_chapter"] = ch.title
             job["opt_current_chapter_num"] = i + 1
             job["opt_elapsed_seconds"] = round(time.time() - start_time)
-            job["opt_progress_message"] = (
-                f"Optimizing chapter {i+1}/{total_chapters}: "
-                f"{ch.title[:40]}..."
-            )
+            job["opt_progress_message"] = OPT_MSG_CHAPTER.format(
+                n=i + 1, total=total_chapters, title=ch.title[:40])
             print(f"[{job_id}] LLM optimizing chapter {i+1}/{total_chapters}: {ch.title}")
 
             ch_input_chars = ch.char_count
@@ -2807,18 +2830,18 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
-        _emit_finalization_progress("Finalizing optimization...", 0.0)
+        _emit_finalization_progress(OPT_MSG_FINALIZING, 0.0)
 
         # Re-check auto_generate — may have been set via the unified optimization+generation flow
         auto_generate = job.get("opt_auto_generate", False)
         if auto_generate:
-            _emit_finalization_progress("Generating optimized project archive...", 0.15)
+            _emit_finalization_progress(OPT_MSG_ARCHIVE_MAKING, 0.15)
             # Generate .abm snapshot first, then proceed to TTS generation
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
-                _emit_finalization_progress("Project archive created.", 0.30)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_DONE, 0.30)
                 # Rinfresca il descrittore di recovery: l'ottimizzazione è
                 # completata e l'.abm esiste su disco. Senza questo upsert il
                 # descrittore (registrato in fase optimize o a register_email)
@@ -2833,8 +2856,8 @@ def run_optimization(job_id, selected_chapters=None):
                               f"(non-fatal): {_e_reg}", flush=True)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
-                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
-            _emit_finalization_progress("Optimization complete! Preparing audio generation...", 1.0)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_UNAVAILABLE, 0.30)
+            _emit_finalization_progress(OPT_MSG_DONE_PREPARING_AUDIO, 1.0)
             # Go directly to generating — skip intermediate "optimized" status
             # to avoid race condition in SSE polling
             voice = job.get("opt_voice", "it-IT-IsabellaNeural")
@@ -2928,22 +2951,22 @@ def run_optimization(job_id, selected_chapters=None):
                            podcast_base_url=podcast_base_url)
         elif job.get("email_registered"):
             # Batch mode, no auto-generate: create .abm and send email
-            _emit_finalization_progress("Generating optimized project archive...", 0.15)
+            _emit_finalization_progress(OPT_MSG_ARCHIVE_MAKING, 0.15)
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
-                _emit_finalization_progress("Project archive created.", 0.30)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_DONE, 0.30)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm: {e}")
-                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
-            _emit_finalization_progress("Sending completion email...", 0.70)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_UNAVAILABLE, 0.30)
+            _emit_finalization_progress(OPT_MSG_EMAIL_SENDING, 0.70)
             try:
                 _send_optimization_email(job_id)
-                _emit_finalization_progress("Completion email sent.", 1.0)
+                _emit_finalization_progress(OPT_MSG_EMAIL_SENT, 1.0)
             except Exception as e:
                 print(f"[{job_id}] Optimization email error: {e}")
-                _emit_finalization_progress("Optimization complete (email error, retry manually).", 1.0)
+                _emit_finalization_progress(OPT_MSG_DONE_EMAIL_ERROR, 1.0)
             # Optimize-only batch: il lavoro pagato è finito qui. Chiudi il
             # descrittore anche se l'email non è partita, altrimenti il job
             # risulta orfano ai riavvii successivi e finisce in rimborso.
@@ -2955,14 +2978,14 @@ def run_optimization(job_id, selected_chapters=None):
             _set_job_status(job, "optimized")
         else:
             # Interactive mode: just mark as optimized
-            _emit_finalization_progress("Optimization complete!", 1.0)
+            _emit_finalization_progress(OPT_MSG_DONE, 1.0)
             _set_job_status(job, "optimized")
             job["last_poll"] = time.time()
 
     except _CancelledError:
         # Revert to analyzed so cleanup doesn't nuke the job — user can retry
         _set_job_status(job, "analyzed")
-        job["opt_progress_message"] = "Optimization cancelled"
+        job["opt_progress_message"] = OPT_MSG_CANCELLED
         print(f"[{job_id}] LLM optimization cancelled")
         _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),

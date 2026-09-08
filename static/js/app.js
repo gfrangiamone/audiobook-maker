@@ -186,8 +186,24 @@ const SERVER_MSG_KEYS={
   "M4B conversion complete":"m4b_done",
   "M4B conversion failed":"m4b_failed",
   "M4B conversion timed out":"m4b_timeout",
-  "M4B conversion — invalid file":"m4b_invalid"
+  "M4B conversion — invalid file":"m4b_invalid",
+  "Starting optimization...":"opt_starting",
+  "Finalizing optimization...":"opt_finalizing",
+  "Generating optimized project archive...":"opt_archive_making",
+  "Project archive created.":"opt_archive_done",
+  "Project archive not available (non-critical).":"opt_archive_unavailable",
+  "Optimization complete! Preparing audio generation...":"opt_done_preparing_audio",
+  "Sending completion email...":"opt_email_sending",
+  "Completion email sent.":"opt_email_sent",
+  "Optimization complete (email error, retry manually).":"opt_done_email_error",
+  "Optimization complete!":"opt_done",
+  "Optimization cancelled":"opt_cancelled"
 };
+// Il messaggio del capitolo in lavorazione porta dentro numeri e titolo,
+// quindi non e' una stringa fissa da mappare. Il client lo riconosce da qui e
+// lo ricompone dagli stessi campi del payload da cui il server lo ha costruito
+// (OPT_MSG_CHAPTER in generation_engine.py).
+const OPT_CHAPTER_RE=/^Optimizing chapter \d+\/\d+: /;
 function tServerMsg(msg){
   if(!msg)return '';
   const k=SERVER_MSG_KEYS[msg];
@@ -3756,10 +3772,18 @@ function _listenOptProgressWiz(){
     var pct=Math.min(100,Math.round(workedChars/totalChars*100));
     document.getElementById('pBar').style.width=pct+'%';
     document.getElementById('pPct').textContent=pct+'%';
-    document.getElementById('pMsg').textContent=d.opt_progress_message||'';
+    // Come per la barra audio: un solo messaggio, gia' tradotto, per i due
+    // riquadri. progressPhase mostrava la stringa cruda del server, in inglese
+    // dentro un'interfaccia per il resto tradotta.
+    let optMsg=tServerMsg(d.opt_progress_message);
+    if(OPT_CHAPTER_RE.test(d.opt_progress_message||'')){
+      optMsg=t('opt_chapter',{n:d.opt_current_chapter_num||0,tot:d.opt_progress_total||0,
+                              title:String(d.opt_current_chapter||'').substring(0,40)});
+    }
+    document.getElementById('pMsg').textContent=optMsg;
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
-    const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.opt_progress_message)progressPhase.textContent=d.opt_progress_message;
+    const progressPhase=document.getElementById('progressPhase');if(progressPhase&&optMsg)progressPhase.textContent=optMsg;
     _updateJobRunningPct(pct,myJobId);
 
     var pChEl=document.getElementById('pCh');
