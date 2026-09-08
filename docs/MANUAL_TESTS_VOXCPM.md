@@ -127,9 +127,17 @@ quel che si vuole vedere dichiarato).
    precedenti: questo lavoro cambia il ritmo, non il punto d'arrivo.
 
 Se la barra resta ferma per l'intera sintesi e il libro esce comunque
-completo, il canale è muto ma innocuo: guarda `ABM_VOXCPM_PROGRESS`
-nell'unit systemd (a `0` è spento apposta) e la versione dell'immagine sul
-worker, che deve essere almeno quella del 2026-09-07.
+completo, il canale ascolta ma non riceve nulla: guarda `ABM_VOXCPM_PROGRESS`
+nell'unit systemd (a `0` spegne solo l'**ascolto** lato ABM, non impedisce al
+worker di pubblicare) e la versione dell'immagine sul worker, che deve essere
+almeno quella del 2026-09-07.
+
+Se invece un job resta `IN_PROGRESS` ben oltre la fine della generazione,
+cerca nel log del worker l'avviso `avanzamento: il thread non e' terminato
+entro il timeout` (lo stampa `chiudi()` in `handler.py`) e spegni
+`VOXCPM_PROGRESS_MIN_S` sull'endpoint: è il solo interruttore che ferma
+davvero le POST di avanzamento, ed è un cambio di template sull'endpoint
+RunPod, non una riga nell'unit systemd.
 
 ## 8. Cosa fare se qualcosa non torna
 

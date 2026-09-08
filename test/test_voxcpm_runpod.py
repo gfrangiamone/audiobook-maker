@@ -190,6 +190,63 @@ def test_errore_nell_output_di_un_job_completato():
     assert "upload" in str(e.value)
 
 
+def test_residuo_di_avanzamento_su_failed_non_declassa_il_guasto():
+    # F1 (review finale): se il worker muore senza mai scrivere l'esito
+    # (OOM, segfault, kill), l'SDK non manda l'esito finale e il record
+    # RunPod conserva l'ultima riga d'avanzamento dentro `output`. Letta
+    # com'e', quella riga (non vuota) scavalca `st["error"]` — la sola
+    # stringa che porti "cuda" — e il guasto ritentabile si declassa a un
+    # VoxcpmJobError nudo che il ciclo di `synthesize_chapter` non cattura.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-18"})],
+        get=[FintaRisposta(body={
+            "status": "FAILED",
+            "error": "CUDA out of memory: il worker e' morto senza rispondere",
+            "output": {"phase": "generate", "chunks_done": 3,
+                       "chunks_total": 8}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmMotoreCompromesso) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert "CUDA out of memory" in str(e.value)
+
+
+def test_residuo_di_avanzamento_su_completed_non_e_un_esito():
+    # Lo stesso residuo su COMPLETED non deve passare per un esito riuscito:
+    # gli manca tutto cio' che un esito vero porta (`failed_indices`,
+    # `audio_b64`, `chunks`), e restituirlo tale e quale ingannerebbe il
+    # chiamante che lo scambia per un capitolo consegnato.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-19"})],
+        get=[FintaRisposta(body={
+            "status": "COMPLETED",
+            "output": {"phase": "generate", "chunks_done": 8,
+                       "chunks_total": 8}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert "chunks_done" not in out
+    assert "chunks_total" not in out
+    assert "phase" not in out
+
+
+def test_output_di_errore_vero_con_campi_di_avanzamento_non_si_scarta():
+    # Guardia di regressione: un `output` di errore vero (quello che porta
+    # `engine_dead`/`bounced`) deve continuare a essere letto per intero
+    # anche se porta pure `chunks_done`/`chunks_total` residui — il
+    # predicato di F1 guarda `error` per primo apposta, e non deve poter
+    # affamare la diagnostica che il commento sopra `dettaglio` difende.
+    ses = FintaSessione(
+        post=[FintaRisposta(body={"id": "job-20"})],
+        get=[FintaRisposta(body={
+            "status": "FAILED",
+            "output": {"error": "motore compromesso: cuda error",
+                       "engine_dead": True, "bounced": True,
+                       "chunks_done": 3, "chunks_total": 8}})],
+    )
+    with pytest.raises(voxcpm_tts.VoxcpmRimbalzato) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto, poll=0)
+    assert "cuda error" in str(e.value)
+
+
 def test_coda_satura_non_e_ritentabile():
     # Mai passato per IN_PROGRESS entro il tetto di coda: l'endpoint e' saturo,
     # non lento. Rimettersi in fila non aiuta nessuno.

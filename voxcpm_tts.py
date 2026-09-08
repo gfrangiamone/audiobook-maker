@@ -662,6 +662,37 @@ def _riga_avanzamento(on_progress, out, job_id):
         _LOG.warning("avanzamento non registrato per il job %s", job_id)
 
 
+def _residuo_di_avanzamento(out):
+    """Riconosce, a stato terminale, l'ultima riga d'avanzamento rimasta in
+    `output` invece di un vero esito.
+
+    E' la controparte di `_riga_avanzamento`: quella la consuma quando il job
+    e' ancora `IN_PROGRESS`, questa la scarta quando il job e' gia' finito.
+    Il campo e' lo stesso perche' il worker scrive gli stessi
+    `chunks_done`/`chunks_total` in entrambi i casi — se il worker muore
+    senza rispondere (OOM, segfault, kill), l'SDK non manda mai l'esito
+    finale e il record RunPod conserva quella riga com'era, non svuotata.
+    Scambiarla per un `output` vero butterebbe via `st["error"]` — la sola
+    stringa di RunPod che porti "out of memory"/"cuda" — e declasserebbe un
+    guasto ritentabile (`VoxcpmMotoreCompromesso`) a un `VoxcpmJobError`
+    nudo, che il ciclo di `synthesize_chapter` non cattura.
+
+    Una riga d'avanzamento porta `chunks_total` *e* `chunks_done`, e *mai*
+    `error`: nessun esito vero ha questa forma (il riuscito porta
+    `failed_indices`/`audio_b64`/`chunks`, il rifiutato porta `error`,
+    `engine_dead` o `bounced`).
+    """
+    if "error" in out:
+        return False
+    totale = out.get("chunks_total")
+    fatti = out.get("chunks_done")
+    if not isinstance(totale, int) or isinstance(totale, bool) or totale <= 0:
+        return False
+    if not isinstance(fatti, int) or isinstance(fatti, bool) or fatti < 0:
+        return False
+    return True
+
+
 def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
                     on_queue, cancelled=None, on_billing=None,
                     on_progress=None):
@@ -716,6 +747,12 @@ def _attendi_esito(job_id, ses, sleep, attesa, tetto_exec, tetto_coda, clock,
         if stato in ("COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"):
             out = st.get("output")
             out = out if isinstance(out, dict) else {}
+            if _residuo_di_avanzamento(out):
+                # Il worker e' morto senza mai scrivere l'esito: quello che
+                # resta in `output` e' ancora una riga d'avanzamento, non un
+                # esito. Trattarla come assente riporta `dettaglio` qui sotto
+                # su `st.get("error")`.
+                out = {}
             if on_billing is not None:
                 # Prima di decidere se questo e' un successo o un guasto: la
                 # GPU che si e' fermata a meta' l'abbiamo comprata lo stesso, e

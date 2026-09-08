@@ -423,11 +423,16 @@ degradano entrambe al comportamento attuale:
 | worker  | ABM     | esito                                                                  |
 |---------|---------|------------------------------------------------------------------------|
 | vecchio | nuovo   | nessun `output` parziale, `on_progress` mai chiamata, barra come oggi   |
-| nuovo   | vecchio | `progress_update` ignorata, `/status` terminale invariato               |
+| nuovo   | vecchio | `progress_update` ignorata; su un guasto senza esito finale il `/status` terminale può portare l'ultima riga d'avanzamento invece di un esito vero — non è "invariato", è il predicato di F1 (`_residuo_di_avanzamento`) a riconoscerla e scartarla |
 
 Il deploy dell'immagine può quindi precedere o seguire il rilascio di ABM in
-qualunque ordine, e `ABM_VOXCPM_PROGRESS=0` è l'interruttore che riporta tutto
-indietro senza toccare la GPU.
+qualunque ordine. Ma sono due interruttori con due raggi diversi, non uno
+solo: `ABM_VOXCPM_PROGRESS=0` (lato ABM) riporta indietro la barra senza
+toccare la GPU, ma non impedisce al worker di **pubblicare** — le POST
+continuano, e con esse la coda di runpod-python#250 che `chiudi()` mitiga ma
+non elimina. Il solo interruttore che zittisce davvero le POST è
+`VOXCPM_PROGRESS_MIN_S=0` sull'endpoint RunPod, lato worker — cioè un cambio
+di template, non una riga nell'unit systemd.
 
 **Il piano B non serve.** La sonda (§4.1) ha misurato il payload parziale in
 arrivo sotto `output`: si implementa il canale RunPod. Quel che segue resta
