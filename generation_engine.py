@@ -64,6 +64,7 @@ from audio_utils import (
     pcm_to_aac_m4b, _convert_mp3_to_m4b,
     pcm_to_aac_m4b_monitored, _convert_mp3_to_m4b_monitored,
     trim_pcm_trailing_silence, build_m4b_rebuild_kit,
+    M4B_MSG_PREPARING,
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3,
@@ -5507,7 +5508,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     job["progress_message"] = "Converting to M4B..."
                     job["m4b_progress_current"] = 0
                     job["m4b_progress_total"] = 100
-                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_progress_message"] = M4B_MSG_PREPARING
                     job["m4b_started_at"] = time.time()
                     job["_m4b_last_log_ts"] = 0.0
 
@@ -5602,7 +5603,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 job["progress_message"] = "Converting to M4B..."
                 job["m4b_progress_current"] = 0
                 job["m4b_progress_total"] = 100
-                job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                job["m4b_progress_message"] = M4B_MSG_PREPARING
                 job["m4b_started_at"] = time.time()
                 job["_m4b_last_log_ts"] = 0.0
 
@@ -5935,7 +5936,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                     job["m4b_progress_current"] = 0
                     job["m4b_progress_total"] = 100
-                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_progress_message"] = M4B_MSG_PREPARING
                     job["m4b_started_at"] = time.time()
                     job["_m4b_last_log_ts"] = 0.0
 

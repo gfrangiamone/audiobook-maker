@@ -170,6 +170,29 @@ function t(k, replacements){
   }
   return s;
 }
+// I messaggi di avanzamento nascono nel processo di generazione, che non sa in
+// che lingua sta guardando chi legge: arrivano percio' in inglese canonico e si
+// traducono qui. Questa mappa e' l'altra meta' delle costanti M4B_MSG_* di
+// audio_utils.py — chi aggiunge un messaggio la' aggiunge una riga qui e la
+// chiave nelle sette lingue di i18n_data.js. Una stringa fuori mappa resta
+// l'inglese che e' arrivato: ripiego voluto, meglio del vuoto.
+const SERVER_MSG_KEYS={
+  "Converting to M4B...":"converting_m4b",
+  "M4B conversion — preparing…":"m4b_preparing",
+  "M4B conversion — preparing metadata…":"m4b_preparing_meta",
+  "M4B conversion — AAC encoding…":"m4b_encoding",
+  "M4B conversion — AAC encoding (direct PCM→AAC)…":"m4b_encoding_pcm",
+  "M4B conversion — final validation…":"m4b_validating",
+  "M4B conversion complete":"m4b_done",
+  "M4B conversion failed":"m4b_failed",
+  "M4B conversion timed out":"m4b_timeout",
+  "M4B conversion — invalid file":"m4b_invalid"
+};
+function tServerMsg(msg){
+  if(!msg)return '';
+  const k=SERVER_MSG_KEYS[msg];
+  return k?(t(k)||msg):msg;
+}
 function applyI18n(){
   document.querySelectorAll('[data-t]').forEach(e=>{
     const k=e.getAttribute('data-t'), v=t(k);
@@ -4240,10 +4263,14 @@ function listenProgress(){
       // Update both old and new progress elements
       document.getElementById('pPct').textContent=pct+'%';
       document.getElementById('pBar').style.width=pct+'%';
-      document.getElementById('pMsg').textContent=d.progress_message||'';
+      // Un solo messaggio, gia' tradotto, per i due riquadri: progressPhase
+      // mostrava la stringa cruda del server accanto a pMsg tradotto, e nello
+      // stesso pannello convivevano due lingue.
+      const msg=tServerMsg(d.progress_message);
+      document.getElementById('pMsg').textContent=msg;
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
-      const progressPhase=document.getElementById('progressPhase');if(progressPhase&&d.progress_message)progressPhase.textContent=d.progress_message;
+      const progressPhase=document.getElementById('progressPhase');if(progressPhase&&msg)progressPhase.textContent=msg;
       _updateJobRunningPct(pct,myJobId);
 
       if(d.current_chapter)
@@ -4265,10 +4292,6 @@ function listenProgress(){
       if(d.bytes_generated>0)
         document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
 
-      let msg=d.progress_message||'';
-      if(msg==="Converting to M4B..."){msg=t('converting_m4b')||msg}
-      document.getElementById('pMsg').textContent=msg;
-
       // M4B sub-bar update
       const m4bWrap=document.getElementById('m4bProgressWrap');
       const m4bBar=document.getElementById('m4bProgressBar');
@@ -4279,7 +4302,7 @@ function listenProgress(){
           m4bWrap.style.display='block';
           m4bBar.value=d.m4b_progress_current||0;
           m4bPct.textContent=(d.m4b_progress_current||0)+'%';
-          m4bMsg.textContent=d.m4b_progress_message||'';
+          m4bMsg.textContent=tServerMsg(d.m4b_progress_message);
         }else{
           m4bWrap.style.display='none';
         }

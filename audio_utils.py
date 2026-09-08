@@ -934,6 +934,26 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         return False
 
 
+# Messaggi di avanzamento della conversione M4B.
+#
+# Il server li emette in inglese canonico e il client li traduce nella lingua
+# di chi guarda (chiavi `m4b_*` in templates/_fragments/i18n_data.js, mappa
+# `SERVER_MSG_KEYS` in static/js/app.js): il processo di generazione non sa in che
+# lingua sta guardando l'utente, quindi qualunque messaggio scritto qui in
+# italiano finisce sotto gli occhi di un lettore inglese, francese o cinese.
+# Chi aggiunge un messaggio qui deve aggiungere anche la chiave di la': senza,
+# resta visibile l'inglese e basta, che e' il ripiego voluto.
+M4B_MSG_PREPARING = "M4B conversion — preparing…"
+M4B_MSG_PREPARING_META = "M4B conversion — preparing metadata…"
+M4B_MSG_ENCODING = "M4B conversion — AAC encoding…"
+M4B_MSG_ENCODING_PCM = "M4B conversion — AAC encoding (direct PCM→AAC)…"
+M4B_MSG_VALIDATING = "M4B conversion — final validation…"
+M4B_MSG_DONE = "M4B conversion complete"
+M4B_MSG_FAILED = "M4B conversion failed"
+M4B_MSG_TIMEOUT = "M4B conversion timed out"
+M4B_MSG_INVALID = "M4B conversion — invalid file"
+
+
 def _monitored_m4b_run(tag, convert, output_path, on_phase, status_out,
                        prep_msg, encoding_msg):
     """Corpo comune dei wrapper monitored di conversione M4B.
@@ -969,29 +989,29 @@ def _monitored_m4b_run(tag, convert, output_path, on_phase, status_out,
     try:
         result = convert()
     except subprocess.TimeoutExpired:
-        _emit(0, "Conversione M4B timeout")
-        _finish("timeout", 0, "Conversione M4B timeout")
+        _emit(0, M4B_MSG_TIMEOUT)
+        _finish("timeout", 0, M4B_MSG_TIMEOUT)
         _discard_failed_output(output_path, tag)
         return False
     except Exception:
-        _emit(0, "Conversione M4B fallita")
-        _finish("fail", 0, "Conversione M4B fallita")
+        _emit(0, M4B_MSG_FAILED)
+        _finish("fail", 0, M4B_MSG_FAILED)
         _discard_failed_output(output_path, tag)
         return False
 
     if not result:
-        _emit(0, "Conversione M4B fallita")
-        _finish("fail", 0, "Conversione M4B fallita")
+        _emit(0, M4B_MSG_FAILED)
+        _finish("fail", 0, M4B_MSG_FAILED)
         # Il convert dovrebbe aver gia' ripulito, ma un M4B parziale sopravvissuto
         # qui verrebbe raccolto a valle come se fosse il risultato buono.
         _discard_failed_output(output_path, tag)
         return False
 
     # Validazione ffprobe (98 → 100)
-    _emit(98, "Conversione M4B — validazione finale…")
+    _emit(98, M4B_MSG_VALIDATING)
     if _validate_m4b_file(output_path):
-        _emit(100, "Conversione M4B completata")
-        _finish("ok", 100, "Conversione M4B completata")
+        _emit(100, M4B_MSG_DONE)
+        _finish("ok", 100, M4B_MSG_DONE)
         return True
 
     # File invalido: tentiamo rimozione (best-effort, come l'originale).
@@ -1000,8 +1020,8 @@ def _monitored_m4b_run(tag, convert, output_path, on_phase, status_out,
             os.remove(output_path)
         except OSError:
             pass
-    _emit(0, "Conversione M4B — file invalido")
-    _finish("invalid", 0, "Conversione M4B — file invalido")
+    _emit(0, M4B_MSG_INVALID)
+    _finish("invalid", 0, M4B_MSG_INVALID)
     return False
 
 
@@ -1029,8 +1049,8 @@ def _convert_mp3_to_m4b_monitored(mp3_path, m4b_path, on_phase=None, status_out=
         "_convert_mp3_to_m4b_monitored",
         lambda: _convert_mp3_to_m4b(mp3_path, m4b_path, **kwargs),
         m4b_path, on_phase, status_out,
-        "Conversione M4B — preparazione metadati…",
-        "Conversione M4B — encoding AAC…")
+        M4B_MSG_PREPARING_META,
+        M4B_MSG_ENCODING)
 
 
 # ---------------------------------------------------------------------------
@@ -1897,5 +1917,5 @@ def pcm_to_aac_m4b_monitored(pcm_paths, output_path, on_phase=None, status_out=N
         "pcm_to_aac_m4b_monitored",
         lambda: pcm_to_aac_m4b(pcm_paths, output_path, **kwargs),
         output_path, on_phase, status_out,
-        "Conversione M4B — preparazione…",
-        "Conversione M4B — encoding AAC (PCM→AAC diretto)…")
+        M4B_MSG_PREPARING,
+        M4B_MSG_ENCODING_PCM)
