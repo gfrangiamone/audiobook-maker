@@ -8819,7 +8819,15 @@ def _vc_urls(rec):
 
 
 def _vc_view(rec):
+    """Vista pubblica per progress/approve/regenerate/retry/reject/claim/confirm.
+
+    `voice_code` va restituito solo da `commit` (il pagante, che costruisce la
+    propria risposta a parte) e da `mine()` (solo al proprietario): qui va
+    tolto sempre, anche a chi e' gia' autorizzato, perche' questa vista e'
+    condivisa da tutti i dispositivi con accesso (es. dopo un resume/confirm).
+    """
     pub = voice_clone.public_view(rec)
+    pub.pop("voice_code", None)
     demo = rec.get("demo") or {}
     if demo:
         pub["regen_left"] = max(0, int(demo.get("regen_max") or 0) - int(demo.get("regen_used") or 0))
@@ -8958,7 +8966,7 @@ def api_vc_sample():
         try:
             mt = voice_clone_audio.prepare_sample(src, wav)
         except voice_clone_audio.SampleRejected as e:
-            _vc_log("vc_sample", "VOICE_CLONE_SAMPLE_REJECTED", e.reason)
+            _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", e.reason)
             metrics = getattr(e, "metrics", None)
             return _vc_err("sample_rejected", str(e), 400, reason=e.reason,
                            metrics=(metrics.as_dict() if metrics is not None else {}))
@@ -8970,7 +8978,7 @@ def api_vc_sample():
                 return _vc_err("asr_unavailable", f"Transcript check unavailable: {e}", 503)
             cer = asr["cer"]
             if cer > voice_clone_audio.max_cer():
-                _vc_log("vc_sample", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
+                _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
                 return _vc_err("sample_rejected", "Transcript does not match", 400,
                                reason="vc_gate_transcript", cer=cer, heard=asr.get("heard", ""))
         rec = voice_clone.create_draft(cid, lang=lang, locale=locale, gender=gender,
@@ -9191,12 +9199,13 @@ def api_vc_claim():
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
     try:
         esito = voice_clone.claim(code, cid)
-    except ValueError as e:
-        if "locked" in str(e):
-            return _vc_err("code_locked", "Too many wrong codes, try later", 423)
+    except voice_clone.VoiceGone:
+        # VoiceGone e' un ValueError: deve essere intercettata prima del
+        # ValueError generico sotto (l'unico altro ValueError di claim() e'
+        # il lock, niente sniffing sul messaggio).
         return _vc_err("code_unknown", "Unknown voice code", 404)
-    if esito is None:
-        return _vc_err("code_unknown", "Unknown voice code", 404)
+    except ValueError:
+        return _vc_err("code_locked", "Too many wrong codes, try later", 423)
     status, rec, confirm_code = esito
     _vc_log(rec, "VOICE_CLONE_CLAIM", status)
     if status == "ok":
@@ -9215,7 +9224,10 @@ def api_vc_confirm():
     cid = _get_client_id()
     data = request.get_json(silent=True) or {}
     code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
-    esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip())
+    try:
+        esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip())
+    except voice_clone.VoiceGone:
+        return _vc_err("code_unknown", "Unknown voice code", 404)
     if esito == "ok":
         rec = voice_clone.by_voice_code(code)
         _vc_log(rec, "VOICE_CLONE_DEVICE_ADDED")
@@ -9348,7 +9360,7 @@ def vc_devices(token):
         abort(404)
     righe = ""
     for d in rec.get("devices") or []:
-        when = datetime.utcfromtimestamp(float(d.get("added_at") or 0)).strftime("%Y-%m-%d")
+        when = datetime.fromtimestamp(float(d.get("added_at") or 0), timezone.utc).strftime("%Y-%m-%d")
         chiave = _vc_device_key(d.get("cid"))
         azione = ("" if d.get("via") == "creator" else
                   f"<form method=\"post\" action=\"/vc/{html_mod.escape(token)}/devices/revoke\" style=\"display:inline\">"

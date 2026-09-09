@@ -313,3 +313,63 @@ def test_pagine_vc(client, tmp_path):
     assert r.status_code == 200 and vc.get(rec["id"])["state"] == "deleted"
     assert not os.path.isdir(vc.voice_dir(rec["token"]))
     assert client.get(f"/vc/{rec['manage_token']}/devices").status_code == 404
+
+
+def test_voice_code_non_trapela_a_dispositivi_non_proprietari(client, tmp_path, ambiente):
+    """Fix round 1 (CRITICAL): voice_code va restituito solo da commit() e da
+    mine() al proprietario. progress/approve/reject (via _vc_view) non lo
+    devono mai includere, nemmeno al proprietario stesso."""
+    import re
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    _cid(client, "cid-due")
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    assert r.status_code == 200 and r.get_json()["status"] == "pending"
+    codice = re.search(r"\b(\d{6})\b", ambiente[-1][2]).group(1)
+    r = client.post("/api/voice_clone/confirm", json={"voice_code": rec["voice_code"], "confirm_code": codice})
+    assert r.status_code == 200 and "voice_code" not in r.get_json()["voice"]
+    r = client.get(f"/api/voice_clone/progress/{rec['id']}")
+    payload = json.loads(r.get_data(as_text=True).strip().split("data: ")[-1])
+    assert "voice_code" not in payload
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject")
+    assert r.status_code == 200 and "voice_code" not in r.get_json()
+    altro = _paid(tmp_path, cid="cid-tre", email="c@x.it")
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(altro["id"], s)
+    _cid(client, "cid-tre")
+    r = client.post(f"/api/voice_clone/{altro['id']}/approve")
+    assert r.status_code == 200 and "voice_code" not in r.get_json()
+
+
+def test_confirm_codice_sconosciuto(client):
+    """Fix round 1 (IMPORTANT): confirm() con voice_code sconosciuto/terminale
+    solleva VoiceGone; l'endpoint deve tornare 404 code_unknown, non 500."""
+    r = client.post("/api/voice_clone/confirm", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ", "confirm_code": "123456"})
+    assert r.status_code == 404 and r.get_json()["error_code"] == "code_unknown"
+
+
+def test_claim_codice_sconosciuto(client):
+    """Fix round 1 (IMPORTANT): claim() su codice sconosciuto deve dare
+    404 code_unknown via except VoiceGone, senza sniffing sul messaggio."""
+    r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ"})
+    assert r.status_code == 404 and r.get_json()["error_code"] == "code_unknown"
+
+
+def test_claim_locked_dopo_troppi_tentativi_di_conferma(client, tmp_path, ambiente):
+    """Fix round 1 (IMPORTANT): il solo ValueError residuo di claim() e' il
+    lock (423 code_locked), esaurito qui per la via reale (5 conferme
+    sbagliate di fila bloccano il cid, non il codice sconosciuto)."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    _cid(client, "cid-due")
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    assert r.status_code == 200 and r.get_json()["status"] == "pending"
+    r = None
+    for _ in range(vc.CONFIRM_MAX_TRIES):
+        r = client.post("/api/voice_clone/confirm",
+                        json={"voice_code": rec["voice_code"], "confirm_code": "000000"})
+    assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
