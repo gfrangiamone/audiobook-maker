@@ -410,6 +410,24 @@ def test_scarica_ritenta_una_connessione_caduta_a_meta(tmp_path, monkeypatch):
     assert not os.path.exists(dest + ".part")
 
 
+def test_scarica_insiste_fino_a_dieci_volte_con_pausa_a_tetto(tmp_path, monkeypatch):
+    # Un guasto lungo (R2 o la rete giu' per qualche minuto): nove cadute e
+    # poi la consegna. La pausa raddoppia fino a 60 s e li' si ferma, per un
+    # totale di circa cinque minuti: ben sotto la validita' della GET firmata.
+    pause = []
+    monkeypatch.setattr(voxcpm_tts, "_dormi", pause.append)
+    chiamate = _get_a_sequenza(monkeypatch, [
+        _RispostaGet(b"abcd", requests.exceptions.ConnectionError("giu'"))
+        for _ in range(9)
+    ] + [_RispostaGet(b"abcd")])
+    dest = str(tmp_path / "cap.pcm")
+    voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
+    assert open(dest, "rb").read() == b"abcd"
+    assert len(chiamate) == 10 == voxcpm_tts._SCARICA_TENTATIVI
+    assert pause == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0, 60.0]
+    assert sum(pause) < 6 * 60
+
+
 def test_scarica_si_arrende_dopo_i_tentativi(tmp_path, monkeypatch):
     monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
     chiamate = _get_a_sequenza(monkeypatch, [

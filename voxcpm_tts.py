@@ -871,10 +871,14 @@ def _riassunto(out):
 # costa minuti di GPU, e perdere il job costa il libro intero. Il 2026-09-08
 # un `ChunkedEncodingError` (connessione caduta a meta' corpo) al capitolo
 # 247 di 250 ha buttato via quattro ore di sintesi: da qui i tentativi.
-# La pausa raddoppia a ogni giro (2 s, 4 s): le URL firmate valgono minuti,
-# quindi l'attesa non le fa scadere.
-_SCARICA_TENTATIVI = 3
+# Dieci prove, con pausa che raddoppia da 2 s fino a un tetto di 60 s
+# (2, 4, 8, 16, 32, poi 60 x4): in tutto circa cinque minuti di attesa,
+# abbastanza per lasciar passare un intoppo di rete o di R2, e molto meno
+# della validita' della GET firmata (`storage_backend._PRESIGN_TTL`, sei
+# ore), quindi l'attesa non la fa scadere.
+_SCARICA_TENTATIVI = 10
 _SCARICA_PAUSA_SEC = 2.0
+_SCARICA_PAUSA_MAX_SEC = 60.0
 
 
 def _scarica_ritentabile(codice):
@@ -932,7 +936,7 @@ def _scarica(url, dest):
             if os.path.exists(tmp):
                 os.remove(tmp)
         _dormi(pausa)
-        pausa *= 2
+        pausa = min(pausa * 2, _SCARICA_PAUSA_MAX_SEC)
 
 
 def _cancella_intermedio(key):
