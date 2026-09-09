@@ -98,7 +98,7 @@
   "de": {
     "brand": "Audiobook Maker",
     "paid_subject": "Deine Stimmprobe: Code und Beleg",
-    "paid_body": "<p>Danke: deine Probe wurde akzeptiert und wir bereiten die zwei Testätze vor.</p><p>Dein Stimmcode lautet <strong style=\"font-size:1.2em\">{voice_code}</strong>. Du brauchst ihn, um sie von einem anderen Gerät wiederzufinden: bewahre ihn wie ein Passwort auf.</p><p>Betrag: <strong>{amount} EUR</strong>.</p><p>Um die Proben anzuhören und die Stimme freizugeben: <a href=\"{resume_url}\">{resume_url}</a></p><p>Autorisierte Geräte: <a href=\"{manage_url}\">{manage_url}</a><br>Stimme und Dateien löschen: <a href=\"{delete_url}\">{delete_url}</a></p>",
+    "paid_body": "<p>Danke: deine Probe wurde akzeptiert und wir bereiten die zwei Testsätze vor.</p><p>Dein Stimmcode lautet <strong style=\"font-size:1.2em\">{voice_code}</strong>. Du brauchst ihn, um sie von einem anderen Gerät wiederzufinden: bewahre ihn wie ein Passwort auf.</p><p>Betrag: <strong>{amount} EUR</strong>.</p><p>Um die Proben anzuhören und die Stimme freizugeben: <a href=\"{resume_url}\">{resume_url}</a></p><p>Autorisierte Geräte: <a href=\"{manage_url}\">{manage_url}</a><br>Stimme und Dateien löschen: <a href=\"{delete_url}\">{delete_url}</a></p>",
     "confirm_subject": "Dein Bestätigungscode",
     "confirm_body": "<p>Jemand fügt deine Stimmprobe auf einem neuen Gerät hinzu. Wenn du das warst, gib diesen Code innerhalb von {minutes} Minuten ein:</p><p style=\"font-size:1.6em;letter-spacing:.2em\"><strong>{confirm_code}</strong></p><p>Wenn du es nicht warst, ignoriere diese E-Mail: ohne den Code kann niemand deine Stimme verwenden.</p>",
     "device_subject": "Neues Gerät autorisiert",
@@ -108,7 +108,7 @@
     "expiring_subject": "Deine Stimmprobe läuft in {days} Tagen ab",
     "expiring_body": "<p>Du hast deine Stimmprobe eine Weile nicht genutzt: sie läuft in {days} Tagen ab und die Dateien werden gelöscht.</p><p>Um sie zu erneuern, nutze sie einfach in einem Hörbuch. Geräte: <a href=\"{manage_url}\">{manage_url}</a></p>",
     "reminder_subject": "Die Proben deiner Stimme warten auf dich",
-    "reminder_body_1": "<p>Die zwei Testätze deiner Stimmprobe sind seit einem Tag bereit. Höre sie an und entscheide: <a href=\"{resume_url}\">{resume_url}</a></p>",
+    "reminder_body_1": "<p>Die zwei Testsätze deiner Stimmprobe sind seit einem Tag bereit. Höre sie an und entscheide: <a href=\"{resume_url}\">{resume_url}</a></p>",
     "reminder_body_2": "<p>Die Proben deiner Stimme warten seit einer Woche. Ohne Entscheidung innerhalb von 30 Tagen nach der Vorbereitung wird der Betrag erstattet und die Dateien gelöscht: <a href=\"{resume_url}\">{resume_url}</a></p>",
     "refund_subject": "Rückerstattung der Stimmprobe",
     "refund_body_paypal": "<p>{reason}</p><p>Wir haben dir einen Gutschein über <strong>{voucher_amount} EUR</strong> ausgestellt, gültig für {expiry_days} Tage, einsetzbar für jeden Dienst:</p><p style=\"font-size:1.3em\"><strong>{voucher_code}</strong></p>",

@@ -1,6 +1,7 @@
 """Email della voce campione in sette lingue (spec §8)."""
 import json
 import os
+import string
 
 import pytest
 
@@ -105,3 +106,52 @@ def test_blocco_digest():
         assert "ready" in es._voice_clone_block_html()
     finally:
         es.set_voice_clone_provider(None)
+
+
+def test_coercizioni_numeriche_non_sollevano(inviate):
+    assert es.send_voice_clone_paid("u@x.it", "en", voice_code="X", amount_eur=None,
+                                    resume_url="https://r", manage_url="https://m",
+                                    delete_url="https://d") is False
+    assert es.send_voice_clone_reminder("u@x.it", "en", resume_url="https://r", stage="x") is False
+    assert es.send_voice_clone_refunded("u@x.it", "en", amount_eur="abc", method="paypal",
+                                        reason="user_rejected", voucher_code="V") is False
+    assert inviate == []
+
+
+def test_digest_inviato_con_sole_righe_voce_campionata_e_coda_vuota(monkeypatch):
+    """Una giornata con solo eventi «voce campionata» e nessun libro in coda deve
+    comunque produrre un digest (stesso pattern dell'issue #8 per l'abuso)."""
+    sent = {}
+    monkeypatch.setattr(es, "_send_email", lambda to, subj, html, reply_to=None: sent.update(subj=subj, html=html) or True)
+    monkeypatch.setattr(es, "_smtp_available", lambda: True)
+    monkeypatch.setattr(es, "ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setattr(es, "_admin_last_sent", 0.0)
+    monkeypatch.setattr(es, "_admin_queue", [])
+    es.set_funnel_provider(None)
+    es.set_power_users_provider(None)
+    es.set_abuse_provider(None)
+    es.set_voice_clone_provider(lambda: {"window_hours": 24, "active_ready": 2,
+                                         "rows": [{"label": "paid", "count": 1}]})
+    try:
+        es._try_send_admin_digest()
+    finally:
+        es.set_voice_clone_provider(None)
+    assert sent, "il digest doveva essere inviato"
+    assert "paid" in sent["html"]
+
+
+def test_parita_placeholder_fra_le_lingue():
+    path = os.path.join(os.path.dirname(es.__file__), "i18n", "voice_clone_emails.json")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    fmt = string.Formatter()
+
+    def placeholders(text):
+        return {name for _, name, _, _ in fmt.parse(text) if name}
+
+    for k in KEYS:
+        ref = placeholders(data["en"][k])
+        for lang in LANGS:
+            if lang == "en":
+                continue
+            assert placeholders(data[lang][k]) == ref, (lang, k)

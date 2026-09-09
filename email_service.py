@@ -561,8 +561,9 @@ def _try_send_admin_digest():
     _abuse_data = _abuse_provider_data()
     _abuse_rows = (_abuse_data or {}).get("rows") or []
     _vc_data = _voice_clone_provider_data()
+    _vc_rows = (_vc_data or {}).get("rows") or []
     with _admin_queue_lock:
-        if not _admin_queue and not _abuse_rows:
+        if not _admin_queue and not _abuse_rows and not _vc_rows:
             return
         now = time.time()
         if (now - _admin_last_sent) < ADMIN_DIGEST_INTERVAL_SEC:
@@ -817,6 +818,18 @@ def _vc_t(lang):
     return _VC_I18N.get((lang or "").split("-")[0].lower()) or _VC_I18N.get("en") or {}
 
 
+def _vc_num(value, kind="float"):
+    """Converte un valore numerico per l'interpolazione email. `None` se non
+    convertibile: il chiamante deve allora ritornare `False` senza inviare.
+    Tiene le coercizioni fuori dal try/except di `_vc_send` (che scatta solo
+    dopo il controllo lingua/email), cosi' un `amount_eur=None` o
+    `stage=\"x\"` non solleva mai fuori dalle funzioni pubbliche."""
+    try:
+        return int(value) if kind == "int" else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _vc_send(email, lang, subject_key, body_keys, **values):
     """Compone e manda una email della voce campione. `body_keys`: chiavi da
     concatenare. I valori vengono escapati tranne gli URL (chiavi *_url).
@@ -835,8 +848,11 @@ def _vc_send(email, lang, subject_key, body_keys, **values):
 
 
 def send_voice_clone_paid(email, lang, *, voice_code, amount_eur, resume_url, manage_url, delete_url):
+    amount = _vc_num(amount_eur)
+    if amount is None:
+        return False
     return _vc_send(email, lang, "paid_subject", ("paid_body",), voice_code=voice_code,
-                    amount=f"{float(amount_eur):.2f}", resume_url=resume_url,
+                    amount=f"{amount:.2f}", resume_url=resume_url,
                     manage_url=manage_url, delete_url=delete_url)
 
 
@@ -860,7 +876,10 @@ def send_voice_clone_expiring(email, lang, *, days, manage_url):
 
 
 def send_voice_clone_reminder(email, lang, *, resume_url, stage):
-    key = "reminder_body_2" if int(stage) >= 2 else "reminder_body_1"
+    stage_n = _vc_num(stage, kind="int")
+    if stage_n is None:
+        return False
+    key = "reminder_body_2" if stage_n >= 2 else "reminder_body_1"
     return _vc_send(email, lang, "reminder_subject", (key,), resume_url=resume_url)
 
 
@@ -868,18 +887,24 @@ def send_voice_clone_refunded(email, lang, *, amount_eur, method, reason, vouche
                               voucher_amount=None, expiry_days=None):
     if method not in ("paypal", "voucher"):
         return False
+    amount = _vc_num(amount_eur)
+    if amount is None:
+        return False
     t = _vc_t(lang)
     reason_text = t.get("refund_reason_" + reason) or t.get("refund_reason_user_rejected") or ""
     if method == "paypal":
         if not voucher_code:
             return False
+        v_amount = _vc_num(voucher_amount if voucher_amount is not None else amount)
+        if v_amount is None:
+            return False
         return _vc_send(email, lang, "refund_subject", ("refund_body_paypal",), reason=reason_text,
                         voucher_code=voucher_code,
-                        voucher_amount=f"{float(voucher_amount if voucher_amount is not None else amount_eur):.2f}",
+                        voucher_amount=f"{v_amount:.2f}",
                         expiry_days=expiry_days if expiry_days is not None else VOUCHER_EXPIRY_DAYS,
-                        amount=f"{float(amount_eur):.2f}")
+                        amount=f"{amount:.2f}")
     return _vc_send(email, lang, "refund_subject", ("refund_body_voucher",), reason=reason_text,
-                    amount=f"{float(amount_eur):.2f}")
+                    amount=f"{amount:.2f}")
 
 
 def _send_voucher_notification_email(code, email, amount_eur, valid_days, created_at):
