@@ -269,3 +269,152 @@ def apply_gate(mt, sr, g=None):
         why.append("vc_gate_clip")
     mt.reasons = why
     return mt
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg: probe, conversione, loudness
+# ---------------------------------------------------------------------------
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+_SUBPROCESS_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+ACCEPTED_EXT = ("wav", "mp3", "webm", "opus", "ogg", "m4a", "mp4")
+MIN_PROBE_SEC = 3.0
+MAX_PROBE_SEC = 60.0
+_FFMPEG_TIMEOUT = 120
+
+
+class SampleRejected(Exception):
+    """Il campione non va bene. `reason` e' una chiave i18n `vc_gate_*`."""
+
+    def __init__(self, reason, detail="", metrics=None):
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+        self.reason = reason
+        self.detail = detail
+        self.metrics = metrics
+
+
+def _tool(name):
+    path = shutil.which(name)
+    if not path:
+        raise RuntimeError(f"{name} non trovato nel PATH")
+    return path
+
+
+def probe(path):
+    """Il primo stream audio del file: durata, codec, sample rate, canali."""
+    cmd = [_tool("ffprobe"), "-v", "error", "-print_format", "json",
+           "-show_streams", "-show_format", path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=30, **_TEXT, **_SUBPROCESS_FLAGS)
+        data = json.loads(r.stdout or "{}")
+    except (subprocess.SubprocessError, ValueError) as e:
+        raise SampleRejected("vc_gate_format", f"ffprobe: {e}")
+    audio = [s for s in data.get("streams") or [] if s.get("codec_type") == "audio"]
+    if r.returncode != 0 or not audio:
+        raise SampleRejected("vc_gate_format", "nessuno stream audio")
+    s = audio[0]
+    dur = s.get("duration") or (data.get("format") or {}).get("duration") or 0
+    try:
+        dur = float(dur)
+    except (TypeError, ValueError):
+        dur = 0.0
+    if dur <= 0.0:
+        # webm di MediaRecorder spesso non dichiara la durata: la si misura
+        # decodificando, e' l'unico modo affidabile.
+        dur = _decoded_seconds(path)
+    if dur < MIN_PROBE_SEC:
+        raise SampleRejected("vc_gate_short", f"{dur:.1f}s")
+    if dur > MAX_PROBE_SEC:
+        raise SampleRejected("vc_gate_long", f"{dur:.1f}s")
+    return {"duration": round(dur, 3), "codec": str(s.get("codec_name") or ""),
+            "sample_rate": int(s.get("sample_rate") or 0), "channels": int(s.get("channels") or 0)}
+
+
+def _decoded_seconds(path):
+    cmd = [_tool("ffmpeg"), "-v", "error", "-i", path, "-f", "null", "-",
+           "-stats", "-loglevel", "info"]
+    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    m = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
+    if not m:
+        return 0.0
+    h, mi, s = m[-1]
+    return int(h) * 3600 + int(mi) * 60 + float(s)
+
+
+def convert(src, dst_wav):
+    """Qualunque ingresso -> wav mono 24 kHz s16 con highpass a 60 Hz (§5.1)."""
+    cmd = [_tool("ffmpeg"), "-y", "-v", "error", "-i", src, "-vn", "-ac", "1",
+           "-ar", str(SAMPLE_RATE), "-af", "highpass=f=60", "-c:a", "pcm_s16le",
+           "-f", "wav", dst_wav]
+    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    if r.returncode != 0 or not os.path.exists(dst_wav) or os.path.getsize(dst_wav) < 100:
+        raise SampleRejected("vc_gate_format", (r.stderr or "")[-300:])
+
+
+_EBU_I = re.compile(r"\bI:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
+
+
+def loudness_lufs(wav_path):
+    """Loudness integrata BS.1770 via `ebur128` di ffmpeg. nan se assente."""
+    cmd = [_tool("ffmpeg"), "-v", "info", "-nostats", "-i", wav_path,
+           "-af", "ebur128=framelog=quiet", "-f", "null", "-"]
+    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    found = _EBU_I.findall(r.stderr or "")
+    return float(found[-1]) if found else float("nan")
+
+
+def normalize(x, sr):
+    """dc -> trim 300 ms -> guadagno a TARGET_LUFS -> tetto PEAK_DBFS.
+
+    Ritorna (segnale, loudness misurata prima del guadagno). La misura passa
+    da ffmpeg su un wav temporaneo: il guadagno e' lineare, quindi la
+    loudness finale e' esattamente quella misurata piu' il guadagno.
+    """
+    y = np.asarray(x, dtype=np.float32)
+    y = y - float(np.mean(y))
+    y = trim_edges(y, sr, pad_ms=300.0)
+    fd, tmp = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        write_wav(tmp, y, sr)
+        lu = loudness_lufs(tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    gain_db = 0.0 if not math.isfinite(lu) else TARGET_LUFS - lu
+    y = y * (10.0 ** (gain_db / 20.0))
+    peak = float(np.max(np.abs(y))) if y.size else 0.0
+    ceil = 10.0 ** (PEAK_DBFS / 20.0)
+    if peak > ceil:
+        y = y * (ceil / peak)
+    return y.astype(np.float32), lu
+
+
+def prepare_sample(src_path, dst_wav, *, gate=None):
+    """Pipeline intera (§5.1-5.3). Scrive `dst_wav` solo se il gate passa."""
+    probe(src_path)
+    fd, tmp = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        convert(src_path, tmp)
+        x, sr = read_wav(tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    y, _lu_in = normalize(x, sr)
+    mt = apply_gate(measure(y, sr), sr, gate)
+    if mt.reasons:
+        raise SampleRejected(mt.reasons[0], "; ".join(mt.reasons), metrics=mt)
+    write_wav(dst_wav, y, sr)
+    mt.lufs = round(loudness_lufs(dst_wav), 2)     # misurata sul file consegnato
+    return mt

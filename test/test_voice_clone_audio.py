@@ -5,6 +5,8 @@ I segnali sono sintetici e deterministici: raffiche di rumore bianco a
 Le misure del worker (`tools/voice_prompts/audio.py`) le trattano come
 parlato pulito; ogni difetto e' costruito alterando una cosa sola.
 """
+import os
+
 import numpy as np
 import pytest
 
@@ -117,3 +119,98 @@ def test_wav_roundtrip(tmp_path):
     y, sr = vca.read_wav(str(p))
     assert sr == SR and len(y) == len(x)
     assert np.max(np.abs(y - x)) < 1e-3
+
+
+import shutil
+import subprocess
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+                                  reason="ffmpeg/ffprobe non installati")
+
+
+def _wav_parlato(tmp_path, name="in.wav", **kw):
+    p = tmp_path / name
+    vca.write_wav(str(p), _parlato(**kw), SR)
+    return str(p)
+
+
+def _codifica(src, dst, *args):
+    """Ricodifica con ffmpeg; SKIP se la build locale non ha l'encoder."""
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, *args, dst],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip(f"encoder assente in questa build di ffmpeg: {r.stderr[-120:]}")
+    return dst
+
+
+@needs_ffmpeg
+def test_probe_legge_durata_e_canali(tmp_path):
+    src = _wav_parlato(tmp_path, seconds=15.0)
+    info = vca.probe(src)
+    assert abs(info["duration"] - 15.0) < 0.2
+    assert info["channels"] == 1 and info["sample_rate"] == SR
+
+
+@needs_ffmpeg
+def test_probe_rifiuta_un_file_senza_audio(tmp_path):
+    p = tmp_path / "x.mp3"
+    p.write_bytes(b"non sono audio" * 100)
+    with pytest.raises(vca.SampleRejected) as ei:
+        vca.probe(str(p))
+    assert ei.value.reason == "vc_gate_format"
+
+
+@needs_ffmpeg
+def test_convert_da_opus_stereo_48k(tmp_path):
+    """Il caso MediaRecorder: webm/opus a 48 kHz. Esce wav mono 24 kHz s16."""
+    src = _wav_parlato(tmp_path, seconds=14.0)
+    webm = _codifica(src, str(tmp_path / "rec.webm"), "-ac", "2", "-ar", "48000",
+                     "-c:a", "libopus", "-b:a", "96k")
+    out = str(tmp_path / "out.wav")
+    vca.convert(webm, out)
+    x, sr = vca.read_wav(out)
+    assert sr == SR and abs(len(x) / SR - 14.0) < 0.3
+
+
+@needs_ffmpeg
+def test_loudness_e_normalize(tmp_path):
+    src = _wav_parlato(tmp_path, seconds=14.0, level_db=-34.0)
+    lu = vca.loudness_lufs(src)
+    assert lu < -30.0                     # parte piano (rumore bianco: K-weighting ~ +3 dB)
+    x, sr = vca.read_wav(src)
+    y, lu_in = vca.normalize(x, sr)
+    assert abs(lu_in - lu) < 0.5
+    out = str(tmp_path / "norm.wav")
+    vca.write_wav(out, y, sr)
+    assert abs(vca.loudness_lufs(out) - vca.TARGET_LUFS) < 1.5
+    assert 20.0 * np.log10(np.max(np.abs(y))) <= vca.PEAK_DBFS + 0.1
+
+
+@needs_ffmpeg
+def test_prepare_sample_passa_e_scrive_il_wav(tmp_path):
+    src = _wav_parlato(tmp_path, seconds=15.0)
+    dst = str(tmp_path / "sample.wav")
+    mt = vca.prepare_sample(src, dst)
+    assert mt.reasons == [] and os.path.exists(dst)
+    assert abs(mt.lufs - vca.TARGET_LUFS) < 1.5
+
+
+@needs_ffmpeg
+def test_prepare_sample_rifiuta_e_non_scrive(tmp_path):
+    src = _wav_parlato(tmp_path, seconds=6.0)
+    dst = str(tmp_path / "sample.wav")
+    with pytest.raises(vca.SampleRejected) as ei:
+        vca.prepare_sample(src, dst)
+    assert ei.value.reason == "vc_gate_short"
+    assert ei.value.metrics.duration < 12.0
+    assert not os.path.exists(dst)
+
+
+@needs_ffmpeg
+def test_prepare_sample_mp3_64k_cade_per_banda(tmp_path):
+    src = _wav_parlato(tmp_path, seconds=15.0)
+    mp3 = _codifica(src, str(tmp_path / "low.mp3"), "-ar", "22050",
+                    "-c:a", "libmp3lame", "-b:a", "32k")
+    with pytest.raises(vca.SampleRejected) as ei:
+        vca.prepare_sample(mp3, str(tmp_path / "s.wav"))
+    assert "vc_gate_band" in ei.value.metrics.reasons
