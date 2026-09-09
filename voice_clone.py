@@ -276,6 +276,28 @@ def remove_files(rec):
             print(f"[voice_clone] delete R2 fallita per {rec['id']}: {e}")
 
 
+def delete_by_owner(manage_token):
+    """§6.6: cancellazione dal link di gestione. Da qualunque stato non
+    terminale a `deleted`, file rimossi; None se il token e' ignoto.
+
+    `TRANSITIONS` ammette `deleted` solo da `ready` (rifiuto esplicito da
+    `demos_ready`/`demo_failed` passa per `reject`, col rimborso). Da uno
+    stato intermedio senza quella transizione il proprietario puo' comunque
+    cancellare: qui si forza lo stato senza passare da `transition()`, senza
+    rimborso automatico (chi vuole il rimborso usa "Rifiuta" nell'app).
+    """
+    with _lock:
+        rec = by_manage_token(manage_token)
+        if rec is None or rec.get("state") in _TERMINAL:
+            return None
+        if rec.get("state") not in TRANSITIONS or "deleted" not in TRANSITIONS[rec["state"]]:
+            out = store().update(rec["id"], {"state": "deleted", "deleted_at": time.time()})
+        else:
+            out = transition(rec["id"], "deleted")
+    remove_files(out)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # bozza
 # ---------------------------------------------------------------------------

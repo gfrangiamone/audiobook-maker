@@ -41,7 +41,7 @@ from pathlib import Path
 
 from flask import (
     Flask, request, jsonify,
-    send_file, Response, stream_with_context, redirect, after_this_request
+    send_file, Response, stream_with_context, redirect, after_this_request, abort
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 import storage_backend
@@ -90,6 +90,10 @@ except Exception as _voxcpm_err:      # noqa: BLE001
 # La classifica d'uso delle voci VoxCPM: modulo foglia (json + voice_utils),
 # quindi importato senza rete di protezione.
 import voxcpm_ranking
+import voice_clone
+import voice_clone_audio
+import voice_clone_demo
+import voice_clone_prompts
 
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
@@ -349,7 +353,7 @@ def add_security_headers(response):
     # /dl/<token>: pagine e file di download fuori dall'indice. Difesa in
     # profondità: sono già in Disallow nel robots.txt, ma alcuni crawler lo
     # ignorano e potrebbero indicizzare l'URL token (thin/duplicate content).
-    if path.startswith('/dl/'):
+    if path.startswith('/dl/') or path.startswith('/vc/'):
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
     return response
 
@@ -375,6 +379,8 @@ if gemini_tts is not None:
 community_store.init(_DATA_DIR)
 pending_jobs.init()  # richiede community_store.init() già chiamato
 tts_backend_state.init(_DATA_DIR)
+voice_clone.init(_DATA_DIR)
+voice_clone_audio.init(_DATA_DIR)
 
 if gemini_tts is not None:
     def _on_tts_backend_switch(model_key, reason, detail, job_id):
@@ -8704,6 +8710,14 @@ def api_voices():
             except Exception:
                 voices["_voxcpm"] = {"available": False, "model_label": "",
                                      "personas": []}
+        # Voci campionate dell'utente (spec voci-campionate, piano 2): calcolo
+        # per richiesta, mai dentro _fetch_voices (la cache e' condivisa fra
+        # tutti gli utenti, "_mine" no).
+        try:
+            voices["_mine"] = (voice_clone.mine(_get_client_id())
+                               if (voxcpm_tts is not None and voice_clone.enabled()) else [])
+        except Exception:
+            voices["_mine"] = []
         # Disponibilita' traduzione libro: backend LLM configurato + modello di
         # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
         # bottone "Traduci" invece di farlo fallire dopo la selezione capitoli.
@@ -8770,6 +8784,618 @@ def api_voice_demo():
     except FileNotFoundError:
         return jsonify({"error": "clip non disponibile"}), 404
     return send_file(percorso, mimetype="audio/wav", conditional=True)
+
+
+# ---------------------------------------------------------------------------
+# Voci campionate (spec 2026-09-09, piano 2)
+# ---------------------------------------------------------------------------
+_VC_ID_RE = re.compile(r"^vc_[A-Za-z0-9_\-]{4,64}$")
+
+
+def _vc_err(code, msg, status, **extra):
+    body = {"error": msg, "error_code": code}
+    body.update(extra)
+    return jsonify(body), status
+
+
+def _vc_gate():
+    """None se la feature e' attiva, altrimenti la risposta 404."""
+    if voxcpm_tts is None or not voice_clone.enabled():
+        return _vc_err("voice_clone_disabled", "Voice samples are not available", 404)
+    return None
+
+
+def _vc_rec_or_404(clone_id):
+    if not _VC_ID_RE.match(clone_id or ""):
+        return None
+    return voice_clone.get(clone_id)
+
+
+def _vc_urls(rec):
+    base = BASE_URL or ""
+    return {"resume_url": f"{base}/vc/{rec['resume_token']['value']}/resume",
+            "manage_url": f"{base}/vc/{rec['manage_token']}/devices",
+            "delete_url": f"{base}/vc/{rec['manage_token']}/delete"}
+
+
+def _vc_view(rec):
+    pub = voice_clone.public_view(rec)
+    demo = rec.get("demo") or {}
+    if demo:
+        pub["regen_left"] = max(0, int(demo.get("regen_max") or 0) - int(demo.get("regen_used") or 0))
+        pub["extra_id"] = demo.get("extra_id")
+    if rec.get("state") in ("demos_ready", "ready"):
+        pub["demo_urls"] = {"common": f"/api/voice_clone/{rec['id']}/demo/common",
+                            "extra": f"/api/voice_clone/{rec['id']}/demo/extra"}
+    return pub
+
+
+def _vc_log(rec_or_id, op, extra=""):
+    cid_pub = rec_or_id["id"] if isinstance(rec_or_id, dict) else rec_or_id
+    try:
+        _log_activity(cid_pub, extra, op, client_id=_get_client_id(), client_ip=_client_ip())
+    except Exception:
+        pass
+
+
+def _vc_demo_texts(locale):
+    """Frase comune + frasi extra dedup per testo, dal catalogo (§3.4)."""
+    if voxcpm_catalog is None:
+        return None
+    comune, extra, visti = None, [], set()
+    for rec in voxcpm_catalog.voices():
+        if rec.get("locale") != locale:
+            continue
+        for d in rec.get("demos") or []:
+            if d.get("common"):
+                if comune is None:
+                    comune = {"id": d["id"], "text": d.get("text") or ""}
+                    visti.add(comune["text"])
+                continue
+            testo = d.get("text") or ""
+            if testo and testo not in visti:
+                visti.add(testo)
+                extra.append({"id": d["id"], "text": testo})
+    if comune is None:
+        return None
+    extra.sort(key=lambda e: e["id"])
+    return {"common": comune, "extra": extra}
+
+
+def _voice_clone_notify(event, rec, **extra):
+    """Eventi da voice_clone_demo / voice_clone.sweep -> email + log."""
+    email = rec.get("owner_email") or ""
+    lang = rec.get("ui_lang") or "en"
+    urls = _vc_urls(rec)
+    if event == "demos_ready":
+        _vc_log(rec, "VOICE_CLONE_DEMOS_READY")
+    elif event == "demo_failed":
+        _vc_log(rec, "VOICE_CLONE_DEMO_FAILED", (extra.get("error") or "")[:120])
+        print(f"[voice_clone] demo fallita per {rec['id']}: {extra.get('error')}", flush=True)
+    elif event == "refunded":
+        _vc_log(rec, "VOICE_CLONE_REFUNDED", extra.get("reason") or "")
+        if email:
+            email_service.send_voice_clone_refunded(
+                email, lang, amount_eur=extra.get("amount_eur") or 0.0,
+                method=extra.get("method") or "free", reason=extra.get("reason") or "user_rejected",
+                voucher_code=extra.get("voucher_code"),
+                voucher_amount=extra.get("bonus_amount") or extra.get("amount_eur"))
+    elif event == "expiring":
+        _vc_log(rec, "VOICE_CLONE_EXPIRING")
+        if email:
+            email_service.send_voice_clone_expiring(email, lang, days=extra.get("days", 30),
+                                                     manage_url=urls["manage_url"])
+    elif event == "expired":
+        _vc_log(rec, "VOICE_CLONE_EXPIRED")
+    elif event == "approval_reminder":
+        _vc_log(rec, "VOICE_CLONE_REMINDER", str(extra.get("stage")))
+        if email:
+            email_service.send_voice_clone_reminder(email, lang, resume_url=urls["resume_url"],
+                                                     stage=extra.get("stage", 1))
+
+
+@app.route("/api/voice_clone/config")
+def api_vc_config():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    g = voice_clone_audio.gate_from_env()
+    price = payment.voice_clone_price_eur()
+    return jsonify({"enabled": True, "price_eur": price, "free": price <= 0,
+                    "max_upload_mb": voice_clone.max_upload_mb(),
+                    "regen_max": voice_clone.regen_max(),
+                    "languages": voice_clone.offered_languages(),
+                    "min_sec": g.min_sec, "max_sec": g.max_sec,
+                    "asr": voice_clone_audio.asr_enabled()})
+
+
+@app.route("/api/voice_clone/prompt")
+def api_vc_prompt():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    lang = (request.args.get("lang") or "").strip().lower()
+    gender = (request.args.get("gender") or "").strip().lower()
+    if lang not in voice_clone.offered_languages() or gender not in ("m", "f"):
+        return _vc_err("bad_request", "Unknown language or gender", 400)
+    text = voice_clone_prompts.prompt_for(lang, gender)
+    return jsonify({"text": text, "version": voice_clone_prompts.prompt_version(text),
+                    "lang": lang, "gender": gender})
+
+
+@app.route("/api/voice_clone/sample", methods=["POST"])
+def api_vc_sample():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    from werkzeug.utils import secure_filename
+    cid = _get_client_id()
+    ip = _client_ip()
+    ok, retry = _ip_rl_check("vc_sample", ip, 10, 30)
+    if ok:
+        ok, retry = _ip_rl_check("vc_sample_cid", cid or ip, 10, 10)
+    if not ok:
+        return _vc_err("rate_limited", "Too many samples, try later", 429, retry_after=retry)
+    f = request.files.get("file")
+    lang = (request.form.get("lang") or "").strip().lower()
+    locale = (request.form.get("locale") or "").strip()
+    gender = (request.form.get("gender") or "").strip().lower()
+    offerte = voice_clone.offered_languages()
+    if f is None or lang not in offerte or locale not in offerte[lang] or gender not in ("m", "f"):
+        return _vc_err("bad_request", "Missing file, language, locale or gender", 400)
+    ext = (secure_filename(f.filename or "").rsplit(".", 1)[-1].lower() or "webm")[:5]
+    if ext not in voice_clone._ACCEPTED_EXT:
+        ext = "webm"
+    tmp_id = uuid.uuid4().hex
+    src = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.{ext}")
+    wav = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.wav")
+    prompt_text = voice_clone_prompts.prompt_for(lang, gender)
+    max_bytes = voice_clone.max_upload_mb() * 1024 * 1024
+    try:
+        f.save(src)
+        if os.path.getsize(src) > max_bytes:
+            return _vc_err("too_large", f"Sample over {voice_clone.max_upload_mb()} MB", 413)
+        try:
+            mt = voice_clone_audio.prepare_sample(src, wav)
+        except voice_clone_audio.SampleRejected as e:
+            _vc_log("vc_sample", "VOICE_CLONE_SAMPLE_REJECTED", e.reason)
+            metrics = getattr(e, "metrics", None)
+            return _vc_err("sample_rejected", str(e), 400, reason=e.reason,
+                           metrics=(metrics.as_dict() if metrics is not None else {}))
+        cer = None
+        if voice_clone_audio.asr_enabled():
+            try:
+                asr = voice_clone_audio.check_transcript(wav, lang, prompt_text)
+            except voice_clone_audio.AsrUnavailable as e:
+                return _vc_err("asr_unavailable", f"Transcript check unavailable: {e}", 503)
+            cer = asr["cer"]
+            if cer > voice_clone_audio.max_cer():
+                _vc_log("vc_sample", "VOICE_CLONE_SAMPLE_REJECTED", "vc_gate_transcript")
+                return _vc_err("sample_rejected", "Transcript does not match", 400,
+                               reason="vc_gate_transcript", cer=cer, heard=asr.get("heard", ""))
+        rec = voice_clone.create_draft(cid, lang=lang, locale=locale, gender=gender,
+                                       prompt_text=prompt_text, sample_wav=wav, original_path=src,
+                                       original_ext=ext, metrics=mt.as_dict(),
+                                       ui_lang=_get_browser_lang() or "en")
+        _vc_log(rec, "VOICE_CLONE_SAMPLE_OK")
+        return jsonify({"clone_id": rec["id"], "state": rec["state"], "expires_at": rec["expires_at"],
+                        "metrics": rec.get("metrics") or {}, "cer": cer})
+    finally:
+        for p in (src, wav):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+@app.route("/api/voice_clone/demo_texts")
+def api_vc_demo_texts():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    d = _vc_demo_texts((request.args.get("locale") or "").strip())
+    if d is None:
+        return _vc_err("bad_request", "No voices for this locale", 400)
+    return jsonify(d)
+
+
+@app.route("/api/voice_clone/commit", methods=["POST"])
+def api_vc_commit():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    cid = _get_client_id()
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    e1 = (data.get("email") or "").strip().lower()
+    e2 = (data.get("email2") or "").strip().lower()
+    if not e1 or "@" not in e1 or e1 != e2:
+        return _vc_err("email_mismatch", "The two email addresses differ", 400)
+    testi = _vc_demo_texts(rec.get("locale") or "") or {"common": None, "extra": []}
+    extra = next((e for e in testi["extra"] if e["id"] == data.get("extra_id")), None)
+    if extra is None or testi["common"] is None:
+        return _vc_err("bad_request", "Unknown demo phrase", 400)
+    price = payment.voice_clone_price_eur()
+    try:
+        out, created = voice_clone.commit(
+            rec["id"], cid, email=e1, extra_id=extra["id"], extra_text=extra["text"],
+            common_text=testi["common"]["text"], payment_token=(data.get("payment_token") or "").strip(),
+            price_eur=price)
+    except voice_clone.EmailHasVoice:
+        return _vc_err("email_has_voice", "This email already has a voice sample", 409)
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_gone", "Voice no longer available", 410)
+    except PermissionError:
+        return _vc_err("not_authorized", "Not authorized", 403)
+    except ValueError as e:
+        return _vc_err("payment_invalid", f"Payment not valid: {e}", 402)
+    if created:
+        _vc_log(out, "VOICE_CLONE_PAID", (out.get("payment") or {}).get("type") or "")
+        try:
+            voice_clone_demo.start_demos(out["id"])
+        except Exception as e:      # noqa: BLE001 - lo sweeper/recover riprendera'
+            print(f"[voice_clone] start_demos {out['id']}: {e}", flush=True)
+        email_service.send_voice_clone_paid(
+            out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
+            amount_eur=(out.get("payment") or {}).get("amount_eur") or 0.0, **_vc_urls(out))
+    return jsonify({"clone_id": out["id"], "voice_code": out["voice_code"],
+                    "state": out["state"], "created": created})
+
+
+@app.route("/api/paypal_create_order_voice_clone", methods=["POST"])
+def api_paypal_create_order_voice_clone():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    if not _paypal_available():
+        return jsonify({"error": "PayPal not configured"}), 503
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    if rec.get("state") != "sample_ok":
+        return _vc_err("bad_state", "Voice already paid", 409)
+    amount_eur = payment.voice_clone_price_eur()
+    if amount_eur <= 0:
+        return jsonify({"error": "No payment required"}), 400
+    try:
+        order = _paypal_create_order(amount_eur, "Voice sample - Audiobook Maker",
+                                     custom_id="vc:" + rec["id"])
+    except Exception as e:
+        print(f"[paypal] voice clone create_order failed: {e}")
+        return jsonify({"error": f"PayPal error: {e}"}), 500
+    return jsonify({"order_id": order.get("id"), "amount_eur": amount_eur,
+                    "status": order.get("status")})
+
+
+_VC_SSE_END = ("demos_ready", "demo_failed", "ready", "refunded", "expired", "deleted")
+
+
+@app.route("/api/voice_clone/progress/<clone_id>")
+def api_vc_progress(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+
+    def stream():
+        fine = time.time() + 1800
+        while True:
+            cur = voice_clone.get(clone_id) or rec
+            yield "data: " + json.dumps(_vc_view(cur)) + "\n\n"
+            if cur.get("state") in _VC_SSE_END or time.time() > fine:
+                return
+            time.sleep(2)
+    return Response(stream(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _vc_action(clone_id, fn):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    try:
+        out = fn(rec, _get_client_id())
+    except voice_clone_demo.RegenExhausted:
+        return _vc_err("regen_exhausted", "No regenerations left", 409)
+    except voice_clone.BadTransition:
+        return _vc_err("bad_state", "Action not allowed in this state", 409)
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_gone", "Voice no longer available", 410)
+    except PermissionError:
+        return _vc_err("not_authorized", "Not authorized", 403)
+    return jsonify(_vc_view(out))
+
+
+class _VcBadRequest(ValueError):
+    pass
+
+
+@app.route("/api/voice_clone/<clone_id>/approve", methods=["POST"])
+def api_vc_approve(clone_id):
+    def go(rec, cid):
+        out = voice_clone_demo.approve(rec["id"], cid)
+        _vc_log(out, "VOICE_CLONE_READY")
+        if out.get("owner_email"):
+            email_service.send_voice_clone_ready(
+                out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
+                manage_url=_vc_urls(out)["manage_url"], delete_url=_vc_urls(out)["delete_url"],
+                retention_days=int(voice_clone.retention_sec() // 86400))
+        return out
+    return _vc_action(clone_id, go)
+
+
+@app.route("/api/voice_clone/<clone_id>/regenerate", methods=["POST"])
+def api_vc_regenerate(clone_id):
+    data = request.get_json(silent=True) or {}
+
+    def go(rec, cid):
+        testi = _vc_demo_texts(rec.get("locale") or "") or {"extra": []}
+        extra = next((e for e in testi["extra"] if e["id"] == data.get("extra_id")), None)
+        if extra is None:
+            raise _VcBadRequest("Unknown demo phrase")
+        out = voice_clone_demo.regenerate(rec["id"], cid, extra_id=extra["id"], extra_text=extra["text"])
+        _vc_log(out, "VOICE_CLONE_REGENERATE")
+        return out
+    try:
+        return _vc_action(clone_id, go)
+    except _VcBadRequest as e:
+        return _vc_err("bad_request", str(e), 400)
+
+
+@app.route("/api/voice_clone/<clone_id>/retry", methods=["POST"])
+def api_vc_retry(clone_id):
+    return _vc_action(clone_id, lambda rec, cid: voice_clone_demo.retry(rec["id"], cid))
+
+
+@app.route("/api/voice_clone/<clone_id>/reject", methods=["POST"])
+def api_vc_reject(clone_id):
+    def go(rec, cid):
+        if rec.get("state") == "refunded":
+            return rec
+        out = voice_clone_demo.reject(rec["id"], cid)
+        _vc_log(out, "VOICE_CLONE_REJECTED")
+        return out
+    return _vc_action(clone_id, go)
+
+
+@app.route("/api/voice_clone/mine")
+def api_vc_mine():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    return jsonify({"voices": voice_clone.mine(_get_client_id())})
+
+
+@app.route("/api/voice_clone/claim", methods=["POST"])
+def api_vc_claim():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    cid = _get_client_id()
+    ok, retry = _ip_rl_check("vc_claim_cid", cid or _client_ip(), 5, 5)
+    if not ok:
+        return _vc_err("rate_limited", "Too many attempts, try later", 429, retry_after=retry)
+    data = request.get_json(silent=True) or {}
+    code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    try:
+        esito = voice_clone.claim(code, cid)
+    except ValueError as e:
+        if "locked" in str(e):
+            return _vc_err("code_locked", "Too many wrong codes, try later", 423)
+        return _vc_err("code_unknown", "Unknown voice code", 404)
+    if esito is None:
+        return _vc_err("code_unknown", "Unknown voice code", 404)
+    status, rec, confirm_code = esito
+    _vc_log(rec, "VOICE_CLONE_CLAIM", status)
+    if status == "ok":
+        return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    if rec.get("owner_email"):
+        email_service.send_voice_clone_confirm(rec["owner_email"], rec.get("ui_lang") or "en",
+                                                confirm_code=confirm_code)
+    return jsonify({"status": "pending"})
+
+
+@app.route("/api/voice_clone/confirm", methods=["POST"])
+def api_vc_confirm():
+    gate = _vc_gate()
+    if gate:
+        return gate
+    cid = _get_client_id()
+    data = request.get_json(silent=True) or {}
+    code = voice_clone.normalize_voice_code(str(data.get("voice_code") or ""))
+    esito = voice_clone.confirm(code, cid, str(data.get("confirm_code") or "").strip())
+    if esito == "ok":
+        rec = voice_clone.by_voice_code(code)
+        _vc_log(rec, "VOICE_CLONE_DEVICE_ADDED")
+        if rec.get("owner_email"):
+            email_service.send_voice_clone_device_added(rec["owner_email"], rec.get("ui_lang") or "en",
+                                                         devices_url=_vc_urls(rec)["manage_url"])
+        return jsonify({"status": "ok", "voice": _vc_view(rec)})
+    mappa = {"wrong": ("confirm_wrong", 400), "expired": ("confirm_expired", 410),
+             "none": ("confirm_none", 404), "locked": ("code_locked", 423)}
+    ec, sc = mappa.get(esito, ("confirm_none", 404))
+    return _vc_err(ec, f"Confirmation {esito}", sc)
+
+
+@app.route("/api/voice_clone/<clone_id>/forget", methods=["POST"])
+def api_vc_forget(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None or not voice_clone.forget(clone_id, _get_client_id()):
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    return jsonify({"ok": True})
+
+
+def _vc_is_owner(rec, cid):
+    dev = (rec.get("devices") or [{}])[0]
+    return bool(cid) and dev.get("cid") == cid and dev.get("via") == "creator"
+
+
+@app.route("/api/voice_clone/<clone_id>/resend", methods=["POST"])
+def api_vc_resend(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not _vc_is_owner(rec, _get_client_id()) or rec.get("state") in voice_clone._TERMINAL:
+        return _vc_err("not_authorized", "Only the owner can resend the email", 403)
+    ok, retry = _ip_rl_check("vc_resend", clone_id, 3, 3)
+    if not ok:
+        return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
+    urls = _vc_urls(rec)
+    lang = rec.get("ui_lang") or "en"
+    if rec.get("state") == "ready":
+        sent = email_service.send_voice_clone_ready(rec["owner_email"], lang, voice_code=rec["voice_code"],
+                                                     manage_url=urls["manage_url"], delete_url=urls["delete_url"],
+                                                     retention_days=int(voice_clone.retention_sec() // 86400))
+    else:
+        sent = email_service.send_voice_clone_paid(rec["owner_email"], lang, voice_code=rec["voice_code"],
+                                                    amount_eur=(rec.get("payment") or {}).get("amount_eur") or 0.0,
+                                                    **urls)
+    _vc_log(rec, "VOICE_CLONE_RESEND")
+    return jsonify({"ok": bool(sent)})
+
+
+def _vc_send_audio(clone_id, name):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone._has_cid(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    try:
+        path = voice_clone._ensure_local(rec, name)
+    except Exception:
+        path = None
+    if not path or not os.path.exists(path):
+        return _vc_err("voice_not_found", "File not available", 404)
+    return send_file(path, mimetype="audio/wav", conditional=True)
+
+
+@app.route("/api/voice_clone/<clone_id>/sample.wav")
+def api_vc_sample_file(clone_id):
+    return _vc_send_audio(clone_id, "sample.wav")
+
+
+@app.route("/api/voice_clone/<clone_id>/demo/<which>")
+def api_vc_demo_file(clone_id, which):
+    if which not in ("common", "extra"):
+        return _vc_err("voice_not_found", "File not available", 404)
+    return _vc_send_audio(clone_id, f"demo_{which}.wav")
+
+
+def _vc_page(title, body_html, status=200):
+    html_doc = (f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                f"<meta name=\"robots\" content=\"noindex,nofollow\"><title>{html_mod.escape(title)}</title>"
+                f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
+                f"button{{padding:.6em 1.2em}}table{{border-collapse:collapse}}td{{padding:.3em .8em}}</style>"
+                f"</head><body><h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
+    return Response(html_doc, status=status, mimetype="text/html")
+
+
+def _vc_rec_by_manage(token):
+    rec = voice_clone.by_manage_token(token or "")
+    if rec is None or rec.get("state") in voice_clone._TERMINAL:
+        return None
+    return rec
+
+
+@app.route("/vc/<token>/resume")
+def vc_resume(token):
+    if _vc_gate():
+        abort(404)
+    rec = voice_clone.by_resume_token(token)
+    if rec is None or rec.get("state") in voice_clone._TERMINAL:
+        abort(404)
+    cid = _get_client_id()
+    if cid and not voice_clone._has_cid(rec, cid):
+        with voice_clone._lock:
+            devices = list(rec.get("devices") or []) + [{"cid": cid, "added_at": time.time(), "via": "resume"}]
+            voice_clone.store().update(rec["id"], {"devices": devices})
+        _vc_log(rec, "VOICE_CLONE_RESUME")
+    return redirect(f"/?vc={rec['id']}", code=302)
+
+
+def _vc_device_key(cid):
+    return hashlib.sha256((cid or "").encode("utf-8")).hexdigest()[:8]
+
+
+@app.route("/vc/<token>/devices")
+def vc_devices(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        abort(404)
+    righe = ""
+    for d in rec.get("devices") or []:
+        when = datetime.utcfromtimestamp(float(d.get("added_at") or 0)).strftime("%Y-%m-%d")
+        chiave = _vc_device_key(d.get("cid"))
+        azione = ("" if d.get("via") == "creator" else
+                  f"<form method=\"post\" action=\"/vc/{html_mod.escape(token)}/devices/revoke\" style=\"display:inline\">"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\"><button>Revoke</button></form>")
+        righe += (f"<tr><td>{chiave}</td><td>{html_mod.escape(str(d.get('via') or ''))}</td>"
+                  f"<td>{when}</td><td>{azione}</td></tr>")
+    body = (f"<p>Devices allowed to use your voice sample.</p>"
+            f"<table><tr><th>Device</th><th>Added via</th><th>Date</th><th></th></tr>{righe}</table>"
+            f"<p><a href=\"/vc/{html_mod.escape(token)}/delete\">Delete this voice</a></p>")
+    return _vc_page("Your voice sample: devices", body)
+
+
+@app.route("/vc/<token>/devices/revoke", methods=["POST"])
+def vc_devices_revoke(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        abort(404)
+    key = (request.form.get("key") or request.form.get("cid") or "").strip()
+    for d in rec.get("devices") or []:
+        if d.get("via") != "creator" and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key):
+            voice_clone.revoke_device(token, d.get("cid"))
+            _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
+            break
+    return redirect(f"/vc/{token}/devices", code=302)
+
+
+@app.route("/vc/<token>/delete", methods=["GET", "POST"])
+def vc_delete(token):
+    if _vc_gate():
+        abort(404)
+    rec = _vc_rec_by_manage(token)
+    if rec is None:
+        abort(404)
+    if request.method == "GET":
+        body = (f"<p>This removes your voice sample and every file derived from it. "
+                f"Audiobooks already generated are not affected.</p>"
+                f"<p>If you have not approved the voice yet and want a refund, "
+                f"reject it from the app instead.</p>"
+                f"<form method=\"post\"><button>Delete my voice</button></form>")
+        return _vc_page("Delete your voice sample", body)
+    out = voice_clone.delete_by_owner(token)
+    if out is None:
+        abort(404)
+    _vc_log(out, "VOICE_CLONE_DELETED")
+    return _vc_page("Voice deleted", "<p>Your voice sample and its files have been deleted.</p>")
 
 
 @app.route("/api/community/stats/today")
@@ -17821,6 +18447,24 @@ def _cleanup_supervisor():
             time.sleep(5)
 
 
+def _voice_clone_sweep_supervisor():
+    """Sweep del ciclo di vita delle voci campionate, riavviato su crash
+    come _cleanup_supervisor (incidente 2026-06-15)."""
+    import traceback
+    while True:
+        try:
+            time.sleep(voice_clone.SWEEP_INTERVAL_SEC)
+            if voxcpm_tts is None or not voice_clone.enabled():
+                continue
+            out = voice_clone.sweep()
+            if any(out.values()):
+                print(f"[voice_clone] sweep: {out}", flush=True)
+        except Exception as e:      # noqa: BLE001
+            traceback.print_exc()
+            print(f"[voice_clone] sweep crashed, restarting: {type(e).__name__}: {e}", flush=True)
+            time.sleep(60)
+
+
 def _cleanup_loop():
     """Background thread: periodically clean up finished/abandoned jobs."""
     while True:
@@ -18203,7 +18847,26 @@ def _ensure_background_threads():
         abuse_watch.start_worker(_abuse_apply_verdict)
     except Exception as _aw_err:
         print(f"[startup] abuse_watch init failed (non-fatal): {_aw_err}", flush=True)
-    
+
+    # Voci campionate (spec 2026-09-09, piano 2): notifier, hook di rilancio
+    # e rimborso, provider del digest, recovery al boot, sweeper supervisionato.
+    try:
+        voice_clone_demo.configure(notifier=_voice_clone_notify)
+        voice_clone.set_hooks(
+            notify=_voice_clone_notify,
+            relaunch=lambda cid: voice_clone_demo.start_demos(cid),
+            refund=lambda cid, reason: voice_clone_demo.refund(
+                cid, reason, bonus=(reason == "demo_failed_timeout")))
+        email_service.set_voice_clone_provider(voice_clone.digest_data)
+        if voxcpm_tts is not None and voice_clone.enabled():
+            n = voice_clone_demo.recover()
+            if n:
+                print(f"[voice_clone] recover: {n} generazioni demo rilanciate", flush=True)
+        threading.Thread(target=_voice_clone_sweep_supervisor, daemon=True,
+                         name="voice-clone-sweep").start()
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] cablaggio non riuscito: {e}", flush=True)
+
     # Verifica dipendenze audio (ffmpeg/ffprobe) per formato M4B
     ffmpeg_ok, ffprobe_ok = _check_audio_dependencies()
     if not ffmpeg_ok or not ffprobe_ok:
