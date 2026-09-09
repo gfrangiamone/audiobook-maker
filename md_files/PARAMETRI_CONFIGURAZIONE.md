@@ -429,6 +429,13 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOXCPM_JOBS` | `2` Capitoli VoxCPM sottomessi insieme. Ogni job in piu' e' un'accensione in piu' se l'endpoint deve scalare. | `voxcpm_tts.py` | 737 |
 | `ABM_MAX_VOXCPM_TEXT_CHARS` | Cap caratteri testo per job con voce VoxCPM. Default = `ABM_MAX_SPEECHIFY_TEXT_CHARS` (a sua volta `800000` di default). Selezione via `_max_text_chars_for_voice(voice)` quando `voice` inizia per `voxcpm:`. | `audiobook_app.py` | 504 |
 | `ABM_VOXCPM_DIGEST` | `1` Digest quotidiano dei ritentativi delle code tagliate, spedito a `ABM_ADMIN_EMAIL` una volta per giornata (sempre quella di **ieri**, in UTC: un giorno ancora aperto darebbe conti parziali). Valori falsi: `0`/`false`/`off`/`no`. Senza `ABM_ADMIN_EMAIL` o senza SMTP non parte comunque. Il giorno gia' spedito e' segnato in `voxcpm_digest_last.txt` dentro `ABM_DATA_DIR`, cosi' un riavvio non salta ne' duplica una giornata. | `email_service.py` | 41 |
+| `ABM_VOICE_CLONE_MIN_SEC` / `ABM_VOICE_CLONE_MAX_SEC` | `12` / `20` — finestra di durata accettata dal gate del campione vocale (voci campionate, D7). Il target dichiarato all'utente resta 15-18 s. | `voice_clone_audio.py` | `gate_from_env`, 244 |
+| `ABM_VOICE_CLONE_MAX_CER` | `0.25` — soglia di CER (faster-whisper contro la frase guidata) sopra la quale il campione e' respinto con `vc_gate_text`. Da calibrare su registrazioni reali nelle nove lingue prima del rilascio. Accetta la virgola decimale. | `voice_clone_audio.py` | `max_cer`, 473 |
+| `ABM_VOICE_CLONE_ASR` | `1` — `0` salta la verifica ASR (solo sviluppo). | `voice_clone_audio.py` | `asr_enabled`, 469 |
+| `ABM_VOICE_CLONE_ASR_MODEL` | `base` — modello faster-whisper su CPU (`base` ~150 MB, `small` ~460 MB), scaricato al primo uso in `ABM_DATA_DIR/whisper/`, caricato a richiesta e scaricato dalla RAM dopo 600 s di inattivita' (`ASR_IDLE_UNLOAD_SEC`). Impronta stimata 0,4-0,6 GB per `base`: verificare contro la RAM libera di produzione. | `voice_clone_audio.py` | `_asr_model_name`, 477 |
+| `ABM_VOICE_CLONE_ASR_TIMEOUT_SEC` | `120` — timeout della trascrizione; scaduto, il campione non passa (`vc_gate_asr_unavailable`). | `voice_clone_audio.py` | `_asr_timeout`, 481 |
+| `ABM_VOICE_CLONE_SAMPLE_TTL_H` | `24` — vita di un campione approvato ma non pagato (`sample_ok`); oltre, file e record vengono rimossi da `purge_stale_drafts`. | `voice_clone.py` | `sample_ttl_sec`, 92 |
+| `ABM_VOICE_CLONE_RETENTION_DAYS` | `365` — retention della voce, rinnovata a ogni uso (`touch_used`). | `voice_clone.py` | `retention_sec`, 96 |
 
 I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
 
@@ -1161,4 +1168,5 @@ il giudice vedeva solo volume e conteggio cid.
 | Push FCM app mobile (`push_service.py`) | 5 |
 | Telemetria di carico (`load_metrics.py`) | 4 |
 | Quota voci standard / riuso / power user | 3 |
-| **Totale** | **119** |
+| Voci campionate (`voice_clone.py`, `voice_clone_audio.py`) | 8 |
+| **Totale** | **127** |

@@ -837,6 +837,28 @@ def invalidate_clone_cache():
         _clone_cache.clear()
 
 
+def voice_clone_token(voice_id):
+    """Il token se `voice_id` e' una voce campionata (`voxcpm:mine:<token>`),
+    altrimenti None. Non apre lo store: e' solo sintassi."""
+    prefix = "voxcpm:mine:"
+    if not isinstance(voice_id, str) or not voice_id.startswith(prefix):
+        return None
+    tok = voice_id[len(prefix):]
+    return tok if tok else None
+
+
+def _lingua_voce(voice_id):
+    """La lingua a due lettere della voce: dal catalogo o dal record clone.
+    ValueError se la voce non esiste, come `parse_voice_id`."""
+    if voice_clone_token(voice_id) is not None:
+        import voice_clone
+        lang = voice_clone.language_of(voice_id)
+        if not lang:
+            raise ValueError(f"voce campione sconosciuta: {voice_id!r}")
+        return lang.lower()
+    return voxcpm_catalog.parse_voice_id(voice_id)["locale"].split("-")[0].lower()
+
+
 def clone_block(voice_id):
     """I campi del payload che determinano la voce, in modalita' `hifi`.
 
@@ -849,19 +871,34 @@ def clone_block(voice_id):
 
     Il risultato e' memorizzato per `voice_id`: il wav non cambia, e su un
     libro da quaranta capitoli sarebbero quaranta letture identiche.
+
+    Per gli id `voxcpm:mine:<token>` il campione e la frase vengono da
+    `voice_clone.resolve`; la cache e' la stessa, per `voice_id`.
     """
     with _clone_lock:
         pronto = _clone_cache.get(voice_id)
     if pronto is not None:
         return dict(pronto)
 
-    rec = voxcpm_catalog.parse_voice_id(voice_id)
-    with open(voxcpm_catalog.sample_path(voice_id), "rb") as f:
+    tok = voice_clone_token(voice_id)
+    if tok is not None:
+        import voice_clone       # foglia rispetto a questo modulo; import qui
+        # per non caricare lo store quando si servono solo voci di catalogo
+        try:
+            risolta = voice_clone.resolve(voice_id)
+        except voice_clone.VoiceGone as e:
+            # stessa famiglia d'errore delle voci di catalogo sparite (§9.4)
+            raise ValueError(str(e)) from e
+        wav_path, prompt_text = risolta["wav_path"], risolta["prompt_text"]
+    else:
+        rec = voxcpm_catalog.parse_voice_id(voice_id)
+        wav_path, prompt_text = voxcpm_catalog.sample_path(voice_id), rec["transcript"]
+    with open(wav_path, "rb") as f:
         wav = base64.b64encode(f.read()).decode("ascii")
     blocco = {
         "prompt_wav_b64": wav,
         "prompt_format": "wav",
-        "prompt_text": rec["transcript"],
+        "prompt_text": prompt_text,
         "reference_wav_b64": wav,
         "reference_format": "wav",
     }
@@ -1067,8 +1104,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     # delle code sul worker, che senza la indovina da quattro secondi d'audio
     # e sbaglia piu' spesso. `clone_block` ha gia' respinto le voci che non
     # esistono, quindi qui il record c'e'.
-    lingua = voxcpm_catalog.parse_voice_id(voice_id)["locale"].split(
-        "-")[0].lower()
+    lingua = _lingua_voce(voice_id)
     riposa = sleep or _dormi
     su_r2 = bool(key) and storage_backend.is_enabled()
     stats = {"sample_rate": 0, "chars": 0, "audio_seconds": 0.0,
