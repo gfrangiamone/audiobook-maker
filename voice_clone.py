@@ -737,13 +737,16 @@ def _sweep_one(rec, t, out):
     if state == "ready":
         exp = _num(rec.get("expires_at"))
         if exp <= t:
+            done = None
             with _lock:
                 cur = get(cid)
                 if cur and cur.get("state") == "ready":
-                    cur = transition(cid, "expired", now=t)
-            remove_files(cur)
+                    done = transition(cid, "expired", now=t)
+            if done is None:
+                return  # sparito o gia' mosso da un altro attore: niente da fare
+            remove_files(done)
             out["expired"] += 1
-            _hook("notify", "expired", cur)
+            _hook("notify", "expired", done)
         elif exp - t <= EXPIRY_WARN_SEC and not rec.get("expiry_warned_at"):
             store().update(cid, {"expiry_warned_at": t})
             out["warned"] += 1
