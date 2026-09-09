@@ -444,27 +444,27 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 
 **Costanti interne (non configurabili):**
 
-- `RESUME_TOKEN_DAYS = 30` — validita' del link di ripresa non confermato.
-- `SWEEP_INTERVAL_SEC = 3600` — intervallo fra due cicli del sweeper di pulizia stale.
+- `RESUME_TOKEN_DAYS = 30` — validita' del link di ripresa (`/vc/<token>/resume`) inviato per email.
+- `SWEEP_INTERVAL_SEC = 3600` — intervallo fra due cicli dello sweeper del ciclo di vita (`voice_clone.sweep`).
 - `EXPIRY_WARN_SEC = 30 * 86400` (30 giorni) — avviso di scadenza verso il proprietario.
 - `DEMO_FAILED_RELAUNCH_SEC = 6 * 3600` (6 ore) — attesa prima di un nuovo tentativo automatico su `demo_failed`.
 - `DEMO_FAILED_REFUND_SEC = 7 * 86400` (7 giorni) — scadenza del rimborso automatico da `demo_failed`.
 - `APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)` (24 ore e 7 giorni) — istanti dei promemoria da `demos_ready`.
-- `APPROVAL_REFUND_SEC = 30 * 86400` (30 giorni) — scadenza del rimborso automatico da `ready`.
-- `RECORD_PURGE_SEC = 90 * 86400` (90 giorni) — purga dei record dalle retention complete.
-- `CONFIRM_TTL_SEC = 900` (15 minuti) — vita di un link di conferma.
+- `APPROVAL_REFUND_SEC = 30 * 86400` (30 giorni) — rimborso automatico se la voce resta in `demos_ready` senza approvazione.
+- `RECORD_PURGE_SEC = 90 * 86400` (90 giorni) — purga del record dopo l'ingresso in uno stato terminale (`refunded`/`expired`/`deleted`).
+- `CONFIRM_TTL_SEC = 900` (15 minuti) — validita' del codice di conferma del claim.
 - `CONFIRM_MAX_TRIES = 5` — tentativi di conferma prima del lock.
 - `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
 
 **Rate limit (in `audiobook_app.py`, `_ip_rl_check`):**
 
-- `vc_sample`: 10/min e 30/hora per IP; 10/min e 10/ora per cid.
+- `vc_sample`: 10/min e 30/ora per IP; 10/min e 10/ora per cid.
 - `vc_claim_cid`: 5/min e 5/ora per cid.
 - `vc_resend`: 3/min e 3/ora per voce (clone_id) — la spec prevede 3/giorno, allineamento previsto.
 
 **Log della activity:**
 
-- `VOICE_CLONE_*` (vedi §5.2) — registrati con il solo id pubblico della voce, mai email ne' identificativi dell'owner.
+- `VOICE_CLONE_*` — registrati con il solo id pubblico della voce, mai email, token ne' identificativi dell'owner.
 
 I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
 
