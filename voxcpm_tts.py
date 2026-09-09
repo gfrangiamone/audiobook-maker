@@ -1029,19 +1029,27 @@ def normalizza_puntini(testo):
     chunk): la pausa resta e le due frasi non si incollano. In testa alla
     frase, o dopo un altro segno di fine frase o una virgola, i puntini
     cadono e basta: «, e poi» non e' una cosa da leggere.
+
+    Il segno non si incolla mai alla parola dopo: se i puntini erano attaccati
+    al seguito ci va uno spazio, altrimenti resta una parola sola che il TTS
+    legge di corsa. Davanti a una virgoletta o a una parentesi lo spazio non
+    serve e non si mette.
     """
     if not testo:
         return testo
 
     def _sostituisci(m):
+        # I puntini si mangiano gli spazi che li precedono, non quelli che li
+        # seguono: se subito dopo c'e' una lettera o una cifra, il segno che
+        # mettiamo resterebbe attaccato a quella parola.
+        attaccato = testo[m.end():m.end() + 1].isalnum()
         prima = testo[:m.start()].rstrip(" \t")
         if not prima or prima[-1] in ".!?:;,\n":
-            return ""
+            return " " if (prima and attaccato) else ""
         dopo = testo[m.end():].lstrip(" \t" + _VIRGOLETTE)
         primo = dopo[:1]
-        if primo.isalpha() and primo.islower():
-            return ","
-        return "."
+        segno = "," if (primo.isalpha() and primo.islower()) else "."
+        return segno + " " if attaccato else segno
 
     return _PUNTINI_RE.sub(_sostituisci, testo)
 

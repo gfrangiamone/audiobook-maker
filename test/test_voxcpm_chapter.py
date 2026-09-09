@@ -100,6 +100,14 @@ def test_il_payload_e_in_hifi_con_prefisso_e_trascrizione(tmp_path, monkeypatch)
     ("\u2026e poi niente", "e poi niente"),
     ("Ah!\u2026 poi niente", "Ah! poi niente"),
     ("Ecco, \u2026 poi niente", "Ecco, poi niente"),
+    # Il segno non si incolla alla parola che segue: se i puntini erano
+    # attaccati al seguito, ci va uno spazio.
+    ('nostro Padre"...la realizzazione', 'nostro Padre", la realizzazione'),
+    ("Non lo so\u2026Forse domani.", "Non lo so. Forse domani."),
+    ("Ah!...poi niente", "Ah! poi niente"),
+    # Davanti a una virgoletta o a una parentesi lo spazio non serve.
+    ("disse\u2026\u00abvieni\u00bb",
+     "disse,\u00abvieni\u00bb"),
     # Senza puntini il testo non si tocca, compreso un punto singolo.
     ("Prima frase. Seconda frase.", "Prima frase. Seconda frase."),
     ("", ""),
