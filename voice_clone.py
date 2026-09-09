@@ -503,9 +503,14 @@ def _has_cid(rec, cid):
     return any(d.get("cid") == cid for d in rec.get("devices") or [])
 
 
-def check_use(voice_id, cid, lang, locale):
+def check_use(voice_id, cid, lang, locale=None):
     """'' se la voce si puo' usare per questo libro, altrimenti il codice
-    d'errore della spec §9: gone (D16: solo `ready`), not_authorized, lang_mismatch."""
+    d'errore della spec §9: gone (D16: solo `ready`), not_authorized, lang_mismatch.
+
+    `locale` e' opzionale: vuoto/None -> si confronta solo `lang`; valorizzato
+    -> confronto stretto contro `rec["locale"]` (spec §9 riga 479: mismatch su
+    lingua/accento del libro). Il chiamante non deve rileggere il locale della
+    voce per farlo combaciare con se stesso: passare '' quando non lo ha."""
     try:
         rec = _record_for_voice_id(voice_id)
     except VoiceGone:
@@ -514,7 +519,9 @@ def check_use(voice_id, cid, lang, locale):
         return "voice_gone"
     if not _has_cid(rec, cid):
         return "voice_not_authorized"
-    if (lang or "").lower() != rec["lang"] or (locale or "") != rec["locale"]:
+    if (lang or "").lower() != rec["lang"]:
+        return "voice_lang_mismatch"
+    if locale and locale != rec["locale"]:
         return "voice_lang_mismatch"
     return ""
 

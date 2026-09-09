@@ -70,9 +70,12 @@ def _job(monkeypatch, job_id="JOBVC1"):
     return job_id
 
 
-def _generate(client, job_id, voice, lang="it"):
-    return client.post("/api/generate", json={"job_id": job_id, "voice": voice, "lang": lang,
-                                              "output_format": "mp3", "rate": "+0%"})
+def _generate(client, job_id, voice, lang="it", locale=None):
+    payload = {"job_id": job_id, "voice": voice, "lang": lang,
+              "output_format": "mp3", "rate": "+0%"}
+    if locale is not None:
+        payload["locale"] = locale
+    return client.post("/api/generate", json=payload)
 
 
 def test_generate_rifiuta_cid_non_autorizzato(client, tmp_path, monkeypatch):
@@ -86,6 +89,17 @@ def test_generate_rifiuta_lingua_diversa(client, tmp_path, monkeypatch):
     rec = _ready(tmp_path)
     jid = _job(monkeypatch)
     r = _generate(client, jid, vc.voice_id_of(rec), lang="en")
+    assert r.status_code == 400 and r.get_json()["error_code"] == "voice_lang_mismatch"
+
+
+def test_generate_rifiuta_locale_diverso(client, tmp_path, monkeypatch):
+    # Voce it-IT ma libro dichiarato it-CH: stessa lingua, accento diverso ->
+    # mismatch (spec §9 riga 479). Il locale qui e' quello del LIBRO/chiamata,
+    # non quello della voce: un confronto della voce con se stessa sarebbe
+    # tautologico e non intercetterebbe mai nulla.
+    rec = _ready(tmp_path)
+    jid = _job(monkeypatch)
+    r = _generate(client, jid, vc.voice_id_of(rec), lang="it", locale="it-CH")
     assert r.status_code == 400 and r.get_json()["error_code"] == "voice_lang_mismatch"
 
 

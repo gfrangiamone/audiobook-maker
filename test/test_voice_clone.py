@@ -301,6 +301,7 @@ def test_check_use_ordine_dei_rifiuti(tmp_path):
     assert vc.check_use(vid, "cid-uno", "en", "en-US") == "voice_lang_mismatch"
     assert vc.check_use(vid, "cid-uno", "it", "it-CH") == "voice_lang_mismatch"
     assert vc.check_use(vid, "cid-uno", "it", "it-IT") == ""
+    assert vc.check_use(vid, "cid-uno", "it", "") == ""
     assert vc.check_use("voxcpm:mine:zz", "cid-uno", "it", "it-IT") == "voice_gone"
     assert vc.authorized(vid, "cid-uno") and not vc.authorized(vid, "cid-due")
 

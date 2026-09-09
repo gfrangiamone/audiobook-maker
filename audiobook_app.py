@@ -1422,11 +1422,10 @@ def _recovery_generate_gate(job_id, rec, info):
         if voxcpm_tts is None:
             raise _RecoveryRejected("modulo voxcpm_tts non disponibile")
         if voice.startswith(voice_clone.VOICE_ID_PREFIX):
-            # Stesso ruling di /api/generate: il locale confrontato e' quello
-            # DELLA VOCE (rec['locale']), non quello del descrittore, che
-            # spesso non lo porta affatto. La lingua resta il criterio vero.
-            _vc_rec = voice_clone.by_token(voice_clone.token_of(voice))
-            _vc_locale = (_vc_rec.get("locale") if _vc_rec else None) or rec.get("locale") or lang
+            # Stesso ruling di /api/generate: locale del DESCRITTORE (non
+            # della voce, altrimenti il confronto sarebbe tautologico) - ''
+            # se il descrittore non lo porta, resta il solo confronto lingua.
+            _vc_locale = (rec.get("locale") or "").strip()
             _err = voice_clone.check_use(voice, (rec.get("client_id") or "").strip(), lang, _vc_locale)
             if _err:
                 raise _RecoveryRejected(f"voce campione non usabile: {_err}")
@@ -11484,15 +11483,14 @@ def api_generate():
     if _is_voxcpm_voice(voice):
         if voxcpm_tts is None or not voxcpm_tts.is_available():
             return jsonify({"error": "voxcpm_not_configured"}), 400
-    # Voce campione (spec §9): cid autorizzato, voce ancora `ready`, lingua
-    # del libro compatibile. Il locale confrontato e' quello DELLA VOCE (non
-    # quello che manda il frontend, che spesso passa solo `lang`): la spec
-    # chiede il mismatch sulla lingua del libro, il locale resta informativo.
+    # Voce campione (spec §9 riga 479): cid autorizzato, voce ancora `ready`,
+    # lingua/accento del libro compatibili. Il locale e' quello mandato dal
+    # chiamante per QUESTO libro (non quello della voce: confrontare la voce
+    # con se stessa sarebbe tautologico) - '' se assente, il confronto resta
+    # allora solo sulla lingua.
     if voice.startswith(voice_clone.VOICE_ID_PREFIX):
         _vc_lang = (data.get("lang") or "").strip().split("-")[0].lower()
-        _vc_rec = voice_clone.by_token(voice_clone.token_of(voice))
-        _vc_locale = (_vc_rec.get("locale") if _vc_rec else None) \
-            or (data.get("locale") or data.get("lang") or "").strip()
+        _vc_locale = (data.get("locale") or "").strip()
         _vc_err_code = voice_clone.check_use(voice, _get_client_id(), _vc_lang, _vc_locale)
         if _vc_err_code:
             _vc_status = {"voice_gone": 410, "voice_not_authorized": 403,
