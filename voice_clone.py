@@ -43,7 +43,8 @@ TRANSITIONS = {
 HAS_SAMPLE = frozenset({"sample_ok", "paid", "demos_generating", "demos_ready",
                         "demo_failed", "ready"})
 _STAMP_ON_ENTER = {"ready": "ready_at", "paid": "paid_at", "refunded": "refunded_at",
-                   "expired": "expired_at", "deleted": "deleted_at"}
+                   "expired": "expired_at", "deleted": "deleted_at",
+                   "demos_ready": "demos_ready_at"}
 
 _lock = threading.RLock()
 _data_dir = None
