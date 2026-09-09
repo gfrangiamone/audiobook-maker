@@ -10,6 +10,7 @@ import os
 import pytest
 import requests
 
+import tts_split
 import voxcpm_catalog
 import voxcpm_tts
 
@@ -116,6 +117,66 @@ def test_i_puntini_non_arrivano_al_worker(tmp_path, monkeypatch):
         VOCE, str(tmp_path / "cap.pcm"))
     assert finto.payload[0]["input"]["chunks"] == [
         "per un affare umano, il paragone", "Non lo so."]
+
+
+# -- I puntini sul confine di chunk --------------------------------------
+#
+# split_text_into_chunks tratta i puntini come fine frase, quindi il taglio
+# cade proprio li'. Se la normalizzazione gira sui chunk gia' spezzati non
+# vede il seguito, legge "fine testo" e promuove i puntini a punto: pausa
+# lunga in mezzo alla frase. Per questo _plan_chunks la applica prima.
+
+CONFINE = (
+    "Ma se paragoniamo la nostra attenzione, la serieta della nostra ricerca, "
+    "il nostro desiderio di conoscere all'attenzione, alla serieta, al desiderio "
+    "che portiamo nel trovare tale aiuto di cui abbiamo bisogno "
+    "per un affare umano ... il paragone e, il piu delle volte, "
+    "a favore dell'affare umano."
+)
+
+
+class FintoCapitolo:
+    def __init__(self, testo):
+        self.index = 0
+        self.title = ""
+        self.text = testo
+
+
+class FintoLibro:
+    def __init__(self, testo):
+        self.chapters = [FintoCapitolo(testo)]
+
+
+def pianifica(pre_split):
+    """I chunk del capitolo CONFINE con un max_chars che taglia sui puntini."""
+    plan = tts_split._plan_chunks(FintoLibro(CONFINE), max_chars=250,
+                                  pre_split=pre_split)
+    return [voce["text"] for voce in plan]
+
+
+def test_senza_normalizzazione_a_monte_i_puntini_finiscono_a_fine_chunk():
+    # Il difetto, riprodotto: il taglio cade sui puntini (che prepare_tts_text
+    # ha gia' accostato alla parola precedente)...
+    chunks = pianifica(None)
+    assert chunks[0].endswith("per un affare umano...")
+    assert chunks[1].startswith("il paragone e,")
+    # ...e normalizzando chunk per chunk diventano un punto fermo.
+    assert voxcpm_tts.normalizza_puntini(chunks[0]).endswith("affare umano.")
+
+
+def test_i_puntini_sul_confine_di_chunk_restano_una_virgola():
+    chunks = pianifica(tts_split._pick_pre_split(VOCE))
+    assert "affare umano, il paragone" in " ".join(chunks)
+    # Nessun chunk finisce coi puntini, e nessun chunk che non sia l'ultimo
+    # chiude la frase spezzata a meta'.
+    assert not any(c.rstrip().endswith("...") for c in chunks)
+    assert not any(c.rstrip().endswith("affare umano.") for c in chunks[:-1])
+
+
+def test_la_normalizzazione_a_monte_e_solo_di_voxcpm():
+    assert tts_split._pick_pre_split(VOCE) is voxcpm_tts.normalizza_puntini
+    assert tts_split._pick_pre_split("it-IT-ElsaNeural") is None
+    assert tts_split._pick_pre_split("") is None
 
 
 def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):
