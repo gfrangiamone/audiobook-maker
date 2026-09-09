@@ -49,7 +49,20 @@ def test_clone_block_mine_e_in_cache(tmp_path):
     os.remove(os.path.join(vc.voice_dir(rec["token"]), "sample.wav"))
     assert voxcpm_tts.clone_block(vid) == a          # servito dalla cache
     voxcpm_tts.invalidate_clone_cache()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ValueError):
+        voxcpm_tts.clone_block(vid)
+
+
+def test_clone_block_mine_sample_unavailable_si_propaga_grezza(tmp_path, monkeypatch):
+    rec = _voce(tmp_path)
+    vid = vc.voice_id_of(rec)
+    os.remove(os.path.join(vc.voice_dir(rec["token"]), "sample.wav"))
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+
+    def _boom(k, p):
+        raise ConnectionError("r2 irraggiungibile")
+    monkeypatch.setattr(storage_backend, "download_file", _boom)
+    with pytest.raises(vc.SampleUnavailable):
         voxcpm_tts.clone_block(vid)
 
 

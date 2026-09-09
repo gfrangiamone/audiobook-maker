@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -52,8 +53,25 @@ class VoiceGone(ValueError):
     """Voce inesistente o senza campione (cancellata, rimborsata, scaduta)."""
 
 
+class SampleUnavailable(Exception):
+    """Il campione esiste ma non e' raggiungibile ora (R2 in errore di
+    trasporto/credenziali): NON e' una voce sparita, va trattata come
+    condizione transitoria/riprovabile, non come VoiceGone."""
+
+
 class BadTransition(ValueError):
     """Passaggio di stato non previsto dalla tabella."""
+
+
+# Copia locale della whitelist di voice_clone_audio.ACCEPTED_EXT: import
+# diretto non voluto qui (trascina numpy solo per una validazione di stringa).
+_ACCEPTED_EXT = ("wav", "mp3", "webm", "opus", "ogg", "m4a", "mp4")
+_EXT_RE = re.compile(r"^[a-z0-9]{1,5}$")
+
+# Un lock per token, creato pigramente sotto `_lock`, per serializzare il
+# download R2 di un dato campione: due thread che risolvono la stessa voce
+# nello stesso istante non devono avviare due download dello stesso file.
+_local_locks = {}
 
 
 def init(data_dir):
@@ -148,22 +166,29 @@ def get(clone_id):
 
 
 def by_token(token):
-    return _find(lambda r: r.get("token") == token) if token else None
+    if not token:
+        return None
+    return _find(lambda r: hmac.compare_digest(str(r.get("token") or ""), str(token)))
 
 
 def by_voice_code(code):
     code = normalize_voice_code(code)
-    return _find(lambda r: r.get("voice_code") == code) if code else None
+    if not code:
+        return None
+    return _find(lambda r: hmac.compare_digest(str(r.get("voice_code") or ""), str(code)))
 
 
 def by_manage_token(token):
-    return _find(lambda r: r.get("manage_token") == token) if token else None
+    if not token:
+        return None
+    return _find(lambda r: hmac.compare_digest(str(r.get("manage_token") or ""), str(token)))
 
 
 def by_resume_token(token, now=None):
     if not token:
         return None
-    rec = _find(lambda r: (r.get("resume_token") or {}).get("value") == token)
+    rec = _find(lambda r: hmac.compare_digest(
+        str((r.get("resume_token") or {}).get("value") or ""), str(token)))
     if rec is None or (rec["resume_token"].get("expires_at") or 0) < _now(now):
         return None
     return rec
@@ -227,6 +252,9 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
     Un solo draft per cid (§3.3): il precedente viene cancellato con i suoi
     file. Lingua, locale e genere devono essere fra quelli offerti.
     """
+    original_ext = (original_ext or "").strip().lower()
+    if not _EXT_RE.match(original_ext) or original_ext not in _ACCEPTED_EXT:
+        raise ValueError(f"original_ext non ammessa: {original_ext!r}")
     offerte = offered_languages()
     if lang not in offerte or locale not in offerte[lang]:
         raise ValueError(f"lingua/locale non offerti: {lang}/{locale}")
@@ -278,24 +306,42 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
         except Exception:
             shutil.rmtree(d, ignore_errors=True)
             raise
+        # Il nuovo record e' gia' salvato: solo ora si puo' far cadere il
+        # precedente. La cancellazione dei suoi file (I/O, R2 incluso) resta
+        # fuori dal lock del modulo.
         if prev is not None:
-            remove_files(prev)
             store().delete(prev["id"])
+    if prev is not None:
+        remove_files(prev)
     upload_to_r2(rec, "sample.wav")
     upload_to_r2(rec, "original." + original_ext)
     return rec
 
 
 def purge_stale_drafts(now=None):
-    """Bozze `sample_ok` oltre la TTL: file e record via. Ritorna quante."""
+    """Bozze `sample_ok` oltre la TTL: record via, poi file. Ritorna quante.
+
+    Il record cade per primo: se `remove_files` fallisce su una bozza la
+    voce e' comunque sparita per il resto del sistema (nessuna bozza
+    orfana rivista da un utente), e le altre bozze scadute non vengono
+    trascinate giu' da un singolo errore d'I/O.
+    """
     t = _now(now)
-    n = 0
     with _lock:
-        for rec in _all():
-            if rec.get("state") == "sample_ok" and (rec.get("expires_at") or 0) <= t:
-                remove_files(rec)
-                store().delete(rec["id"])
-                n += 1
+        scadute = [rec for rec in _all()
+                   if rec.get("state") == "sample_ok" and (rec.get("expires_at") or 0) <= t]
+    n = 0
+    for rec in scadute:
+        try:
+            store().delete(rec["id"])
+        except Exception as e:
+            print(f"[voice_clone] purge: cancellazione record fallita per {rec['id']}: {e}")
+            continue
+        n += 1
+        try:
+            remove_files(rec)
+        except Exception as e:
+            print(f"[voice_clone] purge: rimozione file fallita per {rec['id']}: {e}")
     return n
 
 
@@ -347,18 +393,38 @@ def _record_for_voice_id(voice_id):
     return rec
 
 
+def _local_lock(token):
+    with _lock:
+        lk = _local_locks.get(token)
+        if lk is None:
+            lk = threading.Lock()
+            _local_locks[token] = lk
+        return lk
+
+
 def _ensure_local(rec, name):
-    """Il file locale, scaricato da R2 se manca (§5.5: nuovo server)."""
+    """Il file locale, scaricato da R2 se manca (§5.5: nuovo server).
+
+    Serializzato per token: due thread che risolvono la stessa voce nello
+    stesso momento non devono avviare due download dello stesso file (il
+    secondo trova gia' pronto quanto scaricato dal primo). Il download vero
+    e proprio resta fuori dal lock del modulo, solo sotto il lock per token.
+    """
     path = os.path.join(voice_dir(rec["token"]), name)
     if os.path.exists(path):
         return path
-    if storage_backend.is_enabled():
-        try:
-            if storage_backend.download_file(r2_key(rec["token"], name), path):
+    with _local_lock(rec["token"]):
+        if os.path.exists(path):
+            return path
+        if storage_backend.is_enabled():
+            try:
+                ok = storage_backend.download_file(r2_key(rec["token"], name), path)
+            except Exception as e:
+                print(f"[voice_clone] download R2 fallito per {rec['id']}/{name}: {e}")
+                raise SampleUnavailable("campione temporaneamente non disponibile") from e
+            if ok:
                 return path
-        except Exception as e:
-            print(f"[voice_clone] download R2 fallito per {rec['id']}/{name}: {e}")
-    raise FileNotFoundError(path)
+        raise VoiceGone(f"voce {rec['id']} senza campione")
 
 
 def resolve(voice_id):
@@ -463,12 +529,17 @@ def claim(voice_code, cid, now=None):
         rec = _by_code_alive(voice_code)
         if _has_cid(rec, cid):
             return "ok", rec, None
-        if (rec.get("confirm_locks") or {}).get(cid, 0) > t:
+        locks = rec.get("confirm_locks") or {}
+        if locks.get(cid, 0) > t:
             raise ValueError("locked")
         code = f"{secrets.randbelow(1000000):06d}"
+        # Pulizia di passaggio: i lock scaduti non restano per sempre nel
+        # record solo perche' nessuno li ha mai riletti dopo la scadenza.
+        pruned = {k: v for k, v in locks.items() if v > t}
         rec = store().update(rec["id"], {"pending_confirm": {
             "cid": cid, "code_hash": _code_hash(code),
-            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0}})
+            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0},
+            "confirm_locks": pruned})
         return "pending", rec, code
 
 
@@ -489,7 +560,7 @@ def confirm(voice_code, cid, confirm_code, now=None):
             return "ok"
         pc = dict(pc, tries=int(pc.get("tries") or 0) + 1)
         if pc["tries"] >= CONFIRM_MAX_TRIES:
-            locks = dict(rec.get("confirm_locks") or {})
+            locks = {k: v for k, v in (rec.get("confirm_locks") or {}).items() if v > t}
             locks[cid] = t + CONFIRM_LOCK_SEC
             store().update(rec["id"], {"pending_confirm": None, "confirm_locks": locks})
             return "locked"

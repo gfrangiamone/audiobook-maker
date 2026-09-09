@@ -115,6 +115,34 @@ def test_forget_e_revoke(tmp_path):
     assert vc.get(rec["id"])["state"] == "ready"        # la voce sopravvive
 
 
+def test_confirm_locks_scaduti_vengono_potati(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)
+    for _ in range(5):
+        vc.confirm(rec["voice_code"], "cid-nuovo", "000000", now=1001)
+    assert vc.get(rec["id"])["confirm_locks"]["cid-nuovo"] == 1001 + vc.CONFIRM_LOCK_SEC
+
+    dopo_scadenza = 1001 + vc.CONFIRM_LOCK_SEC + 1
+    # claim (lettura) pota il lock scaduto per un cid diverso
+    vc.claim(rec["voice_code"], "cid-altro", now=dopo_scadenza)
+    assert "cid-nuovo" not in (vc.get(rec["id"])["confirm_locks"] or {})
+
+
+def test_confirm_locks_scaduti_potati_alla_scrittura_di_un_nuovo_blocco(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code_a = vc.claim(rec["voice_code"], "cid-a", now=1000)
+    for _ in range(5):
+        vc.confirm(rec["voice_code"], "cid-a", "000000", now=1001)
+    assert vc.get(rec["id"])["confirm_locks"]["cid-a"] == 1001 + vc.CONFIRM_LOCK_SEC
+
+    dopo_scadenza = 1001 + vc.CONFIRM_LOCK_SEC + 1
+    _, _, code_b = vc.claim(rec["voice_code"], "cid-b", now=dopo_scadenza)
+    for _ in range(5):
+        vc.confirm(rec["voice_code"], "cid-b", "000000", now=dopo_scadenza)
+    locks = vc.get(rec["id"])["confirm_locks"]
+    assert "cid-a" not in locks and locks["cid-b"] == dopo_scadenza + vc.CONFIRM_LOCK_SEC
+
+
 def test_devices_view_mostra_solo_la_coda_del_cid(tmp_path):
     rec = _pronta(tmp_path, cid="abcd1234efgh")
     view = vc.devices_view(vc.get(rec["id"]))

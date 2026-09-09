@@ -1,5 +1,6 @@
 """Store, identita', bozza e transizioni delle voci campionate (spec §6, §10)."""
 import os
+import threading
 
 import pytest
 
@@ -76,6 +77,15 @@ def test_create_draft_rifiuta_lingua_o_genere_fuori_offerta(tmp_path):
         bozza(tmp_path, locale="it-CH")       # locale non attivo nel catalogo
 
 
+def test_create_draft_rifiuta_original_ext_non_ammessa(tmp_path):
+    with pytest.raises(ValueError):
+        bozza(tmp_path, original_ext="../evil")
+    assert os.listdir(vc.voices_dir()) == []
+    with pytest.raises(ValueError):
+        bozza(tmp_path, original_ext="EXE")     # non nella whitelist, pur regex-valida
+    assert os.listdir(vc.voices_dir()) == []
+
+
 def test_nuova_bozza_dello_stesso_cid_sostituisce_la_precedente(tmp_path):
     a = bozza(tmp_path)
     b = bozza(tmp_path)
@@ -90,6 +100,28 @@ def test_draft_for_cid_ignora_le_scadute(tmp_path):
     assert vc.purge_stale_drafts(now=rec["expires_at"] + 1) == 1
     assert vc.get(rec["id"]) is None
     assert not os.path.exists(vc.voice_dir(rec["token"]))
+
+
+def test_purge_stale_drafts_record_cade_anche_se_i_file_falliscono(tmp_path, monkeypatch):
+    a = bozza(tmp_path, cid="cid-a")
+    b = bozza(tmp_path, cid="cid-b")
+    scaduta = max(a["expires_at"], b["expires_at"]) + 1
+
+    originale = vc.remove_files
+    chiamate = []
+
+    def _remove_files(rec):
+        chiamate.append(rec["id"])
+        if rec["id"] == a["id"]:
+            raise OSError("permesso negato")
+        return originale(rec)
+    monkeypatch.setattr(vc, "remove_files", _remove_files)
+
+    n = vc.purge_stale_drafts(now=scaduta)
+    assert n == 2                              # entrambi i record cadono
+    assert sorted(chiamate) == sorted([a["id"], b["id"]])
+    assert vc.get(a["id"]) is None and vc.get(b["id"]) is None
+    assert not os.path.exists(vc.voice_dir(b["token"]))    # b: file rimossi regolarmente
 
 
 def test_transizioni_ammesse_e_vietate(tmp_path):
@@ -208,8 +240,55 @@ def test_resolve_senza_locale_ne_r2(tmp_path, monkeypatch):
     os.remove(os.path.join(vc.voice_dir(rec["token"]), "sample.wav"))
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "download_file", lambda k, p: False)
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(vc.VoiceGone) as ei:
         vc.resolve(vc.voice_id_of(rec))
+    assert rec["token"] not in str(ei.value)       # mai il token nel messaggio
+
+
+def test_resolve_r2_in_errore_di_trasporto_da_sample_unavailable(tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    os.remove(os.path.join(vc.voice_dir(rec["token"]), "sample.wav"))
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+
+    def _boom(k, p):
+        raise ConnectionError("r2 irraggiungibile")
+    monkeypatch.setattr(storage_backend, "download_file", _boom)
+    with pytest.raises(vc.SampleUnavailable) as ei:
+        vc.resolve(vc.voice_id_of(rec))
+    assert rec["token"] not in str(ei.value)
+    assert not issubclass(vc.SampleUnavailable, vc.VoiceGone)
+    assert not issubclass(vc.SampleUnavailable, ValueError)
+
+
+def test_ensure_local_concorrente_scarica_una_sola_volta(tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    wav = os.path.join(vc.voice_dir(rec["token"]), "sample.wav")
+    os.remove(wav)
+    chiamate = []
+    lock = threading.Lock()
+
+    def _dl(key, path):
+        with lock:
+            chiamate.append(key)
+        import time as _t
+        _t.sleep(0.15)
+        with open(path, "wb") as fh:
+            fh.write(b"RIFF-da-r2")
+        return True
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "download_file", _dl)
+
+    risultati = []
+
+    def _worker():
+        risultati.append(vc._ensure_local(rec, "sample.wav"))
+    t1 = threading.Thread(target=_worker)
+    t2 = threading.Thread(target=_worker)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+    assert len(chiamate) == 1
+    assert risultati == [wav, wav]
+    assert open(wav, "rb").read() == b"RIFF-da-r2"
 
 
 def test_check_use_ordine_dei_rifiuti(tmp_path):
