@@ -60,6 +60,8 @@ LLM_FREE_THRESHOLD_EUR = float(os.environ.get("ABM_LLM_FREE_THRESHOLD_EUR", "0.5
 # e il floor non si applica. Vale solo per l'ottimizzazione standalone (non per la
 # quota LLM dei pagamenti combinati con voci PREMIUM). Accetta virgola decimale.
 LLM_MIN_COST_EUR = float(os.environ.get("ABM_LLM_MIN_COST_EUR", "1.0").replace(",", "."))
+# Voce campione (spec §7.1): prezzo fisso, indipendente dal libro. <= 0 = gratis.
+EUR_CLONED_VOICE = float(os.environ.get("ABM_EUR_CLONED_VOICE", "5.00").replace(",", "."))
 # Costo provider LLM per l'OTTIMIZZAZIONE AI del testo (base costo audit
 # /admin/audit-premium tab "AI Optimization"). Parametro UNICO blended in USD
 # per 1M token TOTALI (prompt + completion): assorbe il mix input/output e i
@@ -960,6 +962,49 @@ def consume_payment_token(token: str, amount_eur: float, job_id: str,
             _mark_paid_job_done(job_id, purpose=purpose)
             return "paypal"
     raise ValueError("invalid payment_token")
+
+
+def voice_clone_price_eur() -> float:
+    """Prezzo della voce campione (§7.1). Un valore <= 0 significa gratis:
+    il pannello di pagamento viene saltato e `commit` non consuma nulla."""
+    return round(float(EUR_CLONED_VOICE), 2)
+
+
+def release_payment_token(token: str, amount_eur: float, job_id: str,
+                          method: str, reason: str = "") -> bool:
+    """Rollback esatto di `consume_payment_token` (§7.2, «consuma prima,
+    poi scrivi; se la scrittura fallisce, rilascia»).
+
+    `method` e' la stringa ritornata dal consumo. Voucher: ri-accredito
+    sull'originale. PayPal: l'ordine torna spendibile (`used=False`, via
+    `used_at`/`used_for_job`) sotto `_payments_lock`. Ritorna True se ha
+    ripristinato qualcosa; non solleva mai (il chiamante sta gia'
+    gestendo un errore).
+    """
+    if not token:
+        return False
+    try:
+        if method == "voucher":
+            if token not in _vouchers:
+                return False
+            _voucher_refund(token, amount_eur, job_id=job_id, reason=reason or "rollback")
+            return True
+        if method == "paypal":
+            with _payments_lock:
+                pay = _payments.get(token)
+                if not pay or not pay.get("used"):
+                    return False
+                pay["used"] = False
+                pay.pop("used_at", None)
+                pay.pop("used_for_job", None)
+                try:
+                    _save_payments()
+                except Exception:
+                    pass
+            return True
+    except Exception as e:      # noqa: BLE001 - il rollback non deve mai propagare
+        print(f"[payment] release_payment_token fallita per {job_id}: {e}", flush=True)
+    return False
 
 
 def email_for_token(token: str) -> str:
