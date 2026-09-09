@@ -436,6 +436,35 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOICE_CLONE_ASR_TIMEOUT_SEC` | `120` — timeout della trascrizione; scaduto, il campione non passa (`vc_gate_asr_unavailable`). | `voice_clone_audio.py` | `_asr_timeout`, 481 |
 | `ABM_VOICE_CLONE_SAMPLE_TTL_H` | `24` — vita di un campione approvato ma non pagato (`sample_ok`); oltre, file e record vengono rimossi da `purge_stale_drafts`. | `voice_clone.py` | `sample_ttl_sec`, 92 |
 | `ABM_VOICE_CLONE_RETENTION_DAYS` | `365` — retention della voce, rinnovata a ogni uso (`touch_used`). | `voice_clone.py` | `retention_sec`, 96 |
+| `ABM_VOICE_CLONE_ENABLED` | Interruttore della feature voci campionate. `0`/`false`/`no`/`off` spengono gli endpoint `/api/voice_clone/*` (404 `voice_clone_disabled`), la chiave `_mine` di `/api/voices`, lo sweeper e il recovery. | `voice_clone.py` | `enabled`, 132 |
+| `ABM_EUR_CLONED_VOICE` | Prezzo fisso in EUR della voce campione (§7.1); virgola decimale ammessa; `<= 0` = gratis (pannello pagamento saltato, `payment.type="free"`). | `payment.py` | `EUR_CLONED_VOICE`, 64 |
+| `ABM_VOICE_CLONE_MAX_UPLOAD_MB` | Dimensione massima del campione caricato (413 `too_large` oltre). Minimo 1. | `voice_clone.py` | `max_upload_mb`, 145 |
+| `ABM_VOICE_CLONE_REGEN_MAX` | Rigenerazioni delle demo concesse per voce (409 `regen_exhausted` oltre). Minimo 0. | `voice_clone.py` | `regen_max`, 137 |
+| `ABM_VOICE_CLONE_DEMO_RETRIES` | Tentativi per ogni frase demo sul worker prima di `demo_failed` (pausa 2^n s, tetto 30 s). Minimo 1. | `voice_clone.py` | `demo_retries`, 141 |
+
+**Costanti interne (non configurabili):**
+
+- `RESUME_TOKEN_DAYS = 30` — validita' del link di ripresa non confermato.
+- `SWEEP_INTERVAL_SEC = 3600` — intervallo fra due cicli del sweeper di pulizia stale.
+- `EXPIRY_WARN_SEC = 30 * 86400` (30 giorni) — avviso di scadenza verso il proprietario.
+- `DEMO_FAILED_RELAUNCH_SEC = 6 * 3600` (6 ore) — attesa prima di un nuovo tentativo automatico su `demo_failed`.
+- `DEMO_FAILED_REFUND_SEC = 7 * 86400` (7 giorni) — scadenza del rimborso automatico da `demo_failed`.
+- `APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)` (24 ore e 7 giorni) — istanti dei promemoria da `demos_ready`.
+- `APPROVAL_REFUND_SEC = 30 * 86400` (30 giorni) — scadenza del rimborso automatico da `ready`.
+- `RECORD_PURGE_SEC = 90 * 86400` (90 giorni) — purga dei record dalle retention complete.
+- `CONFIRM_TTL_SEC = 900` (15 minuti) — vita di un link di conferma.
+- `CONFIRM_MAX_TRIES = 5` — tentativi di conferma prima del lock.
+- `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
+
+**Rate limit (in `audiobook_app.py`, `_ip_rl_check`):**
+
+- `vc_sample`: 10/min e 30/hora per IP; 10/min e 10/ora per cid.
+- `vc_claim_cid`: 5/min e 5/ora per cid.
+- `vc_resend`: 3/min e 3/ora per voce (clone_id) — la spec prevede 3/giorno, allineamento previsto.
+
+**Log della activity:**
+
+- `VOICE_CLONE_*` (vedi §5.2) — registrati con il solo id pubblico della voce, mai email ne' identificativi dell'owner.
 
 I quattro numeri del digest — necessari, riusciti, falliti, non tentati — si ricavano dai campi `worker_verify_*` che `generation_engine` scrive nel libro mastro (`gemini_cost_audit_YYYY-MM.jsonl`, righe con `"provider": "voxcpm"`): `worker_verify_chunks` i chunk passati sotto l'ASR del worker, `worker_verify_sospetti` i ritentativi giudicati necessari, `worker_verify_rinunciati` i sospetti lasciati fuori dal tetto `ABM_VOXCPM_VERIFY_MAX_FRAC` del worker, `worker_verify_giri` i giri di rigenerazione spesi. I record scritti prima di questa versione non li hanno: il digest li conta a parte, come «job senza misure». Dal 3 settembre 2026 ci sono anche `worker_verify_numerali` (code in cui compariva un numero) e `worker_verify_falsi_numerali` (di quelle, gli allarmi che il rilevatore ha spento perche' l'unica differenza era la grafia: l'ASR scrive «1967» dove il testo dice «millenovecentosessantasette»). Sono ritentativi non comprati, non difetti recuperati, e stanno in un riquadro loro; i job di un worker precedente alla regola si contano come «ciechi sui numeri», perche' uno zero li' vorrebbe dire «nessun numero in giro».
 
