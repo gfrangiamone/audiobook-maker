@@ -432,3 +432,92 @@ def touch_used(clone_id, now=None):
             return None
         t = _now(now)
         return store().update(clone_id, {"last_used_at": t, "expires_at": t + retention_sec()})
+
+
+# ---------------------------------------------------------------------------
+# dispositivi (§6.3, §6.4)
+# ---------------------------------------------------------------------------
+CONFIRM_TTL_SEC = 900
+CONFIRM_MAX_TRIES = 5
+CONFIRM_LOCK_SEC = 900
+
+
+def _by_code_alive(voice_code):
+    rec = by_voice_code(voice_code)
+    if rec is None or rec.get("state") in _TERMINAL:
+        raise VoiceGone("codice-voce sconosciuto")
+    return rec
+
+
+def _code_hash(code):
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def claim(voice_code, cid, now=None):
+    """Primo passo del recupero/dono: o il cid e' gia' dentro, o parte un
+    codice di conferma per il proprietario. Il codice in chiaro torna al
+    chiamante (che lo spedisce) e nel record resta solo l'hash."""
+    t = _now(now)
+    with _lock:
+        rec = _by_code_alive(voice_code)
+        if _has_cid(rec, cid):
+            return "ok", rec, None
+        if (rec.get("confirm_locks") or {}).get(cid, 0) > t:
+            raise ValueError("locked")
+        code = f"{secrets.randbelow(1000000):06d}"
+        rec = store().update(rec["id"], {"pending_confirm": {
+            "cid": cid, "code_hash": _code_hash(code),
+            "expires_at": t + CONFIRM_TTL_SEC, "tries": 0}})
+        return "pending", rec, code
+
+
+def confirm(voice_code, cid, confirm_code, now=None):
+    t = _now(now)
+    with _lock:
+        rec = _by_code_alive(voice_code)
+        pc = rec.get("pending_confirm")
+        if not pc or pc.get("cid") != cid:
+            return "none"
+        if (pc.get("expires_at") or 0) < t:
+            store().update(rec["id"], {"pending_confirm": None})
+            return "expired"
+        if pc.get("code_hash") == _code_hash((confirm_code or "").strip()):
+            devices = list(rec.get("devices") or [])
+            devices.append({"cid": cid, "added_at": t, "via": "code"})
+            store().update(rec["id"], {"pending_confirm": None, "devices": devices})
+            return "ok"
+        pc = dict(pc, tries=int(pc.get("tries") or 0) + 1)
+        if pc["tries"] >= CONFIRM_MAX_TRIES:
+            locks = dict(rec.get("confirm_locks") or {})
+            locks[cid] = t + CONFIRM_LOCK_SEC
+            store().update(rec["id"], {"pending_confirm": None, "confirm_locks": locks})
+            return "locked"
+        store().update(rec["id"], {"pending_confirm": pc})
+        return "wrong"
+
+
+def _drop_device(rec, cid):
+    devices = [d for d in rec.get("devices") or [] if d.get("cid") != cid]
+    if len(devices) == len(rec.get("devices") or []):
+        return False
+    store().update(rec["id"], {"devices": devices})
+    return True
+
+
+def forget(clone_id, cid):
+    """«Rimuovi da questo dispositivo»: solo il legame, la voce sopravvive."""
+    with _lock:
+        rec = get(clone_id)
+        return bool(rec) and _drop_device(rec, cid)
+
+
+def revoke_device(manage_token, cid):
+    """Revoca dal proprietario (link con manage_token)."""
+    with _lock:
+        rec = by_manage_token(manage_token)
+        return bool(rec) and _drop_device(rec, cid)
+
+
+def devices_view(rec):
+    return [{"cid_tail": str(d.get("cid") or "")[-4:], "added_at": d.get("added_at"),
+             "via": d.get("via")} for d in rec.get("devices") or []]
