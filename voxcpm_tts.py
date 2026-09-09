@@ -403,11 +403,28 @@ class VoxcpmAnnullato(VoxcpmJobError):
     ritentabile = False
 
 
-# Quante volte si rifa' un job i cui chunk sono usciti a silenzio, e quante
-# se n'e' rimbalzato uno. Budget separati perche' misurano cose diverse: il
-# primo il carico sulla GPU, il secondo la sfortuna nell'instradamento.
+class VoxcpmConsegnaFallita(VoxcpmJobError):
+    """Il worker ha sintetizzato, ma l'audio non e' arrivato al server.
+
+    Download da R2 fallito anche dopo i tentativi di `_scarica`, corpo
+    troncato, o worker che dichiara di non aver caricato nulla: la GPU ha
+    fatto il suo, e' il viaggio dell'intermedio che si e' perso. Ritentabile
+    risottomettendo il capitolo, a concorrenza invariata: il guasto non e'
+    nella GPU, e un altro giro carica un oggetto nuovo. Costa minuti di GPU,
+    contro il libro intero che si perderebbe facendo fallire il job.
+    """
+
+    ritentabile = True
+
+
+# Quante volte si rifa' un job i cui chunk sono usciti a silenzio, quante
+# se n'e' rimbalzato uno, e quante si risottomette un capitolo il cui audio
+# non e' arrivato dal worker (`VoxcpmConsegnaFallita`). Budget separati
+# perche' misurano cose diverse: il primo il carico sulla GPU, il secondo la
+# sfortuna nell'instradamento, il terzo la salute del trasporto via R2.
 SILENCE_RETRIES = 2
 BOUNCE_RETRIES = 6
+DELIVERY_RETRIES = 2
 
 # Sottostringhe che, nel messaggio d'errore, dicono "la GPU non ce l'ha
 # fatta". Sono i casi in cui rifare piu' stretti ha senso: una firma scaduta
@@ -900,9 +917,10 @@ def _scarica(url, dest):
 
     Un fallimento di rete transitorio si ritenta (`_SCARICA_TENTATIVI`
     volte, vedi `_scarica_ritentabile`); esaurite le prove, o su un errore
-    che non passera' da solo, esce come `VoxcpmJobError` e non come
+    che non passera' da solo, esce come `VoxcpmConsegnaFallita` e non come
     `requests.HTTPError`: e' il contratto dichiarato da `synthesize_chapter`,
-    e chi chiama non deve conoscere il trasporto per capire cosa e' successo.
+    che su quel tipo risottomette il capitolo, e chi chiama non deve
+    conoscere il trasporto per capire cosa e' successo.
     Il messaggio non riporta `url`: e' una GET firmata, e finirebbe nei log.
     """
     tmp = dest + ".part"
@@ -922,7 +940,7 @@ def _scarica(url, dest):
             dettaglio = f"HTTP {codice}" if codice else type(e).__name__
             if (not _scarica_ritentabile(codice)
                     or tentativo >= _SCARICA_TENTATIVI):
-                raise VoxcpmJobError(
+                raise VoxcpmConsegnaFallita(
                     f"scaricamento del capitolo da R2 fallito: {dettaglio}"
                 ) from e
             _LOG.warning(
@@ -965,7 +983,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
     Il ritentativo sta qui e non piu' in alto per la stessa ragione (§9.2):
     rifare il capitolo mentre il worker e' caldo costa secondi di GPU, rifarlo
-    a freddo costa un'accensione intera.
+    a freddo costa un'accensione intera. Vale anche quando la sintesi e'
+    riuscita e a perdersi e' il viaggio dell'audio da R2
+    (`VoxcpmConsegnaFallita`): il capitolo si risottomette fino a
+    `DELIVERY_RETRIES` volte prima che il job fallisca, perche' l'8/9/2026 un
+    download caduto al capitolo 247 di 250 ha buttato via quattro ore di
+    sintesi e un rimborso intero.
 
     Args:
         chunks: i testi del capitolo, gia' spezzati da `tts_split`.
@@ -1048,7 +1071,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              "runpod": []}
 
     conc = concurrency()
-    tentativo, rimbalzi = 0, 0
+    tentativo, rimbalzi, riconsegne = 0, 0, 0
     while True:
         if cancelled is not None and cancelled():
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
@@ -1159,7 +1182,25 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                         f"concorrenza {conc}: il capitolo sarebbe bucato, non "
                         f"lo si tiene")
             else:
-                scritti = _consegna(out, dest_path, key, su_r2, conc, len(chunks))
+                try:
+                    scritti = _consegna(out, dest_path, key, su_r2, conc,
+                                        len(chunks))
+                except VoxcpmConsegnaFallita as e:
+                    # La sintesi c'e' stata, e' l'audio a non essere
+                    # arrivato: si rifa' il capitolo a concorrenza
+                    # invariata (la GPU non c'entra) e senza toccare il
+                    # budget dei silenzi. L'intermedio su R2, se c'era,
+                    # `_consegna` l'ha gia' cancellato: il giro nuovo ne
+                    # carica uno fresco sulla stessa chiave.
+                    riconsegne += 1
+                    stats["redone"] += 1
+                    if riconsegne > DELIVERY_RETRIES:
+                        raise
+                    _LOG.warning(
+                        "capitolo sintetizzato ma non consegnato (%s): lo "
+                        "risottometto, %d di %d", e, riconsegne,
+                        DELIVERY_RETRIES)
+                    continue
                 stats["bytes"] = scritti
                 return stats
 
@@ -1175,7 +1216,7 @@ def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
     if su_r2:
         caricati = int((out.get("s3") or {}).get("bytes") or 0)
         if not caricati:
-            raise VoxcpmJobError(
+            raise VoxcpmConsegnaFallita(
                 "il job non ha caricato niente su R2: " + _riassunto(out))
         try:
             _scarica(storage_backend.presigned_get_url(key), dest_path)
@@ -1184,7 +1225,7 @@ def _consegna(out, dest_path, key, su_r2, conc, n_chunk):
                 # Un troncamento silenzioso scriverebbe un capitolo corto
                 # senza che nulla a valle se ne accorga: l'M4B risulterebbe
                 # comunque valido, solo piu' breve del dovuto.
-                raise VoxcpmJobError(
+                raise VoxcpmConsegnaFallita(
                     f"scaricamento troncato da R2: il worker ne ha caricati "
                     f"{caricati}, ne sono arrivati {scaricati}")
         finally:

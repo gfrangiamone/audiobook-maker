@@ -384,6 +384,7 @@ di dare la colpa alla VRAM.
 | `WorkerBloccato` (coda o timeout) | retry con backoff, poi fallimento del job con rimborso |
 | `WorkerRimbalzato` | retry immediato, worker caldo |
 | «motore compromesso» / OOM | ritentabile: nuovo job, non errore del libro |
+| Audio sintetizzato ma non arrivato da R2 (download caduto, troncato, nulla caricato) | fino a 10 GET a pausa crescente (2 s → 60 s), poi il capitolo si risottomette fino a 2 volte a concorrenza invariata, poi fallimento del job con rimborso |
 | Endpoint non configurato | VoxCPM non compare fra i modelli, come già fa il tab premium con Gemini |
 | Gate di qualità fallito | messaggio §6.3, la generazione non parte |
 | Campione utente mancante o scaduto | si ricade sul catalogo, con avviso esplicito |

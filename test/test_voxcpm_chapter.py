@@ -435,9 +435,10 @@ def test_scarica_si_arrende_dopo_i_tentativi(tmp_path, monkeypatch):
         for _ in range(voxcpm_tts._SCARICA_TENTATIVI)
     ])
     dest = str(tmp_path / "cap.pcm")
-    with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
+    with pytest.raises(voxcpm_tts.VoxcpmConsegnaFallita) as e:
         voxcpm_tts._scarica("https://r2.esempio/x?firma", dest)
     assert "ChunkedEncodingError" in str(e.value)
+    assert e.value.ritentabile
     assert len(chiamate) == voxcpm_tts._SCARICA_TENTATIVI
     assert not os.path.exists(dest)
     assert not os.path.exists(dest + ".part")
@@ -482,14 +483,81 @@ def test_download_r2_troncato_e_un_errore(tmp_path, monkeypatch):
     # nulla a valle se ne accorga.
     monkeypatch.setattr(voxcpm_tts, "_scarica",
                         lambda url, dest: open(dest, "wb").write(b"\x07" * 32) and None)
-    finto = FintoRunJob({"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
-                         "audio_seconds": 1.0, "tts_seconds": 0.5,
-                         "failed_indices": []})
+    esito = {"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+             "audio_seconds": 1.0, "tts_seconds": 0.5, "failed_indices": []}
+    finto = FintoRunJob(*[dict(esito)
+                          for _ in range(voxcpm_tts.DELIVERY_RETRIES + 1)])
     with pytest.raises(voxcpm_tts.VoxcpmJobError) as e:
         sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
     assert "troncat" in str(e.value).lower()
-    # L'intermedio si cancella comunque: il download parziale non lo salva.
-    assert cancellate == ["voxcpm/j/ch1.pcm"]
+    # Un troncamento e' un guasto del trasporto: il capitolo si risottomette
+    # prima di arrendersi, e l'intermedio si cancella a ogni giro, perche'
+    # il download parziale non lo salva.
+    assert len(finto.payload) == voxcpm_tts.DELIVERY_RETRIES + 1
+    assert cancellate == ["voxcpm/j/ch1.pcm"] * (voxcpm_tts.DELIVERY_RETRIES + 1)
+
+
+def test_consegna_fallita_risottomette_il_capitolo(tmp_path, monkeypatch):
+    # L'8/9/2026 un download caduto al capitolo 247 di 250 ha ucciso il job:
+    # la sintesi era riuscita, era l'audio a non essere arrivato. Ora il
+    # capitolo si rifa' a concorrenza invariata (la GPU non c'entra) e il
+    # libro non si perde.
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+    cancellate = []
+    monkeypatch.setattr(storage_backend, "delete_object", cancellate.append)
+    giri = []
+
+    def scarica(url, dest):
+        giri.append(url)
+        if len(giri) == 1:
+            raise voxcpm_tts.VoxcpmConsegnaFallita(
+                "scaricamento del capitolo da R2 fallito: ChunkedEncodingError")
+        with open(dest, "wb") as f:
+            f.write(b"\x07" * 64)
+
+    monkeypatch.setattr(voxcpm_tts, "_scarica", scarica)
+    esito = {"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+             "audio_seconds": 1.0, "tts_seconds": 0.5, "failed_indices": []}
+    finto = FintoRunJob(dict(esito), dict(esito))
+    stats, dest = sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert os.path.getsize(dest) == 64
+    assert len(finto.payload) == 2
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 32]
+    assert stats["redone"] == 1
+    assert stats["jobs"] == 2
+    # La GPU si e' pagata due volte: entrambi i giri stanno nel conto.
+    assert stats["tts_seconds"] == 1.0
+    assert cancellate == ["voxcpm/j/ch1.pcm"] * 2
+
+
+def test_consegna_fallita_a_oltranza_perde_il_capitolo(tmp_path, monkeypatch):
+    import storage_backend
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "presigned_put_url",
+                        lambda key, ttl=None: "https://r2.esempio/x?firma")
+    monkeypatch.setattr(storage_backend, "presigned_get_url",
+                        lambda key, download_name=None, ttl=None: "https://r2.esempio/x?get")
+    monkeypatch.setattr(storage_backend, "delete_object", lambda k: None)
+
+    def scarica_rotto(url, dest):
+        raise voxcpm_tts.VoxcpmConsegnaFallita(
+            "scaricamento del capitolo da R2 fallito: ConnectionError")
+
+    monkeypatch.setattr(voxcpm_tts, "_scarica", scarica_rotto)
+    esito = {"s3": {"bytes": 64}, "sample_rate": 48000, "chars": 9,
+             "audio_seconds": 1.0, "tts_seconds": 0.5, "failed_indices": []}
+    finto = FintoRunJob(*[dict(esito)
+                          for _ in range(voxcpm_tts.DELIVERY_RETRIES + 1)])
+    with pytest.raises(voxcpm_tts.VoxcpmConsegnaFallita) as e:
+        sintetizza(finto, tmp_path, monkeypatch, key="voxcpm/j/ch1.pcm")
+    assert "ConnectionError" in str(e.value)
+    assert len(finto.payload) == voxcpm_tts.DELIVERY_RETRIES + 1
+    assert not os.path.exists(str(tmp_path / "cap.pcm"))
 
 
 def test_download_r2_fallito_cancella_comunque_l_intermedio(tmp_path, monkeypatch):
