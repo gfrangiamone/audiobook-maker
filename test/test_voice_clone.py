@@ -153,3 +153,119 @@ def test_bozza_precedente_sopravvive_se_lo_spostamento_fallisce(tmp_path, monkey
     assert ancora["id"] == prima["id"]
     assert os.path.exists(os.path.join(vc.voice_dir(prima["token"]), "sample.wav"))
     assert os.listdir(vc.voices_dir()) == [prima["token"]]
+
+
+def _pronta(tmp_path, cid="cid-uno", **kw):
+    rec = bozza(tmp_path, cid=cid, **kw)
+    vc.transition(rec["id"], "paid"); vc.transition(rec["id"], "demos_generating")
+    vc.transition(rec["id"], "demos_ready")
+    return vc.transition(rec["id"], "ready")
+
+
+def test_resolve_ritorna_wav_e_frase(tmp_path):
+    rec = _pronta(tmp_path)
+    out = vc.resolve(vc.voice_id_of(rec))
+    assert out["wav_path"] == os.path.join(vc.voice_dir(rec["token"]), "sample.wav")
+    assert out["prompt_text"] == PROMPT and out["lang"] == "it" and out["locale"] == "it-IT"
+    assert vc.language_of(vc.voice_id_of(rec)) == "it"
+
+
+def test_resolve_vale_anche_prima_di_ready_ma_non_dopo_la_fine(tmp_path):
+    rec = bozza(tmp_path)
+    vid = vc.voice_id_of(rec)
+    assert vc.resolve(vid)["prompt_text"] == PROMPT       # sample_ok: le demo lo usano
+    vc.transition(rec["id"], "paid"); vc.transition(rec["id"], "refunded")
+    with pytest.raises(vc.VoiceGone):
+        vc.resolve(vid)
+    with pytest.raises(vc.VoiceGone):
+        vc.resolve("voxcpm:mine:" + "0" * 32)
+    with pytest.raises(vc.VoiceGone):
+        vc.resolve("voxcpm:v2:it-IT/Valentina")
+
+
+def test_resolve_scarica_da_r2_se_il_locale_manca(tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    wav = os.path.join(vc.voice_dir(rec["token"]), "sample.wav")
+    os.remove(wav)
+    richieste = []
+
+    def _dl(key, path):
+        richieste.append(key)
+        with open(path, "wb") as fh:
+            fh.write(b"RIFF-da-r2")
+        return True
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "download_file", _dl)
+    assert vc.resolve(vc.voice_id_of(rec))["wav_path"] == wav
+    assert richieste == ["voices/" + rec["token"] + "/sample.wav"]
+    assert open(wav, "rb").read() == b"RIFF-da-r2"
+
+
+def test_resolve_senza_locale_ne_r2(tmp_path, monkeypatch):
+    rec = _pronta(tmp_path)
+    os.remove(os.path.join(vc.voice_dir(rec["token"]), "sample.wav"))
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "download_file", lambda k, p: False)
+    with pytest.raises(FileNotFoundError):
+        vc.resolve(vc.voice_id_of(rec))
+
+
+def test_check_use_ordine_dei_rifiuti(tmp_path):
+    rec = bozza(tmp_path)
+    vid = vc.voice_id_of(rec)
+    assert vc.check_use(vid, "cid-uno", "it", "it-IT") == "voice_gone"        # non ready
+    _ = vc.transition(rec["id"], "paid"); vc.transition(rec["id"], "demos_generating")
+    vc.transition(rec["id"], "demos_ready"); vc.transition(rec["id"], "ready")
+    assert vc.check_use(vid, "cid-due", "it", "it-IT") == "voice_not_authorized"
+    assert vc.check_use(vid, "cid-uno", "en", "en-US") == "voice_lang_mismatch"
+    assert vc.check_use(vid, "cid-uno", "it", "it-CH") == "voice_lang_mismatch"
+    assert vc.check_use(vid, "cid-uno", "it", "it-IT") == ""
+    assert vc.check_use("voxcpm:mine:zz", "cid-uno", "it", "it-IT") == "voice_gone"
+    assert vc.authorized(vid, "cid-uno") and not vc.authorized(vid, "cid-due")
+
+
+def test_mine_elenca_le_voci_del_dispositivo(tmp_path):
+    a = _pronta(tmp_path, cid="cid-uno")
+    b = bozza(tmp_path, cid="cid-uno", lang="en", locale="en-US")   # bozza in sospeso
+    _pronta(tmp_path, cid="cid-altro")
+    got = vc.mine("cid-uno")
+    assert [g["id"] for g in got] == [a["id"], b["id"]]
+    assert got[0]["owner"] is True and got[0]["pending"] is False
+    assert got[0]["voice_id"] == vc.voice_id_of(a) and "voice_id" not in got[1]
+    assert got[1]["pending"] is True
+    assert "token" not in got[0] and "manage_token" not in got[0]
+
+
+def test_mine_esclude_gli_stati_terminali(tmp_path):
+    rec = _pronta(tmp_path)
+    vc.transition(rec["id"], "deleted")
+    assert vc.mine("cid-uno") == []
+
+
+def test_touch_used_rinnova_la_scadenza(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_VOICE_CLONE_RETENTION_DAYS", "10")
+    rec = _pronta(tmp_path)
+    got = vc.touch_used(rec["id"], now=rec["created_at"] + 100)
+    assert got["last_used_at"] == rec["created_at"] + 100
+    assert got["expires_at"] == rec["created_at"] + 100 + 10 * 86400
+    bozza_ = bozza(tmp_path, cid="cid-tre")
+    assert vc.touch_used(bozza_["id"]) is None          # non ready: niente rinnovo
+
+
+def test_storage_download_file_usa_il_client(monkeypatch, tmp_path):
+    class _Client:
+        def download_file(self, Bucket, Key, Filename):
+            with open(Filename, "wb") as fh:
+                fh.write(b"ok")
+    monkeypatch.setattr(storage_backend, "_get_client", lambda: _Client())
+    monkeypatch.setattr(storage_backend, "_BUCKET", "b")
+    dest = tmp_path / "giu" / "x.wav"
+    assert storage_backend.download_file("voices/t/sample.wav", str(dest)) is True
+    assert dest.read_bytes() == b"ok"
+
+    class _Manca:
+        def download_file(self, **kw):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "404"}}, "GetObject")
+    monkeypatch.setattr(storage_backend, "_get_client", lambda: _Manca())
+    assert storage_backend.download_file("voices/t/no.wav", str(tmp_path / "no.wav")) is False

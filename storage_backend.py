@@ -110,6 +110,28 @@ def get_range(key, start, end):
         return b""
 
 
+def download_file(key, local_path):
+    """Scarica l'oggetto in `local_path` (cartella creata se manca), via un
+    file temporaneo accanto alla destinazione cosi' un download interrotto
+    non lascia un file a meta'. Ritorna False se l'oggetto non esiste;
+    solleva su altri errori."""
+    os.makedirs(os.path.dirname(os.path.abspath(local_path)) or ".", exist_ok=True)
+    tmp = local_path + ".part"
+    try:
+        _get_client().download_file(Bucket=_BUCKET, Key=_full_key(key), Filename=tmp)
+    except ClientError as e:
+        code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+    os.replace(tmp, local_path)
+    return True
+
+
 def presigned_get_url(key, download_name=None, ttl=None):
     """URL GET temporaneo per redirect 302. download_name forza il filename
     via Content-Disposition (preservato attraverso il redirect)."""

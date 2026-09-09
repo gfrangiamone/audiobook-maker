@@ -333,3 +333,102 @@ def public_view(rec):
     if rec.get("state") == "ready":
         pub["voice_id"] = voice_id_of(rec)
     return pub
+
+
+# ---------------------------------------------------------------------------
+# uso in generazione (§9)
+# ---------------------------------------------------------------------------
+def _record_for_voice_id(voice_id):
+    tok = token_of(voice_id)
+    rec = by_token(tok) if tok else None
+    if rec is None:
+        raise VoiceGone(f"voce campione sconosciuta: {voice_id!r}")
+    return rec
+
+
+def _ensure_local(rec, name):
+    """Il file locale, scaricato da R2 se manca (§5.5: nuovo server)."""
+    path = os.path.join(voice_dir(rec["token"]), name)
+    if os.path.exists(path):
+        return path
+    if storage_backend.is_enabled():
+        try:
+            if storage_backend.download_file(r2_key(rec["token"], name), path):
+                return path
+        except Exception as e:
+            print(f"[voice_clone] download R2 fallito per {rec['id']}/{name}: {e}")
+    raise FileNotFoundError(path)
+
+
+def resolve(voice_id):
+    """Per `voxcpm_tts.clone_block`: wav normalizzato e frase letta."""
+    rec = _record_for_voice_id(voice_id)
+    if rec.get("state") not in HAS_SAMPLE:
+        raise VoiceGone(f"voce {rec['id']} in stato {rec.get('state')}")
+    return {"wav_path": _ensure_local(rec, "sample.wav"),
+            "prompt_text": rec["prompt_text"], "lang": rec["lang"], "locale": rec["locale"]}
+
+
+def language_of(voice_id):
+    try:
+        return _record_for_voice_id(voice_id)["lang"]
+    except VoiceGone:
+        return None
+
+
+def _has_cid(rec, cid):
+    return any(d.get("cid") == cid for d in rec.get("devices") or [])
+
+
+def check_use(voice_id, cid, lang, locale):
+    """'' se la voce si puo' usare per questo libro, altrimenti il codice
+    d'errore della spec §9: gone (D16: solo `ready`), not_authorized, lang_mismatch."""
+    try:
+        rec = _record_for_voice_id(voice_id)
+    except VoiceGone:
+        return "voice_gone"
+    if rec.get("state") != "ready":
+        return "voice_gone"
+    if not _has_cid(rec, cid):
+        return "voice_not_authorized"
+    if (lang or "").lower() != rec["lang"] or (locale or "") != rec["locale"]:
+        return "voice_lang_mismatch"
+    return ""
+
+
+def authorized(voice_id, cid):
+    try:
+        rec = _record_for_voice_id(voice_id)
+    except VoiceGone:
+        return False
+    return rec.get("state") == "ready" and _has_cid(rec, cid)
+
+
+_TERMINAL = frozenset({"refunded", "expired", "deleted"})
+
+
+def mine(cid, now=None):
+    """Le voci del dispositivo, pronte e in sospeso, senza segreti (§3.6)."""
+    out = []
+    for rec in _all():
+        if rec.get("state") in _TERMINAL or not _has_cid(rec, cid):
+            continue
+        if rec.get("state") == "sample_ok" and (rec.get("expires_at") or 0) <= _now(now):
+            continue
+        pub = public_view(rec)
+        pub["owner"] = any(d.get("cid") == cid and d.get("via") == "creator"
+                           for d in rec.get("devices") or [])
+        pub["pending"] = rec.get("state") != "ready"
+        out.append(pub)
+    out.sort(key=lambda p: (p["pending"], -(p.get("created_at") or 0)))
+    return out
+
+
+def touch_used(clone_id, now=None):
+    """Rinnovo della retention a ogni uso (D15). Solo su voci `ready`."""
+    with _lock:
+        rec = get(clone_id)
+        if rec is None or rec.get("state") != "ready":
+            return None
+        t = _now(now)
+        return store().update(clone_id, {"last_used_at": t, "expires_at": t + retention_sec()})
