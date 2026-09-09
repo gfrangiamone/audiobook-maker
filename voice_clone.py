@@ -10,6 +10,7 @@ arriva da `init()`.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import secrets
 import shutil
@@ -481,7 +482,7 @@ def confirm(voice_code, cid, confirm_code, now=None):
         if (pc.get("expires_at") or 0) < t:
             store().update(rec["id"], {"pending_confirm": None})
             return "expired"
-        if pc.get("code_hash") == _code_hash((confirm_code or "").strip()):
+        if hmac.compare_digest(pc.get("code_hash") or "", _code_hash((confirm_code or "").strip())):
             devices = list(rec.get("devices") or [])
             devices.append({"cid": cid, "added_at": t, "via": "code"})
             store().update(rec["id"], {"pending_confirm": None, "devices": devices})
