@@ -78,6 +78,46 @@ def test_il_payload_e_in_hifi_con_prefisso_e_trascrizione(tmp_path, monkeypatch)
     assert base64.b64decode(inp["reference_wav_b64"])[:4] == b"RIFF"
 
 
+@pytest.mark.parametrize("testo, atteso", [
+    # Il caso del collaudo del 9/9/2026: VoxCPM leggeva «umano punto il».
+    ("bisogno per un affare umano\u2026 il paragone e', il piu' delle volte",
+     "bisogno per un affare umano, il paragone e', il piu' delle volte"),
+    # Tre punti ASCII, anche spaziati, valgono come il carattere unico.
+    ("aspetta ... vieni qui", "aspetta, vieni qui"),
+    ("aspetta . . . vieni qui", "aspetta, vieni qui"),
+    ("aspetta\u2026. vieni qui", "aspetta, vieni qui"),
+    # Segue una frase nuova: la pausa resta un punto, non si incolla.
+    ("Non lo so\u2026 Forse domani.", "Non lo so. Forse domani."),
+    ("Erano in\u2026 3 o 4.", "Erano in. 3 o 4."),
+    # Fine del chunk: punto.
+    ("Non lo so\u2026", "Non lo so."),
+    # Una virgoletta in mezzo non cambia il verdetto: conta la lettera.
+    ("disse\u2026 \u00abvieni\u00bb", "disse, \u00abvieni\u00bb"),
+    ("disse\u2026 \u00abVieni\u00bb", "disse. \u00abVieni\u00bb"),
+    ("\u00abNon so\u2026\u00bb disse lei.", "\u00abNon so,\u00bb disse lei."),
+    # In testa, o dopo un altro segno di chiusura, i puntini cadono.
+    ("\u2026e poi niente", "e poi niente"),
+    ("Ah!\u2026 poi niente", "Ah! poi niente"),
+    ("Ecco, \u2026 poi niente", "Ecco, poi niente"),
+    # Senza puntini il testo non si tocca, compreso un punto singolo.
+    ("Prima frase. Seconda frase.", "Prima frase. Seconda frase."),
+    ("", ""),
+])
+def test_normalizza_puntini(testo, atteso):
+    assert voxcpm_tts.normalizza_puntini(testo) == atteso
+
+
+def test_i_puntini_non_arrivano_al_worker(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["per un affare umano\u2026 il paragone", "Non lo so\u2026"],
+        VOCE, str(tmp_path / "cap.pcm"))
+    assert finto.payload[0]["input"]["chunks"] == [
+        "per un affare umano, il paragone", "Non lo so."]
+
+
 def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok())
     sintetizza(finto, tmp_path, monkeypatch)

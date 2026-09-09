@@ -18,6 +18,7 @@ import collections
 import json
 import logging
 import os
+import re
 import threading
 import time
 
@@ -971,6 +972,43 @@ def _cancella_intermedio(key):
         _LOG.warning("cancellazione R2 non riuscita per la chiave %s", key)
 
 
+# --- puntini di sospensione ----------------------------------------------
+# VoxCPM legge «…» come la parola «punto»: sul collaudo del 9/9/2026 «per un
+# affare umano… il paragone e'» usciva «umano punto il paragone». Provato a
+# mano, una virgola al posto dei puntini rende la lettura giusta. La regola
+# sta qui, sul chunk che parte per il worker, e non nella catena comune di
+# `prepare_tts_text`: gli altri motori leggono i puntini come una pausa
+# lunga, e trasformarli in virgola per tutti accorcerebbe pause che oggi
+# suonano bene. Copre «…», «...», «. . .» e le loro combinazioni.
+_PUNTINI_RE = re.compile(r"[ \t]*(?:\u2026|\.[ \t]?\.[ \t]?\.)(?:[ \t]?[.\u2026])*")
+_VIRGOLETTE = "\u00ab\u00bb\"\u201c\u201d\u2018\u2019'()[]"
+
+
+def normalizza_puntini(testo):
+    """I puntini di sospensione diventano virgola o punto, secondo cio' che segue.
+
+    Virgola se la frase continua (segue una minuscola, anche dopo una
+    virgoletta), punto se ne comincia un'altra (maiuscola, cifra, fine del
+    chunk): la pausa resta e le due frasi non si incollano. In testa alla
+    frase, o dopo un altro segno di fine frase o una virgola, i puntini
+    cadono e basta: «, e poi» non e' una cosa da leggere.
+    """
+    if not testo:
+        return testo
+
+    def _sostituisci(m):
+        prima = testo[:m.start()].rstrip(" \t")
+        if not prima or prima[-1] in ".!?:;,\n":
+            return ""
+        dopo = testo[m.end():].lstrip(" \t" + _VIRGOLETTE)
+        primo = dopo[:1]
+        if primo.isalpha() and primo.islower():
+            return ","
+        return "."
+
+    return _PUNTINI_RE.sub(_sostituisci, testo)
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
                        on_progress=None):
@@ -1079,7 +1117,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         payload = {"input": {
             "action": "generate",
-            "chunks": list(chunks),
+            "chunks": [normalizza_puntini(c) for c in chunks],
             **clone,
             "cfg": CFG_READ,
             "concurrency": conc,
