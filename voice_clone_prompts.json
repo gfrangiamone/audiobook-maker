@@ -1,0 +1,17 @@
+{
+  "schema": "abm-voice-clone-prompts/1",
+  "prompts": {
+    "it": {"text": "Ogni mattina apro la finestra prima di fare il caffè, e ascolto la strada che si sveglia. Passa il furgone del pane, poi qualcuno con il cane, poi il silenzio. Non ho fretta. Leggo qualche pagina, e ne rileggo una frase a voce alta. Solo allora comincia la mia giornata."},
+    "en": {"text": "Every morning I open the window before making coffee, and I listen to the street waking up. The bread van goes by, then someone with a dog, then silence. I am in no hurry. I read a few pages, and read one sentence again out loud. Only then does my day begin."},
+    "fr": {"text": "Chaque matin, j'ouvre la fenêtre avant de préparer le café, et j'écoute la rue qui se réveille. Le camion du boulanger passe, puis quelqu'un avec son chien, puis le silence. Rien ne presse. Je lis quelques pages, et j'en relis une phrase à voix haute. C'est alors que ma journée commence."},
+    "es": {"text": "Cada mañana abro la ventana antes de preparar el café, y escucho la calle que despierta. Pasa la furgoneta del pan, luego alguien con su perro, luego el silencio. No tengo prisa. Leo unas páginas, y vuelvo a leer una frase en voz alta. Solo entonces empieza mi día."},
+    "de": {"text": "Jeden Morgen öffne ich das Fenster, bevor ich Kaffee koche, und höre, wie die Straße erwacht. Der Bäckerwagen fährt vorbei, dann jemand mit Hund, dann Stille. Ich habe keine Eile. Ich lese ein paar Seiten und lese einen Satz noch einmal laut. Erst dann beginnt mein Tag."},
+    "nl": {"text": "Elke ochtend open ik het raam voordat ik koffie zet, en luister ik hoe de straat wakker wordt. De bakkerswagen rijdt voorbij, dan iemand met een hond, dan stilte. Ik heb geen haast. Ik lees een paar bladzijden, en lees één zin nog eens hardop. Pas dan begint mijn dag."},
+    "pt": {"text": "Todas as manhãs abro a janela antes de fazer o café, e escuto a rua que acorda. Passa o padeiro, depois uma bicicleta devagar, depois o silêncio. Não tenho pressa. Leio algumas páginas, e volto a ler uma frase em voz alta. Só então começa o meu dia."},
+    "hi": {"text_by_gender": {
+      "m": "हर सुबह कॉफ़ी बनाने से पहले मैं खिड़की खोलता हूँ, और सुनता हूँ कि गली कैसे जागती है। दूध वाला गुज़रता है, फिर कोई कुत्ते के साथ, फिर सन्नाटा। मुझे जल्दी नहीं है। मैं कुछ पन्ने पढ़ता हूँ, और एक वाक्य ज़ोर से दोबारा पढ़ता हूँ। तभी मेरा दिन शुरू होता है।",
+      "f": "हर सुबह कॉफ़ी बनाने से पहले मैं खिड़की खोलती हूँ, और सुनती हूँ कि गली कैसे जागती है। दूध वाला गुज़रता है, फिर कोई कुत्ते के साथ, फिर सन्नाटा। मुझे जल्दी नहीं है। मैं कुछ पन्ने पढ़ती हूँ, और एक वाक्य ज़ोर से दोबारा पढ़ती हूँ। तभी मेरा दिन शुरू होता है।"
+    }},
+    "zh": {"text": "每天早上，我先打开窗户，再去煮咖啡，听着街道慢慢醒来。送面包的车开过去了，然后是遛狗的人，然后是一片安静。我不着急。读几页书，再把最喜欢的那句大声念一遍。到那时，我的一天才真正开始。"}
+  }
+}
