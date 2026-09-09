@@ -19,6 +19,7 @@ import threading
 import time
 
 import community_store
+import payment
 import storage_backend
 import voice_clone_prompts
 import voxcpm_catalog
@@ -61,6 +62,10 @@ class SampleUnavailable(Exception):
 
 class BadTransition(ValueError):
     """Passaggio di stato non previsto dalla tabella."""
+
+
+class EmailHasVoice(ValueError):
+    """L'email ha gia' una voce viva (§3.4): si recupera con il codice o si cancella."""
 
 
 # Copia locale della whitelist di voice_clone_audio.ACCEPTED_EXT: import
@@ -113,6 +118,26 @@ def sample_ttl_sec():
 
 def retention_sec():
     return _env_int("ABM_VOICE_CLONE_RETENTION_DAYS", 365) * 86400
+
+
+def enabled():
+    raw = (os.environ.get("ABM_VOICE_CLONE_ENABLED") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def regen_max():
+    return max(0, _env_int("ABM_VOICE_CLONE_REGEN_MAX", 3))
+
+
+def demo_retries():
+    return max(1, _env_int("ABM_VOICE_CLONE_DEMO_RETRIES", 3))
+
+
+def max_upload_mb():
+    return max(1, _env_int("ABM_VOICE_CLONE_MAX_UPLOAD_MB", 20))
+
+
+DEMO_NAMES = ("demo_common.wav", "demo_extra.wav")
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +511,11 @@ def mine(cid, now=None):
         pub["owner"] = any(d.get("cid") == cid and d.get("via") == "creator"
                            for d in rec.get("devices") or [])
         pub["pending"] = rec.get("state") != "ready"
+        if not pub["owner"]:
+            pub.pop("voice_code", None)
+        if rec.get("state") == "ready":
+            pub["demo_urls"] = {"common": f"/api/voice_clone/{rec['id']}/demo/common",
+                                "extra": f"/api/voice_clone/{rec['id']}/demo/extra"}
         out.append(pub)
     out.sort(key=lambda p: (p["pending"], -(p.get("created_at") or 0)))
     return out
@@ -499,6 +529,75 @@ def touch_used(clone_id, now=None):
             return None
         t = _now(now)
         return store().update(clone_id, {"last_used_at": t, "expires_at": t + retention_sec()})
+
+
+# ---------------------------------------------------------------------------
+# commit (§3.4, §7.2)
+# ---------------------------------------------------------------------------
+def email_has_active_voice(email, exclude_id=None):
+    h = email_hash(email)
+    for rec in _all():
+        if rec.get("id") == exclude_id or rec.get("state") in _TERMINAL:
+            continue
+        if rec.get("owner_email_hash") == h:
+            return True
+    return False
+
+
+def _norm_email(email):
+    return (email or "").strip().lower()
+
+
+def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
+           payment_token, price_eur, now=None):
+    """Dal campione alla voce pagata (`paid`).
+
+    Sotto il lock di modulo: un doppio click trova la voce gia' oltre
+    `sample_ok` e riceve `(rec, False)`; un cid estraneo riceve
+    PermissionError; un'email gia' in uso su una voce viva riceve
+    EmailHasVoice PRIMA di toccare il pagamento (§10). Con `price_eur <= 0`
+    la voce e' gratis. Altrimenti il token viene consumato per primo e, se
+    la scrittura del record fallisce, rilasciato (§7.2).
+    """
+    email = _norm_email(email)
+    t = _now(now)
+    with _lock:
+        rec = get(clone_id)
+        if rec is None:
+            raise VoiceGone(clone_id)
+        if not _has_cid(rec, cid):
+            raise PermissionError("cid non autorizzato")
+        if rec.get("state") != "sample_ok":
+            if rec.get("state") in _TERMINAL:
+                raise VoiceGone(clone_id)
+            return rec, False
+        if email_has_active_voice(email, exclude_id=clone_id):
+            raise EmailHasVoice("email gia' associata a una voce")
+        price = round(float(price_eur or 0.0), 2)
+        job_id = "vc:" + clone_id
+        if price <= 0:
+            pay = {"type": "free", "token": "", "amount_eur": 0.0, "paid_at": t}
+        else:
+            method = payment.consume_payment_token(payment_token, price, job_id,
+                                                   purpose="voice_clone")
+            pay = {"type": method, "token": payment_token, "amount_eur": price, "paid_at": t}
+        patch = {
+            "owner_email": email, "owner_email_hash": email_hash(email),
+            "demo": {"common_text": common_text, "extra_id": extra_id,
+                     "extra_text": extra_text, "regen_used": 0,
+                     "regen_max": regen_max(), "runpod_job_id": None},
+            "payment": pay,
+            "resume_token": {"value": rec["resume_token"]["value"],
+                             "expires_at": t + RESUME_TOKEN_DAYS * 86400},
+        }
+        try:
+            out = transition(clone_id, "paid", patch, now=t)
+        except Exception:
+            if pay["type"] != "free":
+                payment.release_payment_token(payment_token, price, job_id, pay["type"],
+                                              reason="voice clone commit failed")
+            raise
+        return out, True
 
 
 # ---------------------------------------------------------------------------
