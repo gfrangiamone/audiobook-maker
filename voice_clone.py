@@ -1,0 +1,327 @@
+"""Voci campionate: store, identita', stati, dispositivi, resolver (spec §6,
+§9, §10).
+
+Il record vive in `_voice_clones.json` (community_store.JsonStore: lock,
+scrittura atomica, .bak). I file del campione stanno in
+`<data_dir>/voices/<token>/`, fuori dal tiering hot/cold dei job, con copia
+su R2 sotto `voices/<token>/`. Nessun import di audiobook_app: la data dir
+arriva da `init()`.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets
+import shutil
+import threading
+import time
+
+import community_store
+import storage_backend
+import voice_clone_prompts
+import voxcpm_catalog
+
+VOICE_ID_PREFIX = "voxcpm:mine:"
+R2_PREFIX = "voices/"
+CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
+RESUME_TOKEN_DAYS = 30
+
+STATES = ("sample_ok", "paid", "demos_generating", "demos_ready", "ready",
+          "demo_failed", "refunded", "expired", "deleted")
+TRANSITIONS = {
+    "sample_ok": {"paid"},
+    "paid": {"demos_generating", "refunded"},
+    "demos_generating": {"demos_ready", "demo_failed", "refunded"},
+    "demos_ready": {"ready", "demos_generating", "refunded"},
+    "demo_failed": {"demos_generating", "refunded"},
+    "ready": {"expired", "deleted"},
+    "refunded": set(), "expired": set(), "deleted": set(),
+}
+HAS_SAMPLE = frozenset({"sample_ok", "paid", "demos_generating", "demos_ready",
+                        "demo_failed", "ready"})
+_STAMP_ON_ENTER = {"ready": "ready_at", "paid": "paid_at", "refunded": "refunded_at",
+                   "expired": "expired_at", "deleted": "deleted_at"}
+
+_lock = threading.RLock()
+_data_dir = None
+_store = None
+
+
+class VoiceGone(ValueError):
+    """Voce inesistente o senza campione (cancellata, rimborsata, scaduta)."""
+
+
+class BadTransition(ValueError):
+    """Passaggio di stato non previsto dalla tabella."""
+
+
+def init(data_dir):
+    global _data_dir, _store
+    _data_dir = str(data_dir)
+    _store = community_store.JsonStore("_voice_clones.json")
+    os.makedirs(voices_dir(), exist_ok=True)
+
+
+def store():
+    if _store is None:
+        raise RuntimeError("voice_clone.init() must be called first")
+    return _store
+
+
+def voices_dir():
+    return os.path.join(_data_dir, "voices")
+
+
+def voice_dir(token):
+    return os.path.join(voices_dir(), token)
+
+
+def _now(now):
+    return int(now if now is not None else time.time())
+
+
+def _env_int(name, default):
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return int(float(raw.replace(",", "."))) if raw else default
+    except ValueError:
+        return default
+
+
+def sample_ttl_sec():
+    return _env_int("ABM_VOICE_CLONE_SAMPLE_TTL_H", 24) * 3600
+
+
+def retention_sec():
+    return _env_int("ABM_VOICE_CLONE_RETENTION_DAYS", 365) * 86400
+
+
+# ---------------------------------------------------------------------------
+# identita'
+# ---------------------------------------------------------------------------
+def new_token():
+    return secrets.token_hex(16)
+
+
+def new_voice_code():
+    raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(12))
+    return "-".join((raw[0:4], raw[4:8], raw[8:12]))
+
+
+def normalize_voice_code(s):
+    raw = "".join(c for c in (s or "").upper() if c.isalnum())
+    return "-".join((raw[0:4], raw[4:8], raw[8:12])) if len(raw) == 12 else raw
+
+
+def voice_id_of(rec):
+    return VOICE_ID_PREFIX + rec["token"]
+
+
+def token_of(voice_id):
+    if not isinstance(voice_id, str) or not voice_id.startswith(VOICE_ID_PREFIX):
+        return None
+    tok = voice_id[len(VOICE_ID_PREFIX):]
+    return tok if len(tok) == 32 and all(c in "0123456789abcdef" for c in tok) else None
+
+
+def email_hash(email):
+    return hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# ricerca (scansione lineare: decine di record, vedi piano §Global Constraints)
+# ---------------------------------------------------------------------------
+def _all():
+    return store().all(include_archived=True)
+
+
+def _find(pred):
+    for rec in _all():
+        if pred(rec):
+            return rec
+    return None
+
+
+def get(clone_id):
+    return store().get(clone_id) if clone_id else None
+
+
+def by_token(token):
+    return _find(lambda r: r.get("token") == token) if token else None
+
+
+def by_voice_code(code):
+    code = normalize_voice_code(code)
+    return _find(lambda r: r.get("voice_code") == code) if code else None
+
+
+def by_manage_token(token):
+    return _find(lambda r: r.get("manage_token") == token) if token else None
+
+
+def by_resume_token(token, now=None):
+    if not token:
+        return None
+    rec = _find(lambda r: (r.get("resume_token") or {}).get("value") == token)
+    if rec is None or (rec["resume_token"].get("expires_at") or 0) < _now(now):
+        return None
+    return rec
+
+
+def draft_for_cid(cid, now=None):
+    t = _now(now)
+    return _find(lambda r: r.get("state") == "sample_ok"
+                 and any(d.get("cid") == cid for d in r.get("devices") or [])
+                 and (r.get("expires_at") or 0) > t)
+
+
+def offered_languages():
+    """Lingua -> locali attivi, per le sole lingue con frase guidata (D3)."""
+    con_frase = set(voice_clone_prompts.languages())
+    out = {}
+    for rec in voxcpm_catalog.voices():
+        if rec["lang"] in con_frase:
+            out.setdefault(rec["lang"], set()).add(rec["locale"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+# ---------------------------------------------------------------------------
+# file
+# ---------------------------------------------------------------------------
+def r2_key(token, name):
+    return f"{R2_PREFIX}{token}/{name}"
+
+
+def upload_to_r2(rec, name):
+    """Copia `voice_dir/<name>` su R2, se attivo. Best effort: un fallimento
+    lascia il locale come unica copia e lo scrive a stdout."""
+    if not storage_backend.is_enabled():
+        return False
+    path = os.path.join(voice_dir(rec["token"]), name)
+    try:
+        storage_backend.upload_file(path, r2_key(rec["token"], name))
+        return True
+    except Exception as e:
+        print(f"[voice_clone] upload R2 fallito per {rec['id']}/{name}: {e}")
+        return False
+
+
+def remove_files(rec):
+    """Cancella cartella locale e prefisso R2 della voce. Non solleva."""
+    shutil.rmtree(voice_dir(rec["token"]), ignore_errors=True)
+    if storage_backend.is_enabled():
+        try:
+            storage_backend.delete_prefix(r2_key(rec["token"], ""))
+        except Exception as e:
+            print(f"[voice_clone] delete R2 fallita per {rec['id']}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# bozza
+# ---------------------------------------------------------------------------
+def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
+                 original_path, original_ext, metrics, ui_lang, now=None):
+    """Il campione approvato dal gate diventa una voce in stato `sample_ok`.
+
+    Un solo draft per cid (§3.3): il precedente viene cancellato con i suoi
+    file. Lingua, locale e genere devono essere fra quelli offerti.
+    """
+    offerte = offered_languages()
+    if lang not in offerte or locale not in offerte[lang]:
+        raise ValueError(f"lingua/locale non offerti: {lang}/{locale}")
+    if gender not in ("m", "f"):
+        raise ValueError(f"genere non valido: {gender!r}")
+    if not (prompt_text or "").strip():
+        raise ValueError("prompt_text vuoto")
+    t = _now(now)
+    token = new_token()
+    with _lock:
+        while by_token(token) is not None:
+            token = new_token()
+        code = new_voice_code()
+        while by_voice_code(code) is not None:
+            code = new_voice_code()
+        prev = _find(lambda r: r.get("state") == "sample_ok"
+                     and any(d.get("cid") == cid for d in r.get("devices") or []))
+        if prev is not None:
+            remove_files(prev)
+            store().delete(prev["id"])
+        d = voice_dir(token)
+        os.makedirs(d, exist_ok=True)
+        shutil.move(sample_wav, os.path.join(d, "sample.wav"))
+        shutil.move(original_path, os.path.join(d, "original." + original_ext))
+        rec = {
+            "id": "vc_" + secrets.token_hex(6),
+            "token": token,
+            "voice_code": code,
+            "state": "sample_ok",
+            "state_changed_at": t,
+            "manage_token": new_token(),
+            "resume_token": {"value": new_token(), "expires_at": t + RESUME_TOKEN_DAYS * 86400},
+            "owner_email": None, "owner_email_hash": None,
+            "lang": lang, "locale": locale, "gender": gender,
+            "prompt_text": prompt_text,
+            "prompt_version": voice_clone_prompts.prompt_version(prompt_text),
+            "sample": dict(metrics or {}, original_ext=original_ext),
+            "demo": None, "payment": None,
+            "devices": [{"cid": cid, "added_at": t, "via": "creator"}],
+            "pending_confirm": None, "confirm_locks": {},
+            "consent_at": t, "ui_lang": ui_lang,
+            "created_at": t, "ready_at": None, "last_used_at": t,
+            "expires_at": t + sample_ttl_sec(), "expiry_warned_at": None,
+            "archived": False, "deleted_at": None, "delete_reason": None,
+        }
+        store().add(rec)
+    upload_to_r2(rec, "sample.wav")
+    upload_to_r2(rec, "original." + original_ext)
+    return rec
+
+
+def purge_stale_drafts(now=None):
+    """Bozze `sample_ok` oltre la TTL: file e record via. Ritorna quante."""
+    t = _now(now)
+    n = 0
+    with _lock:
+        for rec in _all():
+            if rec.get("state") == "sample_ok" and (rec.get("expires_at") or 0) <= t:
+                remove_files(rec)
+                store().delete(rec["id"])
+                n += 1
+    return n
+
+
+# ---------------------------------------------------------------------------
+# stati
+# ---------------------------------------------------------------------------
+def transition(clone_id, new_state, patch=None, now=None):
+    if new_state not in STATES:
+        raise BadTransition(f"stato sconosciuto: {new_state}")
+    with _lock:
+        rec = get(clone_id)
+        if rec is None:
+            raise VoiceGone(clone_id)
+        cur = rec.get("state")
+        if new_state not in TRANSITIONS.get(cur, set()):
+            raise BadTransition(f"{clone_id}: {cur} -> {new_state}")
+        t = _now(now)
+        upd = dict(patch or {})
+        upd["state"] = new_state
+        upd["state_changed_at"] = t
+        stamp = _STAMP_ON_ENTER.get(new_state)
+        if stamp:
+            upd.setdefault(stamp, t)
+        return store().update(clone_id, upd)
+
+
+# ---------------------------------------------------------------------------
+# vista pubblica
+# ---------------------------------------------------------------------------
+_SECRET_KEYS = ("token", "manage_token", "resume_token", "owner_email",
+                "pending_confirm", "confirm_locks")
+
+
+def public_view(rec):
+    pub = {k: v for k, v in rec.items() if k not in _SECRET_KEYS}
+    if rec.get("state") == "ready":
+        pub["voice_id"] = voice_id_of(rec)
+    return pub
