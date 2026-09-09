@@ -87,6 +87,9 @@ except Exception as _voxcpm_err:      # noqa: BLE001
     print(f"VoxCPM non disponibile: {_voxcpm_err}")
     voxcpm_catalog = None
     voxcpm_tts = None
+# La classifica d'uso delle voci VoxCPM: modulo foglia (json + voice_utils),
+# quindi importato senza rete di protezione.
+import voxcpm_ranking
 
 from audio_utils import (
     _extract_cover_from_epub, _generate_fallback_cover,
@@ -2651,9 +2654,9 @@ async def _fetch_voices():
             # Un catalogo illeggibile toglie un motore, non l'applicazione.
             print(f"Error merging VoxCPM voices: {e}")
 
-    # Sorting
-    for lang in languages.values():
-        lang["voices"].sort(key=lambda x: (x["gender"], x["name"]))
+    # Sorting: Female prima di Male, poi per nome; fra le voci VoxCPM
+    # decidono prima i punti d'uso (mese corrente, poi assoluti).
+    voxcpm_ranking.ordina(languages)
 
     # Priority sorting for languages
     priority = {"it": 0, "en": 1, "fr": 2, "de": 3, "es": 4, "pt": 5}
@@ -2666,8 +2669,12 @@ def get_voices():
     global _voices_cache
     with _voices_lock:
         if _voices_cache is not None:
+            # La cache si costruisce una volta (le voci Edge arrivano dalla
+            # rete), ma i punti VoxCPM cambiano a ogni generazione: il
+            # riordino e' sul posto e costa quanto un sort di poche liste.
+            voxcpm_ranking.ordina(_voices_cache)
             return _voices_cache
-            
+
     import asyncio
     try:
         # Create new loop for this thread (or use existing if in main)

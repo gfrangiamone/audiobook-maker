@@ -52,6 +52,7 @@ import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
 import voxcpm_tts
+import voxcpm_ranking
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -5520,6 +5521,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_speechify = (engine == "speechify")
     use_voxcpm = (engine == "voxcpm")
     use_pcm = use_gemini or use_speechify or use_voxcpm
+    if use_voxcpm:
+        # La voce e' usata davvero: pagamento o quota gia' passati, la
+        # sintesi sta per partire. Un punto alla voce, una volta per job
+        # (il recovery rientra da qui e non deve contare due volte).
+        try:
+            voxcpm_ranking.punto(voice, job_id)
+        except Exception as _e:      # noqa: BLE001
+            print(f"[{job_id}] classifica voci VoxCPM non aggiornata: {_e}")
     if use_speechify:
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
     # Sample rate reale del PCM: vedi `_pcm_sample_rate` per la scelta motore

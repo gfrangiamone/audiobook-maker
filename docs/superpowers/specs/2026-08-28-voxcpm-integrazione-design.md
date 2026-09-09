@@ -871,3 +871,49 @@ Ora il costo si misura come lo misura il libro mastro del worker
 - **Il prezzo all'utente non cambia.** Resta `ABM_VOXCPM_RATE_EUR_PER_MCHAR`
   sui caratteri (§8.2): il cliente non compra secondi di GPU e non deve
   pagare i nostri rimbalzi. Cambia solo il lato costo, cioe' il margine.
+
+## 18. L'ordine delle voci proposte segue l'uso — 2026-09-09
+
+Il catalogo VoxCPM è un dato importato (§12.1) e finora l'ordine di
+presentazione era quello del nome, dentro i due blocchi Female/Male. Con
+l'uso reale, però, alcune voci si rivelano più scelte di altre, e chi entra
+per la prima volta beneficia di vederle per prime. Da oggi **ogni voce
+VoxCPM che viene usata davvero guadagna un punto**, e la lista proposta per
+lingua/accento mette in testa, dentro ciascun blocco di genere, le voci con
+più punti.
+
+- **Cosa conta come uso.** Un punto per job, nel momento in cui la
+  generazione VoxCPM parte per davvero — `generation_engine.run_generation`
+  subito dopo aver stabilito il motore, quindi a pagamento o quota già
+  passati. Non conta l'anteprima, non conta la sola scelta nel pannello.
+  Il conteggio è **idempotente per job**: il recovery che rilancia lo
+  stesso job non assegna un secondo punto.
+- **Dimensione voce-mese.** I punti si salvano per voce **e** per mese
+  (`YYYY-MM`). L'ordine dentro il blocco di genere è: punti del mese
+  corrente, decrescenti; a parità, punti in assoluto (somma di tutti i
+  mesi), decrescenti; a parità ancora, nome. Così una voce nuova può
+  scavalcare chi ha accumulato prima di lei, e la storia decide solo i
+  pareggi. Female resta prima di Male.
+- **Solo VoxCPM.** Le voci Edge, Gemini e Speechify hanno sempre zero punti:
+  fra loro l'ordine per nome non cambia, e nessuna di loro viene scavalcata
+  o scavalca per via dei punti, perché il confronto è dentro lo stesso
+  blocco e a pari punti torna il nome.
+- **Dove sta.** `voxcpm_ranking.py`, modulo foglia; file
+  `ABM_DATA_DIR/_voxcpm_voice_points.json` con `{"mesi": {mese: {voce:
+  n}}, "jobs": {job_id: mese}}`. `mesi` non si pota mai, è il totale
+  assoluto; `jobs` serve all'idempotenza e tiene i due mesi più recenti.
+  Scrittura atomica sotto lock, best-effort: una classifica illeggibile o
+  non scrivibile non tocca la generazione. Nessun dato personale. Il file
+  va incluso nella migrazione del server insieme agli altri `_*.json` della
+  data dir.
+- **Dove agisce.** `audiobook_app._fetch_voices` ordina con
+  `voxcpm_ranking.ordina` al posto del sort per `(gender, name)`, e
+  `get_voices()` riordina sul posto anche a cache già costruita: la cache
+  nasce una volta (le voci Edge arrivano dalla rete) ma i punti cambiano a
+  ogni generazione. Il client non cambia: si fida già dell'ordine del
+  backend.
+- **Fuori perimetro, per ora.** Nessuna vista amministrativa dei punti
+  (`voxcpm_ranking.classifica()` li restituisce tutti, se servisse), nessun
+  decadimento oltre la finestra mensile, nessun peso per lingua o accento:
+  la voce è già legata al suo locale, quindi il confronto avviene di fatto
+  tra voci della stessa lingua.
