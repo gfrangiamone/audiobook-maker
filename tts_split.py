@@ -164,6 +164,31 @@ def _pick_chunk_max_bytes(voice_id):
         return 700
 
 
+def _pick_pre_split(voice_id):
+    """Normalizzazione da applicare al testo INTERO, appena prima di spezzarlo.
+
+    Serve alle regole di punteggiatura che guardano cosa viene DOPO il segno:
+    applicate ai chunk gia` tagliati vedono un confine artificiale al posto del
+    testo che segue, e decidono il verdetto sbagliato.
+
+    VoxCPM: voxcpm_tts.normalizza_puntini. I puntini di sospensione diventano
+    virgola se la frase continua, punto se ne comincia un'altra. Ma
+    split_text_into_chunks tratta i puntini come fine frase: sui puntini a
+    meta` frase il taglio cadeva li`, la coda restava in fondo al chunk e la
+    regola leggeva «fine testo» -> punto, mettendo una pausa lunga in mezzo
+    alla frase («per un affare umano. Il paragone e...»).
+
+    Gli altri motori leggono «...» come pausa lunga e non vanno toccati: None.
+    """
+    if _is_voxcpm_voice(voice_id):
+        try:
+            import voxcpm_tts
+            return voxcpm_tts.normalizza_puntini
+        except Exception:
+            return None
+    return None
+
+
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
 # alla frase successiva per garantire abbastanza contesto al motore TTS.
 _TTS_MIN_SENT_CHARS = 80
@@ -661,7 +686,7 @@ def _sanitize_tts_text(text: str):
 
 
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
-                 strip_round=True, strip_square=True):
+                 strip_round=True, strip_square=True, pre_split=None):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
@@ -670,6 +695,8 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                meno margine di sicurezza per Gemini).
     strip_round/strip_square: se False, il testo tra parentesi tonde/quadre viene
                letto dal TTS invece di essere rimosso (default: rimuove entrambe).
+    pre_split: callable opzionale applicato al testo INTERO del capitolo appena
+               prima della spezzatura (vedi _pick_pre_split). None = nessuna.
     """
     plan = []
     for ch in info.chapters:
@@ -692,6 +719,11 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
             # titolo non ha gia` una punteggiatura sua («Perche'?» -> «Perche'?.»).
             sep = "" if re.search(r'[.!?…:;]$', title) else "."
             full_text = f"{title}{sep}\n\n{clean_text}"
+        # Ultimo ritocco a testo ancora intero: dopo la spezzatura la fine del
+        # chunk e` un confine finto e le regole di punteggiatura che guardano
+        # il seguito sbaglierebbero verdetto (vedi _pick_pre_split).
+        if pre_split is not None:
+            full_text = pre_split(full_text)
         chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
         for ci, chunk_text in enumerate(chunks):
             plan.append({

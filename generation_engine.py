@@ -72,7 +72,7 @@ from audio_utils import (
 )
 from tts_split import (
     _plan_chunks, generate_chunk_mp3,
-    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes, _pick_pre_split,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
     generate_chunk_pcm_speechify,
     prepare_tts_text, _normalize_shouting,
@@ -5593,7 +5593,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _strip_round = not bool(job.get("read_round_parens", False))
         _strip_square = not bool(job.get("read_square_brackets", False))
         plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
-                            strip_round=_strip_round, strip_square=_strip_square)
+                            strip_round=_strip_round, strip_square=_strip_square,
+                            pre_split=_pick_pre_split(voice))
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         job["gemini_actual"] = {
             "input_tokens": 0,
