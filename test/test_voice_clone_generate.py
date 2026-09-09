@@ -177,10 +177,18 @@ def test_tag_e_etichette_della_voce_personale(tmp_path, monkeypatch):
     class Info:
         language = "it"
     tags = ge._generation_tags({"voice": vid}, Info(), vid, "+0%")
-    assert tags["abm_voice"] == "user-voice" and tags["abm_voice_id"] == vid
+    # Il token e' un segreto (voice_clone.py): nei metadati del file
+    # consegnato (ri-condivisibile dall'utente) puo' finire solo il prefisso
+    # 'voxcpm:mine', mai l'id completo col token.
+    assert tags["abm_voice"] == "user-voice" and tags["abm_voice_id"] == "voxcpm:mine"
     assert tags["abm_model"] == voxcpm_catalog.MODEL_LABEL and tags["abm_language"] == "it"
+    tok = vc.token_of(vid)
+    assert not any(tok in str(v) for v in tags.values())
+    # Voce di catalogo (non personale): l'id completo resta nei metadati,
+    # non e' un segreto.
     tags = ge._generation_tags({"voice": "voxcpm:v2:it-IT/Stefano"}, Info(), "voxcpm:v2:it-IT/Stefano", "+0%")
     assert tags["abm_voice"] == "Stefano" and tags["abm_language"] == "it-IT"
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Stefano"
 
 
 def test_righe_email_considerano_voxcpm_premium(tmp_path):

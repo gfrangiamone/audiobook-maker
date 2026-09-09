@@ -3945,7 +3945,13 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
 
         tags["abm_model"] = model_label
         tags["abm_voice"] = voice_name
-        tags["abm_voice_id"] = voice_id
+        # Voce campione: l'id completo porta il token, un segreto (vedi
+        # voice_clone.py) - nei metadati del file consegnato (ri-condivisibile
+        # dall'utente) va solo il prefisso, mai il token.
+        if voice_id.startswith("voxcpm:mine:"):
+            tags["abm_voice_id"] = "voxcpm:mine"
+        else:
+            tags["abm_voice_id"] = voice_id
         tags["abm_language"] = language
         if accent:
             tags["abm_accent"] = accent
