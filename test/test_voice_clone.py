@@ -1,6 +1,5 @@
 """Store, identita', bozza e transizioni delle voci campionate (spec §6, §10)."""
 import os
-import time
 
 import pytest
 
@@ -142,3 +141,15 @@ def test_remove_files_chiama_r2_se_attivo(tmp_path, monkeypatch):
     vc.remove_files(rec)
     assert cancellati == ["voices/" + rec["token"] + "/"]
     assert not os.path.exists(vc.voice_dir(rec["token"]))
+
+
+def test_bozza_precedente_sopravvive_se_lo_spostamento_fallisce(tmp_path, monkeypatch):
+    prima = bozza(tmp_path)
+    monkeypatch.setattr(vc.shutil, "move",
+                         lambda *a, **kw: (_ for _ in ()).throw(OSError("disco pieno")))
+    with pytest.raises(OSError):
+        bozza(tmp_path)
+    ancora = vc.draft_for_cid("cid-uno")
+    assert ancora["id"] == prima["id"]
+    assert os.path.exists(os.path.join(vc.voice_dir(prima["token"]), "sample.wav"))
+    assert os.listdir(vc.voices_dir()) == [prima["token"]]

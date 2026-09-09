@@ -243,35 +243,43 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
             code = new_voice_code()
         prev = _find(lambda r: r.get("state") == "sample_ok"
                      and any(d.get("cid") == cid for d in r.get("devices") or []))
+        d = voice_dir(token)
+        # La bozza precedente resta intatta finche' la nuova non e' interamente
+        # al sicuro (file spostati + record salvato): uno spostamento fallito
+        # (disco pieno, permessi, file temporaneo gia' sparito) non deve mai
+        # cancellare l'unica copia buona che esisteva prima.
+        try:
+            os.makedirs(d, exist_ok=True)
+            shutil.move(sample_wav, os.path.join(d, "sample.wav"))
+            shutil.move(original_path, os.path.join(d, "original." + original_ext))
+            rec = {
+                "id": "vc_" + secrets.token_hex(6),
+                "token": token,
+                "voice_code": code,
+                "state": "sample_ok",
+                "state_changed_at": t,
+                "manage_token": new_token(),
+                "resume_token": {"value": new_token(), "expires_at": t + RESUME_TOKEN_DAYS * 86400},
+                "owner_email": None, "owner_email_hash": None,
+                "lang": lang, "locale": locale, "gender": gender,
+                "prompt_text": prompt_text,
+                "prompt_version": voice_clone_prompts.prompt_version(prompt_text),
+                "sample": dict(metrics or {}, original_ext=original_ext),
+                "demo": None, "payment": None,
+                "devices": [{"cid": cid, "added_at": t, "via": "creator"}],
+                "pending_confirm": None, "confirm_locks": {},
+                "consent_at": t, "ui_lang": ui_lang,
+                "created_at": t, "ready_at": None, "last_used_at": t,
+                "expires_at": t + sample_ttl_sec(), "expiry_warned_at": None,
+                "archived": False, "deleted_at": None, "delete_reason": None,
+            }
+            store().add(rec)
+        except Exception:
+            shutil.rmtree(d, ignore_errors=True)
+            raise
         if prev is not None:
             remove_files(prev)
             store().delete(prev["id"])
-        d = voice_dir(token)
-        os.makedirs(d, exist_ok=True)
-        shutil.move(sample_wav, os.path.join(d, "sample.wav"))
-        shutil.move(original_path, os.path.join(d, "original." + original_ext))
-        rec = {
-            "id": "vc_" + secrets.token_hex(6),
-            "token": token,
-            "voice_code": code,
-            "state": "sample_ok",
-            "state_changed_at": t,
-            "manage_token": new_token(),
-            "resume_token": {"value": new_token(), "expires_at": t + RESUME_TOKEN_DAYS * 86400},
-            "owner_email": None, "owner_email_hash": None,
-            "lang": lang, "locale": locale, "gender": gender,
-            "prompt_text": prompt_text,
-            "prompt_version": voice_clone_prompts.prompt_version(prompt_text),
-            "sample": dict(metrics or {}, original_ext=original_ext),
-            "demo": None, "payment": None,
-            "devices": [{"cid": cid, "added_at": t, "via": "creator"}],
-            "pending_confirm": None, "confirm_locks": {},
-            "consent_at": t, "ui_lang": ui_lang,
-            "created_at": t, "ready_at": None, "last_used_at": t,
-            "expires_at": t + sample_ttl_sec(), "expiry_warned_at": None,
-            "archived": False, "deleted_at": None, "delete_reason": None,
-        }
-        store().add(rec)
     upload_to_r2(rec, "sample.wav")
     upload_to_r2(rec, "original." + original_ext)
     return rec
