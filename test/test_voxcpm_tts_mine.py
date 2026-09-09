@@ -54,8 +54,10 @@ def test_clone_block_mine_e_in_cache(tmp_path):
 
 
 def test_clone_block_mine_sconosciuta_solleva_value_error():
-    with pytest.raises(ValueError):
-        voxcpm_tts.clone_block("voxcpm:mine:" + "a" * 32)
+    token = "a" * 32
+    with pytest.raises(ValueError) as ei:
+        voxcpm_tts.clone_block("voxcpm:mine:" + token)
+    assert token not in str(ei.value)      # mai il token nel messaggio d'errore
 
 
 def test_clone_block_catalogo_invariato():
@@ -67,5 +69,7 @@ def test_lingua_voce(tmp_path):
     rec = _voce(tmp_path)
     assert voxcpm_tts._lingua_voce(vc.voice_id_of(rec)) == "it"
     assert voxcpm_tts._lingua_voce("voxcpm:v2:it-IT/Stefano") == "it"
-    with pytest.raises(ValueError):
-        voxcpm_tts._lingua_voce("voxcpm:mine:" + "b" * 32)
+    token = "b" * 32
+    with pytest.raises(ValueError) as ei:
+        voxcpm_tts._lingua_voce("voxcpm:mine:" + token)
+    assert token not in str(ei.value)      # mai il token nel messaggio d'errore

@@ -854,7 +854,7 @@ def _lingua_voce(voice_id):
         import voice_clone
         lang = voice_clone.language_of(voice_id)
         if not lang:
-            raise ValueError(f"voce campione sconosciuta: {voice_id!r}")
+            raise ValueError("voce campione sconosciuta")
         return lang.lower()
     return voxcpm_catalog.parse_voice_id(voice_id)["locale"].split("-")[0].lower()
 

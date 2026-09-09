@@ -343,7 +343,7 @@ def _record_for_voice_id(voice_id):
     tok = token_of(voice_id)
     rec = by_token(tok) if tok else None
     if rec is None:
-        raise VoiceGone(f"voce campione sconosciuta: {voice_id!r}")
+        raise VoiceGone("voce campione sconosciuta")
     return rec
 
 

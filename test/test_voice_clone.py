@@ -177,8 +177,10 @@ def test_resolve_vale_anche_prima_di_ready_ma_non_dopo_la_fine(tmp_path):
     vc.transition(rec["id"], "paid"); vc.transition(rec["id"], "refunded")
     with pytest.raises(vc.VoiceGone):
         vc.resolve(vid)
-    with pytest.raises(vc.VoiceGone):
-        vc.resolve("voxcpm:mine:" + "0" * 32)
+    token_ignoto = "0" * 32
+    with pytest.raises(vc.VoiceGone) as ei:
+        vc.resolve("voxcpm:mine:" + token_ignoto)
+    assert token_ignoto not in str(ei.value)       # mai il token nel messaggio
     with pytest.raises(vc.VoiceGone):
         vc.resolve("voxcpm:v2:it-IT/Valentina")
 
