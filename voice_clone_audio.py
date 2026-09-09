@@ -436,3 +436,180 @@ def prepare_sample(src_path, dst_wav, *, gate=None):
     write_wav(dst_wav, y, sr)
     mt.lufs = round(loudness_lufs(dst_wav), 2)     # misurata sul file consegnato
     return mt
+
+
+# ---------------------------------------------------------------------------
+# Verifica ASR: faster-whisper su CPU, un lock, scarico dopo inattivita'
+# ---------------------------------------------------------------------------
+import threading
+import time
+import unicodedata
+
+ASR_IDLE_UNLOAD_SEC = 600
+_data_dir = None
+_asr_lock = threading.Lock()       # una trascrizione alla volta (§5.4)
+_asr_state_lock = threading.Lock()
+_asr_model = None
+_asr_last_used = 0.0
+_asr_timer = None
+_zh_conv = None
+
+
+class AsrUnavailable(Exception):
+    """Verifica non eseguibile ora (errore, timeout, CPU occupata): il
+    campione non passa, risposta `vc_gate_asr_unavailable` (§5.4)."""
+
+
+def init(data_dir):
+    """Cartella dati: i modelli whisper vanno in `<data_dir>/whisper`."""
+    global _data_dir
+    _data_dir = str(data_dir)
+
+
+def asr_enabled():
+    return (os.environ.get("ABM_VOICE_CLONE_ASR") or "1").strip() != "0"
+
+
+def max_cer():
+    return _env_float("ABM_VOICE_CLONE_MAX_CER", 0.25)
+
+
+def _asr_model_name():
+    return (os.environ.get("ABM_VOICE_CLONE_ASR_MODEL") or "base").strip() or "base"
+
+
+def _asr_timeout():
+    return _env_float("ABM_VOICE_CLONE_ASR_TIMEOUT_SEC", 120.0)
+
+
+def _hans(s):
+    """Cinese tradizionale -> semplificato, come nel worker: si confrontano
+    le letture, non le grafie."""
+    global _zh_conv
+    if not re.search(r"[㐀-鿿]", s):
+        return s
+    if _zh_conv is None:
+        try:
+            from zhconv import convert as _zh_conv
+        except ImportError:
+            return s
+    return _zh_conv(s, "zh-cn")
+
+
+def flatten(s):
+    """Solo lettere e cifre, minuscole, niente spazi (`_flatten` del worker)."""
+    s = unicodedata.normalize("NFKC", _hans(s or "")).lower()
+    return "".join(c for c in s if c.isalnum())
+
+
+def cer(ref, hyp):
+    """Distanza di edit sui caratteri, normalizzata sulla lunghezza attesa."""
+    a, b = flatten(ref), flatten(hyp)
+    if not a:
+        return 1.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return round(prev[-1] / len(a), 4)
+
+
+def _new_model(name, download_root):
+    """Fabbrica del modello: i test la sostituiscono."""
+    from faster_whisper import WhisperModel
+    return WhisperModel(name, device="cpu", compute_type="int8", download_root=download_root)
+
+
+def _whisper_dir():
+    base = _data_dir or os.environ.get("ABM_DATA_DIR") or tempfile.gettempdir()
+    path = os.path.join(base, "whisper")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def unload_asr():
+    global _asr_model, _asr_timer
+    with _asr_state_lock:
+        _asr_model = None
+        if _asr_timer is not None:
+            _asr_timer.cancel()
+            _asr_timer = None
+
+
+def _unload_if_idle():
+    global _asr_model, _asr_timer
+    with _asr_state_lock:
+        _asr_timer = None
+        if _asr_model is not None and time.monotonic() - _asr_last_used >= ASR_IDLE_UNLOAD_SEC:
+            _asr_model = None
+            print("[voice_clone_audio] modello whisper scaricato per inattivita'")
+
+
+def _arm_unload_timer():
+    global _asr_timer
+    with _asr_state_lock:
+        if _asr_timer is not None:
+            _asr_timer.cancel()
+        _asr_timer = threading.Timer(ASR_IDLE_UNLOAD_SEC + 0.05, _unload_if_idle)
+        _asr_timer.daemon = True
+        _asr_timer.start()
+
+
+def _get_model():
+    global _asr_model
+    with _asr_state_lock:
+        if _asr_model is not None:
+            return _asr_model
+    name = _asr_model_name()
+    t0 = time.monotonic()
+    model = _new_model(name, _whisper_dir())
+    print(f"[voice_clone_audio] modello whisper '{name}' caricato in {time.monotonic() - t0:.1f}s")
+    with _asr_state_lock:
+        _asr_model = model
+    return model
+
+
+def _transcribe(wav_path, language):
+    model = _get_model()
+    segs, _ = model.transcribe(wav_path, language=language, beam_size=1, word_timestamps=True)
+    return " ".join((s.text or "").strip() for s in segs).strip()
+
+
+def check_transcript(wav_path, language, expected_text, *, timeout=None):
+    """CER fra la frase guidata e quel che whisper sente nel campione.
+
+    Gira in un thread con timeout; il lock `_asr_lock` serializza le
+    trascrizioni. Un lock non ottenuto entro `timeout`, un errore del
+    modello o un thread che non torna in tempo valgono `AsrUnavailable`:
+    niente stato intermedio, l'utente riprova (§5.4).
+    """
+    global _asr_last_used
+    timeout = _asr_timeout() if timeout is None else float(timeout)
+    if not _asr_lock.acquire(timeout=timeout):
+        raise AsrUnavailable("verifica gia' in corso")
+    try:
+        esito = {}
+
+        def _run():
+            try:
+                esito["heard"] = _transcribe(wav_path, language)
+            except BaseException as e:      # noqa: BLE001 - riportato al chiamante
+                esito["error"] = e
+        t0 = time.monotonic()
+        th = threading.Thread(target=_run, name="vc-asr", daemon=True)
+        th.start()
+        th.join(timeout)
+        if th.is_alive():
+            raise AsrUnavailable(f"timeout dopo {timeout:.0f}s")
+        if "error" in esito:
+            raise AsrUnavailable(f"{type(esito['error']).__name__}: {esito['error']}")
+        seconds = round(time.monotonic() - t0, 2)
+    finally:
+        _asr_lock.release()
+    with _asr_state_lock:
+        _asr_last_used = time.monotonic()
+    _arm_unload_timer()
+    heard = esito.get("heard", "")
+    return {"cer": cer(expected_text, heard), "heard": heard, "seconds": seconds}
