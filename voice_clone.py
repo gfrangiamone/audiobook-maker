@@ -29,6 +29,14 @@ R2_PREFIX = "voices/"
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
 RESUME_TOKEN_DAYS = 30
 
+SWEEP_INTERVAL_SEC = 3600
+EXPIRY_WARN_SEC = 30 * 86400
+DEMO_FAILED_RELAUNCH_SEC = 6 * 3600
+DEMO_FAILED_REFUND_SEC = 7 * 86400
+APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)
+APPROVAL_REFUND_SEC = 30 * 86400
+RECORD_PURGE_SEC = 90 * 86400
+
 STATES = ("sample_ok", "paid", "demos_generating", "demos_ready", "ready",
           "demo_failed", "refunded", "expired", "deleted")
 TRANSITIONS = {
@@ -529,7 +537,8 @@ def touch_used(clone_id, now=None):
         if rec is None or rec.get("state") != "ready":
             return None
         t = _now(now)
-        return store().update(clone_id, {"last_used_at": t, "expires_at": t + retention_sec()})
+        return store().update(clone_id, {"last_used_at": t, "expires_at": t + retention_sec(),
+                                         "expiry_warned_at": None})
 
 
 # ---------------------------------------------------------------------------
@@ -693,3 +702,129 @@ def revoke_device(manage_token, cid):
 def devices_view(rec):
     return [{"cid_tail": str(d.get("cid") or "")[-4:], "added_at": d.get("added_at"),
              "via": d.get("via")} for d in rec.get("devices") or []]
+
+
+# ---------------------------------------------------------------------------
+# ciclo di vita (§6.5, §10)
+# ---------------------------------------------------------------------------
+_hooks = {"notify": None, "relaunch": None, "refund": None}
+
+
+def set_hooks(notify=None, relaunch=None, refund=None):
+    _hooks.update({"notify": notify, "relaunch": relaunch, "refund": refund})
+
+
+def _hook(name, *args, **kw):
+    fn = _hooks.get(name)
+    if fn is None:
+        return
+    try:
+        fn(*args, **kw)
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] hook {name} fallito: {e}", flush=True)
+
+
+def _num(v):
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        raise ValueError(f"timestamp non numerico: {v!r}")
+
+
+def _sweep_one(rec, t, out):
+    state = rec.get("state")
+    cid = rec["id"]
+    if state == "ready":
+        exp = _num(rec.get("expires_at"))
+        if exp <= t:
+            with _lock:
+                cur = get(cid)
+                if cur and cur.get("state") == "ready":
+                    cur = transition(cid, "expired", now=t)
+            remove_files(cur)
+            out["expired"] += 1
+            _hook("notify", "expired", cur)
+        elif exp - t <= EXPIRY_WARN_SEC and not rec.get("expiry_warned_at"):
+            store().update(cid, {"expiry_warned_at": t})
+            out["warned"] += 1
+            _hook("notify", "expiring", rec, days=max(0, int((exp - t) // 86400)))
+        return
+    if state in _TERMINAL:
+        stamp = _num(rec.get(_STAMP_ON_ENTER.get(state) or "") or rec.get("created_at"))
+        if t - stamp >= RECORD_PURGE_SEC:
+            store().delete(cid)
+            out["purged"] += 1
+        return
+    demo = rec.get("demo") or {}
+    if state == "demo_failed":
+        first = _num(demo.get("first_failed_at") or demo.get("failed_at") or rec.get("paid_at"))
+        if t - first >= DEMO_FAILED_REFUND_SEC:
+            out["refunded"] += 1
+            _hook("refund", cid, "demo_failed_timeout")
+        elif t - _num(demo.get("failed_at")) >= DEMO_FAILED_RELAUNCH_SEC:
+            out["relaunched"] += 1
+            _hook("relaunch", cid)
+        return
+    if state == "demos_ready":
+        since = _num(rec.get("demos_ready_at") or rec.get("paid_at"))
+        if t - since >= APPROVAL_REFUND_SEC:
+            out["refunded"] += 1
+            _hook("refund", cid, "no_approval")
+            return
+        sent = list(demo.get("reminders") or [])
+        for stage, delay in enumerate(APPROVAL_REMINDER_SEC, start=1):
+            if stage not in sent and t - since >= delay:
+                sent.append(stage)
+                store().update(cid, {"demo": dict(demo, reminders=sent)})
+                out["reminded"] += 1
+                _hook("notify", "approval_reminder", rec, stage=stage)
+                break
+
+
+def sweep(now=None):
+    """Un giro del ciclo di vita. Ogni record e' isolato: un errore su uno
+    non ferma gli altri (incidente cleanup loop 2026-06-15)."""
+    t = _now(now)
+    out = {"drafts_purged": 0, "warned": 0, "expired": 0, "purged": 0,
+           "relaunched": 0, "refunded": 0, "reminded": 0}
+    try:
+        purged = purge_stale_drafts(now=t)
+        out["drafts_purged"] = purged if isinstance(purged, int) else len(purged or [])
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] purge bozze fallita: {e}", flush=True)
+    for rec in list(_all()):
+        try:
+            _sweep_one(rec, t, out)
+        except Exception as e:      # noqa: BLE001
+            print(f"[voice_clone] sweep {rec.get('id')}: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def digest_data(window_hours=24, now=None):
+    """Sezione «Voci campionate» del digest admin (§12): solo contatori."""
+    t = _now(now)
+    since = t - int(window_hours) * 3600
+    counts = {}
+    active = 0
+
+    def bump(label):
+        counts[label] = counts.get(label, 0) + 1
+
+    for rec in _all():
+        st = rec.get("state")
+        if st == "ready":
+            active += 1
+        if st == "demo_failed":
+            bump("demo_failed")
+        if (rec.get("paid_at") or 0) >= since:
+            bump("paid")
+        if (rec.get("ready_at") or 0) >= since:
+            bump("ready")
+        if st == "refunded" and (rec.get("refunded_at") or 0) >= since:
+            bump("refunded:" + ((rec.get("refund") or {}).get("reason") or "unknown"))
+        if st == "expired" and (rec.get("expired_at") or 0) >= since:
+            bump("expired")
+        if st == "deleted" and (rec.get("deleted_at") or 0) >= since:
+            bump("deleted")
+    rows = [{"label": k, "count": v} for k, v in sorted(counts.items())]
+    return {"window_hours": int(window_hours), "rows": rows, "active_ready": active}
