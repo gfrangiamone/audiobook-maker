@@ -1711,7 +1711,9 @@ def _friendly_voice_name(voice):
         # v2 ne' mine) -> ultimo segmento ':' come ripiego, meglio di niente.
         parti = v.split(":")
         if len(parti) >= 2 and parti[1] == "mine":
-            return "La tua voce"
+            # Etichetta monolingua in inglese (niente traduzioni sparse):
+            # le email localizzate la traducono a valle se serve (Task 8).
+            return "Your voice"
         return parti[-1].strip()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
@@ -1733,7 +1735,7 @@ def _generation_details_lines(job, lang):
     resta nei chiamanti."""
     d = _email_details_i18n.get(lang, _email_details_i18n["en"])
     voice = (job.get("voice") or "").strip()
-    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice)
+    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice)
     lines = []
 
     # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
@@ -3446,6 +3448,12 @@ def _engine_for_voice(voice):
     return "edge"
 
 
+def _ranking_point_allowed(voice):
+    """Le voci personali (voxcpm:mine:) non entrano nella classifica d'uso:
+    e' una voce campione di un solo utente, non una voce del catalogo."""
+    return _is_voxcpm_voice(voice) and not (voice or "").startswith("voxcpm:mine:")
+
+
 def _pcm_sample_rate(job, use_speechify, use_voxcpm):
     """Sample rate del flusso PCM in corso: unica fonte di verita', usata sia
     per il calcolo delle durate sia per generare il silenzio fra i capitoli
@@ -3910,6 +3918,20 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                 # della voce scelta (il dropdown accento filtra le voci).
                 language = _loc or ""
                 accent = _loc or ""
+            except Exception:
+                pass
+        elif engine == "voxcpm":
+            try:
+                import voxcpm_catalog as _vcat
+                model_label = getattr(_vcat, "MODEL_LABEL", "") or "VoxCPM2"
+                if voice_id.startswith("voxcpm:mine:"):
+                    import voice_clone as _vcl
+                    voice_name = "user-voice"
+                    language = _vcl.language_of(voice_id) or ""
+                else:
+                    _rec = _vcat.parse_voice_id(voice_id)
+                    voice_name = _rec.get("name") or voice_id
+                    language = _rec.get("locale") or ""
             except Exception:
                 pass
         else:
@@ -5521,10 +5543,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     use_speechify = (engine == "speechify")
     use_voxcpm = (engine == "voxcpm")
     use_pcm = use_gemini or use_speechify or use_voxcpm
-    if use_voxcpm:
+    if use_voxcpm and _ranking_point_allowed(voice):
         # La voce e' usata davvero: pagamento o quota gia' passati, la
         # sintesi sta per partire. Un punto alla voce, una volta per job
-        # (il recovery rientra da qui e non deve contare due volte).
+        # (il recovery rientra da qui e non deve contare due volte). Le voci
+        # personali (voxcpm:mine:) restano fuori dalla classifica.
         try:
             voxcpm_ranking.punto(voice, job_id)
         except Exception as _e:      # noqa: BLE001

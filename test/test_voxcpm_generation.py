@@ -43,7 +43,9 @@ def test_nome_amichevole_senza_locale_ne_prefisso():
 def test_nome_amichevole_voce_clonata_senza_slash():
     # 'voxcpm:mine:<token>' non ha '/': il token non e' un nome da mostrare
     # nell'email di consegna, va sostituito con un'etichetta amichevole.
-    assert generation_engine._friendly_voice_name("voxcpm:mine:ab12cd34") == "La tua voce"
+    # Monolingua inglese (Task 7, spec §9): niente stringhe in italiano nei
+    # fallback non localizzati.
+    assert generation_engine._friendly_voice_name("voxcpm:mine:ab12cd34") == "Your voice"
     # Schema voxcpm ignoto (ne' v2 ne' mine): ultimo segmento ':' come ripiego,
     # ma mai il token/id grezzo per intero senza alcun tentativo di pulizia.
     assert generation_engine._friendly_voice_name("voxcpm:altro") == "altro"

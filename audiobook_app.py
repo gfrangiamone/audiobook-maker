@@ -1399,7 +1399,8 @@ def _recovery_generate_gate(job_id, rec, info):
     out = {"info": info, "estimate_key": None, "estimate": None, "quota_charge": None}
     is_gem = _is_gemini_voice(voice)
     is_spx = _is_speechify_voice(voice)
-    if not (is_gem or is_spx):
+    is_vox = _is_voxcpm_voice(voice)
+    if not (is_gem or is_spx or is_vox):
         return out
     total_chars = sum(getattr(ch, "char_count", 0) or 0 for ch in chs)
     max_chars = _effective_max_text_chars(voice, None)
@@ -1414,9 +1415,23 @@ def _recovery_generate_gate(job_id, rec, info):
         est = gemini_tts.estimate_book_cost(chs, voice, language=lang,
                                             rate_pct=rec.get("rate", "+0%"))
         key = "gemini_estimate"
-    else:
+    elif is_spx:
         est = speechify_tts.estimate_book_cost(chs, language="en")
         key = "speechify_estimate"
+    else:
+        if voxcpm_tts is None:
+            raise _RecoveryRejected("modulo voxcpm_tts non disponibile")
+        if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+            # Stesso ruling di /api/generate: il locale confrontato e' quello
+            # DELLA VOCE (rec['locale']), non quello del descrittore, che
+            # spesso non lo porta affatto. La lingua resta il criterio vero.
+            _vc_rec = voice_clone.by_token(voice_clone.token_of(voice))
+            _vc_locale = (_vc_rec.get("locale") if _vc_rec else None) or rec.get("locale") or lang
+            _err = voice_clone.check_use(voice, (rec.get("client_id") or "").strip(), lang, _vc_locale)
+            if _err:
+                raise _RecoveryRejected(f"voce campione non usabile: {_err}")
+        est = voxcpm_tts.estimate_book_cost(chs, language=lang)
+        key = "voxcpm_estimate"
     if not _assert_priced_on_real_text(job_id, chs, est.get("chars_total", 0)):
         raise _RecoveryRejected("stima ex-ante su testo vuoto")
     out["estimate_key"] = key
@@ -11469,6 +11484,21 @@ def api_generate():
     if _is_voxcpm_voice(voice):
         if voxcpm_tts is None or not voxcpm_tts.is_available():
             return jsonify({"error": "voxcpm_not_configured"}), 400
+    # Voce campione (spec §9): cid autorizzato, voce ancora `ready`, lingua
+    # del libro compatibile. Il locale confrontato e' quello DELLA VOCE (non
+    # quello che manda il frontend, che spesso passa solo `lang`): la spec
+    # chiede il mismatch sulla lingua del libro, il locale resta informativo.
+    if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+        _vc_lang = (data.get("lang") or "").strip().split("-")[0].lower()
+        _vc_rec = voice_clone.by_token(voice_clone.token_of(voice))
+        _vc_locale = (_vc_rec.get("locale") if _vc_rec else None) \
+            or (data.get("locale") or data.get("lang") or "").strip()
+        _vc_err_code = voice_clone.check_use(voice, _get_client_id(), _vc_lang, _vc_locale)
+        if _vc_err_code:
+            _vc_status = {"voice_gone": 410, "voice_not_authorized": 403,
+                          "voice_lang_mismatch": 400}.get(_vc_err_code, 400)
+            return jsonify({"error": f"Voice sample not usable: {_vc_err_code}",
+                            "error_code": _vc_err_code}), _vc_status
 
     job, err, sc = _check_job_owner(job_id)
     if err is not None:
@@ -12297,6 +12327,16 @@ def api_generate():
         except Exception as _ftq_err:
             print(f"[{job_id}] free_tts_quota consume failed (non-fatal): {_ftq_err}",
                   flush=True)
+
+    # Voce campione: da qui il job e' certo di partire (vedi commento sopra),
+    # quindi e' il punto giusto per rinnovare la retention all'uso (D15) e
+    # marcare l'etichetta amichevole sul job (email/pannello di completamento).
+    if voice.startswith(voice_clone.VOICE_ID_PREFIX):
+        _vc_rec2 = voice_clone.by_token(voice_clone.token_of(voice))
+        if _vc_rec2 is not None:
+            voice_clone.touch_used(_vc_rec2["id"])
+            job["voice_label"] = "user-voice"
+            _vc_log(_vc_rec2, "VOICE_CLONE_USED", job_id)
 
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
     # questa generazione. Quello scritto da register_email puo' non esistere
