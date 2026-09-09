@@ -339,7 +339,10 @@ def probe(path):
 def _decoded_seconds(path):
     cmd = [_tool("ffmpeg"), "-v", "error", "-i", path, "-f", "null", "-",
            "-stats", "-loglevel", "info"]
-    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    except subprocess.SubprocessError:
+        return 0.0     # probe() rifiuta dur <= 0 con vc_gate_short: coerente con il suo modo di riportare
     m = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
     if not m:
         return 0.0
@@ -352,9 +355,21 @@ def convert(src, dst_wav):
     cmd = [_tool("ffmpeg"), "-y", "-v", "error", "-i", src, "-vn", "-ac", "1",
            "-ar", str(SAMPLE_RATE), "-af", "highpass=f=60", "-c:a", "pcm_s16le",
            "-f", "wav", dst_wav]
-    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    except subprocess.SubprocessError as e:
+        _rimuovi_parziale(dst_wav)
+        raise SampleRejected("vc_gate_format", f"ffmpeg: {e}")
     if r.returncode != 0 or not os.path.exists(dst_wav) or os.path.getsize(dst_wav) < 100:
+        _rimuovi_parziale(dst_wav)
         raise SampleRejected("vc_gate_format", (r.stderr or "")[-300:])
+
+
+def _rimuovi_parziale(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 _EBU_I = re.compile(r"\bI:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
@@ -364,7 +379,10 @@ def loudness_lufs(wav_path):
     """Loudness integrata BS.1770 via `ebur128` di ffmpeg. nan se assente."""
     cmd = [_tool("ffmpeg"), "-v", "info", "-nostats", "-i", wav_path,
            "-af", "ebur128=framelog=quiet", "-f", "null", "-"]
-    r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=_FFMPEG_TIMEOUT, **_TEXT, **_SUBPROCESS_FLAGS)
+    except subprocess.SubprocessError as e:
+        raise SampleRejected("vc_gate_format", f"ffmpeg: {e}")
     found = _EBU_I.findall(r.stderr or "")
     return float(found[-1]) if found else float("nan")
 

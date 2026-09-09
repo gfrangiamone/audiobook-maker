@@ -214,3 +214,19 @@ def test_prepare_sample_mp3_64k_cade_per_banda(tmp_path):
     with pytest.raises(vca.SampleRejected) as ei:
         vca.prepare_sample(mp3, str(tmp_path / "s.wav"))
     assert "vc_gate_band" in ei.value.metrics.reasons
+
+
+def test_convert_rifiuta_pulito_su_timeout_ffmpeg(tmp_path, monkeypatch):
+    """Timeout o spawn-fail di ffmpeg non deve mai propagarsi grezzo: deve
+    diventare un SampleRejected pulito, senza wav parziale. Nessun ffmpeg
+    reale coinvolto: subprocess.run e' monkeypatchato."""
+    def _timeout(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=1)
+
+    monkeypatch.setattr(vca.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(vca.subprocess, "run", _timeout)
+    dst = str(tmp_path / "out.wav")
+    with pytest.raises(vca.SampleRejected) as ei:
+        vca.convert(str(tmp_path / "in.webm"), dst)
+    assert ei.value.reason == "vc_gate_format"
+    assert not os.path.exists(dst)
