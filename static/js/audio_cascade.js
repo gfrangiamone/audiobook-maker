@@ -107,6 +107,34 @@ function vociPremium(catalog, lang, model) {
   return out;
 }
 
+/* Voci personali del dispositivo (voci campionate, spec §3.8): solo quelle
+   pronte, con lingua e accento coincidenti, nella STESSA forma delle voci di
+   catalogo — id, genere, clip demo, campione — cosi' la combo e i player di
+   app.js non devono distinguere una voce campionata da una di catalogo.
+   `locale` vuoto = qualunque accento della lingua. */
+function vociMie(catalog, lang, locale) {
+  var mine = (catalog && Array.isArray(catalog._mine)) ? catalog._mine : [];
+  var out = [];
+  for (var i = 0; i < mine.length; i++) {
+    var m = mine[i];
+    if (!m || m.state !== 'ready' || !m.voice_id) continue;
+    if (lang && m.lang !== lang) continue;
+    if (locale && m.locale !== locale) continue;
+    var d = m.demo_urls || {};
+    var demos = [];
+    if (d.common) demos.push({common: true, url: d.common});
+    if (d.extra) demos.push({common: false, url: d.extra});
+    out.push({
+      id: m.voice_id, clone_id: m.id, mine: true, owner: !!m.owner,
+      lang: m.lang, locale: m.locale,
+      gender: m.gender === 'f' ? 'Female' : 'Male',
+      demos: demos,
+      sample_url: '/api/voice_clone/' + m.id + '/sample.wav'
+    });
+  }
+  return out;
+}
+
 function _preserva(valore, disponibili) {
   return (valore && disponibili.indexOf(valore) !== -1) ? valore : null;
 }
@@ -225,8 +253,10 @@ function resolveAudioSelection(input) {
    bundler), `module.exports` per node --test. */
 if (typeof window !== 'undefined') {
   window.resolveAudioSelection = resolveAudioSelection;
+  window.modelliPer = modelliPer;
+  window.vociMie = vociMie;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {resolveAudioSelection: resolveAudioSelection,
-                    modelliPer: modelliPer};
+                    modelliPer: modelliPer, vociMie: vociMie};
 }

@@ -32,13 +32,14 @@ import pytest
 
 RADICE = pathlib.Path(__file__).resolve().parents[1]
 
-# Numero MINIMO di test attesi in test/js/audio_cascade.test.js. E' un
-# pavimento, non un valore esatto: task futuri aggiungeranno altri test alla
-# cascata e non devono rompere questo wrapper solo perche' il conteggio e'
-# salito. Cio' che deve restare impossibile e' che il numero SCENDA sotto la
-# protezione attuale (test spariti silenziosamente: rinominati, cancellati,
-# glob che non fa piu' match) — di quello il wrapper deve accorgersi.
-TEST_ATTESI = 22
+# Numero MINIMO di test attesi in test/js/**/*.test.js — copre sia
+# audio_cascade.test.js sia voice_clone.test.js. E' un pavimento, non un
+# valore esatto: task futuri aggiungeranno altri test e non devono rompere
+# questo wrapper solo perche' il conteggio e' salito. Cio' che deve restare
+# impossibile e' che il numero SCENDA sotto la protezione attuale (test
+# spariti silenziosamente: rinominati, cancellati, glob che non fa piu'
+# match) — di quello il wrapper deve accorgersi.
+TEST_ATTESI = 26
 
 
 @pytest.mark.skipif(shutil.which("node") is None,

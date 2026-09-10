@@ -1426,6 +1426,9 @@ function _voxcpmSelectedVoice(){
   const id=sel?sel.value:'';
   if(!_isVoxcpmVoiceId(id))return null;
   for(const v of _voxcpmVoicesForLang())if(v.id===id)return v;
+  // Voci personali (campionate): stessa forma delle voci di catalogo.
+  const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',''):[];
+  for(const v of mie)if(v.id===id)return v;
   return null;
 }
 
@@ -1594,8 +1597,26 @@ function updVoicesPremium(){
   if(vmEl&&vmEl.value==='voxcpm'){
     const loc=_voxcpmAccentSel;
     const lista=_voxcpmVoicesForLang().filter(v=>!loc||v.locale===loc);
-    const prevVoice=_voxcpmVoiceSel||sel.value;
+    let prevVoice=_voxcpmVoiceSel||sel.value;
     sel.innerHTML='';
+    // Le voci personali del dispositivo con lingua e accento coincidenti
+    // stanno in un gruppo in testa (spec §3.8). Se ce n'e' una sola ed e' la
+    // prima popolazione dopo la creazione, e' preselezionata.
+    const mie=(typeof vociMie==='function')?vociMie(voices,bookLangState.code||'it',loc):[];
+    if(mie.length){
+      const gm=document.createElement('optgroup');
+      gm.label=t('vc_group_mine');
+      for(const v of mie){
+        const o=document.createElement('option');
+        o.value=v.id;
+        o.textContent=(v.owner?t('vc_voice_own'):t('vc_voice_shared'))+' · '+_voxcpmLocaleLabel(v.locale);
+        gm.appendChild(o);
+      }
+      sel.appendChild(gm);
+    }
+    if(window._vcJustCreated&&mie.length===1&&mie[0].id===window._vcJustCreated){
+      prevVoice=window._vcJustCreated;window._vcJustCreated=null;
+    }
     let lg='';
     for(const v of lista){
       if(v.gender!==lg){
@@ -1619,6 +1640,7 @@ function updVoicesPremium(){
       _loadVoxcpmSample();
       if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
     };
+    if(typeof vcSyncButton==='function')vcSyncButton();
     return;
   }
   // --- Ramo Speechify Simba-3.2: voci filtrate per accento (locale), non per lingua ---
