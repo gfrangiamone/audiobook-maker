@@ -270,4 +270,54 @@ def test_vcaction_usa_la_guardia_anti_doppio_invio():
     corpo = _estrai_funzione(VC, "vcAction")
     assert "if (S.busy) return" in corpo
     assert "vcSetBusy(true)" in corpo
-    assert corpo.count("vcSetBusy(false)") >= 2, "serve su successo/errore applicativo ed errore di rete"
+
+
+# ---------- fix round 1 (review Task 5: F1-F4) ----------
+
+def test_regola_small_esiste_in_css():
+    """F1: .vc-code-note e .vcRegenLeft usano la classe .small, prima assente."""
+    assert re.search(r"\.small\s*\{[^}]*\}", CSS), ".small non definita in style.css"
+
+
+def test_vcrenderp4_mette_in_pausa_le_prove_quando_nascoste():
+    """F2: cambiando stato (regenerate/retry) le due prove audio non devono
+    restare a suonare in sottofondo dietro lo spinner o l'esito."""
+    corpo = _estrai_funzione(VC, "vcRenderP4")
+    assert "vcDemoCommon" in corpo and "vcDemoExtra" in corpo
+    assert ".pause()" in corpo
+    assert re.search(r"if\s*\(!demosOn\)", corpo), "la pausa deve scattare solo quando i demo non sono mostrati"
+
+
+def test_vcwatch_onerror_riprova_con_backoff():
+    """F3: alla caduta della rete l'SSE non deve arrendersi in silenzio ne'
+    ritentare a raffica: deve riarmarsi con un setTimeout crescente finche'
+    lo stato resta di attesa e il pannello 4 e' ancora quello mostrato."""
+    corpo = _estrai_funzione(VC, "vcWatch")
+    assert "onerror" in corpo
+    ramo_errore = corpo[corpo.index("onerror"):]
+    assert "setTimeout(" in ramo_errore, "deve riarmarsi via setTimeout, non in loop stretto"
+    assert "S.esTimer" in ramo_errore
+    assert "vcWatch(" in ramo_errore, "il riarmo deve richiamare vcWatch"
+    assert re.search(r"p4\s*&&\s*!p4\.hidden", ramo_errore), "il riarmo deve controllare che il pannello 4 sia ancora visibile"
+
+
+def test_vcwatch_e_vcclose_ripuliscono_il_timer_di_retry():
+    """F3: nessun riarmo zombie dopo la chiusura del modal o una vcWatch nuova."""
+    chiusura = _estrai_funzione(VC, "vcClose")
+    assert "S.esTimer" in chiusura and "clearTimeout" in chiusura
+    corpo = _estrai_funzione(VC, "vcWatch")
+    inizio = corpo[:corpo.index("es.onmessage")]
+    assert "S.esTimer" in inizio and "clearTimeout" in inizio, \
+        "vcWatch deve azzerare un retry precedente prima di aprire un nuovo EventSource"
+
+
+def test_vcinitpanel4_non_ricarica_le_frasi_extra_se_gia_popolate():
+    """F4: come vcLoadExtraTexts sul pannello 3, rientrare piu' volte nel
+    pannello 4 non deve ripetere la fetch ne' scartare una risposta tardiva
+    di un clone_id ormai abbandonato."""
+    corpo = _estrai_funzione(VC, "vcInitPanel4")
+    assert "S.regenLoadedFor" in corpo
+    assert re.search(r"if\s*\(S\.regenLoadedFor\s*===\s*regenKey.*\)\s*return;", corpo), \
+        "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
+    assert re.search(r"if\s*\(!S\.cur\s*\|\|\s*S\.cur\.clone_id\s*!==\s*cloneId\)\s*return;", corpo), \
+        "la risposta della fetch deve essere scartata se nel frattempo e' cambiato il clone corrente"

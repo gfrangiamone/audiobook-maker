@@ -166,6 +166,7 @@
   function vcClose() {
     var m = $('vcModal'); if (m) m.hidden = true;
     if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
+    if (S.esTimer) { clearTimeout(S.esTimer); S.esTimer = null; }
     if (typeof S.stopMedia === 'function') S.stopMedia();
   }
   window.vcClose = vcClose;
@@ -465,12 +466,21 @@
     S.cur.view = view;
     var st = view.state;
     var show = function (id, on) { var e = $(id); if (e) e.hidden = !on; };
+    var demosOn = st === 'demos_ready';
     show('vcWait', st === 'paid' || st === 'demos_generating');
-    show('vcDemos', st === 'demos_ready');
+    show('vcDemos', demosOn);
     show('vcFailed', st === 'demo_failed');
     show('vcDone', st === 'ready');
     show('vcRefunded', st === 'refunded' || st === 'expired' || st === 'deleted');
-    if (st === 'demos_ready') {
+    if (!demosOn) {
+      /* Regenerate/retry o cambio di stato: le due prove smettono di
+         suonare, non restano in sottofondo dietro lo spinner o l'esito. */
+      ['vcDemoCommon', 'vcDemoExtra'].forEach(function (id) {
+        var a = $(id);
+        if (a) { try { a.pause(); a.currentTime = 0; } catch (e) {} }
+      });
+    }
+    if (demosOn) {
       var du = view.demo_urls || {};
       var c = $('vcDemoCommon'); var x = $('vcDemoExtra');
       if (c && du.common) c.src = du.common + '?ts=' + Date.now();
@@ -488,8 +498,9 @@
      1800 s) si rilegge `mine`. Un solo EventSource per volta (S.es): si
      chiude prima di aprirne un altro, alla chiusura del modal e su stato
      finale; un evento tardivo per un clone_id diverso viene scartato. */
-  function vcWatch() {
+  function vcWatch(retryDelay) {
     if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
+    if (S.esTimer) { clearTimeout(S.esTimer); S.esTimer = null; }
     if (!S.cur || !S.cur.clone_id || !window.EventSource) return;
     var cloneId = S.cur.clone_id;
     var es = new EventSource('/api/voice_clone/progress/' + encodeURIComponent(cloneId));
@@ -501,11 +512,28 @@
       vcRenderP4(v);
       if (vcPanelFor(v.state) !== 4 || v.state === 'demos_ready' || v.state === 'demo_failed') { es.close(); S.es = null; }
     };
+    /* Rete instabile: non lasciamo il pannello 4 fermo senza avanzamento.
+       Rileggiamo `mine` e, se lo stato resta di attesa e il pannello 4 e'
+       ancora quello mostrato, riproviamo con un backoff crescente (mai un
+       loop stretto) finche' l'utente non chiude il modal o lo stato cambia. */
     es.onerror = function () {
       es.close(); if (S.es === es) S.es = null;
       if (!S.cur || S.cur.clone_id !== cloneId) return;
+      var delay = Math.min(Number(retryDelay) || 3000, 30000);
       vcRefreshMine().then(function () {
-        for (var i = 0; i < S.mine.length; i++) if (S.mine[i].id === cloneId) vcRenderP4(S.mine[i]);
+        if (!S.cur || S.cur.clone_id !== cloneId) return;
+        var rec = null;
+        for (var i = 0; i < S.mine.length; i++) if (S.mine[i].id === cloneId) rec = S.mine[i];
+        if (!rec) return;
+        vcRenderP4(rec);
+        var p4 = $('vcP4');
+        var stillWaiting = rec.state === 'paid' || rec.state === 'demos_generating';
+        if (stillWaiting && p4 && !p4.hidden) {
+          S.esTimer = setTimeout(function () {
+            S.esTimer = null;
+            if (S.cur && S.cur.clone_id === cloneId) vcWatch(Math.min(delay * 2, 30000));
+          }, delay);
+        }
       });
     };
   }
@@ -545,16 +573,25 @@
     }
     var sel = $('vcRegenSel');
     if (sel) {
-      sel.innerHTML = '';
+      var cloneId = S.cur.clone_id;
       var loc = (S.cur.view && S.cur.view.locale) || S.cur.locale || '';
+      var regenKey = cloneId + '|' + loc;
+      /* Come vcLoadExtraTexts sul pannello 3: rientrare piu' volte nel
+         pannello 4 (regenerate, retry, evento SSE) non deve ripetere la
+         fetch ne' scartare la selezione dell'utente se l'elenco e' gia'
+         quello giusto. */
+      if (S.regenLoadedFor === regenKey && sel.options.length) return;
+      sel.innerHTML = '';
       vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
         if (!r.ok) return;
+        if (!S.cur || S.cur.clone_id !== cloneId) return;
         (r.data.extra || []).forEach(function (x) {
           var o = document.createElement('option'); o.value = x.id;
           o.textContent = (x.text || '').slice(0, 60) + '…';
           sel.appendChild(o);
         });
         if (S.cur.view && S.cur.view.extra_id) sel.value = S.cur.view.extra_id;
+        S.regenLoadedFor = regenKey;
       });
     }
     $('vcApprove').onclick = function () { vcAction('approve').then(function (v) { if (v) vcAfterApprove(v); }); };
