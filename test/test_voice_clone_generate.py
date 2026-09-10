@@ -125,6 +125,37 @@ def test_generate_accetta_e_rinnova_la_retention(client, tmp_path, monkeypatch):
     assert cur["last_used_at"] > 1 and cur["expires_at"] > 2
 
 
+def test_generate_maschera_il_token_nel_log_e_nel_digest(client, tmp_path, monkeypatch):
+    """C2: l'id completo della voce campionata (col token) non deve mai
+    finire nel business log ne' nella riga del digest admin - solo
+    l'etichetta neutra "user-voice"."""
+    import email_service
+    rec = _ready(tmp_path)
+    vid = vc.voice_id_of(rec)
+    tok = vc.token_of(vid)
+    jid = _job(monkeypatch)
+    monkeypatch.setattr(audiobook_app, "run_generation", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(audiobook_app.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    monkeypatch.setattr(audiobook_app, "SCRIPT_DIR", tmp_path)
+    audiobook_app._logged_sids_ops.clear()
+    audiobook_app._logged_month = None
+    monkeypatch.setattr(email_service, "ADMIN_EMAIL", "admin@x.it")
+    email_service._admin_queue.clear()
+
+    r = _generate(client, jid, vid)
+    assert r.status_code == 200, r.get_json()
+
+    log = list(tmp_path.glob("activity_*.log"))[0].read_text(encoding="utf-8")
+    assert tok not in log
+    assert "user-voice" in log
+
+    assert email_service._admin_queue, "l'evento GENERATE non e' stato accodato per il digest"
+    ultimo = email_service._admin_queue[-1]
+    assert ultimo["voice"] == "user-voice"
+    assert tok not in str(ultimo)
+
+
 def test_preview_non_supportata_per_la_voce_personale(client, tmp_path, monkeypatch):
     # /api/preview_audio e' GET-only e legge la voce da query string, non dal
     # body: il rifiuto vale gia' prima di controllare il job (basta il prefisso

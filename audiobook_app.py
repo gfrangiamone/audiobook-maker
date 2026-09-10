@@ -1577,7 +1577,7 @@ def _reenqueue_orphan(job_id, rec):
         try:
             _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job["voice"], job.get("browser_lang", ""),
+                          _voice_for_log(job["voice"]), job.get("browser_lang", ""),
                           epoch=job.get("gen_epoch"),
                           platform=job.get("platform", ""))
         except Exception:
@@ -2774,6 +2774,21 @@ def _init_log_dedup():
                 parts = line.strip().split(" # ")
                 if len(parts) >= 4:
                     _logged_sids_ops.add((parts[0], parts[3]))
+
+def _voice_for_log(voice):
+    """C2: l'id di una voce campionata (voxcpm:mine:<token>) non deve mai
+    finire scritto in un log/dossier/digest persistito - il token e' un
+    segreto (vedi vincoli globali della feature voci campionate). Ogni
+    chiamante che passa una voce a _log_activity/_abuse_note/
+    _admin_notify_generation deve filtrarla da qui. Passthrough per ogni
+    altra voce (edge-tts, gemini:, speechify:, voxcpm:v2:...)."""
+    try:
+        if voice and voice.startswith(voice_clone.VOICE_ID_PREFIX):
+            return "user-voice"
+    except Exception:
+        pass
+    return voice
+
 
 def _log_activity(session_id, filename, operation, client_id='', client_ip='', voice='', browser_lang='', epoch=None, platform=''):
     """Scrive una riga nel business log mensile, deduplicando per (job_id, operazione).
@@ -4131,7 +4146,7 @@ def _abuse_apply_verdict(group, verdict):
         try:
             _log_activity(jid, job.get("original_filename", ""), "QUOTA_ABUSE_KILL",
                           job.get("client_id", ""), job.get("client_ip", ""),
-                          job.get("voice", ""), browser_lang=job.get("browser_lang", ""))
+                          _voice_for_log(job.get("voice", "")), browser_lang=job.get("browser_lang", ""))
         except Exception:
             pass
         try:
@@ -11872,7 +11887,7 @@ def api_generate():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=voice)
+                                      voice=_voice_for_log(voice))
                     except Exception:
                         pass
                 return jsonify({
@@ -12062,7 +12077,7 @@ def api_generate():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=voice)
+                                      voice=_voice_for_log(voice))
                     except Exception:
                         pass
                 return jsonify({
@@ -12160,7 +12175,7 @@ def api_generate():
             except Exception:
                 pass
             _log_activity(job_id, job.get("original_filename", ""), "QUOTA_ABUSE_BLOCK",
-                          client_id, client_ip, voice,
+                          client_id, client_ip, _voice_for_log(voice),
                           browser_lang=job.get("browser_lang", ""))
             print(f"[{job_id}] abuse_watch: job rifiutato (gruppo {_abuse_group})", flush=True)
             return jsonify({"error": "Processing interrupted.",
@@ -12317,9 +12332,9 @@ def api_generate():
                     if job["status"] == "generating":
                         job["status"] = "optimized" if job.get("ai_optimized") else "analyzed"
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_BLOCK",
-                              client_id, client_ip, voice,
+                              client_id, client_ip, _voice_for_log(voice),
                               browser_lang=job.get("browser_lang", ""))
-                _abuse_note(job_id, job, "quota_block", chars=selected_chars, voice=voice)
+                _abuse_note(job_id, job, "quota_block", chars=selected_chars, voice=_voice_for_log(voice))
                 print(f"[{job_id}] free TTS quota: {_ftq_dec['used_chars']:,}+"
                       f"{selected_chars:,} > {_ftq_dec['limit_chars']:,} chars "
                       f"-> email gate", flush=True)
@@ -12372,21 +12387,22 @@ def api_generate():
                   f"{' (gated)' if _ftq_gated else ''}", flush=True)
             if _ftq_gated:
                 _log_activity(job_id, job.get("original_filename", ""), "QUOTA_GATE",
-                              client_id, client_ip, voice,
+                              client_id, client_ip, _voice_for_log(voice),
                               browser_lang=job.get("browser_lang", ""))
-                _abuse_note(job_id, job, "quota_gate", chars=_ftq_chars, voice=voice)
+                _abuse_note(job_id, job, "quota_gate", chars=_ftq_chars, voice=_voice_for_log(voice))
         except Exception as _ftq_err:
             print(f"[{job_id}] free_tts_quota consume failed (non-fatal): {_ftq_err}",
                   flush=True)
 
     # Voce campione: da qui il job e' certo di partire (vedi commento sopra),
-    # quindi e' il punto giusto per rinnovare la retention all'uso (D15) e
-    # marcare l'etichetta amichevole sul job (email/pannello di completamento).
+    # quindi e' il punto giusto per rinnovare la retention all'uso (D15).
+    # L'etichetta amichevole per email/pannello di completamento e' gia'
+    # risolta da generation_engine._friendly_voice_name(job["voice"]) ("Your
+    # voice") - job["voice_label"] non aveva alcun lettore (C2, rimosso).
     if voice.startswith(voice_clone.VOICE_ID_PREFIX):
         _vc_rec2 = voice_clone.by_token(voice_clone.token_of(voice))
         if _vc_rec2 is not None:
             voice_clone.touch_used(_vc_rec2["id"])
-            job["voice_label"] = "user-voice"
             _vc_log(_vc_rec2, "VOICE_CLONE_USED", job_id)
 
     # Descrittore di recovery (ri)scritto ALLA PARTENZA con i parametri di
@@ -12415,12 +12431,12 @@ def api_generate():
     )
     thread.start()
     _log_activity(job_id, job.get("original_filename", ""), "GENERATE",
-                  client_id, client_ip, voice,
+                  client_id, client_ip, _voice_for_log(voice),
                   browser_lang=job.get("browser_lang", ""),
                   epoch=job.get("gen_epoch"),
                   platform=job.get("platform", ""))
-    _abuse_note(job_id, job, "generate", chars=selected_chars, voice=voice)
-    _admin_notify_generation(job_id, info, voice, job.get("original_filename", ""))
+    _abuse_note(job_id, job, "generate", chars=selected_chars, voice=_voice_for_log(voice))
+    _admin_notify_generation(job_id, info, _voice_for_log(voice), job.get("original_filename", ""))
     _resp = {"status": "started"}
     # Job pagato portato in modalita' batch sull'email del pagamento: comunica
     # al frontend l'email (mascherata) cosi' l'utente sa dove ricevera' il file
@@ -14730,7 +14746,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_for_est)
+                                      voice=_voice_for_log(_voice_for_est))
                     except Exception:
                         pass
                 _release_opt_claim()
@@ -14881,7 +14897,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_spx)
+                                      voice=_voice_for_log(_voice_spx))
                     except Exception:
                         pass
                 _release_opt_claim()
@@ -15025,7 +15041,7 @@ def api_optimize():
                                       "FREE_QUOTA_EXCEEDED",
                                       client_id=job.get("client_id", ""),
                                       client_ip=job.get("client_ip", ""),
-                                      voice=_voice_vox)
+                                      voice=_voice_for_log(_voice_vox))
                     except Exception:
                         pass
                 _release_opt_claim()
