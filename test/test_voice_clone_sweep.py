@@ -1,9 +1,11 @@
 """Ciclo di vita giornaliero della voce (spec §6.5, §10, §12)."""
 import os
+import time
 
 import pytest
 
 import community_store
+import payment
 import storage_backend
 import voice_clone as vc
 import voxcpm_catalog
@@ -26,6 +28,15 @@ def ambiente(tmp_path, monkeypatch):
     yield {"ev": ev, "rel": rel, "ref": ref}
     vc.set_hooks()
     voxcpm_catalog.invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
+def pagamenti(tmp_path, monkeypatch):
+    monkeypatch.setattr(payment, "_payments", {})
+    monkeypatch.setattr(payment, "_pending_orders", {})
+    monkeypatch.setattr(payment, "_PAYMENTS_FILE", tmp_path / "_payments.json")
+    monkeypatch.setattr(payment, "_DATA_DIR", tmp_path)
+    yield
 
 
 def _file(tmp_path, name):
@@ -114,6 +125,41 @@ def test_promemoria_di_approvazione_e_rimborso_a_30_giorni(tmp_path, ambiente):
     assert ambiente["ref"] == [(rec["id"], "no_approval")]
 
 
+def test_paid_fermo_oltre_un_ora_rilancia(tmp_path, ambiente):
+    """I1: un record fermo in `paid`/`demos_generating` senza cambio di stato
+    oltre STALE_INFLIGHT_SEC e' quasi sempre un thread morto (crash/riavvio):
+    va rilanciato come per demo_failed."""
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "paid", t0)
+    assert vc.sweep(now=t0 + 1800)["relaunched"] == 0
+    out = vc.sweep(now=t0 + vc.STALE_INFLIGHT_SEC + 1)
+    assert out["relaunched"] == 1 and ambiente["rel"] == [rec["id"]]
+
+
+def test_demos_generating_fermo_oltre_un_ora_rilancia(tmp_path, ambiente):
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "paid", t0)
+    rec = vc.transition(rec["id"], "demos_generating", now=t0 + 5)
+    out = vc.sweep(now=t0 + 5 + vc.STALE_INFLIGHT_SEC + 1)
+    assert out["relaunched"] == 1 and ambiente["rel"] == [rec["id"]]
+
+
+def test_hook_fallito_non_logga_il_messaggio_dell_eccezione(tmp_path, capsys):
+    """m3: un hook (qui notify) puo' incapsulare un errore SMTP col testo
+    dell'email del destinatario: nel log deve comparire solo il tipo
+    dell'eccezione, mai str(e)."""
+    def notify_fallace(ev, rec, **x):
+        raise RuntimeError("SMTP error sending to owner@example.com")
+    vc.set_hooks(notify=notify_fallace)
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "ready", t0)
+    vc.store().update(rec["id"], {"expires_at": t0 + 29 * D})
+    vc.sweep(now=t0)
+    out = capsys.readouterr().out
+    assert "owner@example.com" not in out
+    assert "RuntimeError" in out
+
+
 def test_sweep_non_si_ferma_su_un_record_rotto(tmp_path, monkeypatch):
     t0 = 1_000_000
     a = voce(tmp_path, "a", "ready", t0)
@@ -122,6 +168,66 @@ def test_sweep_non_si_ferma_su_un_record_rotto(tmp_path, monkeypatch):
     t1 = t0 + vc.retention_sec() + 1
     out = vc.sweep(now=t1)
     assert out["expired"] == 1 and vc.get(b["id"])["state"] == "expired"
+
+
+def _capture(order_id, job_id, captured_at, amount=5.0, email="p@x.it", used=False):
+    payment._payments[order_id] = {"order_id": order_id, "amount_eur": amount, "email": email,
+                                   "captured_at": captured_at, "used": used, "job_id": job_id}
+
+
+def test_bozza_rimpiazzata_rimborsa_il_capture_del_draft_precedente(tmp_path):
+    """C1 item 2 (create_draft): la bozza rimpiazzata puo' avere un capture
+    gia' incassato (creato prima di commit()) che non verra' mai consumato."""
+    t0 = 1_000_000
+    prima = voce(tmp_path, "a", "sample_ok", t0)
+    _capture("ORDD1", "vc:" + prima["id"], t0)
+    seconda = voce(tmp_path, "a", "sample_ok", t0 + 10)
+    assert vc.get(prima["id"]) is None and vc.get(seconda["id"]) is not None
+    assert payment._payments["ORDD1"]["used"] is True
+
+
+def test_bozza_scaduta_purgata_rimborsa_il_capture(tmp_path):
+    """C1 item 2 (purge_stale_drafts)."""
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "sample_ok", t0)
+    _capture("ORDD2", "vc:" + rec["id"], t0)
+    assert vc.sweep(now=t0 + vc.sample_ttl_sec() + 1)["drafts_purged"] == 1
+    assert payment._payments["ORDD2"]["used"] is True
+
+
+def test_transizione_terminale_rimborsa_il_capture(tmp_path, ambiente):
+    """C1 item 3: ogni transizione verso uno stato terminale rimborsa i
+    capture non consumati di quella voce (qui: scadenza -> expired)."""
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "ready", t0)
+    _capture("ORDD3", "vc:" + rec["id"], t0)
+    t1 = t0 + vc.retention_sec() + 1
+    out = vc.sweep(now=t1)
+    assert out["expired"] == 1
+    assert payment._payments["ORDD3"]["used"] is True
+
+
+def test_sweep_rimborsa_capture_vc_orfano_su_voce_sparita(tmp_path):
+    """C1 item 4 (safety net): un capture `vc:` la cui voce non esiste piu'
+    viene rimborsato dal giro di riconciliazione a fine sweep."""
+    t0 = 1_000_000
+    _capture("ORDD4", "vc:non_esiste", t0)
+    vc.sweep(now=t0 + vc.sample_ttl_sec() + 1)
+    assert payment._payments["ORDD4"]["used"] is True
+
+
+def test_sweep_non_rimborsa_capture_su_voce_viva_solo_logga(tmp_path, capsys):
+    """C1 item 4: un capture non consumato su una voce ANCORA VIVA (paid/demos_*
+    /ready) e' impossibile per costruzione (commit consuma prima di scrivere):
+    se accade comunque, va solo loggato (id pubblico, mai token/email), MAI
+    rimborsato d'ufficio."""
+    t0 = 1_000_000
+    rec = voce(tmp_path, "a", "demos_ready", t0)
+    _capture("ORDD5", "vc:" + rec["id"], t0)
+    vc.sweep(now=t0 + vc.sample_ttl_sec() + 1)
+    assert payment._payments["ORDD5"]["used"] is False
+    out = capsys.readouterr().out
+    assert "ORPHAN capture" in out and rec["id"] in out and "p@x.it" not in out
 
 
 def test_digest_data_conta_nella_finestra(tmp_path):

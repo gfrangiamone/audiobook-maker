@@ -115,6 +115,27 @@ def test_forget_e_revoke(tmp_path):
     assert vc.get(rec["id"])["state"] == "ready"        # la voce sopravvive
 
 
+def test_is_owner_solo_il_dispositivo_creatore(tmp_path):
+    rec = _pronta(tmp_path)
+    _, _, code = vc.claim(rec["voice_code"], "cid-b", now=1000)
+    vc.confirm(rec["voice_code"], "cid-b", code, now=1001)
+    got = vc.get(rec["id"])
+    assert vc.is_owner(got, "cid-owner") is True
+    assert vc.is_owner(got, "cid-b") is False
+    assert vc.is_owner(got, "cid-sconosciuto") is False
+
+
+def test_forget_rifiuta_il_dispositivo_proprietario(tmp_path):
+    """m1: il creatore non puo' essere dimenticato (perderebbe per sempre il
+    voice_code). Deve usare "Cancella" (delete_by_owner)."""
+    rec = _pronta(tmp_path)
+    with pytest.raises(vc.BadTransition):
+        vc.forget(rec["id"], "cid-owner")
+    assert vc.authorized(vc.voice_id_of(rec), "cid-owner")
+    got = vc.get(rec["id"])
+    assert any(d.get("cid") == "cid-owner" for d in got["devices"])
+
+
 def test_confirm_locks_scaduti_vengono_potati(tmp_path):
     rec = _pronta(tmp_path)
     _, _, code = vc.claim(rec["voice_code"], "cid-nuovo", now=1000)

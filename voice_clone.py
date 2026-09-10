@@ -33,6 +33,7 @@ SWEEP_INTERVAL_SEC = 3600
 EXPIRY_WARN_SEC = 30 * 86400
 DEMO_FAILED_RELAUNCH_SEC = 6 * 3600
 DEMO_FAILED_REFUND_SEC = 7 * 86400
+STALE_INFLIGHT_SEC = 3600
 APPROVAL_REMINDER_SEC = (24 * 3600, 7 * 86400)
 APPROVAL_REFUND_SEC = 30 * 86400
 RECORD_PURGE_SEC = 90 * 86400
@@ -75,6 +76,12 @@ class BadTransition(ValueError):
 
 class EmailHasVoice(ValueError):
     """L'email ha gia' una voce viva (§3.4): si recupera con il codice o si cancella."""
+
+
+class PaymentInvalid(ValueError):
+    """Il payment_token non e' valido/consumabile (m4): sottoclasse dedicata
+    cosi' il chiamante puo' distinguere il fallimento del pagamento da
+    qualunque altro ValueError sollevato da commit()."""
 
 
 # Copia locale della whitelist di voice_clone_audio.ACCEPTED_EXT: import
@@ -276,6 +283,17 @@ def remove_files(rec):
             print(f"[voice_clone] delete R2 fallita per {rec['id']}: {e}")
 
 
+def _refund_captures(clone_id, reason):
+    """Rimborso best-effort dei capture PayPal non consumati legati a questa
+    voce (C1). Idempotente (`refund_unused_captures_for_job` salta `used`/
+    `pending_unfunded`) e non solleva mai: chi chiama e' gia' in un percorso
+    di terminazione/pulizia che non deve fallire per questo."""
+    try:
+        payment.refund_unused_captures_for_job("vc:" + clone_id, reason=reason)
+    except Exception as e:
+        print(f"[voice_clone] refund capture fallito per {clone_id}: {type(e).__name__}")
+
+
 def delete_by_owner(manage_token):
     """§6.6: cancellazione dal link di gestione. Da qualunque stato non
     terminale a `deleted`, file rimossi; None se il token e' ignoto.
@@ -283,8 +301,9 @@ def delete_by_owner(manage_token):
     `TRANSITIONS` ammette `deleted` solo da `ready` (rifiuto esplicito da
     `demos_ready`/`demo_failed` passa per `reject`, col rimborso). Da uno
     stato intermedio senza quella transizione il proprietario puo' comunque
-    cancellare: qui si forza lo stato senza passare da `transition()`, senza
-    rimborso automatico (chi vuole il rimborso usa "Rifiuta" nell'app).
+    cancellare: qui si forza lo stato senza passare da `transition()`. Il
+    rimborso automatico (C1) copre entrambi i rami: se `transition()` lo ha
+    gia' fatto (ramo normale) la seconda chiamata e' un no-op idempotente.
     """
     with _lock:
         rec = by_manage_token(manage_token)
@@ -295,6 +314,7 @@ def delete_by_owner(manage_token):
         else:
             out = transition(rec["id"], "deleted")
     remove_files(out)
+    _refund_captures(out["id"], "voice_clone_deleted")
     return out
 
 
@@ -369,6 +389,10 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
             store().delete(prev["id"])
     if prev is not None:
         remove_files(prev)
+        # C1: la bozza rimpiazzata puo' avere un capture PayPal gia' incassato
+        # (l'ordine si crea a partire dalla bozza, prima di commit()) che ora
+        # non verra' mai consumato: rimborso automatico, idempotente.
+        _refund_captures(prev["id"], "voice_clone_draft_replaced")
     upload_to_r2(rec, "sample.wav")
     upload_to_r2(rec, "original." + original_ext)
     return rec
@@ -398,6 +422,7 @@ def purge_stale_drafts(now=None):
             remove_files(rec)
         except Exception as e:
             print(f"[voice_clone] purge: rimozione file fallita per {rec['id']}: {e}")
+        _refund_captures(rec["id"], "voice_clone_draft_expired")
     return n
 
 
@@ -421,7 +446,13 @@ def transition(clone_id, new_state, patch=None, now=None):
         stamp = _STAMP_ON_ENTER.get(new_state)
         if stamp:
             upd.setdefault(stamp, t)
-        return store().update(clone_id, upd)
+        out = store().update(clone_id, upd)
+    # C1: ogni ingresso in uno stato terminale rimborsa i capture non
+    # consumati di questa voce. Fuori dal lock di modulo (il rimborso prende
+    # il lock di payment.py: evita un ordine di lock annidato).
+    if new_state in _TERMINAL:
+        _refund_captures(clone_id, "voice_clone_" + new_state)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +534,14 @@ def _has_cid(rec, cid):
     return any(d.get("cid") == cid for d in rec.get("devices") or [])
 
 
+def is_owner(rec, cid):
+    """Predicato unico di proprieta' (m1): il dispositivo che ha creato la
+    voce (`via == "creator"`), non il primo della lista ne' un dispositivo
+    autorizzato per altra via (resume/confirm)."""
+    return any(d.get("cid") == cid and d.get("via") == "creator"
+              for d in rec.get("devices") or [])
+
+
 def check_use(voice_id, cid, lang, locale=None):
     """'' se la voce si puo' usare per questo libro, altrimenti il codice
     d'errore della spec §9: gone (D16: solo `ready`), not_authorized, lang_mismatch.
@@ -546,8 +585,7 @@ def mine(cid, now=None):
         if rec.get("state") == "sample_ok" and (rec.get("expires_at") or 0) <= _now(now):
             continue
         pub = public_view(rec)
-        pub["owner"] = any(d.get("cid") == cid and d.get("via") == "creator"
-                           for d in rec.get("devices") or [])
+        pub["owner"] = is_owner(rec, cid)
         pub["pending"] = rec.get("state") != "ready"
         if not pub["owner"]:
             pub.pop("voice_code", None)
@@ -617,8 +655,11 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
         if price <= 0:
             pay = {"type": "free", "token": "", "amount_eur": 0.0, "paid_at": t}
         else:
-            method = payment.consume_payment_token(payment_token, price, job_id,
-                                                   purpose="voice_clone")
+            try:
+                method = payment.consume_payment_token(payment_token, price, job_id,
+                                                       purpose="voice_clone")
+            except ValueError as e:
+                raise PaymentInvalid(str(e)) from e
             pay = {"type": method, "token": payment_token, "amount_eur": price, "paid_at": t}
         patch = {
             "owner_email": email, "owner_email_hash": email_hash(email),
@@ -715,10 +756,18 @@ def _drop_device(rec, cid):
 
 
 def forget(clone_id, cid):
-    """«Rimuovi da questo dispositivo»: solo il legame, la voce sopravvive."""
+    """«Rimuovi da questo dispositivo»: solo il legame, la voce sopravvive.
+
+    m1: il dispositivo creatore non puo' essere rimosso qui, altrimenti il
+    proprietario perderebbe per sempre il voice_code (nessun altro modo di
+    recuperarlo). Chi vuole liberarsene usa "Cancella" (delete_by_owner)."""
     with _lock:
         rec = get(clone_id)
-        return bool(rec) and _drop_device(rec, cid)
+        if rec is None:
+            return False
+        if is_owner(rec, cid):
+            raise BadTransition("il dispositivo proprietario non puo' essere dimenticato")
+        return _drop_device(rec, cid)
 
 
 def revoke_device(manage_token, cid):
@@ -750,7 +799,10 @@ def _hook(name, *args, **kw):
     try:
         fn(*args, **kw)
     except Exception as e:      # noqa: BLE001
-        print(f"[voice_clone] hook {name} fallito: {e}", flush=True)
+        # m3: mai str(e) qui. Gli hook (notify/refund) possono incapsulare
+        # errori SMTP che riportano l'indirizzo email del destinatario nel
+        # testo dell'eccezione: solo il tipo, mai il messaggio.
+        print(f"[voice_clone] hook {name} fallito: {type(e).__name__}", flush=True)
 
 
 def _num(v):
@@ -787,6 +839,18 @@ def _sweep_one(rec, t, out):
             store().delete(cid)
             out["purged"] += 1
         return
+    if state in ("paid", "demos_generating"):
+        # I1: un record fermo in uno stato "in volo" oltre STALE_INFLIGHT_SEC
+        # (nessun cambio di stato) e' quasi sempre un thread di generazione
+        # morto senza che demo_failed/demos_ready sia mai stato scritto
+        # (crash, riavvio). Rilancia come per demo_failed: idempotente lato
+        # relaunch hook (start_demos su un record non piu' in questo stato
+        # e' un no-op).
+        # TODO piano 3: rilancio ogni sweep senza backoff ne' cap sui tentativi.
+        if t - _num(rec.get("state_changed_at")) >= STALE_INFLIGHT_SEC:
+            out["relaunched"] += 1
+            _hook("relaunch", cid)
+        return
     demo = rec.get("demo") or {}
     if state == "demo_failed":
         first = _num(demo.get("first_failed_at") or demo.get("failed_at") or rec.get("paid_at"))
@@ -794,6 +858,7 @@ def _sweep_one(rec, t, out):
             out["refunded"] += 1
             _hook("refund", cid, "demo_failed_timeout")
         elif t - _num(demo.get("failed_at")) >= DEMO_FAILED_RELAUNCH_SEC:
+            # TODO piano 3: rilancio ogni 6h senza backoff ne' cap sui tentativi.
             out["relaunched"] += 1
             _hook("relaunch", cid)
         return
@@ -829,7 +894,59 @@ def sweep(now=None):
             _sweep_one(rec, t, out)
         except Exception as e:      # noqa: BLE001
             print(f"[voice_clone] sweep {rec.get('id')}: {type(e).__name__}: {e}", flush=True)
+    try:
+        reconcile_orphan_captures(now=t)
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] reconcile_orphan_captures fallita: {type(e).__name__}", flush=True)
     return out
+
+
+def reconcile_orphan_captures(now=None):
+    """C1 safety net: rete di sicurezza per capture PayPal `vc:<id>` mai
+    consumati che i punti di rimborso mirati (draft sostituita/scaduta,
+    ingresso in stato terminale) non hanno intercettato — es. un capture
+    creato per una bozza mai diventata record (crash fra create-order e
+    create_draft) o un record cancellato dal DB con un capture ancora
+    aperto. Non solleva mai: e' chiamata dallo sweep orario e da
+    `voice_clone_demo.recover()` al boot.
+
+    Per ogni capture PayPal incassato e non consumato con `job_id` che
+    inizia per "vc:", piu' vecchio di `sample_ttl_sec()` (evita falsi
+    positivi sulla normale finestra pagamento -> commit):
+      - record assente, terminale o ancora `sample_ok` -> rimborso
+        (`refund_unused_capture`, idempotente).
+      - record vivo (paid/demos_*/ready) con capture non consumato: per
+        costruzione impossibile (commit consuma il token PRIMA di scrivere
+        il record) -> anomalia, loggata per revisione admin, MAI rimborsata
+        automaticamente qui (potrebbe essere un secondo capture legittimo
+        non ancora riconciliato).
+    """
+    t = _now(now)
+    try:
+        capture = payment.iter_unused_captures(min_age_sec=sample_ttl_sec(), now=t)
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone] reconcile: iter_unused_captures fallita: {type(e).__name__}")
+        return 0
+    n = 0
+    for row in capture:
+        job_id = row.get("job_id") or ""
+        if not job_id.startswith("vc:"):
+            continue
+        clone_id = job_id[len("vc:"):]
+        rec = get(clone_id)
+        if rec is None or rec.get("state") in _TERMINAL or rec.get("state") == "sample_ok":
+            try:
+                payment.refund_unused_capture(row["order_id"], reason="voice_clone_orphan_reconcile")
+                n += 1
+            except Exception as e:      # noqa: BLE001
+                print(f"[voice_clone] reconcile: refund fallito order={row.get('order_id')}: "
+                     f"{type(e).__name__}")
+        else:
+            # Vivo con capture non consumato: impossibile per costruzione,
+            # mai email/token nel log.
+            print(f"[voice_clone] ORPHAN capture on live voice id={clone_id} "
+                 f"order={row.get('order_id')}")
+    return n
 
 
 def digest_data(window_hours=24, now=None):

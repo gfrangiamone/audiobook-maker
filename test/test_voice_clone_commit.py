@@ -95,8 +95,11 @@ def test_commit_consuma_il_voucher_e_scrive_il_pagamento(tmp_path):
 
 
 def test_commit_pagamento_invalido_lascia_la_bozza(tmp_path):
+    """m4: consume_payment_token che fallisce solleva vc.PaymentInvalid, non
+    un ValueError generico, cosi' il chiamante puo' distinguerlo da
+    EmailHasVoice/BadTransition/VoiceGone (anch'essi ValueError)."""
     rec = bozza(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(vc.PaymentInvalid):
         _commit(rec, payment_token="NOPE", price_eur=5.0)
     assert vc.get(rec["id"])["state"] == "sample_ok"
 
