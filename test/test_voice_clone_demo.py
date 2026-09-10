@@ -224,6 +224,52 @@ def test_recover_rilancia_le_generazioni_interrotte(tmp_path, monkeypatch):
     assert sorted(lanciati) == sorted([rec["id"], altro["id"]])
 
 
+def test_run_eccezione_dopo_generate_demos_porta_a_demo_failed(tmp_path, monkeypatch, ambiente):
+    """I1: un'eccezione nel blocco dopo generate_demos (scrittura record,
+    notify, ecc.) non deve lasciare il record bloccato in demos_generating:
+    il fallback lo porta a demo_failed."""
+    rec = voce_pagata(tmp_path)
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", WorkerFinto())
+    orig_transition = vc.transition
+
+    def transition_fallace(clone_id, new_state, *a, **kw):
+        if new_state == "demos_ready":
+            raise RuntimeError("scrittura record fallita")
+        return orig_transition(clone_id, new_state, *a, **kw)
+
+    monkeypatch.setattr(vc, "transition", transition_fallace)
+    out = vcd.start_demos(rec["id"], background=False)
+    assert out["state"] == "demo_failed"
+    assert out["demo"]["fail_count"] == 1 and out["demo"]["failed_at"]
+    assert out["demo"]["last_error"] == "RuntimeError"
+    assert ambiente[-1][0] == "demo_failed"
+
+
+def test_run_pulisce_i_file_se_la_voce_diventa_terminale_durante_la_generazione(
+        tmp_path, monkeypatch, ambiente):
+    """I2: se, mentre il thread di demo genera, un altro attore porta la voce
+    a uno stato terminale (rimborso/cancellazione concorrente), i file
+    scritti dopo quel momento non devono restare orfani su disco."""
+    rec = voce_pagata(tmp_path)
+    vc.transition(rec["id"], "demos_generating")
+    d = vc.voice_dir(rec["token"])
+
+    def generate_finto(clone_id, sleep=None):
+        # simula un refund concorrente mentre il thread genera
+        vc.transition(clone_id, "refunded",
+                      {"refund": {"reason": "concurrent", "method": "free",
+                                  "amount_eur": 0, "at": 0}})
+        # file scritto DOPO la pulizia del refund concorrente: orfano se
+        # nessuno lo ripulisce
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, "demo_common.wav"), "wb").write(b"tardivo")
+        return "ok", ""
+
+    monkeypatch.setattr(vcd, "generate_demos", generate_finto)
+    vcd._run(rec["id"])
+    assert not os.path.isdir(d) or not os.listdir(d)
+
+
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg assente")
 def test_pcm_to_wav48_reale(tmp_path, monkeypatch):
     monkeypatch.undo()

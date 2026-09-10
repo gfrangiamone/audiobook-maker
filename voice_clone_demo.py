@@ -122,22 +122,53 @@ def _run(clone_id):
         traceback.print_exc()
         esito, dettaglio = "failed", f"{type(e).__name__}: {e}"[:300]
     t = time.time()
-    rec = vc.get(clone_id)
-    if rec is None or rec.get("state") != "demos_generating":
-        return
-    demo = dict(rec.get("demo") or {})
-    if esito == "ok":
-        demo.update({"failed_at": None, "last_error": ""})
-        out = vc.transition(clone_id, "demos_ready", {"demo": demo}, now=t)
-        _notify("demos_ready", out)
-    elif esito == "unusable":
-        refund(clone_id, "sample_unusable", bonus=True)
-    else:
-        demo.update({"failed_at": t, "fail_count": int(demo.get("fail_count") or 0) + 1,
-                     "first_failed_at": demo.get("first_failed_at") or t,
-                     "last_error": dettaglio})
-        out = vc.transition(clone_id, "demo_failed", {"demo": demo}, now=t)
-        _notify("demo_failed", out, error=dettaglio)
+    last_seen = vc.get(clone_id)
+    try:
+        rec = last_seen
+        if rec is None or rec.get("state") != "demos_generating":
+            return
+        demo = dict(rec.get("demo") or {})
+        if esito == "ok":
+            demo.update({"failed_at": None, "last_error": ""})
+            out = vc.transition(clone_id, "demos_ready", {"demo": demo}, now=t)
+            _notify("demos_ready", out)
+        elif esito == "unusable":
+            refund(clone_id, "sample_unusable", bonus=True)
+        else:
+            demo.update({"failed_at": t, "fail_count": int(demo.get("fail_count") or 0) + 1,
+                         "first_failed_at": demo.get("first_failed_at") or t,
+                         "last_error": dettaglio})
+            out = vc.transition(clone_id, "demo_failed", {"demo": demo}, now=t)
+            _notify("demo_failed", out, error=dettaglio)
+    except Exception as e:      # noqa: BLE001 - I1: mai lasciare il record bloccato in
+        # demos_generating per un'eccezione qui (scrittura record, notify, ecc.):
+        # tentativo di miglior sforzo per portarlo comunque a demo_failed, cosi'
+        # il ciclo relaunch/refund dello sweep lo riprende invece di restare
+        # ostaggio per sempre.
+        traceback.print_exc()
+        try:
+            rec2 = vc.get(clone_id)
+            if rec2 is not None and rec2.get("state") == "demos_generating":
+                demo2 = dict(rec2.get("demo") or {})
+                demo2.update({"failed_at": t, "fail_count": int(demo2.get("fail_count") or 0) + 1,
+                             "first_failed_at": demo2.get("first_failed_at") or t,
+                             "last_error": type(e).__name__})
+                out2 = vc.transition(clone_id, "demo_failed", {"demo": demo2}, now=t)
+                _notify("demo_failed", out2, error=type(e).__name__)
+        except Exception as e2:      # noqa: BLE001 - ultima rete: solo log
+            print(f"[voice_clone_demo] _run fallback demo_failed fallito per {clone_id}: "
+                 f"{type(e2).__name__}", flush=True)
+    finally:
+        # I2: nel frattempo un altro attore (utente, sweep) puo' avere
+        # rimborsato/cancellato la voce mentre questo thread generava: se il
+        # record e' sparito o e' ormai terminale, i file appena scritti da
+        # questo giro non servono piu' a nessuno. Fuori da qualunque lock.
+        cur = vc.get(clone_id)
+        if cur is not None:
+            if cur.get("state") in vc._TERMINAL:
+                vc.remove_files(cur)
+        elif last_seen is not None:
+            vc.remove_files(last_seen)
 
 
 def _run_and_forget(clone_id):
@@ -284,7 +315,11 @@ def refund(clone_id, reason, *, bonus=False):
 
 def recover():
     """Al riavvio: ogni voce ferma in `paid` (crash fra commit e avvio) o in
-    `demos_generating` (thread perso) riparte. Ritorna quante."""
+    `demos_generating` (thread perso) riparte. Ritorna quante.
+
+    C1 item 4: anche un giro di riconciliazione delle capture orfane, per lo
+    stesso motivo del riavvio del crash-loop (`recover` gira una sola volta
+    all'avvio, prima che lo `sweep` periodico riprenda a girare)."""
     n = 0
     for rec in vc._all():
         if rec.get("state") in ("paid", "demos_generating"):
@@ -293,4 +328,9 @@ def recover():
                 n += 1
             except Exception as e:      # noqa: BLE001
                 print(f"[voice_clone_demo] recover {rec.get('id')}: {e}", flush=True)
+    try:
+        vc.reconcile_orphan_captures()
+    except Exception as e:      # noqa: BLE001
+        print(f"[voice_clone_demo] recover reconcile_orphan_captures fallita: "
+             f"{type(e).__name__}", flush=True)
     return n
