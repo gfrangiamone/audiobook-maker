@@ -2105,6 +2105,22 @@ function _openPayModalCtx(ctx) {
   _payCtx = ctx;
   _payConfirmed = false;
   _payState = { total: ctx.total, gemini: ctx.geminiAmount || 0, token: null, method: null };
+  // Titolo e avviso: personalizzabili per flusso (default = quelli storici del
+  // markup). La funzione è condivisa da tutti i flussi di pagamento e viene
+  // richiamata a ogni apertura: basta la scelta con `||` per ripristinare la
+  // chiave di default quando il ctx non la specifica.
+  const titleEl = document.getElementById('geminiPayModalTitle');
+  if (titleEl) {
+    const tk = ctx.titleKey || 'pay_modal_title';
+    titleEl.setAttribute('data-t', tk);
+    titleEl.textContent = (typeof t === 'function') ? t(tk) : tk;
+  }
+  const noticeEl = document.getElementById('payEmailNotice');
+  if (noticeEl) {
+    const nk = ctx.noticeKey || 'pay_email_notice';
+    noticeEl.setAttribute('data-t', nk);
+    noticeEl.textContent = (typeof t === 'function') ? t(nk) : nk;
+  }
   // Mappa fissa ctx.lines[i] -> (etichetta, importo) nel markup.
   const rowMap = [
     { labelId: 'payLineGeminiLabel', amountId: 'payLineGemini' },
@@ -2305,7 +2321,7 @@ async function renderPaypalGeminiButtons(){
     },
     onApprove:async function(data,actions){
       try{
-        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:jobId})});
+        const r=await fetch('/api/paypal_capture_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:data.orderID,job_id:(_payCtx&&_payCtx.paypal&&_payCtx.paypal.captureJobId)||jobId})});
         const d=await r.json();
         if(d.error||!d.payment_token){
           // Capture rifiutata dall'emittente (INSTRUMENT_DECLINED): flusso

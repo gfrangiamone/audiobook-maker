@@ -373,6 +373,81 @@
     $('vcP2Back').onclick = function () { if (S.busy) return; vcStopMedia(); vcShow(1); };
   }
 
+  /* ---------- pannello 3: email, brano extra, pagamento ---------- */
+
+  function vcLoadExtraTexts() {
+    var sel = $('vcExtraSel'); if (!sel || !S.cur) return;
+    sel.innerHTML = '';
+    var loc = S.cur.locale || (S.cur.view && S.cur.view.locale) || '';
+    vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      (r.data.extra || []).forEach(function (x) {
+        var o = document.createElement('option'); o.value = x.id;
+        o.textContent = (x.text || '').slice(0, 90) + ((x.text || '').length > 90 ? '…' : '');
+        sel.appendChild(o);
+      });
+    });
+  }
+
+  function vcEmailsOk() {
+    var a = ($('vcEmail').value || '').trim(); var b = ($('vcEmail2').value || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) { vcErr(tt('vc_err_email_bad')); return false; }
+    if (a.toLowerCase() !== b.toLowerCase()) { vcErr(tt('vc_err_email_mismatch')); return false; }
+    return true;
+  }
+
+  function vcCommit(paymentToken) {
+    var body = {clone_id: S.cur.clone_id, email: $('vcEmail').value.trim(), email2: $('vcEmail2').value.trim(),
+                extra_id: $('vcExtraSel').value, payment_token: paymentToken || ''};
+    var btn = $('vcPayBtn'); if (btn) btn.disabled = true;
+    vcPost('/api/voice_clone/commit', body).then(function (r) {
+      if (btn) btn.disabled = false;
+      if (!r.ok) {
+        var m = $('vcModal'); if (m) m.hidden = false;
+        vcShow(3); vcErr(vcApiErrMsg(r.data)); return;
+      }
+      S.cur.voice_code = r.data.voice_code || null;
+      S.cur.view = {id: r.data.clone_id, state: 'paid'};
+      vcShow(4);
+    }).catch(function () { if (btn) btn.disabled = false; vcShow(3); vcErr(tt('vc_err_generic')); });
+  }
+
+  /* Gratis -> commit diretto. A pagamento -> il modal di pagamento gia' in
+     uso per le voci premium (PayPal o voucher), poi commit col token. Il
+     modal del wizard si nasconde intanto: i due hanno lo stesso z-index. */
+  function vcPay() {
+    if (!S.cur || !S.cur.clone_id) { vcShow(2); return; }
+    if (!vcEmailsOk()) return;
+    vcErr('');
+    if (S.cfg && S.cfg.free) { vcCommit(''); return; }
+    if (typeof _openPayModalCtx !== 'function') { vcErr(tt('vc_err_generic')); return; }
+    var price = Number(S.cfg.price_eur) || 0;
+    var m = $('vcModal'); if (m) m.hidden = true;
+    _openPayModalCtx({
+      lines: [{labelKey: 'vc_pay_line', amount: price}],
+      total: price, geminiAmount: 0,
+      voucherPurpose: 'voice_clone',
+      titleKey: 'vc_pay_title', noticeKey: 'vc_pay_notice',
+      paypal: {endpoint: '/api/paypal_create_order_voice_clone',
+               buildBody: function () { return {clone_id: S.cur.clone_id}; },
+               captureJobId: 'vc:' + S.cur.clone_id},
+      onConfirm: function (token) { vcCommit(token); },
+      onCancel: function () { if (m) m.hidden = false; vcShow(3); },
+    });
+    // Precompila il campo email del buono con quella gia' battuta sul
+    // pannello 3: evita di ridigitarla, l'utente puo' comunque cambiarla.
+    var ve = document.getElementById('geminiPayVoucherEmail');
+    if (ve) ve.value = $('vcEmail').value.trim();
+  }
+
+  function vcInitPanel3() {
+    var price = $('vcPrice');
+    if (price && S.cfg) price.textContent = S.cfg.free ? tt('vc_price_free') : tt('vc_price', {p: Number(S.cfg.price_eur).toFixed(2)});
+    var pb = $('vcPayBtn'); if (pb) { pb.disabled = false; pb.textContent = tt(S.cfg && S.cfg.free ? 'vc_pay_btn_free' : 'vc_pay_btn'); pb.onclick = vcPay; }
+    $('vcP3Back').onclick = function () { vcShow(2); };
+    vcLoadExtraTexts();
+  }
+
   function vcInit() {
     var btn = $('vcOpenBtn'); if (btn) btn.onclick = function () { vcOpen(); };
     var rb = $('vcResumeBtn'); if (rb) rb.onclick = function () { vcOpen(); };
@@ -382,6 +457,7 @@
     S.panelHooks = S.panelHooks || {};
     S.panelHooks.vcP1 = vcInitPanel1;
     S.panelHooks.vcP2 = vcInitPanel2;
+    S.panelHooks.vcP3 = vcInitPanel3;
     vcFetch('/api/voice_clone/config').then(function (r) {
       S.cfg = r.ok ? r.data : null;
       return vcRefreshMine();

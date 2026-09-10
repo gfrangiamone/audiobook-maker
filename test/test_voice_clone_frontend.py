@@ -168,3 +168,38 @@ def test_chiavi_task3_in_tutte_le_lingue():
         chiavi = _chiavi_i18n(lang)
         mancanti = [k for k in TASK3_KEYS if k not in chiavi]
         assert not mancanti, f"{lang}: {mancanti}"
+
+
+TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_pay_btn", "vc_pay_btn_free",
+              "vc_pay_title", "vc_pay_line", "vc_pay_notice", "vc_err_email_bad", "vc_err_email_mismatch",
+              "vc_err_email_has_voice", "vc_err_payment_invalid", "vc_err_voice_not_found",
+              "vc_err_voice_gone", "vc_err_not_authorized", "vc_err_bad_request"]
+
+
+def test_markup_pannello_3():
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    for i in ("vcEmail", "vcEmail2", "vcExtraSel", "vcPrice", "vcP3Back", "vcPayBtn"):
+        assert f'id="{i}"' in p3, i
+
+
+def test_pagamento_passa_dal_modal_esistente():
+    assert "_openPayModalCtx({" in VC
+    assert "voucherPurpose: 'voice_clone'" in VC
+    assert "endpoint: '/api/paypal_create_order_voice_clone'" in VC
+    assert "captureJobId: 'vc:' + S.cur.clone_id" in VC
+    assert "geminiAmount: 0" in VC
+    assert "/api/voice_clone/commit" in VC
+
+
+def test_capture_paypal_usa_capture_job_id():
+    corpo = _estrai_funzione(JS, "renderPaypalGeminiButtons")
+    assert "captureJobId" in corpo
+    corpo2 = _estrai_funzione(JS, "_openPayModalCtx")
+    assert "titleKey" in corpo2 and "noticeKey" in corpo2
+
+
+def test_chiavi_task4_in_tutte_le_lingue():
+    for lang in LANGS:
+        chiavi = _chiavi_i18n(lang)
+        mancanti = [k for k in TASK4_KEYS if k not in chiavi]
+        assert not mancanti, f"{lang}: {mancanti}"
