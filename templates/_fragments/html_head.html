@@ -543,6 +543,14 @@ __REVIEWS_LD__
         </div>
       </div>
 
+      <div id="vcBtnRow" class="vc-btn-row" hidden>
+        <button type="button" id="vcOpenBtn" class="btn-outline btn-sm vc-open-btn" data-t="vc_btn_start" data-t-title="vc_btn_tip">Sample your voice</button>
+        <div id="vcResumeBanner" class="al al-i vc-resume" hidden>
+          <span data-t="vc_resume_banner">You have a pending voice sample:</span>
+          <button type="button" id="vcResumeBtn" class="btn-outline btn-sm" data-t="vc_resume_btn">resume</button>
+        </div>
+      </div>
+
       <details class="adv-options" id="advOptions">
         <summary data-t="adv_options_title">Opzioni avanzate</summary>
         <div class="adv-options-body">
@@ -1151,6 +1159,41 @@ __REVIEWS_LD__
         <button type="button" class="btn-secondary" id="btnPayCancel2" data-t="pay_cancel">Annulla</button>
         <button type="button" class="btn-primary" id="btnPayConfirm" data-t="pay_confirm" disabled>Conferma</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- VOICE CLONE MODAL (Campiona la tua voce) -->
+  <div id="vcModal" class="modal-backdrop" hidden>
+    <div class="modal payment-modal vc-modal" role="dialog" aria-modal="true" aria-labelledby="vcTitle">
+      <header class="modal-header">
+        <h3 id="vcTitle" data-t="vc_title">Sample your voice</h3>
+        <button type="button" id="vcClose" class="modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div id="vcErr" class="al al-e" hidden></div>
+
+        <section id="vcP1" hidden>
+          <p data-t-html="vc_p1_intro"></p>
+          <ul class="vc-terms">
+            <li data-t="vc_p1_t1"></li>
+            <li data-t="vc_p1_t2"></li>
+            <li data-t="vc_p1_t3"></li>
+            <li data-t="vc_p1_t4"></li>
+            <li data-t="vc_p1_t5"></li>
+          </ul>
+          <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcP1Price"></strong></p>
+          <label class="vc-consent"><input type="checkbox" id="vcConsent"> <span data-t="vc_consent"></span></label>
+          <div class="modal-footer vc-footer">
+            <button type="button" id="vcP1Cancel" class="btn-secondary" data-t="vc_cancel"></button>
+            <button type="button" id="vcP1Next" class="btn-primary" data-t="vc_next" disabled></button>
+          </div>
+        </section>
+
+        <section id="vcP2" hidden></section>
+        <section id="vcP3" hidden></section>
+        <section id="vcP4" hidden></section>
+        <section id="vcPMine" hidden></section>
+      </div>
     </div>
   </div>
 

@@ -1187,3 +1187,29 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* La parentesi che nega l'anteprima del libro: stesso accento dei bottoni di
    ascolto, altrimenti si perde nel grigio della nota (§17.5). */
 .voxcpm-hint-em{color:var(--ac);font-weight:600}
+
+/* Voci campionate */
+.vc-btn-row{margin:.6rem 0 0;display:flex;flex-direction:column;gap:.5rem}
+.vc-open-btn{width:100%}
+.vc-resume{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+.vc-modal{max-width:560px}
+.vc-modal .modal-body{max-height:70vh;overflow-y:auto}
+.vc-terms{padding-left:1.2rem;margin:.5rem 0}
+.vc-terms li{margin:.25rem 0}
+.vc-consent{display:flex;gap:.5rem;align-items:flex-start;margin:.8rem 0;font-weight:600}
+.vc-footer{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem;padding:0;border:0}
+.vc-prompt{background:var(--bg-soft,#f5f5f7);border-radius:8px;padding:.8rem;font-size:1.05rem;line-height:1.5;margin:.6rem 0}
+.vc-rec-row{display:flex;align-items:center;gap:.6rem;margin:.6rem 0;flex-wrap:wrap}
+.vc-rec-row meter{flex:1;min-width:120px;height:14px}
+.vc-timer{font-variant-numeric:tabular-nums;min-width:3.5em}
+.vc-rec-dot{width:12px;height:12px;border-radius:50%;background:#c33;display:inline-block;animation:vcblink 1s infinite}
+@keyframes vcblink{50%{opacity:.2}}
+.vc-code{font-family:monospace;font-size:1.3rem;letter-spacing:.15em;background:var(--bg-soft,#f5f5f7);padding:.5rem .8rem;border-radius:8px;display:inline-block;margin:.4rem 0}
+.vc-demo-row{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+.vc-demo-row audio{width:100%}
+.vc-mine-list{list-style:none;padding:0;margin:.5rem 0}
+.vc-mine-item{border:1px solid var(--border,#ddd);border-radius:8px;padding:.6rem;margin:.4rem 0}
+.vc-mine-item .vc-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
+.vc-claim-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0}
+.vc-claim-row input{flex:1;min-width:160px}
+.vc-wait{display:flex;align-items:center;gap:.6rem;margin:.6rem 0}

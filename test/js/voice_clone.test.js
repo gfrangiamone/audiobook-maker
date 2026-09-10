@@ -51,3 +51,68 @@ test('vociMie: una voce pronta senza voice_id o senza demo non rompe', () => {
   assert.deepEqual(out.map(v => v.id), ['voxcpm:mine:Y']);
   assert.deepEqual(out[0].demos, []);
 });
+
+const VcCore = require('../../static/js/voice_clone.js');
+
+test('vcPanelFor: lo stato del record decide il pannello di ripresa', () => {
+  assert.equal(VcCore.vcPanelFor('sample_ok'), 3);
+  for (const s of ['paid', 'demos_generating', 'demos_ready', 'demo_failed']) assert.equal(VcCore.vcPanelFor(s), 4);
+  for (const s of ['ready', 'refunded', 'expired', 'deleted', '', undefined]) assert.equal(VcCore.vcPanelFor(s), 0);
+});
+
+test('vcGateKey: motivo di scarto -> chiave i18n, generico per i motivi ignoti', () => {
+  assert.equal(VcCore.vcGateKey('short'), 'vc_gate_short');
+  assert.equal(VcCore.vcGateKey('transcript'), 'vc_gate_transcript');
+  assert.equal(VcCore.vcGateKey('asr'), 'vc_gate_asr');
+  assert.equal(VcCore.vcGateKey('boh'), 'vc_gate_generic');
+  assert.equal(VcCore.vcGateKey(''), 'vc_gate_generic');
+});
+
+test('vcPending: la prima voce in sospeso, altrimenti null', () => {
+  const p = {id: 'vc_1', pending: true, state: 'sample_ok'};
+  assert.equal(VcCore.vcPending([{id: 'vc_0', pending: false, state: 'ready'}, p]), p);
+  assert.equal(VcCore.vcPending([{id: 'vc_0', pending: false, state: 'ready'}]), null);
+  assert.equal(VcCore.vcPending(null), null);
+});
+
+test('vcButtonKey: crea, gestisci o riprendi', () => {
+  assert.equal(VcCore.vcButtonKey([]), 'vc_btn_start');
+  assert.equal(VcCore.vcButtonKey([{pending: false, state: 'ready'}]), 'vc_btn_mine');
+  assert.equal(VcCore.vcButtonKey([{pending: true, state: 'paid'}]), 'vc_btn_resume');
+});
+
+test('vcVisible: solo con feature attiva, modello disponibile e lingua offerta', () => {
+  const cfg = {enabled: true, languages: {it: ['it-IT'], en: ['en-US']}};
+  assert.equal(VcCore.vcVisible(cfg, true, 'it'), true);
+  assert.equal(VcCore.vcVisible(cfg, true, 'de'), false);
+  assert.equal(VcCore.vcVisible(cfg, false, 'it'), false);
+  assert.equal(VcCore.vcVisible({enabled: false, languages: {it: []}}, true, 'it'), false);
+  assert.equal(VcCore.vcVisible(null, true, 'it'), false);
+});
+
+test('vcUploadCheck: estensione ammessa e dimensione entro il tetto', () => {
+  assert.deepEqual(VcCore.vcUploadCheck('voce.WAV', 1000, 20), {ok: true, ext: 'wav'});
+  assert.deepEqual(VcCore.vcUploadCheck('voce.m4a', 1000, 20), {ok: true, ext: 'm4a'});
+  assert.deepEqual(VcCore.vcUploadCheck('voce.flac', 1000, 20), {ok: false, reason: 'format'});
+  assert.deepEqual(VcCore.vcUploadCheck('senzaestensione', 1000, 20), {ok: false, reason: 'format'});
+  assert.deepEqual(VcCore.vcUploadCheck('voce.mp3', 21 * 1024 * 1024, 20), {ok: false, reason: 'too_large'});
+});
+
+test('vcRecordExt: dal mimeType del registratore all estensione del file', () => {
+  assert.equal(VcCore.vcRecordExt('audio/webm;codecs=opus'), 'webm');
+  assert.equal(VcCore.vcRecordExt('audio/mp4'), 'mp4');
+  assert.equal(VcCore.vcRecordExt('audio/ogg;codecs=opus'), 'ogg');
+  assert.equal(VcCore.vcRecordExt(''), 'webm');
+});
+
+test('vcRegenAllowed: solo con rigenerazioni residue', () => {
+  assert.equal(VcCore.vcRegenAllowed({regen_left: 2}), true);
+  assert.equal(VcCore.vcRegenAllowed({regen_left: 0}), false);
+  assert.equal(VcCore.vcRegenAllowed({}), false);
+});
+
+test('vcHasReadyFor: una voce pronta nella lingua', () => {
+  const mine = [{state: 'ready', lang: 'it', voice_id: 'x'}, {state: 'paid', lang: 'en'}];
+  assert.equal(VcCore.vcHasReadyFor(mine, 'it'), true);
+  assert.equal(VcCore.vcHasReadyFor(mine, 'en'), false);
+});

@@ -1324,6 +1324,7 @@ function _onPremiumModelChanged(){
   }
   updVoicesPremium();
   if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
+  if(typeof vcSyncButton==='function')vcSyncButton();
 }
 
 function _populateSpeechifyAccents(){
@@ -1901,6 +1902,7 @@ function switchAudioTab(tab){
     if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
   }
   if(typeof requestCombinedEstimate==='function')requestCombinedEstimate();
+  if(typeof vcSyncButton==='function')vcSyncButton();
 }
 
 // Helper: ritorna l'id della voce attualmente attiva, in base al tab selezionato.
