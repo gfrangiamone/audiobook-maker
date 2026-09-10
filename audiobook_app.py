@@ -8730,7 +8730,8 @@ def api_voices():
         try:
             voices["_mine"] = (voice_clone.mine(_get_client_id())
                                if (voxcpm_tts is not None and voice_clone.enabled()) else [])
-        except Exception:
+        except Exception as e:      # noqa: BLE001
+            print(f"[voice_clone] mine failed: {type(e).__name__}", flush=True)
             voices["_mine"] = []
         # Disponibilita' traduzione libro: backend LLM configurato + modello di
         # traduzione esplicito (ABM_TRANSLATE_MODEL). Se False la UI nasconde il
@@ -8897,23 +8898,32 @@ def _voice_clone_notify(event, rec, **extra):
     elif event == "refunded":
         _vc_log(rec, "VOICE_CLONE_REFUNDED", extra.get("reason") or "")
         if email:
-            email_service.send_voice_clone_refunded(
-                email, lang, amount_eur=extra.get("amount_eur") or 0.0,
-                method=extra.get("method") or "free", reason=extra.get("reason") or "user_rejected",
-                voucher_code=extra.get("voucher_code"),
-                voucher_amount=extra.get("bonus_amount") or extra.get("amount_eur"))
+            try:
+                email_service.send_voice_clone_refunded(
+                    email, lang, amount_eur=extra.get("amount_eur") or 0.0,
+                    method=extra.get("method") or "free", reason=extra.get("reason") or "user_rejected",
+                    voucher_code=extra.get("voucher_code"),
+                    voucher_amount=extra.get("bonus_amount") or extra.get("amount_eur"))
+            except Exception as e:      # noqa: BLE001 - m3: mai loggare str(e), puo' contenere l'email
+                print(f"[voice_clone] notify refunded fallita: {type(e).__name__}", flush=True)
     elif event == "expiring":
         _vc_log(rec, "VOICE_CLONE_EXPIRING")
         if email:
-            email_service.send_voice_clone_expiring(email, lang, days=extra.get("days", 30),
-                                                     manage_url=urls["manage_url"])
+            try:
+                email_service.send_voice_clone_expiring(email, lang, days=extra.get("days", 30),
+                                                         manage_url=urls["manage_url"])
+            except Exception as e:      # noqa: BLE001
+                print(f"[voice_clone] notify expiring fallita: {type(e).__name__}", flush=True)
     elif event == "expired":
         _vc_log(rec, "VOICE_CLONE_EXPIRED")
     elif event == "approval_reminder":
         _vc_log(rec, "VOICE_CLONE_REMINDER", str(extra.get("stage")))
         if email:
-            email_service.send_voice_clone_reminder(email, lang, resume_url=urls["resume_url"],
-                                                     stage=extra.get("stage", 1))
+            try:
+                email_service.send_voice_clone_reminder(email, lang, resume_url=urls["resume_url"],
+                                                         stage=extra.get("stage", 1))
+            except Exception as e:      # noqa: BLE001
+                print(f"[voice_clone] notify reminder fallita: {type(e).__name__}", flush=True)
 
 
 @app.route("/api/voice_clone/config")
@@ -9048,10 +9058,14 @@ def api_vc_commit():
     except voice_clone.EmailHasVoice:
         return _vc_err("email_has_voice", "This email already has a voice sample", 409)
     except voice_clone.VoiceGone:
+        # C1 item 1: una capture vc:<clone_id> gia' incassata (payment_token
+        # consumato in un tentativo precedente) su una voce ormai sparita/
+        # terminale non deve restare orfana: nessun altro punto la rimborsera'.
+        payment.refund_unused_captures_for_job("vc:" + rec["id"], reason="voice_clone_gone")
         return _vc_err("voice_gone", "Voice no longer available", 410)
     except PermissionError:
         return _vc_err("not_authorized", "Not authorized", 403)
-    except ValueError as e:
+    except voice_clone.PaymentInvalid as e:
         return _vc_err("payment_invalid", f"Payment not valid: {e}", 402)
     if created:
         _vc_log(out, "VOICE_CLONE_PAID", (out.get("payment") or {}).get("type") or "")
@@ -9059,9 +9073,20 @@ def api_vc_commit():
             voice_clone_demo.start_demos(out["id"])
         except Exception as e:      # noqa: BLE001 - lo sweeper/recover riprendera'
             print(f"[voice_clone] start_demos {out['id']}: {e}", flush=True)
-        email_service.send_voice_clone_paid(
-            out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
-            amount_eur=(out.get("payment") or {}).get("amount_eur") or 0.0, **_vc_urls(out))
+
+        def _send_paid_email():
+            try:
+                email_service.send_voice_clone_paid(
+                    out["owner_email"], out.get("ui_lang") or "en", voice_code=out["voice_code"],
+                    amount_eur=(out.get("payment") or {}).get("amount_eur") or 0.0, **_vc_urls(out))
+            except Exception as e:      # noqa: BLE001 - m3: mai loggare str(e)
+                print(f"[voice_clone] send_voice_clone_paid {out['id']}: {type(e).__name__}", flush=True)
+
+        try:
+            threading.Thread(target=_send_paid_email, daemon=True,
+                             name=f"vc-paid-email-{out['id']}").start()
+        except Exception:
+            _send_paid_email()
     return jsonify({"clone_id": out["id"], "voice_code": out["voice_code"],
                     "state": out["state"], "created": created})
 
@@ -9261,14 +9286,21 @@ def api_vc_forget(clone_id):
     if gate:
         return gate
     rec = _vc_rec_or_404(clone_id)
-    if rec is None or not voice_clone.forget(clone_id, _get_client_id()):
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    try:
+        ok = voice_clone.forget(clone_id, _get_client_id())
+    except voice_clone.BadTransition:
+        # m1: il dispositivo creatore non puo' essere dimenticato (perderebbe
+        # per sempre il voice_code) - va cancellato con "Cancella" (delete_by_owner).
+        return _vc_err("bad_state", "The owner device cannot be forgotten; delete the voice instead", 409)
+    if not ok:
         return _vc_err("voice_not_found", "Voice not found", 404)
     return jsonify({"ok": True})
 
 
 def _vc_is_owner(rec, cid):
-    dev = (rec.get("devices") or [{}])[0]
-    return bool(cid) and dev.get("cid") == cid and dev.get("via") == "creator"
+    return voice_clone.is_owner(rec, cid)
 
 
 @app.route("/api/voice_clone/<clone_id>/resend", methods=["POST"])

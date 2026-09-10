@@ -190,6 +190,24 @@ def test_commit_errori(client, tmp_path, monkeypatch):
     assert r.status_code == 403 and r.get_json()["error_code"] == "not_authorized"
 
 
+def test_commit_su_voce_terminale_rimborsa_la_capture_orfana(client, tmp_path):
+    """C1 item 1: se la voce diventa terminale (qui: scaduta) prima che una
+    capture PayPal per essa venga incassata, e l'utente prova comunque a
+    confermare il pagamento, l'uscita 410 voice_gone deve rimborsare subito
+    la capture invece di lasciarla orfana fino al prossimo giro di sweep."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready", "expired"):
+        vc.transition(rec["id"], s)
+    payment._payments["ORD-VC-1"] = {"order_id": "ORD-VC-1", "amount_eur": 5.0, "email": "a@x.it",
+                                     "captured_at": 1_000_000, "used": False, "job_id": "vc:" + rec["id"]}
+    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
+    r = client.post("/api/voice_clone/commit", json={
+        "clone_id": rec["id"], "email": "a@x.it", "email2": "a@x.it",
+        "extra_id": extra, "payment_token": "ORD-VC-1"})
+    assert r.status_code == 410 and r.get_json()["error_code"] == "voice_gone"
+    assert payment._payments["ORD-VC-1"]["used"] is True
+
+
 def test_paypal_order(client, tmp_path, monkeypatch):
     rec = _draft(tmp_path)
     monkeypatch.setattr(audiobook_app, "_paypal_available", lambda: True)
@@ -278,6 +296,35 @@ def test_mine_claim_confirm_forget(client, tmp_path, ambiente):
     assert client.post(f"/api/voice_clone/{rec['id']}/forget").status_code == 200
     assert client.get("/api/voice_clone/mine").get_json()["voices"] == []
     assert client.post(f"/api/voice_clone/{rec['id']}/resend").status_code == 403
+
+
+def test_forget_rifiuta_il_dispositivo_proprietario(client, tmp_path):
+    """m1: il dispositivo creatore non puo' essere dimenticato via API (409
+    bad_state); solo "Cancella" (delete_by_owner, /vc/<token>/delete)."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready"):
+        vc.transition(rec["id"], s)
+    r = client.post(f"/api/voice_clone/{rec['id']}/forget")
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    assert vc.authorized(vc.voice_id_of(rec), "cid-uno")
+
+
+def test_notify_rimborso_non_logga_l_email_se_l_invio_fallisce(client, tmp_path, monkeypatch, capsys):
+    """m3: se l'invio dell'email di rimborso fallisce, lo stdout deve
+    riportare solo type(e).__name__, mai il messaggio d'eccezione (puo'
+    contenere l'indirizzo email del destinatario)."""
+    rec = _paid(tmp_path, email="segreto@example.com")
+    vc.transition(rec["id"], "demos_generating")
+    vc.transition(rec["id"], "demo_failed")
+
+    def esplode(*a, **kw):
+        raise RuntimeError("SMTP rifiutato per segreto@example.com")
+    monkeypatch.setattr(email_service, "send_voice_clone_refunded", esplode)
+    r = client.post(f"/api/voice_clone/{rec['id']}/reject")
+    assert r.status_code == 200 and r.get_json()["state"] == "refunded"
+    out = capsys.readouterr().out
+    assert "segreto@example.com" not in out
+    assert "RuntimeError" in out
 
 
 def test_resend_solo_proprietario_e_3_al_giorno(client, tmp_path, ambiente):
