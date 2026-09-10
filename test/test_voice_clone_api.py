@@ -455,3 +455,81 @@ def test_claim_locked_dopo_troppi_tentativi_di_conferma(client, tmp_path, ambien
     assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
     r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
     assert r.status_code == 423 and r.get_json()["error_code"] == "code_locked"
+
+
+def test_sample_troppo_grande(client, monkeypatch):
+    """T6b: file salvato ma oltre max_upload_mb -> 413 too_large, nessuna
+    bozza creata."""
+    monkeypatch.setattr(vc, "max_upload_mb", lambda: 0)
+    r = client.post("/api/voice_clone/sample", data={
+        "file": (io.BytesIO(b"webm-bytes"), "rec.webm"), "lang": "it", "locale": "it-IT",
+        "gender": "f", "prompt_version": "x"}, content_type="multipart/form-data")
+    assert r.status_code == 413
+    assert r.get_json()["error_code"] == "too_large"
+    assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR) if f.startswith("vc_")]
+
+
+def test_sample_asr_non_disponibile(client, monkeypatch):
+    """T6b: verifica ASR abilitata ma il modello non risponde
+    (voice_clone_audio.AsrUnavailable) -> 503 asr_unavailable, nessuna bozza
+    creata."""
+    monkeypatch.setenv("ABM_VOICE_CLONE_ASR", "1")
+
+    def prepara(src, dst, **kw):
+        open(dst, "wb").write(b"RIFF-wav")
+        return vca.Metrics(**{f: 0.0 for f in vca.Metrics.__dataclass_fields__})
+    monkeypatch.setattr(vca, "prepare_sample", prepara)
+
+    def esplode(wav_path, language, expected_text, **kw):
+        raise vca.AsrUnavailable("modello whisper non caricato")
+    monkeypatch.setattr(vca, "check_transcript", esplode)
+    r = client.post("/api/voice_clone/sample", data={
+        "file": (io.BytesIO(b"webm-bytes"), "rec.webm"), "lang": "it", "locale": "it-IT",
+        "gender": "f", "prompt_version": "x"}, content_type="multipart/form-data")
+    assert r.status_code == 503
+    assert r.get_json()["error_code"] == "asr_unavailable"
+    assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR) if f.startswith("vc_")]
+
+
+def test_approve_voce_sparita(client, tmp_path):
+    """T6b: approve su una voce diventata terminale (es. rimborsata da un
+    altro dispositivo) tra il caricamento della pagina e il click -> 410
+    voice_gone, non 404/500."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    vc.transition(rec["id"], "refunded")
+    r = client.post(f"/api/voice_clone/{rec['id']}/approve")
+    assert r.status_code == 410 and r.get_json()["error_code"] == "voice_gone"
+
+
+def test_regenerate_esaurito(client, tmp_path, monkeypatch, ambiente):
+    """T6b: oltre regen_max rigenerazioni -> 409 regen_exhausted (invece di
+    continuare a consumare la coda di sintesi)."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], s)
+    monkeypatch.setattr(vcd, "start_demos", lambda cid, **kw: vc.get(cid))
+    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
+    for _ in range(vc.regen_max()):
+        r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": extra})
+        assert r.status_code == 200, r.get_json()
+    r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": extra})
+    assert r.status_code == 409 and r.get_json()["error_code"] == "regen_exhausted"
+
+
+def test_confirm_scaduto_via_api(client, tmp_path, monkeypatch, ambiente):
+    """T6b: il codice di conferma scade (CONFIRM_TTL_SEC) prima che il nuovo
+    dispositivo lo usi -> 410 confirm_expired (distinto da confirm_wrong)."""
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready"):
+        vc.transition(rec["id"], s)
+    ora = [1_000_000.0]
+    monkeypatch.setattr(vc, "_now", lambda now=None: int(now if now is not None else ora[0]))
+    _cid(client, "cid-due")
+    r = client.post("/api/voice_clone/claim", json={"voice_code": rec["voice_code"]})
+    assert r.status_code == 200 and r.get_json()["status"] == "pending"
+    ora[0] += vc.CONFIRM_TTL_SEC + 1
+    r = client.post("/api/voice_clone/confirm",
+                    json={"voice_code": rec["voice_code"], "confirm_code": "000000"})
+    assert r.status_code == 410 and r.get_json()["error_code"] == "confirm_expired"
