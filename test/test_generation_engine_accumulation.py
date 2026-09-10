@@ -141,12 +141,12 @@ def test_run_generation_accumulates_gemini_actuals_multifile(monkeypatch, tmp_pa
 
 
 def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
-    """If engine is google/edge, gemini_actual stays at zeros (initialised but never accumulated)."""
-    def fake_chunk_google(text, voice, rate, output_path, max_retries=3, **kwargs):
+    """If engine is edge, gemini_actual stays at zeros (initialised but never accumulated)."""
+    async def fake_chunk_edge(text, voice, rate, output_path, max_retries=3, **kwargs):
         with open(output_path, "wb") as f:
             f.write(b"\x00" * 1000)
-        return {"success": True}
-    monkeypatch.setattr(generation_engine, "generate_chunk_mp3_google", fake_chunk_google)
+        return True
+    monkeypatch.setattr(generation_engine, "generate_chunk_mp3", fake_chunk_edge)
 
     plan = [{
         "chapter_index": 1, "chapter_title": "C", "chunk_index": 0, "chunks_in_chapter": 1,
@@ -154,7 +154,7 @@ def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
     }]
     monkeypatch.setattr(generation_engine, "_plan_chunks", lambda info, max_chars, max_bytes=None, **kw: plan)
     monkeypatch.setattr(generation_engine, "_pick_chunk_max_chars", lambda v, l: 4096)
-    monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "google")
+    monkeypatch.setattr(generation_engine, "_engine_for_voice", lambda v: "edge")
     monkeypatch.setattr(generation_engine, "_generate_silence_mp3", lambda p, s=1: True)
     monkeypatch.setattr(generation_engine, "_get_audio_duration_ms", lambda p: 1000)
 
@@ -170,7 +170,7 @@ def test_run_generation_actuals_zero_when_no_gemini(monkeypatch, tmp_path):
     monkeypatch.setattr(generation_engine, "_jobs_lock", None, raising=False)
 
     try:
-        generation_engine.run_generation("j2", _Info(), "google:it-IT-Standard-A", "+0%",
+        generation_engine.run_generation("j2", _Info(), "it-IT-Standard-A", "+0%",
                                          single_file=True, output_format="mp3")
     except Exception:
         pass

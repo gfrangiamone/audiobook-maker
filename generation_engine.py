@@ -51,6 +51,8 @@ import gemini_cost_audit
 import translation_cost_audit
 import optimization_cost_audit
 import speechify_tts
+import voxcpm_tts
+import voxcpm_ranking
 from audio_utils import (
     _safe_filename, _include_cover_in_dir,
     _generate_silence_mp3, _concatenate_mp3,
@@ -66,12 +68,14 @@ from audio_utils import (
     pcm_to_aac_m4b, _convert_mp3_to_m4b,
     pcm_to_aac_m4b_monitored, _convert_mp3_to_m4b_monitored,
     trim_pcm_trailing_silence, build_m4b_rebuild_kit,
+    M4B_MSG_PREPARING,
 )
 from tts_split import (
-    _plan_chunks, generate_chunk_mp3, generate_chunk_mp3_google,
-    _pick_chunk_max_chars, _pick_chunk_max_bytes,
+    _plan_chunks, generate_chunk_mp3,
+    _pick_chunk_max_chars, _pick_chunk_max_bytes, _pick_pre_split,
     generate_chunk_pcm_gemini, _generate_silence_pcm,
     generate_chunk_pcm_speechify,
+    prepare_tts_text, _normalize_shouting,
 )
 
 # ---------------------------------------------------------------------------
@@ -200,7 +204,6 @@ _upload_dir = None      # Path to data directory
 _download_tokens = None # reference to token dict in audiobook_app
 _save_tokens = None     # callable: persist tokens to disk
 _log_activity = lambda *a, **kw: None   # callable: log activity (default: no-op)
-_google_tts = None      # optional google_tts module
 _jobs_lock = None       # threading.Lock injected by configure(); guard _set_job_status before configure
 _invalidate_voices_cache = lambda: None  # callable (default: no-op)
 _retention_sec = 64800  # job retention in seconds (configurable via ABM_JOB_RETENTION_SEC)
@@ -218,6 +221,7 @@ _client_gen_cap_reached = None
 # Predicato voce PREMIUM Gemini: definizione unica in voice_utils (modulo foglia).
 from voice_utils import is_gemini_voice as _is_gemini_voice
 from voice_utils import is_speechify_voice as _is_speechify_voice
+from voice_utils import is_voxcpm_voice as _is_voxcpm_voice
 
 
 def _retention_for_job(job):
@@ -469,7 +473,7 @@ def _set_job_status(job, status):
 
 
 def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn,
-              google_tts_module=None, invalidate_voices_cache_fn=None, jobs_lock=None,
+              invalidate_voices_cache_fn=None, jobs_lock=None,
               retention_sec=None, gemini_retention_sec=None, write_email_marker_fn=None,
               lookup_client_email_fn=None, build_descriptor_fn=None, send_push_fn=None,
               client_gen_cap_fn=None):
@@ -477,7 +481,7 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     Chiamare una volta al startup, prima di avviare qualsiasi thread.
     """
     global _jobs, _upload_dir, _download_tokens, _save_tokens, _log_activity
-    global _google_tts, _invalidate_voices_cache, _jobs_lock, _retention_sec
+    global _invalidate_voices_cache, _jobs_lock, _retention_sec
     global _gemini_retention_sec, _write_email_marker, _lookup_client_email
     global _build_descriptor, _send_push, _client_gen_cap_reached
     _jobs = jobs
@@ -485,7 +489,6 @@ def configure(jobs, upload_dir, download_tokens, save_tokens_fn, log_activity_fn
     _download_tokens = download_tokens
     _save_tokens = save_tokens_fn
     _log_activity = log_activity_fn
-    _google_tts = google_tts_module
     if invalidate_voices_cache_fn is not None:
         _invalidate_voices_cache = invalidate_voices_cache_fn
     _jobs_lock = jobs_lock
@@ -836,7 +839,7 @@ _LLM_PREAMBLE_RE = re.compile(
 # lingue che non spaziano le parole (cinese, giapponese) usano la
 # punteggiatura a larghezza piena, non questa; il lookahead le esclude
 # comunque.
-_LLM_SPAZIO_MANCANTE_RE = re.compile(r"([,;:])(?=[^\W\d_])(?![぀-鿿])")
+_LLM_SPAZIO_MANCANTE_RE = re.compile(r"([,;:])(?=[^\W\d_])(?![\u3040-\u9fff])")
 _LLM_SPAZIO_DI_TROPPO_RE = re.compile(r"[ \t]+([,;:.!?])")
 
 
@@ -1463,12 +1466,21 @@ def _generate_optimized_abm(job_id):
         except Exception:
             safety_prompt = ""
 
+    # Lo snapshot deve essere la prova di cosa leggera` il motore, non del testo
+    # com'era prima: applichiamo la stessa preparazione di `_plan_chunks` con i
+    # flag parentesi del job (assenti in fase di ottimizzazione = default della
+    # generazione). Cosi` chi apre il .abm ritrova il maiuscolo gia' abbassato e
+    # il punto dopo il titolo, che e` esattamente cio` che sentira`.
+    strip_round = not job.get("read_round_parens", False)
+    strip_square = not job.get("read_square_brackets", False)
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         chapters_manifest = []
         for ch in info.chapters:
             if chapter_set and ch.index not in chapter_set:
                 continue
-            ch_safe = _safe_filename(ch.title)[:50] or f"ch_{ch.index}"
+            ch_title = _normalize_shouting((ch.title or "").strip())
+            ch_safe = _safe_filename(ch_title)[:50] or f"ch_{ch.index}"
             ch_filename = f"{ch.index:03d}_{ch_safe}.txt"
 
             # Safety-net: se il testo del capitolo contiene un echo del system
@@ -1497,12 +1509,20 @@ def _generate_optimized_abm(job_id):
                     chars_output=len(ch_text_orig),
                     leaked_preview=ch_text_orig[:200],
                 )
+            else:
+                # `flatten=False`: il .abm si legge e si ri-carica come progetto,
+                # i paragrafi restano. Le parole sono comunque quelle del TTS.
+                # (Il placeholder di leak resta fuori: vive tra parentesi quadre
+                # e lo stripping lo cancellerebbe.)
+                ch_text_safe = prepare_tts_text(
+                    ch_text_safe, strip_round=strip_round,
+                    strip_square=strip_square, flatten=False)
 
             zf.writestr(f"chapters/{ch_filename}", ch_text_safe)
             entry = {
                 "index": ch.index,
                 "filename": ch_filename,
-                "title": ch.title,
+                "title": ch_title,
                 "word_count": ch.word_count,
             }
             if prompt_leak_flag:
@@ -1532,6 +1552,13 @@ def _generate_optimized_abm(job_id):
             "original_filename": job.get("original_filename", ""),
             "ai_optimized": True,
             "ai_optimized_at": datetime.now(timezone.utc).isoformat(),
+            # Evidenza delle lavorazioni NON AI applicate al testo qui dentro.
+            "tts_text_prepared": {
+                "shouting_normalized": True,
+                "heading_pause": True,
+                "round_parens_read": bool(job.get("read_round_parens", False)),
+                "square_brackets_read": bool(job.get("read_square_brackets", False)),
+            },
             "chapters": chapters_manifest,
         }
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -1674,6 +1701,20 @@ def _friendly_voice_name(voice):
         name = v.split(":")[-1]
         name = re.sub(r"_\d+$", "", name)
         return name.replace("_", " ").strip().title()
+    if _is_voxcpm_voice(v):
+        # 'voxcpm:v2:it-IT/Stefano' -> 'Stefano'. Il locale serve a distinguere
+        # le voci dentro il catalogo, non a chi legge l'email di consegna.
+        if "/" in v:
+            return v.split("/")[-1].strip()
+        # 'voxcpm:mine:<token>' -> nessuno slash: e' una voce clonata
+        # dall'utente, il token non e' un nome da mostrare. Schema ignoto (ne'
+        # v2 ne' mine) -> ultimo segmento ':' come ripiego, meglio di niente.
+        parti = v.split(":")
+        if len(parti) >= 2 and parti[1] == "mine":
+            # Etichetta monolingua in inglese (niente traduzioni sparse):
+            # le email localizzate la traducono a valle se serve (Task 8).
+            return "Your voice"
+        return parti[-1].strip()
     if _is_gemini_voice(v):
         return v.split(":")[-1].strip()
     base = v.split("-")[-1]
@@ -1694,7 +1735,7 @@ def _generation_details_lines(job, lang):
     resta nei chiamanti."""
     d = _email_details_i18n.get(lang, _email_details_i18n["en"])
     voice = (job.get("voice") or "").strip()
-    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice)
+    is_premium = _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice)
     lines = []
 
     # 1) Lingua + tipo voci (codice ISO: locale della voce edge, oppure
@@ -2703,35 +2744,33 @@ def _refund_job_payment(job_id, job, reason="error"):
 
 
 # ---------------------------------------------------------------------------
-# Google TTS refund helper
-# ---------------------------------------------------------------------------
-
-def _google_tts_refund_unused(job_id, job):
-    """Restituisce al budget i caratteri Google TTS prenotati ma non consumati,
-    poi forza una riconciliazione con Cloud Monitoring."""
-    if _google_tts is None:
-        return
-    reserved = job.get("google_tts_reserved", 0)
-    consumed = job.get("processed_chars", 0)
-    if reserved > consumed:
-        unused = reserved - consumed
-        _google_tts.refund_chars(unused)
-        print(f"[{job_id}] Google TTS: refunded {unused:,} unused chars "
-              f"(reserved {reserved:,}, consumed {consumed:,})")
-        _invalidate_voices_cache()
-    # Forza riconciliazione immediata in thread separato per non bloccare il cleanup
-    def _do_reconcile():
-        try:
-            time.sleep(2)  # Piccolo delay per dare tempo all'API di registrare
-            _google_tts.reconcile_with_cloud_monitoring()
-        except Exception as e:
-            print(f"[{job_id}] Post-cancel reconcile error: {e}")
-    threading.Thread(target=_do_reconcile, daemon=True).start()
-
-
-# ---------------------------------------------------------------------------
 # run_optimization — background thread LLM
 # ---------------------------------------------------------------------------
+
+# Messaggi di avanzamento dell'ottimizzazione del testo.
+#
+# Stessa regola dei M4B_MSG_* di audio_utils.py: qui siamo nel processo di
+# generazione, che non sa in che lingua sta guardando chi legge. I messaggi
+# escono in inglese canonico e il client li traduce (mappa `SERVER_MSG_KEYS` in
+# static/js/app.js, chiavi `opt_*` in templates/_fragments/i18n_data.js).
+#
+# OPT_MSG_CHAPTER e' l'eccezione: porta dentro numeri e titolo, quindi non e'
+# una stringa fissa da mappare. Il client la riconosce con `OPT_CHAPTER_RE` e
+# ricompone la frase dagli stessi campi del payload da cui e' nata qui
+# (opt_current_chapter_num, opt_progress_total, opt_current_chapter).
+OPT_MSG_STARTING = "Starting optimization..."
+OPT_MSG_CHAPTER = "Optimizing chapter {n}/{total}: {title}..."
+OPT_MSG_FINALIZING = "Finalizing optimization..."
+OPT_MSG_ARCHIVE_MAKING = "Generating optimized project archive..."
+OPT_MSG_ARCHIVE_DONE = "Project archive created."
+OPT_MSG_ARCHIVE_UNAVAILABLE = "Project archive not available (non-critical)."
+OPT_MSG_DONE_PREPARING_AUDIO = "Optimization complete! Preparing audio generation..."
+OPT_MSG_EMAIL_SENDING = "Sending completion email..."
+OPT_MSG_EMAIL_SENT = "Completion email sent."
+OPT_MSG_DONE_EMAIL_ERROR = "Optimization complete (email error, retry manually)."
+OPT_MSG_DONE = "Optimization complete!"
+OPT_MSG_CANCELLED = "Optimization cancelled"
+
 
 def run_optimization(job_id, selected_chapters=None):
     """Background thread: optimize text of all chapters via LLM.
@@ -2787,7 +2826,7 @@ def run_optimization(job_id, selected_chapters=None):
     job["opt_streamed_chars"] = 0
     job["opt_usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "estimated": False}
     job["opt_start_time"] = start_time
-    job["opt_progress_message"] = "Starting optimization..."
+    job["opt_progress_message"] = OPT_MSG_STARTING
 
     def _emit_finalization_progress(phase_name, fraction_done):
         """fraction_done: 0.0 -> 1.0 within finalization phase"""
@@ -2810,10 +2849,8 @@ def run_optimization(job_id, selected_chapters=None):
             job["opt_current_chapter"] = ch.title
             job["opt_current_chapter_num"] = i + 1
             job["opt_elapsed_seconds"] = round(time.time() - start_time)
-            job["opt_progress_message"] = (
-                f"Optimizing chapter {i+1}/{total_chapters}: "
-                f"{ch.title[:40]}..."
-            )
+            job["opt_progress_message"] = OPT_MSG_CHAPTER.format(
+                n=i + 1, total=total_chapters, title=ch.title[:40])
             print(f"[{job_id}] LLM optimizing chapter {i+1}/{total_chapters}: {ch.title}")
 
             ch_input_chars = ch.char_count
@@ -2866,18 +2903,18 @@ def run_optimization(job_id, selected_chapters=None):
                       job.get("client_id", ""), job.get("client_ip", ""),
                       "", job.get("browser_lang", ""))
 
-        _emit_finalization_progress("Finalizing optimization...", 0.0)
+        _emit_finalization_progress(OPT_MSG_FINALIZING, 0.0)
 
         # Re-check auto_generate — may have been set via the unified optimization+generation flow
         auto_generate = job.get("opt_auto_generate", False)
         if auto_generate:
-            _emit_finalization_progress("Generating optimized project archive...", 0.15)
+            _emit_finalization_progress(OPT_MSG_ARCHIVE_MAKING, 0.15)
             # Generate .abm snapshot first, then proceed to TTS generation
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
-                _emit_finalization_progress("Project archive created.", 0.30)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_DONE, 0.30)
                 # Rinfresca il descrittore di recovery: l'ottimizzazione è
                 # completata e l'.abm esiste su disco. Senza questo upsert il
                 # descrittore (registrato in fase optimize o a register_email)
@@ -2892,8 +2929,8 @@ def run_optimization(job_id, selected_chapters=None):
                               f"(non-fatal): {_e_reg}", flush=True)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm snapshot before auto-gen: {e}")
-                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
-            _emit_finalization_progress("Optimization complete! Preparing audio generation...", 1.0)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_UNAVAILABLE, 0.30)
+            _emit_finalization_progress(OPT_MSG_DONE_PREPARING_AUDIO, 1.0)
             # Go directly to generating — skip intermediate "optimized" status
             # to avoid race condition in SSE polling
             voice = job.get("opt_voice", "it-IT-IsabellaNeural")
@@ -2995,22 +3032,22 @@ def run_optimization(job_id, selected_chapters=None):
                            podcast_base_url=podcast_base_url)
         elif job.get("email_registered"):
             # Batch mode, no auto-generate: create .abm and send email
-            _emit_finalization_progress("Generating optimized project archive...", 0.15)
+            _emit_finalization_progress(OPT_MSG_ARCHIVE_MAKING, 0.15)
             try:
                 abm_path, abm_name = _generate_optimized_abm(job_id)
                 job["optimized_abm_path"] = abm_path
                 job["optimized_abm_name"] = abm_name
-                _emit_finalization_progress("Project archive created.", 0.30)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_DONE, 0.30)
             except Exception as e:
                 print(f"[{job_id}] Failed to generate .abm: {e}")
-                _emit_finalization_progress("Project archive not available (non-critical).", 0.30)
-            _emit_finalization_progress("Sending completion email...", 0.70)
+                _emit_finalization_progress(OPT_MSG_ARCHIVE_UNAVAILABLE, 0.30)
+            _emit_finalization_progress(OPT_MSG_EMAIL_SENDING, 0.70)
             try:
                 _send_optimization_email(job_id)
-                _emit_finalization_progress("Completion email sent.", 1.0)
+                _emit_finalization_progress(OPT_MSG_EMAIL_SENT, 1.0)
             except Exception as e:
                 print(f"[{job_id}] Optimization email error: {e}")
-                _emit_finalization_progress("Optimization complete (email error, retry manually).", 1.0)
+                _emit_finalization_progress(OPT_MSG_DONE_EMAIL_ERROR, 1.0)
             # Optimize-only batch: il lavoro pagato è finito qui. Chiudi il
             # descrittore anche se l'email non è partita, altrimenti il job
             # risulta orfano ai riavvii successivi e finisce in rimborso.
@@ -3022,14 +3059,14 @@ def run_optimization(job_id, selected_chapters=None):
             _set_job_status(job, "optimized")
         else:
             # Interactive mode: just mark as optimized
-            _emit_finalization_progress("Optimization complete!", 1.0)
+            _emit_finalization_progress(OPT_MSG_DONE, 1.0)
             _set_job_status(job, "optimized")
             job["last_poll"] = time.time()
 
     except _CancelledError:
         # Revert to analyzed so cleanup doesn't nuke the job — user can retry
         _set_job_status(job, "analyzed")
-        job["opt_progress_message"] = "Optimization cancelled"
+        job["opt_progress_message"] = OPT_MSG_CANCELLED
         print(f"[{job_id}] LLM optimization cancelled")
         _log_activity(job_id, job.get("original_filename", ""), "OPT_CANCEL",
                       job.get("client_id", ""), job.get("client_ip", ""),
@@ -3395,20 +3432,375 @@ def _engine_for_voice(voice):
     """Sceglie il motore TTS dal voice ID.
 
     Prefissi:
+      - "voxcpm:..."    -> VoxCPM2 su RunPod (PCM native, job per capitolo)
       - "speechify:..." -> Speechify Simba-3.2 (PCM native)
       - "gemini:..."  -> Gemini TTS (PCM native)
-      - "gcloud:..."  -> Google Cloud TTS Chirp3-HD (MP3)
       - altrimenti    -> Microsoft Edge TTS (MP3, default)
     """
     if not voice:
         return "edge"
+    if _is_voxcpm_voice(voice):
+        return "voxcpm"
     if _is_speechify_voice(voice):
         return "speechify"
     if _is_gemini_voice(voice):
         return "gemini"
-    if _google_tts is not None and _google_tts.is_google_voice(voice):
-        return "google"
     return "edge"
+
+
+def _ranking_point_allowed(voice):
+    """Le voci personali (voxcpm:mine:) non entrano nella classifica d'uso:
+    e' una voce campione di un solo utente, non una voce del catalogo."""
+    return _is_voxcpm_voice(voice) and not (voice or "").startswith("voxcpm:mine:")
+
+
+def _pcm_sample_rate(job, use_speechify, use_voxcpm):
+    """Sample rate del flusso PCM in corso: unica fonte di verita', usata sia
+    per il calcolo delle durate sia per generare il silenzio fra i capitoli
+    (prima i due punti divergevano, ed e' cosi' che il silenzio VoxCPM usciva
+    a 24 kHz invece che nativo 48 kHz, dimezzando la pausa richiesta).
+
+    Speechify: nativo 48000, ma il valore vero arriva dal primo chunk
+    sintetizzato (job['speechify_sample_rate']); prima che la pre-sintesi lo
+    scriva, 48000 e' comunque la stima giusta. VoxCPM: nativo 48000, fisso
+    (nessun campo di job da rileggere: il worker non lo varia mai). Gli altri
+    motori (Gemini incluso) restano a 24000, lo standard usato ovunque nel
+    resto della pipeline."""
+    if use_speechify:
+        return job.get("speechify_sample_rate", 48000)
+    if use_voxcpm:
+        return 48000
+    return 24000
+
+
+def _voxcpm_chapter_groups(plan, reusable):
+    """I chunk del piano raggruppati per capitolo, in ordine.
+
+    Ritorna `[(chapter_index, [indice_chunk, ...]), ...]`, saltando i capitoli
+    i cui chunk sono TUTTI riusabili da un tentativo precedente.
+
+    Il riuso e' per capitolo e non per chunk perche' l'unita' di lavoro e' il
+    capitolo (§7.3): rigenerare un solo chunk costerebbe comunque il job
+    intero, e il PCM che torna e' del capitolo, non ricucibile a pezzi.
+    """
+    ordine = []
+    per_capitolo = {}
+    for i, blocco in enumerate(plan):
+        ci = blocco.get("chapter_index", 0)
+        if ci not in per_capitolo:
+            per_capitolo[ci] = []
+            ordine.append(ci)
+        per_capitolo[ci].append(i)
+    return [(ci, per_capitolo[ci]) for ci in ordine
+            if not set(per_capitolo[ci]) <= set(reusable)]
+
+
+# Quanto vale la sintesi VoxCPM sulla barra, rispetto all'assemblaggio: 9 a
+# 1, cioe' 90% e 10%. Non e' una stima del tempo — e' un ordine di grandezza
+# onesto. La sintesi e' un job GPU per capitolo (minuti); l'assemblaggio
+# concatena PCM gia' su disco (secondi). Con la barra tutta sull'assemblaggio,
+# come prima, l'utente vedeva 2/(N+2) fisso per l'intera generazione.
+_VOXCPM_PESO_BARRA = 9
+
+
+def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
+                     cancelled=None, job=None, peso_barra=0):
+    """Sintetizza il libro un capitolo per job. Ritorna {indice_chunk: esito}.
+
+    Gemella della pre-sintesi Speechify poco piu' sotto, con un'unita' diversa:
+    li' un chunk per chiamata, qui un capitolo per job (§7.3). L'assemblaggio
+    sequenziale non cambia: legge i file-parte gia' scritti.
+
+    Il worker restituisce UN PCM per job, e i confini fra i chunk non tornano
+    indietro. L'audio del capitolo si scrive percio' nel file-parte del suo
+    PRIMO chunk, e gli altri chunk dello stesso capitolo ricevono un file
+    vuoto: `pcm_concat` li concatena in ordine e un pezzo vuoto non aggiunge
+    nulla, quindi l'audio esce identico e i marcatori M4B restano allineati.
+    Chiedere al worker le lunghezze dei singoli chunk vorrebbe dire modificare
+    `abm-voxcpm-worker`, che la spec mette fra i non toccati.
+
+    `job`, se passato, riceve `job["voxcpm_actual"]` aggiornato capitolo per
+    capitolo, DENTRO lo stesso loop che raccoglie `esiti` (non a fine
+    funzione): se un capitolo successivo solleva (annullamento o ritentativi
+    esauriti), le misure dei capitoli gia' completati non vanno perse. Senza
+    questo, un job cancellato/fallito a meta' libro auditerebbe zero
+    caratteri e zero costo, anche quando il worker ha davvero fatturato GPU.
+
+    `peso_barra`, se non nullo, governa quanto vale un capitolo sulla barra:
+    il 90% del suo peso avanza chunk per chunk, non appena il worker pubblica
+    un avanzamento parziale (fase e conto chunk), e il restante 10% scatta
+    tutto insieme alla consegna, quando il PCM del capitolo e' davvero su
+    disco. `progress_message` si riscrive insieme al numero, sotto lo stesso
+    lock, e porta in coda il conto delle frasi in volo o la fase in corso
+    ("preparazione del motore vocale" mentre tutti aspettano il motore,
+    "rifinitura e consegna" quando tutti hanno smesso di generare). Zero (il
+    default) lascia la barra ferma: e' il comportamento per i chiamanti che
+    non passano `job`.
+
+    Raises:
+        _CancelledError: annullamento richiesto.
+        voxcpm_tts.VoxcpmJobError: capitolo perso a ritentativi esauriti. E'
+            un fallimento del job con rimborso (§9.4), non un capitolo muto.
+    """
+    import concurrent.futures as _cf
+
+    gruppi = _voxcpm_chapter_groups(plan, reusable)
+    esiti = {}
+    if job is not None:
+        job.setdefault("voxcpm_actual", {
+            "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
+            "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
+            "code_tagliate": 0,
+            # Quanto e' servita la verifica delle code sul worker: chunk
+            # ascoltati, ritentativi necessari, quelli a cui si e'
+            # rinunciato per il tetto, e i giri spesi. Il digest quotidiano
+            # vive di questi quattro numeri.
+            "verifica_chunk": 0, "verifica_sospetti": 0,
+            "verifica_rinunciati": 0, "verifica_giri": 0,
+            # E di due che dicono quanto lavora la regola dei numeri: le
+            # code dove un numero c'era, e quante di quelle avrebbero fatto
+            # scattare un allarme se l'ASR non avesse il vizio di riscrivere
+            # «millenovecentosessantasette» come «1967». Sono ritentativi
+            # non comprati.
+            "verifica_numerali": 0, "verifica_falsi_numerali": 0,
+            # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
+            # fattura: e' il costo vero del libro, che il conto sui caratteri
+            # non puo' vedere.
+            "runpod": [],
+        })
+
+    # Quanto vale un capitolo, e quanto ne vale la coda. I chunk generati non
+    # sono il 100% del lavoro: dopo di loro restano i giri di rigenerazione
+    # delle code tagliate, l'upload su R2 e il download qui. La barra non deve
+    # inchiodarsi su un capitolo che sembra finito e non lo e'.
+    _QUOTA_CHUNK = 0.9
+
+    totale_frasi = sum(len(indici) for _, indici in gruppi)
+    consegnati = {}    # ci -> numero di chunk, scritto a future completata
+    parziali = {}      # ci -> chunk chiusi, scritto dalle callback
+    fasi = {}          # ci -> ultima fase vista, scritto dalle callback
+    # Le callback arrivano dai thread dell'executor, la consegna dal thread
+    # del job: numero e messaggio si scrivono sotto lo stesso lock, cosi' la
+    # coppia non puo' mai essere osservata mezza aggiornata.
+    barra = threading.Lock()
+
+    def _scrivi_barra():
+        """Riscrive numero e messaggio. Il lock lo prende il chiamante.
+
+        Il messaggio PRIMA del numero: chi osserva la barra reagisce al
+        numero, e deve trovare accanto il messaggio nuovo, non quello di un
+        istante fa.
+        """
+        in_volo = [ci for ci in fasi if ci not in consegnati]
+        # Il credito (punti e frasi) e chi e' "in volo" per la coda del
+        # messaggio sono due domande diverse. Un capitolo fallito esce da
+        # `fasi` (non deve trattenere la coda in eterno) ma resta in
+        # `parziali`: i suoi chunk sono stati generati per davvero, e la
+        # barra non puo' fingere che non siano mai esistiti togliendo un
+        # credito gia' mostrato all'utente.
+        con_credito = [ci for ci in parziali if ci not in consegnati]
+        frasi = sum(consegnati.values()) + sum(parziali[ci] for ci in con_credito)
+        punti = peso_barra * (sum(consegnati.values())
+                              + _QUOTA_CHUNK * sum(parziali[ci]
+                                                   for ci in con_credito))
+        if in_volo and all(fasi[ci] == "warmup" for ci in in_volo):
+            # Su worker freddo il motore ci mette due minuti a caricarsi, e
+            # oggi quel tratto e' completamente muto. La precedenza, quando
+            # le fasi si mescolano, e' al conteggio delle frasi: appena UN
+            # capitolo genera, il messaggio torna a contarle.
+            coda = "preparazione del motore vocale"
+        elif in_volo and all(fasi[ci] in ("verify", "deliver")
+                             for ci in in_volo):
+            # «Tutti» e non «almeno uno»: con due job paralleli, uno in
+            # rifinitura e uno in generazione, alternare i due messaggi
+            # darebbe un lampeggio senza informazione.
+            coda = "rifinitura e consegna"
+        else:
+            coda = (f"{frasi} di {totale_frasi} "
+                    f"fras{'e' if totale_frasi == 1 else 'i'}")
+        job["progress_message"] = (
+            f"Sintesi vocale: {len(consegnati)} di {len(gruppi)} "
+            f"capitol{'o' if len(gruppi) == 1 else 'i'} ({coda})")
+        job["progress_current"] = 2 + int(punti)
+
+    def _avanza(ci, n_chunk, riga):
+        """Un avanzamento del capitolo `ci`. Gira sui thread dell'executor.
+
+        Il denominatore e' quello di ABM: il worker scarta i chunk vuoti
+        prima di generare, quindi il suo conteggio puo' essere piu' piccolo,
+        e il peso del capitolo deve chiudere a `peso_barra * n` comunque.
+        """
+        fatti = min(int(riga.get("chunks_done") or 0), n_chunk)
+        with barra:
+            if ci in consegnati:
+                # La future e' gia' tornata: il capitolo vale il suo peso
+                # pieno, e una riga in ritardo non puo' rimetterlo in volo.
+                return
+            # Monotona: un capitolo rifatto riparte da `chunks_done = 0`, e
+            # la fase `verify` non porta un conteggio nuovo.
+            parziali[ci] = max(parziali.get(ci, 0), fatti)
+            fasi[ci] = str(riga.get("phase") or "")
+            _scrivi_barra()
+
+    def _uno(gruppo):
+        ci, indici = gruppo
+        if cancelled is not None and cancelled():
+            raise _CancelledError("Job cancelled")
+        testa = indici[0]
+        dest = str(work_dir / f"chunk_{testa:06d}.pcm")
+        try:
+            stats = voxcpm_tts.synthesize_chapter(
+                [plan[i]["text"] for i in indici], voice, dest,
+                # Un job = un capitolo: la chiave e' univoca e permette di
+                # risalire dal file su R2 al job che l'ha prodotto.
+                key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
+                cancelled=cancelled,
+                # Il payload del worker non porta l'indice di capitolo, e non
+                # deve: il capitolo e' un concetto di ABM. La callback lo sa
+                # perche' e' stata costruita per quello.
+                on_progress=((lambda riga: _avanza(ci, len(indici), riga))
+                             if job is not None and peso_barra else None))
+        except voxcpm_tts.VoxcpmJobError:
+            # Se il fallimento coincide con un annullamento gia' richiesto,
+            # non e' un capitolo perso a ritentativi esauriti: e' la corsa fra
+            # l'annullamento e l'ultimo tentativo del worker. Va sul binario
+            # del rimborso (_CancelledError), non su quello del fallimento
+            # silenzioso di §9.4, che e' per i capitoli DAVVERO persi.
+            if cancelled is not None and cancelled():
+                raise _CancelledError("Job cancelled") from None
+            raise
+        sr = stats.get("sample_rate") or 48000
+        if voxcpm_tts.apply_rate(dest, rate, sr):
+            # La velocita' ha riscritto il PCM sul posto: dimensione e durata
+            # vanno ricalcolate dal file finale, altrimenti gli "attuali" del
+            # Task 11 non corrispondono all'audio davvero consegnato.
+            try:
+                nbytes = os.path.getsize(dest)
+            except OSError:
+                nbytes = stats.get("bytes", 0)
+            stats = dict(stats)
+            stats["bytes"] = nbytes
+            stats["audio_seconds"] = nbytes / (sr * 2)
+        return ci, indici, stats
+
+    # `Executor.map` restituisce (e solleva) in ordine di SOTTOMISSIONE: se il
+    # primo gruppo fallisce, il generatore solleva subito e i gruppi successivi
+    # -- gia' completati o in corso su altri worker -- non vengono mai
+    # consumati dal for, quindi il loro contributo a `job["voxcpm_actual"]"
+    # andrebbe perso anche se il worker li ha davvero fatturati (Review finale,
+    # Important F1). Si sottomettono percio' future esplicite e si consuma con
+    # `as_completed`: ogni esito arrivato si accumula subito, indipendentemente
+    # dall'ordine, e la prima eccezione (in ordine di capitolo, per
+    # determinismo del messaggio) si rilancia solo dopo aver drenato tutte le
+    # future.
+    with _cf.ThreadPoolExecutor(max_workers=voxcpm_tts.jobs_in_flight()) as _ex:
+        future_a_posizione = {_ex.submit(_uno, gruppo): posizione
+                              for posizione, gruppo in enumerate(gruppi)}
+        errori = {}
+        for fut in _cf.as_completed(future_a_posizione):
+            posizione = future_a_posizione[fut]
+            try:
+                ci, indici, stats = fut.result()
+            except BaseException as e:
+                errori[posizione] = e
+                # Questo capitolo non arrivera' mai a `consegnati`: se la
+                # sua riga resta in `fasi`, resta "in volo" per sempre, e un
+                # capitolo superstite non vede mai finire la rifinitura (il
+                # morto conta ancora come "in generate"). Si toglie pero'
+                # SOLO da `fasi`: `parziali` resta, perche' i suoi chunk
+                # sono stati generati e fatturati per davvero, e togliere
+                # anche quello sottrarrebbe un credito gia' mostrato
+                # all'utente, facendo arretrare la barra.
+                if job is not None and peso_barra:
+                    ci_fallito = gruppi[posizione][0]
+                    with barra:
+                        fasi.pop(ci_fallito, None)
+                        _scrivi_barra()
+                continue
+            for posto, i in enumerate(indici):
+                if posto == 0:
+                    esiti[i] = stats
+                    if job is not None:
+                        _va = job["voxcpm_actual"]
+                        _va["chars"] += int(stats.get("chars", 0) or 0)
+                        _va["audio_seconds"] += float(stats.get("audio_seconds", 0) or 0)
+                        _va["tts_seconds"] += float(stats.get("tts_seconds", 0) or 0)
+                        _va["jobs"] += int(stats.get("jobs", 0) or 0)
+                        _va["redone"] += int(stats.get("redone", 0) or 0)
+                        _va["bounced"] += int(stats.get("bounced", 0) or 0)
+                        _va["failed_chunks"] += int(stats.get("failed_chunks", 0) or 0)
+                        # `.get`, come per `runpod`: un job aperto da una
+                        # versione precedente non ha questa chiave.
+                        _va["code_tagliate"] = int(
+                            _va.get("code_tagliate", 0) or 0) + int(
+                                stats.get("code_tagliate", 0) or 0)
+                        # Stesso `.get` difensivo: un job aperto prima di
+                        # queste chiavi le trova assenti, non a zero.
+                        for _k in ("verifica_chunk", "verifica_sospetti",
+                                   "verifica_rinunciati", "verifica_giri",
+                                   "verifica_numerali",
+                                   "verifica_falsi_numerali"):
+                            _va[_k] = int(_va.get(_k, 0) or 0) + int(
+                                stats.get(_k, 0) or 0)
+                        # `setdefault`: un job aperto da una versione
+                        # precedente ha un `voxcpm_actual` senza la chiave.
+                        _va.setdefault("runpod", []).extend(
+                            stats.get("runpod") or [])
+                    continue
+                # Coda del capitolo: file vuoto, e un esito a zero perche' le
+                # misure del capitolo sono gia' contate sul primo chunk.
+                parte = work_dir / f"chunk_{i:06d}.pcm"
+                with open(parte, "wb"):
+                    pass
+                esiti[i] = {"sample_rate": stats.get("sample_rate") or 48000,
+                            "chars": 0, "audio_seconds": 0.0,
+                            "tts_seconds": 0.0, "jobs": 0, "redone": 0,
+                            "bounced": 0, "failed_chunks": 0,
+                            "code_tagliate": 0, "bytes": 0,
+                            "runpod": []}
+            # I capitoli tornano in ordine di completamento, non di indice: il
+            # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
+            # lettura, che a job paralleli sarebbe una mezza verita'.
+            if job is not None and peso_barra:
+                with barra:
+                    # Il 10% che i chunk non coprivano scatta adesso: il PCM
+                    # e' davvero su disco.
+                    consegnati[ci] = len(indici)
+                    parziali.pop(ci, None)
+                    fasi.pop(ci, None)
+                    _scrivi_barra()
+        if errori:
+            prima_posizione = min(errori)
+            raise errori[prima_posizione]
+    return esiti
+
+
+def _voxcpm_chunk_result(i, voxcpm_pre, reusable_chunks, job_id):
+    """Il risultato del chunk `i` per `_synthesize_chunk` (voci VoxCPM).
+
+    Tre casi:
+      1. `i` e' in `voxcpm_pre` (l'ha scritto `_voxcpm_pre_pass`): il suo
+         esito, normale o di coda-capitolo (zero, file vuoto).
+      2. `i` non c'e' ma e' un riuso legittimo (`reusable_chunks`): il chunk
+         non e' mai entrato nella pre-sintesi apposta, perche' il capitolo era
+         gia' su disco da un tentativo precedente.
+      3. `i` non c'e' e non e' nel piano di riuso: la pre-sintesi ha saltato
+         un chunk che avrebbe dovuto sintetizzare. Prima degradava in
+         silenzio a `{"reused": True}`, consegnando il file-parte gia' vuoto o
+         di un tentativo vecchio come se fosse audio valido (Review finale,
+         Minor F4). Qui si logga e si solleva, cosi' il job fallisce in modo
+         tracciabile invece di un capitolo muto consegnato all'utente.
+    """
+    if i in voxcpm_pre:
+        return voxcpm_pre[i]
+    if i in reusable_chunks:
+        return {"reused": True}
+    print(f"[{job_id}] VoxCPM: chunk {i} assente dalla pre-sintesi e non nel "
+          f"piano di riuso — non e' un audio riusato, e' un chunk perso",
+          flush=True)
+    raise voxcpm_tts.VoxcpmJobError(
+        f"chunk {i} assente dalla pre-sintesi VoxCPM (job {job_id}): "
+        f"non riusabile e mai sintetizzato")
 
 
 # ---------------------------------------------------------------------------
@@ -3528,6 +3920,20 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                 accent = _loc or ""
             except Exception:
                 pass
+        elif engine == "voxcpm":
+            try:
+                import voxcpm_catalog as _vcat
+                model_label = getattr(_vcat, "MODEL_LABEL", "") or "VoxCPM2"
+                if voice_id.startswith("voxcpm:mine:"):
+                    import voice_clone as _vcl
+                    voice_name = "user-voice"
+                    language = _vcl.language_of(voice_id) or ""
+                else:
+                    _rec = _vcat.parse_voice_id(voice_id)
+                    voice_name = _rec.get("name") or voice_id
+                    language = _rec.get("locale") or ""
+            except Exception:
+                pass
         else:
             # Edge/Google: la locale e' nel nome stesso della voce (it-IT-DiegoNeural).
             parts = voice_id.replace("gcloud:", "").split("-")
@@ -3539,7 +3945,13 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
 
         tags["abm_model"] = model_label
         tags["abm_voice"] = voice_name
-        tags["abm_voice_id"] = voice_id
+        # Voce campione: l'id completo porta il token, un segreto (vedi
+        # voice_clone.py) - nei metadati del file consegnato (ri-condivisibile
+        # dall'utente) va solo il prefisso, mai il token.
+        if voice_id.startswith("voxcpm:mine:"):
+            tags["abm_voice_id"] = "voxcpm:mine"
+        else:
+            tags["abm_voice_id"] = voice_id
         tags["abm_language"] = language
         if accent:
             tags["abm_accent"] = accent
@@ -4071,6 +4483,202 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
 
 
+def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
+    """Append audit record al termine di un job VoxCPM. Best-effort, non fatale.
+
+    Terzo `provider` dello stesso JSONL mensile: l'aggregato di
+    `gemini_cost_audit` e' provider-agnostico e non va toccato. Il costo vivo
+    va in `google_cost_eur_actual` per la stessa ragione per cui ce lo mette
+    Speechify — il nome del campo e' storico, il significato e' "costo
+    sostenuto dal backend".
+
+    Il costo e' quello che RunPod fattura: i secondi di `executionTime` di
+    ogni job alla tariffa della scheda, piu' l'accensione dei worker che
+    questo libro ha svegliato (§17.7). Ci finiscono dentro anche i tentativi
+    rimbalzati o falliti, che bruciano GPU senza consegnare un carattere —
+    proprio il punto cieco del conto sui caratteri, che resta come ripiego
+    per i job che le righe di fattura non ce l'hanno.
+
+    `cost_basis` dice quale dei due ha fatto il conto, e i secondi restano
+    scritti (`gpu_seconds`, `gpu_exec_seconds`, `gpu_cold_start_seconds`)
+    con la tariffa usata: se domani cambia il prezzo della scheda, l'audit
+    storico si ricalcola senza rigenerare nulla.
+    """
+    try:
+        if not _is_voxcpm_voice(voice_id):
+            return
+        actual = job.get("voxcpm_actual") or {}
+        # --- Pagamento: stessa tasca premium job["payment"] degli altri due ---
+        payment = job.get("payment") or {}
+        charged = float(payment.get("total_eur", 0) or 0)
+        payment_method = payment.get("method", "") or ""
+        payment_source = payment.get("source", "") or ""
+        payment_token_full = payment.get("token", "") or ""
+        if charged <= 0:
+            _legacy_amt = float(job.get("payment_amount_eur", 0) or 0)
+            if _legacy_amt > 0:
+                charged = _legacy_amt
+                payment_method = job.get("payment_type", "") or payment_method
+                payment_token_full = job.get("payment_token", "") or payment_token_full
+                payment_source = payment_source or "legacy_fallback"
+        payment_token_short = ((payment_token_full[:8] + "...")
+                               if len(payment_token_full) > 12
+                               else payment_token_full)
+        _llm_quota = payment.get("llm_eur")
+        _combined_total_eur = (round(charged + float(_llm_quota or 0), 4)
+                               if _llm_quota is not None else round(charged, 4))
+
+        # --- Costo GPU + prezzo "dovuto" sui caratteri effettivamente letti ---
+        chars = int(actual.get("chars", 0) or 0)
+        # Il cronometro dell'handler misura la sola sintesi: non vede
+        # l'accensione ne' l'overhead di RunPod. E' salute del motore, non
+        # una fattura, e resta a parte in `gpu_handler_seconds`.
+        handler_seconds = round(float(actual.get("tts_seconds", 0) or 0), 2)
+        cost_usd = 0.0
+        should_have_been = 0.0
+        cost_usd_mchar = 0.0
+        try:
+            price = voxcpm_tts.compute_user_price_eur(chars)
+            cost_usd_mchar = voxcpm_tts.cost_usd_per_mchar()
+            cost_usd = float(price.get("cost_usd", 0.0) or 0.0)
+            should_have_been = float(price.get("user_price_eur", 0.0) or 0.0)
+        except Exception:
+            cost_usd = 0.0
+            should_have_been = 0.0
+
+        # Le righe di fattura vincono sulla stima quando ci sono. Quando non
+        # ci sono — un job cominciato prima di questa versione — resta la
+        # stima: uno zero leggerebbe come margine pieno su un lavoro che
+        # invece e' costato.
+        fattura = {}
+        try:
+            fattura = voxcpm_tts.gpu_cost_usd(actual.get("runpod") or [])
+        except Exception:
+            fattura = {}
+        cost_basis = "chars"
+        gpu_seconds = handler_seconds
+        if fattura.get("jobs"):
+            cost_basis = "gpu_seconds"
+            cost_usd = float(fattura.get("cost_usd", 0.0) or 0.0)
+            gpu_seconds = float(fattura.get("gpu_seconds", 0.0) or 0.0)
+        try:
+            provider_cost_eur = round(
+                cost_usd * float(speechify_tts.usd_eur_rate()), 4)
+        except Exception:
+            provider_cost_eur = 0.0
+
+        # Costo provider STIMATO (EUR) dallo snapshot pre-generazione, se
+        # presente (lockato in /api/optimize o popolato nel path auto-gen).
+        # Stessa parita' con `_write_speechify_audit`: audio_seconds_est non
+        # si applica a VoxCPM (modello char-based, nessuna stima di durata)
+        # e resta 0. Nessuna stima disponibile -> 0.0 (invariato).
+        _vox_est = job.get("voxcpm_estimate") or {}
+        provider_cost_eur_est = 0.0
+        try:
+            _cost_usd_est = float(_vox_est.get("cost_usd", 0.0) or 0.0)
+            if _cost_usd_est > 0:
+                provider_cost_eur_est = round(
+                    _cost_usd_est * float(speechify_tts.usd_eur_rate()), 4)
+        except Exception:
+            provider_cost_eur_est = 0.0
+
+        delta_eur = round(should_have_been - charged, 4)
+        delta_pct = (round((delta_eur / provider_cost_eur * 100), 2)
+                     if provider_cost_eur > 0 else 0.0)
+        rate_raw = job.get("rate", "+0%")
+        try:
+            rate_pct_val = int(str(rate_raw).replace("%", "").replace("+", "").strip() or 0)
+        except (TypeError, ValueError):
+            rate_pct_val = 0
+
+        rec = {
+            "job_id": job_id,
+            "provider": "voxcpm",
+            "model_key": "v2",
+            "language": language or "",
+            "rate_pct": rate_pct_val,
+            "rate_step": max(-3, min(3, round(rate_pct_val / 10.0))),
+            "chars_total": chars,
+            "billable_chars": chars,
+            "input_tokens_est": 0,
+            "input_tokens_actual": 0,
+            "output_tokens_est": 0,
+            "output_tokens_actual": 0,
+            "audio_seconds_est": 0.0,
+            "audio_seconds_actual": round(float(actual.get("audio_seconds", 0) or 0), 2),
+            "google_cost_eur_est": provider_cost_eur_est,
+            "google_cost_eur_actual": round(provider_cost_eur, 4),
+            "user_price_eur_charged": charged,
+            "user_price_eur_should_have_been": round(should_have_been, 2),
+            "delta_eur": delta_eur,
+            "delta_pct": delta_pct,
+            "margin_eur_actual": round(charged - provider_cost_eur, 4),
+            "combined_total_eur": _combined_total_eur,
+            "outcome": outcome,
+            "payment_method": payment_method,
+            "payment_token_short": payment_token_short,
+            "payment_source": payment_source,
+            # Specifici di VoxCPM: la base per ricalcolare, e la salute del
+            # worker (rimbalzi e capitoli rifatti) accanto al costo.
+            "gpu_seconds": gpu_seconds,
+            "gpu_handler_seconds": handler_seconds,
+            "gpu_exec_seconds": float(fattura.get("exec_seconds", 0.0) or 0.0),
+            "gpu_cold_start_seconds": float(
+                fattura.get("cold_start_seconds", 0.0) or 0.0),
+            "gpu_queue_seconds": float(fattura.get("queue_seconds", 0.0) or 0.0),
+            "gpu_cold_starts": int(fattura.get("cold_starts", 0) or 0),
+            "gpu_jobs_billed": int(fattura.get("jobs", 0) or 0),
+            "gpu_card": fattura.get("gpu", "") or "",
+            "gpu_usd_per_hour": float(fattura.get("usd_per_hour", 0.0) or 0.0),
+            "cost_usd_actual": round(cost_usd, 6),
+            "cost_basis": cost_basis,
+            "cost_usd_per_mchar": cost_usd_mchar,
+            "worker_jobs": int(actual.get("jobs", 0) or 0),
+            "worker_redone": int(actual.get("redone", 0) or 0),
+            "worker_bounced": int(actual.get("bounced", 0) or 0),
+            "worker_failed_chunks": int(actual.get("failed_chunks", 0) or 0),
+            "worker_code_tagliate": int(actual.get("code_tagliate", 0) or 0),
+            # I ritentativi delle code tagliate, come li conta il worker.
+            # `sospetti` sono quelli giudicati necessari, `rinunciati` quelli
+            # mai tentati perche' erano troppi, `code_tagliate` quelli
+            # rimasti difettosi alla consegna (rinunciati compresi): i
+            # riusciti si ricavano per differenza, e nessuno dei tre da'
+            # solo la misura giusta.
+            "worker_verify_chunks": int(actual.get("verifica_chunk", 0) or 0),
+            "worker_verify_sospetti": int(
+                actual.get("verifica_sospetti", 0) or 0),
+            "worker_verify_rinunciati": int(
+                actual.get("verifica_rinunciati", 0) or 0),
+            "worker_verify_giri": int(actual.get("verifica_giri", 0) or 0),
+            # Gli allarmi che la regola dei numeri ha spento prima che
+            # diventassero ritentativi. Non sono difetti evitati: sono
+            # difetti che non c'erano.
+            "worker_verify_numerali": int(
+                actual.get("verifica_numerali", 0) or 0),
+            "worker_verify_falsi_numerali": int(
+                actual.get("verifica_falsi_numerali", 0) or 0),
+        }
+        _reused_n = int(job.get("chunks_reused", 0) or 0)
+        if _reused_n:
+            rec["chunks_reused"] = _reused_n
+        _cancel_meta = job.get("cancel_meta")
+        if isinstance(_cancel_meta, dict):
+            rec["cancel_paid_eur"] = round(float(_cancel_meta.get("paid_eur", 0) or 0), 2)
+            rec["cancel_retained_eur"] = round(float(_cancel_meta.get("retained_eur", 0) or 0), 2)
+            rec["cancel_refund_eur"] = round(float(_cancel_meta.get("refund_eur", 0) or 0), 2)
+            rec["cancel_progress_pct"] = int(_cancel_meta.get("progress_pct", 0) or 0)
+            rec["cancel_partial_audio_delivered"] = bool(
+                _cancel_meta.get("partial_audio_delivered", False))
+        gemini_cost_audit.append_record(rec)
+        _free_thr = voxcpm_tts.free_threshold_eur()
+        if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
+            print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "
+                  f"({should_have_been:.2f}€) senza pagamento registrato "
+                  f"(payment_method={payment_method or 'NONE'}).")
+    except Exception as e:
+        print(f"[{job_id}] voxcpm audit write failed (non-fatal): {e}")
+
+
 def _write_translation_audit(job_id, job, *, backend, model, source_lang,
                              target_lang, optimize, chars_total,
                              usage_report, outcome):
@@ -4483,7 +5091,7 @@ def is_premium_job(job):
     if not isinstance(job, dict):
         return False
     voice = (job.get("voice") or job.get("opt_voice") or "").strip()
-    if _is_gemini_voice(voice) or _is_speechify_voice(voice):
+    if _is_gemini_voice(voice) or _is_speechify_voice(voice) or _is_voxcpm_voice(voice):
         return True
     if (job.get("payment_token") or "").strip():
         return True
@@ -4756,7 +5364,8 @@ def run_reuse(job_id, info, voice, rate, single_file, output_format='m4b',
 
 
 
-def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial):
+def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial,
+                       use_voxcpm=False):
     """Coda comune di consegna di una generazione conclusa: stato done/partial,
     log COMPLETE, marker di fine generazione + offload cold, audit premium,
     push, email/token di download, chiusura del descrittore di recovery e
@@ -4801,6 +5410,8 @@ def _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_
         _write_gemini_audit(job_id, job, voice, _audit_language(job, info), "completed")
     elif use_speechify:
         _write_speechify_audit(job_id, job, voice, _audit_language(job, info), "completed")
+    elif use_voxcpm:
+        _write_voxcpm_audit(job_id, job, voice, _audit_language(job, info), "completed")
 
     # Send push notification to mobile devices
     if _send_push:
@@ -4932,17 +5543,28 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
     asyncio.set_event_loop(loop)
     start_time = time.time()
 
-    # Determina il motore TTS (3-way: edge / google / gemini)
+    # Determina il motore TTS
     engine = _engine_for_voice(voice)
-    use_google = (engine == "google")
     use_gemini = (engine == "gemini")
     use_speechify = (engine == "speechify")
-    use_pcm = use_gemini or use_speechify
+    use_voxcpm = (engine == "voxcpm")
+    use_pcm = use_gemini or use_speechify or use_voxcpm
+    if use_voxcpm and _ranking_point_allowed(voice):
+        # La voce e' usata davvero: pagamento o quota gia' passati, la
+        # sintesi sta per partire. Un punto alla voce, una volta per job
+        # (il recovery rientra da qui e non deve contare due volte). Le voci
+        # personali (voxcpm:mine:) restano fuori dalla classifica.
+        try:
+            voxcpm_ranking.punto(voice, job_id)
+        except Exception as _e:      # noqa: BLE001
+            print(f"[{job_id}] classifica voci VoxCPM non aggiornata: {_e}")
     if use_speechify:
         speechify_emotion = speechify_emotion or job.get("speechify_emotion")
-    # Sample rate reale del PCM Speechify (Simba-3.2 nativo 48000). Popolato dal
-    # primo chunk sintetizzato; default 48000. Per Gemini resta 24000.
-    _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
+    # Sample rate reale del PCM: vedi `_pcm_sample_rate` per la scelta motore
+    # per motore (Speechify dal job una volta popolato, VoxCPM fisso 48000,
+    # Gemini/altri 24000). Riletto piu' sotto una volta che la pre-sintesi
+    # Speechify ha popolato job['speechify_sample_rate'].
+    _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
 
     # Parametri di generazione incisi nei metadati di OGNI file consegnato
     # (MP3 unico, MP3 di capitolo dello ZIP, M4B, MP3 parziale del rimborso).
@@ -5000,7 +5622,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         _strip_round = not bool(job.get("read_round_parens", False))
         _strip_square = not bool(job.get("read_square_brackets", False))
         plan = _plan_chunks(info, max_chars=max_chars, max_bytes=max_bytes,
-                            strip_round=_strip_round, strip_square=_strip_square)
+                            strip_round=_strip_round, strip_square=_strip_square,
+                            pre_split=_pick_pre_split(voice))
         gemini_usage = {"input_tokens": 0, "output_tokens": 0, "model_key": None}
         job["gemini_actual"] = {
             "input_tokens": 0,
@@ -5045,7 +5668,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             strip_round=_strip_round, strip_square=_strip_square)
         try:
             _reusable_chunks = chunk_reuse.reusable_indices(
-                work_dir, _reuse_fp, total_chunks, _chunk_ext)
+                work_dir, _reuse_fp, total_chunks, _chunk_ext, plan=plan)
         except Exception as _reuse_err:
             print(f"[{job_id}] Chunk reuse scan error (non-fatal): {_reuse_err}")
             _reusable_chunks = set()
@@ -5168,11 +5791,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 1
         job["progress_message"] = "Analisi testo..."
 
-        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify, MP3 altrimenti)
+        # Genera file di silenzio da preporre a ogni capitolo (PCM se Gemini/Speechify/VoxCPM, MP3 altrimenti)
         if use_pcm:
             silence_path = str(work_dir / "_silence.pcm")
             _generate_silence_pcm(silence_path, CHAPTER_SILENCE_SEC,
-                                  sample_rate=(48000 if use_speechify else None))
+                                  sample_rate=_pcm_sample_rate(
+                                      job, use_speechify, use_voxcpm))
             silence_ok = os.path.exists(silence_path)
         else:
             silence_path = str(work_dir / "_silence.mp3")
@@ -5181,7 +5805,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["progress_current"] = 2
         job["progress_message"] = "Preparazione audio..."
 
-        job["progress_total"] = total_chunks + 2
+        # VoxCPM: la sintesi si prende la sua fetta di barra (vedi
+        # _VOXCPM_PESO_BARRA), cosi' l'avanzamento segue il lavoro vero invece
+        # di restare fermo fino all'assemblaggio.
+        _peso_sintesi = _VOXCPM_PESO_BARRA if use_voxcpm else 0
+        job["progress_total"] = total_chunks * (_peso_sintesi + 1) + 2
         job["total_chars"] = total_chars
         job["processed_chars"] = 0
         job["bytes_generated"] = 0
@@ -5212,10 +5840,12 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
         def _update_progress(i, block):
             elapsed = time.time() - start_time
-            # Monotono: sul ramo Speechify la pre-sintesi ha gia' portato il
-            # contatore a fondo scala; l'assemblaggio non deve riportare la
-            # barra a 0. Sugli altri engine e' un no-op (i cresce).
-            job["progress_current"] = max(job.get("progress_current", 0) or 0, 2 + i)
+            # Monotono e con offset: la pre-sintesi (Speechify o VoxCPM) ha
+            # gia' portato avanti il contatore; l'assemblaggio non deve
+            # riportare la barra indietro. L'offset e' la quota consumata
+            # dalla pre-sintesi VoxCPM (0 sugli altri engine).
+            job["progress_current"] = max(job.get("progress_current", 0) or 0,
+                                          2 + _peso_sintesi * total_chunks + i)
             job["progress_message"] = (
                 f"Cap. {block['chapter_index']}/{len(info.chapters)}: "
                 f"{block['chapter_title'][:35]}... \u2014 "
@@ -5233,6 +5863,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         # Risultati pre-sintetizzati in pool parallelo (vedi sotto), letti da
         # _synthesize_chunk invece di richiamare l'API una seconda volta.
         _speechify_pre = {}
+        _voxcpm_pre = {}
 
         def _synthesize_chunk(i, block):
             """Sintetizza il chunk `i`. Ritorna (result, part_path).
@@ -5256,6 +5887,14 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 # impronta: nessuna chiamata TTS, nessun costo, nessun usage da
                 # registrare (era gia' stato contabilizzato al primo tentativo).
                 return {"reused": True}, str(work_dir / f"chunk_{i:06d}.{_chunk_ext}")
+            if use_voxcpm:
+                # L'audio l'ha gia' scritto la pre-sintesi per capitolo: qui
+                # non si chiama nessuna API, si consegna il file-parte. Per i
+                # chunk di coda quel file e' vuoto ed e' corretto che lo sia,
+                # perche' l'audio del capitolo sta tutto sul primo.
+                part_path = str(work_dir / f"chunk_{i:06d}.pcm")
+                return _voxcpm_chunk_result(i, _voxcpm_pre, _reusable_chunks,
+                                            job_id), part_path
             if use_speechify:
                 part_path = str(work_dir / f"chunk_{i:06d}.pcm")
                 pre = _speechify_pre.get(i)
@@ -5404,22 +6043,37 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 return result, part_path
             else:
                 part_path = str(work_dir / f"chunk_{i:06d}.mp3")
-                if use_google:
-                    result = generate_chunk_mp3_google(block["text"], voice, rate, part_path)
-                else:
-                    try:
-                        result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
-                    except Exception as _edge_err:
-                        print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
-                        import traceback
-                        traceback.print_exc()
-                        _generate_silence_mp3(part_path, duration_sec=1)
-                        result = False
+                try:
+                    result = loop.run_until_complete(generate_chunk_mp3(block["text"], voice, rate, part_path))
+                except Exception as _edge_err:
+                    print(f"[{job_id}] edge-tts chunk {i} crashed: {_edge_err}")
+                    import traceback
+                    traceback.print_exc()
+                    _generate_silence_mp3(part_path, duration_sec=1)
+                    result = False
                 return result, part_path
 
         # Early-abort Gemini: soglia/campione minimo letti una volta per entrambi
         # i rami (single-file / multi-file).
         _ea_ratio, _ea_min = _early_abort_params()
+
+        # Pre-sintesi VoxCPM: un job per capitolo, jobs_in_flight() in volo.
+        # L'assemblaggio sotto resta sequenziale e legge i .pcm gia' prodotti
+        # (via _voxcpm_pre), come per Speechify.
+        if use_voxcpm:
+            job["progress_message"] = (
+                "Avvio del motore vocale in corso...")
+            # Misure reali del worker: `job["voxcpm_actual"]` viene costruito
+            # DENTRO `_voxcpm_pre_pass`, capitolo per capitolo, cosi' resta
+            # corretto anche se il libro si interrompe a meta' (annullamento
+            # o capitolo perso a ritentativi esauriti) — vedi Important 1
+            # della review del Task 11: sommarlo solo qui, a fine chiamata,
+            # perdeva tutto il lavoro gia' fatturato su un'eccezione.
+            _voxcpm_pre = _voxcpm_pre_pass(
+                plan, voice, rate, work_dir, job_id, _reusable_chunks,
+                cancelled=_check_cancelled, job=job,
+                peso_barra=_peso_sintesi)
+            job["progress_message"] = "Assembling audio..."
 
         # Pre-sintesi parallela Speechify (vedi _speechify_presynth): produce
         # tutti i .pcm prima dell'assemblaggio sequenziale sotto, che li
@@ -5429,8 +6083,10 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 job, plan, work_dir, voice, emotion=speechify_emotion,
                 rate=rate, check_cancelled=_check_cancelled,
                 start_time=start_time)
-        # Re-read del sample rate reale ora che la pre-sintesi lo ha popolato.
-        _pcm_sr = job.get("speechify_sample_rate", 48000) if use_speechify else 24000
+        # Re-read del sample rate reale ora che la pre-sintesi Speechify ha
+        # popolato job['speechify_sample_rate'] (VoxCPM e' fisso: nessun
+        # campo da rileggere, vedi `_pcm_sample_rate`).
+        _pcm_sr = _pcm_sample_rate(job, use_speechify, use_voxcpm)
 
         if single_file:
             all_parts = []
@@ -5569,7 +6225,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     job["progress_message"] = "Converting to M4B..."
                     job["m4b_progress_current"] = 0
                     job["m4b_progress_total"] = 100
-                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_progress_message"] = M4B_MSG_PREPARING
                     job["m4b_started_at"] = time.time()
                     job["_m4b_last_log_ts"] = 0.0
 
@@ -5665,7 +6321,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 job["progress_message"] = "Converting to M4B..."
                 job["m4b_progress_current"] = 0
                 job["m4b_progress_total"] = 100
-                job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                job["m4b_progress_message"] = M4B_MSG_PREPARING
                 job["m4b_started_at"] = time.time()
                 job["_m4b_last_log_ts"] = 0.0
 
@@ -6001,7 +6657,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
                     job["m4b_progress_current"] = 0
                     job["m4b_progress_total"] = 100
-                    job["m4b_progress_message"] = "Conversione M4B — preparazione…"
+                    job["m4b_progress_message"] = M4B_MSG_PREPARING
                     job["m4b_started_at"] = time.time()
                     job["_m4b_last_log_ts"] = 0.0
 
@@ -6096,19 +6752,6 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         except Exception as _e_sweep:
             print(f"[{job_id}] work_dir leftover sweep failed (non-fatal): {_e_sweep}")
 
-        # Caratteri Google TTS: sistema delta tra prenotato e consumato
-        if use_google:
-            reserved = job.get("google_tts_reserved", 0)
-            consumed = job.get("processed_chars", 0)
-            if reserved > consumed:
-                _google_tts.refund_chars(reserved - consumed)
-                print(f"[{job_id}] Google TTS: refunded {reserved - consumed} chars "
-                      f"(reserved {reserved}, consumed {consumed})")
-            elif consumed > reserved:
-                _google_tts.deduct_chars(consumed - reserved)
-                print(f"[{job_id}] Google TTS: extra deduction {consumed - reserved} chars")
-            _invalidate_voices_cache()
-
         total_elapsed = time.time() - start_time
         job["progress_current"] = job["progress_total"]
         job["elapsed_seconds"] = round(total_elapsed)
@@ -6161,11 +6804,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             print(f"[{job_id}] ALL CHUNKS FAILED ({failed_chunks}/{_tot_chunks_safe}) "
                   f"engine={engine} -> error + refund, nessuna consegna.")
             try:
-                # Speechify e' un engine premium: il pagamento vive in
+                # Speechify e VoxCPM sono engine premium: il pagamento vive in
                 # job["payment"] (stessa tasca di Gemini) e va rimborsato via
                 # _refund_gemini_payment. _refund_job_payment tratta la tasca
                 # LLM (payment_amount_eur) e sarebbe la tasca sbagliata.
-                if use_speechify:
+                if use_speechify or use_voxcpm:
                     _refund_gemini_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
                 else:
                     _refund_job_payment(job_id, job, f"all_chunks_failed: {failed_chunks}/{_tot_chunks_safe}")
@@ -6176,6 +6819,13 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _write_speechify_audit(job_id, job, voice,
                                            _audit_language(job, info),
                                            "failed_all_chunks_refunded")
+                except Exception:
+                    pass
+            if use_voxcpm:
+                try:
+                    _write_voxcpm_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "failed_all_chunks_refunded")
                 except Exception:
                     pass
             _mark_pending_failed(job_id, "failed_all_chunks_refunded")
@@ -6247,6 +6897,18 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     _refund_gemini_payment(job_id, job, "no_output: assembly failed")
                 except Exception as _ref_err:
                     print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
+            elif use_voxcpm:
+                # Premium: rimborso sulla tasca job["payment"], come Speechify.
+                try:
+                    _write_voxcpm_audit(job_id, job, voice,
+                                        _audit_language(job, info),
+                                        "failed_no_output_refunded")
+                except Exception:
+                    pass
+                try:
+                    _refund_gemini_payment(job_id, job, "no_output: assembly failed")
+                except Exception as _ref_err:
+                    print(f"[{job_id}] Refund failed (non-fatal): {_ref_err}")
             else:
                 try:
                     _refund_job_payment(job_id, job, "no_output")
@@ -6288,7 +6950,8 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 print(f"[{job_id}] Failed to write .abm: {e}")
                 job["abm_generation_error"] = str(e)
 
-        _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial)
+        _finalize_delivery(job_id, job, info, voice, use_gemini, use_speechify, _is_partial,
+                           use_voxcpm=use_voxcpm)
 
     except _GeminiQualityAbort as _qa:
         # Early-abort: troppi chunk silenziati sul campione iniziale. Stesso path
@@ -6438,9 +7101,20 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                 _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify cancel refund failed (non-fatal): {_ref_err}")
-
-        if use_google:
-            _google_tts_refund_unused(job_id, job)
+        elif use_voxcpm and still_current:
+            # Cancel volontario di un job VoxCPM pagato: rimborso INTEGRALE,
+            # stessa tasca premium job["payment"] di Gemini/Speechify.
+            # _refund_gemini_payment e' no-op se il job non era pagato.
+            try:
+                _write_voxcpm_audit(job_id, job, voice,
+                                    _audit_language(job, info),
+                                    "cancelled_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, "cancelled", retained_eur=0.0)
+            except Exception as _ref_err:
+                print(f"[{job_id}] VoxCPM cancel refund failed (non-fatal): {_ref_err}")
 
         if still_current:
             # Cancel volontario = job concluso per il batch: senza questo mark
@@ -6617,12 +7291,19 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             except Exception as _ref_err:
                 print(f"[{job_id}] Speechify refund failed (non-fatal): {_ref_err}")
             _mark_pending_failed(job_id, "failed_refunded")
-        # Refund caratteri Google TTS non consumati anche in caso di errore
-        if use_google:
+        if use_voxcpm:
+            # Job premium VoxCPM fallito: rimborso integrale (path generico premium,
+            # _refund_gemini_payment legge job['payment_token'] a prescindere dall'engine).
             try:
-                _google_tts_refund_unused(job_id, job)
-            except Exception as ref_err:
-                print(f"[{job_id}] Refund error: {ref_err}")
+                _write_voxcpm_audit(job_id, job, voice,
+                                    _audit_language(job, info), "failed_refunded")
+            except Exception:
+                pass
+            try:
+                _refund_gemini_payment(job_id, job, f"failed: {e}")
+            except Exception as _ref_err:
+                print(f"[{job_id}] VoxCPM refund failed (non-fatal): {_ref_err}")
+            _mark_pending_failed(job_id, "failed_refunded")
         import traceback
         traceback.print_exc()
     finally:

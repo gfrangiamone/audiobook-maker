@@ -1,6 +1,23 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _estrai_funzione(src, nome):
+    """Corpo di `function nome(...)`, per bilanciamento di graffe."""
+    m = re.search(r"(?:async\s+)?function\s+" + re.escape(nome) + r"\s*\(", src)
+    assert m, "funzione %s non trovata" % nome
+    apertura = src.index("{", m.end())
+    profondita = 0
+    for i in range(apertura, len(src)):
+        if src[i] == "{":
+            profondita += 1
+        elif src[i] == "}":
+            profondita -= 1
+            if profondita == 0:
+                return src[apertura:i + 1]
+    raise AssertionError("corpo non bilanciato: %s" % nome)
 
 
 def test_html_has_speechify_emotion_combo():
@@ -14,9 +31,20 @@ def test_html_has_speechify_emotion_combo():
 
 
 def test_appjs_has_model_population():
+    """Il modello Express (id 'simba-3.2') entra nel selettore dal percorso
+    vivo: modelliPer() lo aggiunge solo se la lingua e' 'en' E il catalogo
+    espone voci speechify, applyBookLanguage() riversa la lista in #vmPremium.
+    updModelsPremium(), che duplicava la regola con un default diverso, e'
+    stata cancellata: se torna, questo test lo dice."""
     js = (ROOT / "static/js/app.js").read_text(encoding="utf-8")
-    assert "updModelsPremium" in js
-    assert "simba-3.2" in js
+    cascata = (ROOT / "static/js/audio_cascade.js").read_text(encoding="utf-8")
+    assert "updModelsPremium" not in js, "risorto il popolatore morto"
+    modelli = _estrai_funzione(cascata, "modelliPer")
+    assert "simba-3.2" in modelli, "il modello Express non e' piu' nella cascata"
+    assert "speechify:simba-3.2:" in modelli, "il filtro non guarda piu' il prefisso dell'id"
+    assert "'en'" in modelli, "il modello Express non e' piu' legato all'inglese"
+    corpo = _estrai_funzione(js, "applyBookLanguage")
+    assert "of esito.premium.models" in corpo, "#vmPremium non si popola piu' dalla cascata"
 
 
 def test_appjs_toggle_and_payload():
@@ -36,7 +64,7 @@ def test_i18n_has_emotion_keys():
     assert "lbl_emotion" in js
     assert "lbl_model_simba" in js
     assert "emotion_none" in js
-    # Present in it/en/fr/es/de/zh (same 6-language set as the existing
-    # accent_* Object.assign(L.xx,...) blocks; 'hi' relies on the built-in
-    # t() fallback to L.en for untranslated keys).
-    assert js.count("lbl_model_simba") >= 6
+    # Now present in all seven locales: 'hi' was added together with the
+    # neutral relabelling ("Express (English only)"), because the fallback to
+    # L.en propagated the provider name instead of masking it.
+    assert js.count("lbl_model_simba") == 7

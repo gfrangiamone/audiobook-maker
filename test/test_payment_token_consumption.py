@@ -10,6 +10,10 @@ def test_consume_voucher_token_marks_paid_done(monkeypatch, tmp_path):
     monkeypatch.setattr(payment, "_PAID_JOBS_DONE_FILE", tmp_path / "_paid_jobs_done.json")
     monkeypatch.setattr(payment, "_paid_opt_done", set())
     monkeypatch.setattr(payment, "_paid_jobs_done", [])
+    # Il bonus e` una manopola di esercizio (ABM_VOUCHER_BONUS_PERCENT): se la
+    # legge dall'ambiente, questo test misura la configurazione della macchina
+    # invece del consumo del voucher. Lo fissiamo: 5,00 + 10% = 5,50.
+    monkeypatch.setattr(payment, "VOUCHER_BONUS_PERCENT", 10)
     code, _v = payment._create_voucher("u@x.it", 5.0, kind="test", note="t")
     method = payment.consume_payment_token(code, 1.0, "job-1", purpose="gemini")
     assert method == "voucher"

@@ -127,7 +127,11 @@ def test_generate_optimized_abm_works_after_spill(job_env, monkeypatch):
         names = [n for n in zf.namelist() if n.startswith("chapters/")]
         assert len(names) == 2
         contents = sorted(zf.read(n).decode("utf-8") for n in names)
-    assert contents == sorted(originals)
+    # Lo snapshot porta il testo preparato per il TTS (qui cambia solo lo spazio
+    # in coda): cio` che conta per lo spill e` che il contenuto ci sia tutto.
+    from tts_split import prepare_tts_text
+    assert contents == sorted(prepare_tts_text(t, flatten=False)
+                              for t in originals)
 
 
 def test_spill_is_idempotent(job_env):

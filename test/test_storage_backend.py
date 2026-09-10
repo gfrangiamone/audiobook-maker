@@ -1,5 +1,7 @@
 """Unit test per storage_backend: tutte le primitive S3 con fake client."""
 import importlib
+import os
+
 import pytest
 
 
@@ -112,3 +114,37 @@ def test_delete_prefix_removes_all_under_prefix(sb):
     assert "job/out/a.mp3" in fake.deleted
     assert "job/out/b.mp3" in fake.deleted
     assert "other/c.mp3" not in fake.deleted
+
+
+def test_download_file_part_filename_is_unique_per_call(sb, tmp_path):
+    storage_backend, fake = sb
+    seen = []
+
+    def _download_file(Bucket, Key, Filename):
+        seen.append(Filename)
+        with open(Filename, "wb") as fh:
+            fh.write(b"ok")
+    fake.download_file = _download_file
+    dest = tmp_path / "a.wav"
+    assert storage_backend.download_file("k1", str(dest)) is True
+    assert storage_backend.download_file("k2", str(dest)) is True
+    assert len(seen) == 2 and seen[0] != seen[1]
+    assert all(name.startswith(str(dest) + ".") and name.endswith(".part") for name in seen)
+    assert not os.path.exists(seen[0]) and not os.path.exists(seen[1])   # rinominati/ripuliti
+
+
+def test_download_file_removes_part_on_unexpected_error(sb, tmp_path):
+    storage_backend, fake = sb
+    catturato = {}
+
+    def _download_file(Bucket, Key, Filename):
+        catturato["tmp"] = Filename
+        with open(Filename, "wb") as fh:
+            fh.write(b"parziale")
+        raise RuntimeError("connessione caduta")
+    fake.download_file = _download_file
+    dest = tmp_path / "b.wav"
+    with pytest.raises(RuntimeError):
+        storage_backend.download_file("k", str(dest))
+    assert not os.path.exists(catturato["tmp"])
+    assert not dest.exists()

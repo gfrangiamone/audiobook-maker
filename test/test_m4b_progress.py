@@ -88,11 +88,11 @@ def test_convert_mp3_to_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
     )
     assert ok is True
     assert len(phases) == 4
-    assert phases[0] == (0, "Conversione M4B — preparazione metadati…")
-    assert phases[1] == (5, "Conversione M4B — encoding AAC…")
-    assert phases[2] == (98, "Conversione M4B — validazione finale…")
-    assert phases[3] == (100, "Conversione M4B completata")
-    assert status_out == {"status": "ok", "pct": 100, "msg": "Conversione M4B completata"}
+    assert phases[0] == (0, audio_utils.M4B_MSG_PREPARING_META)
+    assert phases[1] == (5, audio_utils.M4B_MSG_ENCODING)
+    assert phases[2] == (98, audio_utils.M4B_MSG_VALIDATING)
+    assert phases[3] == (100, audio_utils.M4B_MSG_DONE)
+    assert status_out == {"status": "ok", "pct": 100, "msg": audio_utils.M4B_MSG_DONE}
 
 
 def test_convert_mp3_to_m4b_monitored_handles_ffmpeg_fail(monkeypatch, tmp_path):
@@ -204,11 +204,11 @@ def test_pcm_to_aac_m4b_monitored_calls_on_phase(monkeypatch, tmp_path):
     )
     assert ok is True
     assert len(phases) == 4
-    assert phases[0] == (0, "Conversione M4B — preparazione…")
-    assert phases[1] == (5, "Conversione M4B — encoding AAC (PCM→AAC diretto)…")
-    assert phases[2] == (98, "Conversione M4B — validazione finale…")
-    assert phases[3] == (100, "Conversione M4B completata")
-    assert status_out == {"status": "ok", "pct": 100, "msg": "Conversione M4B completata"}
+    assert phases[0] == (0, audio_utils.M4B_MSG_PREPARING)
+    assert phases[1] == (5, audio_utils.M4B_MSG_ENCODING_PCM)
+    assert phases[2] == (98, audio_utils.M4B_MSG_VALIDATING)
+    assert phases[3] == (100, audio_utils.M4B_MSG_DONE)
+    assert status_out == {"status": "ok", "pct": 100, "msg": audio_utils.M4B_MSG_DONE}
 
 
 def test_pcm_to_aac_m4b_monitored_handles_failure(monkeypatch, tmp_path):
@@ -369,9 +369,9 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
     job = {
         "job_id": "J6", "status": "generating",
         "progress_current": 12, "progress_total": 102,
-        "progress_message": "Conversione M4B — encoding (45%)",
+        "progress_message": "Converting to M4B...",
         "m4b_progress_current": 45, "m4b_progress_total": 100,
-        "m4b_progress_message": "Encoding AAC in corso…",
+        "m4b_progress_message": "M4B conversion — AAC encoding…",
     }
     # jobs è il global dict in audiobook_app (o attributo del modulo).
     # Adattati a come è strutturato in produzione.
@@ -408,7 +408,7 @@ def test_sse_payload_contains_m4b_fields(monkeypatch):
     assert "45" in body  # il valore del campo
     assert "m4b_progress_total" in body
     assert "m4b_progress_message" in body
-    assert "Encoding AAC in corso" in body
+    assert "AAC encoding" in body  # sottostringa ASCII: il JSON sfugge trattino e puntini
 
 
 # ---------------------------------------------------------------------------
@@ -463,9 +463,9 @@ def test_admin_card_renders_m4b_subbar(monkeypatch):
     test_job = {
         "job_id": "J7", "status": "generating",
         "progress_current": 80, "progress_total": 100,
-        "progress_message": "Conversione M4B — encoding",
+        "progress_message": "Converting to M4B...",
         "m4b_progress_current": 45, "m4b_progress_total": 100,
-        "m4b_progress_message": "Encoding AAC in corso…",
+        "m4b_progress_message": "M4B conversion — AAC encoding…",
         "output_name": "test", "output_m4b": True,
         "ai_optimized": False, "podcast_ready": False,
     }

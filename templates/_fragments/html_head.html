@@ -382,7 +382,23 @@ __REVIEWS_LD__
       <h2 id="panel3Heading" data-t="s2_title"></h2>
       <p class="subtitle" data-t="p3_subtitle"></p>
 
-      <div id="voiceMismatch" class="al al-w" style="display:none"></div>
+      <div class="book-lang-row" id="bookLangRow">
+        <span class="book-lang-label" data-t="lbl_book_lang"></span>
+        <strong class="book-lang-name" id="bookLangName"></strong>
+        <span class="book-lang-src" id="bookLangSrc"></span>
+        <button type="button" id="forceLangBtn" class="icon-btn"
+                data-t-title="tip_force_lang" aria-haspopup="dialog"
+                onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
+                data-t="force_lang_change"></span></button>
+        <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
+             applyBookLanguage() lo mostra solo quando c'e' davvero un valore
+             del libro diverso da quello attivo, e ne scrive l'etichetta. -->
+        <button type="button" id="restoreLangBtn" class="icon-btn" hidden
+                data-t-title="tip_restore_lang"
+                onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
+                id="restoreLangLabel"></span></button>
+      </div>
+      <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
       <div class="tab-bar-wrap" style="position:relative">
         <div class="tab-bar" role="tablist" style="margin-bottom:12px">
@@ -397,29 +413,40 @@ __REVIEWS_LD__
         </div>
       </div>
 
-      <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
-        <div class="form-row">
-          <div class="form-group"><label data-t="lbl_lang"></label><select id="vl"><option>...</option></select></div>
-          <div class="form-group"><label data-t="lbl_voice"></label><select id="vv"><option data-t="voice_ph"></option></select></div>
-        </div>
+      <!-- Il motivo per cui il tab PREMIUM e' spento sta FUORI dai tab-panel:
+           applyBookLanguage() disabilita il bottone e riporta l'utente su
+           Standard nello stesso istante, quindi dentro #tabPremium questo
+           avviso non sarebbe mai visibile. Stessa forma di #cascadeNote: un
+           avviso a tutta larghezza sotto la tab-bar. -->
+      <div id="premiumOffRow" hidden>
+        <div class="al al-w" id="premiumOffMsg"></div>
+      </div>
 
+      <div class="tab-panel" id="tabStandard" role="tabpanel" aria-labelledby="tabStandardBtn">
+        <div class="form-row" id="stdAccentRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="stdAccent" data-t="lbl_accent_std"></label>
+            <select id="stdAccent"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
+            <label for="vv" data-t="lbl_voice"></label>
+            <select id="vv"><option data-t="voice_ph"></option></select>
+          </div>
+        </div>
       </div>
 
       <div class="tab-panel" id="tabPremium" role="tabpanel" hidden aria-labelledby="tabPremiumBtn">
-        <div class="form-row premium-top-row">
-          <div class="form-group" id="premLangGroup">
-            <label for="vlPremium" data-t="lbl_lang">Lingua</label>
-            <select id="vlPremium"></select>
-          </div>
-          <div class="form-group" id="premModelGroup">
+        <div class="form-row">
+          <div class="form-group" style="flex:1 1 100%">
             <label for="vmPremium" data-t="lbl_model">Modello</label>
             <select id="vmPremium"></select>
             <div class="model-rate-hint" id="modelRateHint"></div>
           </div>
-          <!-- Accento: nella stessa .form-row di lingua/modello. Su desktop va a capo
-               (flex-basis 100%) restando sotto le due select; su schermo stretto la
-               riga diventa colonna e l'ordine CSS lo porta subito sotto la lingua. -->
-          <div class="form-group" id="geminiAccentRow" hidden>
+        </div>
+        <div class="form-row" id="geminiAccentRow" hidden>
+          <div class="form-group" style="flex:1 1 100%">
             <label for="geminiAccent" data-t="lbl_accent">Accento di lettura</label>
             <select id="geminiAccent"></select>
             <div class="model-rate-hint" data-t="accent_hint"></div>
@@ -470,6 +497,57 @@ __REVIEWS_LD__
             <option value="+20%" data-t="sp_f"></option>
             <option value="+30%" data-t="sp_vf"></option>
           </select>
+        </div>
+      </div>
+
+      <div class="form-row" id="voxcpmSampleRow" hidden>
+        <div class="form-group" style="flex:1 1 100%">
+          <div class="voxcpm-listen-box">
+            <div class="voxcpm-listen-head">
+              <label data-t="voxcpm_sample_title">Ascolta come suona questa voce</label>
+              <div class="voxcpm-volume-row">
+                <span class="voxcpm-volume-ico" aria-hidden="true">&#128266;</span>
+                <input type="range" id="voxcpmVolume" min="0" max="100" step="1" value="100" aria-label="Volume">
+              </div>
+            </div>
+            <div id="voxcpmDemoBlock" hidden>
+              <div class="voxcpm-clip-row">
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoCommonBtn">
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_common">La stessa frase per tutte le voci</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmDemoStyledBtn" hidden>
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_demo_styled">Una frase nelle corde di questa voce</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+              </div>
+              <div class="model-rate-hint" data-t-html="voxcpm_demo_hint">
+                Clip audio generate con questa voce <span class="voxcpm-hint-em">(non sono anteprima del tuo libro)</span>
+              </div>
+            </div>
+            <div id="voxcpmSampleBlock" hidden>
+              <div class="voxcpm-clip-row">
+                <button type="button" class="voxcpm-clip-btn" id="voxcpmSampleBtn">
+                  <span class="voxcpm-clip-txt" data-t="voxcpm_sample_listen">Campione della voce</span>
+                  <span class="voxcpm-clip-ico" aria-hidden="true">&#9654;</span>
+                </button>
+              </div>
+              <div class="model-rate-hint" data-t="voxcpm_sample_hint">
+                Il campione da cui la voce viene clonata: il libro suonerà così.
+              </div>
+            </div>
+            <audio id="voxcpmDemoCommon" preload="none"></audio>
+            <audio id="voxcpmDemoStyled" preload="none"></audio>
+            <audio id="voxcpmSample" preload="none"></audio>
+          </div>
+        </div>
+      </div>
+
+      <div id="vcBtnRow" class="vc-btn-row" hidden>
+        <button type="button" id="vcOpenBtn" class="btn-outline btn-sm vc-open-btn" data-t="vc_btn_start" data-t-title="vc_btn_tip">Sample your voice</button>
+        <div id="vcResumeBanner" class="al al-i vc-resume" hidden>
+          <span data-t="vc_resume_banner">You have a pending voice sample:</span>
+          <button type="button" id="vcResumeBtn" class="btn btn-outline btn-sm" data-t="vc_resume_btn">resume</button>
         </div>
       </div>
 
@@ -636,7 +714,7 @@ __REVIEWS_LD__
         </div>
         <!-- M4B conversion sub-bar -->
         <div id="m4bProgressWrap" style="display:none; margin-top:6px;">
-          <label style="font-size:0.85em; color:#666;">Conversione M4B: <span id="m4bPct">0%</span></label>
+          <label style="font-size:0.85em; color:#666;"><span data-t="m4b_label">M4B conversion:</span> <span id="m4bPct">0%</span></label>
           <progress id="m4bProgressBar" value="0" max="100" style="width:100%; height:6px; accent-color:#f97316;"></progress>
           <div id="m4bMsg" style="font-size:0.75em; color:#999; font-style:italic;"></div>
         </div>
@@ -1020,6 +1098,24 @@ __REVIEWS_LD__
     </div>
   </div>
 
+  <!-- FORCE BOOK LANGUAGE MODAL -->
+  <div class="modal-overlay" id="forceLangModal" role="dialog" aria-modal="true" aria-labelledby="forceLangTitle" onclick="if(event.target===this)closeForceLangModal()">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <span data-t="force_lang_title" id="forceLangTitle"></span>
+        <button class="modal-close" onclick="closeForceLangModal()" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 14px;line-height:1.6;font-size:.92rem" data-t="force_lang_hint"></p>
+        <select id="forceLangSelect" size="12" style="width:100%"></select>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-g" onclick="closeForceLangModal()" data-t="force_lang_cancel"></button>
+          <button class="btn btn-ok" onclick="confirmForceLang()" data-t="force_lang_ok"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- PAYMENT MODAL (Premium voices / AI optimization) -->
   <div class="modal-backdrop" id="geminiPayModal" role="dialog" aria-modal="true"
        aria-labelledby="geminiPayModalTitle" hidden>
@@ -1063,6 +1159,146 @@ __REVIEWS_LD__
         <button type="button" class="btn-secondary" id="btnPayCancel2" data-t="pay_cancel">Annulla</button>
         <button type="button" class="btn-primary" id="btnPayConfirm" data-t="pay_confirm" disabled>Conferma</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- VOICE CLONE MODAL (Campiona la tua voce) -->
+  <div id="vcModal" class="modal-backdrop" hidden>
+    <div class="modal payment-modal vc-modal" role="dialog" aria-modal="true" aria-labelledby="vcTitle">
+      <header class="modal-header">
+        <h3 id="vcTitle" data-t="vc_title">Sample your voice</h3>
+        <button type="button" id="vcClose" class="modal-close" aria-label="Close">&times;</button>
+      </header>
+      <div class="modal-body">
+        <div id="vcErr" class="al al-e" hidden></div>
+
+        <section id="vcP1" hidden>
+          <p data-t-html="vc_p1_intro"></p>
+          <ul class="vc-terms">
+            <li data-t="vc_p1_t1"></li>
+            <li data-t="vc_p1_t2"></li>
+            <li data-t="vc_p1_t3"></li>
+            <li data-t="vc_p1_t4"></li>
+            <li data-t="vc_p1_t5"></li>
+          </ul>
+          <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcP1Price"></strong></p>
+          <label class="vc-consent"><input type="checkbox" id="vcConsent"> <span data-t="vc_consent"></span></label>
+          <div class="modal-footer vc-footer">
+            <button type="button" id="vcP1Cancel" class="btn-secondary" data-t="vc_cancel"></button>
+            <button type="button" id="vcP1Next" class="btn-primary" data-t="vc_next" disabled></button>
+          </div>
+        </section>
+
+        <section id="vcP2" hidden>
+          <div class="vc-rec-row">
+            <label><span data-t="vc_lang"></span> <select id="vcLang"></select></label>
+            <label><span data-t="vc_locale"></span> <select id="vcLocale"></select></label>
+            <label><span data-t="vc_gender"></span>
+              <select id="vcGender">
+                <option value="f" data-t="vc_gender_f"></option>
+                <option value="m" data-t="vc_gender_m"></option>
+              </select>
+            </label>
+          </div>
+          <p data-t="vc_p2_read"></p>
+          <div id="vcPromptText" class="vc-prompt"></div>
+          <div class="vc-rec-row">
+            <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
+            <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+            <meter id="vcLevel" min="0" max="1" value="0"></meter>
+            <span id="vcTimer" class="vc-timer">0.0 s</span>
+          </div>
+          <p class="vc-or"><span data-t="vc_or_upload"></span> <input type="file" id="vcFile" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*"></p>
+          <div id="vcSampleBlock" hidden>
+            <p data-t="vc_sample_listen"></p>
+            <audio id="vcSampleAudio" controls preload="none"></audio>
+            <div class="vc-footer">
+              <button type="button" id="vcSampleRedo" class="btn-secondary" data-t="vc_sample_redo"></button>
+              <button type="button" id="vcSampleNext" class="btn-primary" data-t="vc_sample_ok"></button>
+            </div>
+          </div>
+          <div id="vcUploading" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_checking"></span></div>
+          <div class="vc-footer">
+            <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
+          </div>
+        </section>
+        <section id="vcP3" hidden>
+          <p data-t="vc_p3_intro"></p>
+          <label><span data-t="vc_email"></span> <input type="email" id="vcEmail" autocomplete="email" required></label>
+          <label><span data-t="vc_email2"></span> <input type="email" id="vcEmail2" autocomplete="off" required></label>
+          <p data-t="vc_p3_extra"></p>
+          <select id="vcExtraSel"></select>
+          <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcPrice"></strong></p>
+          <div class="vc-footer">
+            <button type="button" id="vcP3Back" class="btn-secondary" data-t="vc_back"></button>
+            <button type="button" id="vcPayBtn" class="btn-primary" data-t="vc_pay_btn"></button>
+          </div>
+        </section>
+        <section id="vcP4" hidden>
+          <div id="vcCodeBox" hidden>
+            <p data-t="vc_code_intro"></p>
+            <div id="vcCode" class="vc-code"></div>
+            <p class="vc-small" data-t="vc_code_note"></p>
+          </div>
+          <div id="vcWait" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_wait"></span></div>
+          <div id="vcDemos" hidden>
+            <p data-t="vc_demos_intro"></p>
+            <div class="vc-demo-row">
+              <span data-t="vc_demo_common"></span><audio id="vcDemoCommon" controls preload="none"></audio>
+              <span data-t="vc_demo_extra"></span><audio id="vcDemoExtra" controls preload="none"></audio>
+            </div>
+            <div class="vc-footer">
+              <button type="button" id="vcApprove" class="btn-primary" data-t="vc_approve"></button>
+            </div>
+            <div class="vc-rec-row">
+              <select id="vcRegenSel"></select>
+              <button type="button" id="vcRegen" class="btn btn-outline btn-sm" data-t="vc_regen"></button>
+              <span id="vcRegenLeft" class="vc-small"></span>
+            </div>
+            <div class="vc-rec-row">
+              <button type="button" id="vcReject" class="btn btn-outline btn-sm" data-t="vc_reject"></button>
+              <span id="vcRejectConfirm" hidden><span data-t="vc_reject_sure"></span>
+                <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
+          </div>
+          <div id="vcFailed" hidden>
+            <p class="al al-e" data-t="vc_demo_failed"></p>
+            <div class="vc-footer">
+              <button type="button" id="vcReject2" class="btn-secondary" data-t="vc_reject"></button>
+              <button type="button" id="vcRetry" class="btn-primary" data-t="vc_retry"></button>
+            </div>
+          </div>
+          <div id="vcDone" hidden>
+            <p class="al al-i" data-t="vc_done"></p>
+            <div class="vc-footer"><button type="button" id="vcDoneClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+          <div id="vcRefunded" hidden>
+            <p class="al al-i" data-t="vc_refunded"></p>
+            <div class="vc-footer"><button type="button" id="vcRefundedClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+        </section>
+        <section id="vcPMine" hidden>
+          <ul id="vcMineList" class="vc-mine-list"></ul>
+          <details class="vc-claim">
+            <summary data-t="vc_claim_title"></summary>
+            <p class="vc-small" data-t="vc_claim_intro"></p>
+            <div class="vc-claim-row">
+              <input type="text" id="vcClaimCode" autocomplete="off" spellcheck="false" data-t-ph="vc_claim_ph">
+              <button type="button" id="vcClaimBtn" class="btn btn-outline btn-sm" data-t="vc_claim_btn"></button>
+            </div>
+            <div id="vcConfirmRow" class="vc-claim-row" hidden>
+              <span class="vc-small" data-t="vc_confirm_intro"></span>
+              <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
+              <button type="button" id="vcConfirmBtn" class="btn btn-outline btn-sm" data-t="vc_confirm_btn"></button>
+            </div>
+          </details>
+          <div class="vc-footer">
+            <button type="button" id="vcMineClose" class="btn-secondary" data-t="vc_close"></button>
+            <button type="button" id="vcNewVoice" class="btn-primary" data-t="vc_new_voice"></button>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 

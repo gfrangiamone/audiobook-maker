@@ -1,8 +1,8 @@
 """
 gemini_tts.py — Gemini 2.5/3.1 Flash TTS integration.
 
-Parallel to google_tts.py for Chirp3-HD. Uses google-genai SDK with separate
-API key (or Vertex AI service account). Native output is PCM 24kHz mono 16-bit.
+Uses google-genai SDK with separate API key (or Vertex AI service account).
+Native output is PCM 24kHz mono 16-bit.
 
 Plan A scope: standalone module — synthesis + pricing + usage tracking + preview cap.
 Integration with tts_split / generation_engine / audiobook_app is Plan B.

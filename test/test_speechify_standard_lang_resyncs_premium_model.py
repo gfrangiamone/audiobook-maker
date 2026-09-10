@@ -1,17 +1,18 @@
-"""Regressione: cambiando lingua dal pannello Voci Standard, il modello del
-pannello Premium deve essere ricostruito e risincronizzato.
+"""Regressione: cambiando la lingua del libro, il modello del pannello Premium
+deve essere ricostruito e risincronizzato.
 
-Difetto (utente): premium=inglese -> modello Simba; poi Standard -> italiano.
-La lingua italiana viene propagata a #vlPremium ma il modello resta 'simba-3.2'
-(solo inglese), stato incompatibile con l'italiano.
+Difetto (utente): premium=inglese -> modello Simba; poi il libro passa
+all'italiano. La lingua veniva propagata al tab Premium ma il modello restava
+'simba-3.2' (solo inglese), stato incompatibile con l'italiano.
 
-Causa: l'onchange di #vl (in fillLangs) propagava la lingua a #vlPremium e
-chiamava solo updVoicesPremium(), senza updModelsPremium()/_onPremiumModelChanged().
+Causa storica: l'onchange della combo lingua Standard propagava il valore alla
+combo lingua Premium e chiamava solo updVoicesPremium(), senza ricostruire i
+modelli ne' risincronizzare le righe che dipendono dal modello.
 
-Fix: quando la lingua è compatibile col catalogo premium, l'handler deve
-ricostruire i modelli (Simba non riproposto per lingue non-EN) e risincronizzare
-le righe dipendenti dal modello, come già fanno il gestore di #vlPremium e
-syncLanguageOptions.
+Da quando la lingua e' una proprieta' del libro le due combo non esistono piu':
+la ricostruzione e' compito di applyBookLanguage(), che ripopola #vmPremium
+dalla lista di modelli della cascata (dove Simba non compare per lingue non
+inglesi) e richiama _onPremiumModelChanged().
 """
 import os
 
@@ -25,30 +26,36 @@ def _app_js():
         return f.read()
 
 
-def _vl_onchange_vlpremium_block(src):
-    """Ritorna il blocco `if(dst){...}` che gestisce la propagazione a
-    #vlPremium dentro l'onchange di #vl (fillLangs)."""
-    anchor = src.index("const dst=document.getElementById('vlPremium')")
-    open_brace = src.index("if(dst){", anchor) + len("if(dst)")
+def _func_body(src, name):
+    """Corpo di `function name(...)` per bilanciamento di graffe."""
+    start = src.index("function " + name)
+    brace = src.index("{", start)
     depth = 0
-    i = open_brace
+    i = brace
     while i < len(src):
         if src[i] == "{":
             depth += 1
         elif src[i] == "}":
             depth -= 1
             if depth == 0:
-                return src[open_brace:i + 1]
+                return src[brace:i + 1]
         i += 1
-    raise AssertionError("blocco if(dst) non bilanciato")
+    raise AssertionError("blocco non bilanciato: " + name)
 
 
-def test_standard_lang_change_rebuilds_premium_model():
-    block = _vl_onchange_vlpremium_block(_app_js())
-    assert "updModelsPremium" in block, (
-        "l'onchange di #vl non ricostruisce i modelli premium: il modello Simba "
+def test_lang_change_rebuilds_premium_model():
+    body = _func_body(_app_js(), "applyBookLanguage")
+    assert "esito.premium.models" in body, (
+        "applyBookLanguage non ricostruisce i modelli premium: il modello Simba "
         "resterebbe selezionato anche per lingue non inglesi"
     )
-    assert "_onPremiumModelChanged" in block, (
-        "l'onchange di #vl non risincronizza le righe dipendenti dal modello"
+    assert "_onPremiumModelChanged" in body, (
+        "applyBookLanguage non risincronizza le righe dipendenti dal modello"
     )
+
+
+def test_niente_piu_combo_lingua_premium():
+    """La propagazione fra due combo non deve tornare: la fonte e' una sola."""
+    src = _app_js()
+    assert "getElementById('vlPremium')" not in _func_body(src, "applyBookLanguage")
+    assert "let bookLangState=" in src

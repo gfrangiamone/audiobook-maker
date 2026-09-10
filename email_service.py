@@ -6,6 +6,7 @@ Funzioni:
   - _send_email: invio HTML email via SMTP
   - _admin_notify_generation: accodamento evento per digest admin
   - _try_send_admin_digest: invio digest se rate limit permette
+  - _try_send_voxcpm_digest: digest quotidiano dei ritentativi VoxCPM
   - _send_payment_receipt_email: ricevuta pagamento PayPal
   - _send_voucher_email: email buono rimborso (ottimizzazione testo AI)
   - _send_gemini_failed_refund_email: notifica fallimento generazione voci PREMIUM + rimborso
@@ -13,6 +14,8 @@ Funzioni:
 Dipende solo dalla stdlib e da os.environ — nessun import da audiobook_app.
 """
 
+import html
+import json
 import os
 import threading
 import time
@@ -32,11 +35,28 @@ SUPPORT_EMAIL = os.environ.get("ABM_SUPPORT_EMAIL", "support@audiobook-maker.com
 BASE_URL = os.environ.get("ABM_BASE_URL", "").rstrip("/")
 
 # ---------------------------------------------------------------------------
+# Voce campionata: testi email in sette lingue (i18n/voice_clone_emails.json)
+# ---------------------------------------------------------------------------
+
+_VC_I18N = {}
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n",
+                           "voice_clone_emails.json"), encoding="utf-8") as _f:
+        _VC_I18N = json.load(_f)
+except Exception as _e:      # noqa: BLE001
+    print(f"WARNING: i18n/voice_clone_emails.json non caricato: {_e}", flush=True)
+
+# ---------------------------------------------------------------------------
 # Admin digest config
 # ---------------------------------------------------------------------------
 
 ADMIN_EMAIL = os.environ.get("ABM_ADMIN_EMAIL", "")
 ADMIN_DIGEST_INTERVAL_SEC = 24 * 60 * 60  # 24 ore tra un digest e il successivo
+
+# Il digest quotidiano VoxCPM: acceso quando c'e' un admin a cui mandarlo,
+# spegnibile senza toccare l'altro digest.
+VOXCPM_DIGEST = os.environ.get("ABM_VOXCPM_DIGEST", "1").strip().lower() not in (
+    "0", "false", "off", "no")
 
 _admin_queue = []          # list of dicts: {title, author, filename, voice, chapters, words, duration_est, timestamp}
 _admin_queue_lock = threading.Lock()
@@ -227,6 +247,44 @@ def _abuse_block_html(data=None):
 </tr></thead><tbody>{trs}</tbody></table>
 <p style="color:#888;font-size:11px;margin:6px 0 0">Solo hash di rete e contatori: nessun IP, email o titolo.
 Ripristino di un gruppo: <code>POST /admin/api/abuse/clear/&lt;gruppo&gt;</code> con header X-Admin-Token.</p>"""
+
+
+# ---------------------------------------------------------------------------
+# Voce campionata digest provider hook (iniettato da audiobook_app — nessun
+# import circolare)
+# ---------------------------------------------------------------------------
+
+_voice_clone_provider = None  # callable() -> {"rows": [...], "window_hours": int, "active_ready": int} | None
+
+
+def set_voice_clone_provider(fn):
+    global _voice_clone_provider
+    _voice_clone_provider = fn
+
+
+def _voice_clone_provider_data():
+    if _voice_clone_provider is None:
+        return None
+    try:
+        return _voice_clone_provider() or None
+    except Exception as e:      # noqa: BLE001
+        print(f"[email] voice clone provider fallito: {e}", flush=True)
+        return None
+
+
+def _voice_clone_block_html(data=None):
+    """Sezione «Voci campionate» del digest: contatori per stato nella
+    finestra e voci attive. Mai email, codici o token."""
+    d = _voice_clone_provider_data() if data is None else data
+    if not d or not (d.get("rows") or []):
+        return ""
+    hours = int(d.get("window_hours") or 24)
+    righe = "".join(f"<tr><td>{html.escape(str(r.get('label')))}</td>"
+                    f"<td style=\"text-align:right\">{int(r.get('count') or 0)}</td></tr>"
+                    for r in d["rows"])
+    return (f"<h3>Voci campionate (ultime {hours} h)</h3>"
+            f"<table>{righe}</table>"
+            f"<p>Voci attive: <strong>{int(d.get('active_ready') or 0)}</strong></p>")
 
 
 # ---------------------------------------------------------------------------
@@ -502,8 +560,10 @@ def _try_send_admin_digest():
     # vuota (issue #8).
     _abuse_data = _abuse_provider_data()
     _abuse_rows = (_abuse_data or {}).get("rows") or []
+    _vc_data = _voice_clone_provider_data()
+    _vc_rows = (_vc_data or {}).get("rows") or []
     with _admin_queue_lock:
-        if not _admin_queue and not _abuse_rows:
+        if not _admin_queue and not _abuse_rows and not _vc_rows:
             return
         now = time.time()
         if (now - _admin_last_sent) < ADMIN_DIGEST_INTERVAL_SEC:
@@ -545,6 +605,7 @@ def _try_send_admin_digest():
     funnel_block = _funnel_block_html()
     power_block = _power_users_block_html()
     abuse_block = _abuse_block_html(_abuse_data or {})
+    voice_clone_block = _voice_clone_block_html(_vc_data or {})
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:system-ui,-apple-system,sans-serif;color:#333;max-width:900px;margin:0 auto;padding:20px">
 <div style="background:linear-gradient(135deg,#1a3c5e,#2c5f8a);color:white;padding:20px 24px;border-radius:12px 12px 0 0">
 <h2 style="margin:0">\U0001f3a7 Audiobook Maker \u2014 Activity Digest</h2>
@@ -565,6 +626,7 @@ def _try_send_admin_digest():
 {funnel_block}
 {power_block}
 {abuse_block}
+{voice_clone_block}
 <p style="color:#999;font-size:12px;margin-top:16px;padding:0 4px">Questo messaggio \u00e8 generato automaticamente da Audiobook Maker.
 Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del server.</p>
 </body></html>"""
@@ -577,6 +639,50 @@ Per disattivare, rimuovere la variabile ABM_ADMIN_EMAIL dalla configurazione del
         with _admin_queue_lock:
             _admin_queue.extend(events)
         print(f"[admin] Digest send failed, {count} events re-queued: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Digest quotidiano VoxCPM
+# ---------------------------------------------------------------------------
+
+def _try_send_voxcpm_digest():
+    """Manda all'admin il riepilogo dei ritentativi VoxCPM di ieri.
+
+    Chiamata a ogni giro del ciclo di pulizia: il giorno da spedire lo decide
+    `voxcpm_digest.giorno_arretrato`, che legge un marker su disco. Quindi il
+    ritmo non dipende da quando il server e' stato avviato, e un riavvio non
+    salta ne' duplica una giornata.
+
+    Un giorno senza job VoxCPM viene marcato come fatto senza spedire nulla:
+    una mail che dice «niente da dire» ogni mattina si smette di leggerla, e
+    con lei si smette di leggere quelle che qualcosa da dire ce l'hanno.
+    """
+    if not (VOXCPM_DIGEST and ADMIN_EMAIL and _smtp_available()):
+        return
+    try:
+        import voxcpm_digest
+    except ImportError:
+        return
+    try:
+        giorno = voxcpm_digest.giorno_arretrato()
+        if not giorno:
+            return
+        r = voxcpm_digest.riepilogo(giorno)
+        if not r["job_totali"]:
+            # Marcato comunque: domani si guarda domani, non di nuovo ieri.
+            voxcpm_digest.segna_inviato(giorno)
+            return
+        _send_email(ADMIN_EMAIL, voxcpm_digest.oggetto(r), voxcpm_digest.html(r))
+        # Solo dopo l'invio riuscito: se la mail non parte, il giorno resta
+        # arretrato e il prossimo giro riprova.
+        voxcpm_digest.segna_inviato(giorno)
+        print(f"[voxcpm] Digest {giorno} inviato a {ADMIN_EMAIL}: "
+              f"{r['necessari']} ritentativi necessari, {r['riusciti']} "
+              f"riusciti, {r['falliti']} falliti, {r['non_tentati']} non "
+              f"tentati")
+    except Exception as e:
+        # Il digest non deve mai fermare il ciclo di pulizia che lo chiama.
+        print(f"[voxcpm] Digest non inviato (non-fatal): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +808,103 @@ def _send_voucher_email(code, email, amount_eur, book_title):
   <p style="color:#999;font-size:12px">Audiobook Maker \u2014 {BASE_URL or ''}</p>
 </div>"""
     _send_email(email, subject, html_body)
+
+
+# ---------------------------------------------------------------------------
+# Voce campionata: email transazionali in sette lingue (spec \u00a78)
+# ---------------------------------------------------------------------------
+
+def _vc_t(lang):
+    return _VC_I18N.get((lang or "").split("-")[0].lower()) or _VC_I18N.get("en") or {}
+
+
+def _vc_num(value, kind="float"):
+    """Converte un valore numerico per l'interpolazione email. `None` se non
+    convertibile: il chiamante deve allora ritornare `False` senza inviare.
+    Tiene le coercizioni fuori dal try/except di `_vc_send` (che scatta solo
+    dopo il controllo lingua/email), cosi' un `amount_eur=None` o
+    `stage=\"x\"` non solleva mai fuori dalle funzioni pubbliche."""
+    try:
+        return int(value) if kind == "int" else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _vc_send(email, lang, subject_key, body_keys, **values):
+    """Compone e manda una email della voce campione. `body_keys`: chiavi da
+    concatenare. I valori vengono escapati tranne gli URL (chiavi *_url).
+    Ritorna False su qualunque errore: chi chiama sta gia' nel flusso."""
+    t = _vc_t(lang)
+    if not t or not email:
+        return False
+    safe = {k: (v if k.endswith("_url") else html.escape(str(v))) for k, v in values.items()}
+    try:
+        subject = t[subject_key].format(**safe)
+        body = "".join(t[k].format(**safe) for k in body_keys) + t.get("footer", "")
+        return bool(_send_email(email, subject, body))
+    except Exception as e:      # noqa: BLE001
+        print(f"[email] voice clone {subject_key} non inviata: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+def send_voice_clone_paid(email, lang, *, voice_code, amount_eur, resume_url, manage_url, delete_url):
+    amount = _vc_num(amount_eur)
+    if amount is None:
+        return False
+    return _vc_send(email, lang, "paid_subject", ("paid_body",), voice_code=voice_code,
+                    amount=f"{amount:.2f}", resume_url=resume_url,
+                    manage_url=manage_url, delete_url=delete_url)
+
+
+def send_voice_clone_confirm(email, lang, *, confirm_code, minutes=15):
+    return _vc_send(email, lang, "confirm_subject", ("confirm_body",),
+                    confirm_code=confirm_code, minutes=minutes)
+
+
+def send_voice_clone_device_added(email, lang, *, devices_url):
+    return _vc_send(email, lang, "device_subject", ("device_body",), devices_url=devices_url)
+
+
+def send_voice_clone_ready(email, lang, *, voice_code, manage_url, delete_url, retention_days):
+    return _vc_send(email, lang, "ready_subject", ("ready_body",), voice_code=voice_code,
+                    manage_url=manage_url, delete_url=delete_url, retention_days=retention_days)
+
+
+def send_voice_clone_expiring(email, lang, *, days, manage_url):
+    return _vc_send(email, lang, "expiring_subject", ("expiring_body",), days=days,
+                    manage_url=manage_url)
+
+
+def send_voice_clone_reminder(email, lang, *, resume_url, stage):
+    stage_n = _vc_num(stage, kind="int")
+    if stage_n is None:
+        return False
+    key = "reminder_body_2" if stage_n >= 2 else "reminder_body_1"
+    return _vc_send(email, lang, "reminder_subject", (key,), resume_url=resume_url)
+
+
+def send_voice_clone_refunded(email, lang, *, amount_eur, method, reason, voucher_code=None,
+                              voucher_amount=None, expiry_days=None):
+    if method not in ("paypal", "voucher"):
+        return False
+    amount = _vc_num(amount_eur)
+    if amount is None:
+        return False
+    t = _vc_t(lang)
+    reason_text = t.get("refund_reason_" + reason) or t.get("refund_reason_user_rejected") or ""
+    if method == "paypal":
+        if not voucher_code:
+            return False
+        v_amount = _vc_num(voucher_amount if voucher_amount is not None else amount)
+        if v_amount is None:
+            return False
+        return _vc_send(email, lang, "refund_subject", ("refund_body_paypal",), reason=reason_text,
+                        voucher_code=voucher_code,
+                        voucher_amount=f"{v_amount:.2f}",
+                        expiry_days=expiry_days if expiry_days is not None else VOUCHER_EXPIRY_DAYS,
+                        amount=f"{amount:.2f}")
+    return _vc_send(email, lang, "refund_subject", ("refund_body_voucher",), reason=reason_text,
+                    amount=f"{amount:.2f}")
 
 
 def _send_voucher_notification_email(code, email, amount_eur, valid_days, created_at):
