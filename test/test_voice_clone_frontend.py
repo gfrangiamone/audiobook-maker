@@ -125,3 +125,35 @@ def test_hindi_in_devanagari():
     chiavi_hi = re.findall(r"Object\.assign\(L\.hi,\{(.*?)\}\);", I18N, re.S)
     testo = "".join(b for b in chiavi_hi if "vc_" in b)
     assert re.search(r"[ऀ-ॿ]", testo), "le stringhe vc_ in hindi devono essere in devanagari"
+
+
+TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m", "vc_p2_read",
+              "vc_rec_start", "vc_rec_stop", "vc_or_upload", "vc_checking", "vc_sample_listen",
+              "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
+              "vc_gate_short", "vc_gate_long", "vc_gate_noise", "vc_gate_pauses", "vc_gate_nopause",
+              "vc_gate_band", "vc_gate_clip", "vc_gate_transcript", "vc_gate_format", "vc_gate_asr",
+              "vc_gate_generic", "vc_err_asr_unavailable", "vc_err_sample_rejected"]
+
+
+def test_markup_pannello_2():
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    for i in ("vcLang", "vcLocale", "vcGender", "vcPromptText", "vcRecBtn", "vcLevel", "vcTimer",
+              "vcFile", "vcSampleBlock", "vcSampleAudio", "vcSampleRedo", "vcSampleNext", "vcP2Back"):
+        assert f'id="{i}"' in p2, i
+    assert 'accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4' in p2
+
+
+def test_registratore_senza_filtri_e_con_stop_automatico():
+    assert "echoCancellation: false" in VC
+    assert "noiseSuppression: false" in VC
+    assert "autoGainControl: false" in VC
+    assert "REC_MAX_MS = 25000" in VC
+    assert "/api/voice_clone/sample" in VC
+    assert "vcUploadCheck(f.name, f.size" in VC
+
+
+def test_chiavi_task3_in_tutte_le_lingue():
+    for lang in LANGS:
+        chiavi = _chiavi_i18n(lang)
+        mancanti = [k for k in TASK3_KEYS if k not in chiavi]
+        assert not mancanti, f"{lang}: {mancanti}"

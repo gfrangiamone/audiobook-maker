@@ -204,6 +204,148 @@
     if (price && S.cfg) price.textContent = S.cfg.free ? tt('vc_price_free') : tt('vc_price', {p: Number(S.cfg.price_eur).toFixed(2)});
   }
 
+  /* ---------- pannello 2: campione ---------- */
+
+  var REC_MAX_MS = 25000;
+
+  function vcFillLangs() {
+    var ls = $('vcLang'); var loc = $('vcLocale');
+    if (!ls || !loc || !S.cfg) return;
+    var langs = S.cfg.languages || {};
+    ls.innerHTML = '';
+    Object.keys(langs).sort().forEach(function (l) {
+      var o = document.createElement('option'); o.value = l;
+      o.textContent = (typeof _langLabel === 'function') ? _langLabel(l) : l.toUpperCase();
+      ls.appendChild(o);
+    });
+    var cur = vcLang();
+    if (langs[cur]) ls.value = cur;
+    vcFillLocales();
+    ls.onchange = function () { vcFillLocales(); vcLoadPrompt(); };
+    loc.onchange = vcLoadPrompt;
+    var g = $('vcGender'); if (g) g.onchange = vcLoadPrompt;
+  }
+
+  function vcFillLocales() {
+    var ls = $('vcLang'); var loc = $('vcLocale');
+    var list = (S.cfg && S.cfg.languages && S.cfg.languages[ls.value]) || [];
+    loc.innerHTML = '';
+    list.forEach(function (l) {
+      var o = document.createElement('option'); o.value = l;
+      o.textContent = (typeof _voxcpmLocaleLabel === 'function') ? _voxcpmLocaleLabel(l) : l;
+      loc.appendChild(o);
+    });
+    var pre = (typeof _voxcpmAccentSel === 'string') ? _voxcpmAccentSel : '';
+    if (pre && list.indexOf(pre) >= 0) loc.value = pre;
+  }
+
+  function vcLoadPrompt() {
+    var box = $('vcPromptText'); if (!box) return;
+    box.textContent = '…';
+    var lang = $('vcLang').value; var gender = $('vcGender').value;
+    vcFetch('/api/voice_clone/prompt?lang=' + encodeURIComponent(lang) + '&gender=' + encodeURIComponent(gender)).then(function (r) {
+      if (!r.ok) { box.textContent = ''; vcErr(vcApiErrMsg(r.data)); return; }
+      box.textContent = r.data.text || '';
+      S.promptVersion = r.data.version;
+    });
+  }
+
+  function vcSetRecording(on) {
+    var b = $('vcRecBtn'); var dot = $('vcRecDot');
+    if (b) b.textContent = tt(on ? 'vc_rec_stop' : 'vc_rec_start');
+    if (dot) dot.hidden = !on;
+  }
+
+  function vcStopMedia() {
+    var m = S.media; S.media = null;
+    if (!m) return;
+    try { if (m.rec && m.rec.state !== 'inactive') m.rec.stop(); } catch (e) {}
+    try { if (m.timer) clearInterval(m.timer); } catch (e) {}
+    try { if (m.stream) m.stream.getTracks().forEach(function (tr) { tr.stop(); }); } catch (e) {}
+    try { if (m.ctx) m.ctx.close(); } catch (e) {}
+    vcSetRecording(false);
+  }
+  S.stopMedia = vcStopMedia;
+
+  /* Registrazione: niente cancellazione dell'eco, niente soppressione del
+     rumore, niente guadagno automatico (spec §3.3): il modello vuole la voce
+     com'e'. Livello con AnalyserNode; stop automatico a 25 s. */
+  function vcStartRecording() {
+    if (!navigator.mediaDevices || !window.MediaRecorder) { vcErr(tt('vc_err_no_mic')); return; }
+    vcErr('');
+    navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}}).then(function (stream) {
+      var mime = '';
+      ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].some(function (m) {
+        if (MediaRecorder.isTypeSupported(m)) { mime = m; return true; } return false;
+      });
+      var rec = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+      var chunks = [];
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var src = ctx.createMediaStreamSource(stream);
+      var an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
+      var buf = new Uint8Array(an.fftSize);
+      var t0 = Date.now();
+      var meter = $('vcLevel'); var timer = $('vcTimer');
+      var tick = setInterval(function () {
+        an.getByteTimeDomainData(buf);
+        var peak = 0;
+        for (var i = 0; i < buf.length; i++) { var v = Math.abs(buf[i] - 128) / 128; if (v > peak) peak = v; }
+        if (meter) meter.value = peak;
+        var el = (Date.now() - t0) / 1000;
+        if (timer) timer.textContent = el.toFixed(1) + ' s';
+        if (el * 1000 >= REC_MAX_MS) vcStopMedia();
+      }, 100);
+      rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+      rec.onstop = function () {
+        var blob = new Blob(chunks, {type: rec.mimeType || mime || 'audio/webm'});
+        var ext = vcRecordExt(rec.mimeType || mime);
+        vcUploadSample(blob, 'sample.' + ext);
+      };
+      S.media = {rec: rec, stream: stream, ctx: ctx, timer: tick};
+      vcSetRecording(true);
+      rec.start();
+    }).catch(function () { vcErr(tt('vc_err_no_mic')); });
+  }
+
+  function vcUploadSample(blob, filename) {
+    var fd = new FormData();
+    fd.append('file', blob, filename);
+    fd.append('lang', $('vcLang').value);
+    fd.append('locale', $('vcLocale').value);
+    fd.append('gender', $('vcGender').value);
+    var wait = $('vcUploading'); if (wait) wait.hidden = false;
+    var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
+    vcErr('');
+    vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
+      if (wait) wait.hidden = true;
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
+      S.cur = {clone_id: r.data.clone_id, view: r.data, lang: $('vcLang').value, locale: $('vcLocale').value, gender: $('vcGender').value, voice_code: null};
+      var a = $('vcSampleAudio');
+      if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
+      if (blk) blk.hidden = false;
+    }).catch(function () { if (wait) wait.hidden = true; vcErr(tt('vc_err_generic')); });
+  }
+
+  function vcInitPanel2() {
+    vcStopMedia();
+    var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
+    var wait = $('vcUploading'); if (wait) wait.hidden = true;
+    var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
+    vcFillLangs();
+    vcLoadPrompt();
+    $('vcRecBtn').onclick = function () { if (S.media) vcStopMedia(); else vcStartRecording(); };
+    $('vcFile').onchange = function () {
+      var f = this.files && this.files[0]; if (!f) return;
+      var chk = vcUploadCheck(f.name, f.size, (S.cfg && S.cfg.max_upload_mb) || 20);
+      if (!chk.ok) { vcErr(tt(chk.reason === 'too_large' ? 'vc_err_too_large' : 'vc_gate_format', {mb: (S.cfg && S.cfg.max_upload_mb) || 20})); this.value = ''; return; }
+      vcUploadSample(f, f.name);
+      this.value = '';
+    };
+    $('vcSampleRedo').onclick = function () { if (blk) blk.hidden = true; var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); } };
+    $('vcSampleNext').onclick = function () { if (S.cur && S.cur.clone_id) vcShow(3); };
+    $('vcP2Back').onclick = function () { vcStopMedia(); vcShow(1); };
+  }
+
   function vcInit() {
     var btn = $('vcOpenBtn'); if (btn) btn.onclick = function () { vcOpen(); };
     var rb = $('vcResumeBtn'); if (rb) rb.onclick = function () { vcOpen(); };
@@ -212,6 +354,7 @@
     if (modal) modal.addEventListener('click', function (ev) { if (ev.target === modal) vcClose(); });
     S.panelHooks = S.panelHooks || {};
     S.panelHooks.vcP1 = vcInitPanel1;
+    S.panelHooks.vcP2 = vcInitPanel2;
     vcFetch('/api/voice_clone/config').then(function (r) {
       S.cfg = r.ok ? r.data : null;
       return vcRefreshMine();

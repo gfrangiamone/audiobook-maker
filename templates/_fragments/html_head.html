@@ -1189,7 +1189,39 @@ __REVIEWS_LD__
           </div>
         </section>
 
-        <section id="vcP2" hidden></section>
+        <section id="vcP2" hidden>
+          <div class="vc-rec-row">
+            <label><span data-t="vc_lang"></span> <select id="vcLang"></select></label>
+            <label><span data-t="vc_locale"></span> <select id="vcLocale"></select></label>
+            <label><span data-t="vc_gender"></span>
+              <select id="vcGender">
+                <option value="f" data-t="vc_gender_f"></option>
+                <option value="m" data-t="vc_gender_m"></option>
+              </select>
+            </label>
+          </div>
+          <p data-t="vc_p2_read"></p>
+          <div id="vcPromptText" class="vc-prompt"></div>
+          <div class="vc-rec-row">
+            <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
+            <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+            <meter id="vcLevel" min="0" max="1" value="0"></meter>
+            <span id="vcTimer" class="vc-timer">0.0 s</span>
+          </div>
+          <p class="vc-or"><span data-t="vc_or_upload"></span> <input type="file" id="vcFile" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*"></p>
+          <div id="vcSampleBlock" hidden>
+            <p data-t="vc_sample_listen"></p>
+            <audio id="vcSampleAudio" controls preload="none"></audio>
+            <div class="vc-footer">
+              <button type="button" id="vcSampleRedo" class="btn-secondary" data-t="vc_sample_redo"></button>
+              <button type="button" id="vcSampleNext" class="btn-primary" data-t="vc_sample_ok"></button>
+            </div>
+          </div>
+          <div id="vcUploading" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_checking"></span></div>
+          <div class="vc-footer">
+            <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
+          </div>
+        </section>
         <section id="vcP3" hidden></section>
         <section id="vcP4" hidden></section>
         <section id="vcPMine" hidden></section>
