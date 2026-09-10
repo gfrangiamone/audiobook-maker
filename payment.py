@@ -997,6 +997,8 @@ def release_payment_token(token: str, amount_eur: float, job_id: str,
                 pay["used"] = False
                 pay.pop("used_at", None)
                 pay.pop("used_for_job", None)
+                pay["released_reason"] = reason or "rollback"
+                pay["released_at"] = time.time()
                 try:
                     _save_payments()
                 except Exception:
@@ -1267,6 +1269,17 @@ def capture_and_store_order(order_id: str, job_id: str = "",
 
         payer = captured.get("payer", {})
         email = (payer.get("email_address") or "").lower().strip()
+
+        if not job_id:
+            # Nessun job_id esplicito (es. voci campionate: capture legato solo
+            # al purpose registrato al create): recupera dal pending SOLO se il
+            # purpose e' un job voice-clone (vc:<id>). Ogni altro purpose resta
+            # senza job_id, comportamento invariato.
+            with _pending_orders_lock:
+                _pending = _pending_orders.get(order_id)
+            _purpose = (_pending.get("purpose") or "") if _pending else ""
+            if _purpose.startswith("vc:"):
+                job_id = _purpose
 
         with _payments_lock:
             # Re-check sotto _payments_lock (defense-in-depth: il _capture_lock

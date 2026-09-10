@@ -56,3 +56,63 @@ def test_release_ignoto_non_solleva():
     assert payment.release_payment_token("NOPE", 5.0, "vc:x", "paypal") is False
     assert payment.release_payment_token("NOPE", 5.0, "vc:x", "voucher") is False
     assert payment.release_payment_token("NOPE", 5.0, "vc:x", "free") is False
+
+
+def test_release_paypal_registra_reason_e_timestamp():
+    payment._payments["VCORDER2"] = {"order_id": "VCORDER2", "amount_eur": 5.0,
+                                    "email": "x@y.it", "captured_at": time.time(),
+                                    "used": False}
+    try:
+        assert payment.consume_payment_token("VCORDER2", 5.0, "vc:abc", purpose="voice_clone") == "paypal"
+        prima = time.time()
+        assert payment.release_payment_token("VCORDER2", 5.0, "vc:abc", "paypal",
+                                              reason="voice_clone_gone") is True
+        rec = payment._payments["VCORDER2"]
+        assert rec["released_reason"] == "voice_clone_gone"
+        assert rec["released_at"] >= prima
+    finally:
+        payment._payments.pop("VCORDER2", None)
+
+
+def test_capture_senza_job_id_eredita_purpose_vc(monkeypatch, tmp_path):
+    monkeypatch.setattr(payment, "_payments", {})
+    monkeypatch.setattr(payment, "_pending_orders", {})
+    monkeypatch.setattr(payment, "_PAYMENTS_FILE", tmp_path / "_payments.json")
+    payment._register_pending_order("ORDVC1", 5.0, purpose="vc:vc_abc123")
+
+    def fake_captured(oid):
+        return {
+            "payer": {"email_address": "buyer@x.it"},
+            "purchase_units": [{
+                "payments": {"captures": [{
+                    "id": "CAPORDVC1", "status": "COMPLETED",
+                    "amount": {"value": "5.00"},
+                }]},
+            }],
+        }
+    monkeypatch.setattr(payment, "_paypal_capture_order", fake_captured)
+    res = payment.capture_and_store_order("ORDVC1", job_id="")
+    assert res["already_captured"] is False
+    assert payment._payments["ORDVC1"]["job_id"] == "vc:vc_abc123"
+
+
+def test_capture_senza_job_id_purpose_non_vc_resta_vuoto(monkeypatch, tmp_path):
+    monkeypatch.setattr(payment, "_payments", {})
+    monkeypatch.setattr(payment, "_pending_orders", {})
+    monkeypatch.setattr(payment, "_PAYMENTS_FILE", tmp_path / "_payments.json")
+    payment._register_pending_order("ORDOPT1", 5.0, purpose="optimize:job-9")
+
+    def fake_captured(oid):
+        return {
+            "payer": {"email_address": "buyer@x.it"},
+            "purchase_units": [{
+                "payments": {"captures": [{
+                    "id": "CAPORDOPT1", "status": "COMPLETED",
+                    "amount": {"value": "5.00"},
+                }]},
+            }],
+        }
+    monkeypatch.setattr(payment, "_paypal_capture_order", fake_captured)
+    res = payment.capture_and_store_order("ORDOPT1", job_id="")
+    assert res["already_captured"] is False
+    assert payment._payments["ORDOPT1"]["job_id"] == ""
