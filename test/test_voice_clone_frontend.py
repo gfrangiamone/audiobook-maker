@@ -369,3 +369,13 @@ def test_chiavi_task6_in_tutte_le_lingue():
         chiavi = _chiavi_i18n(lang)
         mancanti = [k for k in TASK6_KEYS if k not in chiavi]
         assert not mancanti, f"{lang}: {mancanti}"
+
+
+def test_app_non_legge_privati_di_voice_clone():
+    app_src = (ROOT / "audiobook_app.py").read_text(encoding="utf-8")
+    assert "voice_clone._ACCEPTED_EXT" not in app_src
+    assert "voice_clone.accepted_ext()" in app_src
+    import voice_clone
+    assert voice_clone.accepted_ext() == frozenset(voice_clone._ACCEPTED_EXT)
+    js_ext = re.search(r"ACCEPTED_EXT = \[([^\]]+)\]", VC).group(1)
+    assert set(re.findall(r"'(\w+)'", js_ext)) == set(voice_clone.accepted_ext())

@@ -8997,7 +8997,7 @@ def api_vc_sample():
     if f is None or lang not in offerte or locale not in offerte[lang] or gender not in ("m", "f"):
         return _vc_err("bad_request", "Missing file, language, locale or gender", 400)
     ext = (secure_filename(f.filename or "").rsplit(".", 1)[-1].lower() or "webm")[:5]
-    if ext not in voice_clone._ACCEPTED_EXT:
+    if ext not in voice_clone.accepted_ext():
         ext = "webm"
     tmp_id = uuid.uuid4().hex
     src = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.{ext}")

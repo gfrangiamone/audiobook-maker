@@ -153,6 +153,11 @@ def max_upload_mb():
     return max(1, _env_int("ABM_VOICE_CLONE_MAX_UPLOAD_MB", 20))
 
 
+def accepted_ext():
+    """Estensioni accettate per il campione caricato (lette dall'app per il 400 `format`)."""
+    return frozenset(_ACCEPTED_EXT)
+
+
 DEMO_NAMES = ("demo_common.wav", "demo_extra.wav")
 
 
