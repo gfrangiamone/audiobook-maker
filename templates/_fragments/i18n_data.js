@@ -102,7 +102,7 @@ Object.assign(L.en,{vc_group_mine:"Your voices",vc_voice_own:"Your voice",vc_voi
 Object.assign(L.fr,{vc_group_mine:"Vos voix",vc_voice_own:"Votre voix",vc_voice_shared:"Voix reçue"});
 Object.assign(L.es,{vc_group_mine:"Tus voces",vc_voice_own:"Tu voz",vc_voice_shared:"Voz recibida"});
 Object.assign(L.de,{vc_group_mine:"Deine Stimmen",vc_voice_own:"Deine Stimme",vc_voice_shared:"Erhaltene Stimme"});
-Object.assign(L.zh,{vc_group_mine:"你的声音",vc_voice_own:"你的声音",vc_voice_shared:"收到的声音"});
+Object.assign(L.zh,{vc_group_mine:"你录制的声音",vc_voice_own:"你的声音",vc_voice_shared:"收到的声音"});
 Object.assign(L.hi,{vc_group_mine:"आपकी आवाज़ें",vc_voice_own:"आपकी आवाज़",vc_voice_shared:"साझा की गई आवाज़"});
 
 

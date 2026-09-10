@@ -1615,9 +1615,10 @@ function updVoicesPremium(){
       }
       sel.appendChild(gm);
     }
-    if(window._vcJustCreated&&mie.length===1&&mie[0].id===window._vcJustCreated){
-      prevVoice=window._vcJustCreated;window._vcJustCreated=null;
+    if(window._vcJustCreated&&mie.some(v=>v.id===window._vcJustCreated)){
+      prevVoice=window._vcJustCreated;
     }
+    window._vcJustCreated=null;
     let lg='';
     for(const v of lista){
       if(v.gender!==lg){
@@ -5732,7 +5733,7 @@ function _handleVcGenerateError(gd){
   if(code!=='voice_gone'&&code!=='voice_not_authorized'&&code!=='voice_lang_mismatch')return false;
   showErr('s3err',t('vc_err_'+code));
   _voxcpmVoiceSel='';
-  loadVoices().then(()=>{updVoicesPremium();if(typeof vcSyncButton==='function')vcSyncButton();});
+  loadVoices().then(()=>{updVoicesPremium();if(typeof vcSyncButton==='function')vcSyncButton();}).catch(()=>{if(typeof vcSyncButton==='function')vcSyncButton();});
   return true;
 }
 function tryGoToAudioSettings(){

@@ -118,6 +118,7 @@ colonna indica da quale canale possono riceverli:</p>
 <tr><td>Google LLC / Google Ireland</td><td>Notifiche push (Firebase Cloud Messaging)</td><td>App</td></tr>
 <tr><td>Google LLC / Google Ireland</td><td>Voci premium ed elaborazione del testo</td><td>Solo sito web</td></tr>
 <tr><td>Speechify</td><td>Voci premium</td><td>Solo sito web</td></tr>
+<tr><td>RunPod, Inc.</td><td>Sintesi vocale delle voci campionate (voci premium)</td><td>Solo sito web</td></tr>
 <tr><td>DeepSeek</td><td>Ottimizzazione del testo tramite IA</td><td>Solo sito web</td></tr>
 <tr><td>PayPal (Europe)</td><td>Pagamenti dei servizi premium</td><td>Solo sito web</td></tr>
 <tr><td>serverSMTP</td><td>Invio delle email di notifica</td><td>Solo sito web</td></tr>
@@ -154,7 +155,7 @@ una persona: per esercitare i tuoi diritti scrivi a
 cancellano comunque da soli entro circa 24 ore senza alcuna richiesta.</p>
 
 <h2>9. Voci campionate</h2>
-<p>Se scegli di campionare la tua voce, registri o carichi un breve campione audio (circa 15 secondi) leggendo una frase che ti proponiamo. Il campione viene analizzato automaticamente (livelli, pause, rumore) e trascritto da un servizio di riconoscimento vocale per verificare che tu abbia letto la frase; la trascrizione serve solo a questa verifica e non viene conservata oltre l'esito.</p>
+<p>Se scegli di campionare la tua voce, registri o carichi un breve campione audio (circa 15 secondi) leggendo una frase che ti proponiamo. Il campione viene analizzato automaticamente (livelli, pause, rumore) e trascritto da un servizio di riconoscimento vocale per verificare che tu abbia letto la frase; questa trascrizione avviene sui nostri stessi server e l'audio non viene inviato a terzi per questa finalità. La trascrizione serve solo a questa verifica e non viene conservata oltre l'esito.</p>
 <p>Conserviamo il campione normalizzato, i due brani di prova generati con la tua voce, la lingua e il genere dichiarati, l'email indicata, il consenso prestato («è la mia voce e ho il diritto di usarla») con data e ora, e l'elenco dei dispositivi autorizzati (identificati dal cookie tecnico di sessione). Il campione è inviato al fornitore che esegue la sintesi vocale esclusivamente per generare i brani di prova e gli audiolibri che richiedi.</p>
 <p>La voce è utilizzabile solo dai dispositivi che autorizzi con il codice-voce, previa conferma via email al titolare. Puoi eliminare la voce in qualsiasi momento dal link di gestione contenuto nell'email: l'eliminazione cancella campione, brani di prova e riferimento nel catalogo. Una voce non utilizzata per un lungo periodo viene eliminata automaticamente; te lo ricordiamo via email prima della scadenza. I dati di pagamento seguono le regole della sezione dedicata.</p>
 """,
@@ -268,6 +269,7 @@ column indicates from which channel they may receive it:</p>
 <tr><td>Google LLC / Google Ireland</td><td>Push notifications (Firebase Cloud Messaging)</td><td>App</td></tr>
 <tr><td>Google LLC / Google Ireland</td><td>Premium voices and text processing</td><td>Website only</td></tr>
 <tr><td>Speechify</td><td>Premium voices</td><td>Website only</td></tr>
+<tr><td>RunPod, Inc.</td><td>Voice synthesis for sampled voices (premium voices)</td><td>Website only</td></tr>
 <tr><td>DeepSeek</td><td>AI text optimization</td><td>Website only</td></tr>
 <tr><td>PayPal (Europe)</td><td>Premium services payment</td><td>Website only</td></tr>
 <tr><td>serverSMTP</td><td>Sending notification emails</td><td>Website only</td></tr>
@@ -303,7 +305,7 @@ exercise your rights, write to
 delete themselves anyway within about 24 hours without any request.</p>
 
 <h2>9. Sampled voices</h2>
-<p>If you choose to sample your voice, you record or upload a short audio sample (about 15 seconds) reading a sentence we propose. The sample is analysed automatically (levels, pauses, noise) and transcribed by a speech-recognition service to check that you read the sentence; the transcription serves only this check and is not kept beyond the result.</p>
+<p>If you choose to sample your voice, you record or upload a short audio sample (about 15 seconds) reading a sentence we propose. The sample is analysed automatically (levels, pauses, noise) and transcribed by a speech-recognition service to check that you read the sentence; this transcription runs on our own servers and the audio is not sent to third parties for this purpose. The transcription serves only this check and is not kept beyond the result.</p>
 <p>We keep the normalised sample, the two trial passages generated with your voice, the declared language and gender, the email you provide, the consent given (“this is my voice and I have the right to use it”) with date and time, and the list of authorised devices (identified by the technical session cookie). The sample is sent to the provider that performs speech synthesis solely to generate the trial passages and the audiobooks you request.</p>
 <p>The voice can be used only by the devices you authorise with the voice code, after email confirmation by the owner. You can delete the voice at any time from the management link in the email: deletion removes the sample, the trial passages and the catalogue entry. A voice unused for a long period is deleted automatically; we remind you by email before it expires. Payment data follows the rules of the dedicated section.</p>
 """,

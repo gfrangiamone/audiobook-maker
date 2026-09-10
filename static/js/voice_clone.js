@@ -167,7 +167,7 @@
     var m = $('vcModal'); if (m) m.hidden = true;
     if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
     if (S.esTimer) { clearTimeout(S.esTimer); S.esTimer = null; }
-    if (typeof S.stopMedia === 'function') S.stopMedia();
+    if (typeof S.abortMedia === 'function') S.abortMedia();
   }
   window.vcClose = vcClose;
 
@@ -285,6 +285,18 @@
   }
   S.stopMedia = vcStopMedia;
 
+  /* Annullamento esplicito della registrazione in corso (chiusura del modal,
+     «Indietro» dal pannello 2): marca la sessione come abbandonata PRIMA di
+     fermarla, cosi' rec.onstop (che arriva dopo, in modo asincrono, quando
+     S.media e' gia' stato azzerato da vcStopMedia) sa di non dover caricare
+     nulla. Lo stop dal bottone e quello automatico a 25 s restano conferme:
+     passano da vcStopMedia() senza mai passare da qui. */
+  function vcAbortMedia() {
+    if (S.media) S.media.aborted = true;
+    vcStopMedia();
+  }
+  S.abortMedia = vcAbortMedia;
+
   /* Registrazione: niente cancellazione dell'eco, niente soppressione del
      rumore, niente guadagno automatico (spec §3.3): il modello vuole la voce
      com'e'. Livello con AnalyserNode; stop automatico a 25 s. */
@@ -313,6 +325,7 @@
         if (timer) timer.textContent = el.toFixed(1) + ' s';
         if (el * 1000 >= REC_MAX_MS) vcStopMedia();
       }, 100);
+      var session = {rec: rec, stream: stream, ctx: ctx, timer: tick, aborted: false};
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
       rec.onstop = function () {
         /* Pulizia solo se S.media appartiene ancora a QUESTA registrazione.
@@ -326,11 +339,16 @@
            puntato su questo rec: e' l'unico caso in cui la pulizia serve
            qui, timer/pallino/stream compresi. */
         if (S.media && S.media.rec === rec) vcStopMedia();
+        /* `session` e' catturato per closure, non riletto da S.media (che a
+           questo punto e' gia' null per qualunque stop passato da
+           vcStopMedia): e' l'unico modo per sapere, qui, se QUESTA sessione
+           e' stata annullata da vcAbortMedia invece che confermata. */
+        if (session.aborted) return;
         var blob = new Blob(chunks, {type: rec.mimeType || mime || 'audio/webm'});
         var ext = vcRecordExt(rec.mimeType || mime);
         vcUploadSample(blob, 'sample.' + ext);
       };
-      S.media = {rec: rec, stream: stream, ctx: ctx, timer: tick};
+      S.media = session;
       vcSetRecording(true);
       rec.start();
     }).catch(function () { vcErr(tt('vc_err_no_mic')); });
@@ -377,7 +395,7 @@
     };
     $('vcSampleRedo').onclick = function () { if (blk) blk.hidden = true; var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); } };
     $('vcSampleNext').onclick = function () { if (S.cur && S.cur.clone_id) vcShow(3); };
-    $('vcP2Back').onclick = function () { if (S.busy) return; vcStopMedia(); vcShow(1); };
+    $('vcP2Back').onclick = function () { if (S.busy) return; vcAbortMedia(); vcShow(1); };
   }
 
   /* ---------- pannello 3: email, brano extra, pagamento ---------- */
@@ -566,35 +584,41 @@
     });
   }
 
+  /* Come vcLoadExtraTexts sul pannello 3: rientrare piu' volte nel pannello 4
+     (regenerate, retry, evento SSE, riapertura del modal) non deve ripetere
+     la fetch ne' scartare la selezione dell'utente se l'elenco e' gia' quello
+     giusto. La guardia sta solo qui: non deve MAI poter interrompere
+     vcInitPanel4, che deve sempre finire di cablare i bottoni e chiamare
+     vcRenderP4/vcWatch (vedi I1 nella revisione finale). */
+  function vcLoadRegenTexts() {
+    var sel = $('vcRegenSel');
+    if (!sel || !S.cur) return;
+    var cloneId = S.cur.clone_id;
+    var loc = (S.cur.view && S.cur.view.locale) || S.cur.locale || '';
+    var regenKey = cloneId + '|' + loc;
+    if (S.regenLoadedFor === regenKey && sel.options.length) return;
+    sel.innerHTML = '';
+    vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
+      if (!r.ok) return;
+      if (!S.cur || S.cur.clone_id !== cloneId) return;
+      (r.data.extra || []).forEach(function (x) {
+        var o = document.createElement('option'); o.value = x.id;
+        o.textContent = (x.text || '').slice(0, 60) + '…';
+        sel.appendChild(o);
+      });
+      if (S.cur.view && S.cur.view.extra_id) sel.value = S.cur.view.extra_id;
+      S.regenLoadedFor = regenKey;
+    });
+  }
+
   function vcInitPanel4() {
     var cb = $('vcCodeBox');
     if (cb) {
       cb.hidden = !S.cur.voice_code;
       var c = $('vcCode'); if (c) c.textContent = S.cur.voice_code || '';
     }
+    vcLoadRegenTexts();
     var sel = $('vcRegenSel');
-    if (sel) {
-      var cloneId = S.cur.clone_id;
-      var loc = (S.cur.view && S.cur.view.locale) || S.cur.locale || '';
-      var regenKey = cloneId + '|' + loc;
-      /* Come vcLoadExtraTexts sul pannello 3: rientrare piu' volte nel
-         pannello 4 (regenerate, retry, evento SSE) non deve ripetere la
-         fetch ne' scartare la selezione dell'utente se l'elenco e' gia'
-         quello giusto. */
-      if (S.regenLoadedFor === regenKey && sel.options.length) return;
-      sel.innerHTML = '';
-      vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
-        if (!r.ok) return;
-        if (!S.cur || S.cur.clone_id !== cloneId) return;
-        (r.data.extra || []).forEach(function (x) {
-          var o = document.createElement('option'); o.value = x.id;
-          o.textContent = (x.text || '').slice(0, 60) + '…';
-          sel.appendChild(o);
-        });
-        if (S.cur.view && S.cur.view.extra_id) sel.value = S.cur.view.extra_id;
-        S.regenLoadedFor = regenKey;
-      });
-    }
     $('vcApprove').onclick = function () { vcAction('approve').then(function (v) { if (v) vcAfterApprove(v); }); };
     $('vcRegen').onclick = function () { vcAction('regenerate', {extra_id: sel ? sel.value : ''}).then(function (v) { if (v) vcWatch(); }); };
     $('vcReject').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = false; };
@@ -624,7 +648,7 @@
     var ul = $('vcMineList'); if (!ul) return;
     ul.innerHTML = '';
     if (!S.mine.length) {
-      var li0 = document.createElement('li'); li0.className = 'small'; li0.textContent = tt('vc_mine_empty'); ul.appendChild(li0); return;
+      var li0 = document.createElement('li'); li0.className = 'vc-small'; li0.textContent = tt('vc_mine_empty'); ul.appendChild(li0); return;
     }
     S.mine.forEach(function (m) {
       var li = document.createElement('li'); li.className = 'vc-mine-item';
@@ -639,7 +663,7 @@
         var a = document.createElement('audio'); a.controls = true; a.preload = 'none'; a.src = m.demo_urls.common; li.appendChild(a);
       }
       var act = document.createElement('div'); act.className = 'vc-actions';
-      var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
+      var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
       if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
       if (!m.owner) mk('vc_forget', function () { vcAction2(m.id, 'forget').then(function (ok) { if (ok) vcOpen('mine'); }); });
       if (m.owner) mk('vc_resend', function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok')); }); });
@@ -704,8 +728,8 @@
     var row = $('vcConfirmRow'); if (row) row.hidden = true;
     $('vcClaimBtn').onclick = vcClaim;
     $('vcConfirmBtn').onclick = vcConfirm;
-    $('vcMineClose').onclick = vcClose;
-    $('vcNewVoice').onclick = function () { vcShow(1); };
+    $('vcMineClose').onclick = function () { if (S.busy) return; vcClose(); };
+    $('vcNewVoice').onclick = function () { if (S.busy) return; vcShow(1); };
   }
 
   function vcInit() {
@@ -720,19 +744,24 @@
     S.panelHooks.vcP3 = vcInitPanel3;
     S.panelHooks.vcP4 = vcInitPanel4;
     S.panelHooks.vcPMine = vcInitPanelMine;
+    /* Il deep link ?vc=<id> va letto e ripulito dall'URL SUBITO, prima della
+       fetch di config: cosi' l'id resta su S.resumeId anche se la fetch
+       fallisce (rete instabile al primo carico), invece di andare perso
+       insieme al ramo .then() di successo che in quel caso non arriva mai
+       ad eseguire. */
+    var q = new URLSearchParams(location.search);
+    var vc = q.get('vc');
+    if (vc) {
+      q.delete('vc');
+      var qs = q.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      S.resumeId = vc;
+    }
     vcFetch('/api/voice_clone/config').then(function (r) {
       S.cfg = r.ok ? r.data : null;
       return vcRefreshMine();
     }).then(function () {
       vcSyncButton();
-      var q = new URLSearchParams(location.search);
-      var vc = q.get('vc');
-      if (vc) {
-        q.delete('vc');
-        var qs = q.toString();
-        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
-        S.resumeId = vc;
-      }
       /* La ripresa da ?vc=<id> richiede che app.js abbia gia' popolato la
          pagina (combo voci, bookLangState): rimandata al prossimo giro di
          event loop. Se l'id non compare piu' in `mine` (campione scaduto o
@@ -747,7 +776,7 @@
           else { vcShow('mine'); vcErr(tt('vc_err_voice_gone')); }
         }, 0);
       }
-    }).catch(function () { S.cfg = null; });
+    }).catch(function () { S.cfg = null; vcSyncButton(); });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', vcInit);

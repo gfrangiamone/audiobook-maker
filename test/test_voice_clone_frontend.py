@@ -163,6 +163,33 @@ def test_onstop_pulisce_solo_se_e_ancora_il_proprietario_di_s_media():
     assert "S.media && S.media.rec === rec" in corpo
 
 
+def test_registrazione_annullata_non_carica_il_campione():
+    """I2: chiudere il modal o tornare indietro dal pannello 2 deve annullare
+    la registrazione in corso PRIMA di fermarla, cosi' rec.onstop non invia
+    nulla al server. Lo stop manuale (bottone) e quello automatico a 25s
+    restano conferme: caricano come sempre, passando da vcStopMedia()."""
+    corpo_start = _estrai_funzione(VC, "vcStartRecording")
+    assert "aborted" in corpo_start, "la sessione deve tracciare un flag aborted"
+    onstop_idx = corpo_start.index("rec.onstop")
+    onstop = corpo_start[onstop_idx:]
+    assert re.search(r"if\s*\(session\.aborted\)\s*return;", onstop), \
+        "onstop deve saltare l'upload quando la sessione e' stata annullata"
+    assert onstop.index("session.aborted") < onstop.index("vcUploadSample("), \
+        "il controllo aborted deve precedere l'upload"
+
+    corpo_abort = _estrai_funzione(VC, "vcAbortMedia")
+    assert "aborted = true" in corpo_abort
+    assert "vcStopMedia()" in corpo_abort
+    assert corpo_abort.index("aborted = true") < corpo_abort.index("vcStopMedia()"), \
+        "il flag va marcato PRIMA di fermare la registrazione"
+
+    chiusura = _estrai_funzione(VC, "vcClose")
+    assert "S.abortMedia" in chiusura, "vcClose deve annullare, non solo fermare, la registrazione"
+
+    corpo_p2 = _estrai_funzione(VC, "vcInitPanel2")
+    assert "vcAbortMedia()" in corpo_p2, "il tasto Indietro del pannello 2 deve annullare la registrazione"
+
+
 def test_chiavi_task3_in_tutte_le_lingue():
     for lang in LANGS:
         chiavi = _chiavi_i18n(lang)
@@ -275,8 +302,27 @@ def test_vcaction_usa_la_guardia_anti_doppio_invio():
 # ---------- fix round 1 (review Task 5: F1-F4) ----------
 
 def test_regola_small_esiste_in_css():
-    """F1: .vc-code-note e .vcRegenLeft usano la classe .small, prima assente."""
-    assert re.search(r"\.small\s*\{[^}]*\}", CSS), ".small non definita in style.css"
+    """F1/M7: .vc-code-note e .vcRegenLeft usano la classe .vc-small (rinominata
+    da .small, generica, per non collidere con classi omonime future fuori dal
+    wizard voci campionate)."""
+    assert re.search(r"\.vc-small\s*\{[^}]*\}", CSS), ".vc-small non definita in style.css"
+    assert not re.search(r"(?<![.\w-])\.small\b", CSS), ".small non deve piu' comparire in style.css"
+    assert "'small'" not in VC and 'class="small"' not in HTML, \
+        "nessun uso residuo della vecchia classe .small"
+
+
+def test_css_vc_niente_token_non_definiti():
+    """I3: .vc-prompt/.vc-code/.vc-mine-item usavano --bg-soft/--border, mai
+    definiti su :root in questo file (solo il fallback CSS li rendeva
+    innocui). Devono usare i token effettivi del tema (--srf2/--brd)."""
+    blocco_vc = CSS[CSS.index("/* Voci campionate */"):]
+    fine = blocco_vc.find("\n\n")
+    if fine != -1:
+        blocco_vc = blocco_vc[:fine]
+    assert "--bg-soft" not in blocco_vc
+    assert "--border" not in blocco_vc
+    assert "--srf2" in blocco_vc
+    assert "--brd" in blocco_vc
 
 
 def test_vcrenderp4_mette_in_pausa_le_prove_quando_nascoste():
@@ -311,16 +357,49 @@ def test_vcwatch_e_vcclose_ripuliscono_il_timer_di_retry():
         "vcWatch deve azzerare un retry precedente prima di aprire un nuovo EventSource"
 
 
-def test_vcinitpanel4_non_ricarica_le_frasi_extra_se_gia_popolate():
-    """F4: come vcLoadExtraTexts sul pannello 3, rientrare piu' volte nel
+def test_vcloadregentexts_non_ricarica_le_frasi_extra_se_gia_popolate():
+    """F4/I1: come vcLoadExtraTexts sul pannello 3, rientrare piu' volte nel
     pannello 4 non deve ripetere la fetch ne' scartare una risposta tardiva
-    di un clone_id ormai abbandonato."""
-    corpo = _estrai_funzione(VC, "vcInitPanel4")
+    di un clone_id ormai abbandonato. La guardia sta ORA solo dentro
+    vcLoadRegenTexts (estratta da vcInitPanel4): non deve mai poter
+    interrompere il cablaggio dei bottoni ne' vcRenderP4/vcWatch."""
+    corpo = _estrai_funzione(VC, "vcLoadRegenTexts")
     assert "S.regenLoadedFor" in corpo
     assert re.search(r"if\s*\(S\.regenLoadedFor\s*===\s*regenKey.*\)\s*return;", corpo), \
         "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
     assert re.search(r"if\s*\(!S\.cur\s*\|\|\s*S\.cur\.clone_id\s*!==\s*cloneId\)\s*return;", corpo), \
         "la risposta della fetch deve essere scartata se nel frattempo e' cambiato il clone corrente"
+
+
+def _return_a_livello_zero(frammento):
+    """True se `frammento` contiene un `return;` FUORI da qualunque graffa
+    annidata (quindi appartiene al corpo diretto della funzione esaminata, non
+    a una callback/onclick interna: `function () { if (x) return; ... }` non
+    deve far scattare il controllo, un `if (x) return;` nudo si')."""
+    profondita = 0
+    for i, c in enumerate(frammento):
+        if c == '{':
+            profondita += 1
+        elif c == '}':
+            profondita -= 1
+        elif profondita == 0 and frammento[i:i + len('return;')] == 'return;':
+            return True
+    return False
+
+
+def test_vcinitpanel4_cablaggio_sempre_eseguito():
+    """I1: vcInitPanel4 non deve mai poter uscire prima di aver cablato i
+    bottoni e chiamato vcRenderP4/vcWatch. Il guard di memoizzazione vive
+    solo in vcLoadRegenTexts (verificato sopra), qui si controlla che
+    vcInitPanel4 stesso non contenga alcun `return;` A LIVELLO ZERO (fuori da
+    callback/onclick interne) che possa saltare quella coda."""
+    assert "function vcLoadRegenTexts(" in VC
+    corpo = _estrai_funzione(VC, "vcInitPanel4")
+    assert "vcRenderP4(" in corpo
+    prima_di_render = corpo[:corpo.index("vcRenderP4(")]
+    assert not _return_a_livello_zero(prima_di_render), \
+        "vcInitPanel4 non deve uscire in anticipo prima di vcRenderP4 (era il bug F4 riaperto)"
+    assert "vcLoadRegenTexts()" in corpo
 
 
 # ---------- Task 6: ripresa, pannello «Le tue voci», errori di generazione ----------

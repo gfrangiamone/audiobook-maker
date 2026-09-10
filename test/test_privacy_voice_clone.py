@@ -24,6 +24,14 @@ def test_sezione_voci_campionate_it_en():
         assert kw in en
 
 
+def test_tabella_fornitori_cita_runpod():
+    """I4: il fornitore che esegue la sintesi vocale delle voci campionate
+    (RunPod) compare nella tabella §5 di entrambe le lingue; la trascrizione
+    ASR resta sui nostri server e non ha una riga propria (spec §5.4)."""
+    for lang in ("it", "en"):
+        assert "RunPod" in _html(lang), lang
+
+
 def test_numerazione_sezioni_coerente():
     for lang in ("it", "en"):
         nums = [int(n) for n in re.findall(r"<h2[^>]*>\s*(\d+)\.", _html(lang))]
