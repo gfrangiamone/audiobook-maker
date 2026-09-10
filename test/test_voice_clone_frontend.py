@@ -230,3 +230,44 @@ def test_vcloadextratexts_non_ricarica_se_gia_popolato():
     assert "S.extraLoadedFor" in corpo
     assert re.search(r"if\s*\(S\.extraLoadedFor\s*===\s*key.*\)\s*return;", corpo), \
         "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
+
+
+TASK5_KEYS = ["vc_code_intro", "vc_code_note", "vc_wait", "vc_demos_intro", "vc_demo_common", "vc_demo_extra",
+              "vc_approve", "vc_regen", "vc_regen_left", "vc_reject", "vc_reject_sure", "vc_yes", "vc_no",
+              "vc_demo_failed", "vc_retry", "vc_done", "vc_refunded", "vc_err_regen_exhausted", "vc_err_bad_state"]
+
+
+def test_markup_pannello_4():
+    p4 = HTML[HTML.index('id="vcP4"'):HTML.index('id="vcPMine"')]
+    for i in ("vcCodeBox", "vcCode", "vcWait", "vcDemos", "vcDemoCommon", "vcDemoExtra", "vcApprove",
+              "vcRegenSel", "vcRegen", "vcRegenLeft", "vcReject", "vcRejectConfirm", "vcRejectYes",
+              "vcRejectNo", "vcFailed", "vcReject2", "vcRetry", "vcDone", "vcDoneClose", "vcRefunded"):
+        assert f'id="{i}"' in p4, i
+
+
+def test_avanzamento_via_sse_e_decisioni():
+    assert "new EventSource('/api/voice_clone/progress/'" in VC
+    for a in ("'approve'", "'regenerate'", "'retry'", "'reject'"):
+        assert f"vcAction({a}" in VC, a
+    assert "window._vcJustCreated = view.voice_id" in VC
+    assert "confirm(" not in VC.replace("vcRejectConfirm", "").replace("vcConfirm", "").replace("confirm_code", ""), "mai confirm() del browser"
+
+
+def test_chiavi_task5_in_tutte_le_lingue():
+    for lang in LANGS:
+        chiavi = _chiavi_i18n(lang)
+        mancanti = [k for k in TASK5_KEYS if k not in chiavi]
+        assert not mancanti, f"{lang}: {mancanti}"
+
+
+def test_vcsetbusy_blocca_anche_i_controlli_del_pannello_4():
+    corpo = _estrai_funzione(VC, "vcSetBusy")
+    for i in ("vcApprove", "vcRegen", "vcReject", "vcRetry"):
+        assert i in corpo, i
+
+
+def test_vcaction_usa_la_guardia_anti_doppio_invio():
+    corpo = _estrai_funzione(VC, "vcAction")
+    assert "if (S.busy) return" in corpo
+    assert "vcSetBusy(true)" in corpo
+    assert corpo.count("vcSetBusy(false)") >= 2, "serve su successo/errore applicativo ed errore di rete"

@@ -1234,7 +1234,50 @@ __REVIEWS_LD__
             <button type="button" id="vcPayBtn" class="btn-primary" data-t="vc_pay_btn"></button>
           </div>
         </section>
-        <section id="vcP4" hidden></section>
+        <section id="vcP4" hidden>
+          <div id="vcCodeBox" hidden>
+            <p data-t="vc_code_intro"></p>
+            <div id="vcCode" class="vc-code"></div>
+            <p class="small" data-t="vc_code_note"></p>
+          </div>
+          <div id="vcWait" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_wait"></span></div>
+          <div id="vcDemos" hidden>
+            <p data-t="vc_demos_intro"></p>
+            <div class="vc-demo-row">
+              <span data-t="vc_demo_common"></span><audio id="vcDemoCommon" controls preload="none"></audio>
+              <span data-t="vc_demo_extra"></span><audio id="vcDemoExtra" controls preload="none"></audio>
+            </div>
+            <div class="vc-footer">
+              <button type="button" id="vcApprove" class="btn-primary" data-t="vc_approve"></button>
+            </div>
+            <div class="vc-rec-row">
+              <select id="vcRegenSel"></select>
+              <button type="button" id="vcRegen" class="btn-outline btn-sm" data-t="vc_regen"></button>
+              <span id="vcRegenLeft" class="small"></span>
+            </div>
+            <div class="vc-rec-row">
+              <button type="button" id="vcReject" class="btn-outline btn-sm" data-t="vc_reject"></button>
+              <span id="vcRejectConfirm" hidden><span data-t="vc_reject_sure"></span>
+                <button type="button" id="vcRejectYes" class="btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcRejectNo" class="btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
+          </div>
+          <div id="vcFailed" hidden>
+            <p class="al al-e" data-t="vc_demo_failed"></p>
+            <div class="vc-footer">
+              <button type="button" id="vcReject2" class="btn-secondary" data-t="vc_reject"></button>
+              <button type="button" id="vcRetry" class="btn-primary" data-t="vc_retry"></button>
+            </div>
+          </div>
+          <div id="vcDone" hidden>
+            <p class="al al-i" data-t="vc_done"></p>
+            <div class="vc-footer"><button type="button" id="vcDoneClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+          <div id="vcRefunded" hidden>
+            <p class="al al-i" data-t="vc_refunded"></p>
+            <div class="vc-footer"><button type="button" id="vcRefundedClose" class="btn-primary" data-t="vc_close"></button></div>
+          </div>
+        </section>
         <section id="vcPMine" hidden></section>
       </div>
     </div>

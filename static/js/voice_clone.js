@@ -267,6 +267,9 @@
     var back = $('vcP2Back'); if (back) back.disabled = !!on;
     var back3 = $('vcP3Back'); if (back3) back3.disabled = !!on;
     var pay = $('vcPayBtn'); if (pay) pay.disabled = !!on;
+    ['vcApprove', 'vcRegen', 'vcRegenSel', 'vcReject', 'vcRejectYes', 'vcRejectNo', 'vcReject2', 'vcRetry'].forEach(function (id) {
+      var e = $(id); if (e) e.disabled = !!on;
+    });
   }
 
   function vcStopMedia() {
@@ -456,6 +459,118 @@
     vcLoadExtraTexts();
   }
 
+  /* ---------- pannello 4: attesa, demo, decisione ---------- */
+
+  function vcRenderP4(view) {
+    S.cur.view = view;
+    var st = view.state;
+    var show = function (id, on) { var e = $(id); if (e) e.hidden = !on; };
+    show('vcWait', st === 'paid' || st === 'demos_generating');
+    show('vcDemos', st === 'demos_ready');
+    show('vcFailed', st === 'demo_failed');
+    show('vcDone', st === 'ready');
+    show('vcRefunded', st === 'refunded' || st === 'expired' || st === 'deleted');
+    if (st === 'demos_ready') {
+      var du = view.demo_urls || {};
+      var c = $('vcDemoCommon'); var x = $('vcDemoExtra');
+      if (c && du.common) c.src = du.common + '?ts=' + Date.now();
+      if (x && du.extra) x.src = du.extra + '?ts=' + Date.now();
+      var left = Number(view.regen_left) || 0;
+      var rl = $('vcRegenLeft'); if (rl) rl.textContent = tt('vc_regen_left', {n: left});
+      var rb = $('vcRegen'); if (rb) rb.disabled = S.busy || !vcRegenAllowed(view);
+      var rs = $('vcRegenSel'); if (rs) rs.disabled = S.busy || !vcRegenAllowed(view);
+      var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true;
+    }
+  }
+
+  /* Avanzamento via SSE: ogni evento e' la vista pubblica; il flusso chiude
+     da solo su uno stato finale. Alla chiusura senza stato finale (rete,
+     1800 s) si rilegge `mine`. Un solo EventSource per volta (S.es): si
+     chiude prima di aprirne un altro, alla chiusura del modal e su stato
+     finale; un evento tardivo per un clone_id diverso viene scartato. */
+  function vcWatch() {
+    if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
+    if (!S.cur || !S.cur.clone_id || !window.EventSource) return;
+    var cloneId = S.cur.clone_id;
+    var es = new EventSource('/api/voice_clone/progress/' + encodeURIComponent(cloneId));
+    S.es = es;
+    es.onmessage = function (ev) {
+      if (!S.cur || S.cur.clone_id !== cloneId) { try { es.close(); } catch (e) {} return; }
+      var v; try { v = JSON.parse(ev.data); } catch (e) { return; }
+      if (!v || !v.state) return;
+      vcRenderP4(v);
+      if (vcPanelFor(v.state) !== 4 || v.state === 'demos_ready' || v.state === 'demo_failed') { es.close(); S.es = null; }
+    };
+    es.onerror = function () {
+      es.close(); if (S.es === es) S.es = null;
+      if (!S.cur || S.cur.clone_id !== cloneId) return;
+      vcRefreshMine().then(function () {
+        for (var i = 0; i < S.mine.length; i++) if (S.mine[i].id === cloneId) vcRenderP4(S.mine[i]);
+      });
+    };
+  }
+
+  /* Ogni azione passa dalla guardia anti doppio invio: bottoni disabilitati
+     mentre e' in corso, nessuna seconda richiesta finche' la prima non e'
+     tornata (successo, errore applicativo o di rete). */
+  function vcAction(name, body) {
+    if (S.busy) return Promise.resolve(null);
+    vcErr('');
+    vcSetBusy(true);
+    return vcPost('/api/voice_clone/' + encodeURIComponent(S.cur.clone_id) + '/' + name, body || {}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return null; }
+      vcRenderP4(r.data);
+      return r.data;
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); return null; });
+  }
+
+  function vcAfterApprove(view) {
+    window._vcJustCreated = view.voice_id || null;
+    vcRefreshMine().then(function () {
+      if (typeof loadVoices === 'function') {
+        Promise.resolve(loadVoices()).then(function () {
+          if (typeof updVoicesPremium === 'function') updVoicesPremium();
+          vcSyncButton();
+        });
+      }
+    });
+  }
+
+  function vcInitPanel4() {
+    var cb = $('vcCodeBox');
+    if (cb) {
+      cb.hidden = !S.cur.voice_code;
+      var c = $('vcCode'); if (c) c.textContent = S.cur.voice_code || '';
+    }
+    var sel = $('vcRegenSel');
+    if (sel) {
+      sel.innerHTML = '';
+      var loc = (S.cur.view && S.cur.view.locale) || S.cur.locale || '';
+      vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
+        if (!r.ok) return;
+        (r.data.extra || []).forEach(function (x) {
+          var o = document.createElement('option'); o.value = x.id;
+          o.textContent = (x.text || '').slice(0, 60) + '…';
+          sel.appendChild(o);
+        });
+        if (S.cur.view && S.cur.view.extra_id) sel.value = S.cur.view.extra_id;
+      });
+    }
+    $('vcApprove').onclick = function () { vcAction('approve').then(function (v) { if (v) vcAfterApprove(v); }); };
+    $('vcRegen').onclick = function () { vcAction('regenerate', {extra_id: sel ? sel.value : ''}).then(function (v) { if (v) vcWatch(); }); };
+    $('vcReject').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = false; };
+    $('vcRejectNo').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true; };
+    $('vcRejectYes').onclick = function () { vcAction('reject').then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); }); };
+    $('vcReject2').onclick = function () { vcAction('reject').then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); }); };
+    $('vcRetry').onclick = function () { vcAction('retry').then(function (v) { if (v) vcWatch(); }); };
+    $('vcDoneClose').onclick = function () { if (S.busy) return; vcClose(); };
+    $('vcRefundedClose').onclick = function () { if (S.busy) return; vcClose(); };
+    vcRenderP4(S.cur.view || {state: 'paid'});
+    var st = (S.cur.view || {}).state;
+    if (st === 'paid' || st === 'demos_generating') vcWatch();
+  }
+
   function vcInit() {
     var btn = $('vcOpenBtn'); if (btn) btn.onclick = function () { vcOpen(); };
     var rb = $('vcResumeBtn'); if (rb) rb.onclick = function () { vcOpen(); };
@@ -466,6 +581,7 @@
     S.panelHooks.vcP1 = vcInitPanel1;
     S.panelHooks.vcP2 = vcInitPanel2;
     S.panelHooks.vcP3 = vcInitPanel3;
+    S.panelHooks.vcP4 = vcInitPanel4;
     vcFetch('/api/voice_clone/config').then(function (r) {
       S.cfg = r.ok ? r.data : null;
       return vcRefreshMine();
