@@ -164,6 +164,25 @@ def test_confirm_locks_scaduti_potati_alla_scrittura_di_un_nuovo_blocco(tmp_path
     assert "cid-a" not in locks and locks["cid-b"] == dopo_scadenza + vc.CONFIRM_LOCK_SEC
 
 
+def test_check_and_record_resend_finestra_24h(tmp_path):
+    """I3: 3 invii passano nella finestra di 24h, il quarto no; dopo 24h dal
+    primo la finestra scorre e un nuovo invio torna a passare."""
+    rec = _pronta(tmp_path)
+    t0 = 1_000_000
+    for i in range(3):
+        ok, retry = vc.check_and_record_resend(rec["id"], now=t0 + i)
+        assert ok is True and retry is None
+    ok, retry = vc.check_and_record_resend(rec["id"], now=t0 + 3)
+    assert ok is False and retry > 0
+    ok, retry = vc.check_and_record_resend(rec["id"], now=t0 + vc.RESEND_WINDOW_SEC + 1)
+    assert ok is True and retry is None
+
+
+def test_check_and_record_resend_voce_sparita(tmp_path):
+    with pytest.raises(vc.VoiceGone):
+        vc.check_and_record_resend("vc_nope")
+
+
 def test_devices_view_mostra_solo_la_coda_del_cid(tmp_path):
     rec = _pronta(tmp_path, cid="abcd1234efgh")
     view = vc.devices_view(vc.get(rec["id"]))

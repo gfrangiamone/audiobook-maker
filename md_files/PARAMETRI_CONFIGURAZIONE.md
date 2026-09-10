@@ -455,12 +455,18 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 - `CONFIRM_TTL_SEC = 900` (15 minuti) — validita' del codice di conferma del claim.
 - `CONFIRM_MAX_TRIES = 5` — tentativi di conferma prima del lock.
 - `CONFIRM_LOCK_SEC = 900` (15 minuti) — durata del lock post-esaurimento tentativi.
+- `STALE_INFLIGHT_SEC = 3600` (1 ora) — `paid`/`demos_generating` senza cambio di stato oltre questa soglia vengono rilanciati dallo sweeper (guardia anti-stallo, I1).
+- `RESEND_MAX = 3` / `RESEND_WINDOW_SEC = 86400` — resend manuale (§ sotto): 3 invii per voce in una finestra scorrevole di 24h, tracciata in `rec["resend_ts"]` (non un bucket per-IP).
+- `RESUME_DEVICES_MAX = 10` (in `audiobook_app.py`) — dispositivi diversi che possono autorizzarsi tramite lo stesso link di resume (`/vc/<token>/resume`) prima del 409.
 
 **Rate limit (in `audiobook_app.py`, `_ip_rl_check`):**
 
 - `vc_sample`: 10/min e 30/ora per IP; 10/min e 10/ora per cid.
 - `vc_claim_cid`: 5/min e 5/ora per cid.
-- `vc_resend`: 3/min e 3/ora per voce (clone_id) — la spec prevede 3/giorno, allineamento previsto.
+
+**Resend (`voice_clone.check_and_record_resend`, non `_ip_rl_check`):**
+
+- `vc_resend`: 3 invii per voce (clone_id) in una finestra scorrevole di 24h (`RESEND_MAX`/`RESEND_WINDOW_SEC`), non un bucket per-IP — il limite segue la voce, non il dispositivo che lo richiede.
 
 **Log della activity:**
 

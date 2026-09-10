@@ -327,10 +327,23 @@ def test_notify_rimborso_non_logga_l_email_se_l_invio_fallisce(client, tmp_path,
     assert "RuntimeError" in out
 
 
-def test_resend_solo_proprietario_e_3_al_giorno(client, tmp_path, ambiente):
+def test_resend_solo_proprietario_e_3_al_giorno(client, tmp_path, ambiente, monkeypatch):
+    """I3: finestra scorrevole di 24h per voce (rec["resend_ts"]), non un
+    bucket per-IP: 3 invii passano, il 4esimo e' 429 con retry_after, e dopo
+    24h dal primo invio la finestra scorre e un nuovo invio torna a passare."""
     rec = _paid(tmp_path)
-    codes = [client.post(f"/api/voice_clone/{rec['id']}/resend").status_code for _ in range(4)]
+    ora = [1_000_000.0]
+    monkeypatch.setattr(vc, "_now", lambda now=None: int(now if now is not None else ora[0]))
+    codes = []
+    for _ in range(4):
+        codes.append(client.post(f"/api/voice_clone/{rec['id']}/resend").status_code)
+        ora[0] += 1
     assert codes == [200, 200, 200, 429] and len(ambiente) == 3
+    r = client.post(f"/api/voice_clone/{rec['id']}/resend")
+    assert r.status_code == 429 and r.get_json()["retry_after"] > 0
+    ora[0] = 1_000_000.0 + 86400 + 1
+    r = client.post(f"/api/voice_clone/{rec['id']}/resend")
+    assert r.status_code == 200 and len(ambiente) == 4
 
 
 def test_file_audio_solo_autorizzati(client, tmp_path):
@@ -345,21 +358,43 @@ def test_file_audio_solo_autorizzati(client, tmp_path):
 def test_pagine_vc(client, tmp_path):
     rec = _paid(tmp_path)
     _cid(client, "cid-nuovo")
+    # I4: GET mostra solo la pagina di conferma, non muta nulla.
     r = client.get(f"/vc/{rec['resume_token']['value']}/resume")
-    assert r.status_code == 302 and r.headers["Location"].endswith(f"/?vc={rec['id']}")
+    assert r.status_code == 200 and b"Resume" in r.data
     assert r.headers.get("X-Robots-Tag") == "noindex, nofollow"
+    assert not any(d["cid"] == "cid-nuovo" for d in vc.get(rec["id"])["devices"])
+    r = client.post(f"/vc/{rec['resume_token']['value']}/resume")
+    assert r.status_code == 302 and r.headers["Location"].endswith(f"/?vc={rec['id']}")
     assert any(d["cid"] == "cid-nuovo" and d["via"] == "resume" for d in vc.get(rec["id"])["devices"])
     assert client.get("/vc/nope/resume").status_code == 404
     r = client.get(f"/vc/{rec['manage_token']}/devices")
     assert r.status_code == 200 and b"cid-nuovo" not in r.data and b"resume" in r.data
+    for h in (r, client.get(f"/vc/{rec['resume_token']['value']}/resume")):
+        assert "no-store" in h.headers.get("Cache-Control", "")
     r = client.post(f"/vc/{rec['manage_token']}/devices/revoke", data={"cid": "cid-nuovo"})
-    assert r.status_code in (200, 302)
+    assert r.status_code in (200, 302) and "no-store" in r.headers.get("Cache-Control", "")
     assert not any(d["cid"] == "cid-nuovo" for d in vc.get(rec["id"])["devices"])
     assert client.get(f"/vc/{rec['manage_token']}/delete").status_code == 200
     r = client.post(f"/vc/{rec['manage_token']}/delete")
     assert r.status_code == 200 and vc.get(rec["id"])["state"] == "deleted"
     assert not os.path.isdir(vc.voice_dir(rec["token"]))
     assert client.get(f"/vc/{rec['manage_token']}/devices").status_code == 404
+
+
+def test_resume_limita_i_dispositivi_diversi(client, tmp_path, monkeypatch):
+    """I4: oltre RESUME_DEVICES_MAX dispositivi diversi autorizzati via
+    resume, il link risponde 409 invece di continuare ad aggiungerne."""
+    monkeypatch.setattr(audiobook_app, "RESUME_DEVICES_MAX", 2)
+    rec = _paid(tmp_path)
+    token = rec["resume_token"]["value"]
+    _cid(client, "cid-a")
+    assert client.post(f"/vc/{token}/resume").status_code == 302
+    _cid(client, "cid-b")
+    assert client.post(f"/vc/{token}/resume").status_code == 302
+    _cid(client, "cid-c")
+    r = client.post(f"/vc/{token}/resume")
+    assert r.status_code == 409
+    assert not any(d["cid"] == "cid-c" for d in vc.get(rec["id"])["devices"])
 
 
 def test_voice_code_non_trapela_a_dispositivi_non_proprietari(client, tmp_path, ambiente):

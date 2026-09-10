@@ -782,6 +782,31 @@ def devices_view(rec):
              "via": d.get("via")} for d in rec.get("devices") or []]
 
 
+RESEND_MAX = 3
+RESEND_WINDOW_SEC = 86400
+
+
+def check_and_record_resend(clone_id, now=None):
+    """I3: limita il resend manuale a RESEND_MAX invii per RESEND_WINDOW_SEC
+    *per voce* (non per IP: _ip_rl_check e' per-IP, aggirabile cambiando
+    client e comunque non lega il limite alla voce che lo subisce).
+    Finestra scorrevole su `rec["resend_ts"]`, potata e scritta sotto _lock.
+    Ritorna (permesso: bool, retry_after: int|None)."""
+    t = _now(now)
+    with _lock:
+        rec = get(clone_id)
+        if rec is None:
+            raise VoiceGone(clone_id)
+        ts = [x for x in (rec.get("resend_ts") or []) if x > t - RESEND_WINDOW_SEC]
+        if len(ts) >= RESEND_MAX:
+            store().update(clone_id, {"resend_ts": ts})
+            retry_after = int(ts[0] + RESEND_WINDOW_SEC - t) + 1
+            return False, max(retry_after, 1)
+        ts.append(t)
+        store().update(clone_id, {"resend_ts": ts})
+        return True, None
+
+
 # ---------------------------------------------------------------------------
 # ciclo di vita (§6.5, §10)
 # ---------------------------------------------------------------------------

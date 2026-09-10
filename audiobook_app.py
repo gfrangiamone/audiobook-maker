@@ -8805,6 +8805,10 @@ def api_voice_demo():
 # Voci campionate (spec 2026-09-09, piano 2)
 # ---------------------------------------------------------------------------
 _VC_ID_RE = re.compile(r"^vc_[A-Za-z0-9_\-]{4,64}$")
+# I4: quanti dispositivi diversi possono autorizzarsi tramite il link di
+# resume della stessa voce, prima che il link vada considerato compromesso/
+# condiviso oltre l'uso personale previsto.
+RESUME_DEVICES_MAX = 10
 
 
 def _vc_err(code, msg, status, **extra):
@@ -9313,7 +9317,10 @@ def api_vc_resend(clone_id):
         return _vc_err("voice_not_found", "Voice not found", 404)
     if not _vc_is_owner(rec, _get_client_id()) or rec.get("state") in voice_clone._TERMINAL:
         return _vc_err("not_authorized", "Only the owner can resend the email", 403)
-    ok, retry = _ip_rl_check("vc_resend", clone_id, 3, 3)
+    try:
+        ok, retry = voice_clone.check_and_record_resend(rec["id"])
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_not_found", "Voice not found", 404)
     if not ok:
         return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
     urls = _vc_urls(rec)
@@ -9367,7 +9374,9 @@ def _vc_page(title, body_html, status=200):
                 f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
                 f"button{{padding:.6em 1.2em}}table{{border-collapse:collapse}}td{{padding:.3em .8em}}</style>"
                 f"</head><body><h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
-    return Response(html_doc, status=status, mimetype="text/html")
+    # I5: pagine di gestione voce (link email) mai in cache: contengono stato
+    # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
+    return _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
 
 
 def _vc_rec_by_manage(token):
@@ -9377,20 +9386,32 @@ def _vc_rec_by_manage(token):
     return rec
 
 
-@app.route("/vc/<token>/resume")
+@app.route("/vc/<token>/resume", methods=["GET", "POST"])
 def vc_resume(token):
+    # I4: GET non deve mutare nulla (link cliccato da un client mail/preview
+    # che pre-carica gli URL delle pagine) - solo una pagina di conferma con
+    # un form POST. Solo la POST autorizza il dispositivo.
     if _vc_gate():
         abort(404)
     rec = voice_clone.by_resume_token(token)
     if rec is None or rec.get("state") in voice_clone._TERMINAL:
         abort(404)
+    if request.method == "GET":
+        body = (f"<p>Resume the voice sample procedure on this device?</p>"
+                f"<form method=\"post\"><button>Resume</button></form>")
+        return _vc_page("Resume your voice sample", body)
     cid = _get_client_id()
     if cid and not voice_clone._has_cid(rec, cid):
+        resume_devices = [d for d in (rec.get("devices") or []) if d.get("via") == "resume"]
+        if len(resume_devices) >= RESUME_DEVICES_MAX:
+            body = ("<p>Too many devices have used this link. Revoke one from the "
+                    "management link in your email, then try again.</p>")
+            return _vc_page("Too many devices", body, status=409)
         with voice_clone._lock:
             devices = list(rec.get("devices") or []) + [{"cid": cid, "added_at": time.time(), "via": "resume"}]
             voice_clone.store().update(rec["id"], {"devices": devices})
         _vc_log(rec, "VOICE_CLONE_RESUME")
-    return redirect(f"/?vc={rec['id']}", code=302)
+    return _apply_no_cache(redirect(f"/?vc={rec['id']}", code=302))
 
 
 def _vc_device_key(cid):
@@ -9432,7 +9453,7 @@ def vc_devices_revoke(token):
             voice_clone.revoke_device(token, d.get("cid"))
             _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
             break
-    return redirect(f"/vc/{token}/devices", code=302)
+    return _apply_no_cache(redirect(f"/vc/{token}/devices", code=302))
 
 
 @app.route("/vc/<token>/delete", methods=["GET", "POST"])
