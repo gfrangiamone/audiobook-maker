@@ -86,6 +86,7 @@
   window._vcJustCreated = null;
 
   function $(id) { return document.getElementById(id); }
+  function _val(id) { var el = $(id); return el ? el.value : ''; }
   function tt(k, r) { return (typeof t === 'function') ? t(k, r) : k; }
 
   function vcErr(msg) {
@@ -307,11 +308,17 @@
       }, 100);
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
       rec.onstop = function () {
-        /* Copre anche lo stop non richiesto dall'utente (dispositivo
-           scollegato): timer, pallino e stato di S.media vanno ripuliti
-           subito, non al prossimo click. vcStopMedia() e' gia' idempotente
-           (S.media e' gia' stato azzerato sopra se lo stop era manuale). */
-        vcStopMedia();
+        /* Pulizia solo se S.media appartiene ancora a QUESTA registrazione.
+           Uno stop manuale ha gia' azzerato S.media (e chiamato vcStopMedia)
+           in modo sincrono prima che questo callback arrivi: qui S.media e'
+           gia' null o, se nel frattempo e' partita una nuova registrazione,
+           punta al rec della sessione successiva. In entrambi i casi va
+           lasciato stare, altrimenti si ripulirebbe/ucciderebbe la
+           registrazione nuova al posto di questa. Solo lo stop non richiesto
+           dall'utente (dispositivo scollegato) lascia S.media ancora
+           puntato su questo rec: e' l'unico caso in cui la pulizia serve
+           qui, timer/pallino/stream compresi. */
+        if (S.media && S.media.rec === rec) vcStopMedia();
         var blob = new Blob(chunks, {type: rec.mimeType || mime || 'audio/webm'});
         var ext = vcRecordExt(rec.mimeType || mime);
         vcUploadSample(blob, 'sample.' + ext);
@@ -327,9 +334,9 @@
     vcSetBusy(true);
     var fd = new FormData();
     fd.append('file', blob, filename);
-    fd.append('lang', $('vcLang').value);
-    fd.append('locale', $('vcLocale').value);
-    fd.append('gender', $('vcGender').value);
+    fd.append('lang', _val('vcLang'));
+    fd.append('locale', _val('vcLocale'));
+    fd.append('gender', _val('vcGender'));
     var wait = $('vcUploading'); if (wait) wait.hidden = false;
     var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
     vcErr('');
@@ -337,7 +344,7 @@
       if (wait) wait.hidden = true;
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
-      S.cur = {clone_id: r.data.clone_id, view: r.data, lang: $('vcLang').value, locale: $('vcLocale').value, gender: $('vcGender').value, voice_code: null};
+      S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
       if (blk) blk.hidden = false;

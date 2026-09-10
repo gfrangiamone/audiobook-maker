@@ -158,6 +158,11 @@ def test_upload_campione_ha_guardia_anti_doppio_invio():
     assert "vcSetBusy(false)" in corpo
 
 
+def test_onstop_pulisce_solo_se_e_ancora_il_proprietario_di_s_media():
+    corpo = _estrai_funzione(VC, "vcStartRecording")
+    assert "S.media && S.media.rec === rec" in corpo
+
+
 def test_chiavi_task3_in_tutte_le_lingue():
     for lang in LANGS:
         chiavi = _chiavi_i18n(lang)
