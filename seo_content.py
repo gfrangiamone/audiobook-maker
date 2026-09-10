@@ -184,7 +184,7 @@ _CONTENT = {
             "alcuna registrazione, non vengono raccolti dati personali e non viene utilizzato "
             "alcun sistema di tracciamento oltre alle statistiche anonime di utilizzo. "
             "Il progetto è open source con licenza AGPL-3.0. "
-"Voci campionate: campione audio, brani di prova, email e consenso conservati finché la voce è attiva; eliminazione dal link nell'email."
+            "Voci campionate: campione audio, brani di prova, email e consenso conservati finché la voce è attiva; eliminazione dal link nell'email."
         ),
         "accessibility_heading": "Accessibilità e Inclusione",
         "accessibility": (
@@ -348,7 +348,7 @@ _CONTENT = {
             "are automatically deleted at the end of each session. No registration is required, "
             "no personal data is collected, and no tracking is used beyond anonymous usage statistics. "
             "The project is open source under the AGPL-3.0 license. "
-"Sampled voices: audio sample, trial passages, email and consent kept while the voice is active; deletion from the link in the email."
+            "Sampled voices: audio sample, trial passages, email and consent kept while the voice is active; deletion from the link in the email."
         ),
         "accessibility_heading": "Accessibility & Inclusion",
         "accessibility": (
@@ -513,8 +513,8 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker respecte votre vie privée. Les fichiers téléchargés et les audios générés "
             "sont automatiquement supprimés à la fin de chaque session. Aucune inscription requise, "
-"aucune donnée personnelle collectée. Projet open source sous licence AGPL-3.0. "
-"Voix échantillonnées : échantillon audio, extraits d'essai, e-mail et consentement conservés tant que la voix est active ; suppression depuis le lien de l'e-mail."
+            "aucune donnée personnelle collectée. Projet open source sous licence AGPL-3.0. "
+            "Voix échantillonnées : échantillon audio, extraits d'essai, e-mail et consentement conservés tant que la voix est active ; suppression depuis le lien de l'e-mail."
         ),
         "accessibility_heading": "Accessibilité et Inclusion",
         "accessibility": (
@@ -679,8 +679,8 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker respeta tu privacidad. Los archivos subidos y los audios generados "
             "se eliminan automáticamente al final de cada sesión. Sin registro, "
-"sin recopilación de datos personales. Proyecto open source bajo licencia AGPL-3.0. "
-"Voces muestreadas: muestra de audio, fragmentos de prueba, correo y consentimiento conservados mientras la voz esté activa; eliminación desde el enlace del correo."
+            "sin recopilación de datos personales. Proyecto open source bajo licencia AGPL-3.0. "
+            "Voces muestreadas: muestra de audio, fragmentos de prueba, correo y consentimiento conservados mientras la voz esté activa; eliminación desde el enlace del correo."
         ),
         "accessibility_heading": "Accesibilidad e Inclusión",
         "accessibility": (
@@ -847,8 +847,8 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker respektiert Ihre Privatsphäre. Hochgeladene Dateien und erzeugte Audios "
             "werden am Ende jeder Sitzung automatisch gelöscht. Keine Registrierung erforderlich, "
-"keine personenbezogenen Daten werden erhoben. Open-Source-Projekt unter AGPL-3.0-Lizenz. "
-"Stimmproben: Audioprobe, Probetexte, E-Mail und Einwilligung werden aufbewahrt, solange die Stimme aktiv ist; Löschung über den Link in der E-Mail."
+            "keine personenbezogenen Daten werden erhoben. Open-Source-Projekt unter AGPL-3.0-Lizenz. "
+            "Stimmproben: Audioprobe, Probetexte, E-Mail und Einwilligung werden aufbewahrt, solange die Stimme aktiv ist; Löschung über den Link in der E-Mail."
         ),
         "accessibility_heading": "Barrierefreiheit und Inklusion",
         "accessibility": (
@@ -1001,7 +1001,7 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker尊重您的隐私。上传的文件和生成的音频在每次会话结束时自动删除。"
             "无需注册，不收集个人数据。项目以AGPL-3.0许可证开源。"
-"声音采样：音频样本、试听片段、邮箱和同意记录在声音有效期内保留；可通过邮件中的链接删除。"
+            "声音采样：音频样本、试听片段、邮箱和同意记录在声音有效期内保留；可通过邮件中的链接删除。"
         ),
         "accessibility_heading": "无障碍与包容性",
         "accessibility": (
@@ -1150,7 +1150,7 @@ _CONTENT = {
         "privacy": (
             "Audiobook Maker आपकी गोपनीयता का सम्मान करता है. अपलोड की गई फ़ाइलें और जनरेट किए गए ऑडियो प्रत्येक सत्र के अंत में स्वचालित रूप से हटा दिए जाते हैं. "
             "कोई पंजीकरण आवश्यक नहीं, कोई व्यक्तिगत डेटा एकत्र नहीं किया जाता. परियोजना AGPL-3.0 लाइसेंस के तहत ओपन सोर्स है. "
-"नमूना आवाज़ें: ऑडियो नमूना, परीक्षण अंश, ईमेल और सहमति आवाज़ के सक्रिय रहने तक रखे जाते हैं; ईमेल के लिंक से हटाया जा सकता है."
+            "नमूना आवाज़ें: ऑडियो नमूना, परीक्षण अंश, ईमेल और सहमति आवाज़ के सक्रिय रहने तक रखे जाते हैं; ईमेल के लिंक से हटाया जा सकता है."
         ),
         "accessibility_heading": "अभिगम्यता और समावेशिता",
         "accessibility": (
