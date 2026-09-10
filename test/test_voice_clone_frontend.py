@@ -203,3 +203,30 @@ def test_chiavi_task4_in_tutte_le_lingue():
         chiavi = _chiavi_i18n(lang)
         mancanti = [k for k in TASK4_KEYS if k not in chiavi]
         assert not mancanti, f"{lang}: {mancanti}"
+
+
+def test_vcsetbusy_blocca_anche_i_controlli_del_pannello_3():
+    corpo = _estrai_funzione(VC, "vcSetBusy")
+    assert "vcP3Back" in corpo
+    assert "vcPayBtn" in corpo
+
+
+def test_vccommit_usa_la_guardia_anti_doppio_invio():
+    corpo = _estrai_funzione(VC, "vcCommit")
+    assert "vcSetBusy(true)" in corpo
+    assert corpo.count("vcSetBusy(false)") >= 2, "serve su successo, errore applicativo ed errore di rete"
+    assert "btn.disabled" not in corpo, "il bottone va gestito solo via vcSetBusy, non a mano"
+
+
+def test_vcp3back_rispetta_lo_stato_busy():
+    corpo = _estrai_funzione(VC, "vcInitPanel3")
+    m = re.search(r"vcP3Back'\)\.onclick\s*=\s*function\s*\(\)\s*\{([^}]*)\}", corpo)
+    assert m, "onclick di vcP3Back non trovato"
+    assert "if (S.busy) return;" in m.group(1)
+
+
+def test_vcloadextratexts_non_ricarica_se_gia_popolato():
+    corpo = _estrai_funzione(VC, "vcLoadExtraTexts")
+    assert "S.extraLoadedFor" in corpo
+    assert re.search(r"if\s*\(S\.extraLoadedFor\s*===\s*key.*\)\s*return;", corpo), \
+        "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"

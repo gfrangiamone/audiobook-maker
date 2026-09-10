@@ -265,6 +265,8 @@
     var b = $('vcRecBtn'); if (b) b.disabled = !!on;
     var f = $('vcFile'); if (f) f.disabled = !!on;
     var back = $('vcP2Back'); if (back) back.disabled = !!on;
+    var back3 = $('vcP3Back'); if (back3) back3.disabled = !!on;
+    var pay = $('vcPayBtn'); if (pay) pay.disabled = !!on;
   }
 
   function vcStopMedia() {
@@ -377,8 +379,13 @@
 
   function vcLoadExtraTexts() {
     var sel = $('vcExtraSel'); if (!sel || !S.cur) return;
-    sel.innerHTML = '';
     var loc = S.cur.locale || (S.cur.view && S.cur.view.locale) || '';
+    var key = (S.cur.clone_id || '') + '|' + loc;
+    /* Un ritorno su questo pannello (es. dopo un errore di commit) rifa' lo
+       show del pannello 3 e quindi il suo hook: se l'elenco e' gia' quello
+       giusto non lo ricarichiamo, altrimenti la scelta dell'utente sparisce. */
+    if (S.extraLoadedFor === key && sel.options.length) return;
+    sel.innerHTML = '';
     vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       (r.data.extra || []).forEach(function (x) {
@@ -386,6 +393,7 @@
         o.textContent = (x.text || '').slice(0, 90) + ((x.text || '').length > 90 ? '…' : '');
         sel.appendChild(o);
       });
+      S.extraLoadedFor = key;
     });
   }
 
@@ -399,9 +407,9 @@
   function vcCommit(paymentToken) {
     var body = {clone_id: S.cur.clone_id, email: $('vcEmail').value.trim(), email2: $('vcEmail2').value.trim(),
                 extra_id: $('vcExtraSel').value, payment_token: paymentToken || ''};
-    var btn = $('vcPayBtn'); if (btn) btn.disabled = true;
+    vcSetBusy(true);
     vcPost('/api/voice_clone/commit', body).then(function (r) {
-      if (btn) btn.disabled = false;
+      vcSetBusy(false);
       if (!r.ok) {
         var m = $('vcModal'); if (m) m.hidden = false;
         vcShow(3); vcErr(vcApiErrMsg(r.data)); return;
@@ -409,7 +417,7 @@
       S.cur.voice_code = r.data.voice_code || null;
       S.cur.view = {id: r.data.clone_id, state: 'paid'};
       vcShow(4);
-    }).catch(function () { if (btn) btn.disabled = false; vcShow(3); vcErr(tt('vc_err_generic')); });
+    }).catch(function () { vcSetBusy(false); vcShow(3); vcErr(tt('vc_err_generic')); });
   }
 
   /* Gratis -> commit diretto. A pagamento -> il modal di pagamento gia' in
@@ -444,7 +452,7 @@
     var price = $('vcPrice');
     if (price && S.cfg) price.textContent = S.cfg.free ? tt('vc_price_free') : tt('vc_price', {p: Number(S.cfg.price_eur).toFixed(2)});
     var pb = $('vcPayBtn'); if (pb) { pb.disabled = false; pb.textContent = tt(S.cfg && S.cfg.free ? 'vc_pay_btn_free' : 'vc_pay_btn'); pb.onclick = vcPay; }
-    $('vcP3Back').onclick = function () { vcShow(2); };
+    $('vcP3Back').onclick = function () { if (S.busy) return; vcShow(2); };
     vcLoadExtraTexts();
   }
 
