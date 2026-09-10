@@ -43,7 +43,7 @@ def _notify(event, rec, **extra):
     try:
         _notifier(event, rec, **extra)
     except Exception as e:      # noqa: BLE001 - il notifier non blocca mai il flusso
-        print(f"[voice_clone_demo] notifier {event} fallito per {rec.get('id')}: {e}", flush=True)
+        print(f"[voice_clone_demo] notifier {event} fallito per {rec.get('id')}: {type(e).__name__}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ def recover():
                 start_demos(rec["id"])
                 n += 1
             except Exception as e:      # noqa: BLE001
-                print(f"[voice_clone_demo] recover {rec.get('id')}: {e}", flush=True)
+                print(f"[voice_clone_demo] recover {rec.get('id')}: {type(e).__name__}", flush=True)
     try:
         vc.reconcile_orphan_captures()
     except Exception as e:      # noqa: BLE001

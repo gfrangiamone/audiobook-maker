@@ -8912,8 +8912,10 @@ def _voice_clone_notify(event, rec, **extra):
     if event == "demos_ready":
         _vc_log(rec, "VOICE_CLONE_DEMOS_READY")
     elif event == "demo_failed":
-        _vc_log(rec, "VOICE_CLONE_DEMO_FAILED", (extra.get("error") or "")[:120])
-        print(f"[voice_clone] demo fallita per {rec['id']}: {extra.get('error')}", flush=True)
+        # m3: solo il nome del tipo (prima dei ':'), mai il testo dell'eccezione.
+        err_kind = str(extra.get("error") or "").split(":", 1)[0].strip()[:60]
+        _vc_log(rec, "VOICE_CLONE_DEMO_FAILED", err_kind)
+        print(f"[voice_clone] demo fallita per {rec['id']}: {err_kind}", flush=True)
     elif event == "refunded":
         _vc_log(rec, "VOICE_CLONE_REFUNDED", extra.get("reason") or "")
         if email:
