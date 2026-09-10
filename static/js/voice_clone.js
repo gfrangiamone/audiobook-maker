@@ -268,7 +268,8 @@
     var back = $('vcP2Back'); if (back) back.disabled = !!on;
     var back3 = $('vcP3Back'); if (back3) back3.disabled = !!on;
     var pay = $('vcPayBtn'); if (pay) pay.disabled = !!on;
-    ['vcApprove', 'vcRegen', 'vcRegenSel', 'vcReject', 'vcRejectYes', 'vcRejectNo', 'vcReject2', 'vcRetry'].forEach(function (id) {
+    ['vcApprove', 'vcRegen', 'vcRegenSel', 'vcReject', 'vcRejectYes', 'vcRejectNo', 'vcReject2', 'vcRetry',
+      'vcClaimBtn', 'vcConfirmBtn', 'vcNewVoice'].forEach(function (id) {
       var e = $(id); if (e) e.disabled = !!on;
     });
   }
@@ -608,6 +609,105 @@
     if (st === 'paid' || st === 'demos_generating') vcWatch();
   }
 
+  /* ---------- pannello «Le tue voci» ---------- */
+
+  function vcStateLabel(m) {
+    if (m.state === 'ready') return tt('vc_state_ready');
+    if (m.state === 'sample_ok') return tt('vc_state_sample_ok');
+    if (m.state === 'paid' || m.state === 'demos_generating') return tt('vc_state_generating');
+    if (m.state === 'demos_ready') return tt('vc_state_demos_ready');
+    if (m.state === 'demo_failed') return tt('vc_state_demo_failed');
+    return m.state;
+  }
+
+  function vcRenderMine() {
+    var ul = $('vcMineList'); if (!ul) return;
+    ul.innerHTML = '';
+    if (!S.mine.length) {
+      var li0 = document.createElement('li'); li0.className = 'small'; li0.textContent = tt('vc_mine_empty'); ul.appendChild(li0); return;
+    }
+    S.mine.forEach(function (m) {
+      var li = document.createElement('li'); li.className = 'vc-mine-item';
+      var head = document.createElement('div');
+      var lab = (typeof _voxcpmLocaleLabel === 'function') ? _voxcpmLocaleLabel(m.locale) : m.locale;
+      head.textContent = (m.owner ? tt('vc_voice_own') : tt('vc_voice_shared')) + ' · ' + lab + ' · ' + tt(m.gender === 'f' ? 'vc_gender_f' : 'vc_gender_m') + ' — ' + vcStateLabel(m);
+      li.appendChild(head);
+      if (m.owner && m.voice_code) {
+        var code = document.createElement('div'); code.className = 'vc-code'; code.textContent = m.voice_code; li.appendChild(code);
+      }
+      if (m.state === 'ready' && m.demo_urls && m.demo_urls.common) {
+        var a = document.createElement('audio'); a.controls = true; a.preload = 'none'; a.src = m.demo_urls.common; li.appendChild(a);
+      }
+      var act = document.createElement('div'); act.className = 'vc-actions';
+      var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
+      if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
+      if (!m.owner) mk('vc_forget', function () { vcAction2(m.id, 'forget').then(function (ok) { if (ok) vcOpen('mine'); }); });
+      if (m.owner) mk('vc_resend', function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok')); }); });
+      li.appendChild(act);
+      ul.appendChild(li);
+    });
+  }
+
+  function vcAction2(id, name) {
+    if (S.busy) return Promise.resolve(false);
+    vcErr('');
+    vcSetBusy(true);
+    return vcPost('/api/voice_clone/' + encodeURIComponent(id) + '/' + name, {}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return false; }
+      return true;
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); return false; });
+  }
+
+  function vcReloadCombo() {
+    if (typeof loadVoices !== 'function') return;
+    Promise.resolve(loadVoices()).then(function () {
+      if (typeof updVoicesPremium === 'function') updVoicesPremium();
+      vcSyncButton();
+    });
+  }
+
+  function vcClaim() {
+    if (S.busy) return;
+    var code = ($('vcClaimCode').value || '').trim().toUpperCase();
+    if (!code) return;
+    vcErr('');
+    vcSetBusy(true);
+    vcPost('/api/voice_clone/claim', {voice_code: code}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      var row = $('vcConfirmRow');
+      if (r.data.status === 'pending') { if (row) row.hidden = false; $('vcConfirmCode').value = ''; $('vcConfirmCode').focus(); return; }
+      if (row) row.hidden = true;
+      vcOpen('mine'); vcReloadCombo();
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+  }
+
+  function vcConfirm() {
+    if (S.busy) return;
+    var code = ($('vcClaimCode').value || '').trim().toUpperCase();
+    var cc = ($('vcConfirmCode').value || '').trim();
+    if (!code || !cc) return;
+    vcErr('');
+    vcSetBusy(true);
+    vcPost('/api/voice_clone/confirm', {voice_code: code, confirm_code: cc}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      var row = $('vcConfirmRow'); if (row) row.hidden = true;
+      $('vcClaimCode').value = ''; $('vcConfirmCode').value = '';
+      vcOpen('mine'); vcReloadCombo();
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+  }
+
+  function vcInitPanelMine() {
+    vcRenderMine();
+    var row = $('vcConfirmRow'); if (row) row.hidden = true;
+    $('vcClaimBtn').onclick = vcClaim;
+    $('vcConfirmBtn').onclick = vcConfirm;
+    $('vcMineClose').onclick = vcClose;
+    $('vcNewVoice').onclick = function () { vcShow(1); };
+  }
+
   function vcInit() {
     var btn = $('vcOpenBtn'); if (btn) btn.onclick = function () { vcOpen(); };
     var rb = $('vcResumeBtn'); if (rb) rb.onclick = function () { vcOpen(); };
@@ -619,6 +719,7 @@
     S.panelHooks.vcP2 = vcInitPanel2;
     S.panelHooks.vcP3 = vcInitPanel3;
     S.panelHooks.vcP4 = vcInitPanel4;
+    S.panelHooks.vcPMine = vcInitPanelMine;
     vcFetch('/api/voice_clone/config').then(function (r) {
       S.cfg = r.ok ? r.data : null;
       return vcRefreshMine();
@@ -631,6 +732,20 @@
         var qs = q.toString();
         history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
         S.resumeId = vc;
+      }
+      /* La ripresa da ?vc=<id> richiede che app.js abbia gia' popolato la
+         pagina (combo voci, bookLangState): rimandata al prossimo giro di
+         event loop. Se l'id non compare piu' in `mine` (campione scaduto o
+         eliminato nel frattempo) si apre comunque il pannello «Le tue voci»
+         con un messaggio dedicato invece di restare sul pannello 1 muto. */
+      if (S.resumeId) {
+        setTimeout(function () {
+          var id = S.resumeId;
+          var found = false;
+          for (var i = 0; i < S.mine.length; i++) if (S.mine[i].id === id) { found = true; break; }
+          if (found) { vcResume(id); }
+          else { vcShow('mine'); vcErr(tt('vc_err_voice_gone')); }
+        }, 0);
       }
     }).catch(function () { S.cfg = null; });
   }

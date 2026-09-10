@@ -1278,7 +1278,26 @@ __REVIEWS_LD__
             <div class="vc-footer"><button type="button" id="vcRefundedClose" class="btn-primary" data-t="vc_close"></button></div>
           </div>
         </section>
-        <section id="vcPMine" hidden></section>
+        <section id="vcPMine" hidden>
+          <ul id="vcMineList" class="vc-mine-list"></ul>
+          <details class="vc-claim">
+            <summary data-t="vc_claim_title"></summary>
+            <p class="small" data-t="vc_claim_intro"></p>
+            <div class="vc-claim-row">
+              <input type="text" id="vcClaimCode" autocomplete="off" spellcheck="false" data-t-ph="vc_claim_ph">
+              <button type="button" id="vcClaimBtn" class="btn-outline btn-sm" data-t="vc_claim_btn"></button>
+            </div>
+            <div id="vcConfirmRow" class="vc-claim-row" hidden>
+              <span class="small" data-t="vc_confirm_intro"></span>
+              <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
+              <button type="button" id="vcConfirmBtn" class="btn-outline btn-sm" data-t="vc_confirm_btn"></button>
+            </div>
+          </details>
+          <div class="vc-footer">
+            <button type="button" id="vcMineClose" class="btn-secondary" data-t="vc_close"></button>
+            <button type="button" id="vcNewVoice" class="btn-primary" data-t="vc_new_voice"></button>
+          </div>
+        </section>
       </div>
     </div>
   </div>

@@ -3681,6 +3681,11 @@ async function startCombinedGeneration(combinedPaymentToken){
         if(gd.error_code==='free_quota_exhausted'||gd.error_code==='payment_required'){
           _handlePremiumPaymentRequired(gd);return;
         }
+        if(_handleVcGenerateError(gd)){
+          const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+          const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+          unlockUI();generating=false;return;
+        }
         if(gd.error_code==='gemini_overload'){
           // Pre-flight block sincrono: nessun job avviato, nessun payment consumato.
           unlockUI();generating=false;
@@ -4107,6 +4112,11 @@ async function startGen(){
         // questo case l'utente vedrebbe la stringa cruda del 402 e resterebbe
         // senza modale di pagamento (incidente "402 Speechify").
         _handlePremiumPaymentRequired(d);return;
+      }
+      if(_handleVcGenerateError(d)){
+        const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
+        const pf=document.getElementById('panel4Footer');if(pf)pf.style.display='';
+        unlockUI();generating=false;return;
       }
       if(d.error_code==='server_busy'){
         const gp=document.getElementById('generationProgress');if(gp)gp.style.display='none';
@@ -5713,6 +5723,17 @@ function _handlePremiumPaymentRequired(d){
     quota_used_eur:Number(d.quota_used_eur)||0,
     quota_limit_eur:Number(d.quota_limit_eur)||0,
   });
+}
+// Errori di /api/generate dovuti a una voce campionata (spec §3.8): la voce
+// non c'e' piu', il dispositivo non e' autorizzato o la lingua del libro non
+// coincide. Messaggio dedicato e combo ricaricata: mai il testo del server.
+function _handleVcGenerateError(gd){
+  const code=gd&&gd.error_code;
+  if(code!=='voice_gone'&&code!=='voice_not_authorized'&&code!=='voice_lang_mismatch')return false;
+  showErr('s3err',t('vc_err_'+code));
+  _voxcpmVoiceSel='';
+  loadVoices().then(()=>{updVoicesPremium();if(typeof vcSyncButton==='function')vcSyncButton();});
+  return true;
 }
 function tryGoToAudioSettings(){
   const sel=_getSelectedChapterIndexes();

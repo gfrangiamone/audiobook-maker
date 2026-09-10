@@ -321,3 +321,51 @@ def test_vcinitpanel4_non_ricarica_le_frasi_extra_se_gia_popolate():
         "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
     assert re.search(r"if\s*\(!S\.cur\s*\|\|\s*S\.cur\.clone_id\s*!==\s*cloneId\)\s*return;", corpo), \
         "la risposta della fetch deve essere scartata se nel frattempo e' cambiato il clone corrente"
+
+
+# ---------- Task 6: ripresa, pannello «Le tue voci», errori di generazione ----------
+
+TASK6_KEYS = ["vc_mine_empty", "vc_state_ready", "vc_state_sample_ok", "vc_state_generating",
+              "vc_state_demos_ready", "vc_state_demo_failed", "vc_forget", "vc_resend", "vc_resend_ok",
+              "vc_claim_title", "vc_claim_intro", "vc_claim_ph", "vc_claim_btn", "vc_confirm_intro",
+              "vc_confirm_ph", "vc_confirm_btn", "vc_new_voice", "vc_err_code_unknown", "vc_err_code_locked",
+              "vc_err_confirm_wrong", "vc_err_confirm_expired", "vc_err_confirm_none",
+              "vc_err_voice_not_authorized", "vc_err_voice_lang_mismatch"]
+
+
+def test_markup_pannello_mine():
+    pm = HTML[HTML.index('id="vcPMine"'):]
+    pm = pm[:pm.index("</section>")]
+    for i in ("vcMineList", "vcClaimCode", "vcClaimBtn", "vcConfirmRow", "vcConfirmCode", "vcConfirmBtn",
+              "vcMineClose", "vcNewVoice"):
+        assert f'id="{i}"' in pm, i
+
+
+def test_ripresa_e_gestione():
+    assert "S.resumeId" in VC
+    assert "/api/voice_clone/claim" in VC and "/api/voice_clone/confirm" in VC
+    assert "'forget'" in VC and "'resend'" in VC
+    assert "history.replaceState" in VC
+
+
+def test_il_codice_voce_non_finisce_in_console():
+    assert "console.log" not in VC
+
+
+def test_app_gestisce_gli_errori_di_generazione_delle_voci_personali():
+    corpo = _estrai_funzione(JS, "_handleVcGenerateError")
+    for c in ("voice_gone", "voice_not_authorized", "voice_lang_mismatch"):
+        assert c in corpo
+    assert "t('vc_err_'+code)" in corpo
+    # Nei due punti di /api/generate in app.js la variabile della risposta si
+    # chiama rispettivamente `gd` (startCombinedGeneration) e `d` (startGen):
+    # la funzione va richiamata in entrambi, una sola volta ciascuno.
+    chiamate = JS.count("_handleVcGenerateError(gd)") + JS.count("_handleVcGenerateError(d)")
+    assert chiamate >= 2, "va chiamata in entrambi i punti di errore di /api/generate"
+
+
+def test_chiavi_task6_in_tutte_le_lingue():
+    for lang in LANGS:
+        chiavi = _chiavi_i18n(lang)
+        mancanti = [k for k in TASK6_KEYS if k not in chiavi]
+        assert not mancanti, f"{lang}: {mancanti}"
