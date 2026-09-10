@@ -256,6 +256,16 @@
     if (dot) dot.hidden = !on;
   }
 
+  /* Guardia anti doppio invio: mentre il campione e' in upload, niente
+     seconda registrazione, niente secondo file, niente uscita dal pannello
+     (due risposte concorrenti scriverebbero S.cur/vcSampleAudio a caso). */
+  function vcSetBusy(on) {
+    S.busy = !!on;
+    var b = $('vcRecBtn'); if (b) b.disabled = !!on;
+    var f = $('vcFile'); if (f) f.disabled = !!on;
+    var back = $('vcP2Back'); if (back) back.disabled = !!on;
+  }
+
   function vcStopMedia() {
     var m = S.media; S.media = null;
     if (!m) return;
@@ -297,6 +307,11 @@
       }, 100);
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
       rec.onstop = function () {
+        /* Copre anche lo stop non richiesto dall'utente (dispositivo
+           scollegato): timer, pallino e stato di S.media vanno ripuliti
+           subito, non al prossimo click. vcStopMedia() e' gia' idempotente
+           (S.media e' gia' stato azzerato sopra se lo stop era manuale). */
+        vcStopMedia();
         var blob = new Blob(chunks, {type: rec.mimeType || mime || 'audio/webm'});
         var ext = vcRecordExt(rec.mimeType || mime);
         vcUploadSample(blob, 'sample.' + ext);
@@ -308,6 +323,8 @@
   }
 
   function vcUploadSample(blob, filename) {
+    if (S.busy) return;
+    vcSetBusy(true);
     var fd = new FormData();
     fd.append('file', blob, filename);
     fd.append('lang', $('vcLang').value);
@@ -318,23 +335,26 @@
     vcErr('');
     vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
       if (wait) wait.hidden = true;
+      vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: $('vcLang').value, locale: $('vcLocale').value, gender: $('vcGender').value, voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
       if (blk) blk.hidden = false;
-    }).catch(function () { if (wait) wait.hidden = true; vcErr(tt('vc_err_generic')); });
+    }).catch(function () { if (wait) wait.hidden = true; vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   function vcInitPanel2() {
     vcStopMedia();
+    vcSetBusy(false);
     var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
     var wait = $('vcUploading'); if (wait) wait.hidden = true;
     var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
     vcFillLangs();
     vcLoadPrompt();
-    $('vcRecBtn').onclick = function () { if (S.media) vcStopMedia(); else vcStartRecording(); };
+    $('vcRecBtn').onclick = function () { if (S.busy) return; if (S.media) vcStopMedia(); else vcStartRecording(); };
     $('vcFile').onchange = function () {
+      if (S.busy) { this.value = ''; return; }
       var f = this.files && this.files[0]; if (!f) return;
       var chk = vcUploadCheck(f.name, f.size, (S.cfg && S.cfg.max_upload_mb) || 20);
       if (!chk.ok) { vcErr(tt(chk.reason === 'too_large' ? 'vc_err_too_large' : 'vc_gate_format', {mb: (S.cfg && S.cfg.max_upload_mb) || 20})); this.value = ''; return; }
@@ -343,7 +363,7 @@
     };
     $('vcSampleRedo').onclick = function () { if (blk) blk.hidden = true; var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); } };
     $('vcSampleNext').onclick = function () { if (S.cur && S.cur.clone_id) vcShow(3); };
-    $('vcP2Back').onclick = function () { vcStopMedia(); vcShow(1); };
+    $('vcP2Back').onclick = function () { if (S.busy) return; vcStopMedia(); vcShow(1); };
   }
 
   function vcInit() {

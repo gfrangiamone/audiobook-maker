@@ -152,6 +152,12 @@ def test_registratore_senza_filtri_e_con_stop_automatico():
     assert "vcUploadCheck(f.name, f.size" in VC
 
 
+def test_upload_campione_ha_guardia_anti_doppio_invio():
+    corpo = _estrai_funzione(VC, "vcUploadSample")
+    assert "vcSetBusy(true)" in corpo
+    assert "vcSetBusy(false)" in corpo
+
+
 def test_chiavi_task3_in_tutte_le_lingue():
     for lang in LANGS:
         chiavi = _chiavi_i18n(lang)
