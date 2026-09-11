@@ -229,6 +229,43 @@ def test_check_email_dice_subito_se_l_indirizzo_e_occupato(client, tmp_path):
     assert r.status_code == 403 and r.get_json()["error_code"] == "not_authorized"
 
 
+def test_rimanda_il_link_di_gestione_all_indirizzo_occupato(client, tmp_path, ambiente):
+    """Per liberare l'indirizzo bisogna cancellare la vecchia voce dal link di
+    gestione: se quell'email e' andata persa non c'e' via d'uscita. Il link
+    riparte solo verso quell'indirizzo, e il limite di invii e' quello della
+    voce che li subisce, condiviso col resend del proprietario."""
+    occupante = _paid(tmp_path, cid="cid-due", email="presa@x.it")
+    _cid(client, "cid-uno")
+    rec = _draft(tmp_path)
+    ambiente.clear()
+    r = client.post("/api/voice_clone/resend_manage",
+                    json={"clone_id": rec["id"], "email": "PRESA@x.it"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert len(ambiente) == 1 and ambiente[-1][0] == "presa@x.it"
+    # a chi lo chiede non torna niente sulla voce che occupa l'indirizzo
+    assert set(r.get_json()) == {"ok"}
+    # indirizzo libero: nessun link da rimandare
+    r = client.post("/api/voice_clone/resend_manage",
+                    json={"clone_id": rec["id"], "email": "libera@x.it"})
+    assert r.status_code == 404 and r.get_json()["error_code"] == "voice_not_found"
+    r = client.post("/api/voice_clone/resend_manage",
+                    json={"clone_id": rec["id"], "email": "senza-chiocciola"})
+    assert r.status_code == 400
+    # il tetto e' quello della voce bersagliata: nessuno puo' inondarla
+    for _ in range(vc.RESEND_MAX - 1):
+        assert client.post("/api/voice_clone/resend_manage",
+                           json={"clone_id": rec["id"], "email": "presa@x.it"}).status_code == 200
+    r = client.post("/api/voice_clone/resend_manage",
+                    json={"clone_id": rec["id"], "email": "presa@x.it"})
+    assert r.status_code == 429 and r.get_json()["error_code"] == "rate_limited"
+    assert len(vc.get(occupante["id"])["resend_ts"]) == vc.RESEND_MAX
+    # e serve comunque la bozza del proprio dispositivo
+    _cid(client, "cid-tre")
+    r = client.post("/api/voice_clone/resend_manage",
+                    json={"clone_id": rec["id"], "email": "presa@x.it"})
+    assert r.status_code == 403 and r.get_json()["error_code"] == "not_authorized"
+
+
 def test_commit_errori(client, tmp_path, monkeypatch):
     rec = _draft(tmp_path)
     base = {"clone_id": rec["id"], "email": "a@x.it", "email2": "a@x.it",

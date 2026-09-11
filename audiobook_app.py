@@ -9382,17 +9382,66 @@ def api_vc_resend(clone_id):
         return _vc_err("voice_not_found", "Voice not found", 404)
     if not ok:
         return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
+    sent = _vc_send_manage_email(rec)
+    _vc_log(rec, "VOICE_CLONE_RESEND")
+    return jsonify({"ok": bool(sent)})
+
+
+def _vc_send_manage_email(rec):
+    """Rimanda a chi possiede la voce il codice e i link di gestione.
+
+    Prima del «pronto» la voce non ha ancora le prove approvate: l'email da
+    rimandare e' quella del pagamento, che porta gli stessi link.
+    """
     urls = _vc_urls(rec)
     lang = rec.get("ui_lang") or "en"
     if rec.get("state") == "ready":
-        sent = email_service.send_voice_clone_ready(rec["owner_email"], lang, voice_code=rec["voice_code"],
-                                                     manage_url=urls["manage_url"], delete_url=urls["delete_url"],
-                                                     retention_days=int(voice_clone.retention_sec() // 86400))
-    else:
-        sent = email_service.send_voice_clone_paid(rec["owner_email"], lang, voice_code=rec["voice_code"],
-                                                    amount_eur=(rec.get("payment") or {}).get("amount_eur") or 0.0,
-                                                    **urls)
-    _vc_log(rec, "VOICE_CLONE_RESEND")
+        return email_service.send_voice_clone_ready(
+            rec["owner_email"], lang, voice_code=rec["voice_code"],
+            manage_url=urls["manage_url"], delete_url=urls["delete_url"],
+            retention_days=int(voice_clone.retention_sec() // 86400))
+    return email_service.send_voice_clone_paid(
+        rec["owner_email"], lang, voice_code=rec["voice_code"],
+        amount_eur=(rec.get("payment") or {}).get("amount_eur") or 0.0, **urls)
+
+
+@app.route("/api/voice_clone/resend_manage", methods=["POST"])
+def api_vc_resend_manage():
+    """Rimanda il link di gestione all'indirizzo che risulta gia' occupato.
+
+    Chi si vede rifiutare l'email deve cancellare la vecchia voce dal link
+    ricevuto a suo tempo: se quell'email e' andata persa non ha nessuna via
+    d'uscita. Il link parte SOLO verso quell'indirizzo, quindi lo legge solo
+    chi possiede quella casella; a chi lo chiede non torna niente oltre
+    all'esito. Il limite di invii e' quello della voce che li subisce
+    (RESEND_MAX al giorno), condiviso col resend del proprietario: nessuno
+    puo' usare questa rotta per bersagliare un indirizzo.
+    """
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone.is_owner(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return _vc_err("bad_request", "Invalid email", 400)
+    occupante = voice_clone.active_voice_for_email(email, exclude_id=rec["id"])
+    if occupante is None or not occupante.get("owner_email"):
+        # niente conflitto: l'indirizzo e' libero, non c'e' nessun link da
+        # rimandare (e nessun modo di scoprirlo da qui, la risposta e' uguale).
+        return _vc_err("voice_not_found", "No voice for that address", 404)
+    try:
+        ok, retry = voice_clone.check_and_record_resend(occupante["id"])
+    except voice_clone.VoiceGone:
+        return _vc_err("voice_not_found", "No voice for that address", 404)
+    if not ok:
+        return _vc_err("rate_limited", "Limit of 3 emails per day reached", 429, retry_after=retry)
+    sent = _vc_send_manage_email(occupante)
+    _vc_log(occupante, "VOICE_CLONE_RESEND_CONFLICT")
     return jsonify({"ok": bool(sent)})
 
 

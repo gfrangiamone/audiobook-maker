@@ -391,7 +391,8 @@ TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_sample_ok", "vc_p3_
               "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_email_warn",
               "vc_pay_btn", "vc_pay_btn_free",
               "vc_pay_title", "vc_pay_line", "vc_pay_notice", "vc_err_email_bad", "vc_err_email_mismatch",
-              "vc_err_email_has_voice", "vc_err_payment_invalid", "vc_err_voice_not_found",
+              "vc_err_email_has_voice", "vc_resend_manage", "vc_resend_manage_ok",
+              "vc_err_payment_invalid", "vc_err_voice_not_found",
               "vc_err_voice_gone", "vc_err_not_authorized", "vc_err_bad_request"]
 
 
@@ -474,6 +475,31 @@ def test_errore_email_sotto_i_campi():
     assert "vcErr3" in corpo and "vcP3" in corpo
     # le caselle vecchie vanno comunque svuotate, o il messaggio resta doppio
     assert corpo.count("vcErr3") >= 2
+
+
+def test_bottone_per_farsi_rimandare_il_link_di_gestione():
+    """L'indirizzo si libera solo cancellando la vecchia voce dal link di
+    gestione: se quell'email e' persa, senza questo bottone non se ne esce."""
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    assert p3.index('id="vcErr3"') < p3.index('id="vcResendManage"')
+    assert 'data-t="vc_resend_manage"' in p3
+    assert "#vcResendManageWrap" in HTML or ".vc-resend-manage[hidden]{display:none}" in CSS
+    corpo = _estrai_funzione(VC, "vcResendManage")
+    assert "/api/voice_clone/resend_manage" in corpo
+    assert "vc_resend_manage_ok" in corpo
+    # compare solo quando l'indirizzo risulta occupato
+    chk = _estrai_funzione(VC, "vcCheckEmailTaken")
+    assert "vcResendManageWrap" in chk and "!S.emailTaken" in chk
+    init = _estrai_funzione(VC, "vcInitPanel3")
+    assert "vcResendManage" in init and "w.hidden = true" in init
+
+
+def test_le_conferme_non_escono_in_rosso():
+    """Le caselle dei messaggi sono le stesse degli errori: una conferma in
+    rosso si legge come un guaio."""
+    corpo = _estrai_funzione(VC, "vcErr")
+    assert "al al-ok" in corpo and "al al-e" in corpo
+    assert ".al-ok{" in CSS
 
 
 def test_il_conflitto_email_si_ricontrolla_al_rientro():

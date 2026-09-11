@@ -1354,3 +1354,5 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* Che cosa succede dopo il pagamento, in una riga sola: i testi dei brani
    qui non servivano a decidere e spingevano il pagamento sotto la piega. */
 .vc-demos-t{margin:.9rem 0;font-weight:600}
+.vc-resend-manage{margin:.45rem 0 0}
+.vc-resend-manage[hidden]{display:none}

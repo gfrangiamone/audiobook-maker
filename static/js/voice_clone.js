@@ -109,7 +109,7 @@
      una propria casella la usa (sotto registrazione e caricamento nel 2, sotto
      le email nel 3) invece della riga in cima al modal, che l'utente intento a
      guardare i campi non vede. */
-  function vcErr(msg) {
+  function vcErr(msg, buona) {
     var giu = [['vcP2', 'vcErr2'], ['vcP3', 'vcErr3']];
     var tgt = $('vcErr');
     for (var i = 0; i < giu.length; i++) {
@@ -117,9 +117,11 @@
       if (pan && box && !pan.hidden) { tgt = box; break; }
     }
     [$('vcErr'), $('vcErr2'), $('vcErr3')].forEach(function (e) {
-      if (e) { e.hidden = true; e.textContent = ''; }
+      if (e) { e.hidden = true; e.textContent = ''; e.className = 'al al-e'; }
     });
     if (!msg || !tgt) return;
+    /* Le conferme passano dalle stesse caselle: in rosso sembravano guai. */
+    tgt.className = buona ? 'al al-ok' : 'al al-e';
     tgt.textContent = msg; tgt.hidden = false;
   }
 
@@ -609,7 +611,24 @@
       var pb = $('vcPayBtn');
       if (S.emailTaken) { vcErr(tt('vc_err_email_has_voice')); if (pb) pb.disabled = true; }
       else { if (era) vcErr(''); if (pb) pb.disabled = false; }
+      var w = $('vcResendManageWrap'); if (w) w.hidden = !S.emailTaken;
     });
+  }
+
+  /* Per liberare l'indirizzo bisogna cancellare la vecchia voce dal link di
+     gestione: se quell'email e' andata persa non c'e' nessuna via d'uscita.
+     Il link riparte SOLO verso quell'indirizzo, quindi lo legge solo chi ha
+     quella casella; qui non torna niente sulla voce che lo occupa. */
+  function vcResendManage() {
+    if (S.busy || !S.cur || !S.cur.clone_id) return;
+    var a = ($('vcEmail').value || '').trim();
+    if (!a) return;
+    vcSetBusy(true);
+    vcPost('/api/voice_clone/resend_manage', {clone_id: S.cur.clone_id, email: a}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      vcErr(tt('vc_resend_manage_ok'), true);
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   /* Il conflitto si scioglie altrove: per liberare l'indirizzo si va a
@@ -695,6 +714,8 @@
     var si = $('vcP3DiscardYes');
     if (si) si.onclick = vcDiscardDraft;
     S.emailTaken = false;
+    var w = $('vcResendManageWrap'); if (w) w.hidden = true;
+    var rm = $('vcResendManage'); if (rm) rm.onclick = vcResendManage;
     var e1 = $('vcEmail'); if (e1) e1.onblur = vcCheckEmailTaken;
     var e2 = $('vcEmail2'); if (e2) { e2.onblur = vcCheckEmailTaken; e2.onchange = vcCheckEmailTaken; }
     /* Chi arriva qui con le email gia' scritte (rientro nel wizard, campi
@@ -886,7 +907,7 @@
             + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
             + '<rect x="3" y="5" width="18" height="14" rx="2"></rect>'
             + '<path d="m3 7 9 6 9-6"></path></svg>';
-          rb.onclick = function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok')); }); };
+          rb.onclick = function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok'), true); }); };
           row.appendChild(rb);
         }
         li.appendChild(row);

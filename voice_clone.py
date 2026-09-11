@@ -641,14 +641,24 @@ def touch_used(clone_id, now=None):
 # ---------------------------------------------------------------------------
 # commit (§3.4, §7.2)
 # ---------------------------------------------------------------------------
-def email_has_active_voice(email, exclude_id=None):
+def active_voice_for_email(email, exclude_id=None):
+    """La voce viva che occupa quell'indirizzo, o None.
+
+    Serve a chi si vede rifiutare l'email in fase di commit: per liberarla
+    deve cancellare quella voce dal link di gestione, e il link va rimandato
+    proprio a quella voce li'.
+    """
     h = email_hash(email)
     for rec in _all():
         if rec.get("id") == exclude_id or rec.get("state") in _TERMINAL:
             continue
         if rec.get("owner_email_hash") == h:
-            return True
-    return False
+            return rec
+    return None
+
+
+def email_has_active_voice(email, exclude_id=None):
+    return active_voice_for_email(email, exclude_id=exclude_id) is not None
 
 
 def _norm_email(email):
