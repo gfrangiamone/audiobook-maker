@@ -164,6 +164,7 @@ def test_hindi_in_devanagari():
 
 
 TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m", "vc_p2_read",
+              "vc_setup_t", "vc_setup_intro",
               "vc_rec_start", "vc_rec_stop", "vc_rec_cancel", "vc_or", "vc_up_pick", "vc_up_hint",
               "vc_mic", "vc_mic_default", "vc_local_listen", "vc_checking", "vc_sample_listen",
               "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
@@ -174,12 +175,53 @@ TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m",
 
 def test_markup_pannello_2():
     p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
-    for i in ("vcLang", "vcLocale", "vcGender", "vcPromptText", "vcMic", "vcMicWrap", "vcRecBtn",
+    for i in ("vcPromptText", "vcMic", "vcMicWrap", "vcRecBtn",
               "vcRecCancel", "vcLevel", "vcTimer", "vcFile", "vcUpName", "vcUpMb", "vcLocalBlock",
               "vcLocalAudio", "vcErr2", "vcSampleBlock", "vcSampleAudio", "vcSampleRedo",
               "vcSampleNext", "vcP2Back"):
         assert f'id="{i}"' in p2, i
     assert 'accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4' in p2
+    for altrove in ("vcLang", "vcLocale", "vcGender"):
+        assert altrove not in p2, altrove + ": le scelte stanno nel passo che viene prima"
+
+
+def test_markup_pannello_delle_scelte():
+    """Lingua, accento e voce sono un passo a se': sopra il brano erano tre
+    combo di servizio, e invece decidono proprio il testo da leggere."""
+    ps = HTML[HTML.index('id="vcPSetup"'):HTML.index('id="vcP2"')]
+    for i in ("vcLang", "vcLocaleWrap", "vcLocale", "vcGender",
+              "vcGenderIcoF", "vcGenderIcoM", "vcSetupBack", "vcSetupNext"):
+        assert 'id="' + i + '"' in ps, i
+    for k in ("vc_setup_t", "vc_setup_intro", "vc_lang", "vc_locale", "vc_gender"):
+        assert 'data-t="' + k + '"' in ps, k
+    # un'icona per ogni combo, dentro il campo
+    assert ps.count('class="vc-pick-ico"') >= 2 and ps.count("<svg") == 4
+    assert ps.index('id="vcPSetup"') < HTML.index('id="vcP2"')
+    for c in (".vc-picks", ".vc-pick-ico", ".vc-pick-in select"):
+        assert c + "{" in CSS, c
+    assert ".vc-pick[hidden]{display:none}" in CSS, "il wrap dell'accento si nasconde davvero"
+
+
+def test_il_wizard_infila_le_scelte_fra_condizioni_e_brano():
+    mostra = _estrai_funzione(VC, "vcShow")
+    assert "'vcPSetup'" in mostra and "n === 'setup'" in mostra
+    uno = _estrai_funzione(VC, "vcInitPanel1")
+    assert "vcShow('setup')" in uno, "dalle condizioni si passa alle scelte"
+    due = _estrai_funzione(VC, "vcInitPanel2")
+    assert "vcShow('setup')" in due, "«indietro» dal brano torna alle scelte"
+    assert "vcFillLangs()" not in due, "le combo le riempie il passo delle scelte"
+    setup = _estrai_funzione(VC, "vcInitPanelSetup")
+    assert "vcFillLangs()" in setup and "!ls.options.length" in setup,         "ripopolare a ogni ritorno azzererebbe la scelta appena fatta"
+    assert "vcShow(2)" in setup and "vcShow(1)" in setup
+    assert "S.panelHooks.vcPSetup = vcInitPanelSetup;" in VC
+
+
+def test_l_icona_della_voce_segue_la_scelta():
+    corpo = _estrai_funzione(VC, "vcSyncGenderIcon")
+    assert "vcGenderIcoF" in corpo and "vcGenderIcoM" in corpo
+    assert "g.value !== 'f'" in corpo and "g.value !== 'm'" in corpo
+    setup = _estrai_funzione(VC, "vcInitPanelSetup")
+    assert "g.onchange = vcSyncGenderIcon" in setup
 
 
 def test_il_caricamento_sparisce_mentre_si_registra_e_si_verifica():
@@ -345,8 +387,8 @@ def test_chiavi_task3_in_tutte_le_lingue():
         assert not mancanti, f"{lang}: {mancanti}"
 
 
-TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra_auto", "vc_p3_sample_ok", "vc_p3_redo",
-              "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_common", "vc_p3_email_warn",
+TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_sample_ok", "vc_p3_redo",
+              "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_email_warn",
               "vc_pay_btn", "vc_pay_btn_free",
               "vc_pay_title", "vc_pay_line", "vc_pay_notice", "vc_err_email_bad", "vc_err_email_mismatch",
               "vc_err_email_has_voice", "vc_err_payment_invalid", "vc_err_voice_not_found",
@@ -356,7 +398,7 @@ TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra_auto", "vc_p3
 def test_markup_pannello_3():
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
     for i in ("vcP3Sample", "vcP3Redo", "vcP3Discard", "vcP3DiscardAsk", "vcP3DiscardYes",
-              "vcP3DiscardNo", "vcEmail", "vcEmail2", "vcCommonText",
+              "vcP3DiscardNo", "vcEmail", "vcEmail2",
               "vcPrice", "vcP3Back", "vcPayBtn"):
         assert f'id="{i}"' in p3, i
     assert "vcExtraSel" not in p3, "il secondo brano lo sceglie il server, non l'utente"
@@ -383,16 +425,18 @@ def test_bozza_abbandonabile_prima_del_pagamento():
     assert "window.confirm" not in VC, "la conferma e' in linea, come per il rifiuto delle prove"
 
 
-def test_i_due_brani_di_prova_sono_scritti():
-    """«Secondo brano» non dice niente a chi il primo non l'ha mai visto. Il
-    primo si legge per esteso; del secondo si dice che lo sorteggiamo noi."""
+def test_il_pannello_del_pagamento_non_cita_i_testi_dei_brani():
+    """Del pagamento interessa che cosa succede dopo, non che cosa si leggera':
+    i due brani citati per esteso spingevano il prezzo e il bottone sotto la
+    piega. Resta la sola riga che spiega il seguito."""
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
-    assert 'data-t="vc_p3_demos_t"' in p3 and 'data-t="vc_p3_common"' in p3
-    assert 'data-t="vc_p3_extra_auto"' in p3
-    corpo = _estrai_funzione(VC, "vcLoadCommonText")
-    assert "vcCommonText" in corpo, "il brano comune va scritto, non solo contato"
-    for morto in ("vcExtraSel", "vcExtraText", "S.extraTexts", "vcShowExtraText"):
+    assert 'data-t="vc_p3_demos_t"' in p3
+    for morto in ("vcCommonText", "vc-quote", "vc_p3_common", "vc_p3_extra_auto"):
+        assert morto not in p3, morto
+    for morto in ("vcLoadCommonText", "S.extraLoadedFor", "demo_texts",
+                  "vcExtraSel", "vcExtraText", "S.extraTexts", "vcShowExtraText"):
         assert morto not in VC, morto
+    assert "vc_p3_common" not in I18N and "vc_p3_extra_auto" not in I18N
 
 
 def test_il_secondo_brano_lo_sorteggia_il_server():
@@ -438,7 +482,7 @@ def test_form_email_allineato():
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
     assert p3.count('class="vc-fld"') >= 2
     assert re.search(r"(?m)^\.vc-fld input,\.vc-fld select\{width:100%", CSS)
-    for c in (".vc-form", ".vc-card", ".vc-demos", ".vc-quote", ".vc-warn"):
+    for c in (".vc-form", ".vc-card", ".vc-demos-t", ".vc-warn"):
         assert c + "{" in CSS, c
 
 
@@ -485,11 +529,21 @@ def test_vcp3back_rispetta_lo_stato_busy():
     assert "if (S.busy) return;" in m.group(1)
 
 
-def test_vcloadcommontext_non_ricarica_se_gia_popolato():
-    corpo = _estrai_funzione(VC, "vcLoadCommonText")
-    assert "S.extraLoadedFor" in corpo
-    assert re.search(r"if\s*\(S\.extraLoadedFor\s*===\s*key.*\)\s*return;", corpo), \
-        "deve saltare il reload quando il testo e' gia' quello dello stesso clone_id/locale"
+def test_il_caricamento_sparisce_col_campione_accettato():
+    """Registrare e caricare sono alternative: a campione accettato il riquadro
+    «scegli un file» invita a rifare quel che e' gia' fatto. Torna con «rifai»."""
+    corpo = _estrai_funzione(VC, "vcUploadSample")
+    assert "if (!r.ok) { vcSetUploadVisible(true);" in corpo, \
+        "solo lo scarto riapre il caricamento"
+    dopo = corpo[corpo.index("if (!r.ok)"):]
+    dopo = dopo[dopo.index("return;"):]
+    dopo = dopo[:dopo.index(".catch(")]  # la rete caduta e' un altro caso: li' torna
+    assert "vcSetUploadVisible(true)" not in dopo, \
+        "dopo l'accettazione il riquadro non deve tornare"
+    redo = _estrai_funzione(VC, "vcInitPanel2")
+    m = re.search(r"vcSampleRedo'\)\.onclick\s*=\s*function\s*\(\)\s*\{([^}]*)\}", redo)
+    assert m and "vcSetUploadVisible(true)" in m.group(1), \
+        "«rifai il campione» deve rimettere a disposizione il caricamento"
 
 
 TASK5_KEYS = ["vc_code_intro", "vc_code_note", "vc_wait", "vc_demos_intro", "vc_demo_common", "vc_demo_extra",
@@ -626,7 +680,7 @@ def _return_a_livello_zero(frammento):
 def test_vcinitpanel4_cablaggio_sempre_eseguito():
     """I1: vcInitPanel4 non deve mai poter uscire prima di aver cablato i
     bottoni e chiamato vcRenderP4/vcWatch. Il guard di memoizzazione vive
-    solo in vcLoadCommonText, qui si controlla che vcInitPanel4 stesso non
+    solo nel cablaggio delle prove, qui si controlla che vcInitPanel4 stesso non
     contenga alcun `return;` A LIVELLO ZERO (fuori da callback/onclick interne)
     che possa saltare quella coda."""
     corpo = _estrai_funzione(VC, "vcInitPanel4")

@@ -1203,17 +1203,33 @@ __REVIEWS_LD__
           </div>
         </section>
 
-        <section id="vcP2" hidden>
-          <div class="vc-rec-row">
-            <label><span data-t="vc_lang"></span> <select id="vcLang"></select></label>
-            <label id="vcLocaleWrap"><span data-t="vc_locale"></span> <select id="vcLocale"></select></label>
-            <label><span data-t="vc_gender"></span>
-              <select id="vcGender">
+        <section id="vcPSetup" hidden>
+          <p class="vc-setup-t" data-t="vc_setup_t"></p>
+          <p class="vc-small" data-t="vc_setup_intro"></p>
+          <div class="vc-picks">
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_lang"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><select id="vcLang"></select></span>
+            </label>
+            <label class="vc-pick" id="vcLocaleWrap">
+              <span class="vc-pick-lbl" data-t="vc_locale"></span>
+              <span class="vc-pick-in"><svg class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><select id="vcLocale"></select></span>
+            </label>
+            <label class="vc-pick">
+              <span class="vc-pick-lbl" data-t="vc_gender"></span>
+              <span class="vc-pick-in"><svg id="vcGenderIcoF" class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"/><line x1="12" y1="13" x2="12" y2="22"/><line x1="9" y1="19" x2="15" y2="19"/></svg><svg id="vcGenderIcoM" class="vc-pick-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><circle cx="10" cy="14" r="6"/><line x1="14.5" y1="9.5" x2="20.5" y2="3.5"/><polyline points="15 3 21 3 21 9"/></svg><select id="vcGender">
                 <option value="f" data-t="vc_gender_f"></option>
                 <option value="m" data-t="vc_gender_m"></option>
-              </select>
+              </select></span>
             </label>
           </div>
+          <div class="modal-footer vc-footer">
+            <button type="button" id="vcSetupBack" class="btn-secondary" data-t="vc_back"></button>
+            <button type="button" id="vcSetupNext" class="btn-primary" data-t="vc_next"></button>
+          </div>
+        </section>
+
+        <section id="vcP2" hidden>
           <p data-t="vc_p2_read"></p>
           <div id="vcPromptText" class="vc-prompt"></div>
           <div class="vc-cap">
@@ -1271,16 +1287,7 @@ __REVIEWS_LD__
             <label class="vc-fld"><span data-t="vc_email2"></span> <input type="email" id="vcEmail2" autocomplete="off" required></label>
           </div>
           <p class="vc-small vc-warn" data-t="vc_p3_email_warn"></p>
-          <div class="vc-demos">
-            <p class="vc-demos-t" data-t="vc_p3_demos_t"></p>
-            <div class="vc-demo-one">
-              <span class="vc-small" data-t="vc_p3_common"></span>
-              <p id="vcCommonText" class="vc-quote"></p>
-            </div>
-            <div class="vc-demo-one">
-              <span class="vc-small" data-t="vc_p3_extra_auto"></span>
-            </div>
-          </div>
+          <p class="vc-demos-t" data-t="vc_p3_demos_t"></p>
           <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcPrice"></strong></p>
           <div class="vc-footer">
             <button type="button" id="vcP3Back" class="btn-secondary" data-t="vc_back"></button>

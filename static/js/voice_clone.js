@@ -212,8 +212,8 @@
   window.vcSyncButton = vcSyncButton;
 
   function vcShow(n) {
-    ['vcP1', 'vcP2', 'vcP3', 'vcP4', 'vcPMine'].forEach(function (id) { var e = $(id); if (e) e.hidden = true; });
-    var id = n === 'mine' ? 'vcPMine' : 'vcP' + n;
+    ['vcP1', 'vcPSetup', 'vcP2', 'vcP3', 'vcP4', 'vcPMine'].forEach(function (id) { var e = $(id); if (e) e.hidden = true; });
+    var id = (n === 'mine' || n === 'setup') ? ('vcP' + n.charAt(0).toUpperCase() + n.slice(1)) : ('vcP' + n);
     var e = $(id); if (e) e.hidden = false;
     vcErr('');
     var m = $('vcModal'); if (m) m.hidden = false;
@@ -266,10 +266,32 @@
     if (!c || !next) return;
     c.checked = false; next.disabled = true;
     c.onchange = function () { next.disabled = !c.checked; };
-    next.onclick = function () { if (c.checked) vcShow(2); };
+    next.onclick = function () { if (c.checked) vcShow('setup'); };
     var cancel = $('vcP1Cancel'); if (cancel) cancel.onclick = vcClose;
     var price = $('vcP1Price');
     if (price && S.cfg) price.textContent = S.cfg.free ? tt('vc_price_free') : tt('vc_price', {p: Number(S.cfg.price_eur).toFixed(2)});
+  }
+
+  /* ---------- pannello delle scelte: lingua, accento, voce ---------- */
+
+  /* L'icona della voce segue la scelta: e' l'unica delle tre che cambia
+     davvero forma, e rende evidente che la combo si puo' toccare. */
+  function vcSyncGenderIcon() {
+    var g = $('vcGender'); if (!g) return;
+    var f = $('vcGenderIcoF'); var m = $('vcGenderIcoM');
+    if (f) f.hidden = g.value !== 'f';
+    if (m) m.hidden = g.value !== 'm';
+  }
+
+  function vcInitPanelSetup() {
+    var ls = $('vcLang');
+    /* Solo alla prima apertura: ripopolare azzererebbe la scelta appena
+       fatta ogni volta che si torna indietro dal brano. */
+    if (ls && !ls.options.length) vcFillLangs();
+    vcSyncGenderIcon();
+    var g = $('vcGender'); if (g) g.onchange = vcSyncGenderIcon;
+    var back = $('vcSetupBack'); if (back) back.onclick = function () { if (S.busy) return; vcShow(1); };
+    var next = $('vcSetupNext'); if (next) next.onclick = function () { if (S.busy) return; vcShow(2); };
   }
 
   /* ---------- pannello 2: campione ---------- */
@@ -289,9 +311,7 @@
     var cur = vcLang();
     if (langs[cur]) ls.value = cur;
     vcFillLocales();
-    ls.onchange = function () { vcFillLocales(); vcLoadPrompt(); };
-    loc.onchange = vcLoadPrompt;
-    var g = $('vcGender'); if (g) g.onchange = vcLoadPrompt;
+    ls.onchange = vcFillLocales;
   }
 
   function vcFillLocales() {
@@ -503,9 +523,10 @@
     vcErr('');
     vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
       if (wait) wait.hidden = true;
-      vcSetUploadVisible(true);
       vcSetBusy(false);
-      if (!r.ok) { vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
+      /* Solo lo scarto riapre la strada alternativa: col campione accettato
+         un «scegli un file» ancora li' inviterebbe a rifare quel che e' fatto. */
+      if (!r.ok) { vcSetUploadVisible(true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
@@ -532,7 +553,6 @@
     var mb = $('vcUpMb');
     if (mb) mb.textContent = ((S.cfg && S.cfg.max_upload_mb) || 20) + ' MB';
     vcFillMics();
-    vcFillLangs();
     vcLoadPrompt();
     $('vcRecBtn').onclick = function () { if (S.busy) return; if (S.media) vcStopMedia(); else vcStartRecording(); };
     $('vcRecCancel').onclick = vcCancelRecording;
@@ -547,6 +567,7 @@
     };
     $('vcSampleRedo').onclick = function () {
       if (blk) blk.hidden = true;
+      vcSetUploadVisible(true);
       var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); }
       /* Si riparte da zero: via anche la copia locale e il nome del file, o
          resterebbero a schermo appesi al tentativo precedente. */
@@ -555,26 +576,10 @@
       var tm = $('vcTimer'); if (tm) tm.textContent = '0.0 s';
     };
     $('vcSampleNext').onclick = function () { if (S.cur && S.cur.clone_id) vcShow(3); };
-    $('vcP2Back').onclick = function () { if (S.busy) return; vcAbortMedia(); vcShow(1); };
+    $('vcP2Back').onclick = function () { if (S.busy) return; vcAbortMedia(); vcShow('setup'); };
   }
 
-  /* ---------- pannello 3: email, brani di prova, pagamento ---------- */
-
-  /* Il brano comune si legge prima di pagare perche' e' quello che tutte le
-     voci leggono e quindi l'unico confrontabile. Il secondo lo sorteggia il
-     server fra i candidati della lingua: una combo da sfogliare prima del
-     pagamento non aggiungeva nulla a una scelta che non cambia nulla. */
-  function vcLoadCommonText() {
-    var com = $('vcCommonText'); if (!com || !S.cur) return;
-    var loc = S.cur.locale || (S.cur.view && S.cur.view.locale) || '';
-    var key = (S.cur.clone_id || '') + '|' + loc;
-    if (S.extraLoadedFor === key && com.textContent) return;
-    vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
-      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
-      com.textContent = ((r.data.common || {}).text || '');
-      S.extraLoadedFor = key;
-    });
-  }
+  /* ---------- pannello 3: email e pagamento ---------- */
 
   function vcEmailsOk() {
     var a = ($('vcEmail').value || '').trim(); var b = ($('vcEmail2').value || '').trim();
@@ -676,7 +681,6 @@
     S.emailTaken = false;
     var e1 = $('vcEmail'); if (e1) e1.onblur = vcCheckEmailTaken;
     var e2 = $('vcEmail2'); if (e2) { e2.onblur = vcCheckEmailTaken; e2.onchange = vcCheckEmailTaken; }
-    vcLoadCommonText();
   }
 
   /* Prima del pagamento non esiste il link di gestione (l'email si indica
@@ -948,6 +952,7 @@
        click di troppo sullo sfondo. Si esce solo dalla X o dai bottoni. */
     S.panelHooks = S.panelHooks || {};
     S.panelHooks.vcP1 = vcInitPanel1;
+    S.panelHooks.vcPSetup = vcInitPanelSetup;
     S.panelHooks.vcP2 = vcInitPanel2;
     S.panelHooks.vcP3 = vcInitPanel3;
     S.panelHooks.vcP4 = vcInitPanel4;

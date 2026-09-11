@@ -1336,12 +1336,21 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-card audio{width:100%}
 .vc-card-act{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
 .vc-danger{color:var(--err)}
+/* Lingua, accento e voce hanno un passo tutto loro: combo larghe, etichetta
+   sopra e un'icona dentro il campo, che dice di che scelta si tratta senza
+   affidarsi alle bandiere (su Windows restano due lettere). */
+.vc-setup-t{margin:0 0 .3rem;font-weight:600;font-size:1.02rem}
+.vc-picks{display:grid;gap:.85rem;margin:1rem 0 .4rem}
+.vc-pick{display:block}
+.vc-pick[hidden]{display:none}
+.vc-pick-lbl{display:block;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;
+             color:var(--txm);margin-bottom:.25rem}
+.vc-pick-in{position:relative;display:block}
+.vc-pick-ico{position:absolute;left:.65rem;top:50%;transform:translateY(-50%);
+             width:18px;height:18px;color:var(--ac);pointer-events:none}
+.vc-pick-ico[hidden]{display:none}
+.vc-pick-in select{width:100%;padding-left:2.2rem}
 .vc-danger:hover:not(:disabled){color:var(--err);border-color:var(--err);background:var(--errs)}
-.vc-demos{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf);margin:.9rem 0}
-.vc-demos-t{margin:0 0 .5rem;font-weight:600}
-.vc-demo-one{margin:.6rem 0 0}
-.vc-demo-one:first-of-type{margin-top:0}
-/* Il brano che verra' letto, citato per esteso. */
-.vc-quote{margin:.35rem 0 0;padding-left:.6rem;border-left:2px solid var(--brd);
-          color:var(--txd);font-size:.86rem;font-style:italic}
-.vc-quote:empty{display:none}
+/* Che cosa succede dopo il pagamento, in una riga sola: i testi dei brani
+   qui non servivano a decidere e spingevano il pagamento sotto la piega. */
+.vc-demos-t{margin:.9rem 0;font-weight:600}
