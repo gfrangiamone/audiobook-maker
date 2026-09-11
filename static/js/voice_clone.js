@@ -138,17 +138,20 @@
     return !!(vm && vm.value === 'voxcpm' && voxOk && inPremium);
   }
 
-  /* Il bottone compare solo con il modello VoxCPM scelto sulla scheda PREMIUM,
-     feature attiva e lingua del libro offerta; l'etichetta segue lo stato. */
+  /* Il microfono accanto alla combo compare solo con il modello VoxCPM scelto
+     sulla scheda PREMIUM, feature attiva e lingua del libro offerta. Il bottone
+     non porta etichetta: lo stato (crea / le tue voci / riprendi) lo decide
+     vcOpen(), e la ripresa ha comunque il suo banner sotto la combo. */
   function vcSyncButton() {
     var row = $('vcBtnRow'); var btn = $('vcOpenBtn'); var banner = $('vcResumeBanner');
-    if (!row || !btn) return;
+    if (!btn) return;
     var show = vcVoxSelected() && vcVisible(S.cfg, true, vcLang());
-    row.hidden = !show;
-    if (!show) { if (banner) banner.hidden = true; return; }
-    btn.textContent = tt(vcButtonKey(S.mine));
-    btn.title = tt('vc_btn_tip');
-    if (banner) banner.hidden = !vcPending(S.mine);
+    btn.hidden = !show;
+    var tip = tt('vc_btn_tip');
+    btn.title = tip; btn.setAttribute('aria-label', tip);
+    var pend = show && !!vcPending(S.mine);
+    if (row) row.hidden = !pend;
+    if (banner) banner.hidden = !pend;
   }
   window.vcSyncButton = vcSyncButton;
 
@@ -239,6 +242,9 @@
     });
     var pre = (typeof _voxcpmAccentSel === 'string') ? _voxcpmAccentSel : '';
     if (pre && list.indexOf(pre) >= 0) loc.value = pre;
+    /* Una lingua con un solo accento non e' una scelta: la combo sparisce ma
+       resta popolata, cosi' il valore inviato al server non cambia. */
+    var wrap = $('vcLocaleWrap'); if (wrap) wrap.hidden = list.length < 2;
   }
 
   function vcLoadPrompt() {
@@ -736,8 +742,9 @@
     var btn = $('vcOpenBtn'); if (btn) btn.onclick = function () { vcOpen(); };
     var rb = $('vcResumeBtn'); if (rb) rb.onclick = function () { vcOpen(); };
     var close = $('vcClose'); if (close) close.onclick = vcClose;
-    var modal = $('vcModal');
-    if (modal) modal.addEventListener('click', function (ev) { if (ev.target === modal) vcClose(); });
+    /* Niente chiusura sul click fuori: il wizard e' modale sul serio, perche'
+       una registrazione o un pagamento in corso non devono sparire per un
+       click di troppo sullo sfondo. Si esce solo dalla X o dai bottoni. */
     S.panelHooks = S.panelHooks || {};
     S.panelHooks.vcP1 = vcInitPanel1;
     S.panelHooks.vcP2 = vcInitPanel2;

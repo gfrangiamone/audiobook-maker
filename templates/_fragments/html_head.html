@@ -455,7 +455,27 @@ __REVIEWS_LD__
         <div class="form-row">
           <div class="form-group">
             <label for="vvPremium" data-t="lbl_voice">Voce</label>
-            <select id="vvPremium"></select>
+            <!-- Il campionamento della propria voce vive QUI dentro, accanto alla
+                 combo: sta nel pannello PREMIUM (quindi mai visibile sulla scheda
+                 Standard) e vcSyncButton lo scopre solo col modello VoxCPM. -->
+            <div class="vc-voice-row">
+              <select id="vvPremium"></select>
+              <button type="button" id="vcOpenBtn" class="vc-mic-btn" data-t-title="vc_btn_tip"
+                      aria-label="Create an audiobook using your own voice" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+                  <path d="M5 10v2a7 7 0 0 0 14 0v-2"></path>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="vcBtnRow" class="vc-btn-row" hidden>
+          <div id="vcResumeBanner" class="al al-i vc-resume" hidden>
+            <span data-t="vc_resume_banner">You have a pending voice sample:</span>
+            <button type="button" id="vcResumeBtn" class="btn btn-outline btn-sm" data-t="vc_resume_btn">resume</button>
           </div>
         </div>
         <div class="form-row" id="geminiStyleRow">
@@ -540,14 +560,6 @@ __REVIEWS_LD__
             <audio id="voxcpmDemoStyled" preload="none"></audio>
             <audio id="voxcpmSample" preload="none"></audio>
           </div>
-        </div>
-      </div>
-
-      <div id="vcBtnRow" class="vc-btn-row" hidden>
-        <button type="button" id="vcOpenBtn" class="btn-outline btn-sm vc-open-btn" data-t="vc_btn_start" data-t-title="vc_btn_tip">Sample your voice</button>
-        <div id="vcResumeBanner" class="al al-i vc-resume" hidden>
-          <span data-t="vc_resume_banner">You have a pending voice sample:</span>
-          <button type="button" id="vcResumeBtn" class="btn btn-outline btn-sm" data-t="vc_resume_btn">resume</button>
         </div>
       </div>
 
@@ -1192,7 +1204,7 @@ __REVIEWS_LD__
         <section id="vcP2" hidden>
           <div class="vc-rec-row">
             <label><span data-t="vc_lang"></span> <select id="vcLang"></select></label>
-            <label><span data-t="vc_locale"></span> <select id="vcLocale"></select></label>
+            <label id="vcLocaleWrap"><span data-t="vc_locale"></span> <select id="vcLocale"></select></label>
             <label><span data-t="vc_gender"></span>
               <select id="vcGender">
                 <option value="f" data-t="vc_gender_f"></option>

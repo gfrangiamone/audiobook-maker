@@ -266,6 +266,11 @@ select:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color
 
 /* ═══ BUTTONS ═══ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px 28px;border-radius:var(--rs);font-family:inherit;font-size:.95rem;font-weight:600;border:none;cursor:pointer;transition:all .2s;width:100%}
+/* .btn{display:inline-flex} e' una regola d'autore e batte [hidden]{display:none}
+   della UA: senza questa riga ogni bottone nascosto con l'attributo hidden (il
+   wizard delle voci campionate ne usa parecchi) resterebbe a schermo. Stesso
+   inciampo gia' documentato per .form-row[hidden]. */
+.btn[hidden]{display:none}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-p{background:var(--ac);color:#fff}
 .btn-p:hover:not(:disabled){background:var(--ach);transform:translateY(-1px);box-shadow:0 4px 16px rgba(196,122,42,.25)}
@@ -1191,8 +1196,22 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 
 /* Voci campionate */
 .vc-btn-row{margin:.6rem 0 0;display:flex;flex-direction:column;gap:.5rem}
-.vc-open-btn{width:100%}
+.vc-btn-row[hidden]{display:none}
+/* Combo delle voci PREMIUM + bottone microfono: la combo resta elastica
+   (min-width:0, altrimenti il select non si stringe), il bottone e' quadrato e
+   alto quanto lei (align-items:stretch). */
+.vc-voice-row{display:flex;align-items:stretch;gap:8px}
+.vc-voice-row select{flex:1 1 auto;min-width:0}
+.vc-mic-btn{flex:0 0 auto;width:44px;display:inline-flex;align-items:center;justify-content:center;
+            padding:0;background:var(--srf2);border:1px solid var(--brd);border-radius:var(--rs);
+            color:var(--ac);cursor:pointer;transition:border-color .2s,color .2s,background .2s}
+.vc-mic-btn:hover{border-color:var(--ac);background:var(--acs)}
+.vc-mic-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+/* [hidden] va riaffermato: display:inline-flex d'autore batte la regola UA. */
+.vc-mic-btn[hidden]{display:none}
+.vc-mic-btn svg{width:20px;height:20px}
 .vc-resume{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+.vc-resume[hidden]{display:none}
 .vc-modal{max-width:560px}
 .vc-modal .modal-body{max-height:70vh;overflow-y:auto}
 .vc-terms{padding-left:1.2rem;margin:.5rem 0}
@@ -1205,6 +1224,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-timer{font-variant-numeric:tabular-nums;min-width:3.5em}
 .vc-or{text-align:center;color:var(--txm);margin:.6rem 0}
 .vc-rec-dot{width:12px;height:12px;border-radius:50%;background:#c33;display:inline-block;animation:vcblink 1s infinite}
+.vc-rec-dot[hidden]{display:none}
 @keyframes vcblink{50%{opacity:.2}}
 .vc-code{font-family:monospace;font-size:1.3rem;letter-spacing:.15em;background:var(--srf2);padding:.5rem .8rem;border-radius:8px;display:inline-block;margin:.4rem 0}
 .vc-demo-row{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
@@ -1213,6 +1233,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-mine-item{border:1px solid var(--brd);border-radius:8px;padding:.6rem;margin:.4rem 0}
 .vc-mine-item .vc-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
 .vc-claim-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0}
+.vc-claim-row[hidden]{display:none}
 .vc-claim-row input{flex:1;min-width:160px}
 .vc-wait{display:flex;align-items:center;gap:.6rem;margin:.6rem 0}
+.vc-wait[hidden]{display:none}
 .vc-small{font-size:.82rem;color:var(--txm)}

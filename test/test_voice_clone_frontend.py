@@ -83,8 +83,16 @@ def test_markup_bottone_e_modal():
     for i in ("vcBtnRow", "vcOpenBtn", "vcResumeBanner", "vcResumeBtn", "vcModal", "vcClose",
               "vcErr", "vcP1", "vcConsent", "vcP1Next", "vcP1Cancel", "vcP2", "vcP3", "vcP4", "vcPMine"):
         assert f'id="{i}"' in HTML, i
-    assert HTML.index('id="voxcpmSampleRow"') < HTML.index('id="vcBtnRow"') < HTML.index('id="advOptions"')
+    # Il microfono e il banner di ripresa vivono DENTRO #tabPremium, subito
+    # dopo la combo delle voci: sulla scheda Standard non esistono proprio.
+    assert (HTML.index('id="tabPremium"') < HTML.index('id="vvPremium"')
+            < HTML.index('id="vcOpenBtn"') < HTML.index('id="vcBtnRow"')
+            < HTML.index('id="voxcpmSampleRow"') < HTML.index('id="advOptions"'))
     assert 'data-t-title="vc_btn_tip"' in HTML
+    # Bottone a sola icona: un data-t sovrascriverebbe l'SVG del microfono.
+    bottone = HTML[HTML.index('id="vcOpenBtn"'):HTML.index('id="vcOpenBtn"') + 400]
+    assert 'data-t=' not in bottone.split('</button>')[0]
+    assert '<svg' in bottone.split('</button>')[0]
     assert HTML.index('id="geminiPayModal"') < HTML.index('id="vcModal"')
 
 
@@ -103,8 +111,33 @@ def test_app_sincronizza_il_bottone():
 
 
 def test_css_vc():
-    for c in (".vc-btn-row", ".vc-modal", ".vc-consent", ".vc-prompt", ".vc-code", ".vc-mine-item"):
+    for c in (".vc-btn-row", ".vc-modal", ".vc-consent", ".vc-prompt", ".vc-code", ".vc-mine-item",
+              ".vc-voice-row", ".vc-mic-btn"):
         assert c in CSS, c
+    # display:inline-flex d'autore batte la regola UA [hidden]{display:none}
+    assert ".vc-mic-btn[hidden]{display:none}" in CSS
+
+
+def test_hidden_batte_il_display_dautore():
+    """Ogni classe del wizard che imposta un display d'autore deve riaffermare
+    [hidden]{display:none}: la regola UA perde comunque, e senza questa riga
+    bottone, banner e spinner restano a schermo quando il JS li nasconde."""
+    for c in (".btn", ".vc-btn-row", ".vc-resume", ".vc-rec-dot", ".vc-wait",
+              ".vc-claim-row", ".vc-mic-btn"):
+        atteso = re.escape(c) + r"\[hidden\]\s*\{\s*display:\s*none\s*\}"
+        assert re.search(r"(?m)^" + atteso, CSS), c
+
+
+def test_wizard_modale_non_si_chiude_cliccando_fuori():
+    corpo = _estrai_funzione(VC, "vcInit")
+    assert "vcClose" in corpo, "la X deve chiudere"
+    assert "ev.target === modal" not in corpo and "addEventListener('click'" not in corpo
+
+
+def test_accento_nascosto_se_la_lingua_ne_ha_uno_solo():
+    assert 'id="vcLocaleWrap"' in HTML
+    corpo = _estrai_funzione(VC, "vcFillLocales")
+    assert "vcLocaleWrap" in corpo and "list.length < 2" in corpo
 
 
 def test_chiavi_task2_in_tutte_le_lingue():
