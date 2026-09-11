@@ -105,13 +105,18 @@
   function _val(id) { var el = $(id); return el ? el.value : ''; }
   function tt(k, r) { return (typeof t === 'function') ? t(k, r) : k; }
 
-  /* Il motivo dello scarto va letto dove si e' sbagliato: finche' il pannello
-     2 e' a schermo il messaggio esce sotto registrazione e caricamento, non in
-     cima al modal (li' l'utente, che guardava il bottone, non lo vedeva). */
+  /* Il motivo dello scarto va letto dove si e' sbagliato: ogni pannello che ha
+     una propria casella la usa (sotto registrazione e caricamento nel 2, sotto
+     le email nel 3) invece della riga in cima al modal, che l'utente intento a
+     guardare i campi non vede. */
   function vcErr(msg) {
-    var p2 = $('vcP2'); var sotto = $('vcErr2');
-    var tgt = (sotto && p2 && !p2.hidden) ? sotto : $('vcErr');
-    [$('vcErr'), $('vcErr2')].forEach(function (e) {
+    var giu = [['vcP2', 'vcErr2'], ['vcP3', 'vcErr3']];
+    var tgt = $('vcErr');
+    for (var i = 0; i < giu.length; i++) {
+      var pan = $(giu[i][0]); var box = $(giu[i][1]);
+      if (pan && box && !pan.hidden) { tgt = box; break; }
+    }
+    [$('vcErr'), $('vcErr2'), $('vcErr3')].forEach(function (e) {
       if (e) { e.hidden = true; e.textContent = ''; }
     });
     if (!msg || !tgt) return;
@@ -607,6 +612,17 @@
     });
   }
 
+  /* Il conflitto si scioglie altrove: per liberare l'indirizzo si va a
+     cancellare la vecchia voce dal link dell'email, in un'altra scheda. Al
+     ritorno il messaggio deve cadere da solo, senza pretendere che l'utente
+     ribatta l'indirizzo per far scattare un nuovo controllo. */
+  function vcRicontrollaEmailAlRitorno() {
+    if (document.hidden) return;
+    var m = $('vcModal'); if (!m || m.hidden) return;
+    var p3 = $('vcP3'); if (!p3 || p3.hidden) return;
+    vcCheckEmailTaken();
+  }
+
   function vcCommit(paymentToken) {
     var body = {clone_id: S.cur.clone_id, email: $('vcEmail').value.trim(), email2: $('vcEmail2').value.trim(),
                 payment_token: paymentToken || ''};
@@ -681,6 +697,10 @@
     S.emailTaken = false;
     var e1 = $('vcEmail'); if (e1) e1.onblur = vcCheckEmailTaken;
     var e2 = $('vcEmail2'); if (e2) { e2.onblur = vcCheckEmailTaken; e2.onchange = vcCheckEmailTaken; }
+    /* Chi arriva qui con le email gia' scritte (rientro nel wizard, campi
+       riempiti dal browser) non tocca piu' nulla: senza questo controllo lo
+       stato resterebbe quello del giro precedente. */
+    vcCheckEmailTaken();
   }
 
   /* Prima del pagamento non esiste il link di gestione (l'email si indica
@@ -957,6 +977,8 @@
     S.panelHooks.vcP3 = vcInitPanel3;
     S.panelHooks.vcP4 = vcInitPanel4;
     S.panelHooks.vcPMine = vcInitPanelMine;
+    document.addEventListener('visibilitychange', vcRicontrollaEmailAlRitorno);
+    window.addEventListener('focus', vcRicontrollaEmailAlRitorno);
     /* Il deep link ?vc=<id> va letto e ripulito dall'URL SUBITO, prima della
        fetch di config: cosi' l'id resta su S.resumeId anche se la fetch
        fallisce (rete instabile al primo carico), invece di andare perso

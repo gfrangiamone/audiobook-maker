@@ -446,7 +446,7 @@ def test_pagine_vc(client, tmp_path):
     assert any(d["cid"] == "cid-nuovo" and d["via"] == "resume" for d in vc.get(rec["id"])["devices"])
     assert client.get("/vc/nope/resume").status_code == 404
     r = client.get(f"/vc/{rec['manage_token']}/devices")
-    assert r.status_code == 200 and b"cid-nuovo" not in r.data and b"resume" in r.data
+    assert r.status_code == 200 and b"cid-nuovo" not in r.data and b"Email link" in r.data
     for h in (r, client.get(f"/vc/{rec['resume_token']['value']}/resume")):
         assert "no-store" in h.headers.get("Cache-Control", "")
     r = client.post(f"/vc/{rec['manage_token']}/devices/revoke", data={"cid": "cid-nuovo"})
@@ -457,6 +457,46 @@ def test_pagine_vc(client, tmp_path):
     assert r.status_code == 200 and vc.get(rec["id"])["state"] == "deleted"
     assert not os.path.isdir(vc.voice_dir(rec["token"]))
     assert client.get(f"/vc/{rec['manage_token']}/devices").status_code == 404
+
+
+def test_le_pagine_dei_link_email_seguono_la_lingua_del_browser(client, tmp_path):
+    """Chi arriva da un link dell'email non passa dal sito e non ha nessun
+    modo di cambiare lingua: la pagina segue l'Accept-Language e ripiega
+    sull'inglese, col marchio in alto per dire da dove arriva."""
+    rec = _paid(tmp_path)
+    tok = rec["manage_token"]
+    r = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "it-IT,it;q=0.9"})
+    corpo = r.data.decode("utf-8")
+    assert r.status_code == 200
+    assert 'lang="it"' in corpo and "Cancella il tuo campione vocale" in corpo
+    assert "Audiobook Maker" in corpo and "<svg" in corpo and 'class="brand" href="/"' in corpo
+    # la lingua dipende dall'header: senza Vary una cache la congelerebbe
+    assert "Accept-Language" in r.headers.get("Vary", "")
+    r = client.get(f"/vc/{tok}/delete", headers={"Accept-Language": "ja"})
+    assert 'lang="en"' in r.data.decode("utf-8") and b"Delete your voice sample" in r.data
+    r = client.get(f"/vc/{tok}/delete?lang=de", headers={"Accept-Language": "it"})
+    assert 'lang="de"' in r.data.decode("utf-8") and "Sprachprobe l" in r.data.decode("utf-8")
+    r = client.get(f"/vc/{rec['resume_token']['value']}/resume", headers={"Accept-Language": "fr"})
+    assert "Reprendre" in r.data.decode("utf-8")
+    r = client.get(f"/vc/{tok}/devices", headers={"Accept-Language": "it"})
+    corpo = r.data.decode("utf-8")
+    # «creator» e' un nome interno: a chi legge si dice da dove e' entrato
+    assert "Dispositivo" in corpo and "Creazione" in corpo and "creator" not in corpo
+    r = client.post(f"/vc/{tok}/delete", headers={"Accept-Language": "it"})
+    assert "Voce cancellata" in r.data.decode("utf-8")
+
+
+def test_le_traduzioni_delle_pagine_vc_coprono_tutte_le_lingue():
+    percorso = os.path.join(os.path.dirname(__file__), "..", "i18n", "voice_clone_pages.json")
+    with io.open(percorso, encoding="utf-8") as f:
+        dati = json.load(f)
+    assert set(dati) == {"it", "en", "fr", "es", "de", "zh", "hi"}
+    atteso = set(dati["en"])
+    # il ripiego cablato tiene in piedi le pagine se il file non si carica
+    assert atteso >= set(audiobook_app._VC_PAGES_FALLBACK)
+    for lang, voci in dati.items():
+        assert set(voci) == atteso, lang
+        assert all(str(v).strip() for v in voci.values()), lang
 
 
 def test_resume_limita_i_dispositivi_diversi(client, tmp_path, monkeypatch):

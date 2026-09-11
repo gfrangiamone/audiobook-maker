@@ -465,6 +465,29 @@ def test_avviso_sull_email_sotto_i_campi():
     assert ".vc-warn{" in CSS
 
 
+def test_errore_email_sotto_i_campi():
+    """In cima al modal il messaggio finiva fuori dallo sguardo di chi stava
+    battendo l'indirizzo: va letto dove si e' scritto."""
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    assert p3.index('id="vcEmail2"') < p3.index('id="vcErr3"') < p3.index('vc_p3_email_warn')
+    corpo = _estrai_funzione(VC, "vcErr")
+    assert "vcErr3" in corpo and "vcP3" in corpo
+    # le caselle vecchie vanno comunque svuotate, o il messaggio resta doppio
+    assert corpo.count("vcErr3") >= 2
+
+
+def test_il_conflitto_email_si_ricontrolla_al_rientro():
+    """Chi va a cancellare la vecchia voce dal link dell'email lo fa in
+    un'altra scheda: al ritorno il divieto deve cadere da solo."""
+    corpo = _estrai_funzione(VC, "vcRicontrollaEmailAlRitorno")
+    assert "document.hidden" in corpo and "vcModal" in corpo and "vcP3" in corpo
+    assert "vcCheckEmailTaken()" in corpo
+    init = _estrai_funzione(VC, "vcInit")
+    assert "visibilitychange" in init and "vcRicontrollaEmailAlRitorno" in init
+    # e anche chi rientra nel pannello con i campi gia' pieni
+    assert "vcCheckEmailTaken();" in _estrai_funzione(VC, "vcInitPanel3")
+
+
 def test_dopo_il_pagamento_si_parte_senza_conferma():
     """Il countdown di cinque secondi ha senso dove resta qualcosa da
     decidere; qui il pagamento e' l'ultimo passo e l'elaborazione parte."""

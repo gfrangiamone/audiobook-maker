@@ -158,6 +158,16 @@ try:
 except Exception as _e:
     print(f"WARNING: Could not load i18n/download_pages.json: {_e}", file=sys.stderr)
 
+# Le pagine dei link dell'email (ripresa, dispositivi, cancellazione) nelle
+# lingue dell'interfaccia: chi riceve l'email non passa dal sito e non ha modo
+# di cambiare lingua da li'.
+_VC_PAGES_I18N = {}
+try:
+    with open(SCRIPT_DIR / "i18n" / "voice_clone_pages.json", encoding="utf-8") as _f:
+        _VC_PAGES_I18N = json.load(_f)
+except Exception as _e:
+    print(f"WARNING: Could not load i18n/voice_clone_pages.json: {_e}", file=sys.stderr)
+
 #  -  -  LLM per ottimizzazione testo TTS  -  opzionale  -  -
 # (Configurati e gestiti in generation_engine.py; LLM_MODEL letto qui solo per startup log)
 LLM_MODEL = os.environ.get("ABM_LLM_MODEL", "deepseek-chat")
@@ -9416,16 +9426,89 @@ def api_vc_demo_file(clone_id, which):
     return _vc_send_audio(clone_id, f"demo_{which}.wav")
 
 
-def _vc_page(title, body_html, status=200):
-    html_doc = (f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+# Lo stesso marchio dell'intestazione del sito: chi arriva qui da un link
+# dell'email deve riconoscere subito di chi e' la pagina che gli chiede di
+# cancellare o autorizzare qualcosa.
+_VC_LOGO_SVG = (
+    '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    '<rect width="64" height="64" rx="14" fill="#c29a6c"/>'
+    '<path d="M16 44V20c0-2 1.5-3.5 3.5-3.5C23 16.5 28 17 32 19c4-2 9-2.5 12.5-2.5 2 0 3.5 1.5 3.5 3.5v24"'
+    ' fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M32 19v25" stroke="white" stroke-width="2" stroke-linecap="round"/>'
+    '<path d="M17 36c0-9 6.7-15 15-15s15 6 15 15" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>'
+    '<rect x="13" y="34" width="7" height="10" rx="3" fill="white"/>'
+    '<rect x="44" y="34" width="7" height="10" rx="3" fill="white"/>'
+    '<path d="M22 37.5c1.2-1 1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/>'
+    '<path d="M42 37.5c-1.2-1-1.2-3 0-4" fill="none" stroke="#c29a6c" stroke-width="1.3" stroke-linecap="round"/></svg>')
+
+# Se il file i18n non si carica le pagine devono restare in piedi lo stesso:
+# sono l'unica via per revocare un dispositivo o cancellare una voce.
+_VC_PAGES_FALLBACK = {
+    "brand": "Audiobook Maker",
+    "resume_title": "Resume your voice sample",
+    "resume_q": "Resume the voice sample procedure on this device?",
+    "resume_btn": "Resume",
+    "toomany_title": "Too many devices",
+    "toomany_body": "Too many devices have used this link. Revoke one from the "
+                    "management link in your email, then try again.",
+    "devices_title": "Your voice sample: devices",
+    "devices_intro": "Devices allowed to use your voice sample.",
+    "th_device": "Device", "th_via": "Added via", "th_date": "Date",
+    "revoke_btn": "Revoke", "delete_link": "Delete this voice",
+    "via_creator": "Creation", "via_resume": "Email link", "via_code": "Voice code",
+    "delete_title": "Delete your voice sample",
+    "delete_p1": "This removes your voice sample and every file derived from it. "
+                 "Audiobooks already generated are not affected.",
+    "delete_p2": "If you have not approved the voice yet and want a refund, "
+                 "reject it from the app instead.",
+    "delete_btn": "Delete my voice",
+    "deleted_title": "Voice deleted",
+    "deleted_body": "Your voice sample and its files have been deleted.",
+}
+
+
+def _vc_page_lang():
+    """Lingua della pagina: `?lang=` se c'e', altrimenti quella del browser,
+    e inglese se non e' fra quelle dell'interfaccia. Stesso criterio di
+    /privacy e /support."""
+    lang = (request.args.get("lang") or "").strip().lower().split("-")[0]
+    if lang not in _VC_PAGES_I18N:
+        lang = _get_browser_lang()
+    return lang if lang in _VC_PAGES_I18N else "en"
+
+
+def _vc_txt(lang):
+    """Stringhe della lingua sopra l'inglese: una chiave non ancora tradotta
+    esce in inglese invece che vuota."""
+    t = dict(_VC_PAGES_FALLBACK)
+    t.update(_VC_PAGES_I18N.get("en") or {})
+    t.update(_VC_PAGES_I18N.get(lang) or {})
+    return t
+
+
+def _vc_page(title, body_html, status=200, lang="en"):
+    t = _vc_txt(lang)
+    marchio = html_mod.escape(t["brand"])
+    html_doc = (f"<!doctype html><html lang=\"{html_mod.escape(lang)}\"><head><meta charset=\"utf-8\">"
                 f"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                f"<meta name=\"robots\" content=\"noindex,nofollow\"><title>{html_mod.escape(title)}</title>"
+                f"<meta name=\"robots\" content=\"noindex,nofollow\">"
+                f"<title>{marchio} - {html_mod.escape(title)}</title>"
                 f"<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em}}"
-                f"button{{padding:.6em 1.2em}}table{{border-collapse:collapse}}td{{padding:.3em .8em}}</style>"
-                f"</head><body><h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
+                f"button{{padding:.6em 1.2em}}table{{border-collapse:collapse}}td{{padding:.3em .8em}}"
+                f".brand{{display:flex;align-items:center;gap:.6em;margin-bottom:1.8em;"
+                f"color:inherit;text-decoration:none}}"
+                f".brand svg{{width:42px;height:42px;flex:none}}"
+                f".brand span{{font-size:1.1em;font-weight:600}}</style>"
+                f"</head><body><a class=\"brand\" href=\"/\">{_VC_LOGO_SVG}<span>{marchio}</span></a>"
+                f"<h1>{html_mod.escape(title)}</h1>{body_html}</body></html>")
     # I5: pagine di gestione voce (link email) mai in cache: contengono stato
     # per-dispositivo che cambia dopo ogni azione (revoke, delete, resume).
-    return _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
+    resp = _apply_no_cache(Response(html_doc, status=status, mimetype="text/html"))
+    # La lingua dipende dall'header: senza Vary una cache intermedia servirebbe
+    # a tutti la prima lingua capitata.
+    vary = resp.headers.get("Vary")
+    resp.headers["Vary"] = f"{vary}, Accept-Language" if vary else "Accept-Language"
+    return resp
 
 
 def _vc_rec_by_manage(token):
@@ -9445,17 +9528,18 @@ def vc_resume(token):
     rec = voice_clone.by_resume_token(token)
     if rec is None or rec.get("state") in voice_clone._TERMINAL:
         abort(404)
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
     if request.method == "GET":
-        body = (f"<p>Resume the voice sample procedure on this device?</p>"
-                f"<form method=\"post\"><button>Resume</button></form>")
-        return _vc_page("Resume your voice sample", body)
+        body = (f"<p>{html_mod.escape(t['resume_q'])}</p>"
+                f"<form method=\"post\"><button>{html_mod.escape(t['resume_btn'])}</button></form>")
+        return _vc_page(t["resume_title"], body, lang=lang)
     cid = _get_client_id()
     if cid and not voice_clone._has_cid(rec, cid):
         resume_devices = [d for d in (rec.get("devices") or []) if d.get("via") == "resume"]
         if len(resume_devices) >= RESUME_DEVICES_MAX:
-            body = ("<p>Too many devices have used this link. Revoke one from the "
-                    "management link in your email, then try again.</p>")
-            return _vc_page("Too many devices", body, status=409)
+            body = f"<p>{html_mod.escape(t['toomany_body'])}</p>"
+            return _vc_page(t["toomany_title"], body, status=409, lang=lang)
         with voice_clone._lock:
             devices = list(rec.get("devices") or []) + [{"cid": cid, "added_at": time.time(), "via": "resume"}]
             voice_clone.store().update(rec["id"], {"devices": devices})
@@ -9474,19 +9558,28 @@ def vc_devices(token):
     rec = _vc_rec_by_manage(token)
     if rec is None:
         abort(404)
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
     righe = ""
     for d in rec.get("devices") or []:
         when = datetime.fromtimestamp(float(d.get("added_at") or 0), timezone.utc).strftime("%Y-%m-%d")
         chiave = _vc_device_key(d.get("cid"))
         azione = ("" if d.get("via") == "creator" else
                   f"<form method=\"post\" action=\"/vc/{html_mod.escape(token)}/devices/revoke\" style=\"display:inline\">"
-                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\"><button>Revoke</button></form>")
-        righe += (f"<tr><td>{chiave}</td><td>{html_mod.escape(str(d.get('via') or ''))}</td>"
+                  f"<input type=\"hidden\" name=\"key\" value=\"{chiave}\">"
+                  f"<button>{html_mod.escape(t['revoke_btn'])}</button></form>")
+        # «creator», «resume» e «code» sono nomi interni: a chi legge si dice
+        # da dove e' entrato quel dispositivo, nella sua lingua.
+        via = str(d.get("via") or "")
+        righe += (f"<tr><td>{chiave}</td><td>{html_mod.escape(t.get('via_' + via, via))}</td>"
                   f"<td>{when}</td><td>{azione}</td></tr>")
-    body = (f"<p>Devices allowed to use your voice sample.</p>"
-            f"<table><tr><th>Device</th><th>Added via</th><th>Date</th><th></th></tr>{righe}</table>"
-            f"<p><a href=\"/vc/{html_mod.escape(token)}/delete\">Delete this voice</a></p>")
-    return _vc_page("Your voice sample: devices", body)
+    body = (f"<p>{html_mod.escape(t['devices_intro'])}</p>"
+            f"<table><tr><th>{html_mod.escape(t['th_device'])}</th>"
+            f"<th>{html_mod.escape(t['th_via'])}</th>"
+            f"<th>{html_mod.escape(t['th_date'])}</th><th></th></tr>{righe}</table>"
+            f"<p><a href=\"/vc/{html_mod.escape(token)}/delete?lang={html_mod.escape(lang)}\">"
+            f"{html_mod.escape(t['delete_link'])}</a></p>")
+    return _vc_page(t["devices_title"], body, lang=lang)
 
 
 @app.route("/vc/<token>/devices/revoke", methods=["POST"])
@@ -9502,7 +9595,11 @@ def vc_devices_revoke(token):
             voice_clone.revoke_device(token, d.get("cid"))
             _vc_log(rec, "VOICE_CLONE_DEVICE_REVOKED")
             break
-    return _apply_no_cache(redirect(f"/vc/{token}/devices", code=302))
+    # La revoca rimanda alla stessa pagina: se l'utente aveva forzato una
+    # lingua con ?lang= deve ritrovarla dopo il giro.
+    ql = (request.args.get("lang") or "").strip().lower()
+    coda_lang = f"?lang={html_mod.escape(ql)}" if ql in _VC_PAGES_I18N else ""
+    return _apply_no_cache(redirect(f"/vc/{token}/devices{coda_lang}", code=302))
 
 
 @app.route("/vc/<token>/delete", methods=["GET", "POST"])
@@ -9512,18 +9609,18 @@ def vc_delete(token):
     rec = _vc_rec_by_manage(token)
     if rec is None:
         abort(404)
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
     if request.method == "GET":
-        body = (f"<p>This removes your voice sample and every file derived from it. "
-                f"Audiobooks already generated are not affected.</p>"
-                f"<p>If you have not approved the voice yet and want a refund, "
-                f"reject it from the app instead.</p>"
-                f"<form method=\"post\"><button>Delete my voice</button></form>")
-        return _vc_page("Delete your voice sample", body)
+        body = (f"<p>{html_mod.escape(t['delete_p1'])}</p>"
+                f"<p>{html_mod.escape(t['delete_p2'])}</p>"
+                f"<form method=\"post\"><button>{html_mod.escape(t['delete_btn'])}</button></form>")
+        return _vc_page(t["delete_title"], body, lang=lang)
     out = voice_clone.delete_by_owner(token)
     if out is None:
         abort(404)
     _vc_log(out, "VOICE_CLONE_DELETED")
-    return _vc_page("Voice deleted", "<p>Your voice sample and its files have been deleted.</p>")
+    return _vc_page(t["deleted_title"], f"<p>{html_mod.escape(t['deleted_body'])}</p>", lang=lang)
 
 
 @app.route("/api/community/stats/today")
