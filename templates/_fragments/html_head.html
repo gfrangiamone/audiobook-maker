@@ -1226,13 +1226,16 @@ __REVIEWS_LD__
               <span id="vcTimer" class="vc-timer">0.0 s</span>
             </div>
           </div>
-          <p class="vc-or" data-t="vc_or"></p>
-          <div class="vc-up">
-            <input type="file" id="vcFile" class="vc-up-input" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*">
-            <label for="vcFile" class="vc-up-btn" data-t="vc_up_pick"></label>
-            <span id="vcUpName" class="vc-up-name"></span>
-            <p class="vc-up-hint vc-small"><span data-t="vc_up_hint"></span> <b id="vcUpMb"></b></p>
+          <div id="vcUpBlock">
+            <p class="vc-or" data-t="vc_or"></p>
+            <div class="vc-up">
+              <input type="file" id="vcFile" class="vc-up-input" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*">
+              <label for="vcFile" class="vc-up-btn" data-t="vc_up_pick"></label>
+              <span id="vcUpName" class="vc-up-name"></span>
+              <p class="vc-up-hint vc-small"><span data-t="vc_up_hint"></span> <b id="vcUpMb"></b></p>
+            </div>
           </div>
+          <div id="vcUploading" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_checking"></span></div>
           <div id="vcLocalBlock" class="vc-local" hidden>
             <span class="vc-small" data-t="vc_local_listen"></span>
             <audio id="vcLocalAudio" controls preload="none"></audio>
@@ -1246,7 +1249,6 @@ __REVIEWS_LD__
               <button type="button" id="vcSampleNext" class="btn-primary" data-t="vc_sample_ok"></button>
             </div>
           </div>
-          <div id="vcUploading" class="vc-wait" hidden><div class="sp"></div> <span data-t="vc_checking"></span></div>
           <div class="vc-footer">
             <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
           </div>

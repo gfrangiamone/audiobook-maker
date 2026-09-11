@@ -321,6 +321,13 @@
     });
   }
 
+  /* Registrare e caricare sono due strade alternative: mentre una e' in corso
+     l'altra non serve, e il riquadro tratteggiato ruberebbe la scena
+     all'attesa. Sparisce, e lo spinner resta l'unica cosa che si muove. */
+  function vcSetUploadVisible(on) {
+    var blk = $('vcUpBlock'); if (blk) blk.hidden = !on;
+  }
+
   function vcSetRecording(on) {
     var b = $('vcRecBtn'); var dot = $('vcRecDot'); var ann = $('vcRecCancel');
     if (b) b.textContent = tt(on ? 'vc_rec_stop' : 'vc_rec_start');
@@ -328,6 +335,9 @@
     /* «Annulla» esiste solo mentre si registra: fuori da li' non c'e' niente
        da buttare via e resterebbe un bottone senza effetto. */
     if (ann) ann.hidden = !on;
+    /* Solo la partenza nasconde: lo stop porta dritto alla verifica, che
+       tiene il riquadro nascosto senza farlo lampeggiare per un callback. */
+    if (on) vcSetUploadVisible(false);
   }
 
   /* Chi si accorge a meta' frase di aver letto male butta via il tentativo
@@ -407,6 +417,8 @@
   function vcAbortMedia() {
     if (S.media) S.media.aborted = true;
     vcStopMedia();
+    /* Qui la registrazione non diventa un campione: il riquadro torna. */
+    vcSetUploadVisible(true);
   }
   S.abortMedia = vcAbortMedia;
 
@@ -486,10 +498,12 @@
     fd.append('locale', _val('vcLocale'));
     fd.append('gender', _val('vcGender'));
     var wait = $('vcUploading'); if (wait) wait.hidden = false;
+    vcSetUploadVisible(false);
     var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
     vcErr('');
     vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
       if (wait) wait.hidden = true;
+      vcSetUploadVisible(true);
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
@@ -499,7 +513,7 @@
          copia locale, altrimenti resterebbero due lettori uno sopra l'altro. */
       vcSetLocalAudio(null);
       if (blk) blk.hidden = false;
-    }).catch(function () { if (wait) wait.hidden = true; vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+    }).catch(function () { if (wait) wait.hidden = true; vcSetUploadVisible(true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   function vcInitPanel2() {
@@ -507,6 +521,7 @@
     vcSetBusy(false);
     var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
     var wait = $('vcUploading'); if (wait) wait.hidden = true;
+    vcSetUploadVisible(true);
     var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
     var nome = $('vcUpName'); if (nome) nome.textContent = '';
     vcSetLocalAudio(null);

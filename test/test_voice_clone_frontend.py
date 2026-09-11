@@ -182,6 +182,28 @@ def test_markup_pannello_2():
     assert 'accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4' in p2
 
 
+def test_il_caricamento_sparisce_mentre_si_registra_e_si_verifica():
+    """Registrare e caricare sono strade alternative: il riquadro tratteggiato,
+    mentre una delle due e' in corso, ruba la scena all'attesa."""
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    assert 'id="vcUpBlock"' in p2
+    # il riquadro e lo spinner si scambiano il posto: stesso punto del pannello
+    assert p2.index('id="vcUpBlock"') < p2.index('id="vcUploading"') < p2.index('id="vcLocalBlock"')
+    assert "#vcUpBlock[hidden]{display:none}" in CSS
+
+    mostra = _estrai_funzione(VC, "vcSetUploadVisible")
+    assert "vcUpBlock" in mostra and "hidden = !on" in mostra
+    # sparisce alla partenza della registrazione...
+    assert "vcSetUploadVisible(false)" in _estrai_funzione(VC, "vcSetRecording")
+    # ...e per tutta la verifica del campione, con ritorno su ogni uscita
+    carica = _estrai_funzione(VC, "vcUploadSample")
+    assert carica.count("vcSetUploadVisible(false)") == 1
+    assert carica.count("vcSetUploadVisible(true)") == 2
+    # un annullo non diventa mai un campione: li' il riquadro torna subito
+    assert "vcSetUploadVisible(true)" in _estrai_funzione(VC, "vcAbortMedia")
+    assert "vcSetUploadVisible(true)" in _estrai_funzione(VC, "vcInitPanel2")
+
+
 def test_errore_sotto_registrazione_e_caricamento():
     """L'utente guarda i comandi, non la testata del modal: il messaggio di
     scarto deve comparire sotto la cattura, non sopra il pannello."""
@@ -635,6 +657,21 @@ def test_sezione_codice_voce_ha_uno_stile_suo():
     for regola in (".vc-claim{", ".vc-claim>summary{", ".vc-claim-row input{", ".vc-linkbtn{"):
         assert regola in CSS, regola
     assert "border-radius:var(--rs)" in CSS[CSS.index(".vc-claim-row input{"):CSS.index(".vc-claim-row input{") + 400]
+
+    # il marcatore e' il triangolo vero, non un escape CSS: scritto come
+    # "\25B8" era arrivato nel foglio come carattere di controllo e a video
+    # si leggeva «B8» al posto della freccia.
+    marcatore = CSS[CSS.index(".vc-claim>summary::before{"):]
+    marcatore = marcatore[:marcatore.index("}")]
+    assert "▸" in marcatore, marcatore
+
+
+def test_il_foglio_di_stile_non_ha_caratteri_di_controllo():
+    r"""Guardia sugli escape scritti a mano: un `content:"\25B8"` passato per
+    una shell diventa il byte 0x15 e il glifo sparisce dalla pagina."""
+    ammessi = (chr(10), chr(13), chr(9))
+    sporchi = sorted({hex(ord(c)) for c in CSS if ord(c) < 32 and c not in ammessi})
+    assert not sporchi, sporchi
 
 
 def test_ripresa_e_gestione():
