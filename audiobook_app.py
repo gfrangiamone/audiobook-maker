@@ -9011,8 +9011,13 @@ def api_vc_sample():
         try:
             mt = voice_clone_audio.prepare_sample(src, wav)
         except voice_clone_audio.SampleRejected as e:
-            _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", e.reason)
+            # Il dettaglio elenca TUTTI i motivi di scarto (il campo `reason`
+            # ne porta uno solo): in log e in console servono le misure, o
+            # dell'ennesimo scarto resta solo la parola «scartato».
+            _vc_log("", "VOICE_CLONE_SAMPLE_REJECTED", str(e))
             metrics = getattr(e, "metrics", None)
+            print(f"[voice_clone] campione scartato: {e} "
+                  f"{metrics.as_dict() if metrics is not None else ''}", flush=True)
             return _vc_err("sample_rejected", str(e), 400, reason=e.reason,
                            metrics=(metrics.as_dict() if metrics is not None else {}))
         cer = None

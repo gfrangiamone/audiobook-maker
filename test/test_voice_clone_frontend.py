@@ -165,7 +165,7 @@ TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m",
               "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
               "vc_gate_short", "vc_gate_long", "vc_gate_noise", "vc_gate_pauses", "vc_gate_nopause",
               "vc_gate_band", "vc_gate_clip", "vc_gate_transcript", "vc_gate_format", "vc_gate_asr",
-              "vc_gate_generic", "vc_err_asr_unavailable", "vc_err_sample_rejected"]
+              "vc_gate_generic", "vc_gate_heard", "vc_err_asr_unavailable", "vc_err_sample_rejected"]
 
 
 def test_markup_pannello_2():
@@ -221,6 +221,39 @@ def test_registrazione_annullata_non_carica_il_campione():
 
     corpo_p2 = _estrai_funzione(VC, "vcInitPanel2")
     assert "vcAbortMedia()" in corpo_p2, "il tasto Indietro del pannello 2 deve annullare la registrazione"
+
+
+def test_motivo_di_scarto_col_prefisso_del_server():
+    """Il server risponde `reason: "vc_gate_short"`, non `"short"`: senza
+    normalizzare il prefisso ogni scarto finiva su vc_gate_generic e l'utente
+    leggeva sempre e solo «Campione non accettato»."""
+    corpo = _estrai_funzione(VC, "vcGateKey")
+    assert "replace(/^vc_gate_/, '')" in corpo
+
+
+def test_messaggio_di_scarto_esplicativo():
+    """Tutti i motivi (non solo il primo), i secondi misurati, la finestra
+    ammessa presa dalla config e, sul testo, quello che l'ASR ha capito."""
+    chiavi = _estrai_funzione(VC, "vcGateKeys")
+    assert "metrics" in chiavi and "reasons" in chiavi
+    msg = _estrai_funzione(VC, "vcRejectMsg")
+    for atteso in ("vcGateKeys(d)", "mt.duration", "cfg.min_sec", "cfg.max_sec",
+                   "vc_gate_heard", "join(' ')"):
+        assert atteso in msg, atteso
+    assert "vcRejectMsg(d)" in _estrai_funzione(VC, "vcApiErrMsg")
+
+
+def test_durata_e_limiti_nei_messaggi_di_durata():
+    """I secondi misurati e la finestra ammessa entrano nel testo: le soglie
+    stanno nella config (env), non possono restare cablate nella frase."""
+    segnaposto = {"vc_gate_short": ("{got}", "{min}"),
+                  "vc_gate_long": ("{got}", "{max}"),
+                  "vc_gate_heard": ("{heard}",)}
+    for lang in LANGS:
+        for blocco in re.findall(r"Object\.assign\(L\." + lang + r",\{(.*?)\}\);", I18N, re.S):
+            for k, v in re.findall(r'(vc_gate_short|vc_gate_long|vc_gate_heard):"([^"]*)"', blocco):
+                for p in segnaposto[k]:
+                    assert p in v, f"{lang}/{k}: manca {p}"
 
 
 def test_chiavi_task3_in_tutte_le_lingue():

@@ -18,8 +18,28 @@
     return 0;
   }
 
+  /* Il server manda la chiave i18n gia' intera ('vc_gate_short'), il nucleo
+     accetta anche il motivo nudo ('short'): senza questa normalizzazione ogni
+     scarto cadeva su vc_gate_generic e l'utente leggeva sempre «Campione non
+     accettato», senza sapere che cosa correggere. */
   function vcGateKey(reason) {
-    return GATE_REASONS.indexOf(reason) >= 0 ? 'vc_gate_' + reason : 'vc_gate_generic';
+    var r = String(reason == null ? '' : reason).replace(/^vc_gate_/, '');
+    return GATE_REASONS.indexOf(r) >= 0 ? 'vc_gate_' + r : 'vc_gate_generic';
+  }
+
+  /* Il gate scarta per piu' motivi insieme (durata + rumore + pause) ma la
+     risposta ne mette uno solo in `reason`: la lista intera viaggia in
+     metrics.reasons. Mostrarli tutti evita all'utente il ping-pong «correggo
+     un difetto, scopro il successivo». */
+  function vcGateKeys(d) {
+    var mt = (d && d.metrics) || {};
+    var raw = (Array.isArray(mt.reasons) && mt.reasons.length) ? mt.reasons : [d && d.reason];
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var k = vcGateKey(raw[i]);
+      if (k !== 'vc_gate_generic' && out.indexOf(k) < 0) out.push(k);
+    }
+    return out.length ? out : ['vc_gate_generic'];
   }
 
   function vcPending(mine) {
@@ -68,7 +88,7 @@
   }
 
   var VcCore = {
-    vcPanelFor: vcPanelFor, vcGateKey: vcGateKey, vcPending: vcPending,
+    vcPanelFor: vcPanelFor, vcGateKey: vcGateKey, vcGateKeys: vcGateKeys, vcPending: vcPending,
     vcHasReadyFor: vcHasReadyFor, vcButtonKey: vcButtonKey, vcVisible: vcVisible,
     vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt, vcRegenAllowed: vcRegenAllowed,
     ACCEPTED_EXT: ACCEPTED_EXT,
@@ -96,12 +116,32 @@
     e.textContent = msg; e.hidden = false;
   }
 
+  /* Perche' il campione e' stato scartato: tutti i motivi, e per la durata
+     anche i secondi misurati e la finestra ammessa (che arriva dalla config,
+     non e' cablata nella frase). Se l'ASR ha capito altro glielo si fa
+     leggere: e' l'unico modo perche' capisca che cosa ha sbagliato. */
+  function vcRejectMsg(d) {
+    var cfg = S.cfg || {};
+    var mt = (d && d.metrics) || {};
+    var dur = Number(mt.duration);
+    var rep = {got: isFinite(dur) && dur > 0 ? dur.toFixed(1) : '?',
+               min: Math.round(Number(cfg.min_sec) || 12),
+               max: Math.round(Number(cfg.max_sec) || 20)};
+    var keys = vcGateKeys(d);
+    var msg = keys.map(function (k) { return tt(k, rep); }).join(' ');
+    var heard = (d && d.heard || '').trim();
+    if (heard && keys.indexOf('vc_gate_transcript') >= 0) msg += ' ' + tt('vc_gate_heard', {heard: heard});
+    return msg;
+  }
+
   /* Messaggio per una risposta d'errore dell'API: chiave i18n per codice,
      altrimenti il testo generico. Mai il testo grezzo del server. */
   function vcApiErrMsg(d, fallbackKey) {
     var code = d && d.error_code;
     if (code === 'rate_limited') return tt('vc_err_rate_limited', {n: (d && d.retry_after) || 60});
-    if (code === 'sample_rejected') return tt(vcGateKey(d.reason));
+    if (code === 'sample_rejected') return vcRejectMsg(d);
+    /* Il limite va detto: senza il segnaposto l'utente leggeva «il limite e' {mb} MB». */
+    if (code === 'too_large') return tt('vc_err_too_large', {mb: (S.cfg && S.cfg.max_upload_mb) || 20});
     var k = code ? 'vc_err_' + code : (fallbackKey || 'vc_err_generic');
     var s = tt(k);
     return (s && s !== k) ? s : tt(fallbackKey || 'vc_err_generic');

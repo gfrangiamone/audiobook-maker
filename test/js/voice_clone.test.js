@@ -66,6 +66,28 @@ test('vcGateKey: motivo di scarto -> chiave i18n, generico per i motivi ignoti',
   assert.equal(VcCore.vcGateKey('asr'), 'vc_gate_asr');
   assert.equal(VcCore.vcGateKey('boh'), 'vc_gate_generic');
   assert.equal(VcCore.vcGateKey(''), 'vc_gate_generic');
+  assert.equal(VcCore.vcGateKey(null), 'vc_gate_generic');
+});
+
+test('vcGateKey: dal server la chiave arriva col prefisso vc_gate_', () => {
+  // Il motivo arriva cosi' dall'API: se il prefisso non viene tolto prima del
+  // confronto, ogni scarto degrada a vc_gate_generic (il «Campione non
+  // accettato. Riprova» che non dice niente a chi registra).
+  assert.equal(VcCore.vcGateKey('vc_gate_short'), 'vc_gate_short');
+  assert.equal(VcCore.vcGateKey('vc_gate_transcript'), 'vc_gate_transcript');
+  assert.equal(VcCore.vcGateKey('vc_gate_boh'), 'vc_gate_generic');
+});
+
+test('vcGateKeys: tutti i motivi dello scarto, senza doppioni', () => {
+  const d = {reason: 'vc_gate_short', metrics: {reasons: ['vc_gate_short', 'vc_gate_noise', 'vc_gate_pauses']}};
+  assert.deepEqual(VcCore.vcGateKeys(d), ['vc_gate_short', 'vc_gate_noise', 'vc_gate_pauses']);
+  // senza metrics resta il solo `reason` (e' il caso del controllo del testo)
+  assert.deepEqual(VcCore.vcGateKeys({reason: 'vc_gate_transcript'}), ['vc_gate_transcript']);
+  // motivi ignoti o risposta vuota: una riga sola, quella generica
+  assert.deepEqual(VcCore.vcGateKeys({reason: 'boh'}), ['vc_gate_generic']);
+  assert.deepEqual(VcCore.vcGateKeys({}), ['vc_gate_generic']);
+  assert.deepEqual(VcCore.vcGateKeys(null), ['vc_gate_generic']);
+  assert.deepEqual(VcCore.vcGateKeys({metrics: {reasons: ['vc_gate_band', 'vc_gate_band']}}), ['vc_gate_band']);
 });
 
 test('vcPending: la prima voce in sospeso, altrimenti null', () => {
