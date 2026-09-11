@@ -558,54 +558,53 @@
     $('vcP2Back').onclick = function () { if (S.busy) return; vcAbortMedia(); vcShow(1); };
   }
 
-  /* ---------- pannello 3: email, brano extra, pagamento ---------- */
+  /* ---------- pannello 3: email, brani di prova, pagamento ---------- */
 
-  function vcLoadExtraTexts() {
-    var sel = $('vcExtraSel'); if (!sel || !S.cur) return;
+  /* Il brano comune si legge prima di pagare perche' e' quello che tutte le
+     voci leggono e quindi l'unico confrontabile. Il secondo lo sorteggia il
+     server fra i candidati della lingua: una combo da sfogliare prima del
+     pagamento non aggiungeva nulla a una scelta che non cambia nulla. */
+  function vcLoadCommonText() {
+    var com = $('vcCommonText'); if (!com || !S.cur) return;
     var loc = S.cur.locale || (S.cur.view && S.cur.view.locale) || '';
     var key = (S.cur.clone_id || '') + '|' + loc;
-    /* Un ritorno su questo pannello (es. dopo un errore di commit) rifa' lo
-       show del pannello 3 e quindi il suo hook: se l'elenco e' gia' quello
-       giusto non lo ricarichiamo, altrimenti la scelta dell'utente sparisce. */
-    if (S.extraLoadedFor === key && sel.options.length) return;
-    sel.innerHTML = '';
+    if (S.extraLoadedFor === key && com.textContent) return;
     vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
-      /* Il brano comune non si sceglie: e' lo stesso per tutte le voci ed e'
-         li' perche' il confronto abbia senso. Scritto, o «secondo brano»
-         resta un riferimento a qualcosa che l'utente non ha mai visto. */
-      var com = $('vcCommonText');
-      if (com) com.textContent = ((r.data.common || {}).text || '');
-      S.extraTexts = {};
-      (r.data.extra || []).forEach(function (x) {
-        var o = document.createElement('option'); o.value = x.id;
-        o.textContent = (x.text || '').slice(0, 90) + ((x.text || '').length > 90 ? '…' : '');
-        sel.appendChild(o);
-        S.extraTexts[x.id] = x.text || '';
-      });
+      com.textContent = ((r.data.common || {}).text || '');
       S.extraLoadedFor = key;
-      vcShowExtraText();
     });
-  }
-
-  /* Le option di una select non vanno a capo: il brano scelto si legge per
-     intero sotto, non troncato a 90 caratteri dentro la combo. */
-  function vcShowExtraText() {
-    var sel = $('vcExtraSel'); var p = $('vcExtraText');
-    if (!sel || !p) return;
-    p.textContent = (S.extraTexts || {})[sel.value] || '';
   }
 
   function vcEmailsOk() {
     var a = ($('vcEmail').value || '').trim(); var b = ($('vcEmail2').value || '').trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) { vcErr(tt('vc_err_email_bad')); return false; }
     if (a.toLowerCase() !== b.toLowerCase()) { vcErr(tt('vc_err_email_mismatch')); return false; }
+    if (S.emailTaken) { vcErr(tt('vc_err_email_has_voice')); return false; }
     return true;
+  }
+
+  /* L'indirizzo si verifica appena e' stato battuto: accorgersi a pagamento
+     avvenuto che quella email ha gia' una voce e' il momento peggiore per
+     accorgersene. Finche' risulta occupata il bottone paga resta spento. */
+  function vcCheckEmailTaken() {
+    var a = ($('vcEmail').value || '').trim(); var b = ($('vcEmail2').value || '').trim();
+    if (!S.cur || !S.cur.clone_id) return;
+    if (a.toLowerCase() !== b.toLowerCase()) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) return;
+    vcPost('/api/voice_clone/check_email', {clone_id: S.cur.clone_id, email: a}).then(function (r) {
+      if (!r.ok) return;
+      var era = !!S.emailTaken;
+      S.emailTaken = !!r.data.taken;
+      var pb = $('vcPayBtn');
+      if (S.emailTaken) { vcErr(tt('vc_err_email_has_voice')); if (pb) pb.disabled = true; }
+      else { if (era) vcErr(''); if (pb) pb.disabled = false; }
+    });
   }
 
   function vcCommit(paymentToken) {
     var body = {clone_id: S.cur.clone_id, email: $('vcEmail').value.trim(), email2: $('vcEmail2').value.trim(),
-                extra_id: $('vcExtraSel').value, payment_token: paymentToken || ''};
+                payment_token: paymentToken || ''};
     vcSetBusy(true);
     vcPost('/api/voice_clone/commit', body).then(function (r) {
       vcSetBusy(false);
@@ -634,6 +633,9 @@
       lines: [{labelKey: 'vc_pay_line', amount: price}],
       total: price, geminiAmount: 0,
       voucherPurpose: 'voice_clone',
+      // Incassato il pagamento non resta nulla da decidere: l'elaborazione del
+      // campione parte subito, senza il giro di conferma del flusso premium.
+      autoConfirm: true,
       titleKey: 'vc_pay_title', noticeKey: 'vc_pay_notice',
       paypal: {endpoint: '/api/paypal_create_order_voice_clone',
                buildBody: function () { return {clone_id: S.cur.clone_id}; },
@@ -671,8 +673,10 @@
     if (no) no.onclick = function () { if (S.busy) return; if (ask) ask.hidden = true; };
     var si = $('vcP3DiscardYes');
     if (si) si.onclick = vcDiscardDraft;
-    var sel = $('vcExtraSel'); if (sel) sel.onchange = vcShowExtraText;
-    vcLoadExtraTexts();
+    S.emailTaken = false;
+    var e1 = $('vcEmail'); if (e1) e1.onblur = vcCheckEmailTaken;
+    var e2 = $('vcEmail2'); if (e2) { e2.onblur = vcCheckEmailTaken; e2.onchange = vcCheckEmailTaken; }
+    vcLoadCommonText();
   }
 
   /* Prima del pagamento non esiste il link di gestione (l'email si indica

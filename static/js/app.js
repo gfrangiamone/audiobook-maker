@@ -2208,6 +2208,16 @@ function _disarmPayConfirm(){
   btn.style.removeProperty('--cd');
   btn.textContent = _payConfirmLabel();
 }
+// Flussi senza nulla da decidere dopo il pagamento (ctx.autoConfirm): la
+// conferma si da' da sola, subito, invece di far guardare un countdown di
+// cinque secondi a chi ha gia' pagato. Torna true se ha confermato lei.
+function _payAfterPaid(){
+  const btn = document.getElementById('btnPayConfirm');
+  if (btn) btn.disabled = false;
+  if (!(_payCtx && _payCtx.autoConfirm)) return false;
+  onPayConfirm();
+  return true;
+}
 function _armPayConfirm(){
   const btn = document.getElementById('btnPayConfirm');
   if (!btn) return;
@@ -2345,10 +2355,11 @@ async function renderPaypalGeminiButtons(){
           _payPaypalErr(d.error||((typeof t==='function'&&t('pay_paypal_capture_failed'))||'Cattura pagamento fallita'));return}
         _geminiPayCaptured=true;  // capture ok: blocca ulteriori creazioni ordine
         _payState.token=d.payment_token;_payState.method='paypal';
-        // Bottone in evidenza + countdown di auto-conferma: il pagamento e' gia'
-        // incassato, restare fermi sul modale non ha alcun senso per l'utente.
-        _armPayConfirm();
+        // Pagamento incassato: restare fermi sul modale non ha senso. Dove c'e'
+        // ancora qualcosa da confermare il bottone si accende col countdown,
+        // altrove la conferma parte da sola.
         const errEl=document.getElementById('payPaypalError');if(errEl){errEl.style.color='#27ae60';errEl.textContent=(typeof t==='function'&&t('pay_paypal_captured'))||'Pagamento completato — clicca Conferma'}
+        if(!_payAfterPaid())_armPayConfirm();
       }catch(e){_payPaypalErr(((typeof t==='function'&&t('pay_paypal_error'))||'Errore PayPal: ')+(e.message||''))}
     },
     onError:function(err){
@@ -2414,11 +2425,10 @@ async function validateVoucherForPayment() {
     // di notifica durante la generazione: l'utente la conferma esplicitamente.
     lastVoucherEmail = email;
     try { localStorage.setItem('abm_v_email', email); } catch (e) {}
-    const btn = document.getElementById('btnPayConfirm');
-    if (btn) btn.disabled = false;
     errEl.style.color = '#27ae60';
     const rem = (typeof d.remaining_eur === 'number') ? d.remaining_eur.toFixed(2) : '0.00';
     errEl.textContent = ((typeof t === 'function' && t('pay_ok_remaining')) || 'Saldo disponibile') + ` €${rem}`;
+    _payAfterPaid();
   } catch (e) {
     errEl.textContent = (typeof t === 'function' && t('pay_err_network')) || 'Errore di rete';
   }

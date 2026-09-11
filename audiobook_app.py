@@ -9059,6 +9059,31 @@ def api_vc_demo_texts():
     return jsonify(d)
 
 
+@app.route("/api/voice_clone/check_email", methods=["POST"])
+def api_vc_check_email():
+    """Dice subito se l'email ha gia' una voce viva.
+
+    Senza questa rotta il conflitto si scopriva solo dentro `commit`, cioe'
+    DOPO aver pagato: il pagamento viene rilasciato, ma l'utente si vede
+    l'errore a cose fatte. Serve la bozza del proprio dispositivo, altrimenti
+    la rotta diventerebbe un modo per sondare gli indirizzi altrui.
+    """
+    gate = _vc_gate()
+    if gate:
+        return gate
+    data = request.get_json(silent=True) or {}
+    rec = _vc_rec_or_404(str(data.get("clone_id") or ""))
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    if not voice_clone.is_owner(rec, _get_client_id()):
+        return _vc_err("not_authorized", "Not authorized", 403)
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return _vc_err("bad_request", "Invalid email", 400)
+    return jsonify({"ok": True,
+                    "taken": bool(voice_clone.email_has_active_voice(email, exclude_id=rec["id"]))})
+
+
 @app.route("/api/voice_clone/commit", methods=["POST"])
 def api_vc_commit():
     gate = _vc_gate()
@@ -9074,9 +9099,12 @@ def api_vc_commit():
     if not e1 or "@" not in e1 or e1 != e2:
         return _vc_err("email_mismatch", "The two email addresses differ", 400)
     testi = _vc_demo_texts(rec.get("locale") or "") or {"common": None, "extra": []}
-    extra = next((e for e in testi["extra"] if e["id"] == data.get("extra_id")), None)
-    if extra is None or testi["common"] is None:
-        return _vc_err("bad_request", "Unknown demo phrase", 400)
+    # Il secondo brano non si sceglie piu': una combo in piu' da leggere prima
+    # di pagare non aggiungeva nulla, e uno a sorte fra i candidati vale
+    # esattamente quanto uno scelto a mano.
+    if not testi["extra"] or testi["common"] is None:
+        return _vc_err("bad_request", "No demo phrases for this locale", 400)
+    extra = secrets.choice(testi["extra"])
     price = payment.voice_clone_price_eur()
     try:
         out, created = voice_clone.commit(

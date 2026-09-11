@@ -178,9 +178,8 @@ def test_demo_texts(client):
 def test_commit_gratis_e_doppio_click(client, tmp_path, monkeypatch, ambiente):
     monkeypatch.setattr(payment, "EUR_CLONED_VOICE", 0.0)
     rec = _draft(tmp_path)
-    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
     body = {"clone_id": rec["id"], "email": "U@example.com", "email2": "u@example.com ",
-            "extra_id": extra, "payment_token": ""}
+            "payment_token": ""}
     r = client.post("/api/voice_clone/commit", json=body)
     assert r.status_code == 200, r.get_json()
     d = r.get_json()
@@ -192,10 +191,47 @@ def test_commit_gratis_e_doppio_click(client, tmp_path, monkeypatch, ambiente):
     assert len(ambiente) == 1
 
 
+def test_il_secondo_brano_lo_sorteggia_il_server(client, tmp_path, monkeypatch):
+    """La combo prima del pagamento faceva scegliere fra brani equivalenti: il
+    commit non la vuole piu' e pesca da se' fra i candidati della lingua."""
+    monkeypatch.setattr(payment, "EUR_CLONED_VOICE", 0.0)
+    candidati = {e["text"] for e in
+                 client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"]}
+    rec = _draft(tmp_path)
+    r = client.post("/api/voice_clone/commit", json={
+        "clone_id": rec["id"], "email": "u@example.com", "email2": "u@example.com",
+        "payment_token": ""})
+    assert r.status_code == 200, r.get_json()
+    demo = vc.get(rec["id"])["demo"]
+    assert demo["extra_text"] in candidati and demo["extra_id"]
+
+
+def test_check_email_dice_subito_se_l_indirizzo_e_occupato(client, tmp_path):
+    """Senza questa rotta il conflitto si scopriva dentro commit, cioe' dopo
+    aver pagato: il pagamento viene rilasciato, ma l'utente lo scopre a cose
+    fatte. Serve la bozza del proprio dispositivo, o diventerebbe un modo per
+    sondare gli indirizzi altrui."""
+    _paid(tmp_path, cid="cid-due", email="presa@x.it")
+    _cid(client, "cid-uno")
+    rec = _draft(tmp_path)
+    r = client.post("/api/voice_clone/check_email",
+                    json={"clone_id": rec["id"], "email": "PRESA@x.it"})
+    assert r.status_code == 200 and r.get_json()["taken"] is True
+    r = client.post("/api/voice_clone/check_email",
+                    json={"clone_id": rec["id"], "email": "libera@x.it"})
+    assert r.status_code == 200 and r.get_json()["taken"] is False
+    r = client.post("/api/voice_clone/check_email",
+                    json={"clone_id": rec["id"], "email": "senza-chiocciola"})
+    assert r.status_code == 400
+    _cid(client, "cid-tre")
+    r = client.post("/api/voice_clone/check_email",
+                    json={"clone_id": rec["id"], "email": "libera@x.it"})
+    assert r.status_code == 403 and r.get_json()["error_code"] == "not_authorized"
+
+
 def test_commit_errori(client, tmp_path, monkeypatch):
     rec = _draft(tmp_path)
-    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
-    base = {"clone_id": rec["id"], "email": "a@x.it", "email2": "a@x.it", "extra_id": extra,
+    base = {"clone_id": rec["id"], "email": "a@x.it", "email2": "a@x.it",
             "payment_token": "NOPE"}
     r = client.post("/api/voice_clone/commit", json=dict(base, email2="b@x.it"))
     assert r.status_code == 400 and r.get_json()["error_code"] == "email_mismatch"
@@ -220,10 +256,9 @@ def test_commit_su_voce_terminale_rimborsa_la_capture_orfana(client, tmp_path):
         vc.transition(rec["id"], s)
     payment._payments["ORD-VC-1"] = {"order_id": "ORD-VC-1", "amount_eur": 5.0, "email": "a@x.it",
                                      "captured_at": 1_000_000, "used": False, "job_id": "vc:" + rec["id"]}
-    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
     r = client.post("/api/voice_clone/commit", json={
         "clone_id": rec["id"], "email": "a@x.it", "email2": "a@x.it",
-        "extra_id": extra, "payment_token": "ORD-VC-1"})
+        "payment_token": "ORD-VC-1"})
     assert r.status_code == 410 and r.get_json()["error_code"] == "voice_gone"
     assert payment._payments["ORD-VC-1"]["used"] is True
 

@@ -345,8 +345,8 @@ def test_chiavi_task3_in_tutte_le_lingue():
         assert not mancanti, f"{lang}: {mancanti}"
 
 
-TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_p3_sample_ok", "vc_p3_redo",
-              "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_common",
+TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra_auto", "vc_p3_sample_ok", "vc_p3_redo",
+              "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_common", "vc_p3_email_warn",
               "vc_pay_btn", "vc_pay_btn_free",
               "vc_pay_title", "vc_pay_line", "vc_pay_notice", "vc_err_email_bad", "vc_err_email_mismatch",
               "vc_err_email_has_voice", "vc_err_payment_invalid", "vc_err_voice_not_found",
@@ -356,9 +356,10 @@ TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_p3_samp
 def test_markup_pannello_3():
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
     for i in ("vcP3Sample", "vcP3Redo", "vcP3Discard", "vcP3DiscardAsk", "vcP3DiscardYes",
-              "vcP3DiscardNo", "vcEmail", "vcEmail2", "vcCommonText", "vcExtraSel", "vcExtraText",
+              "vcP3DiscardNo", "vcEmail", "vcEmail2", "vcCommonText",
               "vcPrice", "vcP3Back", "vcPayBtn"):
         assert f'id="{i}"' in p3, i
+    assert "vcExtraSel" not in p3, "il secondo brano lo sceglie il server, non l'utente"
 
 
 def test_il_campione_gia_accettato_si_riascolta_dal_pagamento():
@@ -383,14 +384,52 @@ def test_bozza_abbandonabile_prima_del_pagamento():
 
 
 def test_i_due_brani_di_prova_sono_scritti():
-    """«Secondo brano» non dice niente a chi il primo non l'ha mai visto."""
+    """«Secondo brano» non dice niente a chi il primo non l'ha mai visto. Il
+    primo si legge per esteso; del secondo si dice che lo sorteggiamo noi."""
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
     assert 'data-t="vc_p3_demos_t"' in p3 and 'data-t="vc_p3_common"' in p3
-    corpo = _estrai_funzione(VC, "vcLoadExtraTexts")
+    assert 'data-t="vc_p3_extra_auto"' in p3
+    corpo = _estrai_funzione(VC, "vcLoadCommonText")
     assert "vcCommonText" in corpo, "il brano comune va scritto, non solo contato"
-    assert "S.extraTexts" in corpo
-    # le option di una select non vanno a capo: il testo intero sta sotto
-    assert "vcExtraText" in _estrai_funzione(VC, "vcShowExtraText")
+    for morto in ("vcExtraSel", "vcExtraText", "S.extraTexts", "vcShowExtraText"):
+        assert morto not in VC, morto
+
+
+def test_il_secondo_brano_lo_sorteggia_il_server():
+    """La combo prima del pagamento faceva scegliere fra brani equivalenti:
+    una decisione senza conseguenze piazzata nel punto piu' delicato."""
+    corpo = _estrai_funzione(VC, "vcCommit")
+    assert "extra_id" not in corpo
+
+
+def test_email_verificata_subito_non_dopo_il_pagamento():
+    """Il conflitto «questa email ha gia' una voce» si scopriva dentro commit,
+    cioe' a pagamento avvenuto: il peggior momento possibile."""
+    corpo = _estrai_funzione(VC, "vcCheckEmailTaken")
+    assert "/api/voice_clone/check_email" in corpo
+    assert "vc_err_email_has_voice" in corpo
+    assert "pb.disabled = true" in corpo, "finche' e' occupata non si paga"
+    init = _estrai_funzione(VC, "vcInitPanel3")
+    assert init.count("vcCheckEmailTaken") >= 2, "vanno agganciati entrambi i campi"
+    assert "S.emailTaken" in _estrai_funzione(VC, "vcEmailsOk"),         "anche il click su «paga» deve rispettare l'esito del controllo"
+
+
+def test_avviso_sull_email_sotto_i_campi():
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    assert 'data-t="vc_p3_email_warn"' in p3
+    assert p3.index('id="vcEmail2"') < p3.index('data-t="vc_p3_email_warn"') < p3.index('vc_p3_demos_t')
+    assert ".vc-warn{" in CSS
+
+
+def test_dopo_il_pagamento_si_parte_senza_conferma():
+    """Il countdown di cinque secondi ha senso dove resta qualcosa da
+    decidere; qui il pagamento e' l'ultimo passo e l'elaborazione parte."""
+    assert "autoConfirm: true" in _estrai_funzione(VC, "vcPay")
+    dopo = _estrai_funzione(JS, "_payAfterPaid")
+    assert "_payCtx.autoConfirm" in dopo and "onPayConfirm()" in dopo
+    # PayPal e buoni: due strade, stessa regola.
+    assert "if(!_payAfterPaid())_armPayConfirm();" in JS
+    assert "_payAfterPaid();" in _estrai_funzione(JS, "validateVoucherForPayment")
 
 
 def test_form_email_allineato():
@@ -399,7 +438,7 @@ def test_form_email_allineato():
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
     assert p3.count('class="vc-fld"') >= 2
     assert re.search(r"(?m)^\.vc-fld input,\.vc-fld select\{width:100%", CSS)
-    for c in (".vc-form", ".vc-card", ".vc-demos", ".vc-quote"):
+    for c in (".vc-form", ".vc-card", ".vc-demos", ".vc-quote", ".vc-warn"):
         assert c + "{" in CSS, c
 
 
@@ -446,11 +485,11 @@ def test_vcp3back_rispetta_lo_stato_busy():
     assert "if (S.busy) return;" in m.group(1)
 
 
-def test_vcloadextratexts_non_ricarica_se_gia_popolato():
-    corpo = _estrai_funzione(VC, "vcLoadExtraTexts")
+def test_vcloadcommontext_non_ricarica_se_gia_popolato():
+    corpo = _estrai_funzione(VC, "vcLoadCommonText")
     assert "S.extraLoadedFor" in corpo
     assert re.search(r"if\s*\(S\.extraLoadedFor\s*===\s*key.*\)\s*return;", corpo), \
-        "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
+        "deve saltare il reload quando il testo e' gia' quello dello stesso clone_id/locale"
 
 
 TASK5_KEYS = ["vc_code_intro", "vc_code_note", "vc_wait", "vc_demos_intro", "vc_demo_common", "vc_demo_extra",
@@ -587,7 +626,7 @@ def _return_a_livello_zero(frammento):
 def test_vcinitpanel4_cablaggio_sempre_eseguito():
     """I1: vcInitPanel4 non deve mai poter uscire prima di aver cablato i
     bottoni e chiamato vcRenderP4/vcWatch. Il guard di memoizzazione vive
-    solo in vcLoadExtraTexts, qui si controlla che vcInitPanel4 stesso non
+    solo in vcLoadCommonText, qui si controlla che vcInitPanel4 stesso non
     contenga alcun `return;` A LIVELLO ZERO (fuori da callback/onclick interne)
     che possa saltare quella coda."""
     corpo = _estrai_funzione(VC, "vcInitPanel4")

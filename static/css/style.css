@@ -1324,6 +1324,9 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-fld input{padding:10px 14px;background:var(--srf2);border:1px solid var(--brd);
               border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem}
 .vc-fld input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+/* L'email non e' un dato qualsiasi: e' l'unica chiave per ritrovare e
+   gestire la voce. L'avviso sta attaccato ai campi e si legge. */
+.vc-warn{margin:-.3rem 0 0;color:var(--txd);border-left:2px solid var(--ac);padding-left:.6rem}
 /* Il campione gia' accettato: l'utente deve poterlo riconoscere, rifare o
    buttare via senza uscire dal pannello. */
 .vc-card{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;
@@ -1338,8 +1341,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-demos-t{margin:0 0 .5rem;font-weight:600}
 .vc-demo-one{margin:.6rem 0 0}
 .vc-demo-one:first-of-type{margin-top:0}
-/* Le option di una `select` non vanno a capo: il brano scelto si legge per
-   intero qui sotto, non nel bordo troncato della combo. */
+/* Il brano che verra' letto, citato per esteso. */
 .vc-quote{margin:.35rem 0 0;padding-left:.6rem;border-left:2px solid var(--brd);
           color:var(--txd);font-size:.86rem;font-style:italic}
 .vc-quote:empty{display:none}
