@@ -118,10 +118,13 @@ def _pick_chunk_max_chars(voice_id, language):
     il cap sul testo resta sotto quel limite (default 1800, ~100 char di margine
     per i tag; il clamp lato speechify_tts impedisce override pericolosi).
 
-    VoxCPM: voxcpm_tts.chunk_max_chars() (default 300, override env
+    VoxCPM: voxcpm_tts.chunk_max_chars() (default 280, override env
     ABM_VOXCPM_CHUNK_CHARS). Non e' un limite dell'API ma di qualita': il
     modello riancora il timbro al campione solo all'inizio di ogni chunk, e su
     chunk lunghi la voce deriva. Il worker non rispezza i chunk che riceve.
+    Attenzione: per VoxCPM il tetto vero non e' questo ma quello allargato da
+    _pick_sentence_slack (280 x 1,15 = 322), che una frase intera puo'
+    raggiungere pur di non finire spezzata su una virgola.
 
     Edge: 2000 sempre (motore senza vincoli stringenti di RPD).
     """
@@ -187,6 +190,32 @@ def _pick_pre_split(voice_id):
         except Exception:
             return None
     return None
+
+
+# Quanto una frase puo' sforare il cap pur di NON essere spezzata sulle
+# virgole. Vale solo per VoxCPM, ed e' il rimedio a un difetto suo: il worker
+# sintetizza ogni chunk come enunciato a se' e li concatena campione su
+# campione, quindi un taglio a meta' frase si sente due volte — la virgola
+# finale, sospesa, il modello la puo' pronunciare («punto»), e fra i due
+# enunciati restano in fila la coda di silenzio del primo e l'attacco del
+# secondo, una pausa piu' lunga di un punto fermo dove il testo aveva una
+# virgola. Collaudo del 9/9/2026: «il paragone e', il piu' delle volte,» /
+# «a favore dell'affare umano».
+#
+# La frase tenuta intera allunga il chunk, e chunk lunghi fanno derivare il
+# timbro: per questo il cap base e' sceso a 280 (voxcpm_tts.CHUNK_MAX_CHARS),
+# cosi' il tetto con lo sforamento resta intorno ai 300 misurati sul worker.
+_VOXCPM_SENTENCE_SLACK = 0.15
+
+
+def _pick_sentence_slack(voice_id):
+    """Frazione di sforamento concessa a una frase intera, 0 = nessuna.
+
+    Solo VoxCPM: gli altri motori hanno cap che sono limiti veri (byte
+    dell'API per Gemini, lunghezza SSML per Speechify) o non hanno il
+    problema, e allargarli non si fa.
+    """
+    return _VOXCPM_SENTENCE_SLACK if _is_voxcpm_voice(voice_id) else 0.0
 
 
 # Minimo di caratteri per frase standalone: sotto questa soglia accorpiamo
@@ -268,7 +297,8 @@ def _hard_split_oversized(s, max_chars, max_bytes):
     return out
 
 
-def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
+def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
+                           sentence_slack=0.0):
     """Spezza il testo in chunk <= max_chars (e <= max_bytes UTF-8).
 
     Strategia: tokenizza in frasi (terminatori latini E CJK), pre-spezza ogni
@@ -279,6 +309,12 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
 
     max_bytes: cap byte UTF-8 opzionale (necessario per Gemini, che limita a
         byte; per il giapponese ogni carattere pesa ~3 byte). Se None, solo chars.
+    sentence_slack: frazione di sforamento concessa a una frase pur di tenerla
+        intera invece di spezzarla sulle virgole (vedi _pick_sentence_slack).
+        Riguarda SOLO il cap caratteri: max_bytes resta un limite invalicabile.
+        L'accumulo di frasi adiacenti continua a fermarsi a max_chars — la
+        deroga serve alla frase che da sola sfora di poco, non a gonfiare i
+        chunk.
     """
     if not text or not text.strip():
         return [text] if text else [""]
@@ -286,10 +322,13 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None):
     sentences = [s.strip() for s in raw_sentences if s and s.strip()]
     if not sentences:
         sentences = [text.strip()]
-    # Pre-bound: ogni frase oversize viene spezzata sotto i cap.
+    # Pre-bound: ogni frase oversize viene spezzata sotto i cap. La frase che
+    # sfora di poco resta intera se il motore lo concede: meglio un chunk un
+    # po' lungo che un taglio a meta' frase (vedi _pick_sentence_slack).
+    tetto_frase = max(max_chars, int(max_chars * (1.0 + max(0.0, sentence_slack))))
     bounded = []
     for s in sentences:
-        if _within(s, max_chars, max_bytes):
+        if _within(s, tetto_frase, max_bytes):
             bounded.append(s)
         else:
             bounded.extend(_hard_split_oversized(s, max_chars, max_bytes))
@@ -686,7 +725,8 @@ def _sanitize_tts_text(text: str):
 
 
 def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
-                 strip_round=True, strip_square=True, pre_split=None):
+                 strip_round=True, strip_square=True, pre_split=None,
+                 sentence_slack=0.0):
     """Costruisce la lista di chunk da generare per tutti i capitoli di un BookInfo.
 
     max_chars: limite caratteri/chunk (default CHUNK_MAX_CHARS=2000).
@@ -697,6 +737,8 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
                letto dal TTS invece di essere rimosso (default: rimuove entrambe).
     pre_split: callable opzionale applicato al testo INTERO del capitolo appena
                prima della spezzatura (vedi _pick_pre_split). None = nessuna.
+    sentence_slack: sforamento concesso a una frase intera pur di non spezzarla
+               sulle virgole (vedi _pick_sentence_slack). 0 = nessuno.
     """
     plan = []
     for ch in info.chapters:
@@ -724,7 +766,9 @@ def _plan_chunks(info, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         # il seguito sbaglierebbero verdetto (vedi _pick_pre_split).
         if pre_split is not None:
             full_text = pre_split(full_text)
-        chunks = split_text_into_chunks(full_text, max_chars=max_chars, max_bytes=max_bytes)
+        chunks = split_text_into_chunks(full_text, max_chars=max_chars,
+                                        max_bytes=max_bytes,
+                                        sentence_slack=sentence_slack)
         for ci, chunk_text in enumerate(chunks):
             plan.append({
                 "chapter_index": ch.index,

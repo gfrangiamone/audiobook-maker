@@ -240,7 +240,12 @@ def concurrency():
 # il campione. Il worker non rispezza i `chunks` che riceve: il tetto lo
 # decide qui e va tenuto uguale a ABM_VOXCPM_CHUNK_MAX_CHARS sull'endpoint,
 # cosi' un testo grezzo e un piano di ABM producono gli stessi chunk.
-CHUNK_MAX_CHARS = 300
+#
+# Sceso da 300 a 280 l'11/9/2026: `tts_split._pick_sentence_slack` lascia a
+# una frase il 15% di sforamento pur di non spezzarla sulle virgole, e il
+# tetto vero diventa 322. Partire da 280 tiene quel tetto vicino ai 300
+# misurati invece di portarlo a 345.
+CHUNK_MAX_CHARS = 280
 # Sotto questo pavimento una frase normale non ci sta e lo splitter
 # taglierebbe sulle virgole; il tetto e' quello degli altri motori.
 CHUNK_MIN_CHARS = 40
@@ -1017,6 +1022,31 @@ def normalizza_puntini(testo):
     return _PUNTINI_RE.sub(_sostituisci, testo)
 
 
+# Segni che a fine enunciato restano sospesi: la frase continua nel chunk
+# dopo, ma per il modello quello e' tutto il testo che c'e'.
+_CODA_SOSPESA = ",;:"
+
+
+def pulisci_coda(testo):
+    """Toglie la virgola (o il punto e virgola, o i due punti) rimasta in coda.
+
+    Quando una frase supera il cap, `tts_split` la spezza sui breakpoint
+    deboli e il pezzo se ne va con la virgola attaccata in fondo. VoxCPM quel
+    segno sospeso lo puo' pronunciare: nel collaudo del 9/9/2026 il chunk che
+    finiva «il piu' delle volte,» usciva con un «punto» detto a voce. Il
+    chunk tagliato a meta' frase deve arrivare al modello come arriva
+    qualunque altro taglio dello splitter, cioe' senza punteggiatura finale.
+
+    Non tocca i terminatori veri (. ! ? ...): li' la pausa e' dovuta.
+    """
+    if not testo:
+        return testo
+    pulito = testo.rstrip()
+    while pulito and pulito[-1] in _CODA_SOSPESA:
+        pulito = pulito[:-1].rstrip()
+    return pulito if pulito else testo
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
                        on_progress=None):
@@ -1125,7 +1155,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
 
         payload = {"input": {
             "action": "generate",
-            "chunks": [normalizza_puntini(c) for c in chunks],
+            "chunks": [pulisci_coda(normalizza_puntini(c)) for c in chunks],
             **clone,
             "cfg": CFG_READ,
             "concurrency": conc,

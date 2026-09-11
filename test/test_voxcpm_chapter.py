@@ -187,6 +187,98 @@ def test_la_normalizzazione_a_monte_e_solo_di_voxcpm():
     assert tts_split._pick_pre_split("") is None
 
 
+# -- Il taglio a meta' frase ---------------------------------------------
+#
+# Collaudo dell'11/9/2026. La frase che supera il cap viene spezzata sulle
+# virgole, e il pezzo se ne va con la virgola sospesa in coda: VoxCPM quel
+# segno lo pronuncia («il piu' delle volte» + «punto» + «a favore dell'affare
+# umano») e fra i due enunciati concatenati restano in fila la coda di
+# silenzio del primo e l'attacco del secondo, una pausa piu' lunga di un punto
+# fermo. Due rimedi: la frase che sfora di poco non si spezza, e la coda
+# sospesa non parte per il worker.
+
+# 308 caratteri: sopra il cap di 280, sotto il tetto con lo sforamento (322).
+# E' la frase del collaudo, quella che normalizza_puntini ha reso una sola
+# fondendo le due meta' attorno ai puntini.
+SFORA_DI_POCO = (
+    "Ma se paragoniamo la nostra attenzione, la serieta della nostra ricerca, "
+    "il nostro desiderio di conoscere all'attenzione, alla serieta, al "
+    "desiderio che portiamo nel trovare tal ragguaglio o tale aiuto di cui "
+    "abbiamo bisogno per un affare umano, il paragone e, il piu delle volte, "
+    "a favore dell'affare umano."
+)
+
+
+def test_la_frase_che_sfora_di_poco_non_si_spezza():
+    assert 280 < len(SFORA_DI_POCO) <= int(280 * 1.15)
+    intero = tts_split.split_text_into_chunks(
+        SFORA_DI_POCO, max_chars=280,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert intero == [SFORA_DI_POCO]
+    # Senza deroga il taglio cade sulla virgola, ed e' il difetto.
+    spezzato = tts_split.split_text_into_chunks(SFORA_DI_POCO, max_chars=280)
+    assert len(spezzato) == 2
+    assert spezzato[0].endswith("il piu delle volte,")
+
+
+def test_lo_sforamento_non_gonfia_i_chunk():
+    """La deroga e' per la frase singola, non per l'accumulo di frasi."""
+    frase = "Frase da quaranta caratteri buoni, si."
+    testo = " ".join([frase.strip()] * 20)
+    chunks = tts_split.split_text_into_chunks(
+        testo, max_chars=280,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert chunks, "nessun chunk"
+    assert all(len(c) <= 280 for c in chunks), [len(c) for c in chunks]
+
+
+def test_lo_sforamento_non_sfonda_il_cap_byte():
+    """Il cap byte e' un limite dell'API: la deroga non lo tocca."""
+    chunks = tts_split.split_text_into_chunks(
+        SFORA_DI_POCO, max_chars=280, max_bytes=290,
+        sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
+    assert all(len(c.encode("utf-8")) <= 290 for c in chunks)
+    assert len(chunks) > 1
+
+
+def test_lo_sforamento_e_solo_di_voxcpm():
+    assert tts_split._pick_sentence_slack(VOCE) > 0
+    assert tts_split._pick_sentence_slack("it-IT-ElsaNeural") == 0.0
+    assert tts_split._pick_sentence_slack("gemini:flash25:it-IT/Kore") == 0.0
+    assert tts_split._pick_sentence_slack("") == 0.0
+
+
+@pytest.mark.parametrize("testo,atteso", [
+    ("il paragone e, il piu delle volte,", "il paragone e, il piu delle volte"),
+    ("una premessa:", "una premessa"),
+    ("un inciso;", "un inciso"),
+    # Spazi e segni in fila: si toglie tutto quel che resta sospeso.
+    ("la frase continua , ", "la frase continua"),
+    # I terminatori veri non si toccano: li' la pausa e' dovuta.
+    ("Fine del periodo.", "Fine del periodo."),
+    ("Davvero?", "Davvero?"),
+    ("Non lo so…", "Non lo so…"),
+    # Una virgoletta dopo la virgola non e' una coda sospesa.
+    ('disse "vieni",', 'disse "vieni"'),
+    # Non si restituisce mai il vuoto.
+    (",", ","),
+    ("", ""),
+])
+def test_pulisci_coda(testo, atteso):
+    assert voxcpm_tts.pulisci_coda(testo) == atteso
+
+
+def test_la_coda_sospesa_non_arriva_al_worker(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["il paragone e, il piu delle volte,", "a favore dell'affare umano."],
+        VOCE, str(tmp_path / "cap.pcm"))
+    assert finto.payload[0]["input"]["chunks"] == [
+        "il paragone e, il piu delle volte", "a favore dell'affare umano."]
+
+
 def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok())
     sintetizza(finto, tmp_path, monkeypatch)
