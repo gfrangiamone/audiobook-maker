@@ -83,14 +83,10 @@
     return 'webm';
   }
 
-  function vcRegenAllowed(view) {
-    return !!(view && Number(view.regen_left) > 0);
-  }
-
   var VcCore = {
     vcPanelFor: vcPanelFor, vcGateKey: vcGateKey, vcGateKeys: vcGateKeys, vcPending: vcPending,
     vcHasReadyFor: vcHasReadyFor, vcButtonKey: vcButtonKey, vcVisible: vcVisible,
-    vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt, vcRegenAllowed: vcRegenAllowed,
+    vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt,
     ACCEPTED_EXT: ACCEPTED_EXT,
   };
 
@@ -262,6 +258,10 @@
   window.vcResume = vcResume;
 
   function vcInitPanel1() {
+    /* Il codice-voce di un'altra persona si aggiunge anche senza aver mai
+       campionato la propria: da qui si salta alla sezione che lo accetta. */
+    var claim = $('vcP1Claim');
+    if (claim) claim.onclick = function () { if (S.busy) return; vcShow('mine'); };
     var c = $('vcConsent'); var next = $('vcP1Next');
     if (!c || !next) return;
     c.checked = false; next.disabled = true;
@@ -381,7 +381,7 @@
     var back = $('vcP2Back'); if (back) back.disabled = !!on;
     var back3 = $('vcP3Back'); if (back3) back3.disabled = !!on;
     var pay = $('vcPayBtn'); if (pay) pay.disabled = !!on;
-    ['vcApprove', 'vcRegen', 'vcRegenSel', 'vcReject', 'vcRejectYes', 'vcRejectNo', 'vcReject2', 'vcRetry',
+    ['vcApprove', 'vcReject', 'vcRejectYes', 'vcRejectNo', 'vcReject2', 'vcRetry',
       'vcClaimBtn', 'vcConfirmBtn', 'vcNewVoice'].forEach(function (id) {
       var e = $(id); if (e) e.disabled = !!on;
     });
@@ -556,13 +556,29 @@
     sel.innerHTML = '';
     vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      /* Il brano comune non si sceglie: e' lo stesso per tutte le voci ed e'
+         li' perche' il confronto abbia senso. Scritto, o «secondo brano»
+         resta un riferimento a qualcosa che l'utente non ha mai visto. */
+      var com = $('vcCommonText');
+      if (com) com.textContent = ((r.data.common || {}).text || '');
+      S.extraTexts = {};
       (r.data.extra || []).forEach(function (x) {
         var o = document.createElement('option'); o.value = x.id;
         o.textContent = (x.text || '').slice(0, 90) + ((x.text || '').length > 90 ? '…' : '');
         sel.appendChild(o);
+        S.extraTexts[x.id] = x.text || '';
       });
       S.extraLoadedFor = key;
+      vcShowExtraText();
     });
+  }
+
+  /* Le option di una select non vanno a capo: il brano scelto si legge per
+     intero sotto, non troncato a 90 caratteri dentro la combo. */
+  function vcShowExtraText() {
+    var sel = $('vcExtraSel'); var p = $('vcExtraText');
+    if (!sel || !p) return;
+    p.textContent = (S.extraTexts || {})[sel.value] || '';
   }
 
   function vcEmailsOk() {
@@ -621,7 +637,46 @@
     if (price && S.cfg) price.textContent = S.cfg.free ? tt('vc_price_free') : tt('vc_price', {p: Number(S.cfg.price_eur).toFixed(2)});
     var pb = $('vcPayBtn'); if (pb) { pb.disabled = false; pb.textContent = tt(S.cfg && S.cfg.free ? 'vc_pay_btn_free' : 'vc_pay_btn'); pb.onclick = vcPay; }
     $('vcP3Back').onclick = function () { if (S.busy) return; vcShow(2); };
+    /* La bozza vive sul server da quando il campione e' stato accettato, ma
+       l'utente che aveva chiuso la finestra non lo sa: riaprendo si ritrovava
+       davanti al pagamento senza capire quale campione stesse pagando. Qui il
+       campione si riascolta, si rifa' o si butta via. */
+    var sam = $('vcP3Sample');
+    if (sam && S.cur && S.cur.clone_id) {
+      sam.src = '/api/voice_clone/' + encodeURIComponent(S.cur.clone_id) + '/sample.wav?ts=' + Date.now();
+    }
+    var redo = $('vcP3Redo');
+    if (redo) redo.onclick = function () { if (S.busy) return; vcShow(2); };
+    /* Conferma in linea come il rifiuto delle prove: una finestra di conferma
+       del browser bloccherebbe tutto e stonerebbe col resto del wizard. */
+    var ask = $('vcP3DiscardAsk'); if (ask) ask.hidden = true;
+    var del = $('vcP3Discard');
+    if (del) del.onclick = function () { if (S.busy) return; if (ask) ask.hidden = false; };
+    var no = $('vcP3DiscardNo');
+    if (no) no.onclick = function () { if (S.busy) return; if (ask) ask.hidden = true; };
+    var si = $('vcP3DiscardYes');
+    if (si) si.onclick = vcDiscardDraft;
+    var sel = $('vcExtraSel'); if (sel) sel.onchange = vcShowExtraText;
     vcLoadExtraTexts();
+  }
+
+  /* Prima del pagamento non esiste il link di gestione (l'email si indica
+     qui): senza questa via d'uscita la bozza resterebbe in piedi fino alla
+     scadenza e il bottone del campionamento direbbe «riprendi» per sempre. */
+  function vcDiscardDraft() {
+    if (S.busy || !S.cur || !S.cur.clone_id) return;
+    var id = S.cur.clone_id;
+    vcErr('');
+    vcSetBusy(true);
+    vcPost('/api/voice_clone/' + encodeURIComponent(id) + '/discard', {}).then(function (r) {
+      vcSetBusy(false);
+      if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+      S.cur = {};
+      var ask2 = $('vcP3DiscardAsk'); if (ask2) ask2.hidden = true;
+      var sam = $('vcP3Sample');
+      if (sam) { try { sam.pause(); } catch (e) {} sam.removeAttribute('src'); }
+      vcRefreshMine().then(function () { vcSyncButton(); vcShow(1); });
+    }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   /* ---------- pannello 4: attesa, demo, decisione ---------- */
@@ -637,7 +692,7 @@
     show('vcDone', st === 'ready');
     show('vcRefunded', st === 'refunded' || st === 'expired' || st === 'deleted');
     if (!demosOn) {
-      /* Regenerate/retry o cambio di stato: le due prove smettono di
+      /* Retry o cambio di stato: le due prove smettono di
          suonare, non restano in sottofondo dietro lo spinner o l'esito. */
       ['vcDemoCommon', 'vcDemoExtra'].forEach(function (id) {
         var a = $(id);
@@ -649,10 +704,6 @@
       var c = $('vcDemoCommon'); var x = $('vcDemoExtra');
       if (c && du.common) c.src = du.common + '?ts=' + Date.now();
       if (x && du.extra) x.src = du.extra + '?ts=' + Date.now();
-      var left = Number(view.regen_left) || 0;
-      var rl = $('vcRegenLeft'); if (rl) rl.textContent = tt('vc_regen_left', {n: left});
-      var rb = $('vcRegen'); if (rb) rb.disabled = S.busy || !vcRegenAllowed(view);
-      var rs = $('vcRegenSel'); if (rs) rs.disabled = S.busy || !vcRegenAllowed(view);
       var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true;
     }
   }
@@ -729,43 +780,13 @@
     });
   }
 
-  /* Come vcLoadExtraTexts sul pannello 3: rientrare piu' volte nel pannello 4
-     (regenerate, retry, evento SSE, riapertura del modal) non deve ripetere
-     la fetch ne' scartare la selezione dell'utente se l'elenco e' gia' quello
-     giusto. La guardia sta solo qui: non deve MAI poter interrompere
-     vcInitPanel4, che deve sempre finire di cablare i bottoni e chiamare
-     vcRenderP4/vcWatch (vedi I1 nella revisione finale). */
-  function vcLoadRegenTexts() {
-    var sel = $('vcRegenSel');
-    if (!sel || !S.cur) return;
-    var cloneId = S.cur.clone_id;
-    var loc = (S.cur.view && S.cur.view.locale) || S.cur.locale || '';
-    var regenKey = cloneId + '|' + loc;
-    if (S.regenLoadedFor === regenKey && sel.options.length) return;
-    sel.innerHTML = '';
-    vcFetch('/api/voice_clone/demo_texts?locale=' + encodeURIComponent(loc)).then(function (r) {
-      if (!r.ok) return;
-      if (!S.cur || S.cur.clone_id !== cloneId) return;
-      (r.data.extra || []).forEach(function (x) {
-        var o = document.createElement('option'); o.value = x.id;
-        o.textContent = (x.text || '').slice(0, 60) + '…';
-        sel.appendChild(o);
-      });
-      if (S.cur.view && S.cur.view.extra_id) sel.value = S.cur.view.extra_id;
-      S.regenLoadedFor = regenKey;
-    });
-  }
-
   function vcInitPanel4() {
     var cb = $('vcCodeBox');
     if (cb) {
       cb.hidden = !S.cur.voice_code;
       var c = $('vcCode'); if (c) c.textContent = S.cur.voice_code || '';
     }
-    vcLoadRegenTexts();
-    var sel = $('vcRegenSel');
     $('vcApprove').onclick = function () { vcAction('approve').then(function (v) { if (v) vcAfterApprove(v); }); };
-    $('vcRegen').onclick = function () { vcAction('regenerate', {extra_id: sel ? sel.value : ''}).then(function (v) { if (v) vcWatch(); }); };
     $('vcReject').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = false; };
     $('vcRejectNo').onclick = function () { if (S.busy) return; var rc = $('vcRejectConfirm'); if (rc) rc.hidden = true; };
     $('vcRejectYes').onclick = function () { vcAction('reject').then(function (v) { if (v) vcRefreshMine().then(vcSyncButton); }); };
@@ -804,15 +825,34 @@
       if (m.owner && m.voice_code) {
         var code = document.createElement('div'); code.className = 'vc-code'; code.textContent = m.voice_code; li.appendChild(code);
       }
-      if (m.state === 'ready' && m.demo_urls && m.demo_urls.common) {
-        var a = document.createElement('audio'); a.controls = true; a.preload = 'none'; a.src = m.demo_urls.common; li.appendChild(a);
+      if (m.sample_url) {
+        /* Si riascolta il campione registrato, non una prova sintetizzata:
+           era la fonte dell'equivoco («questa non e' la mia voce»). */
+        var cap = document.createElement('p'); cap.className = 'vc-small'; cap.textContent = tt('vc_mine_sample');
+        li.appendChild(cap);
+        var row = document.createElement('div'); row.className = 'vc-sample-row';
+        var a = document.createElement('audio'); a.controls = true; a.preload = 'none'; a.src = m.sample_url;
+        row.appendChild(a);
+        /* «Rimanda l'email» sta qui a destra del player, come icona con
+           tooltip: e' un ripiego raro, non merita una riga di bottoni. */
+        if (m.owner && m.voice_code) {
+          var rb = document.createElement('button');
+          rb.type = 'button'; rb.className = 'vc-icon-btn';
+          rb.title = tt('vc_resend'); rb.setAttribute('aria-label', tt('vc_resend'));
+          rb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+            + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + '<rect x="3" y="5" width="18" height="14" rx="2"></rect>'
+            + '<path d="m3 7 9 6 9-6"></path></svg>';
+          rb.onclick = function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok')); }); };
+          row.appendChild(rb);
+        }
+        li.appendChild(row);
       }
       var act = document.createElement('div'); act.className = 'vc-actions';
       var mk = function (key, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-outline btn-sm'; b.textContent = tt(key); b.onclick = fn; act.appendChild(b); return b; };
       if (m.pending) mk('vc_resume_btn', function () { vcResume(m.id); });
       if (!m.owner) mk('vc_forget', function () { vcAction2(m.id, 'forget').then(function (ok) { if (ok) vcOpen('mine'); }); });
-      if (m.owner) mk('vc_resend', function () { vcAction2(m.id, 'resend').then(function (ok) { if (ok) vcErr(tt('vc_resend_ok')); }); });
-      li.appendChild(act);
+      if (act.childNodes.length) li.appendChild(act);
       ul.appendChild(li);
     });
   }
@@ -871,6 +911,9 @@
   function vcInitPanelMine() {
     vcRenderMine();
     var row = $('vcConfirmRow'); if (row) row.hidden = true;
+    /* Chi arriva qui senza voci proprie ci arriva per il codice-voce: la
+       sezione si apre da sola invece di restare una riga da scoprire. */
+    var box = $('vcClaimBox'); if (box) box.open = !S.mine.length;
     $('vcClaimBtn').onclick = vcClaim;
     $('vcConfirmBtn').onclick = vcConfirm;
     $('vcMineClose').onclick = function () { if (S.busy) return; vcClose(); };

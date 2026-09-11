@@ -91,7 +91,7 @@ def test_config_e_prompt(client):
     assert r.status_code == 200
     d = r.get_json()
     assert d["enabled"] is True and d["price_eur"] == 5.0 and d["free"] is False
-    assert "it" in d["languages"] and d["regen_max"] == 3 and d["max_upload_mb"] == 20
+    assert "it" in d["languages"] and d["max_upload_mb"] == 20
     r = client.get("/api/voice_clone/prompt?lang=it&gender=f")
     assert r.status_code == 200 and r.get_json()["text"] == _prompt()
     assert client.get("/api/voice_clone/prompt?lang=xx&gender=f").status_code == 400
@@ -252,7 +252,7 @@ def test_progress_sse_termina_su_demos_ready(client, tmp_path):
     r = client.get(f"/api/voice_clone/progress/{rec['id']}")
     assert r.status_code == 200 and r.mimetype == "text/event-stream"
     payload = json.loads(r.get_data(as_text=True).strip().split("data: ")[-1])
-    assert payload["state"] == "demos_ready" and payload["regen_left"] == 3
+    assert payload["state"] == "demos_ready"
     assert payload["demo_urls"]["common"].endswith("/demo/common")
     assert "token" not in payload and "owner_email" not in payload
     _cid(client, "altro")
@@ -260,19 +260,11 @@ def test_progress_sse_termina_su_demos_ready(client, tmp_path):
     assert client.get("/api/voice_clone/progress/vc_nope").status_code == 404
 
 
-def test_approve_regenerate_reject(client, tmp_path, monkeypatch, ambiente):
+def test_approve_e_rifiuto(client, tmp_path, monkeypatch, ambiente):
     rec = _paid(tmp_path)
     for s in ("demos_generating", "demos_ready"):
         vc.transition(rec["id"], s)
     monkeypatch.setattr(vc, "upload_to_r2", lambda r, n: True)
-    r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": "nope"})
-    assert r.status_code == 400
-    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
-    monkeypatch.setattr(vcd, "start_demos", lambda cid, **kw: vc.get(cid))
-    r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": extra})
-    assert r.status_code == 200 and r.get_json()["regen_left"] == 2
-    # start_demos e' mockato no-op (fixture ambiente): regenerate() resta in
-    # demos_ready, non demos_generating. Nessuna transizione manuale serve.
     r = client.post(f"/api/voice_clone/{rec['id']}/approve")
     assert r.status_code == 200 and r.get_json()["state"] == "ready"
     assert ambiente[-1][1] == "La tua voce campione è pronta"
@@ -295,6 +287,9 @@ def test_mine_claim_confirm_forget(client, tmp_path, ambiente):
         vc.transition(rec["id"], s)
     d = client.get("/api/voice_clone/mine").get_json()["voices"]
     assert d[0]["id"] == rec["id"] and d[0]["owner"] is True and d[0]["voice_code"]
+    # il player della scheda fa sentire il campione registrato, non una prova
+    assert d[0]["sample_url"] == f"/api/voice_clone/{rec['id']}/sample.wav"
+    assert client.get(d[0]["sample_url"]).status_code == 200
     _cid(client, "cid-due")
     assert client.get("/api/voice_clone/mine").get_json()["voices"] == []
     r = client.post("/api/voice_clone/claim", json={"voice_code": "ZZZZ-ZZZZ-ZZZZ"})
@@ -316,6 +311,34 @@ def test_mine_claim_confirm_forget(client, tmp_path, ambiente):
     assert client.post(f"/api/voice_clone/{rec['id']}/forget").status_code == 200
     assert client.get("/api/voice_clone/mine").get_json()["voices"] == []
     assert client.post(f"/api/voice_clone/{rec['id']}/resend").status_code == 403
+
+
+def test_discard_butta_via_la_bozza_non_pagata(client, tmp_path):
+    """Prima del pagamento non c'e' email, quindi nemmeno link di gestione:
+    senza questa via d'uscita la bozza resta in piedi fino alla scadenza e il
+    bottone del campionamento dice «riprendi» per sempre."""
+    rec = _draft(tmp_path)
+    d = vc.voice_dir(rec["token"])
+    assert os.path.isdir(d)
+    r = client.post(f"/api/voice_clone/{rec['id']}/discard")
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert vc.get(rec["id"])["state"] == "deleted"
+    assert not os.path.isdir(d)
+    assert client.get("/api/voice_clone/mine").get_json()["voices"] == []
+
+
+def test_discard_solo_dal_creatore_e_solo_prima_del_pagamento(client, tmp_path):
+    rec = _draft(tmp_path)
+    _cid(client, "cid-due")
+    r = client.post(f"/api/voice_clone/{rec['id']}/discard")
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    assert vc.get(rec["id"])["state"] == "sample_ok", "un altro dispositivo non la tocca"
+    _cid(client, "cid-uno")
+    pagata = _paid(tmp_path, cid="cid-uno", email="altra@example.com")
+    r = client.post(f"/api/voice_clone/{pagata['id']}/discard")
+    # dopo il pagamento la rinuncia passa da `reject`, che emette il voucher
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    assert vc.get(pagata["id"])["state"] != "deleted"
 
 
 def test_forget_rifiuta_il_dispositivo_proprietario(client, tmp_path):
@@ -523,19 +546,16 @@ def test_approve_voce_sparita(client, tmp_path):
     assert r.status_code == 410 and r.get_json()["error_code"] == "voice_gone"
 
 
-def test_regenerate_esaurito(client, tmp_path, monkeypatch, ambiente):
-    """T6b: oltre regen_max rigenerazioni -> 409 regen_exhausted (invece di
-    continuare a consumare la coda di sintesi)."""
+def test_la_rigenerazione_non_esiste_piu(client, tmp_path, ambiente):
+    """La rigenerazione delle prove e' stata tolta: era lenta e poco utile.
+    Chi restasse con una vecchia pagina aperta prende un 404/405, non una coda
+    di sintesi avviata di nascosto."""
     rec = _paid(tmp_path)
-    for s in ("demos_generating", "demos_ready"):
-        vc.transition(rec["id"], s)
-    monkeypatch.setattr(vcd, "start_demos", lambda cid, **kw: vc.get(cid))
-    extra = client.get("/api/voice_clone/demo_texts?locale=it-IT").get_json()["extra"][0]["id"]
-    for _ in range(vc.regen_max()):
-        r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": extra})
-        assert r.status_code == 200, r.get_json()
-    r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": extra})
-    assert r.status_code == 409 and r.get_json()["error_code"] == "regen_exhausted"
+    for st in ("demos_generating", "demos_ready"):
+        vc.transition(rec["id"], st)
+    r = client.post(f"/api/voice_clone/{rec['id']}/regenerate", json={"extra_id": "x"})
+    assert r.status_code in (404, 405)
+    assert "regen_max" not in client.get("/api/voice_clone/config").get_json()
 
 
 def test_confirm_scaduto_via_api(client, tmp_path, monkeypatch, ambiente):

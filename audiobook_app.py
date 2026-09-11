@@ -8853,7 +8853,7 @@ def _vc_urls(rec):
 
 
 def _vc_view(rec):
-    """Vista pubblica per progress/approve/regenerate/retry/reject/claim/confirm.
+    """Vista pubblica per progress/approve/retry/reject/claim/confirm.
 
     `voice_code` va restituito solo da `commit` (il pagante, che costruisce la
     propria risposta a parte) e da `mine()` (solo al proprietario): qui va
@@ -8864,7 +8864,6 @@ def _vc_view(rec):
     pub.pop("voice_code", None)
     demo = rec.get("demo") or {}
     if demo:
-        pub["regen_left"] = max(0, int(demo.get("regen_max") or 0) - int(demo.get("regen_used") or 0))
         pub["extra_id"] = demo.get("extra_id")
     if rec.get("state") in ("demos_ready", "ready"):
         pub["demo_urls"] = {"common": f"/api/voice_clone/{rec['id']}/demo/common",
@@ -8956,7 +8955,6 @@ def api_vc_config():
     price = payment.voice_clone_price_eur()
     return jsonify({"enabled": True, "price_eur": price, "free": price <= 0,
                     "max_upload_mb": voice_clone.max_upload_mb(),
-                    "regen_max": voice_clone.regen_max(),
                     "languages": voice_clone.offered_languages(),
                     "min_sec": g.min_sec, "max_sec": g.max_sec,
                     "asr": voice_clone_audio.asr_enabled()})
@@ -9184,8 +9182,6 @@ def _vc_action(clone_id, fn):
         return _vc_err("voice_not_found", "Voice not found", 404)
     try:
         out = fn(rec, _get_client_id())
-    except voice_clone_demo.RegenExhausted:
-        return _vc_err("regen_exhausted", "No regenerations left", 409)
     except voice_clone.BadTransition:
         return _vc_err("bad_state", "Action not allowed in this state", 409)
     except voice_clone.VoiceGone:
@@ -9211,24 +9207,6 @@ def api_vc_approve(clone_id):
                 retention_days=int(voice_clone.retention_sec() // 86400))
         return out
     return _vc_action(clone_id, go)
-
-
-@app.route("/api/voice_clone/<clone_id>/regenerate", methods=["POST"])
-def api_vc_regenerate(clone_id):
-    data = request.get_json(silent=True) or {}
-
-    def go(rec, cid):
-        testi = _vc_demo_texts(rec.get("locale") or "") or {"extra": []}
-        extra = next((e for e in testi["extra"] if e["id"] == data.get("extra_id")), None)
-        if extra is None:
-            raise _VcBadRequest("Unknown demo phrase")
-        out = voice_clone_demo.regenerate(rec["id"], cid, extra_id=extra["id"], extra_text=extra["text"])
-        _vc_log(out, "VOICE_CLONE_REGENERATE")
-        return out
-    try:
-        return _vc_action(clone_id, go)
-    except _VcBadRequest as e:
-        return _vc_err("bad_request", str(e), 400)
 
 
 @app.route("/api/voice_clone/<clone_id>/retry", methods=["POST"])
@@ -9308,6 +9286,23 @@ def api_vc_confirm():
              "none": ("confirm_none", 404), "locked": ("code_locked", 423)}
     ec, sc = mappa.get(esito, ("confirm_none", 404))
     return _vc_err(ec, f"Confirmation {esito}", sc)
+
+
+@app.route("/api/voice_clone/<clone_id>/discard", methods=["POST"])
+def api_vc_discard(clone_id):
+    """Butta via una bozza mai pagata: e' l'unica via d'uscita prima del
+    pagamento, visto che il link di gestione arriva solo dopo."""
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    out = voice_clone.discard_draft(clone_id, _get_client_id())
+    if out is None:
+        return _vc_err("bad_state", "Only an unpaid draft of this device can be discarded", 409)
+    _vc_log(out, "VOICE_CLONE_DRAFT_DISCARDED")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/voice_clone/<clone_id>/forget", methods=["POST"])

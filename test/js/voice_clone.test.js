@@ -127,12 +127,6 @@ test('vcRecordExt: dal mimeType del registratore all estensione del file', () =>
   assert.equal(VcCore.vcRecordExt(''), 'webm');
 });
 
-test('vcRegenAllowed: solo con rigenerazioni residue', () => {
-  assert.equal(VcCore.vcRegenAllowed({regen_left: 2}), true);
-  assert.equal(VcCore.vcRegenAllowed({regen_left: 0}), false);
-  assert.equal(VcCore.vcRegenAllowed({}), false);
-});
-
 test('vcHasReadyFor: una voce pronta nella lingua', () => {
   const mine = [{state: 'ready', lang: 'it', voice_id: 'x'}, {state: 'paid', lang: 'en'}];
   assert.equal(VcCore.vcHasReadyFor(mine, 'it'), true);

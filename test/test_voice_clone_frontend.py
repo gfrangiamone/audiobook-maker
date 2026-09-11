@@ -101,7 +101,7 @@ def test_nucleo_puro_esportato_e_senza_dom():
     assert "document." not in testa and "window." not in testa.replace("typeof window", "")
     assert "module.exports = VcCore" in VC
     for f in ("vcPanelFor", "vcGateKey", "vcPending", "vcHasReadyFor", "vcButtonKey", "vcVisible",
-              "vcUploadCheck", "vcRecordExt", "vcRegenAllowed"):
+              "vcUploadCheck", "vcRecordExt"):
         assert f"function {f}(" in VC
 
 
@@ -323,7 +323,9 @@ def test_chiavi_task3_in_tutte_le_lingue():
         assert not mancanti, f"{lang}: {mancanti}"
 
 
-TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_pay_btn", "vc_pay_btn_free",
+TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_p3_sample_ok", "vc_p3_redo",
+              "vc_p3_discard", "vc_p3_discard_ask", "vc_p3_demos_t", "vc_p3_common",
+              "vc_pay_btn", "vc_pay_btn_free",
               "vc_pay_title", "vc_pay_line", "vc_pay_notice", "vc_err_email_bad", "vc_err_email_mismatch",
               "vc_err_email_has_voice", "vc_err_payment_invalid", "vc_err_voice_not_found",
               "vc_err_voice_gone", "vc_err_not_authorized", "vc_err_bad_request"]
@@ -331,8 +333,52 @@ TASK4_KEYS = ["vc_p3_intro", "vc_email", "vc_email2", "vc_p3_extra", "vc_pay_btn
 
 def test_markup_pannello_3():
     p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
-    for i in ("vcEmail", "vcEmail2", "vcExtraSel", "vcPrice", "vcP3Back", "vcPayBtn"):
+    for i in ("vcP3Sample", "vcP3Redo", "vcP3Discard", "vcP3DiscardAsk", "vcP3DiscardYes",
+              "vcP3DiscardNo", "vcEmail", "vcEmail2", "vcCommonText", "vcExtraSel", "vcExtraText",
+              "vcPrice", "vcP3Back", "vcPayBtn"):
         assert f'id="{i}"' in p3, i
+
+
+def test_il_campione_gia_accettato_si_riascolta_dal_pagamento():
+    """Chi chiude la finestra dopo che il campione e' passato non sa che la
+    bozza vive sul server: riaprendo si trovava davanti al pagamento senza
+    sapere che cosa stesse pagando."""
+    corpo = _estrai_funzione(VC, "vcInitPanel3")
+    assert "/sample.wav" in corpo and "vcP3Sample" in corpo
+    assert "vcShow(2)" in corpo, "da qui si deve poter rifare il campione"
+
+
+def test_bozza_abbandonabile_prima_del_pagamento():
+    """Il link di gestione arriva solo con l'email, cioe' dopo il pagamento:
+    senza questa via d'uscita la bozza resterebbe in piedi fino alla scadenza
+    e il bottone del campionamento direbbe «riprendi» per sempre."""
+    corpo = _estrai_funzione(VC, "vcDiscardDraft")
+    assert "/discard" in corpo
+    assert "vcRefreshMine()" in corpo and "vcShow(1)" in corpo
+    init = _estrai_funzione(VC, "vcInitPanel3")
+    assert "vcP3DiscardYes" in init and "vcP3DiscardAsk" in init
+    assert "window.confirm" not in VC, "la conferma e' in linea, come per il rifiuto delle prove"
+
+
+def test_i_due_brani_di_prova_sono_scritti():
+    """«Secondo brano» non dice niente a chi il primo non l'ha mai visto."""
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    assert 'data-t="vc_p3_demos_t"' in p3 and 'data-t="vc_p3_common"' in p3
+    corpo = _estrai_funzione(VC, "vcLoadExtraTexts")
+    assert "vcCommonText" in corpo, "il brano comune va scritto, non solo contato"
+    assert "S.extraTexts" in corpo
+    # le option di una select non vanno a capo: il testo intero sta sotto
+    assert "vcExtraText" in _estrai_funzione(VC, "vcShowExtraText")
+
+
+def test_form_email_allineato():
+    """Le due email erano label d'autore (display:block, maiuscolo) con dentro
+    un input inline a larghezza di default: etichette e campi disallineati."""
+    p3 = HTML[HTML.index('id="vcP3"'):HTML.index('id="vcP4"')]
+    assert p3.count('class="vc-fld"') >= 2
+    assert re.search(r"(?m)^\.vc-fld input,\.vc-fld select\{width:100%", CSS)
+    for c in (".vc-form", ".vc-card", ".vc-demos", ".vc-quote"):
+        assert c + "{" in CSS, c
 
 
 def test_pagamento_passa_dal_modal_esistente():
@@ -386,21 +432,21 @@ def test_vcloadextratexts_non_ricarica_se_gia_popolato():
 
 
 TASK5_KEYS = ["vc_code_intro", "vc_code_note", "vc_wait", "vc_demos_intro", "vc_demo_common", "vc_demo_extra",
-              "vc_approve", "vc_regen", "vc_regen_left", "vc_reject", "vc_reject_sure", "vc_yes", "vc_no",
-              "vc_demo_failed", "vc_retry", "vc_done", "vc_refunded", "vc_err_regen_exhausted", "vc_err_bad_state"]
+              "vc_approve", "vc_reject", "vc_reject_sure", "vc_yes", "vc_no",
+              "vc_demo_failed", "vc_retry", "vc_done", "vc_refunded", "vc_err_bad_state"]
 
 
 def test_markup_pannello_4():
     p4 = HTML[HTML.index('id="vcP4"'):HTML.index('id="vcPMine"')]
     for i in ("vcCodeBox", "vcCode", "vcWait", "vcDemos", "vcDemoCommon", "vcDemoExtra", "vcApprove",
-              "vcRegenSel", "vcRegen", "vcRegenLeft", "vcReject", "vcRejectConfirm", "vcRejectYes",
+              "vcReject", "vcRejectConfirm", "vcRejectYes",
               "vcRejectNo", "vcFailed", "vcReject2", "vcRetry", "vcDone", "vcDoneClose", "vcRefunded"):
         assert f'id="{i}"' in p4, i
 
 
 def test_avanzamento_via_sse_e_decisioni():
     assert "new EventSource('/api/voice_clone/progress/'" in VC
-    for a in ("'approve'", "'regenerate'", "'retry'", "'reject'"):
+    for a in ("'approve'", "'retry'", "'reject'"):
         assert f"vcAction({a}" in VC, a
     assert "window._vcJustCreated = view.voice_id" in VC
     assert "confirm(" not in VC.replace("vcRejectConfirm", "").replace("vcConfirm", "").replace("confirm_code", ""), "mai confirm() del browser"
@@ -415,7 +461,7 @@ def test_chiavi_task5_in_tutte_le_lingue():
 
 def test_vcsetbusy_blocca_anche_i_controlli_del_pannello_4():
     corpo = _estrai_funzione(VC, "vcSetBusy")
-    for i in ("vcApprove", "vcRegen", "vcReject", "vcRetry"):
+    for i in ("vcApprove", "vcReject", "vcRetry"):
         assert i in corpo, i
 
 
@@ -428,7 +474,7 @@ def test_vcaction_usa_la_guardia_anti_doppio_invio():
 # ---------- fix round 1 (review Task 5: F1-F4) ----------
 
 def test_regola_small_esiste_in_css():
-    """F1/M7: .vc-code-note e .vcRegenLeft usano la classe .vc-small (rinominata
+    """F1/M7: .vc-code-note usa la classe .vc-small (rinominata
     da .small, generica, per non collidere con classi omonime future fuori dal
     wizard voci campionate)."""
     assert re.search(r"\.vc-small\s*\{[^}]*\}", CSS), ".vc-small non definita in style.css"
@@ -452,7 +498,7 @@ def test_css_vc_niente_token_non_definiti():
 
 
 def test_vcrenderp4_mette_in_pausa_le_prove_quando_nascoste():
-    """F2: cambiando stato (regenerate/retry) le due prove audio non devono
+    """F2: cambiando stato (retry/esito) le due prove audio non devono
     restare a suonare in sottofondo dietro lo spinner o l'esito."""
     corpo = _estrai_funzione(VC, "vcRenderP4")
     assert "vcDemoCommon" in corpo and "vcDemoExtra" in corpo
@@ -483,18 +529,21 @@ def test_vcwatch_e_vcclose_ripuliscono_il_timer_di_retry():
         "vcWatch deve azzerare un retry precedente prima di aprire un nuovo EventSource"
 
 
-def test_vcloadregentexts_non_ricarica_le_frasi_extra_se_gia_popolate():
-    """F4/I1: come vcLoadExtraTexts sul pannello 3, rientrare piu' volte nel
-    pannello 4 non deve ripetere la fetch ne' scartare una risposta tardiva
-    di un clone_id ormai abbandonato. La guardia sta ORA solo dentro
-    vcLoadRegenTexts (estratta da vcInitPanel4): non deve mai poter
-    interrompere il cablaggio dei bottoni ne' vcRenderP4/vcWatch."""
-    corpo = _estrai_funzione(VC, "vcLoadRegenTexts")
-    assert "S.regenLoadedFor" in corpo
-    assert re.search(r"if\s*\(S\.regenLoadedFor\s*===\s*regenKey.*\)\s*return;", corpo), \
-        "deve saltare il reload quando la selezione e' gia' per lo stesso clone_id/locale"
-    assert re.search(r"if\s*\(!S\.cur\s*\|\|\s*S\.cur\.clone_id\s*!==\s*cloneId\)\s*return;", corpo), \
-        "la risposta della fetch deve essere scartata se nel frattempo e' cambiato il clone corrente"
+def test_niente_rigenerazione_nel_pannello_4():
+    """La rigenerazione delle prove e' stata tolta (lenta e poco utile): via il
+    bottone, la combo delle frasi, il contatore e le chiavi che li scrivevano.
+    Restano solo rifiuto e approvazione, sulla stessa riga."""
+    assert "vcRegen" not in VC and "regen_left" not in VC
+    assert "vcRegen" not in HTML and "vc_regen" not in HTML
+    assert "vc_regen" not in I18N
+    p4 = HTML[HTML.index('id="vcP4"'):HTML.index('id="vcPMine"')]
+    demos = p4[p4.index('id="vcDemos"'):p4.index('id="vcFailed"')]
+    riga = demos[demos.index('class="vc-footer"'):]
+    riga = riga[:riga.index("</div>")]
+    assert 'id="vcReject"' in riga and 'id="vcApprove"' in riga,         "rifiuto e approvazione devono stare nella stessa riga di chiusura"
+    # la conferma inline resta sotto, e sparendo non deve lasciare un vuoto
+    assert 'id="vcRejectConfirm" class="vc-confirm"' in demos
+    assert ".vc-confirm[hidden]{display:none}" in CSS
 
 
 def _return_a_livello_zero(frammento):
@@ -516,16 +565,14 @@ def _return_a_livello_zero(frammento):
 def test_vcinitpanel4_cablaggio_sempre_eseguito():
     """I1: vcInitPanel4 non deve mai poter uscire prima di aver cablato i
     bottoni e chiamato vcRenderP4/vcWatch. Il guard di memoizzazione vive
-    solo in vcLoadRegenTexts (verificato sopra), qui si controlla che
-    vcInitPanel4 stesso non contenga alcun `return;` A LIVELLO ZERO (fuori da
-    callback/onclick interne) che possa saltare quella coda."""
-    assert "function vcLoadRegenTexts(" in VC
+    solo in vcLoadExtraTexts, qui si controlla che vcInitPanel4 stesso non
+    contenga alcun `return;` A LIVELLO ZERO (fuori da callback/onclick interne)
+    che possa saltare quella coda."""
     corpo = _estrai_funzione(VC, "vcInitPanel4")
     assert "vcRenderP4(" in corpo
     prima_di_render = corpo[:corpo.index("vcRenderP4(")]
     assert not _return_a_livello_zero(prima_di_render), \
         "vcInitPanel4 non deve uscire in anticipo prima di vcRenderP4 (era il bug F4 riaperto)"
-    assert "vcLoadRegenTexts()" in corpo
 
 
 # ---------- Task 6: ripresa, pannello «Le tue voci», errori di generazione ----------
@@ -535,7 +582,8 @@ TASK6_KEYS = ["vc_mine_empty", "vc_state_ready", "vc_state_sample_ok", "vc_state
               "vc_claim_title", "vc_claim_intro", "vc_claim_ph", "vc_claim_btn", "vc_confirm_intro",
               "vc_confirm_ph", "vc_confirm_btn", "vc_new_voice", "vc_err_code_unknown", "vc_err_code_locked",
               "vc_err_confirm_wrong", "vc_err_confirm_expired", "vc_err_confirm_none",
-              "vc_err_voice_not_authorized", "vc_err_voice_lang_mismatch"]
+              "vc_err_voice_not_authorized", "vc_err_voice_lang_mismatch",
+              "vc_p1_have_code", "vc_mine_sample"]
 
 
 def test_markup_pannello_mine():
@@ -544,6 +592,49 @@ def test_markup_pannello_mine():
     for i in ("vcMineList", "vcClaimCode", "vcClaimBtn", "vcConfirmRow", "vcConfirmCode", "vcConfirmBtn",
               "vcMineClose", "vcNewVoice"):
         assert f'id="{i}"' in pm, i
+
+
+def test_la_scheda_voce_fa_sentire_il_campione_non_la_prova():
+    """Il player della scheda suonava `demo_urls.common`, cioe' una frase
+    sintetizzata: chi lo apriva non riconosceva la propria voce. Ora suona il
+    campione registrato, che il backend espone in `mine()`."""
+    corpo = _estrai_funzione(VC, "vcRenderMine")
+    assert "m.sample_url" in corpo
+    assert "demo_urls" not in corpo, "la scheda non deve piu' suonare la prova generata"
+    assert "vc_mine_sample" in corpo, "il player va detto cosa fa sentire"
+    assert 'pub["sample_url"]' in (ROOT / "voice_clone.py").read_text(encoding="utf-8")
+
+
+def test_rimanda_email_e_una_icona_accanto_al_player():
+    """M: il bottone a tutta larghezza sotto la scheda diventa un'icona a
+    destra del player, con la scritta solo nel tooltip."""
+    corpo = _estrai_funzione(VC, "vcRenderMine")
+    assert "vc-sample-row" in corpo and "vc-icon-btn" in corpo
+    assert "rb.title = tt('vc_resend')" in corpo
+    assert "setAttribute('aria-label', tt('vc_resend'))" in corpo, "il tooltip non basta da solo"
+    assert "<svg" in corpo, "serve l'icona della busta"
+    assert "mk('vc_resend'" not in corpo, "niente piu' bottone con la scritta"
+    for regola in (".vc-sample-row{", ".vc-icon-btn{"):
+        assert regola in CSS, regola
+
+
+def test_codice_voce_raggiungibile_anche_senza_voce_propria():
+    """Chi riceve un codice-voce non deve prima campionare la propria voce per
+    poterlo usare: dalle condizioni si salta alla sezione che lo accetta, e
+    quella sezione si apre da sola quando non c'e' nessuna voce."""
+    p1 = HTML[HTML.index('id="vcP1"'):HTML.index('id="vcP2"')]
+    assert 'id="vcP1Claim"' in p1 and 'data-t="vc_p1_have_code"' in p1
+    assert "vcShow('mine')" in _estrai_funzione(VC, "vcInitPanel1")
+    corpo = _estrai_funzione(VC, "vcInitPanelMine")
+    assert "vcClaimBox" in corpo and "!S.mine.length" in corpo
+
+
+def test_sezione_codice_voce_ha_uno_stile_suo():
+    """La sezione era una `details` nuda con l'input di default del browser
+    accanto a un bottone dell'app: bordi e altezze diversi."""
+    for regola in (".vc-claim{", ".vc-claim>summary{", ".vc-claim-row input{", ".vc-linkbtn{"):
+        assert regola in CSS, regola
+    assert "border-radius:var(--rs)" in CSS[CSS.index(".vc-claim-row input{"):CSS.index(".vc-claim-row input{") + 400]
 
 
 def test_ripresa_e_gestione():

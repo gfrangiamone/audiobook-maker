@@ -61,11 +61,10 @@ def test_env_helpers(monkeypatch):
     assert vc.enabled() is False
     monkeypatch.setenv("ABM_VOICE_CLONE_ENABLED", "false")
     assert vc.enabled() is False
-    for nome in ("ABM_VOICE_CLONE_REGEN_MAX", "ABM_VOICE_CLONE_DEMO_RETRIES", "ABM_VOICE_CLONE_MAX_UPLOAD_MB"):
+    for nome in ("ABM_VOICE_CLONE_DEMO_RETRIES", "ABM_VOICE_CLONE_MAX_UPLOAD_MB"):
         monkeypatch.delenv(nome, raising=False)
-    assert vc.regen_max() == 3 and vc.demo_retries() == 3 and vc.max_upload_mb() == 20
-    monkeypatch.setenv("ABM_VOICE_CLONE_REGEN_MAX", "1")
-    assert vc.regen_max() == 1
+    assert vc.demo_retries() == 3 and vc.max_upload_mb() == 20
+    assert not hasattr(vc, "regen_max"), "la rigenerazione delle prove e' stata tolta"
     assert vc.DEMO_NAMES == ("demo_common.wav", "demo_extra.wav")
 
 
@@ -77,8 +76,7 @@ def test_commit_gratis_crea_la_voce_paid(tmp_path):
     assert out["owner_email_hash"] == vc.email_hash("utente@example.com")
     assert out["payment"] == {"type": "free", "token": "", "amount_eur": 0.0, "paid_at": 1_000_000}
     assert out["demo"] == {"common_text": "Frase comune.", "extra_id": "memory",
-                           "extra_text": "Frase extra.", "regen_used": 0,
-                           "regen_max": 3, "runpod_job_id": None}
+                           "extra_text": "Frase extra.", "runpod_job_id": None}
     assert out["paid_at"] == 1_000_000
     assert out["resume_token"]["expires_at"] == 1_000_000 + vc.RESUME_TOKEN_DAYS * 86400
     assert out["resume_token"]["value"] == rec["resume_token"]["value"]

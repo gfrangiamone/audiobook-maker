@@ -1195,6 +1195,8 @@ __REVIEWS_LD__
           </ul>
           <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcP1Price"></strong></p>
           <label class="vc-consent"><input type="checkbox" id="vcConsent"> <span data-t="vc_consent"></span></label>
+          <p class="vc-alt"><span data-t="vc_p1_have_code"></span>
+            <button type="button" id="vcP1Claim" class="vc-linkbtn" data-t="vc_claim_title"></button></p>
           <div class="modal-footer vc-footer">
             <button type="button" id="vcP1Cancel" class="btn-secondary" data-t="vc_cancel"></button>
             <button type="button" id="vcP1Next" class="btn-primary" data-t="vc_next" disabled></button>
@@ -1250,11 +1252,34 @@ __REVIEWS_LD__
           </div>
         </section>
         <section id="vcP3" hidden>
+          <div class="vc-card">
+            <p class="vc-card-t" data-t="vc_p3_sample_ok"></p>
+            <audio id="vcP3Sample" controls preload="none"></audio>
+            <div class="vc-card-act">
+              <button type="button" id="vcP3Redo" class="btn btn-outline btn-sm" data-t="vc_p3_redo"></button>
+              <button type="button" id="vcP3Discard" class="btn btn-ghost btn-sm vc-danger" data-t="vc_p3_discard"></button>
+              <span id="vcP3DiscardAsk" hidden><span class="vc-small" data-t="vc_p3_discard_ask"></span>
+                <button type="button" id="vcP3DiscardYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+                <button type="button" id="vcP3DiscardNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
+            </div>
+          </div>
           <p data-t="vc_p3_intro"></p>
-          <label><span data-t="vc_email"></span> <input type="email" id="vcEmail" autocomplete="email" required></label>
-          <label><span data-t="vc_email2"></span> <input type="email" id="vcEmail2" autocomplete="off" required></label>
-          <p data-t="vc_p3_extra"></p>
-          <select id="vcExtraSel"></select>
+          <div class="vc-form">
+            <label class="vc-fld"><span data-t="vc_email"></span> <input type="email" id="vcEmail" autocomplete="email" required></label>
+            <label class="vc-fld"><span data-t="vc_email2"></span> <input type="email" id="vcEmail2" autocomplete="off" required></label>
+          </div>
+          <div class="vc-demos">
+            <p class="vc-demos-t" data-t="vc_p3_demos_t"></p>
+            <div class="vc-demo-one">
+              <span class="vc-small" data-t="vc_p3_common"></span>
+              <p id="vcCommonText" class="vc-quote"></p>
+            </div>
+            <div class="vc-demo-one">
+              <label class="vc-fld" for="vcExtraSel"><span data-t="vc_p3_extra"></span></label>
+              <select id="vcExtraSel"></select>
+              <p id="vcExtraText" class="vc-quote"></p>
+            </div>
+          </div>
           <p class="vc-price"><span data-t="vc_p1_price_lbl"></span> <strong id="vcPrice"></strong></p>
           <div class="vc-footer">
             <button type="button" id="vcP3Back" class="btn-secondary" data-t="vc_back"></button>
@@ -1275,19 +1300,12 @@ __REVIEWS_LD__
               <span data-t="vc_demo_extra"></span><audio id="vcDemoExtra" controls preload="none"></audio>
             </div>
             <div class="vc-footer">
+              <button type="button" id="vcReject" class="btn-secondary" data-t="vc_reject"></button>
               <button type="button" id="vcApprove" class="btn-primary" data-t="vc_approve"></button>
             </div>
-            <div class="vc-rec-row">
-              <select id="vcRegenSel"></select>
-              <button type="button" id="vcRegen" class="btn btn-outline btn-sm" data-t="vc_regen"></button>
-              <span id="vcRegenLeft" class="vc-small"></span>
-            </div>
-            <div class="vc-rec-row">
-              <button type="button" id="vcReject" class="btn btn-outline btn-sm" data-t="vc_reject"></button>
-              <span id="vcRejectConfirm" hidden><span data-t="vc_reject_sure"></span>
-                <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
-                <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
-            </div>
+            <span id="vcRejectConfirm" class="vc-confirm" hidden><span data-t="vc_reject_sure"></span>
+              <button type="button" id="vcRejectYes" class="btn btn-outline btn-sm" data-t="vc_yes"></button>
+              <button type="button" id="vcRejectNo" class="btn btn-outline btn-sm" data-t="vc_no"></button></span>
           </div>
           <div id="vcFailed" hidden>
             <p class="al al-e" data-t="vc_demo_failed"></p>
@@ -1307,15 +1325,15 @@ __REVIEWS_LD__
         </section>
         <section id="vcPMine" hidden>
           <ul id="vcMineList" class="vc-mine-list"></ul>
-          <details class="vc-claim">
+          <details id="vcClaimBox" class="vc-claim">
             <summary data-t="vc_claim_title"></summary>
-            <p class="vc-small" data-t="vc_claim_intro"></p>
+            <p class="vc-small vc-claim-intro" data-t="vc_claim_intro"></p>
             <div class="vc-claim-row">
               <input type="text" id="vcClaimCode" autocomplete="off" spellcheck="false" data-t-ph="vc_claim_ph">
               <button type="button" id="vcClaimBtn" class="btn btn-outline btn-sm" data-t="vc_claim_btn"></button>
             </div>
             <div id="vcConfirmRow" class="vc-claim-row" hidden>
-              <span class="vc-small" data-t="vc_confirm_intro"></span>
+              <span class="vc-small vc-claim-intro" data-t="vc_confirm_intro"></span>
               <input type="text" id="vcConfirmCode" autocomplete="one-time-code" inputmode="numeric" data-t-ph="vc_confirm_ph">
               <button type="button" id="vcConfirmBtn" class="btn btn-outline btn-sm" data-t="vc_confirm_btn"></button>
             </div>

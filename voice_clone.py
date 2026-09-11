@@ -141,10 +141,6 @@ def enabled():
     return raw not in ("0", "false", "no", "off")
 
 
-def regen_max():
-    return max(0, _env_int("ABM_VOICE_CLONE_REGEN_MAX", 3))
-
-
 def demo_retries():
     return max(1, _env_int("ABM_VOICE_CLONE_DEMO_RETRIES", 3))
 
@@ -326,6 +322,32 @@ def delete_by_owner(manage_token):
 # ---------------------------------------------------------------------------
 # bozza
 # ---------------------------------------------------------------------------
+def discard_draft(clone_id, cid):
+    """Abbandono di una bozza mai pagata, dal dispositivo che l'ha creata.
+
+    Serve una via d'uscita: finche' una bozza resta in piedi il bottone del
+    campionamento dice «riprendi» e porta dritto al pagamento, e la
+    cancellazione dal link di gestione non e' disponibile perche' l'email si
+    indica solo al momento del pagamento. Senza questo l'unico modo di
+    liberarsene era aspettarne la scadenza.
+
+    Solo da `sample_ok`: dopo il pagamento la rinuncia passa da `reject`, che
+    emette il voucher. Restituisce None se la voce non esiste, non e' in quello
+    stato o il dispositivo non e' il creatore.
+    """
+    with _lock:
+        rec = get(clone_id)
+        if rec is None or rec.get("state") != "sample_ok" or not is_owner(rec, cid):
+            return None
+        out = store().update(rec["id"], {"state": "deleted", "deleted_at": time.time(),
+                                         "delete_reason": "draft_discarded"})
+    remove_files(out)
+    # Una bozza puo' avere un capture PayPal gia' incassato che non verra' mai
+    # consumato (l'ordine nasce prima di commit()): stessa cura di C1.
+    _refund_captures(out["id"], "voice_clone_draft_discarded")
+    return out
+
+
 def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
                  original_path, original_ext, metrics, ui_lang, now=None):
     """Il campione approvato dal gate diventa una voce in stato `sample_ok`.
@@ -592,6 +614,9 @@ def mine(cid, now=None):
         pub = public_view(rec)
         pub["owner"] = is_owner(rec, cid)
         pub["pending"] = rec.get("state") != "ready"
+        # Il player della scheda fa sentire il CAMPIONE registrato, non una
+        # prova sintetizzata: e' l'unico audio che l'utente riconosce come suo.
+        pub["sample_url"] = f"/api/voice_clone/{rec['id']}/sample.wav"
         if not pub["owner"]:
             pub.pop("voice_code", None)
         if rec.get("state") == "ready":
@@ -669,8 +694,7 @@ def commit(clone_id, cid, *, email, extra_id, extra_text, common_text,
         patch = {
             "owner_email": email, "owner_email_hash": email_hash(email),
             "demo": {"common_text": common_text, "extra_id": extra_id,
-                     "extra_text": extra_text, "regen_used": 0,
-                     "regen_max": regen_max(), "runpod_job_id": None},
+                     "extra_text": extra_text, "runpod_job_id": None},
             "payment": pay,
             "resume_token": {"value": rec["resume_token"]["value"],
                              "expires_at": t + RESUME_TOKEN_DAYS * 86400},

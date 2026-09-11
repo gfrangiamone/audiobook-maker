@@ -1265,13 +1265,79 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 @keyframes vcblink{50%{opacity:.2}}
 .vc-code{font-family:monospace;font-size:1.3rem;letter-spacing:.15em;background:var(--srf2);padding:.5rem .8rem;border-radius:8px;display:inline-block;margin:.4rem 0}
 .vc-demo-row{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0}
+/* La conferma del rifiuto e' una riga a se': quando e' nascosta non deve
+   lasciare un vuoto sotto i due bottoni, da qui la guardia [hidden]. */
+.vc-confirm{display:flex;align-items:center;justify-content:flex-end;gap:.5rem;
+            flex-wrap:wrap;margin:.6rem 0}
+.vc-confirm[hidden]{display:none}
 .vc-demo-row audio{width:100%}
 .vc-mine-list{list-style:none;padding:0;margin:.5rem 0}
 .vc-mine-item{border:1px solid var(--brd);border-radius:8px;padding:.6rem;margin:.4rem 0}
 .vc-mine-item .vc-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem}
-.vc-claim-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.5rem 0}
+/* Sezione del codice-voce: era una `details` nuda con l'input di default del
+   browser accanto a un bottone dell'app, di altezze e bordi diversi. Ora e'
+   una scheda come le altre e i campi hanno lo stile dei campi del wizard. */
+.vc-claim{border:1px solid var(--brd);border-radius:10px;background:var(--srf);
+          padding:.6rem .8rem;margin:.9rem 0}
+.vc-claim>summary{cursor:pointer;font-weight:600;list-style:none;
+                  display:flex;align-items:center;gap:.4rem}
+.vc-claim>summary::-webkit-details-marker{display:none}
+.vc-claim>summary::before{content:"B8";color:var(--ac);font-size:.9em}
+.vc-claim[open]>summary::before{content:"BE"}
+.vc-claim-intro{margin:.5rem 0 0}
+.vc-claim-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.55rem 0 0}
 .vc-claim-row[hidden]{display:none}
-.vc-claim-row input{flex:1;min-width:160px}
+.vc-claim-row input{flex:1 1 180px;min-width:0;padding:10px 14px;background:var(--srf2);
+                    border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);
+                    font-family:inherit;font-size:.95rem}
+.vc-claim-row input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-claim-row .vc-small{flex:1 1 100%;margin:0}
+/* Scorciatoia dalle condizioni: il codice-voce di un altro si aggiunge anche
+   senza aver mai campionato la propria voce. */
+.vc-alt{margin:.8rem 0 0;font-size:.86rem;color:var(--txm)}
+.vc-linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--ac);
+            text-decoration:underline;cursor:pointer}
+.vc-linkbtn:hover{color:var(--tx)}
+.vc-linkbtn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+/* Player del campione con, a destra, l'icona che rimanda l'email col codice. */
+.vc-sample-row{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 0}
+.vc-sample-row audio{flex:1 1 auto;min-width:0}
+.vc-icon-btn{flex:0 0 auto;width:36px;height:36px;display:inline-flex;align-items:center;
+             justify-content:center;padding:0;background:var(--srf2);border:1px solid var(--brd);
+             border-radius:var(--rs);color:var(--ac);cursor:pointer;
+             transition:border-color .2s,color .2s,background .2s}
+.vc-icon-btn:hover:not(:disabled){border-color:var(--ac);background:var(--acs)}
+.vc-icon-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.vc-icon-btn svg{width:18px;height:18px}
 .vc-wait{display:flex;align-items:center;gap:.6rem;margin:.6rem 0}
 .vc-wait[hidden]{display:none}
 .vc-small{font-size:.82rem;color:var(--txm)}
+/* Pannello del pagamento. Prima le due email erano due `label` d'autore
+   (display:block, testo maiuscolo) con dentro l'input inline a larghezza di
+   default del browser: etichette e campi finivano di larghezze diverse e
+   disallineati. Qui l'etichetta sta sopra e il campo occupa la riga. */
+.vc-form{display:grid;gap:.7rem;margin:.8rem 0}
+.vc-fld{display:block;margin:0}
+.vc-fld input,.vc-fld select{width:100%;box-sizing:border-box}
+.vc-fld input{padding:10px 14px;background:var(--srf2);border:1px solid var(--brd);
+              border-radius:var(--rs);color:var(--tx);font-family:inherit;font-size:.95rem}
+.vc-fld input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+/* Il campione gia' accettato: l'utente deve poterlo riconoscere, rifare o
+   buttare via senza uscire dal pannello. */
+.vc-card{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;
+         background:var(--srf);margin:0 0 .9rem}
+.vc-card[hidden]{display:none}
+.vc-card-t{margin:0 0 .4rem;font-weight:600}
+.vc-card audio{width:100%}
+.vc-card-act{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
+.vc-danger{color:var(--err)}
+.vc-danger:hover:not(:disabled){color:var(--err);border-color:var(--err);background:var(--errs)}
+.vc-demos{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf);margin:.9rem 0}
+.vc-demos-t{margin:0 0 .5rem;font-weight:600}
+.vc-demo-one{margin:.6rem 0 0}
+.vc-demo-one:first-of-type{margin-top:0}
+/* Le option di una `select` non vanno a capo: il brano scelto si legge per
+   intero qui sotto, non nel bordo troncato della combo. */
+.vc-quote{margin:.35rem 0 0;padding-left:.6rem;border-left:2px solid var(--brd);
+          color:var(--txd);font-size:.86rem;font-style:italic}
+.vc-quote:empty{display:none}

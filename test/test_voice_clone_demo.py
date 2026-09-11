@@ -1,4 +1,4 @@
-"""Demo, approvazione, rigenerazione, rifiuto (spec §3.5, §5.5, §7.4, §10)."""
+"""Demo, approvazione, rifiuto (spec §3.5, §5.5, §7.4, §10)."""
 import os
 import shutil
 
@@ -129,10 +129,10 @@ def test_start_demos_fallito_va_in_demo_failed(tmp_path, monkeypatch, ambiente):
     assert out["demo"]["fail_count"] == 1 and out["demo"]["failed_at"]
     assert "giu" in out["demo"]["last_error"]
     assert ambiente[-1][0] == "demo_failed"
-    # retry: torna a generare, senza consumare rigenerazioni
+    # retry: torna a generare
     monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", WorkerFinto())
     out = vcd.retry(rec["id"], "cid-uno", background=False)
-    assert out["state"] == "demos_ready" and out["demo"]["regen_used"] == 0
+    assert out["state"] == "demos_ready"
 
 
 def test_campione_inutilizzabile_rimborsa_subito_con_bonus(tmp_path, monkeypatch, ambiente):
@@ -167,21 +167,11 @@ def test_approve_carica_su_r2_e_pulisce_i_tentativi(tmp_path, monkeypatch):
         vcd.approve(rec["id"], "cid-uno")
 
 
-def test_regenerate_rispetta_il_massimo_e_archivia_i_tentativi(tmp_path, monkeypatch):
-    monkeypatch.setenv("ABM_VOICE_CLONE_REGEN_MAX", "1")
-    rec = voce_pagata(tmp_path)
-    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", WorkerFinto())
-    vcd.start_demos(rec["id"], background=False)
-    out = vcd.regenerate(rec["id"], "cid-uno", extra_id="quote", extra_text="Altra frase.",
-                         background=False)
-    assert out["state"] == "demos_ready"
-    assert out["demo"]["regen_used"] == 1 and out["demo"]["extra_id"] == "quote"
-    d = vc.voice_dir(rec["token"])
-    assert os.path.exists(os.path.join(d, "demo_try_0_common.wav"))
-    assert os.path.exists(os.path.join(d, "demo_try_0_extra.wav"))
-    assert os.path.exists(os.path.join(d, "demo_extra.wav"))
-    with pytest.raises(vcd.RegenExhausted):
-        vcd.regenerate(rec["id"], "cid-uno", extra_id="q", extra_text="x", background=False)
+def test_la_rigenerazione_e_sparita(tmp_path, monkeypatch):
+    """Tolta la rigenerazione delle prove: il modulo non deve piu' esporla ne'
+    portarsi dietro l'eccezione che ne governava il tetto."""
+    assert not hasattr(vcd, "regenerate")
+    assert not hasattr(vcd, "RegenExhausted")
 
 
 def test_reject_paypal_emette_voucher_senza_bonus_e_notifica(tmp_path, monkeypatch, ambiente):

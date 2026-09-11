@@ -28,10 +28,6 @@ _threads_lock = threading.Lock()
 _UNUSABLE_MARKERS = ("sample", "campione", "prompt")
 
 
-class RegenExhausted(ValueError):
-    """Rigenerazioni esaurite (§3.5, `ABM_VOICE_CLONE_REGEN_MAX`)."""
-
-
 def configure(notifier=None):
     global _notifier
     _notifier = notifier
@@ -239,25 +235,6 @@ def approve(clone_id, cid, now=None):
         if os.path.exists(os.path.join(vc.voice_dir(out["token"]), name)):
             vc.upload_to_r2(out, name)
     return out
-
-
-def regenerate(clone_id, cid, *, extra_id, extra_text, background=True):
-    """Nuova coppia di demo con la seconda frase scelta (§3.5). Le demo
-    correnti diventano `demo_try_<n>_*`."""
-    with vc._lock:
-        rec = _require(clone_id, cid, ("demos_ready",))
-        demo = dict(rec.get("demo") or {})
-        used = int(demo.get("regen_used") or 0)
-        if used >= int(demo.get("regen_max") if demo.get("regen_max") is not None else vc.regen_max()):
-            raise RegenExhausted("rigenerazioni esaurite")
-        d = vc.voice_dir(rec["token"])
-        for name in vc.DEMO_NAMES:
-            src = os.path.join(d, name)
-            if os.path.exists(src):
-                shutil.move(src, os.path.join(d, f"demo_try_{used}_{name[len('demo_'):]}"))
-        demo.update({"regen_used": used + 1, "extra_id": extra_id, "extra_text": extra_text})
-        vc.store().update(clone_id, {"demo": demo})
-    return start_demos(clone_id, background=background)
 
 
 def retry(clone_id, cid, background=True):

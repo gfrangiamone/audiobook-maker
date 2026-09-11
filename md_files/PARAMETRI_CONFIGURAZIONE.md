@@ -440,7 +440,6 @@ Le voci edge-tts denominate *Multilingual* (es. `it-IT-GiuseppeMultilingualNeura
 | `ABM_VOICE_CLONE_ENABLED` | Interruttore della feature voci campionate. `0`/`false`/`no`/`off` spengono gli endpoint `/api/voice_clone/*` (404 `voice_clone_disabled`), la chiave `_mine` di `/api/voices`, lo sweeper e il recovery. | `voice_clone.py` | `enabled`, 132 |
 | `ABM_EUR_CLONED_VOICE` | Prezzo fisso in EUR della voce campione (§7.1); virgola decimale ammessa; `<= 0` = gratis (pannello pagamento saltato, `payment.type="free"`). | `payment.py` | `EUR_CLONED_VOICE`, 64 |
 | `ABM_VOICE_CLONE_MAX_UPLOAD_MB` | Dimensione massima del campione caricato (413 `too_large` oltre). Minimo 1. | `voice_clone.py` | `max_upload_mb`, 145 |
-| `ABM_VOICE_CLONE_REGEN_MAX` | Rigenerazioni delle demo concesse per voce (409 `regen_exhausted` oltre). Minimo 0. | `voice_clone.py` | `regen_max`, 137 |
 | `ABM_VOICE_CLONE_DEMO_RETRIES` | Tentativi per ogni frase demo sul worker prima di `demo_failed` (pausa 2^n s, tetto 30 s). Minimo 1. | `voice_clone.py` | `demo_retries`, 141 |
 
 **Costanti interne (non configurabili):**
