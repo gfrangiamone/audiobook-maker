@@ -109,11 +109,31 @@
   function _val(id) { var el = $(id); return el ? el.value : ''; }
   function tt(k, r) { return (typeof t === 'function') ? t(k, r) : k; }
 
+  /* Il motivo dello scarto va letto dove si e' sbagliato: finche' il pannello
+     2 e' a schermo il messaggio esce sotto registrazione e caricamento, non in
+     cima al modal (li' l'utente, che guardava il bottone, non lo vedeva). */
   function vcErr(msg) {
-    var e = $('vcErr');
-    if (!e) return;
-    if (!msg) { e.hidden = true; e.textContent = ''; return; }
-    e.textContent = msg; e.hidden = false;
+    var p2 = $('vcP2'); var sotto = $('vcErr2');
+    var tgt = (sotto && p2 && !p2.hidden) ? sotto : $('vcErr');
+    [$('vcErr'), $('vcErr2')].forEach(function (e) {
+      if (e) { e.hidden = true; e.textContent = ''; }
+    });
+    if (!msg || !tgt) return;
+    tgt.textContent = msg; tgt.hidden = false;
+  }
+
+  /* La registrazione resta ascoltabile anche quando il campione viene
+     scartato: e' l'unico modo per accorgersi da soli di aver letto male, il
+     campione del server nasce solo se il controllo passa. L'URL precedente va
+     revocato o ogni tentativo si lascia dietro un blob in memoria. */
+  function vcSetLocalAudio(blob) {
+    if (S.localUrl) { try { URL.revokeObjectURL(S.localUrl); } catch (e) {} S.localUrl = null; }
+    var a = $('vcLocalAudio'); var blk = $('vcLocalBlock');
+    if (!a || !blk) return;
+    try { a.pause(); } catch (e) {}
+    if (!blob) { a.removeAttribute('src'); blk.hidden = true; return; }
+    S.localUrl = URL.createObjectURL(blob);
+    a.src = S.localUrl; blk.hidden = false;
   }
 
   /* Perche' il campione e' stato scartato: tutti i motivi, e per la durata
@@ -211,6 +231,9 @@
     if (S.es) { try { S.es.close(); } catch (e) {} S.es = null; }
     if (S.esTimer) { clearTimeout(S.esTimer); S.esTimer = null; }
     if (typeof S.abortMedia === 'function') S.abortMedia();
+    /* Il blob della registrazione locale muore col modal: tenerlo vivo
+       significherebbe un URL object mai revocato per ogni apertura. */
+    vcSetLocalAudio(null);
   }
   window.vcClose = vcClose;
 
@@ -299,9 +322,53 @@
   }
 
   function vcSetRecording(on) {
-    var b = $('vcRecBtn'); var dot = $('vcRecDot');
+    var b = $('vcRecBtn'); var dot = $('vcRecDot'); var ann = $('vcRecCancel');
     if (b) b.textContent = tt(on ? 'vc_rec_stop' : 'vc_rec_start');
     if (dot) dot.hidden = !on;
+    /* «Annulla» esiste solo mentre si registra: fuori da li' non c'e' niente
+       da buttare via e resterebbe un bottone senza effetto. */
+    if (ann) ann.hidden = !on;
+  }
+
+  /* Chi si accorge a meta' frase di aver letto male butta via il tentativo
+     senza aspettare il verdetto del server: vcAbortMedia marca la sessione
+     come abbandonata, cosi' rec.onstop non carica nulla. */
+  function vcCancelRecording() {
+    if (!S.media) return;
+    vcAbortMedia();
+    var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
+    var meter = $('vcLevel'); if (meter) meter.value = 0;
+    vcErr('');
+  }
+
+  /* Quale microfono sta registrando. Finche' il permesso non e' stato dato il
+     browser restituisce dispositivi senza id ne' nome: in quel caso resta la
+     sola voce «predefinito» e la lista viene rifatta dopo il primo
+     getUserMedia, quando i nomi diventano leggibili. */
+  function vcFillMics(preferito) {
+    var sel = $('vcMic'); var wrap = $('vcMicWrap');
+    if (!sel) return Promise.resolve();
+    var md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) { if (wrap) wrap.hidden = true; return Promise.resolve(); }
+    var tenere = preferito || sel.value;
+    return md.enumerateDevices().then(function (devs) {
+      var ins = (devs || []).filter(function (d) { return d.kind === 'audioinput' && d.deviceId; });
+      sel.innerHTML = '';
+      if (!ins.length) {
+        var o0 = document.createElement('option');
+        o0.value = ''; o0.textContent = tt('vc_mic_default');
+        sel.appendChild(o0);
+      } else {
+        ins.forEach(function (d, i) {
+          var o = document.createElement('option');
+          o.value = d.deviceId;
+          o.textContent = d.label || (tt('vc_mic') + ' ' + (i + 1));
+          sel.appendChild(o);
+        });
+      }
+      if (tenere) { sel.value = tenere; if (sel.value !== tenere) sel.selectedIndex = 0; }
+      if (wrap) wrap.hidden = false;
+    }).catch(function () {});
   }
 
   /* Guardia anti doppio invio: mentre il campione e' in upload, niente
@@ -349,7 +416,16 @@
   function vcStartRecording() {
     if (!navigator.mediaDevices || !window.MediaRecorder) { vcErr(tt('vc_err_no_mic')); return; }
     vcErr('');
-    navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}}).then(function (stream) {
+    var vincoli = {echoCancellation: false, noiseSuppression: false, autoGainControl: false};
+    var voluto = _val('vcMic');
+    if (voluto) vincoli.deviceId = {exact: voluto};
+    navigator.mediaDevices.getUserMedia({audio: vincoli}).then(function (stream) {
+      /* Col permesso appena concesso i nomi dei dispositivi diventano
+         leggibili: si rifa' la lista e si seleziona quello che sta davvero
+         registrando, cosi' l'utente vede su che microfono sta parlando. */
+      var tr0 = stream.getAudioTracks()[0];
+      var conf = (tr0 && tr0.getSettings) ? tr0.getSettings() : {};
+      vcFillMics(conf.deviceId || voluto);
       var mime = '';
       ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].some(function (m) {
         if (MediaRecorder.isTypeSupported(m)) { mime = m; return true; } return false;
@@ -403,6 +479,7 @@
   function vcUploadSample(blob, filename) {
     if (S.busy) return;
     vcSetBusy(true);
+    vcSetLocalAudio(blob);
     var fd = new FormData();
     fd.append('file', blob, filename);
     fd.append('lang', _val('vcLang'));
@@ -418,6 +495,9 @@
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
+      /* Campione accettato: si ascolta quello normalizzato dal server, non la
+         copia locale, altrimenti resterebbero due lettori uno sopra l'altro. */
+      vcSetLocalAudio(null);
       if (blk) blk.hidden = false;
     }).catch(function () { if (wait) wait.hidden = true; vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
@@ -428,18 +508,37 @@
     var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
     var wait = $('vcUploading'); if (wait) wait.hidden = true;
     var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
+    var nome = $('vcUpName'); if (nome) nome.textContent = '';
+    vcSetLocalAudio(null);
+    /* Il limite va scritto, non promesso: `data-t` applica t() senza
+       sostituzioni, quindi un {mb} nella frase resterebbe a video tale e
+       quale. Il numero sta in un elemento suo, cosi' sopravvive anche a un
+       cambio di lingua dell'interfaccia. */
+    var mb = $('vcUpMb');
+    if (mb) mb.textContent = ((S.cfg && S.cfg.max_upload_mb) || 20) + ' MB';
+    vcFillMics();
     vcFillLangs();
     vcLoadPrompt();
     $('vcRecBtn').onclick = function () { if (S.busy) return; if (S.media) vcStopMedia(); else vcStartRecording(); };
+    $('vcRecCancel').onclick = vcCancelRecording;
     $('vcFile').onchange = function () {
       if (S.busy) { this.value = ''; return; }
       var f = this.files && this.files[0]; if (!f) return;
+      if (nome) nome.textContent = f.name;
       var chk = vcUploadCheck(f.name, f.size, (S.cfg && S.cfg.max_upload_mb) || 20);
       if (!chk.ok) { vcErr(tt(chk.reason === 'too_large' ? 'vc_err_too_large' : 'vc_gate_format', {mb: (S.cfg && S.cfg.max_upload_mb) || 20})); this.value = ''; return; }
       vcUploadSample(f, f.name);
       this.value = '';
     };
-    $('vcSampleRedo').onclick = function () { if (blk) blk.hidden = true; var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); } };
+    $('vcSampleRedo').onclick = function () {
+      if (blk) blk.hidden = true;
+      var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); }
+      /* Si riparte da zero: via anche la copia locale e il nome del file, o
+         resterebbero a schermo appesi al tentativo precedente. */
+      vcSetLocalAudio(null);
+      if (nome) nome.textContent = '';
+      var tm = $('vcTimer'); if (tm) tm.textContent = '0.0 s';
+    };
     $('vcSampleNext').onclick = function () { if (S.cur && S.cur.clone_id) vcShow(3); };
     $('vcP2Back').onclick = function () { if (S.busy) return; vcAbortMedia(); vcShow(1); };
   }

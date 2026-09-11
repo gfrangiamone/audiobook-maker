@@ -228,7 +228,15 @@ class Gate:
     min_clarity: float = 36.0
     min_speech_ratio: float = 0.55
     max_speech_ratio: float = 0.98
-    min_bandwidth_ratio: float = 0.78   # rispetto a Nyquist
+    # Banda utile minima, in frazione di Nyquist (7200 Hz sui 24 kHz della
+    # pipeline). Il valore ereditato dal worker, 0.78, era irraggiungibile:
+    # misurato sullo stesso campione reale, un 44.1 kHz sano arriva a 0.71,
+    # un 22.05 kHz a 0.71, un 16 kHz a 0.65, un lowpass ripido a 5 kHz scende
+    # a 0.51, l'11 kHz a 0.49 e la banda telefonica a 0.35. A 0.78 il gate
+    # scartava per «audio ovattato» anche le registrazioni ottime; a 0.60
+    # passano le sorgenti da 16 kHz in su e restano fuori telefono, 11 kHz e
+    # file ricompressi a bitrate basso.
+    min_bandwidth_ratio: float = 0.60   # rispetto a Nyquist
     max_clip_runs: int = 4
     max_gap: float = 1.0
 
@@ -243,7 +251,8 @@ def _env_float(name, default):
 
 def gate_from_env():
     return Gate(min_sec=_env_float("ABM_VOICE_CLONE_MIN_SEC", 12.0),
-                max_sec=_env_float("ABM_VOICE_CLONE_MAX_SEC", 20.0))
+                max_sec=_env_float("ABM_VOICE_CLONE_MAX_SEC", 20.0),
+                min_bandwidth_ratio=_env_float("ABM_VOICE_CLONE_MIN_BAND_RATIO", 0.60))
 
 
 def apply_gate(mt, sr, g=None):

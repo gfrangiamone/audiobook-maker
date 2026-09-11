@@ -43,7 +43,7 @@ def test_parlato_pulito_passa():
     assert 12.0 <= mt.duration <= 20.0
     assert mt.snr_db >= 22.0 and mt.clarity >= 36.0
     assert 0.55 <= mt.speech_ratio <= 0.98
-    assert mt.bandwidth_hz >= 0.78 * SR / 2
+    assert mt.bandwidth_hz >= vca.Gate().min_bandwidth_ratio * SR / 2
     assert mt.clip_runs == 0
 
 
@@ -207,13 +207,35 @@ def test_prepare_sample_rifiuta_e_non_scrive(tmp_path):
 
 
 @needs_ffmpeg
-def test_prepare_sample_mp3_64k_cade_per_banda(tmp_path):
+def test_prepare_sample_banda_telefonica_cade_per_banda(tmp_path):
+    """Quello che la soglia deve ancora fermare: una sorgente a banda stretta
+    davvero (8 kHz di campionamento, cioe' 4 kHz utili). La prova di prima
+    usava un mp3 a 32 kbps su 22,05 kHz, che di banda ne conserva 0,70 di
+    Nyquist: tanta quanta una registrazione sana a 44,1 kHz (0,71), quindi
+    separava i due casi solo grazie a una soglia che bocciava anche i campioni
+    buoni."""
     src = _wav_parlato(tmp_path, seconds=15.0)
-    mp3 = _codifica(src, str(tmp_path / "low.mp3"), "-ar", "22050",
-                    "-c:a", "libmp3lame", "-b:a", "32k")
+    mp3 = _codifica(src, str(tmp_path / "tel.mp3"), "-ar", "8000",
+                    "-c:a", "libmp3lame", "-b:a", "24k")
     with pytest.raises(vca.SampleRejected) as ei:
         vca.prepare_sample(mp3, str(tmp_path / "s.wav"))
     assert "vc_gate_band" in ei.value.metrics.reasons
+
+
+def test_soglia_di_banda_tarata_sul_parlato_vero():
+    """La soglia ereditata dal worker (0,78 di Nyquist = 9360 Hz sui 24 kHz
+    della pipeline) era irraggiungibile dal parlato reale e scartava per
+    «audio ovattato» qualunque campione. Misure sullo stesso brano registrato
+    con un buon microfono: 44,1 kHz -> 0,71; 22,05 kHz -> 0,71; 16 kHz ->
+    0,65; lowpass ripido a 5 kHz -> 0,51; 11 kHz -> 0,49; banda telefonica ->
+    0,35. 0,60 sta nel mezzo: passa da 16 kHz in su, ferma il resto."""
+    assert vca.Gate().min_bandwidth_ratio == 0.60
+    assert vca.gate_from_env().min_bandwidth_ratio == 0.60
+
+
+def test_soglia_di_banda_dallambiente(monkeypatch):
+    monkeypatch.setenv("ABM_VOICE_CLONE_MIN_BAND_RATIO", "0.5")
+    assert vca.gate_from_env().min_bandwidth_ratio == 0.5
 
 
 def test_convert_rifiuta_pulito_su_timeout_ffmpeg(tmp_path, monkeypatch):

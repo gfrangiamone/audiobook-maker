@@ -1222,7 +1222,44 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .vc-rec-row{display:flex;align-items:center;gap:.6rem;margin:.6rem 0;flex-wrap:wrap}
 .vc-rec-row meter{flex:1;min-width:120px;height:14px}
 .vc-timer{font-variant-numeric:tabular-nums;min-width:3.5em}
-.vc-or{text-align:center;color:var(--txm);margin:.6rem 0}
+/* label{display:block} e' una regola d'autore e batte [hidden]{display:none}
+   della UA: senza questa riga la combo dell'accento restava a schermo anche
+   per le lingue che di accenti ne hanno uno solo (l'italiano), pur essendo
+   marcata hidden. Stesso inciampo gia' documentato per .btn[hidden]. */
+#vcLocaleWrap[hidden]{display:none}
+/* Riquadro della cattura: microfono in uso + comandi di registrazione. Sta in
+   una cornice propria per distinguersi a colpo d'occhio dal caricamento di un
+   file qui sotto, che prima si confondeva con la riga dei bottoni. */
+.vc-cap{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf)}
+.vc-cap .vc-rec-row{margin:.5rem 0 0}
+.vc-mic-pick{display:flex;align-items:center;gap:.5rem;margin:0;font-size:.82rem;
+             text-transform:none;letter-spacing:normal}
+.vc-mic-pick[hidden]{display:none}
+.vc-mic-pick select{flex:1;min-width:0}
+.vc-or{text-align:center;color:var(--txm);margin:.7rem 0;font-size:.78rem;
+       text-transform:uppercase;letter-spacing:.08em}
+/* Caricamento da file: l'input di sistema (disegnato a modo suo da ogni
+   browser) sparisce dietro un bottone vero, con accanto il nome del file
+   scelto e, scritto per esteso, il limite in MB. */
+.vc-up{border:1px dashed var(--brd);border-radius:10px;padding:.8rem;text-align:center}
+.vc-up-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.vc-up-input:focus-visible+.vc-up-btn{outline:2px solid var(--ac);outline-offset:2px}
+.vc-up-btn{display:inline-flex;align-items:center;gap:.4rem;margin:0;padding:.5rem 1rem;
+           border:1px solid var(--brd);border-radius:var(--rs);background:var(--srf2);
+           color:var(--ac);cursor:pointer;font-size:.9rem;font-weight:600;
+           text-transform:none;letter-spacing:normal}
+.vc-up-btn:hover{border-color:var(--ac);background:var(--acs)}
+/* Durante l'invio del campione l'input e' disabilitato: il bottone che lo
+   copre deve dirlo, o sembra solo rotto. */
+.vc-up-input:disabled+.vc-up-btn{opacity:.4;cursor:not-allowed}
+.vc-up-name{display:block;margin-top:.4rem;color:var(--txd);font-size:.85rem;word-break:break-all}
+.vc-up-hint{margin:.4rem 0 0}
+/* Riascolto della propria registrazione: resta disponibile anche quando il
+   campione viene scartato, altrimenti non c'e' modo di accorgersi da soli di
+   aver letto male (il campione del server nasce solo se il controllo passa). */
+.vc-local{display:flex;flex-direction:column;gap:.3rem;margin:.7rem 0}
+.vc-local[hidden]{display:none}
+.vc-local audio{width:100%}
 .vc-rec-dot{width:12px;height:12px;border-radius:50%;background:#c33;display:inline-block;animation:vcblink 1s infinite}
 .vc-rec-dot[hidden]{display:none}
 @keyframes vcblink{50%{opacity:.2}}

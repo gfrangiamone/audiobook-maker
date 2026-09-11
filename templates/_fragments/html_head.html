@@ -1214,13 +1214,28 @@ __REVIEWS_LD__
           </div>
           <p data-t="vc_p2_read"></p>
           <div id="vcPromptText" class="vc-prompt"></div>
-          <div class="vc-rec-row">
-            <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
-            <span id="vcRecDot" class="vc-rec-dot" hidden></span>
-            <meter id="vcLevel" min="0" max="1" value="0"></meter>
-            <span id="vcTimer" class="vc-timer">0.0 s</span>
+          <div class="vc-cap">
+            <label id="vcMicWrap" class="vc-mic-pick"><span data-t="vc_mic"></span> <select id="vcMic"></select></label>
+            <div class="vc-rec-row">
+              <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
+              <button type="button" id="vcRecCancel" class="btn-secondary" data-t="vc_rec_cancel" hidden></button>
+              <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+              <meter id="vcLevel" min="0" max="1" value="0"></meter>
+              <span id="vcTimer" class="vc-timer">0.0 s</span>
+            </div>
           </div>
-          <p class="vc-or"><span data-t="vc_or_upload"></span> <input type="file" id="vcFile" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*"></p>
+          <p class="vc-or" data-t="vc_or"></p>
+          <div class="vc-up">
+            <input type="file" id="vcFile" class="vc-up-input" accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4,audio/*">
+            <label for="vcFile" class="vc-up-btn" data-t="vc_up_pick"></label>
+            <span id="vcUpName" class="vc-up-name"></span>
+            <p class="vc-up-hint vc-small"><span data-t="vc_up_hint"></span> <b id="vcUpMb"></b></p>
+          </div>
+          <div id="vcLocalBlock" class="vc-local" hidden>
+            <span class="vc-small" data-t="vc_local_listen"></span>
+            <audio id="vcLocalAudio" controls preload="none"></audio>
+          </div>
+          <div id="vcErr2" class="al al-e" hidden></div>
           <div id="vcSampleBlock" hidden>
             <p data-t="vc_sample_listen"></p>
             <audio id="vcSampleAudio" controls preload="none"></audio>

@@ -132,6 +132,26 @@ def test_sample_ok_crea_la_bozza(client, monkeypatch):
     assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR) if f.startswith("vc_")]
 
 
+def test_sample_wav_non_sovrascrive_loriginale(client, monkeypatch):
+    """Regressione (500 sull'endpoint): con un caricamento gia' in .wav il
+    percorso del campione normalizzato coincideva con quello dell'originale.
+    prepare_sample scriveva sopra il file caricato e create_draft, dopo aver
+    spostato sample.wav, non trovava piu' niente da mettere in original.wav."""
+    def prepara(src, dst, **kw):
+        assert os.path.abspath(src) != os.path.abspath(dst), "stesso file: l'originale si perde"
+        open(dst, "wb").write(b"RIFF-normalizzato")
+        return vca.Metrics(**{f: 0.0 for f in vca.Metrics.__dataclass_fields__})
+    monkeypatch.setattr(vca, "prepare_sample", prepara)
+    r = client.post("/api/voice_clone/sample", data={
+        "file": (io.BytesIO(b"RIFF-originale"), "voce.wav"), "lang": "it", "locale": "it-IT",
+        "gender": "f", "prompt_version": "x"}, content_type="multipart/form-data")
+    assert r.status_code == 200, r.get_json()
+    d = vc.voice_dir(vc.get(r.get_json()["clone_id"])["token"])
+    assert open(os.path.join(d, "original.wav"), "rb").read() == b"RIFF-originale"
+    assert open(os.path.join(d, "sample.wav"), "rb").read() == b"RIFF-normalizzato"
+    assert not [f for f in os.listdir(audiobook_app.UPLOAD_DIR) if f.startswith("vc_")]
+
+
 def test_sample_rate_limit_per_cid(client, monkeypatch):
     def rifiuta(src, dst, **kw):
         raise vca.SampleRejected("vc_gate_short", "3.0s")

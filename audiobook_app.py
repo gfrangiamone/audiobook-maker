@@ -9001,7 +9001,11 @@ def api_vc_sample():
         ext = "webm"
     tmp_id = uuid.uuid4().hex
     src = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.{ext}")
-    wav = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}.wav")
+    # Il suffisso `_norm` non e' cosmesi: con un caricamento gia' in .wav i due
+    # percorsi coincidevano, prepare_sample scriveva il campione normalizzato
+    # SOPRA l'originale e create_draft, dopo aver spostato sample.wav, non
+    # trovava piu' niente da spostare in original.wav (500 sull'endpoint).
+    wav = os.path.join(str(UPLOAD_DIR), f"vc_{tmp_id}_norm.wav")
     prompt_text = voice_clone_prompts.prompt_for(lang, gender)
     max_bytes = voice_clone.max_upload_mb() * 1024 * 1024
     try:

@@ -112,7 +112,7 @@ def test_app_sincronizza_il_bottone():
 
 def test_css_vc():
     for c in (".vc-btn-row", ".vc-modal", ".vc-consent", ".vc-prompt", ".vc-code", ".vc-mine-item",
-              ".vc-voice-row", ".vc-mic-btn"):
+              ".vc-voice-row", ".vc-mic-btn", ".vc-cap", ".vc-up", ".vc-up-btn", ".vc-local"):
         assert c in CSS, c
     # display:inline-flex d'autore batte la regola UA [hidden]{display:none}
     assert ".vc-mic-btn[hidden]{display:none}" in CSS
@@ -123,7 +123,7 @@ def test_hidden_batte_il_display_dautore():
     [hidden]{display:none}: la regola UA perde comunque, e senza questa riga
     bottone, banner e spinner restano a schermo quando il JS li nasconde."""
     for c in (".btn", ".vc-btn-row", ".vc-resume", ".vc-rec-dot", ".vc-wait",
-              ".vc-claim-row", ".vc-mic-btn"):
+              ".vc-claim-row", ".vc-mic-btn", ".vc-mic-pick", ".vc-local"):
         atteso = re.escape(c) + r"\[hidden\]\s*\{\s*display:\s*none\s*\}"
         assert re.search(r"(?m)^" + atteso, CSS), c
 
@@ -138,6 +138,9 @@ def test_accento_nascosto_se_la_lingua_ne_ha_uno_solo():
     assert 'id="vcLocaleWrap"' in HTML
     corpo = _estrai_funzione(VC, "vcFillLocales")
     assert "vcLocaleWrap" in corpo and "list.length < 2" in corpo
+    # label{display:block} e' d'autore e batte [hidden]{display:none} della UA:
+    # senza la guardia la combo restava a schermo anche per l'italiano.
+    assert re.search(r"(?m)^#vcLocaleWrap\[hidden\]\s*\{\s*display:\s*none\s*\}", CSS)
 
 
 def test_chiavi_task2_in_tutte_le_lingue():
@@ -161,7 +164,8 @@ def test_hindi_in_devanagari():
 
 
 TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m", "vc_p2_read",
-              "vc_rec_start", "vc_rec_stop", "vc_or_upload", "vc_checking", "vc_sample_listen",
+              "vc_rec_start", "vc_rec_stop", "vc_rec_cancel", "vc_or", "vc_up_pick", "vc_up_hint",
+              "vc_mic", "vc_mic_default", "vc_local_listen", "vc_checking", "vc_sample_listen",
               "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
               "vc_gate_short", "vc_gate_long", "vc_gate_noise", "vc_gate_pauses", "vc_gate_nopause",
               "vc_gate_band", "vc_gate_clip", "vc_gate_transcript", "vc_gate_format", "vc_gate_asr",
@@ -170,10 +174,66 @@ TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m",
 
 def test_markup_pannello_2():
     p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
-    for i in ("vcLang", "vcLocale", "vcGender", "vcPromptText", "vcRecBtn", "vcLevel", "vcTimer",
-              "vcFile", "vcSampleBlock", "vcSampleAudio", "vcSampleRedo", "vcSampleNext", "vcP2Back"):
+    for i in ("vcLang", "vcLocale", "vcGender", "vcPromptText", "vcMic", "vcMicWrap", "vcRecBtn",
+              "vcRecCancel", "vcLevel", "vcTimer", "vcFile", "vcUpName", "vcUpMb", "vcLocalBlock",
+              "vcLocalAudio", "vcErr2", "vcSampleBlock", "vcSampleAudio", "vcSampleRedo",
+              "vcSampleNext", "vcP2Back"):
         assert f'id="{i}"' in p2, i
     assert 'accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4' in p2
+
+
+def test_errore_sotto_registrazione_e_caricamento():
+    """L'utente guarda i comandi, non la testata del modal: il messaggio di
+    scarto deve comparire sotto la cattura, non sopra il pannello."""
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    assert p2.index('id="vcRecBtn"') < p2.index('id="vcErr2"')
+    assert p2.index('class="vc-up"') < p2.index('id="vcErr2"')
+    corpo = _estrai_funzione(VC, "vcErr")
+    assert "vcErr2" in corpo and "vcP2" in corpo
+
+
+def test_microfono_in_uso_esplicito():
+    corpo = _estrai_funzione(VC, "vcFillMics")
+    assert "enumerateDevices" in corpo and "audioinput" in corpo
+    assert "vc_mic_default" in corpo
+    rec = _estrai_funzione(VC, "vcStartRecording")
+    # il microfono scelto viaggia nei vincoli e la lista si rifa' con i nomi
+    # leggibili solo dopo che il permesso e' stato concesso
+    assert "deviceId = {exact: voluto}" in rec
+    assert "vcFillMics(conf.deviceId || voluto)" in rec
+    assert "vcFillMics()" in _estrai_funzione(VC, "vcInitPanel2")
+
+
+def test_registrazione_annullabile_in_corsa():
+    """Chi si accorge di aver letto male butta via il tentativo senza
+    aspettare il verdetto: il bottone esiste solo mentre si registra."""
+    corpo = _estrai_funzione(VC, "vcCancelRecording")
+    assert "vcAbortMedia()" in corpo
+    assert "ann.hidden = !on" in _estrai_funzione(VC, "vcSetRecording")
+    assert "$('vcRecCancel').onclick = vcCancelRecording" in _estrai_funzione(VC, "vcInitPanel2")
+
+
+def test_registrazione_riascoltabile_anche_se_scartata():
+    corpo = _estrai_funzione(VC, "vcSetLocalAudio")
+    assert "createObjectURL" in corpo and "revokeObjectURL" in corpo
+    up = _estrai_funzione(VC, "vcUploadSample")
+    assert "vcSetLocalAudio(blob)" in up, "la copia locale nasce prima dell'invio"
+    assert "vcSetLocalAudio(null)" in up, "accettato il campione, resta un solo lettore"
+    assert "vcSetLocalAudio(null)" in _estrai_funzione(VC, "vcClose")
+
+
+def test_limite_mb_scritto_non_promesso():
+    """`data-t` applica t() senza sostituzioni: un {mb} nella frase resterebbe
+    a video tale e quale, com'era in vc_or_upload."""
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    assert 'id="vcUpMb"' in p2
+    assert "{mb}" not in p2
+    corpo = _estrai_funzione(VC, "vcInitPanel2")
+    assert "mb.textContent" in corpo and "max_upload_mb" in corpo
+    for lang in LANGS:
+        for blocco in re.findall(r"Object\.assign\(L\." + lang + r",\{(.*?)\}\);", I18N, re.S):
+            for _k, v in re.findall(r'(vc_up_hint|vc_or|vc_up_pick):"([^"]*)"', blocco):
+                assert "{" not in v, f"{lang}: segnaposto in una chiave applicata con data-t"
 
 
 def test_registratore_senza_filtri_e_con_stop_automatico():
