@@ -171,7 +171,7 @@ def test_remove_files_chiama_r2_se_attivo(tmp_path, monkeypatch):
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
     vc.remove_files(rec)
-    assert cancellati == ["voices/" + rec["token"] + "/"]
+    assert cancellati == [vc.R2_PREFIX + rec["token"] + "/"]
     assert not os.path.exists(vc.voice_dir(rec["token"]))
 
 
@@ -231,7 +231,7 @@ def test_resolve_scarica_da_r2_se_il_locale_manca(tmp_path, monkeypatch):
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
     monkeypatch.setattr(storage_backend, "download_file", _dl)
     assert vc.resolve(vc.voice_id_of(rec))["wav_path"] == wav
-    assert richieste == ["voices/" + rec["token"] + "/sample.wav"]
+    assert richieste == [vc.R2_PREFIX + rec["token"] + "/sample.wav"]
     assert open(wav, "rb").read() == b"RIFF-da-r2"
 
 

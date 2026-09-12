@@ -17751,13 +17751,15 @@ CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimoss
 # l'encode: oltre, il job torna purgabile e non puo' restare vivo per sempre.
 CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 
-# Nel data dir non ci sono solo le cartelle dei job: `voices/` e' la casa dei
-# campioni vocali, e su R2 e' il prefisso con lo stesso nome. Lo sweep delle
+# Nel data dir non ci sono solo le cartelle dei job: `user_voices/` e' la casa
+# dei campioni vocali, e su R2 e' il prefisso con lo stesso nome. Lo sweep delle
 # cartelle orfane la scambiava per una job dir abbandonata e la cancellava da
 # disco E da cold (12/09/2026: campioni e demo di tutte le voci distrutti, con
 # i record ancora in stato ready e i file spariti). Ogni scansione del data dir
 # passa da _is_job_dir, e il cold delete rifiuta i prefissi riservati.
-_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME})
+# "voices" e' il nome storico della stessa cartella: resta riservato perche'
+# una copia rimasta da prima del rename non deve finire nel tritacarne.
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME, "voices"})
 
 
 def _is_job_dir(entry):

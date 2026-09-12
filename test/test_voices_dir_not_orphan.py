@@ -1,7 +1,7 @@
 """La cartella dei campioni vocali non e' una job dir orfana.
 
-Incidente del 12/09/2026: `voices/` vive nel data dir accanto alle cartelle dei
-job e su R2 sotto il prefisso omonimo. Lo sweep delle cartelle orfane del
+Incidente del 12/09/2026: la cartella delle voci (oggi `user_voices/`, allora
+`voices/`) vive nel data dir accanto alle cartelle dei job e su R2 sotto il prefisso omonimo. Lo sweep delle cartelle orfane del
 cleanup la vedeva come una job dir abbandonata da piu' di due ore e la
 cancellava da disco, poi chiamava `_delete_cold_for_job("voices")` che
 spazzava via anche l'intero prefisso su cold: campioni e demo di TUTTE le voci
@@ -66,3 +66,23 @@ def test_il_prefisso_r2_delle_voci_e_quello_della_cartella():
 def _RISERVATE():
     import audiobook_app
     return audiobook_app._RESERVED_DATA_DIRS
+
+
+def test_anche_il_nome_storico_della_cartella_resta_protetto(monkeypatch, tmp_path):
+    """Una `voices/` rimasta da prima del rename non deve essere cancellata."""
+    import storage_backend
+    app = _app(monkeypatch, tmp_path)
+    (tmp_path / "voices").mkdir(exist_ok=True)
+    assert app._is_job_dir(tmp_path / "voices") is False
+    cancellati = []
+    monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)
+    monkeypatch.setattr(storage_backend, "delete_prefix", lambda p: cancellati.append(p))
+    app._delete_cold_for_job("voices")
+    assert cancellati == []
+
+
+def test_la_cartella_delle_voci_ha_un_nome_suo():
+    """Nel data dir ogni altra cartella e' di un job: il nome deve essere
+    inequivocabile, non il generico 'voices' che sembrava un job id."""
+    import voice_clone
+    assert voice_clone.VOICES_DIRNAME == "user_voices"

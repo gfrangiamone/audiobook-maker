@@ -25,10 +25,11 @@ import voice_clone_prompts
 import voxcpm_catalog
 
 VOICE_ID_PREFIX = "voxcpm:mine:"
-# Il nome della cartella dei campioni dentro il data dir, uguale al prefisso
-# su R2. Esportato perche' il cleanup di audiobook_app deve poterla
-# riconoscere e saltare: nel data dir tutto il resto sono cartelle di job.
-VOICES_DIRNAME = "voices"
+# La cartella dei campioni e delle demo delle voci clonate dentro il data dir,
+# con lo stesso nome come prefisso su R2. Ha un nome tutto suo (e non
+# l'ambiguo 'voices') perche' nel data dir ogni altra cartella e' di un job:
+# il cleanup deve poterla riconoscere a colpo sicuro e non toccarla mai.
+VOICES_DIRNAME = "user_voices"
 R2_PREFIX = VOICES_DIRNAME + "/"
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
 RESUME_TOKEN_DAYS = 30
