@@ -25,7 +25,11 @@ import voice_clone_prompts
 import voxcpm_catalog
 
 VOICE_ID_PREFIX = "voxcpm:mine:"
-R2_PREFIX = "voices/"
+# Il nome della cartella dei campioni dentro il data dir, uguale al prefisso
+# su R2. Esportato perche' il cleanup di audiobook_app deve poterla
+# riconoscere e saltare: nel data dir tutto il resto sono cartelle di job.
+VOICES_DIRNAME = "voices"
+R2_PREFIX = VOICES_DIRNAME + "/"
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
 RESUME_TOKEN_DAYS = 30
 
@@ -109,7 +113,7 @@ def store():
 
 
 def voices_dir():
-    return os.path.join(_data_dir, "voices")
+    return os.path.join(_data_dir, VOICES_DIRNAME)
 
 
 def voice_dir(token):

@@ -17751,6 +17751,21 @@ CLEANUP_ORPHAN_DIR_AGE_SEC = 2 * 60 * 60   # cartelle orfane > 2h vengono rimoss
 # l'encode: oltre, il job torna purgabile e non puo' restare vivo per sempre.
 CLEANUP_ASSEMBLY_GRACE_SEC = 60 * 60
 
+# Nel data dir non ci sono solo le cartelle dei job: `voices/` e' la casa dei
+# campioni vocali, e su R2 e' il prefisso con lo stesso nome. Lo sweep delle
+# cartelle orfane la scambiava per una job dir abbandonata e la cancellava da
+# disco E da cold (12/09/2026: campioni e demo di tutte le voci distrutti, con
+# i record ancora in stato ready e i file spariti). Ogni scansione del data dir
+# passa da _is_job_dir, e il cold delete rifiuta i prefissi riservati.
+_RESERVED_DATA_DIRS = frozenset({voice_clone.VOICES_DIRNAME})
+
+
+def _is_job_dir(entry):
+    """True se la voce del data dir e' (o e' stata) la cartella di un job."""
+    return (entry.is_dir()
+            and not entry.name.startswith("_")
+            and entry.name not in _RESERVED_DATA_DIRS)
+
 
 def _assembly_purge_hold(job, now):
     """True se il job va risparmiato dal purge perche' e' in fase di assembly.
@@ -17858,7 +17873,7 @@ def _evict_hot_local():
         job_by_id = dict(jobs)
     try:
         for jdir in UPLOAD_DIR.iterdir():
-            if not jdir.is_dir() or jdir.name.startswith("_"):
+            if not _is_job_dir(jdir):
                 continue
             job = job_by_id.get(jdir.name, {})
             hot = storage_tiering.hot_window_sec(job)
@@ -17974,7 +17989,7 @@ def _reconcile_cold_offload():
         job_by_id = dict(jobs)
     try:
         for jdir in UPLOAD_DIR.iterdir():
-            if not jdir.is_dir() or jdir.name.startswith("_"):
+            if not _is_job_dir(jdir):
                 continue
             # Salta i job ANCORA ATTIVI: offloaderanno al proprio COMPLETE.
             # Toccarli ora rischierebbe di copiare file mid-write (vedi F1);
@@ -18042,6 +18057,10 @@ def _delete_cold_for_job(job_id):
     il backend non è configurato. Tollerante agli errori: non deve mai bloccare
     il cleanup locale."""
     if not storage_backend.is_enabled() or not job_id:
+        return
+    if job_id in _RESERVED_DATA_DIRS:
+        # Non e' un job: sotto quel prefisso ci sono i campioni vocali.
+        print(f"[cleanup] Cold delete rifiutato sul prefisso riservato {job_id}/")
         return
     try:
         storage_backend.delete_prefix(f"{job_id}/")
@@ -18979,7 +18998,7 @@ def _cleanup_loop():
                             pass
         try:
             for jdir in UPLOAD_DIR.iterdir():
-                if not jdir.is_dir() or jdir.name.startswith("_"):
+                if not _is_job_dir(jdir):
                     continue
                 for od in jdir.iterdir():
                     if not od.is_dir():
@@ -19037,9 +19056,7 @@ def _cleanup_loop():
         _all_known = _known_job_ids | _known_token_jobs
         try:
             for entry in UPLOAD_DIR.iterdir():
-                if not entry.is_dir():
-                    continue
-                if entry.name.startswith("_"):
+                if not _is_job_dir(entry):
                     continue
                 if entry.name in _all_known:
                     continue
