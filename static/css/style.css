@@ -607,6 +607,17 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    vince sulla regola UA [hidden]{display:none} (stessa specificità, autore dopo UA),
    lasciando visibile #geminiAccentRow anche quando _updateAccentDropdown lo nasconde. */
 .form-row[hidden]{display:none}
+/* Stesso difetto, stessa toppa, per ogni altra classe che dichiara un
+   display: la regola d'autore batte la [hidden]{display:none} del browser,
+   e l'elemento che il JS crede nascosto resta sullo schermo.
+     .icon-btn        -> #restoreLangBtn offriva di tornare a una lingua che
+                         era gia' quella attiva;
+     .voxcpm-clip-btn -> #voxcpmDemoStyledBtn compariva anche per le voci
+                         senza clip stilizzata, e non suonava niente;
+     .prem-badge      -> il pallino restava dopo la scoperta del tab.
+   Non si generalizza a [hidden]{display:none!important}: nel codice ci sono
+   elementi mostrati con style.display, e l'!important li spegnerebbe. */
+.icon-btn[hidden],.voxcpm-clip-btn[hidden],.prem-badge[hidden]{display:none}
 .form-group{flex:1;min-width:180px}
 
 /* ═══ SPEED SLIDER (mockup-inspired) ═══ */
