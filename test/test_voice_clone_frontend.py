@@ -165,7 +165,7 @@ def test_hindi_in_devanagari():
 
 TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m", "vc_p2_read",
               "vc_setup_t", "vc_setup_intro",
-              "vc_rec_start", "vc_rec_stop", "vc_rec_cancel", "vc_or", "vc_up_pick", "vc_up_hint",
+              "vc_rec_start", "vc_rec_stop", "vc_rec_cancel", "vc_or", "vc_up_offer", "vc_up_pick", "vc_up_hint",
               "vc_mic", "vc_mic_default", "vc_local_listen", "vc_checking", "vc_sample_listen",
               "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
               "vc_gate_short", "vc_gate_long", "vc_gate_noise", "vc_gate_pauses", "vc_gate_nopause",
@@ -237,10 +237,12 @@ def test_il_caricamento_sparisce_mentre_si_registra_e_si_verifica():
     assert "vcUpBlock" in mostra and "hidden = !on" in mostra
     # sparisce alla partenza della registrazione...
     assert "vcSetUploadVisible(false)" in _estrai_funzione(VC, "vcSetRecording")
-    # ...e per tutta la verifica del campione, con ritorno su ogni uscita
+    # ...e per tutta la verifica del campione; allo scarto (e all'errore di
+    # rete) resta chiuso e torna solo come link sotto il messaggio
     carica = _estrai_funzione(VC, "vcUploadSample")
     assert carica.count("vcSetUploadVisible(false)") == 1
-    assert carica.count("vcSetUploadVisible(true)") == 2
+    assert carica.count("vcSetUploadVisible(false, true)") == 2
+    assert "vcSetUploadVisible(true)" not in carica
     # un annullo non diventa mai un campione: li' il riquadro torna subito
     assert "vcSetUploadVisible(true)" in _estrai_funzione(VC, "vcAbortMedia")
     assert "vcSetUploadVisible(true)" in _estrai_funzione(VC, "vcInitPanel2")
@@ -582,12 +584,12 @@ def test_il_caricamento_sparisce_col_campione_accettato():
     """Registrare e caricare sono alternative: a campione accettato il riquadro
     «scegli un file» invita a rifare quel che e' gia' fatto. Torna con «rifai»."""
     corpo = _estrai_funzione(VC, "vcUploadSample")
-    assert "if (!r.ok) { vcSetUploadVisible(true);" in corpo, \
-        "solo lo scarto riapre il caricamento"
+    assert "if (!r.ok) { vcSetUploadVisible(false, true);" in corpo, \
+        "solo lo scarto offre il caricamento, come link sotto il messaggio"
     dopo = corpo[corpo.index("if (!r.ok)"):]
     dopo = dopo[dopo.index("return;"):]
     dopo = dopo[:dopo.index(".catch(")]  # la rete caduta e' un altro caso: li' torna
-    assert "vcSetUploadVisible(true)" not in dopo, \
+    assert "vcSetUploadVisible(true)" not in dopo and "vcSetUploadVisible(false, true)" not in dopo, \
         "dopo l'accettazione il riquadro non deve tornare"
     redo = _estrai_funzione(VC, "vcInitPanel2")
     m = re.search(r"vcSampleRedo'\)\.onclick\s*=\s*function\s*\(\)\s*\{([^}]*)\}", redo)
@@ -854,3 +856,19 @@ def test_app_non_legge_privati_di_voice_clone():
     assert voice_clone.accepted_ext() == frozenset(voice_clone._ACCEPTED_EXT)
     js_ext = re.search(r"ACCEPTED_EXT = \[([^\]]+)\]", VC).group(1)
     assert set(re.findall(r"'(\w+)'", js_ext)) == set(voice_clone.accepted_ext())
+
+
+def test_scarto_con_riascolto_e_messaggio_in_alto():
+    """Col campione scartato il riquadro di caricamento spingeva in fondo il
+    riascolto e il motivo dello scarto: resta chiuso, e sotto il messaggio un
+    link lo riapre per chi preferisce passare a un file."""
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    assert 'id="vcUpOffer"' in p2 and 'id="vcUpOfferBtn"' in p2
+    assert 'data-t="vc_up_offer"' in p2
+    assert p2.index('id="vcErr2"') < p2.index('id="vcUpOffer"') < p2.index('id="vcSampleBlock"')
+    assert "#vcUpOffer[hidden]{display:none}" in CSS
+    mostra = _estrai_funzione(VC, "vcSetUploadVisible")
+    # riquadro aperto o registrazione in corso: il link non ha ragione d'esistere
+    assert "off.hidden = !!on || !offer" in mostra
+    init = _estrai_funzione(VC, "vcInitPanel2")
+    assert "vcUpOfferBtn" in init and "vcSetUploadVisible(true)" in init

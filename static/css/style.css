@@ -1243,6 +1243,7 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    scelto e, scritto per esteso, il limite in MB. */
 .vc-up{border:1px dashed var(--brd);border-radius:10px;padding:.8rem;text-align:center}
 #vcUpBlock[hidden]{display:none}
+#vcUpOffer[hidden]{display:none}
 .vc-up-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
 .vc-up-input:focus-visible+.vc-up-btn{outline:2px solid var(--ac);outline-offset:2px}
 .vc-up-btn{display:inline-flex;align-items:center;gap:.4rem;margin:0;padding:.5rem 1rem;

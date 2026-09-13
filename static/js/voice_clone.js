@@ -351,8 +351,13 @@
   /* Registrare e caricare sono due strade alternative: mentre una e' in corso
      l'altra non serve, e il riquadro tratteggiato ruberebbe la scena
      all'attesa. Sparisce, e lo spinner resta l'unica cosa che si muove. */
-  function vcSetUploadVisible(on) {
+  function vcSetUploadVisible(on, offer) {
     var blk = $('vcUpBlock'); if (blk) blk.hidden = !on;
+    /* Dopo un verdetto sfavorevole il riquadro resta chiuso: il riascolto e il
+       motivo dello scarto devono stare subito sotto i comandi, non spinti in
+       fondo al pannello. Al suo posto, sotto il messaggio, un link lo riapre
+       per chi preferisce passare a un file. */
+    var off = $('vcUpOffer'); if (off) off.hidden = !!on || !offer;
   }
 
   function vcSetRecording(on) {
@@ -531,9 +536,11 @@
     vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
       if (wait) wait.hidden = true;
       vcSetBusy(false);
-      /* Solo lo scarto riapre la strada alternativa: col campione accettato
-         un «scegli un file» ancora li' inviterebbe a rifare quel che e' fatto. */
-      if (!r.ok) { vcSetUploadVisible(true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
+      /* Solo lo scarto offre la strada alternativa: col campione accettato
+         un «scegli un file» ancora li' inviterebbe a rifare quel che e' fatto.
+         La offre come link, perche' il riquadro aperto spingerebbe in basso
+         il riascolto e il motivo dello scarto. */
+      if (!r.ok) { vcSetUploadVisible(false, true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
       S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
@@ -541,7 +548,7 @@
          copia locale, altrimenti resterebbero due lettori uno sopra l'altro. */
       vcSetLocalAudio(null);
       if (blk) blk.hidden = false;
-    }).catch(function () { if (wait) wait.hidden = true; vcSetUploadVisible(true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+    }).catch(function () { if (wait) wait.hidden = true; vcSetUploadVisible(false, true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   function vcInitPanel2() {
@@ -563,6 +570,7 @@
     vcLoadPrompt();
     $('vcRecBtn').onclick = function () { if (S.busy) return; if (S.media) vcStopMedia(); else vcStartRecording(); };
     $('vcRecCancel').onclick = vcCancelRecording;
+    $('vcUpOfferBtn').onclick = function () { if (!S.busy) vcSetUploadVisible(true); };
     $('vcFile').onchange = function () {
       if (S.busy) { this.value = ''; return; }
       var f = this.files && this.files[0]; if (!f) return;
