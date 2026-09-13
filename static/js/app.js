@@ -452,6 +452,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   // la cascata di applyBookLanguage() ripopola modello/accento/voce.
   const vmPrem=document.getElementById('vmPremium');
   if(vmPrem)vmPrem.addEventListener('change',()=>{
+    // Scelta dell'utente: la nota della cascata parlava della voce che il
+    // cambio di modello sta per sostituire.
+    if(typeof _hideCascadeNote==='function')_hideCascadeNote();
     // _onPremiumModelChanged() gestisce il toggle stile/emozioni, ripopola
     // voci/accenti/emozioni e propaga il cambio al sig di preview.
     if(typeof _onPremiumModelChanged==='function')_onPremiumModelChanged();
@@ -1108,7 +1111,7 @@ function _renderStandardVoices(std){
     sel.lastElementChild.appendChild(o);
   }
   sel.value=std.voice;
-  sel.onchange=()=>{_updateVoiceChip();_onPreviewParamsChanged();};
+  sel.onchange=()=>{_hideCascadeNote();_updateVoiceChip();_onPreviewParamsChanged();};
   _updateVoiceChip();
 }
 
@@ -1137,6 +1140,16 @@ function _nomeVoce(esito,c){
      «Riportato al valore predefinito» descrive il codice: chi legge vuole
      sapere quale voce ha adesso, e le frasi cosi' scritte non si ripetono
      fra loro perche' ognuna nomina una cosa diversa. */
+/* Chiude la nota. La nota racconta cosa ha cambiato LA CASCATA nell'ultimo
+   giro: appena l'utente mette mano lui a uno di quei controlli — sceglie la
+   voce, cambia modello, passa all'altro tab — quel racconto non descrive piu'
+   cio' che ha davanti, e resterebbe li' a nominare una voce che non e' piu'
+   quella selezionata. */
+function _hideCascadeNote(){
+  const box=document.getElementById('cascadeNote');
+  if(box){box.hidden=true;box.textContent='';}
+}
+
 function _showCascadeNote(esito,linguaCambiata){
   const box=document.getElementById('cascadeNote');
   if(!box)return;
@@ -1617,6 +1630,7 @@ function updVoicesPremium(){
     _voxcpmVoiceSel=sel.value;
     _loadVoxcpmSample();
     sel.onchange=()=>{
+      _hideCascadeNote();
       _voxcpmVoiceSel=sel.value;
       _loadVoxcpmSample();
       if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();
@@ -1646,7 +1660,7 @@ function updVoicesPremium(){
     // la prima (comportamento corretto quando l'utente cambia accento).
     if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
     _speechifyVoiceSel=sel.value;
-    sel.onchange=()=>{_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
+    sel.onchange=()=>{_hideCascadeNote();_speechifyVoiceSel=sel.value;if(typeof _onPreviewParamsChanged==='function')_onPreviewParamsChanged();};
     return;
   }
   // --- Ramo Gemini (esistente) ---
@@ -1691,7 +1705,7 @@ function updVoicesPremium(){
   // resta la prima (giusto: quella voce, con questo modello, non esiste).
   if(prevVoice&&Array.prototype.some.call(sel.options,o=>o.value===prevVoice))sel.value=prevVoice;
   _geminiVoiceSel=sel.value;
-  sel.onchange=()=>{_geminiVoiceSel=sel.value;_updateAccentDropdown();_onPreviewParamsChanged();};
+  sel.onchange=()=>{_hideCascadeNote();_geminiVoiceSel=sel.value;_updateAccentDropdown();_onPreviewParamsChanged();};
   // Dropdown accento: dipende da lingua + voce premium correnti.
   if(typeof _updateAccentDropdown==='function')_updateAccentDropdown();
   // Rate hint viene popolato dalla stima del backend (renderEstimate); qui niente fallback statico.
@@ -1862,6 +1876,14 @@ function switchAudioTab(tab){
     else updVoicesPremium();
   }
   if(prev!==tab){
+    /* La nota della cascata parla SOLO del tab che l'utente aveva davanti
+       (regola gia' applicata da _showCascadeNote con `dove`): tenerla in piedi
+       dopo lo switch le fa nominare un controllo che non e' piu' sullo schermo
+       — «Voce impostata su Isabella (IT)» letto dal pannello PREMIUM. Il
+       feedback vale per l'azione appena fatta; cambiare tab e' un'azione
+       nuova. Quando e' applyBookLanguage() a forzare il ritorno a Standard,
+       la nota viene riscritta subito dopo, con i valori giusti. */
+    _hideCascadeNote();
     // Pausa la riproduzione corrente e ricalibra il player sull'anteprima
     // del tab attivo: se la firma è in _knownPreviewSigs ricarica l'audio,
     // altrimenti nasconde il player ma NON cancella le firme note.
