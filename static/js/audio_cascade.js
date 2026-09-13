@@ -74,6 +74,60 @@ function vociStandard(catalog, lang, locale) {
   return out;
 }
 
+/* ORDINE DEGLI ACCENTI — per diffusione, non per alfabeto.
+ *
+ * I locali arrivano dal catalogo nell'ordine alfabetico dello ShortName Edge
+ * (en-AU, en-CA, en-GB, ... en-US): un elenco cosi' mette in cima l'accento
+ * che quasi nessuno cerca e spinge in fondo quello che cerca la maggioranza.
+ * Questa tabella dice, dentro una stessa lingua, quali varianti vengono
+ * prima; i locali che non compaiono qui restano in coda in ordine alfabetico,
+ * cosi' un locale nuovo compare comunque senza toccare il codice.
+ *
+ * Non e' una classifica di dignita' delle varianti: e' l'ordine in cui la
+ * gente le cerca in un catalogo di audiolibri.
+ */
+var LOCALI_PRIORITARI = [
+  'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN', 'en-IE', 'en-NZ', 'en-ZA',
+  'es-ES', 'es-MX', 'es-AR', 'es-CO', 'es-US', 'es-CL', 'es-PE',
+  'pt-BR', 'pt-PT',
+  'fr-FR', 'fr-CA', 'fr-BE', 'fr-CH',
+  'de-DE', 'de-AT', 'de-CH',
+  'it-IT', 'it-CH',
+  'zh-CN', 'zh-TW', 'zh-HK',
+  'ar-EG', 'ar-SA', 'ar-AE', 'ar-MA', 'ar-DZ', 'ar-IQ',
+  'nl-NL', 'nl-BE',
+  'sv-SE', 'sv-FI',
+  'ta-IN', 'ta-LK', 'ta-SG', 'ta-MY',
+  'bn-BD', 'bn-IN',
+  'ur-PK', 'ur-IN',
+  'sw-KE', 'sw-TZ'
+];
+
+var _RANGO_LOCALE = (function () {
+  var m = {};
+  for (var i = 0; i < LOCALI_PRIORITARI.length; i++) {
+    m[LOCALI_PRIORITARI[i].toLowerCase()] = i;
+  }
+  return m;
+})();
+
+/* Ordina una lista di locali per importanza. I noti nell'ordine della
+   tabella, gli ignoti dopo, in ordine alfabetico. Non muta l'argomento. */
+function ordinaLocali(locali) {
+  var noti = [], ignoti = [];
+  for (var i = 0; i < locali.length; i++) {
+    var loc = locali[i];
+    var k = String(loc).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(_RANGO_LOCALE, k)) noti.push(loc);
+    else ignoti.push(loc);
+  }
+  noti.sort(function (a, b) {
+    return _RANGO_LOCALE[String(a).toLowerCase()] - _RANGO_LOCALE[String(b).toLowerCase()];
+  });
+  ignoti.sort();
+  return noti.concat(ignoti);
+}
+
 function localiStandard(catalog, lang) {
   var visti = {}, out = [];
   var voci = vociStandard(catalog, lang, '');
@@ -81,7 +135,7 @@ function localiStandard(catalog, lang) {
     var loc = voci[i].locale || '';
     if (loc && !visti[loc]) { visti[loc] = true; out.push(loc); }
   }
-  return out;
+  return ordinaLocali(out);
 }
 
 /* Voci premium per modello.
@@ -225,8 +279,12 @@ function resolveAudioSelection(input) {
    bundler), `module.exports` per node --test. */
 if (typeof window !== 'undefined') {
   window.resolveAudioSelection = resolveAudioSelection;
+  /* Anche i popolatori d'accento del tab Premium (app.js) ordinano per
+     diffusione: la tabella e' una sola, qui. */
+  window.ordinaLocali = ordinaLocali;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {resolveAudioSelection: resolveAudioSelection,
-                    modelliPer: modelliPer};
+                    modelliPer: modelliPer,
+                    ordinaLocali: ordinaLocali};
 }

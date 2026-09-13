@@ -1358,11 +1358,13 @@ function _populateVoxcpmAccents(){
   if(!acc)return;
   // I locali si ricavano dalle voci, non da una tabella: il catalogo e' una
   // variabile (D10) e una lingua puo' guadagnare varianti senza rilascio.
-  const locali=[];
+  const grezzi=[];
   for(const v of _voxcpmVoicesForLang()){
-    if(v.locale&&locali.indexOf(v.locale)<0)locali.push(v.locale);
+    if(v.locale&&grezzi.indexOf(v.locale)<0)grezzi.push(v.locale);
   }
-  locali.sort();
+  // Ordine per diffusione, non alfabetico: la tabella dei locali sta in
+  // audio_cascade.js ed e' la stessa che ordina gli accenti del tab Standard.
+  const locali=(typeof ordinaLocali==='function')?ordinaLocali(grezzi):grezzi.sort();
   const prev=(locali.indexOf(_voxcpmAccentSel)>=0)?_voxcpmAccentSel:'';
   acc.innerHTML='';
   for(const loc of locali){

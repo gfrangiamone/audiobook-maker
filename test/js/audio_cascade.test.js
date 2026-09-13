@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const {resolveAudioSelection} = require('../../static/js/audio_cascade.js');
+const {resolveAudioSelection, ordinaLocali} = require('../../static/js/audio_cascade.js');
 
 /* Catalogo minimo, nella forma di /api/voices. Volutamente piccolo: i numeri
    veri (75 lingue, 1.957 voci) non rendono un test piu' vero, solo piu' lento
@@ -302,4 +302,47 @@ test('il reset di una voce dice a quale tab appartiene', () => {
   for (const c of r.changes) if (c.what === 'voice') perTab[c.dove] = c.to;
   assert.strictEqual(perTab.standard, 'it-IT-IsabellaNeural');
   assert.strictEqual(perTab.premium, 'gemini:flash25:Achernar');
+});
+
+/* ── Ordine degli accenti ──────────────────────────────────────────────── */
+
+test('gli accenti escono per diffusione, non in ordine alfabetico', () => {
+  /* Il catalogo Edge arriva alfabetico per ShortName: en-AU in cima, en-US
+     in fondo. L'elenco mostrato all'utente deve invertire quella cortesia
+     tipografica e mettere davanti l'accento che cerca la maggioranza. */
+  assert.deepStrictEqual(
+    ordinaLocali(['en-AU', 'en-CA', 'en-GB', 'en-IN', 'en-US']),
+    ['en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN']);
+  assert.deepStrictEqual(ordinaLocali(['pt-PT', 'pt-BR']), ['pt-BR', 'pt-PT']);
+  assert.deepStrictEqual(ordinaLocali(['de-AT', 'de-CH', 'de-DE']),
+                         ['de-DE', 'de-AT', 'de-CH']);
+});
+
+test('un locale sconosciuto resta in coda, in ordine alfabetico', () => {
+  /* D10: una variante nuova non deve sparire ne` scavalcare le principali. */
+  assert.deepStrictEqual(
+    ordinaLocali(['en-ZZ', 'en-GB', 'en-AA', 'en-US']),
+    ['en-US', 'en-GB', 'en-AA', 'en-ZZ']);
+  assert.deepStrictEqual(ordinaLocali([]), []);
+});
+
+test('ordinaLocali non muta la lista ricevuta', () => {
+  const dentro = ['en-GB', 'en-US'];
+  const fuori = ordinaLocali(dentro);
+  assert.deepStrictEqual(dentro, ['en-GB', 'en-US']);
+  assert.deepStrictEqual(fuori, ['en-US', 'en-GB']);
+});
+
+test('inglese: la cascata consegna gli accenti Standard gia` ordinati', () => {
+  const r = resolveAudioSelection({
+    lang: 'en', catalog: CATALOGO_EN_ALFABETICO, current: {}});
+  assert.deepStrictEqual(r.standard.accents, ['en-US', 'en-GB', 'en-AU']);
+});
+
+test('spagnolo: l`accento di ripiego e` il primo per diffusione', () => {
+  /* Senza voce preferita e senza scelta dell'utente il default e`
+     `accents[0]`: deve essere es-ES, non es-AR perche' inizia per A. */
+  const r = resolveAudioSelection({lang: 'es', catalog: CATALOGO, current: {}});
+  assert.strictEqual(r.standard.accents[0], 'es-ES');
+  assert.strictEqual(r.standard.accent, 'es-ES');
 });
