@@ -2297,6 +2297,15 @@ async function renderPaypalGeminiButtons(){
             if(d.retryable&&actions&&typeof actions.restart==='function')return actions.restart();
             return;
           }
+          if(d.paypal_issue==='ALREADY_PAID'||d.error==='already_paid_for_job'){
+            // Il job ha gia' un pagamento incassato e consumato: il secondo
+            // ordine NON viene catturato (si auto-annulla, nessun addebito).
+            // Senza questo ramo l'utente vedeva il codice grezzo
+            // "already_paid_for_job" e il bottone Conferma restava disabilitato
+            // (incidente 89eGMA9eVVgUxxVOA-fpuA).
+            _payPaypalErr((typeof t==='function'&&t('pay_paypal_already_paid'))||'This audiobook has already been paid: no new charge has been made. If the previous generation was cancelled, use the refund voucher we emailed you (Voucher tab).');
+            return;
+          }
           if(d.retryable&&d.paypal_issue==='INSTRUMENT_DECLINED'&&actions&&typeof actions.restart==='function'){
             _payPaypalErr((typeof t==='function'&&t('pay_paypal_declined'))||'Payment declined — choose another card or payment method');
             return actions.restart();

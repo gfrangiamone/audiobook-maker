@@ -5783,13 +5783,22 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
         job["total_chapters"] = len(info.chapters)
 
         def _check_cancelled():
-            """Controlla se il job e stato cancellato o il client disconnesso."""
+            """Controlla se il job e stato cancellato o il client disconnesso.
+
+            Annota in job["cancel_reason"] il PERCHE': "superseded" (nuova
+            epoch), "user" (annullamento esplicito) o "heartbeat" (client
+            sparito). Serve a valle per non scrivere all'utente che ha
+            annullato lui quando l'annullamento e' automatico.
+            """
             if job.get("gen_epoch", 0) != my_epoch:
                 print(f"[{job_id}] _check_cancelled: epoch mismatch "
                       f"(job={job.get('gen_epoch')}, my={my_epoch})")
+                job["cancel_reason"] = "superseded"
                 return True
             if job.get("cancelled"):
                 print(f"[{job_id}] _check_cancelled: explicit cancel flag")
+                job.setdefault("cancel_reason",
+                               "abuse" if job.get("abuse_terminated") else "user")
                 return True
             if job.get("email_registered"):
                 return False
@@ -5799,6 +5808,7 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             if idle > 60:
                 print(f"[{job_id}] _check_cancelled: heartbeat timeout "
                       f"({idle:.0f}s idle > 60s)")
+                job["cancel_reason"] = "heartbeat"
                 return True
             return False
 
@@ -7033,6 +7043,11 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                                         job.get("original_filename", "")),
                             download_url=partial_download_url,
                             lang=job.get("browser_lang", "it"),
+                            # L'utente non ha annullato nulla se e' stato
+                            # l'heartbeat (o un'altra causa automatica) a
+                            # chiudere il job: il testo dell'email cambia.
+                            auto_cancel=(job.get("cancel_reason", "user")
+                                         != "user"),
                         )
                     except Exception as e:
                         print(f"[{job_id}] cancel partial email failed: {e}")

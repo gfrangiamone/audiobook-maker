@@ -1242,22 +1242,43 @@ def admin_notify_cf_credit_low(model_key, credit_left_usd, threshold_usd):
 
 def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
                                           refund_eur, voucher_code,
-                                          book_title, download_url, lang="it"):
-    """Notifica all'utente che ha annullato volontariamente un job voci PREMIUM
-    in corso: l'MP3 parziale e' disponibile al download, il rimborso e' stato
-    emesso al netto della quota gia' consumata (costo provider + commissioni
-    non recuperabili).
+                                          book_title, download_url, lang="it",
+                                          auto_cancel=False):
+    """Notifica all'utente che un job voci PREMIUM in corso e' stato
+    interrotto: l'MP3 parziale e' disponibile al download, il rimborso e'
+    stato emesso al netto della quota gia' consumata (costo provider +
+    commissioni non recuperabili).
 
     - voucher_code valorizzato => pagamento PayPal, nuovo voucher emesso per
       l'importo rimborsato (refund_eur).
     - voucher_code None => pagamento via voucher, refund_eur ri-accreditato
       silenziosamente sul voucher originale.
+    - auto_cancel=True => l'interruzione NON e' stata chiesta dall'utente
+      (heartbeat scaduto, job soppiantato): scrivergli "hai annullato tu"
+      sarebbe falso e lo lascia senza spiegazione di cosa e' successo.
     """
     if not (email and _smtp_available()):
         return
     title_safe = _sanitize_header(book_title or "il tuo libro", max_len=120)
-    subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
-               f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+    if auto_cancel:
+        subject = (f"Audiobook Maker — Generazione interrotta, audio parziale "
+                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+        heading = "&#x26A0;&#xFE0F; Generazione interrotta"
+        intro = (f"la generazione delle voci PREMIUM per <strong>{title_safe}</strong> "
+                 f"si &egrave; interrotta prima del completamento perch&eacute; la "
+                 f"pagina del browser non era pi&ugrave; in contatto con il servizio "
+                 f"(scheda chiusa, computer in sospensione o connessione caduta).")
+        note = ("<p>Per i libri lunghi ti consigliamo di attivare la "
+                "<strong>consegna via email</strong> prima di avviare la "
+                "generazione: il lavoro prosegue sui nostri server anche a "
+                "browser chiuso e ricevi l'audiolibro appena &egrave; pronto.</p>")
+    else:
+        subject = (f"Audiobook Maker — Generazione annullata, audio parziale "
+                   f"disponibile ({refund_eur:.2f} EUR rimborsati)")
+        heading = "&#x26A0;&#xFE0F; Generazione annullata su tua richiesta"
+        intro = (f"hai annullato la generazione delle voci PREMIUM per "
+                 f"<strong>{title_safe}</strong> mentre era in corso.")
+        note = ""
     dl_safe = (download_url or "").replace('"', "%22")
     if voucher_code and refund_eur > 0:
         from datetime import datetime, timedelta
@@ -1278,10 +1299,10 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     <p style="margin:0">La generazione era gi&agrave; in fase avanzata: l'importo trattenuto ({retained_eur:.2f} EUR) corrisponde al costo gi&agrave; sostenuto. <strong>Nessun rimborso residuo</strong>.</p>
   </div>"""
     html_body = f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#d97706">&#x26A0;&#xFE0F; Generazione annullata su tua richiesta</h2>
+  <h2 style="color:#d97706">{heading}</h2>
   <p>Ciao,</p>
-  <p>hai annullato la generazione delle voci PREMIUM per <strong>{title_safe}</strong> mentre era in corso.</p>
-  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino al momento dell'annullamento. Puoi scaricarlo dal link sottostante:</p>
+  <p>{intro}</p>
+  <p>Abbiamo salvato l'<strong>audio parziale</strong> gi&agrave; sintetizzato fino a quel momento. Puoi scaricarlo dal link sottostante:</p>
   <p style="text-align:center;margin:20px 0">
     <a href="{dl_safe}" style="display:inline-block;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">Scarica l'audio parziale (MP3)</a>
   </p>
@@ -1292,7 +1313,8 @@ def _send_gemini_cancelled_partial_email(email, paid_eur, retained_eur,
     <tr><td style="padding:6px 0;color:#666;border-top:1px solid #eee"><strong>Rimborso</strong></td><td style="padding:6px 0;text-align:right;border-top:1px solid #eee"><strong style="color:#059669">{refund_eur:.2f} EUR</strong></td></tr>
   </table>
   {refund_block}
-  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di annullamento, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
+  {note}
+  <p style="font-size:.9em;color:#666">La quota trattenuta copre il costo del servizio voci PREMIUM gi&agrave; consumato fino al punto di interruzione, pi&ugrave; eventuali commissioni di pagamento non recuperabili.</p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
   <p style="color:#999;font-size:12px">Audiobook Maker — {BASE_URL or ''}</p>
 </div>"""

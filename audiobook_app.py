@@ -1291,6 +1291,73 @@ def _build_job_descriptor(job, phase):
     }
 
 
+def _register_paid_job_batch(job_id, job, payment_token, *, engine="",
+                             lang="", email="", output_format=None,
+                             podcast_base_url="", pending_kind="generate"):
+    """Batch implicito per job PAGATO: un job per cui l'utente ha pagato NON
+    deve morire per heartbeat alla chiusura del browser. Registra l'email del
+    pagamento come notifica -> email_registered=True esenta il job
+    dall'heartbeat (generation_engine `_check_cancelled`) e fa consegnare il
+    risultato via email (o solo il rimborso su errore reale),
+    indipendentemente dalla sessione del client. Idempotente se l'utente aveva
+    gia' registrato un'email via /api/register_email.
+
+    Vale sia per PayPal (email del pagatore) sia per VOUCHER (email associata
+    al buono): in entrambi i casi la consegna e' garantita e il frontend mostra
+    il box di notifica precompilato e disabilitato, senza l'avviso "se chiudi
+    la pagina viene annullato" (non veritiero).
+
+    Chiamata da /api/generate (preflight pagamento premium) e da /api/optimize
+    (pagamento combinato LLM+TTS del wizard, che chiama run_generation diretto
+    bypassando /api/generate). Senza la chiamata dal wizard il job pagato resta
+    esposto all'auto-cancel a 60s — incidente 89eGMA9eVVgUxxVOA-fpuA
+    (12/09/2026: job da 22,40 EUR ucciso al 20%).
+
+    `email`: email gia' risolta dal chiamante (record pagamento/voucher); se
+    vuota si interroga payment.email_for_token.
+    `output_format`: se None i campi notify_download_type/notify_base_url non
+    vengono toccati (il ramo /api/optimize li imposta a valle sui parametri
+    opt_*).
+    `pending_kind`: fase del descrittore di recupero, o "" per non registrarlo
+    (in /api/optimize la registrazione avviene a valle, dopo i parametri opt_*).
+
+    Ritorna True se ha attivato il batch adesso.
+    """
+    if job.get("email_registered"):
+        return False
+    _pay_email = (email or "").strip()
+    if not _pay_email:
+        try:
+            _pay_email = payment.email_for_token(payment_token)
+        except Exception as _e:
+            print(f"[{job_id}] email_for_token failed (non-fatal): {_e}", flush=True)
+            _pay_email = ""
+    if not _pay_email:
+        return False
+    job["notify_email"] = _pay_email
+    if output_format is not None:
+        job.setdefault("notify_download_type",
+                       "podcast" if output_format == "zip_rss" else "audio")
+        job.setdefault("notify_base_url", podcast_base_url or "")
+    job["notify_lang"] = lang or "en"
+    job["email_registered"] = True
+    # Flag per la UX: la notifica e' stata attivata automaticamente sull'email
+    # del pagamento (non registrata esplicitamente dall'utente). Il frontend
+    # lo mostra.
+    job["_auto_batch_notify"] = True
+    _write_email_pending_marker(UPLOAD_DIR / job_id)
+    if pending_kind:
+        try:
+            pending_jobs.register(job_id, pending_kind,
+                                  _build_job_descriptor(job, pending_kind))
+        except Exception as _e:
+            print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
+                  f"failed (non-fatal): {_e}", flush=True)
+    print(f"[{job_id}] Paid {engine or 'premium'} job -> batch mode "
+          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
+    return True
+
+
 def _sniff_input_kind(path):
     """Tipo del file dai magic bytes: 'pdf' | 'epub' | 'abm' | 'txt'.
     Serve ai descrittori legacy con input_path privo di estensione (upload con
@@ -11191,43 +11258,11 @@ def api_generate():
                     metrics_store.incr("payment_from_app", _acq_plat)
                 except Exception:
                     pass
-            # Batch implicito per job PAGATO: un job per cui l'utente ha pagato
-            # NON deve morire per heartbeat alla chiusura del browser. Registra
-            # l'email del pagamento come notifica -> email_registered=True esenta
-            # il job dall'heartbeat (generation_engine `_check_cancelled`) e fa
-            # consegnare il risultato via email (o solo il rimborso su errore
-            # reale), indipendentemente dalla sessione del client. Idempotente
-            # se l'utente aveva gia' registrato un'email via /api/register_email.
-            # Vale sia per PayPal (email del pagatore) sia per VOUCHER (email
-            # associata al buono): in entrambi i casi la consegna e' garantita e
-            # il frontend mostra il box di notifica precompilato e disabilitato,
-            # senza l'avviso "se chiudi la pagina viene annullato" (non veritiero).
-            if not job.get("email_registered"):
-                _pay_email = ""
-                try:
-                    _pay_email = payment.email_for_token(payment_token)
-                except Exception as _e:
-                    print(f"[{job_id}] email_for_token failed (non-fatal): {_e}", flush=True)
-                if _pay_email:
-                    job["notify_email"] = _pay_email
-                    job.setdefault("notify_download_type",
-                                   "podcast" if output_format == "zip_rss" else "audio")
-                    job.setdefault("notify_base_url", podcast_base_url)
-                    job["notify_lang"] = (data.get("lang") or "en")
-                    job["email_registered"] = True
-                    # Flag per la UX: la notifica e' stata attivata
-                    # automaticamente sull'email del pagamento (non registrata
-                    # esplicitamente dall'utente). Il frontend lo mostra.
-                    job["_auto_batch_notify"] = True
-                    _write_email_pending_marker(UPLOAD_DIR / job_id)
-                    try:
-                        pending_jobs.register(job_id, "generate",
-                                              _build_job_descriptor(job, "generate"))
-                    except Exception as _e:
-                        print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
-                              f"failed (non-fatal): {_e}", flush=True)
-                    print(f"[{job_id}] Paid Gemini job -> batch mode "
-                          f"(notify {_pay_email}, heartbeat disabilitato)", flush=True)
+            # Batch implicito per job PAGATO (vedi _register_paid_job_batch).
+            _register_paid_job_batch(
+                job_id, job, payment_token, engine="Gemini",
+                lang=(data.get("lang") or "en"), output_format=output_format,
+                podcast_base_url=podcast_base_url)
         # Stash style for run_generation
         if style_instruction:
             job["gemini_style_instruction"] = style_instruction
@@ -11381,30 +11416,11 @@ def api_generate():
             # Batch implicito per job PAGATO (stessa logica del ramo Gemini):
             # un job pagato non deve morire per heartbeat alla chiusura del
             # browser.
-            if not job.get("email_registered"):
-                _pay_email = ""
-                try:
-                    _pay_email = payment.email_for_token(payment_token)
-                except Exception as _e:
-                    print(f"[{job_id}] email_for_token failed (non-fatal): {_e}", flush=True)
-                if _pay_email:
-                    job["notify_email"] = _pay_email
-                    job.setdefault("notify_download_type",
-                                   "podcast" if output_format == "zip_rss" else "audio")
-                    job.setdefault("notify_base_url", podcast_base_url)
-                    job["notify_lang"] = (data.get("lang") or "en")
-                    job["email_registered"] = True
-                    job["_auto_batch_notify"] = True
-                    _write_email_pending_marker(UPLOAD_DIR / job_id)
-                    try:
-                        pending_jobs.register(job_id, "generate",
-                                              _build_job_descriptor(job, "generate"))
-                    except Exception as _e:
-                        print(f"[{job_id}] pending_jobs.register (paid auto-batch) "
-                              f"failed (non-fatal): {_e}", flush=True)
-                    print(f"[{job_id}] Paid {'VoxCPM' if _is_vox else 'Speechify'} job "
-                          f"-> batch mode (notify {_pay_email}, heartbeat "
-                          f"disabilitato)", flush=True)
+            _register_paid_job_batch(
+                job_id, job, payment_token,
+                engine=("VoxCPM" if _is_vox else "Speechify"),
+                lang=(data.get("lang") or "en"), output_format=output_format,
+                podcast_base_url=podcast_base_url)
         # Stash emotion for run_generation (outer indent: vale per speechify,
         # non annidato nel ramo gemini).
         if speechify_emotion:
@@ -12998,7 +13014,10 @@ def api_paypal_capture_order():
         print(f"[paypal] DUPLICATE capture refused order={order_id} job={job_id}: {e}")
         _log_activity(job_id, jobs.get(job_id, {}).get("original_filename", ""),
                       "PAYMENT_DUPLICATE_REFUSED", "", "", "", str(e))
+        # `paypal_issue`: chiave stabile per il frontend (il campo `error` e'
+        # un codice grezzo, non un messaggio da mostrare all'utente).
         return jsonify({"error": "already_paid_for_job",
+                        "paypal_issue": "ALREADY_PAID",
                         "detail": "This audiobook has already been paid."}), 409
     except payment.UnfundedCaptureError as e:
         # Capture PENDING non finanziata (tipicamente eCheck: addebito su conto
@@ -14084,6 +14103,16 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"gemini={_gemini_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total:.2f}€ ({_consumed_method})")
+            # Batch implicito per job PAGATO. Il wizard consuma qui il
+            # pagamento combinato e poi chiama run_generation direttamente
+            # (bypassa /api/generate): senza questa registrazione l'heartbeat
+            # a 60s resta armato su un job pagato e lo uccide appena l'utente
+            # lascia la scheda in background. Il descrittore di recupero viene
+            # registrato a valle (fase "optimize", dopo i parametri opt_*).
+            _register_paid_job_batch(
+                job_id, job, _combined_token, engine="Gemini",
+                lang=data.get("lang", "en"), email=_consumed_email,
+                pending_kind="")
 
     # ----- Combined payment (LLM + Speechify in auto_generate flow) -----
     # Mirror LEAN del blocco Gemini sopra per le voci PREMIUM Simba. Un unico
@@ -14227,6 +14256,11 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"speechify={_speechify_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total_spx:.2f}€ ({_consumed_method_spx})")
+            # Batch implicito per job PAGATO (vedi ramo Gemini sopra).
+            _register_paid_job_batch(
+                job_id, job, _combined_token_spx, engine="Speechify",
+                lang=data.get("lang", "en"), email=_consumed_email_spx,
+                pending_kind="")
 
     # ----- Combined payment (LLM + VoxCPM in auto_generate flow) -----
     # Mirror LEAN del blocco Speechify sopra per le voci VoxCPM. Un unico
@@ -14371,6 +14405,11 @@ def api_optimize():
             print(f"[{job_id}] combined payment consumed at /api/optimize: "
                   f"voxcpm={_voxcpm_eur_quota:.2f}€ + llm={estimated_cost:.2f}€ "
                   f"= {_expected_total_vox:.2f}€ ({_consumed_method_vox})")
+            # Batch implicito per job PAGATO (vedi ramo Gemini sopra).
+            _register_paid_job_batch(
+                job_id, job, _combined_token_vox, engine="VoxCPM",
+                lang=data.get("lang", "en"), email=_consumed_email_vox,
+                pending_kind="")
 
     # Batch mode: assegnazione campi notify (validazione email + SMTP gia'
     # eseguita sopra, prima del consumo del pagamento).
