@@ -1309,9 +1309,10 @@ function _onPremiumModelChanged(){
   // solo VoxCPM.
   if(styleRow)styleRow.hidden=simba||vox;
   if(emoRow)emoRow.hidden=!simba;
-  /* Il box d'ascolto vive FUORI da #tabPremium (deve stare sotto lo
-     slider della velocita', che lo influenza): tabPremium.hidden non lo
-     copre. E questa funzione gira anche mentre l'utente guarda le Voci
+  /* Il box d'ascolto vive FUORI da #tabPremium (sta nella
+     .preview-cost-row, accanto alla stima costo e sotto lo slider della
+     velocita' che lo influenza): tabPremium.hidden non lo copre. E questa
+     funzione gira anche mentre l'utente guarda le Voci
      Standard — applyBookLanguage() la chiama a ogni giro di cascata per
      ricostruire i controlli premium — quindi il modello da solo non
      basta a decidere: senza il tab, il box comparirebbe fra le voci
@@ -1893,10 +1894,10 @@ function switchAudioTab(tab){
     // nascosto (tabPremium.hidden=true).
     if(tab!=='premium'){
       if(typeof _pauseVoxcpmSample==='function')_pauseVoxcpmSample();
-      // Il box d'ascolto vive fuori da #tabPremium (dopo lo slider della
-      // velocita', che deve precederlo e influenzarlo): tabPremium.hidden
-      // non lo copre, va nascosto qui. Al rientro ci pensa
-      // _onPremiumModelChanged.
+      // Il box d'ascolto vive fuori da #tabPremium — sta nella
+      // .preview-cost-row, accanto alla stima costo, sotto lo slider della
+      // velocita' che lo influenza: tabPremium.hidden non lo copre, va
+      // nascosto qui. Al rientro ci pensa _onPremiumModelChanged.
       const vsRow=document.getElementById('voxcpmSampleRow');
       if(vsRow)vsRow.hidden=true;
     }
