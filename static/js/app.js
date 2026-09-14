@@ -5049,6 +5049,39 @@ async function _streamToBlob(response,onProgress){
   return new Blob(chunks,{type});
 }
 
+// --- Cold storage: il 302 che fetch non puo' seguire ---------------------
+// Dopo la finestra calda il file locale viene evacuato su cold storage e
+// l'endpoint risponde 302 verso un presigned URL cross-origin. `fetch`
+// seguirebbe il redirect, ma la risposta dello storage non porta
+// Access-Control-Allow-Origin: il browser la scarta e solleva
+// "TypeError: Failed to fetch" -- l'errore che compariva sul bottone mentre
+// il link via email, che e' una navigazione e quindi non soggetto al CORS,
+// scaricava lo stesso identico file senza problemi.
+// Con redirect:'manual' il redirect arriva come risposta opaca (type
+// 'opaqueredirect'): la Location non e' leggibile, ma non serve -- basta
+// rinavigare sullo stesso endpoint e lasciare che sia il browser a seguirlo.
+// Ripetere la richiesta e' gratis: questi endpoint chiamano
+// _send_file_throttled con bypass_throttle=True, quindi il secondo colpo non
+// consuma un download ne' fa scattare il cooldown.
+function _coldRedirect(r){
+  return !!r && r.type==='opaqueredirect';
+}
+// Navigazione, non fetch. Il presigned URL porta Content-Disposition
+// attachment (storage_backend.presigned_get_url), quindi il browser scarica
+// senza lasciare la pagina. Niente barra di avanzamento: la consegna esce
+// dal controllo del JS, ed e' il prezzo per non bufferizzare in memoria
+// mezzo giga di M4B.
+function _coldNavigate(url){
+  window.location.assign(url);
+}
+function _dlSuccessLabel(type){
+  if(type === 'm4b') return t('btn_dl_m4b');
+  if(type === 'abm') return t('btn_dl_abm');
+  if(type === 'mp3') return t('btn_dl_mp3');
+  if(type === 'm4bkit') return t('btn_dl_m4b_kit');
+  return t('btn_dl');
+}
+
 async function downloadFile(type){
   if(!jobId)return;
   // Bottone su cui mostrare spinner/disable durante il download. In modalita'
@@ -5066,7 +5099,13 @@ async function downloadFile(type){
   for(let attempt=1;attempt<=maxDlRetries;attempt++){
     try{
       navigator.sendBeacon('/api/heartbeat/'+jobId);
-      const r=await fetch('/api/download/'+jobId + (type ? '?type='+type : ''));
+      const dlUrl='/api/download/'+jobId + (type ? '?type='+type : '');
+      const r=await fetch(dlUrl,{redirect:'manual'});
+      if(_coldRedirect(r)){
+        _coldNavigate(dlUrl);
+        _clearBtnLoading(btn,'✅ <span>'+_dlSuccessLabel(type)+'</span>');
+        return;
+      }
       if(r.status===404){
         if(attempt<maxDlRetries){await new Promise(ok=>setTimeout(ok,1500));continue}
         showPErr(t('dl_expired')||'File non più disponibile. Riconverti il libro.');
@@ -5133,12 +5172,7 @@ async function downloadFile(type){
       document.body.appendChild(a);a.click();
       setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
       
-      let successT = t('btn_dl');
-      if(type === 'm4b') successT = t('btn_dl_m4b');
-      if(type === 'abm') successT = t('btn_dl_abm');
-      if(type === 'mp3') successT = t('btn_dl_mp3');
-      if(type === 'm4bkit') successT = t('btn_dl_m4b_kit');
-      _clearBtnLoading(btn,'✅ <span>'+successT+'</span>');
+      _clearBtnLoading(btn,'✅ <span>'+_dlSuccessLabel(type)+'</span>');
       if(isLastDl)showDlLastWarning();
       return;
     }catch(e){
@@ -5159,7 +5193,13 @@ async function downloadPodcast(){
   _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
-    const r=await fetch('/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl));
+    const pUrl='/api/download_podcast/'+jobId+'?base_url='+encodeURIComponent(baseUrl);
+    const r=await fetch(pUrl,{redirect:'manual'});
+    if(_coldRedirect(r)){
+      _coldNavigate(pUrl);
+      _clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');
+      return;
+    }
     if(r.status===429){
       const txt=await r.text();
       const m=txt.match(/Wait (\d+) seconds/);
@@ -5213,7 +5253,9 @@ async function downloadPodcastZip(){
   _showDlToast(t('dl_hint')||'The download will start shortly. Large files may take a few seconds.');
   try{
     navigator.sendBeacon('/api/heartbeat/'+jobId);
-    const r=await fetch('/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):''));
+    const pUrl='/api/download_podcast/'+jobId+(podcastBaseUrl?'?base_url='+encodeURIComponent(podcastBaseUrl):'');
+    const r=await fetch(pUrl,{redirect:'manual'});
+    if(_coldRedirect(r)){_coldNavigate(pUrl);_clearBtnLoading(btn,'✅ <span data-t="btn_dl_podcast">'+t('btn_dl_podcast')+'</span>');return}
     if(r.status===429){const txt=await r.text();const m=txt.match(/Wait (\d+) seconds/);const sec=m?m[1]:'60';showPErr(t('dl_cooldown').replace('%s', sec));_clearBtnLoading(btn,restoreHtml);return}
     if(r.status===410){showPErr(t('dl_deleted')||'File removed after too many downloads. Please reconvert the book.');_clearBtnLoading(btn,restoreHtml);return}
     if(!r.ok){const tx=await r.text();showPErr(tx||'Download failed');_clearBtnLoading(btn,restoreHtml);return}
