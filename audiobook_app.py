@@ -403,8 +403,21 @@ if gemini_tts is not None:
                 credit = tts_backend_state.credit_left_usd()
         except Exception:
             credit = None
+        # Quando cadra' la prima sonda di rientro. Si legge dallo stato
+        # persistito invece di ricalcolare `ABM_CF_PROBE_FIRST_SEC`: e'
+        # gemini_tts a decidere se armarla (la causa del trip puo' non
+        # essere sondabile), e leggere l'appuntamento vero e' l'unico modo
+        # perche' l'email non prometta una sonda che nessuno ha fissato.
+        probe_in = None
+        try:
+            nxt = tts_backend_state.probe_info(model_key).get("next_at")
+            if nxt:
+                probe_in = max(0, int(nxt - time.time()))
+        except Exception:
+            probe_in = None
         email_service.admin_notify_tts_backend_switch(
-            model_key, reason, detail, job_id, credit_left_usd=credit)
+            model_key, reason, detail, job_id, credit_left_usd=credit,
+            probe_first_sec=probe_in)
         # epoch=time.time() rende la chiave di dedup sempre nuova: a
         # differenza degli eventi di download (spam da prefetch, dedup
         # voluto), ogni switch di backend e' un fatto distinto anche a
@@ -435,8 +448,34 @@ if gemini_tts is not None:
                       model_key, f"residuo stimato {credit_left_usd:.2f} USD",
                       epoch=time.time())
 
+    def _on_tts_backend_return(model_key, probe_attempts, down_seconds):
+        # Chiusura esplicita del failover aperto da `_on_tts_backend_switch`.
+        # Immediata e non nel digest per la stessa simmetria: finche' non
+        # arriva questa email l'admin deve assumere che il servizio giri su
+        # Vertex, e un rientro annunciato il giorno dopo lo farebbe
+        # intervenire a mano su un guasto gia' passato.
+        credit = None
+        try:
+            if (tts_backend_state.credit_check_enabled()
+                    and tts_backend_state.credit_balance_usd() > 0):
+                credit = tts_backend_state.credit_left_usd()
+        except Exception:
+            credit = None
+        email_service.admin_notify_tts_backend_return(
+            model_key, probe_attempts=probe_attempts,
+            down_seconds=down_seconds, credit_left_usd=credit)
+        # epoch=time.time() per la stessa ragione dello switch: ogni rientro
+        # e' un fatto distinto e non va soffocato dal dedup su
+        # (session_id, operation), proprio nel caso - failover ripetuti sullo
+        # stesso modello - che una forense va a cercare.
+        _log_activity("", "", "TTS_BACKEND_RETURN", "", "",
+                      model_key,
+                      f"sonda riuscita dopo {probe_attempts} tentativi",
+                      epoch=time.time())
+
     gemini_tts.set_backend_switch_notifier(_on_tts_backend_switch)
     gemini_tts.set_credit_alert_notifier(_on_cf_credit_alert)
+    gemini_tts.set_backend_return_notifier(_on_tts_backend_return)
 
 jobs = {}
 _jobs_lock = threading.Lock()  # Protects all reads/writes of `jobs` dict
@@ -7280,6 +7319,28 @@ def admin_audit_premium_page():
     return "credito residuo (stima): $" + esc(s.credit_left_usd) +
            " (&asymp; " + esc(s.credit_left_eur) + " &euro;)";
   }
+  // Riga del rientro automatico, mostrata solo a failover in corso: dice se
+  // c'e' un appuntamento e quando, cosi' l'admin sa se aspettare o premere il
+  // pulsante. Senza appuntamento lo dice, invece di tacere: un pannello che
+  // non nomina la sonda lascia credere che il rientro sia ancora solo manuale.
+  function tbProbeFra(sec){
+    if (sec < 60) return sec + " s";
+    if (sec < 3600) return Math.round(sec/60) + " min";
+    const h = Math.floor(sec/3600), m = Math.round((sec%3600)/60);
+    return m ? (h + " h " + m + " min") : (h + " h");
+  }
+  function tbProbeLine(s){
+    if (!s.probe_enabled) {
+      return '<br><span style="color:var(--muted)">rientro automatico disattivato (<code>ABM_CF_PROBE_ENABLE=0</code>)</span>';
+    }
+    const n = s.probe_attempts || 0;
+    const coda = n ? (" · " + n + " sond" + (n === 1 ? "a fallita" : "e fallite") +
+                      (s.probe_last_error ? ": " + esc(s.probe_last_error) : "")) : "";
+    if (s.probe_in_sec === null || s.probe_in_sec === undefined) {
+      return '<br><span style="color:var(--muted)">nessuna sonda di rientro armata per questa causa</span>' + coda;
+    }
+    return "<br>prossima sonda di rientro fra " + esc(tbProbeFra(s.probe_in_sec)) + coda;
+  }
   function tbApply(s){
     const btn = $("tbResetBtn");
     const topupBtn = $("tbTopupBtn");
@@ -7314,7 +7375,8 @@ def admin_audit_premium_page():
       detail.innerHTML = "Causa: " + esc(s.trip_reason || "?") + " · " + esc(s.trip_detail || "") +
                          "<br>Dal " + esc((s.tripped_at || "").slice(0,19).replace("T"," ")) +
                          " · job " + esc(s.trip_job_id || "?") +
-                         "<br>" + tbCreditLine(s);
+                         "<br>" + tbCreditLine(s) +
+                         tbProbeLine(s);
       detail.style.display = "block";
       btn.disabled = false;
       btn.textContent = "Riporta su Cloudflare";
@@ -8176,6 +8238,34 @@ def admin_api_gemini_kill_switch():
     })
 
 
+def _probe_payload(model_key):
+    """Vista JSON dell'appuntamento della sonda di rientro.
+
+    Non solleva mai: il pannello «Backend TTS» deve continuare a mostrare lo
+    stato del breaker anche se la sonda non e' disponibile (modulo TTS non
+    caricato, stato senza campi di sonda perche' scritto da una versione
+    precedente). In quel caso i campi ci sono comunque, a None: il contratto
+    non cambia forma fra installazioni, cosi' il client non deve gestirne due.
+    """
+    vuoto = {"probe_enabled": False, "probe_next_at": None,
+             "probe_in_sec": None, "probe_attempts": 0,
+             "probe_last_error": None, "probe_delay_sec": 0}
+    try:
+        info = tts_backend_state.probe_info(model_key)
+        nxt = info.get("next_at")
+        return {
+            "probe_enabled": bool(gemini_tts is not None
+                                  and gemini_tts._cf_probe_enabled()),
+            "probe_next_at": nxt,
+            "probe_in_sec": None if not nxt else max(0, int(nxt - time.time())),
+            "probe_attempts": info.get("attempts", 0),
+            "probe_last_error": info.get("last_error"),
+            "probe_delay_sec": info.get("delay_sec", 0),
+        }
+    except Exception:
+        return vuoto
+
+
 @app.route("/admin/api/tts_backend", methods=["GET", "POST"])
 def admin_api_tts_backend():
     """Stato del backend TTS (Cloudflare/Vertex), rientro manuale su
@@ -8200,10 +8290,19 @@ def admin_api_tts_backend():
     chiamante che usasse ancora la forma vecchia, un `topup` VERO in un
     `action="reset"` e' rifiutato con 400 invece di essere ignorato.
 
-    Il rientro e' manuale per scelta (D5): un backend caduto per credito
-    esaurito tornerebbe a cadere subito, e ogni caduta costa un job. Nessun
-    timer, nessun ripristino automatico: questo endpoint e' l'UNICO modo di
-    rientrare su Cloudflare.
+    Questo endpoint non e' piu' l'unica via di rientro, ma resta l'unica
+    IMMEDIATA. L'altra e' la sonda di rientro (`gemini_tts.probe_cloudflare`,
+    innescata dal sorvegliante `_cf_probe_supervisor`): poche parole di
+    sintesi in background, senza alcun utente collegato, a intervalli che
+    raddoppiano a ogni fallimento. L'obiezione storica al ripristino
+    automatico - «un backend caduto per credito esaurito tornerebbe a cadere
+    subito, e ogni caduta costa un job» - vale per un rientro tentato con un
+    JOB VERO, non per una sonda che costa una richiesta rifiutata. I job non
+    riprovano mai Cloudflare da soli: il rientro avviene sempre fra un job e
+    l'altro.
+
+    La risposta espone percio' anche l'appuntamento della sonda
+    (`probe_*`), perche' l'admin sappia se aspettare o premere il pulsante.
 
     Punto delicato: il breaker vive in due posti, lo stato persistito su
     disco (tts_backend_state) e la cache in-process gemini_tts._BACKEND,
@@ -8366,6 +8465,14 @@ def admin_api_tts_backend():
         "trip_detail": s.get("trip_detail"),
         "trip_job_id": s.get("trip_job_id"),
         "consecutive_failures": s.get("consecutive_failures", 0),
+        # Stato della sonda di rientro. `probe_next_at` viaggia come epoch
+        # (float), la stessa forma in cui e' persistito: e' l'unico campo
+        # dello stato che sia un istante confrontabile invece di una marca
+        # ISO, e convertirlo qui obbligherebbe il pannello a ri-parsarlo per
+        # calcolare «fra quanto». `probe_in_sec` e' il comodo derivato, gia'
+        # clampato a zero per un appuntamento scaduto che il sorvegliante non
+        # ha ancora raccolto.
+        **_probe_payload(model_key),
         # USD e' l'importo autorevole (il credito Cloudflare e' denominato
         # in dollari); l'equivalente in euro viaggia accanto solo perche' il
         # pannello lo mostri a chi ragiona in euro, convertito con la stessa
@@ -18212,6 +18319,46 @@ else:
     print(f"[startup] PayPal payment disabled (ABM_PAYPAL_CLIENT_ID/SECRET not set)")
 _cleanup_started = False
 
+def _cf_probe_tick_sec():
+    """Cadenza con cui il sorvegliante guarda l'orologio. Non e' l'intervallo
+    fra una sonda e l'altra - quello lo tiene lo stato persistito e raddoppia
+    da solo - ma solo la granularita' con cui l'appuntamento viene notato."""
+    try:
+        return max(10, int(os.environ.get("ABM_CF_PROBE_TICK_SEC", "60") or 60))
+    except (TypeError, ValueError):
+        return 60
+
+
+def _cf_probe_supervisor():
+    """Fa scattare le sonde di rientro su Cloudflare quando sono scadute.
+
+    Vive fuori dai job di proposito: il rientro avviene FRA un job e l'altro,
+    mai dentro. Una sintesi che riprovasse Cloudflare da sola rischierebbe
+    l'audiolibro dell'utente su un backend ancora guasto; questo thread
+    rischia una richiesta HTTP.
+
+    Il ciclo non tiene alcuno stato in memoria: l'appuntamento sta su disco
+    (`tts_backend_state.probe_next_at`), quindi un riavvio del processo nel
+    mezzo di un failover lungo riprende dal ritmo gia' raggiunto invece di
+    ricominciare a bussare ogni mezz'ora.
+
+    Non muore mai: come il sorvegliante del cleanup, un'eccezione qui
+    lascerebbe un failover aperto per sempre senza che nulla lo segnali.
+    """
+    if gemini_tts is None:
+        return
+    tick = _cf_probe_tick_sec()
+    while True:
+        try:
+            time.sleep(tick)
+            for model_key in list(gemini_tts.GEMINI_MODELS):
+                if tts_backend_state.probe_due(model_key):
+                    gemini_tts.probe_cloudflare(model_key)
+        except Exception as e:
+            print(f"[cf-probe] giro fallito (non-fatale): "
+                  f"{type(e).__name__}: {e}", flush=True)
+
+
 def _ensure_background_threads():
     global _cleanup_started
     if _cleanup_started:
@@ -18226,6 +18373,11 @@ def _ensure_background_threads():
     threading.Thread(target=_cleanup_supervisor, daemon=True).start()
     # Recupero job batch interrotti dal riavvio (eseguito una sola volta al boot).
     threading.Thread(target=_recover_orphan_jobs, daemon=True).start()
+    # Rientro automatico su Cloudflare: il sorvegliante delle sonde. Parte
+    # sempre che gemini_tts sia caricato, anche senza failover in corso - e'
+    # lui a notare quello che un riavvio ha trovato gia' aperto sul disco.
+    if gemini_tts is not None:
+        threading.Thread(target=_cf_probe_supervisor, daemon=True).start()
     # Moderazione anti-abuso: worker di giudizio a giudice singolo. All'avvio
     # con kill accesa i verdetti maturati in osservazione vengono azzerati.
     try:
@@ -18266,6 +18418,12 @@ def _ensure_background_threads():
               f"{'on' if VOXCPM_DIGEST else 'off (ABM_VOXCPM_DIGEST=0)'}")
     else:
         print("[startup] Admin digest disabled (ABM_ADMIN_EMAIL not set)")
+    if gemini_tts is not None:
+        print(f"[startup] Rientro TTS su Cloudflare: "
+              f"{'sonda attiva' if gemini_tts._cf_probe_enabled() else 'off (ABM_CF_PROBE_ENABLE=0)'} "
+              f"(prima sonda dopo {gemini_tts._cf_probe_first_sec()}s, "
+              f"tetto {gemini_tts._cf_probe_max_sec()}s, "
+              f"controllo ogni {_cf_probe_tick_sec()}s)")
     print(f"[startup] Abuse moderation: "
           f"{'kill ON' if abuse_watch.kill_enabled() else 'observation only'} "
           f"(confidence >= {abuse_watch.confidence_threshold():.2f}, "

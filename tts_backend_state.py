@@ -4,9 +4,15 @@ Modulo foglia. Nessun import di `audiobook_app` o `gemini_tts`: lo stato e'
 un dato, non una decisione. Chi decide di far scattare il breaker e' il
 chiamante, che confronta `record_failure` con ABM_CF_TRIP_FAILURES.
 
-Il rientro su Cloudflare avviene solo per azione manuale dell'admin
-(`reset`), mai automaticamente: un backend che e' andato giu' per credito
-esaurito tornerebbe a cadere subito, e ogni caduta costa un job.
+Il rientro su Cloudflare non avviene MAI riprovando con un job vero: un
+backend andato giu' per credito esaurito tornerebbe a cadere subito, e ogni
+caduta costa un job. Le due sole vie di rientro sono percio' il reset
+manuale dell'admin (`reset`) e una SONDA in background - una sintesi di
+poche parole, nessun utente collegato - che quando riesce chiama essa
+stessa `reset()`. Questo modulo non esegue la sonda e non decide se vada
+fatta: si limita a custodirne l'appuntamento (`schedule_probe` /
+`probe_due` / `record_probe_failure`), come gia' fa per la soglia di trip,
+che pure decide il chiamante.
 
 Fail-safe di lettura: un file ASSENTE e' un'installazione pulita (nessun
 trip e' mai avvenuto, {} e' corretto). Un file PRESENTE ma illeggibile (I/O,
@@ -390,6 +396,14 @@ def _failsafe_placeholder(trip_reason, trip_detail):
         "trip_job_id": None,
         "consecutive_failures": 0,
         "notified": False,
+        # Nessun appuntamento di sonda: un trip "virtuale" da fail-safe non
+        # e' un guasto misurato di Cloudflare ma uno stato che non sappiamo
+        # leggere, e il rientro automatico e' esattamente cio' che il
+        # fail-safe esiste per impedire. Vedi `probe_due()`.
+        "probe_next_at": None,
+        "probe_delay_sec": 0,
+        "probe_attempts": 0,
+        "probe_last_error": None,
     }
 
 
@@ -500,6 +514,15 @@ def trip(model_key, *, reason, detail, job_id):
             "trip_detail": str(detail)[:300],
             "trip_job_id": job_id,
             "notified": False,
+            # Ciclo nuovo, appuntamento pulito: `reset()` azzera gia' questi
+            # campi, ma un trip che ereditasse il backoff del ciclo
+            # precedente ripartirebbe da ore di attesa invece che dal primo
+            # intervallo. Armare la sonda NON avviene qui: e' una decisione
+            # del chiamante (vedi `schedule_probe`).
+            "probe_next_at": None,
+            "probe_delay_sec": 0,
+            "probe_attempts": 0,
+            "probe_last_error": None,
         })
         _save()
         print(f"[tts-backend-state] TRIP {model_key}: {reason} ({detail})")
@@ -528,6 +551,10 @@ def reset(model_key):
             "trip_job_id": None,
             "consecutive_failures": 0,
             "notified": False,
+            "probe_next_at": None,
+            "probe_delay_sec": 0,
+            "probe_attempts": 0,
+            "probe_last_error": None,
         })
         _save()
         print(f"[tts-backend-state] RESET {model_key} (aveva trip: {had_trip})")
@@ -553,6 +580,137 @@ def record_success(model_key):
         if entry.get("consecutive_failures"):
             entry["consecutive_failures"] = 0
             _save()
+
+
+# --- Appuntamento della sonda di rientro ------------------------------------
+# Un trip e' a senso unico per i JOB: nessun job vero torna mai a provare
+# Cloudflare. Torna a provarci una sonda in background, che sintetizza poche
+# parole senza alcun utente collegato: un suo fallimento costa una richiesta
+# HTTP rifiutata, non un audiolibro, e questo e' l'unico motivo per cui il
+# rientro automatico qui e' ammissibile mentre nel percorso dei job non lo e'.
+#
+# Qui vive solo l'APPUNTAMENTO, non la sonda ne' la decisione di eseguirla:
+# stessa divisione della soglia di trip, che questo modulo conta
+# (`record_failure`) e il chiamante decide (ABM_CF_TRIP_FAILURES).
+#
+# `probe_next_at` e' un epoch float, non una stringa ISO come `tripped_at`:
+# e' l'unico campo di questo modulo che viene CONFRONTATO, e un confronto
+# passa per un parsing che, su un file scritto a mano o corrotto a meta',
+# solleverebbe. Un numero degrada invece a 0.0 via `_safe_float`, cioe' a
+# "scaduto": la sonda parte una volta di troppo e si ri-arma da sola col
+# valore giusto. Un appuntamento illeggibile che blocca per sempre il
+# rientro sarebbe il difetto peggiore dei due.
+
+
+def schedule_probe(model_key, delay_sec):
+    """Fissa il prossimo tentativo di rientro fra `delay_sec` secondi.
+
+    Non verifica che il modello sia scattato ne' che la causa del trip
+    meriti una sonda: entrambe sono decisioni del chiamante. Ritorna
+    l'epoch fissato.
+    """
+    delay = max(1.0, _safe_float(delay_sec, 1.0))
+    with _LOCK:
+        entry, _existed = _entry_for_mutation(model_key)
+        when = time.time() + delay
+        entry["probe_next_at"] = when
+        entry["probe_delay_sec"] = int(delay)
+        _save()
+        return when
+
+
+def clear_probe(model_key):
+    """Disarma la sonda lasciando intatto il trip. Il modello resta su
+    Vertex e ci resta finche' un reset manuale non lo riporta indietro: e'
+    la forma che prende un rientro automatico spento per configurazione o
+    non applicabile a questa causa di trip."""
+    with _LOCK:
+        entry, _existed = _entry_for_mutation(model_key)
+        if entry.get("probe_next_at") is None:
+            return False
+        entry["probe_next_at"] = None
+        _save()
+        return True
+
+
+def probe_due(model_key):
+    """True se c'e' un appuntamento scaduto per questo modello.
+
+    Falso per un modello non scattato (non c'e' nulla da riguadagnare) e per
+    un modello scattato senza appuntamento - compreso il trip "virtuale" del
+    fail-safe, che non ha mai `probe_next_at` (vedi
+    `_failsafe_placeholder`): uno stato che non sappiamo leggere non si
+    riarma da solo, per definizione.
+
+    Lettura pura come `state()`: non scrive, non solleva.
+    """
+    s = state(model_key)
+    if not s.get("tripped_at"):
+        return False
+    when = s.get("probe_next_at")
+    if when is None:
+        return False
+    return _safe_float(when, 0.0) <= time.time()
+
+
+def probe_info(model_key):
+    """Vista di sola lettura dell'appuntamento, per console e log."""
+    s = state(model_key)
+    when = s.get("probe_next_at")
+    return {
+        "next_at": None if when is None else _safe_float(when, 0.0),
+        "delay_sec": _safe_int(s.get("probe_delay_sec", 0)),
+        "attempts": _safe_int(s.get("probe_attempts", 0)),
+        "last_error": s.get("probe_last_error"),
+    }
+
+
+def record_probe_failure(model_key, detail, *, factor=2.0, max_delay_sec=None):
+    """Registra una sonda fallita e sposta l'appuntamento raddoppiandolo.
+
+    Il raddoppio parte dall'intervallo che ha prodotto l'appuntamento appena
+    scaduto (`probe_delay_sec`), non da un contatore di tentativi: cosi' un
+    riavvio del processo nel mezzo di un failover lungo riprende dal ritmo
+    gia' raggiunto invece di ricominciare a bussare ogni mezz'ora.
+
+    `max_delay_sec` e' il tetto oltre il quale l'intervallo non cresce piu':
+    un backend giu' da giorni va comunque ricontrollato ogni tanto, ma a un
+    ritmo che costa una manciata di richieste rifiutate al giorno.
+
+    Ritorna il nuovo epoch di appuntamento.
+    """
+    with _LOCK:
+        entry, _existed = _entry_for_mutation(model_key)
+        prev = _safe_float(entry.get("probe_delay_sec", 0), 0.0)
+        delay = prev * _safe_float(factor, 2.0) if prev > 0 else 1.0
+        if max_delay_sec is not None:
+            cap = _safe_float(max_delay_sec, 0.0)
+            if cap > 0:
+                delay = min(delay, cap)
+        delay = max(1.0, delay)
+        entry["probe_attempts"] = _safe_int(entry.get("probe_attempts", 0)) + 1
+        entry["probe_last_error"] = str(detail)[:300] if detail else None
+        entry["probe_next_at"] = time.time() + delay
+        entry["probe_delay_sec"] = int(delay)
+        _save()
+        print(f"[tts-backend-state] sonda {model_key} fallita "
+              f"({entry['probe_attempts']} tentativi): prossimo rientro fra "
+              f"{int(delay)}s")
+        return entry["probe_next_at"]
+
+
+def defer_probe(model_key):
+    """Rimanda l'appuntamento SENZA contarlo come fallimento ne' allungare
+    l'intervallo: la sonda non e' stata eseguita affatto (per esempio perche'
+    il credito dichiarato e' sotto soglia e una sonda direbbe solo cio' che
+    gia' sappiamo). Contarla come fallita spingerebbe il backoff verso il
+    tetto durante un'attesa in cui non abbiamo misurato nulla."""
+    with _LOCK:
+        entry, _existed = _entry_for_mutation(model_key)
+        delay = max(1.0, _safe_float(entry.get("probe_delay_sec", 0), 1.0))
+        entry["probe_next_at"] = time.time() + delay
+        _save()
+        return entry["probe_next_at"]
 
 
 # --- Ledger della spesa Cloudflare -----------------------------------------
