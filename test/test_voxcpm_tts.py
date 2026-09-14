@@ -128,18 +128,6 @@ def test_apply_rate_non_fa_niente_a_velocita_normale(tmp_path):
     assert p.stat().st_size == 200
 
 
-def test_apply_rate_accetta_un_fattore_numerico(tmp_path):
-    # Il ponte verso l'immagine vecchia passa il prodotto passo x cursore,
-    # non la percentuale del pannello: 1,0 e' neutro, 0,93 stira davvero.
-    p = tmp_path / "x.pcm"
-    p.write_bytes(b"\x00\x00" * 48000)          # 1 s a 48 kHz
-    assert voxcpm_tts.apply_rate(str(p), 1.0, 48000) is False
-    assert voxcpm_tts.apply_rate(str(p), 1.003, 48000) is False
-    assert p.stat().st_size == 96000
-    assert voxcpm_tts.apply_rate(str(p), 0.8, 48000) is True
-    assert 110000 < p.stat().st_size < 130000   # ~96000/0,8
-
-
 def test_speed_effettiva_moltiplica_il_passo_della_voce():
     # +10% su una voce a 0,88 da' 0,968: l'utente chiede il 10% in piu' di
     # quello che ascolta nella clip, non di una velocita' che non ha sentito.

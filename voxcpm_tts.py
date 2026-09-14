@@ -1113,9 +1113,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # somma davvero.
             stats["chars"] = int(out.get("chars") or 0)
             stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
-            # L'eco del passo: c'e' solo dalle immagini che stirano. Senza,
-            # l'audio e' a 1,0 e tocca al chiamante (vedi il ponte in
-            # generation_engine._voxcpm_pre_pass).
+            # L'eco del passo applicato dal worker: e' la prova, nelle
+            # statistiche del job, che il PCM consegnato e' gia' stirato.
             if "speed" in out:
                 stats["speed"] = float(out["speed"])
             # Come `chars`: quello che conta e' il tentativo consegnato, non
@@ -1224,23 +1223,16 @@ def jobs_in_flight():
 def apply_rate(pcm_path, rate, sample_rate):
     """Applica la velocita' di lettura al PCM, sul posto. Ritorna True se fatto.
 
-    Il worker nuovo stira da se' dentro `generate` (spec 2026-09-14); questa
-    funzione resta per il ponte verso l'immagine precedente, e `rate` puo'
-    essere la percentuale del pannello o un fattore numerico gia'
-    moltiplicato. Lo stiramento e' un `atempo` di ffmpeg sul PCM grezzo, il
-    cui dominio 0,5-2,0 copre ogni prodotto ammesso: un solo filtro basta,
-    nessuna catena.
+    `rate` e' la percentuale del pannello ("+10%"). Dal 14/09/2026 il passo lo
+    stira il worker dentro `generate` e il pre-pass VoxCPM non chiama piu'
+    questa funzione: resta per stirare un PCM gia' su disco. Lo stiramento e'
+    un `atempo` di ffmpeg sul PCM grezzo.
     """
-    if isinstance(rate, (int, float)) and not isinstance(rate, bool):
-        # Un fattore gia' calcolato (passo della voce per cursore): e' il
-        # ponte verso l'immagine vecchia del worker, che non stira da se'.
-        tempo = float(rate)
-    else:
-        try:
-            pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
-        except (TypeError, ValueError):
-            return False
-        tempo = 1.0 + pct / 100.0
+    try:
+        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        return False
+    tempo = 1.0 + pct / 100.0
     if abs(tempo - 1.0) < 0.005:
         return False
     tempo = max(0.5, min(2.0, tempo))

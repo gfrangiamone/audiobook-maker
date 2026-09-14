@@ -3665,23 +3665,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             if cancelled is not None and cancelled():
                 raise _CancelledError("Job cancelled") from None
             raise
-        sr = stats.get("sample_rate") or 48000
-        # PONTE verso l'immagine precedente del worker, da togliere in un
-        # commit a parte quando quella nuova e' in produzione: se la risposta
-        # non echeggia `speed`, il PCM e' a 1,0 e lo si stira qui con lo
-        # stesso prodotto. Se lo echeggia, il PCM e' gia' al passo e non si
-        # tocca: due stirature darebbero 0,93 al quadrato.
-        if "speed" not in stats and voxcpm_tts.apply_rate(dest, passo, sr):
-            # La velocita' ha riscritto il PCM sul posto: dimensione e durata
-            # vanno ricalcolate dal file finale, altrimenti gli "attuali" del
-            # Task 11 non corrispondono all'audio davvero consegnato.
-            try:
-                nbytes = os.path.getsize(dest)
-            except OSError:
-                nbytes = stats.get("bytes", 0)
-            stats = dict(stats)
-            stats["bytes"] = nbytes
-            stats["audio_seconds"] = nbytes / (sr * 2)
+        # Il PCM arriva gia' al passo: lo stira il worker dentro `generate`
+        # e lo echeggia in `stats["speed"]` (spec 2026-09-14, immagine
+        # ef469d6 in produzione). Qui non si tocca: una seconda stiratura
+        # darebbe il passo al quadrato.
         return ci, indici, stats
 
     # `Executor.map` restituisce (e solleva) in ordine di SOTTOMISSIONE: se il

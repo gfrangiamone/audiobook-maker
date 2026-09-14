@@ -112,8 +112,8 @@ def test_senza_speed_il_payload_non_lo_porta(tmp_path, monkeypatch):
 
 
 def test_immagine_vecchia_non_echeggia_speed(tmp_path, monkeypatch):
-    # Il worker di prima ignora `speed` e non lo rimanda: le stats non lo
-    # portano, ed e' cosi' che il chiamante sa di dover stirare da se'.
+    # Un worker che ignora `speed` non lo rimanda: le stats non lo portano,
+    # e chi legge il registro del job vede che il passo non e' stato applicato.
     finto = FintoRunJob(esito_ok())
     stats, _ = sintetizza(finto, tmp_path, monkeypatch, speed=0.93)
     assert finto.payload[0]["input"]["speed"] == 0.93
