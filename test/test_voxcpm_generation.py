@@ -12,9 +12,19 @@ import pytest
 
 import chunk_reuse
 import generation_engine
+import voxcpm_catalog
 import voxcpm_tts
 
 VOCE = "voxcpm:v2:it-IT/Stefano"
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "voxcpm_catalog")
+
+
+@pytest.fixture(autouse=True)
+def catalogo_di_prova(monkeypatch):
+    # `passo_di_voce` deve leggere la fixture (Stefano a 0,88), non il
+    # catalogo di produzione.
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", FIXTURE)
+    voxcpm_catalog.invalidate_cache()
 
 
 def blocco(testo, capitolo):
@@ -77,23 +87,29 @@ def test_un_capitolo_riusabile_a_meta_si_rifa_intero():
 class FintaSintesi:
     """Al posto di voxcpm_tts.synthesize_chapter: scrive byte finti."""
 
-    def __init__(self, errore=None):
+    def __init__(self, errore=None, eco_speed=False):
         self.chiamate = []
         self.errore = errore
+        # L'immagine nuova del worker echeggia `speed`; quella vecchia no.
+        self.eco_speed = eco_speed
 
     def __call__(self, chunks, voice_id, dest_path, **kw):
         self.chiamate.append({"chunks": list(chunks), "voice": voice_id,
-                              "dest": dest_path, "key": kw.get("key", "")})
+                              "dest": dest_path, "key": kw.get("key", ""),
+                              "speed": kw.get("speed")})
         if self.errore:
             raise self.errore
         with open(dest_path, "wb") as f:
             f.write(b"\x11\x22" * len(chunks))
-        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
-                "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
-                "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
-                "bytes": 2 * len(chunks),
-                "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1",
-                            "gpu": "NVIDIA RTX PRO 6000 MIG 1g.24gb"}]}
+        out = {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+               "audio_seconds": 1.0 * len(chunks), "tts_seconds": 0.5,
+               "jobs": 1, "redone": 0, "bounced": 0, "failed_chunks": 0,
+               "bytes": 2 * len(chunks),
+               "runpod": [{"exec_s": 30.0, "queue_s": 1.0, "worker": "w1",
+                           "gpu": "NVIDIA RTX PRO 6000 MIG 1g.24gb"}]}
+        if self.eco_speed:
+            out["speed"] = kw.get("speed")
+        return out
 
 
 @pytest.fixture
@@ -168,18 +184,42 @@ def test_annullamento_ferma_le_accensioni(tmp_path, sintesi_finta):
     assert sintesi_finta.chiamate == []
 
 
-def test_la_velocita_si_applica_al_pcm_del_capitolo(tmp_path, monkeypatch):
-    f = FintaSintesi()
+def test_il_worker_riceve_il_passo_della_voce_per_il_cursore(tmp_path, sintesi_finta):
+    # Stefano sta a 0,88 nella fixture; +10% sul passo che si ascolta = 0,968.
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-1", set())
+    assert [c["speed"] for c in sintesi_finta.chiamate] == [0.968, 0.968, 0.968]
+
+
+def test_ponte_immagine_vecchia_stira_il_pcm_con_il_prodotto(tmp_path, monkeypatch):
+    # Il worker non echeggia `speed`: il PCM e' a 1,0 e lo stira l'app, con
+    # il prodotto (non con il solo cursore), una volta per capitolo.
+    f = FintaSintesi(eco_speed=False)
     monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
     monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
     applicate = []
     monkeypatch.setattr(voxcpm_tts, "apply_rate",
                         lambda p, r, sr: applicate.append((os.path.basename(p), r, sr)))
-    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+15%", tmp_path, "job-1", set())
-    # Una volta per capitolo, non una per chunk: l'audio sta tutto li'.
-    assert applicate == [("chunk_000000.pcm", "+15%", 48000),
-                         ("chunk_000002.pcm", "+15%", 48000),
-                         ("chunk_000003.pcm", "+15%", 48000)]
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-1", set())
+    assert applicate == [("chunk_000000.pcm", 0.968, 48000),
+                         ("chunk_000002.pcm", 0.968, 48000),
+                         ("chunk_000003.pcm", 0.968, 48000)]
+
+
+def test_immagine_nuova_non_stira_due_volte(tmp_path, monkeypatch):
+    # Il worker ha echeggiato `speed`: il PCM e' gia' al passo. Stirarlo
+    # ancora darebbe 0,93 al quadrato, l'errore piu' facile da fare qui.
+    f = FintaSintesi(eco_speed=True)
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", f)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")
+    applicate = []
+    monkeypatch.setattr(voxcpm_tts, "apply_rate",
+                        lambda p, r, sr: applicate.append(p) or True)
+    pre = generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+10%", tmp_path, "job-1", set())
+    assert applicate == []
+    assert pre[0]["speed"] == 0.968
+    # Le statistiche restano quelle del worker, che sono gia' giuste.
+    assert pre[0]["bytes"] == 4
+    assert pre[0]["audio_seconds"] == 2.0
 
 
 def test_fallimento_in_corsa_con_l_annullamento_esce_come_annullamento(tmp_path, monkeypatch):

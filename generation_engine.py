@@ -3507,8 +3507,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
     PRIMO chunk, e gli altri chunk dello stesso capitolo ricevono un file
     vuoto: `pcm_concat` li concatena in ordine e un pezzo vuoto non aggiunge
     nulla, quindi l'audio esce identico e i marcatori M4B restano allineati.
-    Chiedere al worker le lunghezze dei singoli chunk vorrebbe dire modificare
-    `abm-voxcpm-worker`, che la spec mette fra i non toccati.
+    `rate` e' il cursore del pannello: non si applica da solo ma moltiplica il
+    passo della voce, e il prodotto va al worker come `speed`.
 
     `job`, se passato, riceve `job["voxcpm_actual"]` aggiornato capitolo per
     capitolo, DENTRO lo stesso loop che raccoglie `esiti` (non a fine
@@ -3633,6 +3633,10 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             fasi[ci] = str(riga.get("phase") or "")
             _scrivi_barra()
 
+    # Il passo da chiedere al worker: quello della clip comune della voce,
+    # per il cursore dell'utente (spec 2026-09-14). Una volta per libro.
+    passo = voxcpm_tts.speed_effettiva(voxcpm_tts.passo_di_voce(voice), rate)
+
     def _uno(gruppo):
         ci, indici = gruppo
         if cancelled is not None and cancelled():
@@ -3646,6 +3650,7 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 # risalire dal file su R2 al job che l'ha prodotto.
                 key=f"voxcpm/{job_id}/ch{ci:06d}.pcm",
                 cancelled=cancelled,
+                speed=passo,
                 # Il payload del worker non porta l'indice di capitolo, e non
                 # deve: il capitolo e' un concetto di ABM. La callback lo sa
                 # perche' e' stata costruita per quello.
@@ -3661,7 +3666,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                 raise _CancelledError("Job cancelled") from None
             raise
         sr = stats.get("sample_rate") or 48000
-        if voxcpm_tts.apply_rate(dest, rate, sr):
+        # PONTE verso l'immagine precedente del worker, da togliere in un
+        # commit a parte quando quella nuova e' in produzione: se la risposta
+        # non echeggia `speed`, il PCM e' a 1,0 e lo si stira qui con lo
+        # stesso prodotto. Se lo echeggia, il PCM e' gia' al passo e non si
+        # tocca: due stirature darebbero 0,93 al quadrato.
+        if "speed" not in stats and voxcpm_tts.apply_rate(dest, passo, sr):
             # La velocita' ha riscritto il PCM sul posto: dimensione e durata
             # vanno ricalcolate dal file finale, altrimenti gli "attuali" del
             # Task 11 non corrispondono all'audio davvero consegnato.
