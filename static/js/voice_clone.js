@@ -520,6 +520,13 @@
     }).catch(function () { vcErr(tt('vc_err_no_mic')); });
   }
 
+  /* Il campione accettato si mostra in due punti: il riascolto sotto la
+     cattura e le conferme nella riga in fondo, accanto a «Indietro». */
+  function vcSetSampleVisible(on) {
+    var blk = $('vcSampleBlock'); if (blk) blk.hidden = !on;
+    var act = $('vcSampleActions'); if (act) act.hidden = !on;
+  }
+
   function vcUploadSample(blob, filename) {
     if (S.busy) return;
     vcSetBusy(true);
@@ -531,7 +538,7 @@
     fd.append('gender', _val('vcGender'));
     var wait = $('vcUploading'); if (wait) wait.hidden = false;
     vcSetUploadVisible(false);
-    var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
+    vcSetSampleVisible(false);
     vcErr('');
     vcFetch('/api/voice_clone/sample', {method: 'POST', body: fd}).then(function (r) {
       if (wait) wait.hidden = true;
@@ -547,14 +554,14 @@
       /* Campione accettato: si ascolta quello normalizzato dal server, non la
          copia locale, altrimenti resterebbero due lettori uno sopra l'altro. */
       vcSetLocalAudio(null);
-      if (blk) blk.hidden = false;
+      vcSetSampleVisible(true);
     }).catch(function () { if (wait) wait.hidden = true; vcSetUploadVisible(false, true); vcSetBusy(false); vcErr(tt('vc_err_generic')); });
   }
 
   function vcInitPanel2() {
     vcStopMedia();
     vcSetBusy(false);
-    var blk = $('vcSampleBlock'); if (blk) blk.hidden = true;
+    vcSetSampleVisible(false);
     var wait = $('vcUploading'); if (wait) wait.hidden = true;
     vcSetUploadVisible(true);
     var timer = $('vcTimer'); if (timer) timer.textContent = '0.0 s';
@@ -581,7 +588,7 @@
       this.value = '';
     };
     $('vcSampleRedo').onclick = function () {
-      if (blk) blk.hidden = true;
+      vcSetSampleVisible(false);
       vcSetUploadVisible(true);
       var a = $('vcSampleAudio'); if (a) { a.pause(); a.removeAttribute('src'); }
       /* Si riparte da zero: via anche la copia locale e il nome del file, o

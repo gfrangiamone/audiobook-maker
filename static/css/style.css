@@ -1230,12 +1230,26 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* Riquadro della cattura: microfono in uso + comandi di registrazione. Sta in
    una cornice propria per distinguersi a colpo d'occhio dal caricamento di un
    file qui sotto, che prima si confondeva con la riga dei bottoni. */
-.vc-cap{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf)}
-.vc-cap .vc-rec-row{margin:.5rem 0 0}
-.vc-mic-pick{display:flex;align-items:center;gap:.5rem;margin:0;font-size:.82rem;
-             text-transform:none;letter-spacing:normal}
+.vc-cap{border:1px solid var(--brd);border-radius:10px;padding:.7rem .8rem;background:var(--srf);
+        display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:.6rem;row-gap:.5rem;align-items:center}
+/* Le due righe condividono le colonne della cornice (subgrid): la combo del
+   microfono e' larga esattamente quanto la barra del livello, e l'icona sta
+   nella colonna dei bottoni, accostata alla combo. */
+.vc-cap .vc-rec-row{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;margin:0}
+.vc-mic-pick{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;margin:0;
+             font-size:.82rem;text-transform:none;letter-spacing:normal}
 .vc-mic-pick[hidden]{display:none}
-.vc-mic-pick select{flex:1;min-width:0}
+.vc-mic-ico{grid-column:1;justify-self:end;width:20px;height:20px;color:var(--ac)}
+.vc-mic-pick select{grid-column:2;min-width:0;width:100%}
+.vc-rec-btns{grid-column:1;display:flex;align-items:center;gap:.6rem}
+.vc-cap .vc-rec-row meter{grid-column:2;width:100%;min-width:0}
+.vc-cap .vc-timer{grid-column:3}
+/* A larghezza di telefono i bottoni prendono la riga intera, altrimenti
+   «Ferma» + «Annulla» lascerebbero alla barra pochi pixel. */
+@media (max-width:480px){
+  .vc-rec-btns{grid-column:1/-1}
+  .vc-cap .vc-rec-row meter{grid-column:1/3}
+}
 .vc-or{text-align:center;color:var(--txm);margin:.7rem 0;font-size:.78rem;
        text-transform:uppercase;letter-spacing:.08em}
 /* Caricamento da file: l'input di sistema (disegnato a modo suo da ogni
@@ -1259,9 +1273,15 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 /* Riascolto della propria registrazione: resta disponibile anche quando il
    campione viene scartato, altrimenti non c'e' modo di accorgersi da soli di
    aver letto male (il campione del server nasce solo se il controllo passa). */
-.vc-local{display:flex;flex-direction:column;gap:.3rem;margin:.7rem 0}
+/* Etichetta e player sulla stessa riga, staccati bene dalla cornice della
+   cattura: e' un'altra fase, non un comando di registrazione. */
+.vc-local{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem .7rem;margin:1.3rem 0 .7rem}
 .vc-local[hidden]{display:none}
-.vc-local audio{width:100%}
+.vc-local audio{flex:1 1 240px;min-width:0}
+/* «Indietro» a sinistra, le conferme del campione a destra, sulla stessa riga. */
+.vc-footer-split{justify-content:space-between;align-items:center;flex-wrap:wrap}
+.vc-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-left:auto}
+.vc-actions[hidden]{display:none}
 .vc-rec-dot{width:12px;height:12px;border-radius:50%;background:#c33;display:inline-block;animation:vcblink 1s infinite}
 .vc-rec-dot[hidden]{display:none}
 @keyframes vcblink{50%{opacity:.2}}

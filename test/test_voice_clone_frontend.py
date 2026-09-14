@@ -123,7 +123,7 @@ def test_hidden_batte_il_display_dautore():
     [hidden]{display:none}: la regola UA perde comunque, e senza questa riga
     bottone, banner e spinner restano a schermo quando il JS li nasconde."""
     for c in (".btn", ".vc-btn-row", ".vc-resume", ".vc-rec-dot", ".vc-wait",
-              ".vc-claim-row", ".vc-mic-btn", ".vc-mic-pick", ".vc-local"):
+              ".vc-claim-row", ".vc-mic-btn", ".vc-mic-pick", ".vc-local", ".vc-actions"):
         atteso = re.escape(c) + r"\[hidden\]\s*\{\s*display:\s*none\s*\}"
         assert re.search(r"(?m)^" + atteso, CSS), c
 
@@ -178,7 +178,7 @@ def test_markup_pannello_2():
     for i in ("vcPromptText", "vcMic", "vcMicWrap", "vcRecBtn",
               "vcRecCancel", "vcLevel", "vcTimer", "vcFile", "vcUpName", "vcUpMb", "vcLocalBlock",
               "vcLocalAudio", "vcErr2", "vcSampleBlock", "vcSampleAudio", "vcSampleRedo",
-              "vcSampleNext", "vcP2Back"):
+              "vcSampleNext", "vcP2Back", "vcSampleActions"):
         assert f'id="{i}"' in p2, i
     assert 'accept=".wav,.mp3,.webm,.opus,.ogg,.m4a,.mp4' in p2
     for altrove in ("vcLang", "vcLocale", "vcGender"):
@@ -872,3 +872,26 @@ def test_scarto_con_riascolto_e_messaggio_in_alto():
     assert "off.hidden = !!on || !offer" in mostra
     init = _estrai_funzione(VC, "vcInitPanel2")
     assert "vcUpOfferBtn" in init and "vcSetUploadVisible(true)" in init
+
+
+def test_pannello_2_layout_razionalizzato():
+    """Microfono come icona e combo larga quanto la barra del livello;
+    riascolto in riga con l'etichetta; «Indietro» a sinistra nella stessa riga
+    delle conferme del campione."""
+    p2 = HTML[HTML.index('id="vcP2"'):HTML.index('id="vcP3"')]
+    mic = p2[p2.index('id="vcMicWrap"'):p2.index('</label>', p2.index('id="vcMicWrap"'))]
+    assert 'class="vc-mic-ico"' in mic and 'data-t="vc_mic"' not in mic
+    assert 'data-t-title="vc_mic"' in mic and 'aria-label=' in mic
+    assert "grid-template-columns:subgrid" in CSS
+    assert ".vc-mic-pick select{grid-column:2" in CSS
+    assert ".vc-cap .vc-rec-row meter{grid-column:2" in CSS
+    campione = p2[p2.index('id="vcSampleBlock"'):]
+    campione = campione[:campione.index('</div>')]
+    assert 'class="vc-local"' in campione and "vcSampleRedo" not in campione
+    riga = p2[p2.index('class="vc-footer vc-footer-split"'):]
+    assert riga.index('id="vcP2Back"') < riga.index('id="vcSampleActions"') < riga.index('id="vcSampleNext"')
+    assert p2.count('class="vc-footer') == 1
+    mostra = _estrai_funzione(VC, "vcSetSampleVisible")
+    assert "vcSampleBlock" in mostra and "vcSampleActions" in mostra
+    assert "blk.hidden" not in _estrai_funzione(VC, "vcUploadSample")
+    assert "vcSetSampleVisible(false)" in _estrai_funzione(VC, "vcInitPanel2")

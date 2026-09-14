@@ -1233,11 +1233,13 @@ __REVIEWS_LD__
           <p data-t="vc_p2_read"></p>
           <div id="vcPromptText" class="vc-prompt"></div>
           <div class="vc-cap">
-            <label id="vcMicWrap" class="vc-mic-pick"><span data-t="vc_mic"></span> <select id="vcMic"></select></label>
+            <label id="vcMicWrap" class="vc-mic-pick"><svg class="vc-mic-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg><select id="vcMic" aria-label="Microphone" data-t-title="vc_mic"></select></label>
             <div class="vc-rec-row">
-              <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
-              <button type="button" id="vcRecCancel" class="btn-secondary" data-t="vc_rec_cancel" hidden></button>
-              <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+              <span class="vc-rec-btns">
+                <button type="button" id="vcRecBtn" class="btn-primary" data-t="vc_rec_start"></button>
+                <button type="button" id="vcRecCancel" class="btn-secondary" data-t="vc_rec_cancel" hidden></button>
+                <span id="vcRecDot" class="vc-rec-dot" hidden></span>
+              </span>
               <meter id="vcLevel" min="0" max="1" value="0"></meter>
               <span id="vcTimer" class="vc-timer">0.0 s</span>
             </div>
@@ -1258,16 +1260,16 @@ __REVIEWS_LD__
           </div>
           <div id="vcErr2" class="al al-e" hidden></div>
           <p id="vcUpOffer" class="vc-alt vc-up-offer" hidden><button type="button" id="vcUpOfferBtn" class="vc-linkbtn" data-t="vc_up_offer"></button></p>
-          <div id="vcSampleBlock" hidden>
-            <p data-t="vc_sample_listen"></p>
+          <div id="vcSampleBlock" class="vc-local" hidden>
+            <span class="vc-small" data-t="vc_sample_listen"></span>
             <audio id="vcSampleAudio" controls preload="none"></audio>
-            <div class="vc-footer">
+          </div>
+          <div class="vc-footer vc-footer-split">
+            <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
+            <span id="vcSampleActions" class="vc-actions" hidden>
               <button type="button" id="vcSampleRedo" class="btn-secondary" data-t="vc_sample_redo"></button>
               <button type="button" id="vcSampleNext" class="btn-primary" data-t="vc_sample_ok"></button>
-            </div>
-          </div>
-          <div class="vc-footer">
-            <button type="button" id="vcP2Back" class="btn-secondary" data-t="vc_back"></button>
+            </span>
           </div>
         </section>
         <section id="vcP3" hidden>
