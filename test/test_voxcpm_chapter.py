@@ -95,6 +95,31 @@ def test_il_payload_dice_al_worker_che_lingua_legge(tmp_path, monkeypatch):
     assert finto.payload[0]["input"]["language"] == "it"
 
 
+def test_il_payload_porta_il_passo_se_richiesto(tmp_path, monkeypatch):
+    # Il worker stira da se' (spec 2026-09-14): il chiamante manda il
+    # prodotto gia' calcolato, non il passo della voce e il cursore separati.
+    finto = FintoRunJob(esito_ok(speed=0.968))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch, speed=0.968)
+    assert finto.payload[0]["input"]["speed"] == 0.968
+    assert stats["speed"] == 0.968
+
+
+def test_senza_speed_il_payload_non_lo_porta(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert "speed" not in finto.payload[0]["input"]
+    assert "speed" not in stats
+
+
+def test_immagine_vecchia_non_echeggia_speed(tmp_path, monkeypatch):
+    # Il worker di prima ignora `speed` e non lo rimanda: le stats non lo
+    # portano, ed e' cosi' che il chiamante sa di dover stirare da se'.
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch, speed=0.93)
+    assert finto.payload[0]["input"]["speed"] == 0.93
+    assert "speed" not in stats
+
+
 def test_code_tagliate_dal_worker_nelle_misure(tmp_path, monkeypatch):
     # Il worker le ha gia' ritentate e ha consegnato lo stesso: il capitolo
     # c'e', ma con delle frasi finite a meta'. Questo numero e' l'unica
