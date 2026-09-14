@@ -337,6 +337,26 @@
     var wrap = $('vcLocaleWrap'); if (wrap) wrap.hidden = list.length < 2;
   }
 
+  /* Al brano si arriva anche senza passare dalle scelte: riprendendo una bozza
+     gia' accettata si apre il pagamento, e da li' «Indietro» o «Rifai» portano
+     qui con le combo mai popolate. Lingua e voce vuote facevano fallire sia il
+     brano (riquadro vuoto) sia l'invio del campione («Dati mancanti o non
+     validi»). Le combo si riempiono ora, con le scelte della bozza se c'e'. */
+  function vcEnsureChoices() {
+    var ls = $('vcLang'); var loc = $('vcLocale'); var g = $('vcGender');
+    if (!ls || !loc || !g) return false;
+    if (!ls.options.length) {
+      vcFillLangs();
+      var cur = S.cur || {}; var v = cur.view || {};
+      var lang = cur.lang || v.lang; var locale = cur.locale || v.locale; var gender = cur.gender || v.gender;
+      if (lang && S.cfg && S.cfg.languages && S.cfg.languages[lang]) { ls.value = lang; vcFillLocales(); }
+      if (locale) { loc.value = locale; if (loc.value !== locale) loc.selectedIndex = 0; }
+      if (gender === 'f' || gender === 'm') g.value = gender;
+      vcSyncGenderIcon();
+    }
+    return !!(ls.value && loc.value && g.value);
+  }
+
   function vcLoadPrompt() {
     var box = $('vcPromptText'); if (!box) return;
     box.textContent = '…';
@@ -559,6 +579,7 @@
   }
 
   function vcInitPanel2() {
+    if (!vcEnsureChoices()) { vcShow('setup'); vcErr(tt('vc_err_generic')); return; }
     vcStopMedia();
     vcSetBusy(false);
     vcSetSampleVisible(false);

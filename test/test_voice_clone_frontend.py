@@ -895,3 +895,16 @@ def test_pannello_2_layout_razionalizzato():
     assert "vcSampleBlock" in mostra and "vcSampleActions" in mostra
     assert "blk.hidden" not in _estrai_funzione(VC, "vcUploadSample")
     assert "vcSetSampleVisible(false)" in _estrai_funzione(VC, "vcInitPanel2")
+
+
+def test_brano_senza_passare_dalle_scelte():
+    """Ripresa di una bozza accettata -> pagamento -> «Indietro»: il pannello del
+    brano si apriva con lingua e voce vuote, il brano non arrivava e l'invio del
+    campione tornava 400 «Dati mancanti o non validi»."""
+    corpo = _estrai_funzione(VC, "vcEnsureChoices")
+    assert "vcFillLangs()" in corpo and "!ls.options.length" in corpo
+    # le scelte della bozza ripresa hanno la precedenza sui default
+    assert "v.lang" in corpo and "v.locale" in corpo and "v.gender" in corpo
+    init = _estrai_funzione(VC, "vcInitPanel2")
+    assert init.index("vcEnsureChoices()") < init.index("vcLoadPrompt()")
+    assert "vcShow('setup')" in init
