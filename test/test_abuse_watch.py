@@ -26,6 +26,16 @@ def _gen(group, cid, chars=1000, voice="zh-CN-XiaoxiaoNeural", fn="book.epub", l
                     {"chars": chars, "voice": voice, "filename": fn, "lang": lang})
 
 
+def _evasione(group, cid="a"):
+    """Traccia minima di evasione della quota: il gate incontrato *e* piu' di
+    una identita' usata per superarlo. Dal 14/09/2026 il solo QUOTA_GATE non
+    basta a fondare un `abuse`: superarlo con la propria email e' l'uso
+    previsto del gate, non un modo di aggirarlo (vedi `_evasion_features`)."""
+    aw.record_event(group, cid, "quota_gate", {})
+    aw.record_event(group, cid, "email", {"email": "uno@example.com"})
+    aw.record_event(group, cid, "email", {"email": "due@example.com"})
+
+
 def _age_verdict(group, seconds=_COOLDOWN_HOP):
     """Retrodata il verdetto persistito: simula il tempo trascorso senza toccare
     l'orologio globale. Serve dove il test verifica un *rigiudizio*, che la
@@ -131,7 +141,7 @@ def test_needs_judgement_from_second_signal(env):
 def test_verdict_scope_cids_vs_group_and_new_cid(env):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a"); _gen(g, "b")
-    aw.record_event(g, "a", "quota_gate", {})           # traccia di evasione: vedi _evasion_features
+    _evasione(g, "a")
     v = aw.set_verdict(g, {"verdict": "abuse", "confidence": "0.95", "scope": "cids",
                            "cids": ["a", "ghost"], "reason": "bot"})
     assert v["cids"] == ["a"] and v["confidence"] == 0.95
@@ -180,7 +190,7 @@ def test_verdict_ttl_and_growth_reevaluation(env, monkeypatch):
 def test_kill_switch_and_admin_email_gate(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a")
-    aw.record_event(g, "a", "quota_gate", {})
+    _evasione(g, "a")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 1.0, "scope": "group", "cids": []})
     assert aw.is_blocked(g, "a") is True
     monkeypatch.setenv("ABM_ABUSE_KILL_ENABLE", "0")
@@ -213,7 +223,7 @@ def test_digest_data_only_hashes_and_counts(env):
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a", chars=500, fn="Secret.epub")
     aw.record_event(g, "a", "email", {"email": "who@example.com"})
-    aw.record_event(g, "a", "quota_gate", {})
+    _evasione(g, "a")
     assert aw.digest_data() == []                       # nessun giudizio/kill/403
     aw.record_judgement_failed(g, "timeout")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.93, "scope": "cids",
@@ -348,6 +358,56 @@ def test_abuse_downgraded_without_any_evasion_trace(env):
     assert aw.is_blocked(g, "a") is False and aw.is_blocked(g, "b") is False
 
 
+def test_stable_identity_is_not_evasion_however_many_gates(env):
+    """Caso ellehome, 14/09/2026: 11 libri in 20 giorni, un IP, un cookie
+    longevo, una sola email, otto QUOTA_GATE superati sempre con quella. Il
+    contatore del gate rendeva vera `quota_evasion_evidence` e il gruppo
+    finiva bloccato. Superare il gate e' l'uso previsto del gate."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")                                         # il cid esiste prima del gate
+    aw.record_event(g, "a", "email", {"email": "tatiana@example.com"})
+    for _ in range(8):
+        aw.record_event(g, "a", "quota_gate", {})
+        _gen(g, "a", chars=900000)
+    ev = aw.evasion_for(g)
+    assert ev["quota_gate_ever"] is True                  # la quota l'ha incontrata
+    assert ev["stable_identity"] is True and ev["identity_rotation"] is False
+    assert ev["quota_evasion_evidence"] is False          # ma non l'ha mai aggirata
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.99, "scope": "group",
+                           "cids": [], "reason": "huge volume"})
+    assert v["verdict"] == "inconclusive" and "evasione" in v["reason"]
+    assert aw.is_blocked(g, "a") is False
+
+
+def test_a_second_email_turns_the_same_gates_into_evasion(env):
+    """Il discrimine e' l'identita', non il volume: la stessa storia con una
+    seconda email registrata e' rotazione, e il verdetto regge."""
+    g = aw.group_key("9.9.9.9", "a")
+    _gen(g, "a")
+    aw.record_event(g, "a", "email", {"email": "uno@example.com"})
+    for _ in range(8):
+        aw.record_event(g, "a", "quota_gate", {})
+        _gen(g, "a", chars=900000)
+    aw.record_event(g, "a", "email", {"email": "due@example.com"})
+    ev = aw.evasion_for(g)
+    assert ev["identity_rotation"] is True and ev["quota_evasion_evidence"] is True
+    v = aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.99, "scope": "group",
+                           "cids": [], "reason": "fresh email after the gate"})
+    assert v["verdict"] == "abuse" and aw.is_blocked(g, "a") is True
+
+
+def test_many_young_cids_are_rotation_even_with_one_email(env):
+    """Cookie che vivono piu' delle due ore dell'usa-e-getta, ma sono tanti e
+    tutti giovani: rotazione lenta, che una sola email non assolve."""
+    g = aw.group_key("9.9.9.9", "a")
+    for i in range(4):
+        _gen(g, "c%d" % i)
+    aw.record_event(g, "c0", "email", {"email": "uno@example.com"})
+    aw.record_event(g, "c0", "quota_gate", {})
+    ev = aw.evasion_for(g)
+    assert ev["identity_rotation"] is True and ev["stable_identity"] is False
+
+
 def test_disposable_cids_are_evasion_even_without_quota_gate(env, monkeypatch):
     """Rotazione *preventiva*: cookie bruciati prima di esaurire la quota, che
     quindi non lascia mai un QUOTA_GATE. La guardia non deve assolverla."""
@@ -384,7 +444,7 @@ def test_admin_clear_raises_the_bar_for_reblocking(env):
     primo rigiudizio."""
     g = aw.group_key("9.9.9.9", "a")
     _gen(g, "a")
-    aw.record_event(g, "a", "quota_gate", {})
+    _evasione(g, "a")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
     assert aw.is_blocked(g, "a") is True
     assert aw.clear_verdict(g) is True
@@ -402,7 +462,8 @@ def test_evasion_features_in_prompt_payload(env):
     grp = json.loads(payload)["group"]
     for k in ("quota_gate_ever", "cids_born_after_last_block", "disposable_cids",
               "median_cid_lifespan_hours", "oldest_cid_age_hours",
-              "admin_cleared_recently", "quota_evasion_evidence"):
+              "admin_cleared_recently", "quota_evasion_evidence",
+              "identity_rotation", "stable_identity"):
         assert k in grp
 
 
@@ -412,7 +473,7 @@ def test_group_scope_covers_cids_born_after_the_verdict(env, monkeypatch):
     g = aw.group_key("9.9.9.9", "a")
     real_time = time.time
     _gen(g, "a")
-    aw.record_event(g, "a", "quota_gate", {})
+    _evasione(g, "a")
     aw.set_verdict(g, {"verdict": "abuse", "confidence": 0.95, "scope": "group", "cids": []})
     monkeypatch.setattr(aw.time, "time", lambda: real_time() + 600)
     _gen(g, "rotated")                                   # cookie nuovo dopo la condanna

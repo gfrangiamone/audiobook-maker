@@ -1115,14 +1115,29 @@ standard`. Op di log: `QUOTA_ABUSE_KILL`, `QUOTA_ABUSE_BLOCK`. Ripristino:
 `set_verdict`): S2 e S4 misurano *volume*, non evasione — un lettore che
 converte la propria bibliografia produce caratteri quanto un harvester.
 Il verdetto `abuse` viene declassato a `inconclusive` (nessun blocco, gruppo
-comunque sotto osservazione) se manca **ogni** traccia di evasione:
+comunque sotto osservazione) se manca **ogni** traccia di evasione. Dal
+14/09/2026 la traccia è la **rotazione di identità**
+(`identity_rotation`), non il contatore del gate: superare il gate è l'uso
+previsto del gate, cioè consegnare un'email; ad aggirarlo è cambiare
+l'identità con cui lo si supera. C'è rotazione quando vale almeno una fra:
 
-- nessun `quota_gate`/`quota_block` mai registrato per il gruppo — non ha mai
-  raggiunto il limite, quindi non lo sta aggirando;
-- nessun cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva);
-- meno di `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
+- almeno un cid nato dopo l'ultimo blocco/kill del gruppo (rotazione reattiva,
+  dove come «blocco» conta anche il primo `quota_gate`/`quota_block`);
+- almeno `_DISPOSABLE_MIN` (2) cid *usa-e-getta*, cioè vissuti meno di
   `_DISPOSABLE_LIFE_SEC` (2 h) e fermi da oltre `_DISPOSABLE_IDLE_SEC` (6 h)
-  — è la rotazione preventiva, che elude il gate senza mai toccarlo.
+  — è la rotazione preventiva, che elude il gate senza mai toccarlo;
+- più di `_STABLE_MAX_EMAILS` (1) email distinte sul gruppo — evadere il
+  gate in serie costringe a registrarne di nuove;
+- almeno `_ROTATION_MIN_CIDS` (4) cid con vita mediana sotto
+  `_ROTATION_MAX_MEDIAN_LIFE_SEC` (24 h) — rotazione lenta, che vive troppo
+  a lungo per finire fra gli usa-e-getta.
+
+Senza rotazione il gruppo ha `stable_identity` vero e non è bloccabile, per
+quanti gate abbia superato e per quanto volume abbia generato (caso ellehome
+del 14/09/2026: 11 libri in 20 giorni, un IP, un cookie longevo, una sola
+email, otto `QUOTA_GATE` — bastava il contatore a far cadere la garanzia).
+`quota_gate_ever` falso resta una garanzia a sé: chi non ha mai raggiunto il
+limite non ha nulla da aggirare.
 
 Un gruppo ripristinato da console porta `cleared_ts`: entro
 `_CLEARED_WINDOW_SEC` (30 giorni) può tornare `abuse` solo con confidenza

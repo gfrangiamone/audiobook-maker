@@ -51,6 +51,14 @@ _GROUP_SCOPE_ACTIVE_SEC = 7 * _DAY_SEC  # scope="group": solo i cid attivi negli
 _DISPOSABLE_LIFE_SEC = 2 * 3600
 _DISPOSABLE_IDLE_SEC = 6 * 3600
 _DISPOSABLE_MIN = 2
+# Rotazione di IDENTITA' (vedi `_evasion_features`): il gate si supera con una
+# email, quindi evaderlo in serie costringe a cambiarla. Una sola email sul
+# gruppo non e' evasione per quante volte il gate venga superato.
+_STABLE_MAX_EMAILS = 1
+# Molti cookie tutti giovani sono rotazione anche senza usa-e-getta conclamati
+# (cid vissuti piu' di `_DISPOSABLE_LIFE_SEC` e quindi non contati la').
+_ROTATION_MIN_CIDS = 4
+_ROTATION_MAX_MEDIAN_LIFE_SEC = 24 * 3600
 _CLEARED_WINDOW_SEC = 30 * _DAY_SEC   # quanto vale il ripristino admin come garanzia
 _CLEARED_MIN_CONF = 0.95              # confidenza minima per ri-bloccare dopo un ripristino
 # Due job dello stesso gruppo che arrivano a pochi secondi l'uno dall'altro
@@ -374,7 +382,16 @@ def _evasion_features(g, now):
 
     Motivo: il 06/09/2026 un utente reale (13 libri in 4 giorni, 2 cid
     stabili, batch/email, zero QUOTA_GATE in assoluto) e' stato bloccato
-    perche' il giudice vedeva solo volume e conteggio cid."""
+    perche' il giudice vedeva solo volume e conteggio cid.
+
+    Il 14/09/2026 lo stesso e' successo a chi la quota l'aveva invece
+    incontrata: 11 libri in 20 giorni, un IP solo, una email sola, otto
+    QUOTA_GATE superati sempre con quella. Bastava il contatore `quota_gate`
+    a rendere vera `quota_evasion_evidence`, e con essa cadeva la garanzia.
+    Ma superare il gate e' l'uso previsto del gate: cio' che lo evade e'
+    cambiare l'identita' con cui lo si supera. Da qui `identity_rotation`,
+    che guarda le identita' e non il contatore, e `stable_identity`, la
+    garanzia per chi non ne ha mai cambiata una."""
     cids = g.get("cids") or {}
     b = g.get("all") or {}
     last_block = _last_block_ts(g)
@@ -394,6 +411,12 @@ def _evasion_features(g, now):
             disposable += 1
     lifespans.sort()
     ages.sort()
+    median_life = lifespans[len(lifespans) // 2] if lifespans else 0.0
+    emails = len(b.get("emails") or [])
+    many_young_cids = (len(cids) >= _ROTATION_MIN_CIDS
+                       and median_life < _ROTATION_MAX_MEDIAN_LIFE_SEC)
+    rotation = bool(born_after or disposable >= _DISPOSABLE_MIN
+                    or emails > _STABLE_MAX_EMAILS or many_young_cids)
     try:
         cleared_age = now - float(g.get("cleared_ts") or 0)
     except (TypeError, ValueError):
@@ -403,15 +426,21 @@ def _evasion_features(g, now):
                                 or int(b.get("quota_block", 0) or 0)),
         "cids_born_after_last_block": born_after,
         "disposable_cids": disposable,
-        "median_cid_lifespan_hours": (round(lifespans[len(lifespans) // 2] / 3600, 1)
-                                      if lifespans else 0),
+        "median_cid_lifespan_hours": round(median_life / 3600, 1),
         "oldest_cid_age_hours": round(ages[-1] / 3600, 1) if ages else 0,
         "admin_cleared_recently": bool(g.get("cleared_ts")
                                        and cleared_age < _CLEARED_WINDOW_SEC),
-        "quota_evasion_evidence": bool(int(b.get("quota_gate", 0) or 0)
-                                       or int(b.get("quota_block", 0) or 0)
-                                       or born_after
-                                       or disposable >= _DISPOSABLE_MIN),
+        "identity_rotation": rotation,
+        "stable_identity": not rotation,
+        # Il contatore del gate non entra piu' da solo: senza rotazione non c'e'
+        # nulla da evadere, e con la rotazione il gate e' solo cio' che ha
+        # spinto a ruotare.
+        "quota_evasion_evidence": bool(rotation
+                                       and (int(b.get("quota_gate", 0) or 0)
+                                            or int(b.get("quota_block", 0) or 0)
+                                            or born_after
+                                            or disposable >= _DISPOSABLE_MIN
+                                            or many_young_cids)),
     }
 
 
@@ -705,13 +734,17 @@ You receive ONLY aggregated behavioural features for one network group (same has
 Signals: S1 = quota exhausted this month; S2 = two or more cids in the group; S3 = many quota-gate acceptances in 24h; S4 = very high character volume in 24h.
 
 The offence is EVADING THE QUOTA, not consuming it. High volume alone is not abuse: a researcher converting their own bibliography produces as many characters as a harvester. Evasion leaves its own traces, reported in the "group" block:
-- "quota_gate_ever": whether this group ever hit the quota at all. FALSE means the group has never even reached the limit, so there is nothing it could be evading.
+- "quota_gate_ever": whether this group ever hit the quota at all. FALSE means the group has never even reached the limit, so there is nothing it could be evading. TRUE is NOT evidence of anything: the gate exists to be passed, and passing it means handing over an email.
 - "cids_born_after_last_block": cookies created after the group's last block — reactive rotation.
 - "disposable_cids": cookies used for a couple of hours and then abandoned — pre-emptive rotation that dodges the gate without ever touching it.
 - "median_cid_lifespan_hours" / "oldest_cid_age_hours": stable, long-lived cookies are what real users have.
+- "distinct_emails": how many identities this group has ever used. Evading the gate in series requires fresh ones; ONE email behind any number of gate acceptances is one person using the service as designed.
+- "identity_rotation" / "stable_identity": the summary of the three lines above — whether the group has ever swapped the identity it passes the gate with.
 - "admin_cleared_recently": a human operator has already reviewed this group and declared it legitimate.
 
-HARD RULE: if "quota_gate_ever" is false AND "cids_born_after_last_block" is 0 AND "disposable_cids" is below 2, you MUST NOT answer "abuse", however large the volume. Answer "clean" or "inconclusive". If "admin_cleared_recently" is true, answer "abuse" only on overwhelming new evidence of rotation.
+HARD RULE: if "quota_gate_ever" is false AND "cids_born_after_last_block" is 0 AND "disposable_cids" is below 2, you MUST NOT answer "abuse", however large the volume. Answer "clean" or "inconclusive".
+HARD RULE: if "stable_identity" is true, you MUST NOT answer "abuse" either — however large the volume, and however many times the quota gate was accepted. A user who exhausts the quota over and over with one stable email and long-lived cookies is a heavy user paying the price the gate asks, not an evader. Answer "clean" or "inconclusive".
+If "admin_cleared_recently" is true, answer "abuse" only on overwhelming new evidence of rotation.
 
 Judge VOLUME and SPEED, not identities:
 - Innocent: a handful of books per month across two cookies (device change), varied voices/languages/hours across cids. Diversity of voices, languages, active hours and emails between cids is the signature of a SHARED NETWORK (home NAT, mobile carrier-grade NAT hosting thousands of users), not of a single actor. S2 and S4 fire routinely on mobile /24 ranges: this alone is never abuse. A steady few books per day from long-lived cookies that never hit the quota is a heavy but legitimate user.
