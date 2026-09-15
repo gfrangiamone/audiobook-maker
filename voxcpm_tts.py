@@ -1129,8 +1129,8 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
-        `verifica_giri`, `verifica_numerali`, `verifica_falsi_numerali`,
-        `bytes` e `runpod`,
+        `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
+        `verifica_falsi_numerali`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -1179,6 +1179,13 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # quanto i falliti, ma nessun tentativo li ha mancati.
              "verifica_rinunciati": 0,
              "verifica_giri": 0,        # giri di rigenerazione spesi
+             # La curva dei rientri: quanti chunk sono tornati sani al primo
+             # giro, quanti al secondo, quanti al terzo. `verifica_giri` dice
+             # quanti giri ha speso il capitolo, `code_tagliate` quanti chunk
+             # non sono rientrati: nessuno dei due dice se un giro in piu'
+             # pagherebbe. Questa lista si', perche' e' la sola che mostra se
+             # il recupero sta ancora rendendo quando i giri finiscono.
+             "verifica_rientri": [],
              # Gli allarmi che il rilevatore ha visto e taciuto perche' la
              # coda conteneva un numero: l'ASR scrive «1967» dove il testo
              # dice «millenovecentosessantasette», e senza questa regola il
@@ -1293,6 +1300,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                 stats["verifica_rinunciati"] = len(
                     _ver.get("rinunciati") or [])
                 stats["verifica_giri"] = int(_ver.get("giri") or 0)
+                # Assente sui worker precedenti: lista vuota, non zeri. Una
+                # lista di zeri direbbe «nessuno e' rientrato», che e' il
+                # contrario di «non lo sappiamo».
+                stats["verifica_rientri"] = [
+                    int(x or 0) for x in (
+                        _ver.get("rientri_per_giro") or [])]
                 stats["verifica_numerali"] = int(
                     _ver.get("numerali") or 0)
                 stats["verifica_falsi_numerali"] = int(

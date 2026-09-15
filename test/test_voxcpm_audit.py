@@ -276,3 +276,27 @@ def test_riga_live_di_un_job_voxcpm_in_corso_usa_il_tariffario_voxcpm(monkeypatc
         assert row["user_price_eur_should_have_been"] > 0
     finally:
         audiobook_app.jobs.pop(jid, None)
+
+
+def test_i_rientri_per_giro_finiscono_nel_record(audit_isolato):
+    # `worker_code_tagliate` conta chi non e' rientrato, `worker_verify_giri`
+    # quanti giri sono stati spesi: nessuno dei due dice se un giro in piu'
+    # pagherebbe. Lo dice la curva, e deve restare scritta nello storico.
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({"verifica_sospetti": 8, "verifica_giri": 3,
+                                 "verifica_rientri": [5, 2, 0]})
+    generation_engine._write_voxcpm_audit("job-1", job, VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_rientri"] == [5, 2, 0]
+    assert r["worker_verify_giri"] == 3
+    assert r["worker_verify_sospetti"] == 8
+
+
+def test_job_senza_rientri_non_inventa_zeri(audit_isolato):
+    # Un job girato su un'immagine che non manda la curva: lista vuota. Una
+    # lista di zeri nello storico si leggerebbe come "nessun recupero".
+    generation_engine._write_voxcpm_audit("job-1", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_rientri"] == []

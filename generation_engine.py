@@ -3770,6 +3770,11 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # vive di questi quattro numeri.
             "verifica_chunk": 0, "verifica_sospetti": 0,
             "verifica_rinunciati": 0, "verifica_giri": 0,
+            # E la curva dei rientri, sommata posizione per posizione sui
+            # capitoli: quanti chunk sono rientrati al primo giro, quanti al
+            # secondo, quanti al terzo. E' l'unico numero che dice se
+            # concedere un giro in piu' paga.
+            "verifica_rientri": [],
             # E di due che dicono quanto lavora la regola dei numeri: le
             # code dove un numero c'era, e quante di quelle avrebbero fatto
             # scattare un allarme se l'ASR non avesse il vizio di riscrivere
@@ -3952,6 +3957,19 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                                    "verifica_falsi_numerali"):
                             _va[_k] = int(_va.get(_k, 0) or 0) + int(
                                 stats.get(_k, 0) or 0)
+                        # I rientri si sommano posizione per posizione, non si
+                        # concatenano: il secondo giro di un capitolo e il
+                        # secondo giro di un altro sono lo stesso giro. La
+                        # lista si allunga fino al capitolo che ne ha spesi di
+                        # piu', e resta vuota se nessuno ha misurato niente.
+                        _rientri = stats.get("verifica_rientri") or []
+                        if _rientri:
+                            _acc = list(_va.get("verifica_rientri") or [])
+                            if len(_acc) < len(_rientri):
+                                _acc += [0] * (len(_rientri) - len(_acc))
+                            for _giro, _quanti in enumerate(_rientri):
+                                _acc[_giro] += int(_quanti or 0)
+                            _va["verifica_rientri"] = _acc
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
@@ -4859,6 +4877,13 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             "worker_verify_rinunciati": int(
                 actual.get("verifica_rinunciati", 0) or 0),
             "worker_verify_giri": int(actual.get("verifica_giri", 0) or 0),
+            # La progressione del recupero: quanti chunk sono rientrati al
+            # primo giro, quanti al secondo, e cosi' via. E' la sola misura
+            # che dice se un giro in piu' pagherebbe — `code_tagliate` conta
+            # chi non e' rientrato, non chi sarebbe rientrato. Lista vuota
+            # sui worker che non la mandano: zeri direbbero un'altra cosa.
+            "worker_verify_rientri": [
+                int(x or 0) for x in (actual.get("verifica_rientri") or [])],
             # Gli allarmi che la regola dei numeri ha spento prima che
             # diventassero ritentativi. Non sono difetti evitati: sono
             # difetti che non c'erano.

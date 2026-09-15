@@ -359,6 +359,41 @@ def test_le_righe_di_fattura_arrivano_all_audit(tmp_path, sintesi_finta):
     assert voxcpm_tts.gpu_cost_usd(righe)["exec_seconds"] == 90.0
 
 
+def test_i_rientri_si_sommano_giro_per_giro_non_in_coda(tmp_path, monkeypatch):
+    # Il secondo giro di un capitolo e il secondo giro di un altro sono lo
+    # stesso giro: le curve si sommano posizione per posizione. Concatenarle
+    # direbbe che il libro ha speso cinque giri invece di tre.
+    # Un capitolo non ha misurato niente, gli altri due hanno curve di
+    # lunghezza diversa: la piu' lunga detta la lunghezza della somma.
+    curve = [[3, 1], [], [2, 0, 1]]
+    ordine = iter(curve)
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0, "tts_seconds": 0.5, "jobs": 1,
+                "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks), "verifica_rientri": next(ordine)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # sequenziale: deterministico
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["verifica_rientri"] == [5, 1, 1]
+
+
+def test_libro_senza_rientri_non_inventa_la_curva(tmp_path, sintesi_finta):
+    # Nessun capitolo ha misurato niente (worker vecchio, o verifica spenta):
+    # la lista resta vuota, non diventa una fila di zeri.
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["verifica_rientri"] == []
+
+
 def test_un_actual_gia_aperto_senza_righe_non_esplode(tmp_path, sintesi_finta):
     # Un job iniziato prima di questa versione ha un `voxcpm_actual` senza la
     # chiave: l'aggregazione la deve creare, non pretenderla.

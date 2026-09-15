@@ -393,6 +393,27 @@ def test_code_tagliate_solo_del_tentativo_consegnato(tmp_path, monkeypatch):
     assert stats["code_tagliate"] == 1
 
 
+def test_i_rientri_per_giro_arrivano_nelle_misure(tmp_path, monkeypatch):
+    # La curva del recupero: cinque chunk sono tornati sani al primo giro, due
+    # al secondo, uno al terzo. E' la sola misura che dice se un giro in piu'
+    # pagherebbe, e finora il worker la mandava e nessuno la leggeva.
+    finto = FintoRunJob(esito_ok(verify={
+        "chunks_verificati": 40, "giri": 3, "rientri_per_giro": [5, 2, 1]}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_rientri"] == [5, 2, 1]
+    assert stats["verifica_giri"] == 3
+
+
+def test_worker_senza_rientri_lascia_la_lista_vuota(tmp_path, monkeypatch):
+    # Un'immagine precedente non manda il campo: lista vuota, non una lista di
+    # zeri. Gli zeri direbbero «nessuno e' rientrato», che e' il contrario di
+    # «non lo sappiamo».
+    finto = FintoRunJob(esito_ok(verify={"chunks_verificati": 40, "giri": 2}))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["verifica_rientri"] == []
+    assert stats["verifica_giri"] == 2
+
+
 def test_l_audio_finisce_nel_file(tmp_path, monkeypatch):
     finto = FintoRunJob(esito_ok(pcm=b"\xaa\xbb" * 50))
     stats, dest = sintetizza(finto, tmp_path, monkeypatch)
