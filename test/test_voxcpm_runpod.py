@@ -406,6 +406,40 @@ def test_submit_non_dorme_dopo_l_ultimo_tentativo():
     assert len(chiamate_sleep) == voxcpm_tts._SUBMIT_RETRIES - 1
 
 
+def test_submit_resiste_a_un_intoppo_di_rete_lungo():
+    # 15/09/2026: un'interruzione TLS piu' lunga dei sette secondi di allora
+    # (quattro prove a 1+2+4 s) ha ucciso un libro all'86%. Sei cadute
+    # consecutive devono restare dentro il budget, e la pausa deve salire
+    # fino al tetto invece di restare ai due secondi iniziali.
+    pause = []
+    ses = FintaSessione(
+        post=[voxcpm_tts.requests.RequestException("EOF in violation of protocol")
+              for _ in range(6)] + [FintaRisposta(body={"id": "job-9"})],
+        get=[FintaRisposta(body={"status": "COMPLETED", "output": {"ok": 1}})],
+    )
+    out = voxcpm_tts.run_job({"input": {}}, session=ses, sleep=pause.append,
+                             poll=0)
+    assert out == {"ok": 1}
+    assert len(ses.post_fatte) == 7
+    assert pause[:6] == [2.0, 4.0, 8.0, 16.0, 32.0, 60.0]
+    # Minuti di resistenza, non secondi: e' il punto della modifica.
+    assert sum(pause[:6]) > 120
+
+
+def test_submit_esaurito_ha_un_tipo_suo():
+    # Il tipo e' il contratto: `synthesize_chapter` risottomette il capitolo
+    # solo se riconosce «non e' mai partito», e da un `VoxcpmJobError` nudo
+    # non lo puo' dedurre.
+    ses = FintaSessione(
+        post=[FintaRisposta(status_code=503, text="scaling")
+              for _ in range(voxcpm_tts._SUBMIT_RETRIES)])
+    with pytest.raises(voxcpm_tts.VoxcpmSottomissioneFallita) as e:
+        voxcpm_tts.run_job({"input": {}}, session=ses, sleep=dormi_finto,
+                           poll=0)
+    assert e.value.ritentabile is True
+    assert "sottomissione" in str(e.value)
+
+
 def test_annullamento_e_osservato_a_tick_brevi_non_dopo_poll_s():
     # Review finale, Important F3: prima `cancelled()` era controllato solo
     # fra un poll e l'altro (mai DENTRO il sonno di `poll_s`), quindi un

@@ -514,6 +514,45 @@ def test_coda_satura_non_si_ritenta(tmp_path, monkeypatch):
     assert len(finto.payload) == 1
 
 
+def test_capitolo_mai_sottomesso_si_risottomette(tmp_path, monkeypatch):
+    # 15/09/2026: la POST /run cadeva su TLS, il `VoxcpmJobError` nudo non
+    # trovava un ramo e portava giu' il libro intero all'86%. Il job non e'
+    # mai partito: nessuna GPU spesa, quindi concorrenza invariata e budget
+    # dei silenzi intatto.
+    finto = FintoRunJob(
+        voxcpm_tts.VoxcpmSottomissioneFallita("esauriti i tentativi"),
+        esito_ok())
+    stats, dest = sintetizza(finto, tmp_path, monkeypatch)
+    assert [p["input"]["concurrency"] for p in finto.payload] == [32, 32]
+    assert stats["redone"] == 0
+    assert os.path.getsize(dest) == 200
+
+
+def test_risottomissioni_a_oltranza_si_arrendono(tmp_path, monkeypatch):
+    troppe = [voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'")
+              for _ in range(voxcpm_tts.SUBMIT_CHAPTER_RETRIES + 2)]
+    finto = FintoRunJob(*troppe)
+    with pytest.raises(voxcpm_tts.VoxcpmSottomissioneFallita):
+        sintetizza(finto, tmp_path, monkeypatch)
+    # Il budget e' SUBMIT_CHAPTER_RETRIES risottomissioni oltre al primo
+    # tentativo vero, come per i rimbalzi e per le riconsegne.
+    assert len(finto.payload) == voxcpm_tts.SUBMIT_CHAPTER_RETRIES + 1
+
+
+def test_fra_due_sottomissioni_si_aspettano_minuti(tmp_path, monkeypatch):
+    # Se la rete e' stata giu' per i tre minuti interi di `_submit`, non
+    # torna nell'attimo dopo: rilanciare subito spenderebbe il budget a
+    # vuoto. La pausa cresce a ogni giro.
+    pause = []
+    monkeypatch.setattr(voxcpm_tts, "_dormi", pause.append)
+    monkeypatch.setattr(voxcpm_tts, "run_job", FintoRunJob(
+        voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'"),
+        voxcpm_tts.VoxcpmSottomissioneFallita("rete giu'"),
+        esito_ok()))
+    voxcpm_tts.synthesize_chapter(CHUNKS, VOCE, str(tmp_path / "cap.pcm"))
+    assert pause == [60, 120]
+
+
 def test_con_r2_acceso_l_audio_passa_dalla_put_firmata(tmp_path, monkeypatch):
     import storage_backend
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: True)

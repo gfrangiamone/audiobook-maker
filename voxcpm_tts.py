@@ -423,14 +423,31 @@ class VoxcpmConsegnaFallita(VoxcpmJobError):
     ritentabile = True
 
 
+class VoxcpmSottomissioneFallita(VoxcpmJobError):
+    """La POST /run non e' mai andata a buon fine: il job non e' partito.
+
+    Tentativi di `_submit` esauriti su cause transitorie (connessione caduta,
+    TLS interrotto, 5xx, 429). Nessuna GPU toccata, nessun job da cancellare:
+    si risottomette il capitolo dopo una pausa lunga. Distinta da
+    `VoxcpmCodaSatura`, che e' l'endpoint che risponde «pieno» e non migliora
+    rimettendosi in fila, e da `VoxcpmConsegnaFallita`, dove la sintesi c'e'
+    stata davvero.
+    """
+
+    ritentabile = True
+
+
 # Quante volte si rifa' un job i cui chunk sono usciti a silenzio, quante
-# se n'e' rimbalzato uno, e quante si risottomette un capitolo il cui audio
-# non e' arrivato dal worker (`VoxcpmConsegnaFallita`). Budget separati
-# perche' misurano cose diverse: il primo il carico sulla GPU, il secondo la
-# sfortuna nell'instradamento, il terzo la salute del trasporto via R2.
+# se n'e' rimbalzato uno, quante si risottomette un capitolo il cui audio
+# non e' arrivato dal worker (`VoxcpmConsegnaFallita`) e quante un capitolo
+# che non si e' riusciti nemmeno a sottomettere (`VoxcpmSottomissioneFallita`).
+# Budget separati perche' misurano cose diverse: il primo il carico sulla GPU,
+# il secondo la sfortuna nell'instradamento, il terzo la salute del trasporto
+# via R2, il quarto quella della rete verso l'endpoint.
 SILENCE_RETRIES = 2
 BOUNCE_RETRIES = 6
 DELIVERY_RETRIES = 2
+SUBMIT_CHAPTER_RETRIES = 2
 
 # Sottostringhe che, nel messaggio d'errore, dicono "la GPU non ce l'ha
 # fatta". Sono i casi in cui rifare piu' stretti ha senso: una firma scaduta
@@ -439,7 +456,16 @@ _GPU_PRESSURE = ("out of memory", "cuda", "nvml", "cublas", "device-side",
                  "motore compromesso")
 
 _RUNPOD_BASE = "https://api.runpod.ai/v2"
-_SUBMIT_RETRIES = 4
+# Otto prove, con pausa che raddoppia da 2 s fino a un tetto di 60 s
+# (2, 4, 8, 16, 32, 60, 60): circa tre minuti di attesa. Erano quattro prove
+# a 1+2+4 s, cioe' sette secondi in tutto: il 15/09/2026 un'interruzione TLS
+# verso l'endpoint piu' lunga di quella finestra ha ucciso un libro all'86%,
+# con ventuno capitoli su ventiquattro gia' sintetizzati e pagati. Stessa
+# forma di `_scarica` (`_SCARICA_TENTATIVI`), perche' e' lo stesso guasto
+# visto dall'altro capo: la rete che se ne va per un momento.
+_SUBMIT_RETRIES = 8
+_SUBMIT_PAUSA_SEC = 2.0
+_SUBMIT_PAUSA_MAX_SEC = 60.0
 _HTTP_TRANSIENT = (429, 500, 502, 503, 504)
 
 
@@ -497,6 +523,7 @@ def _errore_del_job(out, testo, job_id):
 
 def _submit(payload, session, sleep):
     ultimo = ""
+    pausa = _SUBMIT_PAUSA_SEC
     for tentativo in range(_SUBMIT_RETRIES):
         try:
             r = session.post(f"{_base()}/run", headers=_headers(),
@@ -516,8 +543,17 @@ def _submit(payload, session, sleep):
                 raise VoxcpmJobError(f"HTTP {r.status_code}: {r.text[:200]}")
             ultimo = f"HTTP {r.status_code}"
         if tentativo < _SUBMIT_RETRIES - 1:
-            sleep(min(30, 2 ** tentativo))
-    raise VoxcpmJobError(f"esauriti i tentativi di sottomissione ({ultimo})")
+            _LOG.warning(
+                "sottomissione del job fallita (%s), tentativo %d di %d: "
+                "riprovo fra %.0f s", ultimo, tentativo + 1, _SUBMIT_RETRIES,
+                pausa)
+            sleep(pausa)
+            pausa = min(pausa * 2, _SUBMIT_PAUSA_MAX_SEC)
+    # Tipo dedicato, non `VoxcpmJobError` nudo: chi orchestra il capitolo
+    # deve poter distinguere «il job non e' mai partito» da un guasto della
+    # sintesi, ed e' su quel tipo che `synthesize_chapter` risottomette.
+    raise VoxcpmSottomissioneFallita(
+        f"esauriti i tentativi di sottomissione ({ultimo})")
 
 
 def cancel_job(job_id, *, session=None):
@@ -592,7 +628,8 @@ def run_job(payload, *, session=None, sleep=time.sleep, poll=None, timeout=None,
 
     Raises:
         VoxcpmRimbalzato, VoxcpmMotoreCompromesso, VoxcpmBloccato,
-        VoxcpmCodaSatura, VoxcpmAnnullato, VoxcpmJobError: vedi la tabella §9.4.
+        VoxcpmCodaSatura, VoxcpmAnnullato, VoxcpmSottomissioneFallita,
+        VoxcpmJobError: vedi la tabella §9.4.
     """
     ses = session or requests
     attesa = poll_seconds() if poll is None else float(poll)
@@ -1200,7 +1237,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              "runpod": []}
 
     conc = concurrency()
-    tentativo, rimbalzi, riconsegne = 0, 0, 0
+    tentativo, rimbalzi, riconsegne, risottomissioni = 0, 0, 0, 0
     while True:
         if cancelled is not None and cancelled():
             raise VoxcpmJobError("job annullato: nessun altro worker acceso")
@@ -1248,6 +1285,25 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # guasto impiega ancora una decina di secondi a uscire, e finche'
             # e' li' respinge tutto.
             riposa(min(30, 10 * rimbalzi))
+            continue
+        except VoxcpmSottomissioneFallita as e:
+            # Il job non e' mai partito: nessuna GPU spesa, niente da
+            # cancellare, il capitolo e' intatto. Prima questo saliva come
+            # `VoxcpmJobError` nudo e nessun ramo lo prendeva, quindi
+            # un'interruzione di rete piu' lunga della finestra di `_submit`
+            # uccideva il job intero (15/09/2026: ventuno capitoli su
+            # ventiquattro, gia' sintetizzati e pagati, buttati via).
+            # La pausa e' di minuti e non di secondi apposta: se la rete e'
+            # stata giu' per i tre minuti di `_submit`, non torna nell'attimo
+            # dopo, e rilanciare subito spenderebbe il budget a vuoto.
+            risottomissioni += 1
+            if risottomissioni > SUBMIT_CHAPTER_RETRIES:
+                raise
+            _LOG.warning(
+                "capitolo mai sottomesso (%s): riprovo fra %d s, %d di %d",
+                e, 60 * risottomissioni, risottomissioni,
+                SUBMIT_CHAPTER_RETRIES)
+            riposa(60 * risottomissioni)
             continue
         except (VoxcpmBloccato, VoxcpmMotoreCompromesso):
             # Stesso rimedio, due sintomi: il worker che si e' fermato e la
