@@ -3787,6 +3787,11 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             # «millenovecentosessantasette» come «1967». Sono ritentativi
             # non comprati.
             "verifica_numerali": 0, "verifica_falsi_numerali": 0,
+            # E il gemello per la regola della grafia: gli allarmi spenti
+            # perche' l'ASR scriveva la stessa coda in un altro modo. Conto
+            # separato dai numerali perche' e' un altro vizio del
+            # riconoscitore, e i due non si guastano insieme.
+            "verifica_falsi_grafia": 0,
             # Una riga per job SOTTOMESSO a RunPod, coi secondi che RunPod
             # fattura: e' il costo vero del libro, che il conto sui caratteri
             # non puo' vedere.
@@ -3960,7 +3965,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                         for _k in ("verifica_chunk", "verifica_sospetti",
                                    "verifica_rinunciati", "verifica_giri",
                                    "verifica_numerali",
-                                   "verifica_falsi_numerali"):
+                                   "verifica_falsi_numerali",
+                                   "verifica_falsi_grafia"):
                             _va[_k] = int(_va.get(_k, 0) or 0) + int(
                                 stats.get(_k, 0) or 0)
                         # I rientri si sommano posizione per posizione, non si
@@ -4740,7 +4746,7 @@ _CODE_TAGLIATE_LOCK = threading.Lock()
 # si analizza piu'.
 _CODE_TAGLIATE_CAMPI = ("coda_attesa", "detto", "scoperti", "scoperti_grezzi",
                         "caduta", "silenzio_ms", "resa", "livello", "mozza",
-                        "conclamato", "fioco", "numeri", "sospetto")
+                        "conclamato", "fioco", "numeri", "grafia", "sospetto")
 
 
 def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
@@ -4972,6 +4978,14 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
                 actual.get("verifica_numerali", 0) or 0),
             "worker_verify_falsi_numerali": int(
                 actual.get("verifica_falsi_numerali", 0) or 0),
+            # Lo stesso per la regola della grafia: gli allarmi spenti perche'
+            # l'ASR aveva scritto la stessa coda in un altro modo («di se»
+            # dove il testo dice «disse»). Vale la pena contarli a parte dai
+            # numerali: sono due difetti diversi del riconoscitore, e se una
+            # lingua nuova ne facesse impazzire uno solo, il totale unico non
+            # lo direbbe.
+            "worker_verify_falsi_grafia": int(
+                actual.get("verifica_falsi_grafia", 0) or 0),
         }
         _reused_n = int(job.get("chunks_reused", 0) or 0)
         if _reused_n:

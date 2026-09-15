@@ -137,6 +137,44 @@ def test_gli_allarmi_spenti_dai_numeri_si_sommano(digest, tmp_path):
     assert r["job_senza_numeri"] == 0
 
 
+def test_gli_allarmi_spenti_dalla_grafia_hanno_una_colonna_loro(digest,
+                                                                tmp_path):
+    """La regola della grafia si conta a parte da quella dei numeri.
+
+    I due vizi del riconoscitore sono diversi — le tabelle delle cifre da un
+    lato, l'orecchio del modello dall'altro — e si guastano separatamente:
+    sommarli nasconderebbe quale dei due ha smesso di reggere.
+    """
+    _scrivi(tmp_path, [_rec("grafia", worker_code_tagliate=0,
+                            worker_verify_chunks=1911,
+                            worker_verify_sospetti=9,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=3,
+                            worker_verify_numerali=0,
+                            worker_verify_falsi_numerali=0,
+                            worker_verify_falsi_grafia=8)])
+    r = digest.riepilogo(GIORNO)
+    assert r["falsi_grafia"] == 8
+    assert (r["numerali"], r["falsi_numerali"]) == (0, 0)
+    corpo = digest.html(r)
+    assert "regola della grafia" in corpo
+    assert "taciuti altri <strong>8</strong>" in corpo
+
+
+def test_il_worker_senza_la_regola_della_grafia_non_inventa_allarmi(digest,
+                                                                    tmp_path):
+    # Immagine precedente: la chiave manca, e lo zero e' la risposta giusta.
+    # Il riquadro sulla grafia non deve nemmeno comparire.
+    _scrivi(tmp_path, [_rec("vecchio", worker_code_tagliate=1,
+                            worker_verify_chunks=90,
+                            worker_verify_sospetti=2,
+                            worker_verify_rinunciati=0,
+                            worker_verify_giri=1)])
+    r = digest.riepilogo(GIORNO)
+    assert r["falsi_grafia"] == 0
+    assert "regola della grafia" not in digest.html(r)
+
+
 def test_il_worker_di_ieri_e_cieco_solo_sui_numeri(digest, tmp_path):
     """Un worker che misura i ritentativi ma non ancora i numeri.
 

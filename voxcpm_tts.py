@@ -1138,7 +1138,8 @@ _CODA_DIAGNOSI_LOG_MAX = 5
 # hanno deciso.
 _CODA_DIAGNOSI_MISURE = ("scoperti", "scoperti_grezzi", "caduta",
                          "silenzio_ms", "resa", "livello", "mozza",
-                         "conclamato", "fioco", "numeri", "sospetto")
+                         "conclamato", "fioco", "numeri", "grafia",
+                         "sospetto")
 
 
 def _dettaglio_code_tagliate(indici, giudizi, testi):
@@ -1232,7 +1233,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         `code_tagliate_dettaglio`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
         `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
-        `verifica_falsi_numerali`, `bytes` e `runpod`,
+        `verifica_falsi_numerali`, `verifica_falsi_grafia`, `bytes` e `runpod`,
         quest'ultima la lista delle righe di fattura (una per job sottomesso,
         rimbalzi e capitoli rifatti compresi) per `gpu_cost_usd`.
 
@@ -1301,6 +1302,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # nuova, una grafia che le tabelle non conoscono.
              "verifica_numerali": 0,        # code con un numero dentro
              "verifica_falsi_numerali": 0,  # di quelle, allarmi spenti
+             # Lo stesso per la regola della grafia, l'altro vizio del
+             # riconoscitore: «di se» dove il testo dice «disse». Contatore
+             # separato perche' i due difetti non si guastano insieme, e un
+             # totale unico nasconderebbe quale dei due sta cedendo.
+             "verifica_falsi_grafia": 0,
              # Una riga per job SOTTOMESSO, non per job riuscito: i tentativi
              # buttati via sono GPU comprata, ed e' il conto sui caratteri a
              # non vederli.
@@ -1442,6 +1448,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     _ver.get("numerali") or 0)
                 stats["verifica_falsi_numerali"] = int(
                     _ver.get("falsi_numerali") or 0)
+                # La gemella della precedente: gli allarmi spenti dalla
+                # regola della grafia. Assente sui worker precedenti, e lo
+                # zero e' la risposta giusta — quella regola li' non c'era.
+                stats["verifica_falsi_grafia"] = int(
+                    _ver.get("falsi_grafia") or 0)
             stats["tts_seconds"] += float(out.get("tts_seconds") or 0.0)
 
             bad = out["failed_indices"] or []

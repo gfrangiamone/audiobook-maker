@@ -302,6 +302,30 @@ def test_job_senza_rientri_non_inventa_zeri(audit_isolato):
     assert r["worker_verify_rientri"] == []
 
 
+def test_gli_allarmi_spenti_dalla_grafia_arrivano_nel_record(audit_isolato):
+    # Numeri e grafia sono due vizi distinti del riconoscitore: il primo sta
+    # nelle tabelle delle cifre, il secondo nell'orecchio del modello («di se»
+    # per «disse»). Nello storico devono restare due colonne, perche' un
+    # totale unico non direbbe quale delle due regole ha smesso di reggere.
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({"verifica_numerali": 24,
+                                 "verifica_falsi_numerali": 9,
+                                 "verifica_falsi_grafia": 7})
+    generation_engine._write_voxcpm_audit("job-2", job, VOCE, "it",
+                                          "completed")
+    r = leggi(audit_isolato)[0]
+    assert r["worker_verify_falsi_numerali"] == 9
+    assert r["worker_verify_falsi_grafia"] == 7
+
+
+def test_il_worker_senza_grafia_scrive_zero(audit_isolato):
+    # Immagine precedente alla regola: la chiave manca e lo zero e' la
+    # risposta giusta — non ha taciuto niente perche' non c'era.
+    generation_engine._write_voxcpm_audit("job-3", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    assert leggi(audit_isolato)[0]["worker_verify_falsi_grafia"] == 0
+
+
 def leggi_code_tagliate(dir_dati):
     righe = []
     for fp in sorted(dir_dati.glob("voxcpm_code_tagliate_*.jsonl")):
@@ -320,7 +344,7 @@ def _job_con_code_tagliate():
              "mozza": True, "conclamato": True},
             {"capitolo": 3, "chunk": 17, "coda_attesa": "nel 1967.",
              "detto": "nel millenovecento", "scoperti": 2, "caduta": -4.0,
-             "mozza": False, "numeri": True},
+             "mozza": False, "numeri": True, "grafia": "parola"},
         ]})
     return job
 
@@ -340,6 +364,10 @@ def test_le_code_tagliate_finiscono_in_un_dataset_a_parte(audit_isolato):
     assert righe[0]["voice_id"] == VOCE
     assert righe[0]["outcome"] == "completed"
     assert righe[1]["numeri"] is True
+    # Anche il verdetto della regola della grafia passa la lista bianca: senza
+    # di lui, riaprendo il dataset non si saprebbe perche' quell'allarme e'
+    # rimasto acceso o si e' spento.
+    assert righe[1]["grafia"] == "parola"
     # Il conteggio resta dov'era: il dataset lo affianca, non lo sostituisce.
     assert leggi(audit_isolato)[0]["worker_code_tagliate"] == 2
 

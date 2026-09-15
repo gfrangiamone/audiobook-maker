@@ -84,6 +84,13 @@ def riepilogo(giorno):
         # delle tabelle.
         "numerali": 0,
         "falsi_numerali": 0,
+        # La regola della grafia, l'altro modo in cui l'allarme si spegne:
+        # code in cui l'ASR aveva scritto le stesse parole in un altro modo
+        # («di se» per «disse», «la su» per «lassu'»). Sta accanto ai numeri
+        # e non dentro perche' e' un vizio diverso del riconoscitore: quello
+        # dei numeri dipende dalle tabelle, questo dall'orecchio del modello,
+        # e sommarli nasconderebbe quale dei due sta cedendo.
+        "falsi_grafia": 0,
         # Job di un worker che misurava i ritentativi ma non ancora i
         # numeri: cieco solo su queste due colonne.
         "job_senza_numeri": 0,
@@ -120,6 +127,11 @@ def riepilogo(giorno):
                 rec.get("worker_verify_falsi_numerali", 0) or 0)
         else:
             tot["job_senza_numeri"] += 1
+        # Chiave piu' giovane delle altre: sui job di prima resta zero, che
+        # qui e' la risposta giusta — quella regola non c'era, quindi non ha
+        # taciuto niente.
+        tot["falsi_grafia"] += int(
+            rec.get("worker_verify_falsi_grafia", 0) or 0)
         if tagliate:
             tot["job_con_difetti"] += 1
         if necessari or tagliate:
@@ -287,6 +299,13 @@ def html(r):
                   "differenza era la grafia (l'ASR scrive «1967» dove il "
                   "testo dice «millenovecentosessantasette»).</p>"
                   % (r["falsi_numerali"], r["numerali"]))
+    if r["falsi_grafia"]:
+        numeri += ('<p style="color:#555;font-size:13px;margin:6px 4px 0">'
+                   "La regola della grafia ne ha taciuti altri "
+                   "<strong>%d</strong>: code in cui il riconoscitore aveva "
+                   "scritto le stesse parole in un altro modo («di se» dove "
+                   "il testo dice «disse»). Anche questi sono ritentativi "
+                   "che nessuno ha comprato.</p>" % r["falsi_grafia"])
     if r["job_senza_numeri"]:
         numeri += ('<p style="color:#888;font-size:12px;margin:6px 4px 0">'
                    "%d job vengono da un worker precedente alla regola dei "
