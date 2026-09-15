@@ -3764,6 +3764,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
             "chars": 0, "audio_seconds": 0.0, "tts_seconds": 0.0,
             "jobs": 0, "redone": 0, "bounced": 0, "failed_chunks": 0,
             "code_tagliate": 0,
+            # E il giudizio che il worker ha dato a ognuna di quelle code:
+            # coda attesa e coda udita affiancate, con le misure che hanno
+            # deciso. Una riga per difetto, non per capitolo: e' un elenco,
+            # non un contatore, ed e' l'unica cosa che permette di distinguere
+            # una frase davvero mozza da un falso allarme del rilevatore.
+            "code_tagliate_dettaglio": [],
             # Quanto e' servita la verifica delle code sul worker: chunk
             # ascoltati, ritentativi necessari, quelli a cui si e'
             # rinunciato per il tetto, e i giri spesi. Il digest quotidiano
@@ -3970,6 +3976,18 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             for _giro, _quanti in enumerate(_rientri):
                                 _acc[_giro] += int(_quanti or 0)
                             _va["verifica_rientri"] = _acc
+                        # Il dettaglio delle code tagliate si concatena
+                        # invece di sommarsi: ogni riga e' un difetto a se'.
+                        # L'indice del capitolo lo si attacca qui, che e'
+                        # l'unico punto in cui si sa quale capitolo fosse.
+                        _dett = stats.get("code_tagliate_dettaglio") or []
+                        if _dett:
+                            _acc_d = _va.setdefault(
+                                "code_tagliate_dettaglio", [])
+                            for _riga in _dett:
+                                _riga = dict(_riga)
+                                _riga["capitolo"] = ci
+                                _acc_d.append(_riga)
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
                         _va.setdefault("runpod", []).extend(
@@ -3984,7 +4002,8 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             "chars": 0, "audio_seconds": 0.0,
                             "tts_seconds": 0.0, "jobs": 0, "redone": 0,
                             "bounced": 0, "failed_chunks": 0,
-                            "code_tagliate": 0, "bytes": 0,
+                            "code_tagliate": 0,
+                            "code_tagliate_dettaglio": [], "bytes": 0,
                             "runpod": []}
             # I capitoli tornano in ordine di completamento, non di indice: il
             # messaggio conta quelli fatti ("3 di 12"), non dice quale sia in
@@ -4710,6 +4729,68 @@ def _write_speechify_audit(job_id, job, voice_id, language, outcome):
         print(f"[{job_id}] speechify audit write failed (non-fatal): {e}")
 
 
+# Il dataset delle code tagliate e' un file a parte, non una colonna in piu'
+# nell'audit dei costi: quello ha una riga per job ed e' letto dagli
+# aggregati, questo ne ha una per difetto e serve solo a guardarci dentro.
+# Mensile e append-only come l'altro, sotto la stessa data dir.
+_CODE_TAGLIATE_LOCK = threading.Lock()
+# I campi del giudizio del worker che valgono la pena di essere conservati,
+# nell'ordine in cui si leggono. Fuori da questa lista non passa niente: il
+# worker puo' aggiungere chiavi sue, e un dataset che cambia forma da solo non
+# si analizza piu'.
+_CODE_TAGLIATE_CAMPI = ("coda_attesa", "detto", "scoperti", "scoperti_grezzi",
+                        "caduta", "silenzio_ms", "resa", "livello", "mozza",
+                        "conclamato", "fioco", "numeri", "sospetto")
+
+
+def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
+    """Una riga JSONL per ogni coda consegnata ancora tagliata. Non fatale.
+
+    Il worker spende tutti i suoi giri su questi chunk e poi li consegna
+    comunque: il conteggio nell'audit dice che il difetto c'e', ma non che
+    cosa sia. Qui finisce il giudizio per esteso — la coda come l'avrebbe
+    dovuta leggere e la coda come l'ASR l'ha sentita, affiancate — perche'
+    senza vedere quelle due stringhe una accanto all'altra non si distingue
+    una frase davvero mozza da un falso allarme del rilevatore, e tarare
+    soglie alla cieca costa un giro di GPU per ogni ipotesi sbagliata.
+
+    Scrive solo se c'e' qualcosa da scrivere: sui libri sani il file non
+    nasce nemmeno.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        righe = (job.get("voxcpm_actual") or {}).get(
+            "code_tagliate_dettaglio") or []
+        if not righe:
+            return
+        ora = datetime.now(timezone.utc)
+        base = Path(os.environ.get("ABM_DATA_DIR", "."))
+        fp = base / f"voxcpm_code_tagliate_{ora.strftime('%Y-%m')}.jsonl"
+        ts = ora.isoformat()
+        blocco = []
+        for r in righe:
+            # `if ... is None` e non `or`: il capitolo 0 e il chunk 0
+            # esistono, e un `or -1` li trasformerebbe in "non lo so".
+            _cap = r.get("capitolo")
+            _chk = r.get("chunk")
+            rec = {"ts": ts, "job_id": job_id, "voice_id": voice_id,
+                   "language": language, "outcome": outcome,
+                   "capitolo": -1 if _cap is None else int(_cap),
+                   "chunk": -1 if _chk is None else int(_chk)}
+            for k in _CODE_TAGLIATE_CAMPI:
+                if k in r:
+                    rec[k] = r[k]
+            blocco.append(json.dumps(rec, ensure_ascii=False,
+                                     separators=(",", ":")))
+        with _CODE_TAGLIATE_LOCK:
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            with open(fp, "a", encoding="utf-8") as f:
+                f.write("\n".join(blocco) + "\n")
+    except Exception as e:
+        print(f"[{job_id}] voxcpm tails dataset write failed (non-fatal): {e}")
+
+
 def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
     """Append audit record al termine di un job VoxCPM. Best-effort, non fatale.
 
@@ -4904,6 +4985,9 @@ def _write_voxcpm_audit(job_id, job, voice_id, language, outcome):
             rec["cancel_partial_audio_delivered"] = bool(
                 _cancel_meta.get("partial_audio_delivered", False))
         gemini_cost_audit.append_record(rec)
+        # Dopo l'audit e non al posto suo: sono due file con due scopi, e il
+        # secondo non deve poter far mancare il primo.
+        _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome)
         _free_thr = voxcpm_tts.free_threshold_eur()
         if outcome == "completed" and charged <= 0.0 and should_have_been > _free_thr:
             print(f"[{job_id}] AUDIT WARNING: completed VoxCPM job sopra soglia "

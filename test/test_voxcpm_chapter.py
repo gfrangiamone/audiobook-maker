@@ -393,6 +393,49 @@ def test_code_tagliate_solo_del_tentativo_consegnato(tmp_path, monkeypatch):
     assert stats["code_tagliate"] == 1
 
 
+def test_il_giudizio_delle_code_tagliate_arriva_nelle_misure(
+        tmp_path, monkeypatch):
+    # Il worker allega il giudizio per ogni chunk che ha consegnato difettoso:
+    # senza la coda attesa e quella udita affiancate, il conteggio dice che il
+    # difetto c'e' ma non che cosa sia, e finora l'app buttava via il blocco.
+    finto = FintoRunJob(esito_ok(
+        chunks_difettosi=[0, 2],
+        verify_details={
+            "0": {"detto": "prima fra", "scoperti": 3, "scoperti_grezzi": 3,
+                  "caduta": -14.0, "silenzio_ms": 0, "resa": 1.1,
+                  "livello": -21.0, "mozza": True, "conclamato": True,
+                  "fioco": False, "numeri": False, "sospetto": True},
+            "2": {"detto": "terza frase.", "scoperti": 0, "caduta": -11.0,
+                  "mozza": False, "conclamato": False},
+        }))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    dett = stats["code_tagliate_dettaglio"]
+    assert [d["chunk"] for d in dett] == [0, 2]
+    assert dett[0]["coda_attesa"] == "Prima frase."
+    assert dett[0]["detto"] == "prima fra"
+    assert dett[0]["caduta"] == -14.0
+    assert dett[0]["mozza"] is True
+    # Il secondo giudizio non ha tutte le chiavi: passano quelle che ci sono,
+    # senza inventare zeri per le altre.
+    assert dett[1]["detto"] == "terza frase."
+    assert "silenzio_ms" not in dett[1]
+
+
+def test_senza_giudizio_del_worker_resta_la_coda_attesa(tmp_path, monkeypatch):
+    # Un worker di una versione precedente non manda `verify_details`: la riga
+    # con l'indice e la coda attesa e' comunque piu' di zero.
+    finto = FintoRunJob(esito_ok(chunks_difettosi=[1]))
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate_dettaglio"] == [
+        {"chunk": 1, "coda_attesa": "Seconda frase.", "detto": ""}]
+
+
+def test_senza_code_tagliate_il_dettaglio_e_vuoto(tmp_path, monkeypatch):
+    finto = FintoRunJob(esito_ok())
+    stats, _ = sintetizza(finto, tmp_path, monkeypatch)
+    assert stats["code_tagliate_dettaglio"] == []
+
+
 def test_i_rientri_per_giro_arrivano_nelle_misure(tmp_path, monkeypatch):
     # La curva del recupero: cinque chunk sono tornati sani al primo giro, due
     # al secondo, uno al terzo. E' la sola misura che dice se un giro in piu'

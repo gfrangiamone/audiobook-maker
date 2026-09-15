@@ -1125,6 +1125,70 @@ def segno_sospeso(testo):
     return pulito[-1] if pulito and pulito[-1] in _CODA_SOSPESA else ""
 
 
+# La coda che il worker confronta e' lunga `verifica.CODA_CAR` caratteri: la
+# stessa finestra va ritagliata qui, altrimenti «attesa» e «udita» nel log
+# parlano di due pezzi di testo diversi e affiancarle non dice niente.
+_CODA_DIAGNOSI_CAR = 60
+# Quante code tagliate finiscono nel log per capitolo. Il dataset le tiene
+# tutte: il log serve a far vedere il difetto a chi sta guardando, non a
+# contarlo.
+_CODA_DIAGNOSI_LOG_MAX = 5
+# Le misure del giudizio del worker, nell'ordine in cui vanno lette: prima
+# cosa ha sentito l'ASR, poi cosa ha visto il segnale, poi le regole che
+# hanno deciso.
+_CODA_DIAGNOSI_MISURE = ("scoperti", "scoperti_grezzi", "caduta",
+                         "silenzio_ms", "resa", "livello", "mozza",
+                         "conclamato", "fioco", "numeri", "sospetto")
+
+
+def _dettaglio_code_tagliate(indici, giudizi, testi):
+    """Una riga per chunk consegnato con la coda ancora tagliata.
+
+    Il worker su questi chunk spende tutti i suoi giri e poi li consegna
+    comunque, allegando in `verify_details` il giudizio dato a ognuno —
+    compreso `detto`, la coda come l'ASR l'ha sentita. Finora l'app buttava
+    via quel blocco e delle code tagliate restava il solo conteggio: nessun
+    modo di distinguere una frase davvero mozza da un falso allarme del
+    confronto con l'ASR o della misura del segnale, e quindi nessun modo di
+    tarare alcunche' senza tirare a indovinare. Qui coda attesa e coda udita
+    finiscono affiancate, con le misure che hanno deciso.
+
+    Il giudizio manca se il worker e' di una versione precedente: resta la
+    riga col solo indice e la coda attesa, che e' comunque piu' di zero.
+    """
+    fuori = []
+    for i in indici:
+        try:
+            idx = int(i)
+        except (TypeError, ValueError):
+            continue
+        testo = testi[idx] if 0 <= idx < len(testi) else ""
+        riga = {"chunk": idx,
+                "coda_attesa": testo[-_CODA_DIAGNOSI_CAR:],
+                "detto": ""}
+        # Le chiavi di `verify_details` sono stringhe (JSON), ma un worker
+        # che passasse interi non deve far sparire la diagnosi.
+        g = giudizi.get(str(idx))
+        if g is None:
+            g = giudizi.get(idx)
+        if isinstance(g, dict):
+            riga["detto"] = str(g.get("detto") or "")
+            for k in _CODA_DIAGNOSI_MISURE:
+                if k in g:
+                    riga[k] = g[k]
+        fuori.append(riga)
+    return fuori
+
+
+def _riga_coda_tagliata(d):
+    """La riga di diagnosi in una stringa sola, per il log."""
+    misure = " ".join("%s=%s" % (k, d[k])
+                      for k in _CODA_DIAGNOSI_MISURE if k in d)
+    return ("chunk %d | attesa: %r | udita: %r | %s"
+            % (d["chunk"], d.get("coda_attesa", ""), d.get("detto", ""),
+               misure))
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
                        on_progress=None, speed=None):
@@ -1165,6 +1229,7 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
         `jobs`, `redone`, `bounced`, `failed_chunks`, `code_tagliate`,
+        `code_tagliate_dettaglio`,
         `verifica_chunk`, `verifica_sospetti`, `verifica_rinunciati`,
         `verifica_giri`, `verifica_rientri`, `verifica_numerali`,
         `verifica_falsi_numerali`, `bytes` e `runpod`,
@@ -1204,6 +1269,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
              # meta', e senza questo numero il difetto arriva nell'M4B senza
              # che nessuno lo sappia.
              "code_tagliate": 0,
+             # E per ognuna di quelle code, il giudizio che il worker le ha
+             # dato: la coda attesa e quella udita affiancate, con le misure.
+             # Senza questo il conteggio sopra dice che il difetto c'e' ma non
+             # che cosa sia, e su un numero non si tara niente.
+             "code_tagliate_dettaglio": [],
              # Le tre misure che dicono quanto e' costata la verifica e
              # quanto e' servita. `code_tagliate` da solo conta i falliti
              # ma non i tentati: un capitolo con zero code tagliate puo'
@@ -1344,6 +1414,12 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     "(chunk %s): il worker ha esaurito i suoi ritentativi",
                     len(_tagliate),
                     ", ".join(str(i) for i in _tagliate[:10]))
+                stats["code_tagliate_dettaglio"] = _dettaglio_code_tagliate(
+                    _tagliate, out.get("verify_details") or {},
+                    payload["input"]["chunks"])
+                for _d in stats["code_tagliate_dettaglio"][
+                        :_CODA_DIAGNOSI_LOG_MAX]:
+                    _LOG.warning("coda tagliata: %s", _riga_coda_tagliata(_d))
             # Come `chars`: le misure sono quelle del tentativo consegnato.
             # Il blocco manca se la verifica era spenta o se il worker e'
             # di una versione precedente, e allora restano gli zeri.

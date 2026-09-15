@@ -385,6 +385,45 @@ def test_i_rientri_si_sommano_giro_per_giro_non_in_coda(tmp_path, monkeypatch):
     assert job["voxcpm_actual"]["verifica_rientri"] == [5, 1, 1]
 
 
+def test_il_dettaglio_delle_code_si_concatena_col_capitolo(tmp_path,
+                                                           monkeypatch):
+    # Ogni riga e' un difetto a se' e va ritrovata nel libro: l'indice del
+    # capitolo lo sa solo l'aggregazione, ed e' li' che va attaccato.
+    # Capitolo 0, 1 e 2: solo il primo e il terzo hanno code tagliate.
+    dettagli = iter([
+        [{"chunk": 0, "coda_attesa": "al viale.", "detto": "al"}],
+        [],
+        [{"chunk": 4, "coda_attesa": "nel 1967.", "detto": "nel mille"}],
+    ])
+
+    def sintesi(chunks, voice_id, dest_path, **kw):
+        with open(dest_path, "wb") as f:
+            f.write(b"\x11\x22" * len(chunks))
+        return {"sample_rate": 48000, "chars": sum(len(c) for c in chunks),
+                "audio_seconds": 1.0, "tts_seconds": 0.5, "jobs": 1,
+                "redone": 0, "bounced": 0, "failed_chunks": 0,
+                "bytes": 2 * len(chunks),
+                "code_tagliate_dettaglio": next(dettagli)}
+
+    monkeypatch.setattr(voxcpm_tts, "synthesize_chapter", sintesi)
+    monkeypatch.setattr(voxcpm_tts, "apply_rate", lambda *a, **k: False)
+    monkeypatch.setenv("ABM_VOXCPM_JOBS", "1")   # sequenziale: deterministico
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    righe = job["voxcpm_actual"]["code_tagliate_dettaglio"]
+    assert [(r["capitolo"], r["chunk"]) for r in righe] == [(0, 0), (2, 4)]
+    assert righe[0]["detto"] == "al"
+
+
+def test_libro_senza_code_tagliate_non_inventa_il_dettaglio(tmp_path,
+                                                            sintesi_finta):
+    job = {}
+    generation_engine._voxcpm_pre_pass(PIANO, VOCE, "+0%", tmp_path, "job-1",
+                                       set(), job=job)
+    assert job["voxcpm_actual"]["code_tagliate_dettaglio"] == []
+
+
 def test_libro_senza_rientri_non_inventa_la_curva(tmp_path, sintesi_finta):
     # Nessun capitolo ha misurato niente (worker vecchio, o verifica spenta):
     # la lista resta vuota, non diventa una fila di zeri.

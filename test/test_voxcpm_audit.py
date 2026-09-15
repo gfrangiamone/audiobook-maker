@@ -300,3 +300,62 @@ def test_job_senza_rientri_non_inventa_zeri(audit_isolato):
                                           "it", "completed")
     r = leggi(audit_isolato)[0]
     assert r["worker_verify_rientri"] == []
+
+
+def leggi_code_tagliate(dir_dati):
+    righe = []
+    for fp in sorted(dir_dati.glob("voxcpm_code_tagliate_*.jsonl")):
+        with open(fp, encoding="utf-8") as f:
+            righe.extend(json.loads(r) for r in f if r.strip())
+    return righe
+
+
+def _job_con_code_tagliate():
+    job = job_con_fattura()
+    job["voxcpm_actual"].update({
+        "code_tagliate": 2,
+        "code_tagliate_dettaglio": [
+            {"capitolo": 0, "chunk": 0, "coda_attesa": "in fondo al viale.",
+             "detto": "in fondo al", "scoperti": 3, "caduta": -14.0,
+             "mozza": True, "conclamato": True},
+            {"capitolo": 3, "chunk": 17, "coda_attesa": "nel 1967.",
+             "detto": "nel millenovecento", "scoperti": 2, "caduta": -4.0,
+             "mozza": False, "numeri": True},
+        ]})
+    return job
+
+
+def test_le_code_tagliate_finiscono_in_un_dataset_a_parte(audit_isolato):
+    # Una riga per difetto, non per job: e' l'unico modo di distinguere una
+    # frase davvero mozza da un falso allarme del rilevatore, e senza le due
+    # stringhe affiancate tarare le soglie sarebbe tirare a indovinare.
+    generation_engine._write_voxcpm_audit("job-9", _job_con_code_tagliate(),
+                                          VOCE, "it", "completed")
+    righe = leggi_code_tagliate(audit_isolato)
+    assert [r["chunk"] for r in righe] == [0, 17]
+    assert righe[0]["capitolo"] == 0
+    assert righe[0]["coda_attesa"] == "in fondo al viale."
+    assert righe[0]["detto"] == "in fondo al"
+    assert righe[0]["job_id"] == "job-9"
+    assert righe[0]["voice_id"] == VOCE
+    assert righe[0]["outcome"] == "completed"
+    assert righe[1]["numeri"] is True
+    # Il conteggio resta dov'era: il dataset lo affianca, non lo sostituisce.
+    assert leggi(audit_isolato)[0]["worker_code_tagliate"] == 2
+
+
+def test_il_dataset_delle_code_tagliate_si_scrive_anche_sui_falliti(
+        audit_isolato):
+    # Il difetto va guardato soprattutto sui job morti: sono quelli in cui il
+    # worker ha faticato di piu'.
+    generation_engine._write_voxcpm_audit("job-9", _job_con_code_tagliate(),
+                                          VOCE, "it", "failed")
+    assert [r["outcome"] for r in leggi_code_tagliate(audit_isolato)] == [
+        "failed", "failed"]
+
+
+def test_senza_code_tagliate_il_dataset_non_nasce(audit_isolato):
+    # Sui libri sani il file non deve nemmeno esistere.
+    generation_engine._write_voxcpm_audit("job-9", job_con_fattura(), VOCE,
+                                          "it", "completed")
+    assert list(audit_isolato.glob("voxcpm_code_tagliate_*.jsonl")) == []
