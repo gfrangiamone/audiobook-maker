@@ -3692,6 +3692,14 @@ async function startCombinedGeneration(combinedPaymentToken){
   }
 }
 
+// I nodi di avanzamento legacy (#pPct/#pBar/#pMsg/#pCh/#x*) vivono tutti
+// dentro #pra. Vanno letti sempre in modo difensivo: se uno di loro manca,
+// l'eccezione fermerebbe l'handler SSE PRIMA della barra visibile del wizard
+// e l'interfaccia resterebbe congelata a 0% mentre il job avanza davvero.
+function _legacyTxt(id,v,color){const el=document.getElementById(id);if(!el)return null;el.textContent=v;if(color!==undefined)el.style.color=color;return el}
+function _legacyW(id,v){const el=document.getElementById(id);if(!el)return null;el.style.width=v;return el}
+function _legacyColor(id,color){const el=document.getElementById(id);if(!el)return null;el.style.color=color;return el}
+
 function _setWizPct(pct){
   const p=Math.max(0,Math.min(100,Math.round(pct||0)));
   const pBar=document.getElementById('pBar');if(pBar)pBar.style.width=p+'%';
@@ -3820,7 +3828,7 @@ function _showGeminiOverloadModal(d){
   function dismiss(){
     el.remove();
     // Pulisci eventuale errore inline residuo nello step di progress
-    var pra=document.getElementById('pra');if(pra)pra.innerHTML='';
+    var praSlot=document.getElementById('praErr');if(praSlot)praSlot.innerHTML='';
     // Torna allo step 3 (scelta voce/audio)
     try{goToStep(3);}catch(e){}
     // Libera lo stato wizard per consentire un nuovo avvio.
@@ -3887,7 +3895,7 @@ function _listenOptProgressWiz(){
     }
     if(d.status==='cancelled'){
       finished=true;es.close();_hideJobRunningModal(true,myJobId);_setCancelButtonMode('gen');
-      document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimization cancelled';
+      _legacyTxt('pMsg',t('opt_cancelled')||'Optimization cancelled');
       unlockUI();return;
     }
     if(d.status==='optimized'){
@@ -3896,9 +3904,9 @@ function _listenOptProgressWiz(){
       (async()=>{try{const est=await fetch('/api/optimize_estimate/'+jobId).then(r=>r.json());if(est.optimized_chapters)optimizedChapters=est.optimized_chapters;}catch(e){}})();
       aiOptEnabled=false;
       _updateAiOptUI();
-      document.getElementById('pMsg').textContent=t('opt_done')||'Text optimization complete!';
-      document.getElementById('pBar').style.width='100%';
-      document.getElementById('pPct').textContent='100%';
+      _legacyTxt('pMsg',t('opt_done')||'Text optimization complete!');
+      _legacyW('pBar','100%');
+      _legacyTxt('pPct','100%');
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('opt_done')||'Optimization complete';
@@ -3938,8 +3946,8 @@ function _listenOptProgressWiz(){
     var streamedChars=Math.min(d.opt_streamed_chars||0,curChChars);
     var workedChars=doneChars+streamedChars;
     var pct=Math.min(100,Math.round(workedChars/totalChars*100));
-    document.getElementById('pBar').style.width=pct+'%';
-    document.getElementById('pPct').textContent=pct+'%';
+    _legacyW('pBar',pct+'%');
+    _legacyTxt('pPct',pct+'%');
     // Come per la barra audio: un solo messaggio, gia' tradotto, per i due
     // riquadri. progressPhase mostrava la stringa cruda del server, in inglese
     // dentro un'interfaccia per il resto tradotta.
@@ -3948,7 +3956,7 @@ function _listenOptProgressWiz(){
       optMsg=t('opt_chapter',{n:d.opt_current_chapter_num||0,tot:d.opt_progress_total||0,
                               title:String(d.opt_current_chapter||'').substring(0,40)});
     }
-    document.getElementById('pMsg').textContent=optMsg;
+    _legacyTxt('pMsg',optMsg);
     const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
     const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
     const progressPhase=document.getElementById('progressPhase');if(progressPhase&&optMsg)progressPhase.textContent=optMsg;
@@ -4481,7 +4489,7 @@ function listenProgress(){
         const _cmsg=d.error_code==='job_terminated'
           ?(t('job_terminated_msg')||'Processing interrupted. If you think this is a mistake, please contact us.')
           :t('cancelled_msg');
-        document.getElementById('pMsg').textContent=_cmsg;document.getElementById('pMsg').style.color='var(--err)';
+        _legacyTxt('pMsg',_cmsg,'var(--err)');
         document.getElementById('cnA').style.display='none';unlockUI();generating=false;
         if(d.error_code!=='job_terminated')_renderGeminiCancelSummary(d);
         return
@@ -4499,36 +4507,36 @@ function listenProgress(){
       }
       _updateGeminiCancelLockUI(pct);
       // Update both old and new progress elements
-      document.getElementById('pPct').textContent=pct+'%';
-      document.getElementById('pBar').style.width=pct+'%';
+      _legacyTxt('pPct',pct+'%');
+      _legacyW('pBar',pct+'%');
       // Un solo messaggio, gia' tradotto, per i due riquadri: progressPhase
       // mostrava la stringa cruda del server accanto a pMsg tradotto, e nello
       // stesso pannello convivevano due lingue.
       const msg=tServerMsg(d.progress_message);
-      document.getElementById('pMsg').textContent=msg;
+      _legacyTxt('pMsg',msg);
       const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width=pct+'%';
       const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent=pct+'%';
       const progressPhase=document.getElementById('progressPhase');if(progressPhase&&msg)progressPhase.textContent=msg;
       _updateJobRunningPct(pct,myJobId);
 
       if(d.current_chapter)
-        document.getElementById('pCh').textContent='Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40);
+        _legacyTxt('pCh','Cap. '+d.current_chapter_num+'/'+d.total_chapters+': '+d.current_chapter.substring(0,40));
       if(d.progress_total>0)
-        document.getElementById('xBlk').textContent=d.progress_current+' / '+d.progress_total;
+        _legacyTxt('xBlk',d.progress_current+' / '+d.progress_total);
       if(d.total_chapters>0)
-        document.getElementById('xCh').textContent=d.current_chapter_num+' / '+d.total_chapters;
+        _legacyTxt('xCh',d.current_chapter_num+' / '+d.total_chapters);
       if(d.elapsed_seconds>0)
-        document.getElementById('xEl').textContent=fmtTime(d.elapsed_seconds);
+        _legacyTxt('xEl',fmtTime(d.elapsed_seconds));
 
       if(d.processed_chars>0&&d.elapsed_seconds>1&&d.total_chars>0){
         const cps=d.processed_chars/d.elapsed_seconds;
         const left=d.total_chars-d.processed_chars;
         const eta=Math.round(left/cps);
-        document.getElementById('xEta').textContent=eta>0?'~'+fmtTime(eta):t('almost');
-        document.getElementById('xSpd').textContent=Math.round(cps)+' '+t('cps');
+        _legacyTxt('xEta',eta>0?'~'+fmtTime(eta):t('almost'));
+        _legacyTxt('xSpd',Math.round(cps)+' '+t('cps'));
       }
       if(d.bytes_generated>0)
-        document.getElementById('xSz').textContent=fmtBytes(d.bytes_generated);
+        _legacyTxt('xSz',fmtBytes(d.bytes_generated));
 
       // M4B sub-bar update
       const m4bWrap=document.getElementById('m4bProgressWrap');
@@ -4555,10 +4563,9 @@ function listenProgress(){
         generating=false;jobDone=true;
         _hideJobRunningModal(false,myJobId); // don't reset — keep jobId for download buttons
         unlockUI();
-        document.getElementById('pPct').textContent='100%';
-        document.getElementById('pBar').style.width='100%';
-        document.getElementById('pMsg').textContent=t('done_msg');
-        document.getElementById('pMsg').style.color='var(--ok)';
+        _legacyTxt('pPct','100%');
+        _legacyW('pBar','100%');
+        _legacyTxt('pMsg',t('done_msg'),'var(--ok)');
         const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='100%';
         const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='100%';
         const progressPhase=document.getElementById('progressPhase');if(progressPhase)progressPhase.textContent=t('done_t');
@@ -4566,13 +4573,12 @@ function listenProgress(){
 
         if(d.m4b_failed){
           const warn=document.createElement('div');warn.className='al al-warn';warn.style.marginTop='10px';
-          warn.textContent=t('m4b_warn_mp3');document.getElementById('pra').appendChild(warn);
+          warn.textContent=t('m4b_warn_mp3');const _praHost=document.getElementById('pra');if(_praHost)_praHost.appendChild(warn);
         }
         if(d.failed_chunks>0){
-          document.getElementById('pMsg').textContent=t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)';
-          document.getElementById('pMsg').style.color='#d97706';
+          _legacyTxt('pMsg',t('done_msg')+' (⚠ '+d.failed_chunks+' chunk skipped)','#d97706');
         }
-        document.getElementById('xEta').textContent='-';
+        _legacyTxt('xEta','-');
 
         // Navigate to panel 5 (completion)
         _unlockStep(5);
@@ -4722,8 +4728,8 @@ function retryGeneration(){
   document.getElementById('cnA').innerHTML='<button class="btn btn-danger" id="btnC">⏹️ '+(t('btn_cancel')||'Cancel')+'</button>';
   document.getElementById('btnC').onclick=cancelJob;
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
-  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
-  document.getElementById('pPct').textContent='0%';
+  _legacyTxt('pMsg','','');
+  _legacyTxt('pPct','0%');
   startGen();
 }
 
@@ -4745,7 +4751,7 @@ function _setCancelButtonMode(mode){
 function cancelOptimization(){
   if(!jobId)return;
   try{navigator.sendBeacon('/api/cancel_optimize/'+jobId);}catch(e){}
-  document.getElementById('pMsg').textContent=t('opt_cancelled')||'Optimisation cancelled';
+  _legacyTxt('pMsg',t('opt_cancelled')||'Optimisation cancelled');
   _setCancelButtonMode('gen');
   unlockUI();
   const genProgress=document.getElementById('generationProgress');if(genProgress)genProgress.style.display='none';
@@ -4935,11 +4941,11 @@ function _completeCancelUI(){
   try{ _syncTransferBtnPlacement(); }catch(_e){}
   const aiOptCard2=document.getElementById('aiOptCard');if(aiOptCard2)aiOptCard2.style.display='';
   const summaryBox2=document.getElementById('summaryBox');if(summaryBox2)summaryBox2.style.display='';
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
-  document.getElementById('pMsg').textContent='';document.getElementById('pMsg').style.color='';
+  _legacyTxt('pMsg','','');
   document.querySelectorAll('#pra .ps').forEach(el=>{el.style.display=''});
   const btnGen=document.getElementById('btnGenerate');if(btnGen){btnGen.disabled=false;const sp=document.createElement('span');sp.setAttribute('data-t','btn_gen');sp.textContent=t('btn_gen');btnGen.replaceChildren(sp);}
   const cnA=document.getElementById('cnA');if(cnA)cnA.style.display='none';
@@ -5328,9 +5334,9 @@ async function goBackToChapters(){
   const panel4Footer=document.getElementById('panel4Footer');if(panel4Footer)panel4Footer.style.display='';
   _resetEmailLateArea();
   const btnGenGoBack=document.getElementById('btnGenerate');if(btnGenGoBack){btnGenGoBack.disabled=false;btnGenGoBack.innerHTML='<span data-t="btn_gen">'+t('btn_gen')+'</span>'}
-  document.getElementById('pMsg').style.color='';
+  _legacyColor('pMsg','');
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
   // Reset wizard progress
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
   const progressPct=document.getElementById('progressPct');if(progressPct)progressPct.textContent='0%';
@@ -5427,8 +5433,8 @@ function resetAll(){
   const aiAlreadyOpt=document.getElementById('aiAlreadyOpt');if(aiAlreadyOpt)aiAlreadyOpt.style.display='none';
   const costEstimate=document.getElementById('costEstimate');if(costEstimate)costEstimate.classList.remove('visible');
   // Reset old progress
-  document.getElementById('pBar').style.width='0%';document.getElementById('pPct').textContent='0%';
-  document.getElementById('pMsg').style.color='';
+  _legacyW('pBar','0%');_legacyTxt('pPct','0%');
+  _legacyColor('pMsg','');
   ['xBlk','xCh','xEl','xEta','xSz','xSpd'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
   // Reset wizard progress
   const progressFill=document.getElementById('progressFill');if(progressFill)progressFill.style.width='0%';
@@ -5599,9 +5605,19 @@ function _elVisible(el){ if(!el) return false; try{ return el.offsetParent!==nul
 // era visibile all'utente (pagina apparentemente ferma e muta). Ora l'alert va
 // nel primo contenitore effettivamente visibile del wizard; #pra resta popolato
 // per retrocompatibilita'.
+// L'errore va in un nodo dedicato appeso a #pra: sostituire l'innerHTML di
+// #pra cancellava #pPct/#pBar/#pMsg/#pCh e le statistiche, e da quel momento
+// ogni tick SSE e ogni reset dell'interfaccia sollevavano TypeError.
+function _praErrSlot(){
+  const pra=document.getElementById('pra');
+  if(!pra)return null;
+  let slot=document.getElementById('praErr');
+  if(!slot){slot=document.createElement('div');slot.id='praErr';pra.appendChild(slot)}
+  return slot;
+}
 function showPErr(m){
   const html='<div class="al al-e fi">'+esc(m)+'</div>';
-  const pra=document.getElementById('pra');if(pra)pra.innerHTML=html;
+  const praSlot=_praErrSlot();if(praSlot)praSlot.innerHTML=html;
   let target=null;
   const ids=['progressErr','panel5Err','s3err'];
   for(let i=0;i<ids.length;i++){const el=document.getElementById(ids[i]);if(_elVisible(el)){target=el;break}}
@@ -5610,7 +5626,7 @@ function showPErr(m){
   target.innerHTML=html;
   try{target.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_e){}
 }
-function _clearPErr(){['progressErr','panel5Err'].forEach(function(id){const el=document.getElementById(id);if(el)el.innerHTML=''})}
+function _clearPErr(){['progressErr','panel5Err','praErr'].forEach(function(id){const el=document.getElementById(id);if(el)el.innerHTML=''})}
 
 function showDlLastWarning(){
   const el=document.getElementById('dlLastNotice');
