@@ -55,6 +55,44 @@ def test_record_normalizzato():
     assert stefano["duration_s"] == 19.52
 
 
+def test_il_passo_della_voce_si_legge_dal_catalogo():
+    # `speed` e' il passo della clip comune: il libro deve uscire a quello.
+    stefano = next(v for v in voxcpm_catalog.voices() if v["name"] == "Stefano")
+    assert stefano["speed"] == 0.88
+
+
+def test_voce_senza_speed_legge_al_passo_di_default(capsys):
+    # Un catalogo consegnato prima del campo: la voce resta valida, a 0,93,
+    # e il log lo dice una volta sola, non una riga per voce.
+    federica = next(v for v in voxcpm_catalog.voices() if v["name"] == "Federica")
+    assert federica["speed"] == voxcpm_catalog.SPEED_DEFAULT == 0.93
+    out = capsys.readouterr().out
+    assert out.count("senza `speed`") == 1
+    assert "1 voci" in out or "1 voce" in out
+
+
+def test_speed_non_numerico_ripiega_sul_default(tmp_path, monkeypatch):
+    import json
+    data = {
+        "languages": [{"code": "it", "enabled": True}],
+        "voices": [{
+            "id": "it-IT_m_storto", "name": "Storto", "name_is_invented": True,
+            "language": {"code": "it", "locale": "it-IT", "label": "italiano"},
+            "gender": {"value": "m", "label": "maschile"},
+            "audio": {"file": "it-IT/Storto.wav", "transcript": "Test", "duration_s": 20.0},
+            "quality": {"score": 0.88, "gate_passed": True},
+            "speed": "lento",
+            "description": {"persona": "warm-young", "role": "caldo", "axes": [], "lang": "it"}
+        }]
+    }
+    (tmp_path / "voices.json").write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", str(tmp_path))
+    voxcpm_catalog.invalidate_cache()
+    voci = voxcpm_catalog.voices()
+    assert len(voci) == 1
+    assert voci[0]["speed"] == 0.93
+
+
 def test_genere_femminile_mappato():
     federica = next(v for v in voxcpm_catalog.voices() if v["name"] == "Federica")
     assert federica["gender"] == "Female"

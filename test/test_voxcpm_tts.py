@@ -128,6 +128,29 @@ def test_apply_rate_non_fa_niente_a_velocita_normale(tmp_path):
     assert p.stat().st_size == 200
 
 
+def test_speed_effettiva_moltiplica_il_passo_della_voce():
+    # +10% su una voce a 0,88 da' 0,968: l'utente chiede il 10% in piu' di
+    # quello che ascolta nella clip, non di una velocita' che non ha sentito.
+    assert voxcpm_tts.speed_effettiva(0.88, "+10%") == 0.968
+    assert voxcpm_tts.speed_effettiva(0.93, "+0%") == 0.93
+    assert voxcpm_tts.speed_effettiva(0.93, "") == 0.93
+    assert voxcpm_tts.speed_effettiva(0.93, None) == 0.93
+    assert voxcpm_tts.speed_effettiva(0.93, "-30%") == 0.651
+    assert voxcpm_tts.speed_effettiva(0.6, "-30%") == 0.5      # stretto in basso
+    assert voxcpm_tts.speed_effettiva(1.8, "+30%") == 2.0      # stretto in alto
+    assert voxcpm_tts.speed_effettiva(0.93, "storto") == 0.93  # cursore illeggibile
+
+
+def test_passo_di_voce_dal_catalogo(monkeypatch):
+    fixture = os.path.join(os.path.dirname(__file__), "fixtures", "voxcpm_catalog")
+    monkeypatch.setenv("ABM_VOXCPM_CATALOG_DIR", fixture)
+    voxcpm_catalog.invalidate_cache()
+    assert voxcpm_tts.passo_di_voce("voxcpm:v2:it-IT/Stefano") == 0.88
+    # Una voce clonata (`mine`) o sparita non e' di catalogo: il default.
+    assert voxcpm_tts.passo_di_voce("voxcpm:mine:abc123") == 0.93
+    assert voxcpm_tts.passo_di_voce("voxcpm:v2:it-IT/Nessuno") == 0.93
+
+
 def test_apply_rate_accelera_il_pcm(tmp_path):
     # ffmpeg vero su un PCM di silenzio: +30% deve accorciare il file.
     p = tmp_path / "x.pcm"

@@ -842,6 +842,34 @@ def invalidate_clone_cache():
         _clone_cache.clear()
 
 
+def passo_di_voce(voice_id):
+    """Il passo a cui e' stirata la clip comune della voce, dal catalogo.
+
+    Una voce che non e' di catalogo (clonata, o sparita da una rigenerazione)
+    legge al default: e' lo stesso passo con cui escono le clip che non hanno
+    una riga in `_velocita.csv`.
+    """
+    try:
+        return float(voxcpm_catalog.parse_voice_id(voice_id)["speed"])
+    except ValueError:
+        return voxcpm_catalog.SPEED_DEFAULT
+
+
+def speed_effettiva(passo_voce, rate):
+    """Il passo da chiedere al worker: quello della voce, per il cursore.
+
+    `+10%` su una voce a 0,88 da' 0,968. L'utente chiede il dieci per cento
+    in piu' di quello che ascolta nella clip, non di una velocita' cruda che
+    non ha mai sentito (decisione dell'utente, 14 settembre 2026). Un cursore
+    illeggibile vale zero. Il risultato sta nell'intervallo del worker.
+    """
+    try:
+        pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        pct = 0.0
+    return max(0.5, min(2.0, round(float(passo_voce) * (1.0 + pct / 100.0), 3)))
+
+
 def clone_block(voice_id):
     """I campi del payload che determinano la voce, in modalita' `hifi`.
 
@@ -1049,7 +1077,7 @@ def pulisci_coda(testo):
 
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
-                       on_progress=None):
+                       on_progress=None, speed=None):
     """Sintetizza un capitolo intero come un solo job. Scrive il PCM grezzo.
 
     Un job per capitolo (§7.3): il costo sta nell'accensione del worker, non
@@ -1078,6 +1106,11 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             a `run_job` e spenta da `ABM_VOXCPM_PROGRESS=0`. Un capitolo
             rifatto ripubblica `chunks_done` da zero: la monotonia della
             barra e' responsabilita' del chiamante, non di qui.
+        speed: il passo di lettura da chiedere al worker (gia' moltiplicato
+            per il cursore, vedi `speed_effettiva`). `None` = non mandarlo.
+            Se il worker lo echeggia, torna in `stats["speed"]`; se non lo
+            echeggia (immagine precedente) la chiave manca e il chiamante
+            deve stirare da se'.
 
     Returns:
         dict con `sample_rate`, `chars`, `audio_seconds`, `tts_seconds`,
@@ -1165,6 +1198,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             "output_format": "pcm",
             "language": lingua,
         }}
+        if speed is not None:
+            # Il worker stira ogni chunk a questo passo prima di concatenare.
+            payload["input"]["speed"] = speed
         if su_r2:
             payload["input"]["s3"] = {
                 "put_url": storage_backend.presigned_put_url(key),
@@ -1215,6 +1251,10 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
             # somma davvero.
             stats["chars"] = int(out.get("chars") or 0)
             stats["audio_seconds"] = float(out.get("audio_seconds") or 0.0)
+            # L'eco del passo applicato dal worker: e' la prova, nelle
+            # statistiche del job, che il PCM consegnato e' gia' stirato.
+            if "speed" in out:
+                stats["speed"] = float(out["speed"])
             # Come `chars`: quello che conta e' il tentativo consegnato, non
             # la somma con quelli buttati via.
             _tagliate = out.get("chunks_difettosi") or []
@@ -1339,11 +1379,10 @@ def jobs_in_flight():
 def apply_rate(pcm_path, rate, sample_rate):
     """Applica la velocita' di lettura al PCM, sul posto. Ritorna True se fatto.
 
-    L'azione `generate` del worker non ha un parametro di velocita': ce l'ha
-    `assemble`, che D9 lascia fuori dal perimetro. La velocita' la mette
-    quindi l'app, con un `atempo` di ffmpeg sul PCM grezzo. L'intervallo del
-    pannello e' -30%..+30% (§5.2), comodamente dentro il dominio 0,5-2,0 di
-    `atempo`: un solo filtro basta, nessuna catena.
+    `rate` e' la percentuale del pannello ("+10%"). Dal 14/09/2026 il passo lo
+    stira il worker dentro `generate` e il pre-pass VoxCPM non chiama piu'
+    questa funzione: resta per stirare un PCM gia' su disco. Lo stiramento e'
+    un `atempo` di ffmpeg sul PCM grezzo.
     """
     try:
         pct = float(str(rate or "0").replace("%", "").replace("+", "").strip())
