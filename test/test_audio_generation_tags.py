@@ -150,6 +150,28 @@ def test_tags_voce_speechify_usa_locale_come_accento():
     assert tags["abm_speed"].startswith("0.95x")
 
 
+def test_tags_voce_voxcpm_non_scambia_lid_per_la_lingua():
+    # `voxcpm:v2:it-IT/Lorenzo` non e' una locale col nome dentro: spezzarlo
+    # sui trattini come le voci Edge finiva per incidere l'id intero nella
+    # lingua e lasciare il modello vuoto.
+    import voxcpm_catalog
+    tags = generation_engine._generation_tags(
+        {}, _Info(), "voxcpm:v2:it-IT/Lorenzo", "-10%")
+    assert tags["abm_model"] == voxcpm_catalog.MODEL_LABEL
+    assert tags["abm_voice"] == "Lorenzo (IT)"
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/Lorenzo"
+    assert tags["abm_language"] == "it-IT"
+    assert tags["abm_accent"] == "it-IT"
+    assert tags["abm_speed"].startswith("0.90x")
+
+
+def test_tags_voce_voxcpm_sparita_dal_catalogo_non_esplode():
+    tags = generation_engine._generation_tags(
+        {}, _Info(), "voxcpm:v2:it-IT/NonEsiste", "+0%")
+    assert tags["abm_voice_id"] == "voxcpm:v2:it-IT/NonEsiste"
+    assert tags["abm_language"] == "it"
+
+
 def test_tags_segnalano_testo_ottimizzato():
     tags = generation_engine._generation_tags(
         {"ai_optimized": True}, _Info(), "it-IT-DiegoNeural", "+0%")
@@ -246,6 +268,29 @@ def test_pacchetto_mp4_sta_in_una_chiave_sola_e_ha_un_tetto():
         {"abm_style_%d" % i: "x" * 300 for i in range(10)})
     assert len(args[1]) <= len("keywords=") + audio_utils._EXTRA_TAG_PACK_MAX_CHARS
     assert audio_utils._extra_tag_args_mp4(None) == []
+
+
+def test_descrizione_del_libro_perde_il_markup():
+    # Il `dc:description` degli EPUB e' HTML: finiva inciso tale e quale.
+    out = audio_utils._descrizione_semplice(
+        '<p class="description">AL DIO SCONOSCIUTO &egrave; un romanzo'
+        '\n&ldquo;profetico&rdquo;.</p>')
+    assert out == 'AL DIO SCONOSCIUTO \u00e8 un romanzo \u201cprofetico\u201d.'
+    assert audio_utils._descrizione_semplice(None) == ""
+    # Il tetto vale sul testo, non sul markup.
+    assert len(audio_utils._descrizione_semplice("<p>" + "a" * 2000 + "</p>")) == 1000
+
+
+@requires_ffmpeg
+def test_m4b_non_incide_i_tag_html_della_descrizione(tmp_path):
+    pcm = _silence_pcm(tmp_path, seconds=2)
+    out = str(tmp_path / "out.m4b")
+    assert audio_utils.pcm_to_aac_m4b(
+        [pcm], out, title="Il Libro",
+        description='<p class="description">Un <i>bel</i> libro.</p>')
+    tags = _format_tags(out)
+    assert tags["comment"] == "Un bel libro."
+    assert tags["description"] == "Un bel libro."
 
 
 @requires_ffmpeg

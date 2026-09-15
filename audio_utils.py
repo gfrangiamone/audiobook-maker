@@ -19,7 +19,9 @@ Funzioni:
 Nessuna dipendenza da altri moduli del progetto.
 """
 
+import html as _html
 import os
+import re as _re
 import shutil
 import subprocess
 import sys
@@ -686,6 +688,23 @@ def _extract_year_from_date(date_str):
 # FFMETADATA1 (capitoli + tag globali) — condiviso fra conversione M4B e kit
 # ---------------------------------------------------------------------------
 
+_TAG_HTML = _re.compile(r"<[^>]+>")
+
+
+def _descrizione_semplice(s, limite=1000):
+    """Descrizione del libro ridotta a testo semplice, poi troncata.
+
+    Il `dc:description` degli EPUB porta quasi sempre markup (`<p class=
+    "description">...</p>`, entita' HTML), e ffmpeg lo incide tale e quale:
+    Apple Books e gli altri lettori mostrano i tag all'utente. Il markup si
+    toglie PRIMA di troncare, altrimenti il tetto se lo mangiano i tag.
+    """
+    if not s:
+        return ""
+    txt = _html.unescape(_TAG_HTML.sub(" ", str(s)))
+    return " ".join(txt.split())[:limite].strip()
+
+
 def _escape_ffmeta(s):
     """Escape dei caratteri speciali del formato FFMETADATA1 (=, ;, #, \\, newline)."""
     return (str(s).replace('\\', '\\\\').replace('=', '\\=')
@@ -868,7 +887,7 @@ def _convert_mp3_to_m4b(mp3_path, m4b_path, chapters=None, title=None, author=No
         # Normalizza metadati opzionali
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         # Filtra capitoli con durata zero (ffprobe non disponibile → tutte le durate = 0)
         valid_chapters = None
@@ -1205,7 +1224,7 @@ def build_m4b_rebuild_kit(mp3_path, output_zip, chapters=None, title=None,
 
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         source_kbps = _get_audio_bitrate(mp3_path)
         aac_bitrate = f"{source_kbps}k"
@@ -1930,7 +1949,7 @@ def pcm_to_aac_m4b(pcm_paths, output_path, sample_rate=24000, channels=1,
 
         year = _extract_year_from_date(date) if date else ""
         lang_iso = _normalize_language_iso(language) if language else ""
-        desc_trunc = (description or "").strip()[:1000] if description else ""
+        desc_trunc = _descrizione_semplice(description)
 
         valid_chapters = None
         if chapters:

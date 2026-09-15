@@ -4118,6 +4118,25 @@ def _generation_tags(job, info, voice, rate, style_instruction=None, emotion=Non
                     accent = "%s (%s)" % (chosen, codes[chosen])
             except Exception:
                 pass
+        elif engine == "voxcpm":
+            # Il voice id VoxCPM non e' una locale con dentro il nome, come
+            # quelli Edge: e' `voxcpm:v2:<locale>/<Nome>`. Spezzarlo sui
+            # trattini nel ramo Edge scriveva l'id intero dentro
+            # `abm_language` e lasciava `abm_model` vuoto (M4B consegnati il
+            # 15/09/2026 con `abm_language=voxcpm:v2:it-IT/Lorenzo`).
+            model_label = getattr(voxcpm_tts, "MODEL_LABEL", "") or model_label
+            try:
+                import voxcpm_catalog
+                rec = voxcpm_catalog.parse_voice_id(voice_id)
+                voice_name = voxcpm_catalog._display_name(rec)
+                # Come per Simba: l'accento non e' un parametro a se', e' la
+                # locale della voce (il filtro ACCENTO sceglie fra le varianti).
+                language = rec["locale"] or ""
+                accent = language
+            except Exception:
+                # Voce sparita dal catalogo dopo una rigenerazione (§9.4): non
+                # e' un errore, restano l'id e la lingua del libro.
+                pass
         elif engine == "speechify":
             try:
                 _mk, _vn, _loc = speechify_tts.parse_voice_id(voice_id)
