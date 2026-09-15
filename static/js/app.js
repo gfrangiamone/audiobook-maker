@@ -1610,7 +1610,10 @@ function updVoicesPremium(){
       for(const v of mie){
         const o=document.createElement('option');
         o.value=v.id;
-        o.textContent=(v.owner?t('vc_voice_own'):t('vc_voice_shared'))+' · '+_voxcpmLocaleLabel(v.locale);
+        // Il nome dato alla voce al campionamento, se c'e', al posto
+        // dell'etichetta generica: con piu' voci proprie e' l'unico modo di
+        // distinguerle.
+        o.textContent=(v.name||(v.owner?t('vc_voice_own'):t('vc_voice_shared')))+' · '+_voxcpmLocaleLabel(v.locale);
         gm.appendChild(o);
       }
       sel.appendChild(gm);

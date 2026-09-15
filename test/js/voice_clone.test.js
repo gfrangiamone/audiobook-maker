@@ -8,7 +8,7 @@ const CAT = {
   _voxcpm: {available: true, model_label: 'VoxCPM2', personas: {}},
   _mine: [
     {id: 'vc_a1', state: 'ready', voice_id: 'voxcpm:mine:TOKA', lang: 'it', locale: 'it-IT',
-     gender: 'f', owner: true, pending: false,
+     gender: 'f', owner: true, pending: false, name: 'Nonna Pina',
      demo_urls: {common: '/api/voice_clone/vc_a1/demo/common', extra: '/api/voice_clone/vc_a1/demo/extra'}},
     {id: 'vc_b2', state: 'ready', voice_id: 'voxcpm:mine:TOKB', lang: 'it', locale: 'it-CH',
      gender: 'm', owner: false, pending: false,
@@ -26,6 +26,7 @@ test('vociMie: solo le voci pronte con lingua e accento coincidenti', () => {
   assert.equal(out[0].owner, true);
   assert.equal(out[0].clone_id, 'vc_a1');
   assert.equal(out[0].gender, 'Female');
+  assert.equal(out[0].name, 'Nonna Pina');
   assert.equal(out[0].sample_url, '/api/voice_clone/vc_a1/sample.wav');
   assert.deepEqual(out[0].demos, [
     {common: true, url: '/api/voice_clone/vc_a1/demo/common'},
@@ -36,6 +37,8 @@ test('vociMie: solo le voci pronte con lingua e accento coincidenti', () => {
 test('vociMie: senza locale filtra solo per lingua', () => {
   assert.deepEqual(vociMie(CAT, 'it', '').map(v => v.id), ['voxcpm:mine:TOKA', 'voxcpm:mine:TOKB']);
   assert.equal(vociMie(CAT, 'it', '')[1].gender, 'Male');
+  // voce senza nome: stringa vuota, la combo usa l'etichetta generica
+  assert.equal(vociMie(CAT, 'it', '')[1].name, '');
 });
 
 test('vociMie: catalogo senza _mine o nullo -> lista vuota', () => {

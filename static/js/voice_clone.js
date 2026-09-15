@@ -353,6 +353,8 @@
       if (locale) { loc.value = locale; if (loc.value !== locale) loc.selectedIndex = 0; }
       if (gender === 'f' || gender === 'm') g.value = gender;
       vcSyncGenderIcon();
+      var nm = $('vcName'); var name = cur.name || v.name;
+      if (nm && !nm.value && name) nm.value = name;
     }
     return !!(ls.value && loc.value && g.value);
   }
@@ -556,6 +558,7 @@
     fd.append('lang', _val('vcLang'));
     fd.append('locale', _val('vcLocale'));
     fd.append('gender', _val('vcGender'));
+    fd.append('name', _val('vcName'));
     var wait = $('vcUploading'); if (wait) wait.hidden = false;
     vcSetUploadVisible(false);
     vcSetSampleVisible(false);
@@ -568,7 +571,7 @@
          La offre come link, perche' il riquadro aperto spingerebbe in basso
          il riascolto e il motivo dello scarto. */
       if (!r.ok) { vcSetUploadVisible(false, true); vcErr(vcApiErrMsg(r.data, 'vc_err_generic')); return; }
-      S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), voice_code: null};
+      S.cur = {clone_id: r.data.clone_id, view: r.data, lang: _val('vcLang'), locale: _val('vcLocale'), gender: _val('vcGender'), name: _val('vcName'), voice_code: null};
       var a = $('vcSampleAudio');
       if (a) { a.src = '/api/voice_clone/' + encodeURIComponent(r.data.clone_id) + '/sample.wav?ts=' + Date.now(); }
       /* Campione accettato: si ascolta quello normalizzato dal server, non la
@@ -772,6 +775,7 @@
       vcSetBusy(false);
       if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
       S.cur = {};
+      vcClearName();
       var ask2 = $('vcP3DiscardAsk'); if (ask2) ask2.hidden = true;
       var sam = $('vcP3Sample');
       if (sam) { try { sam.pause(); } catch (e) {} sam.removeAttribute('src'); }
@@ -790,6 +794,8 @@
     show('vcDemos', demosOn);
     show('vcFailed', st === 'demo_failed');
     show('vcDone', st === 'ready');
+    /* Voce nata: il nome era suo, la prossima non deve ereditarlo. */
+    if (st === 'ready') vcClearName();
     show('vcRefunded', st === 'refunded' || st === 'expired' || st === 'deleted');
     if (!demosOn) {
       /* Retry o cambio di stato: le due prove smettono di
@@ -910,6 +916,63 @@
     return m.state;
   }
 
+  function vcClearName() { var nm = $('vcName'); if (nm) nm.value = ''; }
+
+  /* Titolo della scheda: il nome dato alla voce o, in mancanza, l'etichetta
+     generica. Il proprietario lo cambia con la matita, sul posto. */
+  function vcMineHead(m) {
+    var head = document.createElement('div'); head.className = 'vc-mine-head';
+    var lab = (typeof _voxcpmLocaleLabel === 'function') ? _voxcpmLocaleLabel(m.locale) : m.locale;
+    var nm = document.createElement('span'); nm.className = 'vc-mine-name';
+    nm.textContent = m.name || (m.owner ? tt('vc_voice_own') : tt('vc_voice_shared'));
+    head.appendChild(nm);
+    if (m.owner) {
+      var pb = document.createElement('button');
+      pb.type = 'button'; pb.className = 'vc-icon-btn';
+      pb.title = tt('vc_rename'); pb.setAttribute('aria-label', tt('vc_rename'));
+      pb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+        + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path></svg>';
+      pb.onclick = function () { if (!S.busy) vcRenameForm(m, head); };
+      head.appendChild(pb);
+    }
+    var info = document.createElement('span');
+    info.textContent = lab + ' · ' + tt(m.gender === 'f' ? 'vc_gender_f' : 'vc_gender_m') + ' — ' + vcStateLabel(m);
+    head.appendChild(info);
+    return head;
+  }
+
+  function vcRenameForm(m, head) {
+    var form = document.createElement('div'); form.className = 'vc-rename';
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.maxLength = 40; inp.value = m.name || '';
+    inp.placeholder = tt('vc_name_ph'); inp.setAttribute('aria-label', tt('vc_name'));
+    var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn btn-outline btn-sm'; ok.textContent = tt('vc_save');
+    var no = document.createElement('button'); no.type = 'button'; no.className = 'btn btn-outline btn-sm'; no.textContent = tt('vc_cancel');
+    var chiudi = function () { if (form.parentNode) form.parentNode.replaceChild(head, form); };
+    var salva = function () {
+      if (S.busy) return;
+      vcErr('');
+      vcSetBusy(true);
+      vcPost('/api/voice_clone/' + encodeURIComponent(m.id) + '/rename', {name: inp.value}).then(function (r) {
+        vcSetBusy(false);
+        if (!r.ok) { vcErr(vcApiErrMsg(r.data)); return; }
+        m.name = r.data.name || '';
+        vcRenderMine();
+        vcReloadCombo();
+      }).catch(function () { vcSetBusy(false); vcErr(tt('vc_err_generic')); });
+    };
+    ok.onclick = salva;
+    no.onclick = function () { if (!S.busy) chiudi(); };
+    inp.onkeydown = function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); salva(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); chiudi(); }
+    };
+    form.appendChild(inp); form.appendChild(ok); form.appendChild(no);
+    head.parentNode.replaceChild(form, head);
+    inp.focus(); inp.select();
+  }
+
   function vcRenderMine() {
     var ul = $('vcMineList'); if (!ul) return;
     ul.innerHTML = '';
@@ -918,10 +981,7 @@
     }
     S.mine.forEach(function (m) {
       var li = document.createElement('li'); li.className = 'vc-mine-item';
-      var head = document.createElement('div');
-      var lab = (typeof _voxcpmLocaleLabel === 'function') ? _voxcpmLocaleLabel(m.locale) : m.locale;
-      head.textContent = (m.owner ? tt('vc_voice_own') : tt('vc_voice_shared')) + ' · ' + lab + ' · ' + tt(m.gender === 'f' ? 'vc_gender_f' : 'vc_gender_m') + ' — ' + vcStateLabel(m);
-      li.appendChild(head);
+      li.appendChild(vcMineHead(m));
       if (m.owner && m.voice_code) {
         var code = document.createElement('div'); code.className = 'vc-code'; code.textContent = m.voice_code; li.appendChild(code);
       }
@@ -1017,7 +1077,7 @@
     $('vcClaimBtn').onclick = vcClaim;
     $('vcConfirmBtn').onclick = vcConfirm;
     $('vcMineClose').onclick = function () { if (S.busy) return; vcClose(); };
-    $('vcNewVoice').onclick = function () { if (S.busy) return; vcShow(1); };
+    $('vcNewVoice').onclick = function () { if (S.busy) return; vcClearName(); vcShow(1); };
   }
 
   function vcInit() {

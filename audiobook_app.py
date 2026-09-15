@@ -9046,7 +9046,8 @@ def api_vc_sample():
         rec = voice_clone.create_draft(cid, lang=lang, locale=locale, gender=gender,
                                        prompt_text=prompt_text, sample_wav=wav, original_path=src,
                                        original_ext=ext, metrics=mt.as_dict(),
-                                       ui_lang=_get_browser_lang() or "en")
+                                       ui_lang=_get_browser_lang() or "en",
+                                       name=request.form.get("name") or "")
         _vc_log(rec, "VOICE_CLONE_SAMPLE_OK")
         return jsonify({"clone_id": rec["id"], "state": rec["state"], "expires_at": rec["expires_at"],
                         "metrics": rec.get("metrics") or {}, "cer": cer})
@@ -9360,6 +9361,21 @@ def api_vc_forget(clone_id):
     if not ok:
         return _vc_err("voice_not_found", "Voice not found", 404)
     return jsonify({"ok": True})
+
+
+@app.route("/api/voice_clone/<clone_id>/rename", methods=["POST"])
+def api_vc_rename(clone_id):
+    gate = _vc_gate()
+    if gate:
+        return gate
+    rec = _vc_rec_or_404(clone_id)
+    if rec is None:
+        return _vc_err("voice_not_found", "Voice not found", 404)
+    data = request.get_json(silent=True) or {}
+    out = voice_clone.rename(clone_id, _get_client_id(), data.get("name"))
+    if out is None:
+        return _vc_err("bad_state", "Only the owner device can rename a live voice", 409)
+    return jsonify({"ok": True, "name": out.get("name") or ""})
 
 
 def _vc_is_owner(rec, cid):

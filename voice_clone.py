@@ -33,6 +33,10 @@ VOICES_DIRNAME = "user_voices"
 R2_PREFIX = VOICES_DIRNAME + "/"
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # niente 0/O, 1/I/L
 RESUME_TOKEN_DAYS = 30
+NAME_MAX = 40
+_NAME_CTRL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+# ZWJ/ZWNJ (u200c/u200d) restano: servono alla scrittura hindi e alle emoji composte.
+_NAME_DROP_RE = re.compile(r"[\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
 
 SWEEP_INTERVAL_SEC = 3600
 EXPIRY_WARN_SEC = 30 * 86400
@@ -353,8 +357,28 @@ def discard_draft(clone_id, cid):
     return out
 
 
+def normalize_name(s):
+    """Il nome che l'utente da' alla propria voce, come comparira' nella combo.
+
+    Facoltativo: '' se manca. I caratteri di controllo valgono uno spazio, gli
+    invisibili spariscono (anche i marcatori di direzione, che rovescerebbero
+    la riga della combo), spazi compattati, al massimo NAME_MAX caratteri."""
+    s = _NAME_DROP_RE.sub("", _NAME_CTRL_RE.sub(" ", str(s or "")))
+    return " ".join(s.split())[:NAME_MAX].strip()
+
+
+def rename(clone_id, cid, name):
+    """Rinomina dalla lista «Le tue voci»: solo il dispositivo creatore e solo
+    una voce ancora viva. None se non e' possibile; '' toglie il nome."""
+    with _lock:
+        rec = get(clone_id)
+        if rec is None or rec.get("state") in _TERMINAL or not is_owner(rec, cid):
+            return None
+        return store().update(rec["id"], {"name": normalize_name(name)})
+
+
 def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
-                 original_path, original_ext, metrics, ui_lang, now=None):
+                 original_path, original_ext, metrics, ui_lang, name="", now=None):
     """Il campione approvato dal gate diventa una voce in stato `sample_ok`.
 
     Un solo draft per cid (§3.3): il precedente viene cancellato con i suoi
@@ -399,6 +423,7 @@ def create_draft(cid, *, lang, locale, gender, prompt_text, sample_wav,
                 "resume_token": {"value": new_token(), "expires_at": t + RESUME_TOKEN_DAYS * 86400},
                 "owner_email": None, "owner_email_hash": None,
                 "lang": lang, "locale": locale, "gender": gender,
+                "name": normalize_name(name),
                 "prompt_text": prompt_text,
                 "prompt_version": voice_clone_prompts.prompt_version(prompt_text),
                 "sample": dict(metrics or {}, original_ext=original_ext),

@@ -1371,6 +1371,20 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
              width:18px;height:18px;color:var(--ac);pointer-events:none}
 .vc-pick-ico[hidden]{display:none}
 .vc-pick-in select{width:100%;padding-left:2.2rem}
+.vc-pick-in input{width:100%;box-sizing:border-box;padding:10px 14px 10px 2.2rem;background:var(--srf2);
+                  border:1px solid var(--brd);border-radius:var(--rs);color:var(--tx);font:inherit;font-size:.95rem;line-height:1.25}
+.vc-pick-in input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
+.vc-pick-hint{display:block;margin-top:.25rem;text-transform:none;letter-spacing:normal;font-weight:400}
+/* Nome della voce nella lista «Le tue voci»: titolo, matita per rinominare
+   (solo il proprietario) e, al clic, il campo con Salva/Annulla sulla riga. */
+.vc-mine-head{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.vc-mine-name{font-weight:600}
+.vc-mine-head .vc-icon-btn{width:30px;height:30px}
+.vc-mine-head .vc-icon-btn svg{width:15px;height:15px}
+.vc-rename{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.1rem 0 .2rem}
+.vc-rename input{flex:1 1 180px;min-width:0;padding:7px 10px;background:var(--srf2);border:1px solid var(--brd);
+                 border-radius:var(--rs);color:var(--tx);font:inherit;font-size:.9rem}
+.vc-rename input:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-color:var(--ac)}
 .vc-danger:hover:not(:disabled){color:var(--err);border-color:var(--err);background:var(--errs)}
 /* Che cosa succede dopo il pagamento, in una riga sola: i testi dei brani
    qui non servivano a decidere e spingevano il pagamento sotto la piega. */

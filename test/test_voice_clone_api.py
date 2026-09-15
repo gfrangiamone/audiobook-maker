@@ -685,3 +685,48 @@ def test_confirm_scaduto_via_api(client, tmp_path, monkeypatch, ambiente):
     r = client.post("/api/voice_clone/confirm",
                     json={"voice_code": rec["voice_code"], "confirm_code": "000000"})
     assert r.status_code == 410 and r.get_json()["error_code"] == "confirm_expired"
+
+
+def test_il_nome_della_voce_arriva_col_campione_e_si_vede_in_mine(client, monkeypatch, tmp_path):
+    def prepara(src, dst, **kw):
+        open(dst, "wb").write(b"RIFF-wav")
+        return vca.Metrics(**{f: 0.0 for f in vca.Metrics.__dataclass_fields__})
+    monkeypatch.setattr(vca, "prepare_sample", prepara)
+    r = client.post("/api/voice_clone/sample", data={
+        "file": (io.BytesIO(b"webm-bytes"), "rec.webm"), "lang": "it", "locale": "it-IT",
+        "gender": "f", "name": "  Voce\u202e  di\tNonna  "}, content_type="multipart/form-data")
+    assert r.status_code == 200, r.get_json()
+    cid_ = r.get_json()["clone_id"]
+    assert vc.get(cid_)["name"] == "Voce di Nonna"
+    mine = client.get("/api/voice_clone/mine").get_json()["voices"]
+    assert mine[0]["name"] == "Voce di Nonna"
+
+
+def test_nome_facoltativo_e_troncato():
+    assert vc.normalize_name(None) == ""
+    assert vc.normalize_name("   ") == ""
+    assert len(vc.normalize_name("x" * 100)) == vc.NAME_MAX
+    # ZWJ resta: serve alle scritture indiane e alle emoji composte
+    assert vc.normalize_name("\u0915\u094d\u200d\u0937") == "\u0915\u094d\u200d\u0937"
+
+
+def test_rinomina_solo_proprietario_e_voce_viva(client, tmp_path, ambiente):
+    rec = _paid(tmp_path)
+    for s in ("demos_generating", "demos_ready", "ready"):
+        vc.transition(rec["id"], s)
+    r = client.post(f"/api/voice_clone/{rec['id']}/rename", json={"name": " Narratore "})
+    assert r.status_code == 200 and r.get_json() == {"ok": True, "name": "Narratore"}
+    assert vc.get(rec["id"])["name"] == "Narratore"
+    # un nome vuoto toglie il nome: la combo torna all'etichetta generica
+    r = client.post(f"/api/voice_clone/{rec['id']}/rename", json={"name": ""})
+    assert r.status_code == 200 and vc.get(rec["id"])["name"] == ""
+    # un dispositivo autorizzato ma non creatore non puo' rinominare
+    vc.store().update(rec["id"], {"devices": rec["devices"] + [{"cid": "cid-due", "via": "confirm"}]})
+    _cid(client, "cid-due")
+    r = client.post(f"/api/voice_clone/{rec['id']}/rename", json={"name": "Mia"})
+    assert r.status_code == 409 and r.get_json()["error_code"] == "bad_state"
+    _cid(client, "cid-uno")
+    assert client.post("/api/voice_clone/vc_000000000000/rename", json={"name": "x"}).status_code == 404
+    vc.transition(rec["id"], "deleted")
+    r = client.post(f"/api/voice_clone/{rec['id']}/rename", json={"name": "Tardi"})
+    assert r.status_code == 409

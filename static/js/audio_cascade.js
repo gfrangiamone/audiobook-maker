@@ -126,6 +126,7 @@ function vociMie(catalog, lang, locale) {
     if (d.extra) demos.push({common: false, url: d.extra});
     out.push({
       id: m.voice_id, clone_id: m.id, mine: true, owner: !!m.owner,
+      name: (typeof m.name === 'string') ? m.name : '',
       lang: m.lang, locale: m.locale,
       gender: m.gender === 'f' ? 'Female' : 'Male',
       demos: demos,

@@ -164,7 +164,7 @@ def test_hindi_in_devanagari():
 
 
 TASK3_KEYS = ["vc_lang", "vc_locale", "vc_gender", "vc_gender_f", "vc_gender_m", "vc_p2_read",
-              "vc_setup_t", "vc_setup_intro",
+              "vc_setup_t", "vc_setup_intro", "vc_name", "vc_name_ph", "vc_name_hint", "vc_rename", "vc_save",
               "vc_rec_start", "vc_rec_stop", "vc_rec_cancel", "vc_or", "vc_up_offer", "vc_up_pick", "vc_up_hint",
               "vc_mic", "vc_mic_default", "vc_local_listen", "vc_checking", "vc_sample_listen",
               "vc_sample_ok", "vc_sample_redo", "vc_err_no_mic", "vc_err_too_large",
@@ -194,8 +194,8 @@ def test_markup_pannello_delle_scelte():
         assert 'id="' + i + '"' in ps, i
     for k in ("vc_setup_t", "vc_setup_intro", "vc_lang", "vc_locale", "vc_gender"):
         assert 'data-t="' + k + '"' in ps, k
-    # un'icona per ogni combo, dentro il campo
-    assert ps.count('class="vc-pick-ico"') >= 2 and ps.count("<svg") == 4
+    # un'icona per ogni campo (tre combo e il nome), dentro il campo
+    assert ps.count('class="vc-pick-ico"') >= 2 and ps.count("<svg") == 5
     assert ps.index('id="vcPSetup"') < HTML.index('id="vcP2"')
     for c in (".vc-picks", ".vc-pick-ico", ".vc-pick-in select"):
         assert c + "{" in CSS, c
@@ -908,3 +908,20 @@ def test_brano_senza_passare_dalle_scelte():
     init = _estrai_funzione(VC, "vcInitPanel2")
     assert init.index("vcEnsureChoices()") < init.index("vcLoadPrompt()")
     assert "vcShow('setup')" in init
+
+
+def test_nome_della_voce_scelto_al_campionamento():
+    """Il nome si sceglie nel passo delle scelte, parte col campione e prende
+    il posto dell'etichetta generica nella combo e in «Le tue voci»."""
+    setup = HTML[HTML.index('id="vcPSetup"'):HTML.index('id="vcP2"')]
+    assert 'id="vcName"' in setup and 'maxlength="40"' in setup and 'data-t-ph="vc_name_ph"' in setup
+    up = _estrai_funzione(VC, "vcUploadSample")
+    assert "fd.append('name', _val('vcName'))" in up
+    assert "name: _val('vcName')" in up
+    assert "v.name" in _estrai_funzione(VC, "vcEnsureChoices")
+    head = _estrai_funzione(VC, "vcMineHead")
+    assert "m.name ||" in head and "vcRenameForm" in head and "if (m.owner)" in head
+    assert "textContent = m.name" in head          # mai innerHTML col nome dell'utente
+    form = _estrai_funzione(VC, "vcRenameForm")
+    assert "/rename'" in form and "vcReloadCombo()" in form
+    assert "o.textContent=(v.name||(v.owner?t('vc_voice_own'):t('vc_voice_shared')))" in JS
