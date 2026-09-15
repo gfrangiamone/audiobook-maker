@@ -389,6 +389,10 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    equivalenti gia' in uso (--txd testo attenuato, --brd bordo) e la stessa
    coppia di colori di `.al-w` per lo stato "lingua ipotizzata". */
 .book-lang-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+/* Nell'angolo in alto a destra dell'intestazione: allineata a destra, libera di
+   occupare piu' righe (max ~320px) e senza margine proprio. */
+.panel-head>.book-lang-row{flex:0 1 320px;justify-content:flex-end;
+                           margin-bottom:0;padding-top:3px}
 .book-lang-label{color:var(--txd)}
 .book-lang-src{color:var(--txd);font-size:.9em}
 .book-lang-src.is-warn{color:#856d10}
@@ -576,7 +580,15 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
 .panel.active{display:block;animation:fadeSlideIn .3s ease}
 @keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .panel h2{font-family:'DM Serif Display','Noto Serif SC','STSong','SimSun',serif;font-size:1.25rem;font-weight:400;margin-bottom:4px;letter-spacing:-.01em;color:var(--tx)}
-.panel>.subtitle{color:var(--txd);font-size:.84rem;margin-bottom:28px;line-height:1.4}
+.panel>.subtitle,.panel-head-main>.subtitle{color:var(--txd);font-size:.84rem;margin-bottom:28px;line-height:1.4}
+/* Intestazione di pannello a due colonne: titolo+sottotitolo a sinistra, blocco
+   di contesto (la lingua del libro) in alto a destra. Il margine inferiore
+   passa dal sottotitolo al contenitore, cosi' la colonna destra puo' crescere
+   su piu' righe senza sbilanciare la spaziatura. */
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;
+            gap:10px 24px;flex-wrap:wrap;margin-bottom:28px}
+.panel-head-main{flex:1 1 240px;min-width:0}
+.panel-head-main>.subtitle{margin-bottom:0}
 
 /* ═══ BOOK INFO BAR ═══ */
 .book-info-bar{display:flex;gap:22px;align-items:flex-start;padding:20px 22px;background:var(--srf2);border-radius:var(--rs);margin-bottom:22px;border:1px solid var(--brd)}
@@ -805,6 +817,8 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
   .wizard-steps{gap:4px;padding:6px 12px 0}
   .wizard-connector{width:20px}
   .form-row{flex-direction:column;gap:14px}
+  .panel-head{gap:14px}
+  .panel-head>.book-lang-row{flex:1 1 100%;justify-content:flex-start;padding-top:0}
   .panel-footer{flex-direction:column-reverse;gap:14px;align-items:stretch}
   .panel-footer .left,.panel-footer .right{flex:auto;justify-content:center;flex-wrap:wrap}
   .book-info-bar{gap:14px}

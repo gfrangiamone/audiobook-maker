@@ -379,24 +379,32 @@ __REVIEWS_LD__
 
     <!-- ═══ PANEL 3: Audio Settings ═══ -->
     <section class="panel" id="panel3" aria-labelledby="panel3Heading">
-      <h2 id="panel3Heading" data-t="s2_title"></h2>
-      <p class="subtitle" data-t="p3_subtitle"></p>
+      <!-- Titolo a sinistra, lingua del libro in alto a destra: la lingua e'
+           una proprieta' del libro, non un passo della configurazione, quindi
+           sta nell'angolo come un'etichetta e non in mezzo ai controlli. Il
+           blocco puo' occupare piu' righe; sotto i 640px torna a capo. -->
+      <div class="panel-head">
+        <div class="panel-head-main">
+          <h2 id="panel3Heading" data-t="s2_title"></h2>
+          <p class="subtitle" data-t="p3_subtitle"></p>
+        </div>
 
-      <div class="book-lang-row" id="bookLangRow">
-        <span class="book-lang-label" data-t="lbl_book_lang"></span>
-        <strong class="book-lang-name" id="bookLangName"></strong>
-        <span class="book-lang-src" id="bookLangSrc"></span>
-        <button type="button" id="forceLangBtn" class="icon-btn"
-                data-t-title="tip_force_lang" aria-haspopup="dialog"
-                onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
-                data-t="force_lang_change"></span></button>
-        <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
-             applyBookLanguage() lo mostra solo quando c'e' davvero un valore
-             del libro diverso da quello attivo, e ne scrive l'etichetta. -->
-        <button type="button" id="restoreLangBtn" class="icon-btn" hidden
-                data-t-title="tip_restore_lang"
-                onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
-                id="restoreLangLabel"></span></button>
+        <div class="book-lang-row" id="bookLangRow">
+          <span class="book-lang-label" data-t="lbl_book_lang"></span>
+          <strong class="book-lang-name" id="bookLangName"></strong>
+          <span class="book-lang-src" id="bookLangSrc"></span>
+          <button type="button" id="forceLangBtn" class="icon-btn"
+                  data-t-title="tip_force_lang" aria-haspopup="dialog"
+                  onclick="openForceLangModal()"><span aria-hidden="true">&#9881;</span><span
+                  data-t="force_lang_change"></span></button>
+          <!-- Il ritorno alla lingua dichiarata dal libro. Nasce nascosto:
+               applyBookLanguage() lo mostra solo quando c'e' davvero un valore
+               del libro diverso da quello attivo, e ne scrive l'etichetta. -->
+          <button type="button" id="restoreLangBtn" class="icon-btn" hidden
+                  data-t-title="tip_restore_lang"
+                  onclick="restoreBookLang()"><span aria-hidden="true">&#8617;</span><span
+                  id="restoreLangLabel"></span></button>
+        </div>
       </div>
       <div class="al al-i" id="cascadeNote" hidden role="status" aria-live="polite"></div>
 
