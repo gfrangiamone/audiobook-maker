@@ -215,10 +215,35 @@ def test_la_frase_che_sfora_di_poco_non_si_spezza():
         SFORA_DI_POCO, max_chars=280,
         sentence_slack=tts_split._VOXCPM_SENTENCE_SLACK)
     assert intero == [SFORA_DI_POCO]
-    # Senza deroga il taglio cade sulla virgola, ed e' il difetto.
+    # Senza deroga il taglio cade su una virgola, ed e' il difetto.
     spezzato = tts_split.split_text_into_chunks(SFORA_DI_POCO, max_chars=280)
     assert len(spezzato) == 2
-    assert spezzato[0].endswith("il piu delle volte,")
+    assert spezzato[0].endswith(",")
+
+
+def test_la_frase_lunga_non_lascia_un_moncone_in_fondo():
+    """Riempire fino al cap lascia in fondo un orfano di poche parole.
+
+    Un frammento corto il modello lo legge senza contesto, con la cadenza
+    sbagliata. Il taglio precedente arretra, e il numero di pezzi — cioe' di
+    giunzioni da cucire — resta quello.
+    """
+    frase = ", ".join([f"parola numero {i} di una parte di media misura"
+                       for i in range(7)]) + "."
+    pezzi = tts_split.split_text_into_chunks(frase, max_chars=140)
+    assert len(pezzi) == 3                       # 321 caratteri / 140
+    assert min(len(p) for p in pezzi) >= 80, [len(p) for p in pezzi]
+
+
+def test_il_taglio_preferisce_il_segno_forte():
+    """Fra un punto e virgola e una virgola piu' in la', vince il primo."""
+    frase = ("Il primo membro del periodo dura un centinaio di caratteri "
+             "buoni e si chiude sul punto e virgola; poi comincia il secondo "
+             "membro, che prosegue con una virgola, e ancora, fino alla fine "
+             "del periodo.")
+    pezzi = tts_split.split_text_into_chunks(frase, max_chars=140)
+    assert len(pezzi) == 2
+    assert pezzi[0].endswith(";"), pezzi[0]
 
 
 def test_lo_sforamento_non_gonfia_i_chunk():
@@ -277,6 +302,25 @@ def test_la_coda_sospesa_non_arriva_al_worker(tmp_path, monkeypatch):
         VOCE, str(tmp_path / "cap.pcm"))
     assert finto.payload[0]["input"]["chunks"] == [
         "il paragone e, il piu delle volte", "a favore dell'affare umano."]
+
+
+def test_il_segno_tolto_viaggia_a_parte(tmp_path, monkeypatch):
+    """Il worker deve sapere su che segno cadeva il taglio.
+
+    Il testo gli arriva gia' ripulito: senza questo elenco non distinguerebbe
+    una virgola sospesa da un taglio in mezzo a un sintagma, e la pausa che le
+    due cose meritano e' diversa.
+    """
+    finto = FintoRunJob(esito_ok())
+    monkeypatch.setattr(voxcpm_tts, "run_job", finto)
+    monkeypatch.setattr(voxcpm_tts, "_dormi", lambda _s: None)
+    voxcpm_tts.synthesize_chapter(
+        ["il paragone e, il piu delle volte,", "una premessa lunga:",
+         "a favore dell'affare umano."],
+        VOCE, str(tmp_path / "cap.pcm"))
+    inp = finto.payload[0]["input"]
+    assert inp["giunti"] == [",", ":", ""]
+    assert len(inp["giunti"]) == len(inp["chunks"])
 
 
 def test_prompt_text_e_la_trascrizione_esatta(tmp_path, monkeypatch):

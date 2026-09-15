@@ -1075,6 +1075,19 @@ def pulisci_coda(testo):
     return pulito if pulito else testo
 
 
+def segno_sospeso(testo):
+    """Il segno che `pulisci_coda` toglierebbe, o stringa vuota.
+
+    Il worker il testo lo riceve gia' ripulito e non ha modo di sapere se quel
+    taglio stava su una virgola o in mezzo a un sintagma: la pausa che merita
+    e' diversa, quindi il segno glielo diciamo a parte.
+    """
+    if not testo:
+        return ""
+    pulito = testo.rstrip()
+    return pulito[-1] if pulito and pulito[-1] in _CODA_SOSPESA else ""
+
+
 def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                        sleep=None, on_queue=None, cancelled=None,
                        on_progress=None, speed=None):
@@ -1189,6 +1202,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
         payload = {"input": {
             "action": "generate",
             "chunks": [pulisci_coda(normalizza_puntini(c)) for c in chunks],
+            # Elenco parallelo: per ogni chunk il segno debole tolto dalla
+            # coda. Il worker ci misura la pausa della giunzione.
+            "giunti": [segno_sospeso(normalizza_puntini(c)) for c in chunks],
             **clone,
             "cfg": CFG_READ,
             "concurrency": conc,

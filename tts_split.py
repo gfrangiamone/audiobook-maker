@@ -250,34 +250,75 @@ def _within(s, max_chars, max_bytes):
             (max_bytes is None or len(s.encode("utf-8")) <= max_bytes))
 
 
+# Segni deboli, ma meno deboli di una virgola: un punto e virgola o due punti
+# reggono un taglio molto meglio, perche' li' la voce chiude comunque il
+# periodo. Fra due tagli possibili si sceglie questo.
+_SEGNI_FORTI = ";:；："
+
+
 def _hard_split_oversized(s, max_chars, max_bytes):
     """Spezza una singola frase oltre i limiti in pezzi <= (max_chars, max_bytes).
 
-    1) prova i breakpoint deboli (virgole CJK/latine);
+    1) prova i breakpoint deboli (virgole CJK/latine), preferendo i segni forti
+       e senza lasciare un moncone in fondo;
     2) per i residui ancora oversize (es. lunghe sequenze CJK senza punteggiatura)
        taglio duro carattere-per-carattere rispettando SEMPRE il cap byte —
        garantisce che nessun pezzo superi mai il limite dell'API.
+
+    Ogni pezzo e' una sintesi a se' e ogni giunzione fra due pezzi va cucita:
+    il numero di pezzi resta quindi il minimo che sta nei limiti. Quel che si
+    puo' scegliere e' *dove* tagliare — su un punto e virgola meglio che su una
+    virgola — e che l'ultimo pezzo non sia di tre parole: un frammento corto
+    il modello lo legge senza contesto, con la cadenza sbagliata.
     """
     parts = [p for p in _SOFT_BREAK_RE.split(s) if p]
-    merged = []
-    cur = ""
-    for p in parts:
+
+    def unisci(ps):
         # Il breakpoint latino si porta via lo spazio che seguiva la virgola
         # (`(?<=[,;:])\s+` lo consuma): rimettendo insieme due pezzi va
         # restituito, o al TTS arriva «tra cui,pubblicati da Garzanti,Danny»
         # dove il testo diceva «tra cui, pubblicati da Garzanti, Danny». Il
         # breakpoint CJK e' a larghezza zero, non aveva spazi da consumare:
         # li' i pezzi si riattaccano come stavano.
-        giunto = " " if cur and cur[-1] in ",;:" else ""
-        cand = (cur + giunto + p) if cur else p
-        if _within(cand, max_chars, max_bytes):
-            cur = cand
+        out = ""
+        for p in ps:
+            out += (" " if out and out[-1] in ",;:" else "") + p
+        return out
+
+    gruppi = []
+    cur = []
+    for p in parts:
+        if not cur:
+            cur = [p]
+            continue
+        testo = unisci(cur)
+        if not _within(unisci(cur + [p]), max_chars, max_bytes):
+            gruppi.append(cur)
+            cur = [p]
+        elif (testo[-1] in _SEGNI_FORTI
+                and len(testo) >= _TTS_MIN_SENT_CHARS):
+            # Ci sta ancora, ma questo e' un segno forte e il pezzo ha gia'
+            # una misura sua: meglio tagliare qui che su una virgola piu' in
+            # la' per riempire il cap.
+            gruppi.append(cur)
+            cur = [p]
         else:
-            if cur:
-                merged.append(cur)
-            cur = p
+            cur.append(p)
     if cur:
-        merged.append(cur)
+        gruppi.append(cur)
+    # Il moncone finale si evita arretrando il taglio precedente, non
+    # aggiungendo pezzi: il conto resta quello. Si arretra solo finche' chi
+    # cede resta a sua volta di misura, altrimenti il moncone cambia solo di
+    # posto.
+    while (len(gruppi) >= 2 and len(gruppi[-2]) > 1
+            and len(unisci(gruppi[-1])) < _TTS_MIN_SENT_CHARS):
+        p = gruppi[-2][-1]
+        if (not _within(unisci([p] + gruppi[-1]), max_chars, max_bytes)
+                or len(unisci(gruppi[-2][:-1])) < _TTS_MIN_SENT_CHARS):
+            break
+        gruppi[-2].pop()
+        gruppi[-1].insert(0, p)
+    merged = [unisci(g) for g in gruppi]
     out = []
     for p in merged:
         if _within(p, max_chars, max_bytes):
@@ -331,7 +372,10 @@ def split_text_into_chunks(text, max_chars=CHUNK_MAX_CHARS, max_bytes=None,
         if _within(s, tetto_frase, max_bytes):
             bounded.append(s)
         else:
-            bounded.extend(_hard_split_oversized(s, max_chars, max_bytes))
+            # Il tetto e' quello della frase, non il cap secco: lo slack e'
+            # gia' la misura che il motore regge, e concederlo anche ai pezzi
+            # significa un pezzo in meno, cioe' una giunzione in meno.
+            bounded.extend(_hard_split_oversized(s, tetto_frase, max_bytes))
     chunks = []
     current = ""
     for sent in bounded:
