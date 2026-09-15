@@ -282,7 +282,9 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_RESERVED_PROMPT_TOKENS` | `4000` | `ABM_LLM_RESERVED_PROMPT_TOKENS` | `generation_engine.py` | 90 |
 | `LLM_OUTPUT_SAFETY_MARGIN` | `0.85` | `ABM_LLM_OUTPUT_SAFETY_MARGIN` | `generation_engine.py` | 91 |
 | `LLM_REQUEST_TIMEOUT_SEC` | `120.0` | `ABM_LLM_REQUEST_TIMEOUT_SEC` | `generation_engine.py` | 94 |
-| `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
+| `LLM_MAX_RETRIES` | `4` (backoff esponenziale `2**attempt`; su sovraccarico provider `LLM_OVERLOAD_BACKOFF_SEC × 2**attempt`) | `ABM_LLM_MAX_RETRIES` | `generation_engine.py` | 95 |
+| `LLM_FIRST_EVENT_TIMEOUT_SEC` | `90.0` (secondi senza **alcun** evento dall'apertura dello stream: il watchdog `_FirstEventWatchdog` chiude lo stream e la chiamata diventa `_LLMStallError`, transitoria. Serve perché un provider in coda risponde 200 e manda solo keep-alive SSE: il read timeout non scatta mai e la rinuncia arriva dopo 900 s — incidente 14/09/2026, 19 ottimizzazioni fallite. Durante l'attesa il watchdog osserva anche `opt_cancelled` → `_CancelledError` immediato. `0` = disattivato) | `ABM_LLM_FIRST_EVENT_TIMEOUT_SEC` | `generation_engine.py` | 130 |
+| `LLM_OVERLOAD_BACKOFF_SEC` | `20.0` (pausa base prima di ritentare un provider sovraccarico: stallo del primo evento o errore con `unable to start processing` / `try again later` / `overloaded` / `server busy` nel messaggio. Raddoppia a ogni tentativo: 20, 40, 80 s. Caso peggiore con i default: 4 × 90 s + 140 s ≈ 8 min prima dell'errore del job) | `ABM_LLM_OVERLOAD_BACKOFF_SEC` | `generation_engine.py` | 133 |
 | `LLM_INTER_CHUNK_SLEEP_SEC` | `0.5` | `ABM_LLM_INTER_CHUNK_SLEEP_SEC` | `generation_engine.py` | 96 |
 | `LLM_HEARTBEAT_TIMEOUT_SEC` | `60.0` (auto-cancel solo interactive) | `ABM_LLM_HEARTBEAT_TIMEOUT_SEC` | `generation_engine.py` | 97 |
 | `LLM_TRIVIAL_INPUT_MIN_CHARS` | `80` (sotto soglia, o single-line < 2× senza punteggiatura terminale → pass-through, no LLM call. Antidoto a prompt-leak su input banali) | `ABM_LLM_TRIVIAL_INPUT_MIN_CHARS` | `generation_engine.py` | 100 |
@@ -292,7 +294,9 @@ Tutti i parametri sono `ABM_LLM_*` env-driven. Default tarati su DeepSeek-Chat (
 | `LLM_MAX_INPUT_CHARS` | derived = ~3.26M | — | `generation_engine.py` | 102 |
 | `LLM_SAFE_OUTPUT_CHUNK` | derived = `MAX_TOKENS × CHARS_PER_TOKEN × SAFETY_MARGIN` ≈ 195k char | — | `generation_engine.py` | 106 |
 
-Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`.
+Errori transient gestiti da retry: `ReadError`, `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `RemoteProtocolError`, `APIConnectionError`, `APITimeoutError`. In più: HTTP 429/500/502/503/504, `_LLMStallError` e i messaggi di sovraccarico del provider (questi ultimi con `LLM_OVERLOAD_BACKOFF_SEC`).
+
+**Email di fallimento ottimizzazione**: su errore (non su annullamento) `run_optimization` rimborsa e poi chiama `_send_optimization_failed_email`, che scrive a `notify_email` nella lingua `notify_lang` (fallback inglese). La riga sul rimborso dipende dal pagamento: voucher → importo ri-accreditato sul buono usato; PayPal → annuncio del buono di rimborso che arriva in email separata; gratuita → nessun addebito; rimborso non riuscito → nessuna promessa. Mai il codice del buono. Una sola email per job (`opt_fail_email_sent`), activity log `OPT_FAIL_EMAIL_SENT` / `OPT_FAIL_EMAIL_FAILED`.
 
 ### 3.4 Generazione audio
 

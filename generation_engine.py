@@ -123,6 +123,14 @@ LLM_HEARTBEAT_TIMEOUT_SEC = _env_float("ABM_LLM_HEARTBEAT_TIMEOUT_SEC", 60.0)
 LLM_TRIVIAL_INPUT_MIN_CHARS = _env_int("ABM_LLM_TRIVIAL_INPUT_MIN_CHARS", 80)
 LLM_LEAK_MAX_RETRIES = _env_int("ABM_LLM_LEAK_MAX_RETRIES", 2)
 LLM_EMPTY_MAX_RETRIES = _env_int("ABM_LLM_EMPTY_MAX_RETRIES", 2)
+# Un provider in coda risponde 200 subito e poi manda solo commenti SSE di
+# keep-alive: il read timeout non scatta mai e l'errore arriva dopo 15 minuti
+# (incidente 14/09/2026, 19 ottimizzazioni perse). Se entro questa soglia non
+# arriva nessun evento, lo stream si chiude e si ritenta. 0 = disattivato.
+LLM_FIRST_EVENT_TIMEOUT_SEC = _env_float("ABM_LLM_FIRST_EVENT_TIMEOUT_SEC", 90.0)
+# Pausa base prima di ritentare un provider sovraccarico (raddoppia a ogni
+# tentativo): i 1-8 s dei guasti di rete non gli danno il tempo di smaltire.
+LLM_OVERLOAD_BACKOFF_SEC = _env_float("ABM_LLM_OVERLOAD_BACKOFF_SEC", 20.0)
 
 # --- Auto-generazione post-ottimizzazione -----------------------------------
 # Attesa massima di uno slot di generazione libero prima di partire comunque.
@@ -943,6 +951,56 @@ class _EmptyOutputError(Exception):
     """
 
 
+class _LLMStallError(Exception):
+    """Sollevata quando lo stream LLM non emette alcun evento entro
+    LLM_FIRST_EVENT_TIMEOUT_SEC: il provider ha accettato la richiesta ma non
+    ha iniziato a elaborarla (coda da sovraccarico). E' transitoria."""
+
+
+# Frammenti del messaggio con cui il provider rinuncia a una richiesta rimasta
+# in coda ("unable to start processing ... try again later"): errore senza
+# status HTTP, quindi invisibile al controllo per codice.
+_LLM_OVERLOAD_MARKERS = (
+    "unable to start processing", "try again later", "overloaded",
+    "server is busy", "server busy",
+)
+
+
+class _FirstEventWatchdog:
+    """Chiude lo stream se non arriva il primo evento entro `timeout` secondi,
+    o se il job viene annullato mentre si aspetta. Chiudere lo stream da un
+    altro thread sblocca l'iterazione (httpx.ReadError o fine silenziosa):
+    `reason` dice al chiamante perche' e' successo."""
+
+    def __init__(self, stream, timeout, job=None):
+        self.reason = None
+        self._stream = stream
+        self._job = job
+        self._deadline = time.monotonic() + timeout
+        self._poll = max(0.01, min(1.0, timeout / 4.0))
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="llm-first-event-watchdog")
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop.wait(self._poll):
+            if self._job is not None and self._job.get("opt_cancelled"):
+                self.reason = "cancelled"
+            elif time.monotonic() >= self._deadline:
+                self.reason = "stall"
+            else:
+                continue
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            return
+
+    def stop(self):
+        self._stop.set()
+
+
 _LEAK_PREFIX_LEN = 120      # char di "fingerprint" presi dal capo del prompt
 _LEAK_PREFIX_MIN = 60       # soglia minima utile per evitare match casuali su prompt cortissimi
 _LEAK_SEARCH_WINDOW = 400   # finestra iniziale dell'output in cui cercare il prefix (tollera heading saltati)
@@ -1090,6 +1148,7 @@ def _call_llm(user_content, job=None, max_retries=None):
     while attempt < max_retries:
         result_parts = []
         partial_streamed = 0
+        watchdog = None
         try:
             # Configura i parametri per la chiamata (inclusi thinking e reasoning_effort).
             # Su retry anti-leak: temperature un filo piu' alta + reasoning off,
@@ -1115,8 +1174,13 @@ def _call_llm(user_content, job=None, max_retries=None):
                 kwargs.update(llm_thinking_kwargs())
 
             stream = _llm_client.chat.completions.create(**kwargs)
+            if LLM_FIRST_EVENT_TIMEOUT_SEC > 0:
+                watchdog = _FirstEventWatchdog(
+                    stream, LLM_FIRST_EVENT_TIMEOUT_SEC, job)
             call_usage = None
             for event in stream:
+                if watchdog is not None:
+                    watchdog.stop()
                 # Check cancellation during streaming to stop consuming tokens
                 if job is not None and job.get("opt_cancelled"):
                     stream.close()
@@ -1141,6 +1205,15 @@ def _call_llm(user_content, job=None, max_retries=None):
                 if hasattr(event.choices[0].delta, "reasoning_content") and event.choices[0].delta.reasoning_content:
                     if job is not None:
                         job["opt_streamed_chars"] = job.get("opt_streamed_chars", 0) + len(event.choices[0].delta.reasoning_content)
+
+            # Stream chiuso dal watchdog senza eccezione: non e' una risposta
+            # vuota (budget e messaggio sbagliati), e' un provider che non e'
+            # mai partito o un annullamento arrivato durante l'attesa.
+            if watchdog is not None and watchdog.reason == "cancelled":
+                raise _CancelledError("Optimization cancelled while waiting for the LLM")
+            if watchdog is not None and watchdog.reason == "stall":
+                raise _LLMStallError(
+                    f"no event within {LLM_FIRST_EVENT_TIMEOUT_SEC:.0f}s")
 
             raw = "".join(result_parts)
             cleaned = _sanitize_llm_output(raw)
@@ -1222,12 +1295,25 @@ def _call_llm(user_content, job=None, max_retries=None):
         except _CancelledError:
             raise
         except Exception as e:
+            # Eccezione provocata dalla chiusura del watchdog (tipicamente
+            # httpx.ReadError): va letta per la sua causa, non per il tipo.
+            if watchdog is not None and watchdog.reason == "cancelled":
+                raise _CancelledError(
+                    "Optimization cancelled while waiting for the LLM") from e
+            if (watchdog is not None and watchdog.reason == "stall"
+                    and not isinstance(e, _LLMStallError)):
+                e = _LLMStallError(
+                    f"no event within {LLM_FIRST_EVENT_TIMEOUT_SEC:.0f}s")
             last_exc = e
             if job is not None and partial_streamed > 0:
                 job["opt_streamed_chars"] = max(0, job.get("opt_streamed_chars", 0) - partial_streamed)
             err_name = type(e).__name__
+            # Provider sovraccarico: nessun evento in tempo, oppure la rinuncia
+            # esplicita dopo la coda. Transitorio, ma con pause lunghe.
+            overload = isinstance(e, _LLMStallError) or any(
+                m in str(e).lower() for m in _LLM_OVERLOAD_MARKERS)
             # Errori di rete client-side (httpx/openai connection wrappers).
-            transient = any(s in err_name for s in (
+            transient = overload or any(s in err_name for s in (
                 "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
                 "RemoteProtocolError", "APIConnectionError", "APITimeoutError",
             ))
@@ -1245,11 +1331,17 @@ def _call_llm(user_content, job=None, max_retries=None):
                 if isinstance(_sc, int) and _sc in (429, 500, 502, 503, 504):
                     transient = True
             if not transient or attempt >= max_retries - 1:
-                raise
-            wait = 2 ** attempt  # 1, 2, 4, 8 seconds
+                raise e
+            if overload:
+                wait = LLM_OVERLOAD_BACKOFF_SEC * (2 ** attempt)  # 20, 40, 80 s
+            else:
+                wait = 2 ** attempt  # 1, 2, 4, 8 seconds
             print(f"  [LLM] {err_name} (attempt {attempt+1}/{max_retries}), retry in {wait}s: {e}")
             time.sleep(wait)
             attempt += 1
+        finally:
+            if watchdog is not None:
+                watchdog.stop()
     if last_exc:
         raise last_exc
     return "".join(result_parts)
@@ -2261,6 +2353,130 @@ def _send_optimization_email(job_id):
                       "", job.get("browser_lang", ""))
 
 
+def _opt_failed_email_texts(book_title, amount_eur):
+    """i18n email di ottimizzazione testo NON riuscita. Tre varianti della
+    riga di rimborso: `refund_voucher` (ri-accredito sul buono usato),
+    `refund_paypal` (buono di rimborso in email separata), `refund_none`
+    (ottimizzazione gratuita). Mai il codice del buono qui: per PayPal lo
+    porta l'email del buono, per il voucher resta quello gia' in mano."""
+    amt = f"{amount_eur:.2f}"
+    return {
+        "it": {
+            "subject": f"Audiobook Maker — \"{book_title}\" ottimizzazione testo non riuscita",
+            "heading": "&#x26A0;&#xFE0F; Ottimizzazione testo non riuscita",
+            "body": f"L'ottimizzazione AI del testo di <strong>{book_title}</strong> non &egrave; andata a buon fine: il servizio di elaborazione non era disponibile. Di solito &egrave; un problema temporaneo: riprova tra un po'.",
+            "btn": "&#x1F504; Riprova",
+            "refund_voucher": f"Nessun addebito: {amt} EUR sono stati ri-accreditati sul buono che hai usato e sono subito disponibili.",
+            "refund_paypal": f"Nessun addebito: riceverai in un'email separata un buono di rimborso da {amt} EUR (o pi&ugrave;).",
+            "refund_none": "L'ottimizzazione era gratuita: non &egrave; stato addebitato nulla.",
+            "footer": "Questa email &egrave; stata generata automaticamente da Audiobook Maker.",
+        },
+        "en": {
+            "subject": f"Audiobook Maker — \"{book_title}\" text optimization failed",
+            "heading": "&#x26A0;&#xFE0F; Text optimization failed",
+            "body": f"The AI text optimization of <strong>{book_title}</strong> could not be completed: the processing service was unavailable. This is usually temporary: please try again in a while.",
+            "btn": "&#x1F504; Try again",
+            "refund_voucher": f"You have not been charged: {amt} EUR has been credited back to the voucher you used and is available right away.",
+            "refund_paypal": f"You have not been charged: you will receive a refund voucher of {amt} EUR (or more) in a separate email.",
+            "refund_none": "The optimization was free: nothing has been charged.",
+            "footer": "This email was automatically generated by Audiobook Maker.",
+        },
+        "fr": {
+            "subject": f"Audiobook Maker — \"{book_title}\" échec de l'optimisation du texte",
+            "heading": "&#x26A0;&#xFE0F; &Eacute;chec de l'optimisation du texte",
+            "body": f"L'optimisation AI du texte de <strong>{book_title}</strong> n'a pas pu aboutir : le service de traitement n'&eacute;tait pas disponible. C'est g&eacute;n&eacute;ralement temporaire : r&eacute;essayez un peu plus tard.",
+            "btn": "&#x1F504; R&eacute;essayer",
+            "refund_voucher": f"Aucun d&eacute;bit : {amt} EUR ont &eacute;t&eacute; recr&eacute;dit&eacute;s sur le bon utilis&eacute; et sont disponibles imm&eacute;diatement.",
+            "refund_paypal": f"Aucun d&eacute;bit : vous recevrez dans un email s&eacute;par&eacute; un bon de remboursement de {amt} EUR (ou plus).",
+            "refund_none": "L'optimisation &eacute;tait gratuite : rien n'a &eacute;t&eacute; d&eacute;bit&eacute;.",
+            "footer": "Cet email a &eacute;t&eacute; g&eacute;n&eacute;r&eacute; automatiquement par Audiobook Maker.",
+        },
+        "es": {
+            "subject": f"Audiobook Maker — \"{book_title}\" la optimización de texto ha fallado",
+            "heading": "&#x26A0;&#xFE0F; La optimizaci&oacute;n de texto ha fallado",
+            "body": f"La optimizaci&oacute;n AI del texto de <strong>{book_title}</strong> no se ha podido completar: el servicio de procesamiento no estaba disponible. Suele ser algo temporal: vuelve a intentarlo dentro de un rato.",
+            "btn": "&#x1F504; Reintentar",
+            "refund_voucher": f"No se ha cobrado nada: {amt} EUR se han devuelto al cup&oacute;n que usaste y est&aacute;n disponibles de inmediato.",
+            "refund_paypal": f"No se ha cobrado nada: recibir&aacute;s en un email aparte un cup&oacute;n de reembolso de {amt} EUR (o m&aacute;s).",
+            "refund_none": "La optimizaci&oacute;n era gratuita: no se ha cobrado nada.",
+            "footer": "Este email fue generado autom&aacute;ticamente por Audiobook Maker.",
+        },
+        "de": {
+            "subject": f"Audiobook Maker — \"{book_title}\" Textoptimierung fehlgeschlagen",
+            "heading": "&#x26A0;&#xFE0F; Textoptimierung fehlgeschlagen",
+            "body": f"Die KI-Textoptimierung von <strong>{book_title}</strong> konnte nicht abgeschlossen werden: Der Verarbeitungsdienst war nicht erreichbar. Das ist meist vor&uuml;bergehend: Bitte versuche es sp&auml;ter erneut.",
+            "btn": "&#x1F504; Erneut versuchen",
+            "refund_voucher": f"Es wurde nichts berechnet: {amt} EUR wurden deinem verwendeten Gutschein wieder gutgeschrieben und sind sofort verf&uuml;gbar.",
+            "refund_paypal": f"Es wurde nichts berechnet: Du erh&auml;ltst in einer separaten E-Mail einen Erstattungsgutschein &uuml;ber {amt} EUR (oder mehr).",
+            "refund_none": "Die Optimierung war kostenlos: Es wurde nichts berechnet.",
+            "footer": "Diese E-Mail wurde automatisch von Audiobook Maker generiert.",
+        },
+        "pt": {
+            "subject": f"Audiobook Maker — \"{book_title}\" falha na otimização de texto",
+            "heading": "&#x26A0;&#xFE0F; Falha na otimiza&ccedil;&atilde;o de texto",
+            "body": f"A otimiza&ccedil;&atilde;o AI do texto de <strong>{book_title}</strong> n&atilde;o p&ocirc;de ser conclu&iacute;da: o servi&ccedil;o de processamento n&atilde;o estava dispon&iacute;vel. Normalmente &eacute; tempor&aacute;rio: tente novamente daqui a pouco.",
+            "btn": "&#x1F504; Tentar novamente",
+            "refund_voucher": f"Nada foi cobrado: {amt} EUR foram devolvidos ao voucher que voc&ecirc; usou e j&aacute; est&atilde;o dispon&iacute;veis.",
+            "refund_paypal": f"Nada foi cobrado: voc&ecirc; receber&aacute; em um e-mail separado um voucher de reembolso de {amt} EUR (ou mais).",
+            "refund_none": "A otimiza&ccedil;&atilde;o era gratuita: nada foi cobrado.",
+            "footer": "Este e-mail foi gerado automaticamente pelo Audiobook Maker.",
+        },
+        "zh": {
+            "subject": f"Audiobook Maker — \"{book_title}\" 文本优化失败",
+            "heading": "&#x26A0;&#xFE0F; 文本优化失败",
+            "body": f"<strong>{book_title}</strong> 的AI文本优化未能完成：处理服务暂时不可用。这通常是暂时性的问题，请稍后再试。",
+            "btn": "&#x1F504; 重试",
+            "refund_voucher": f"未产生任何费用：{amt} EUR 已退回您使用的优惠券，可立即使用。",
+            "refund_paypal": f"未产生任何费用：您将在另一封邮件中收到价值 {amt} EUR（或更多）的退款优惠券。",
+            "refund_none": "本次优化为免费：未产生任何费用。",
+            "footer": "此邮件由 Audiobook Maker 自动生成。",
+        },
+    }
+
+
+def _send_optimization_failed_email(job_id, job):
+    """Avvisa l'email registrata che l'ottimizzazione e' fallita, dopo il
+    rimborso. Senza questo avviso chi aveva chiesto la notifica aspettava
+    un'email che non sarebbe mai arrivata (ticket del 15/09/2026). Chiamarla
+    solo sui fallimenti, mai sugli annullamenti: chi annulla lo sa gia'."""
+    email = job.get("notify_email")
+    if not email or job.get("opt_fail_email_sent"):
+        return False
+    info = job.get("info")
+    book_title = getattr(info, "title", "") or "Audiobook"
+    lang = job.get("notify_lang", "en")
+    paid = float(job.get("payment_amount_eur", 0) or 0)
+    payment_type = job.get("payment_type", "")
+
+    texts = _opt_failed_email_texts(book_title, paid)
+    t = dict(texts.get(lang, texts["en"]))
+    if paid > 0 and job.get("refund_done") and payment_type == "voucher":
+        t["warn"] = t["refund_voucher"]
+    elif paid > 0 and job.get("refund_done") and payment_type == "paypal":
+        t["warn"] = t["refund_paypal"]
+    elif paid <= 0:
+        t["warn"] = t["refund_none"]
+    else:
+        # Pagato ma rimborso non riuscito: nessuna promessa in email, il caso
+        # e' nei log per l'intervento manuale.
+        t["warn"] = ""
+    retry_url = f"{BASE_URL}/" if BASE_URL else "/"
+    html_body = _email_html_body(t, retry_url)
+
+    try:
+        success = email_service._send_email(email, t["subject"], html_body)
+    except Exception as e:
+        print(f"[{job_id}] optimization-failed email error: {e}", flush=True)
+        success = False
+    if success:
+        job["opt_fail_email_sent"] = True
+    _log_activity(job_id, job.get("original_filename", ""),
+                  "OPT_FAIL_EMAIL_SENT" if success else "OPT_FAIL_EMAIL_FAILED",
+                  job.get("client_id", ""), job.get("client_ip", ""),
+                  "", job.get("browser_lang", ""))
+    return success
+
+
 # ---------------------------------------------------------------------------
 # Payment refund helper
 # ---------------------------------------------------------------------------
@@ -3079,6 +3295,11 @@ def run_optimization(job_id, selected_chapters=None):
         import traceback
         traceback.print_exc()
         _refund_job_payment(job_id, job, "error")
+        try:
+            _send_optimization_failed_email(job_id, job)
+        except Exception as _e_fail_mail:
+            print(f"[{job_id}] optimization-failed email (non-fatal): "
+                  f"{_e_fail_mail}", flush=True)
         _write_optimization_audit(
             job_id, job, language=lang, chars_total=total_chars,
             outcome="failed_refunded")
