@@ -3947,6 +3947,11 @@ def web_manifest():
 # Non indicizzato (gia` coperto da Disallow: /admin/ in robots.txt)
 
 
+# Eventi che segnano l'avvio effettivo del libro (mai le anteprime): con
+# voce PREMIUM sulla riga la sessione entra nel filtro "PREMIUM" del pannello.
+_PREMIUM_START_OPS = frozenset({"GENERATE", "OPTIMIZE"})
+
+
 def _parse_log_sessions(ym):
     """Parse log file for given YYYY-MM and return (sessions OrderedDict, client_session_count dict)."""
     from datetime import datetime
@@ -3981,6 +3986,16 @@ def _parse_log_sessions(ym):
             except ValueError:
                 continue
 
+            # Avvio reale del libro con voce PREMIUM: GENERATE, oppure
+            # OPTIMIZE del wizard combinato (ottimizza + auto-gen), che porta
+            # la voce di destinazione gia' in fase di ottimizzazione AI. Si
+            # guarda la voce della RIGA, non l'ultima vista sulla sessione:
+            # un'anteprima premium seguita da un OPTIMIZE senza voce non conta.
+            premium_started = (
+                operation in _PREMIUM_START_OPS
+                and (_is_gemini_voice(voice) or _is_speechify_voice(voice)
+                     or _is_voxcpm_voice(voice))
+            )
             if sid not in sessions:
                 sessions[sid] = {
                     "first_dt": dt, "last_dt": dt,
@@ -3990,9 +4005,12 @@ def _parse_log_sessions(ym):
                     "voice": voice, "browser_lang": browser_lang,
                     "platform": platform,
                     "transferred": operation == "TRANSFER",
+                    "premium_started": premium_started,
                 }
             else:
                 s = sessions[sid]
+                if premium_started:
+                    s["premium_started"] = True
                 if dt < s["first_dt"]:
                     s["first_dt"] = dt
                 if dt >= s["last_dt"]:
@@ -4378,17 +4396,11 @@ def admin_logs():
     gen_completed = sum(1 for s in sessions.values() if _session_completed(s))
     gen_in_progress = sum(1 for sid, s in sessions.items() if _session_in_progress(s, sid))
     gen_cancelled = total_sessions - gen_completed - gen_in_progress
-    # Sessioni che hanno realmente avviato la generazione del libro con voci
-    # PREMIUM (Gemini, Speechify/Simba o VoxCPM: stessa tasca di
-    # pagamento/rimborso) — esclude le anteprime: richiediamo GENERATE in events.
-    gemini_started = sum(
-        1 for s in sessions.values()
-        if "GENERATE" in s["events"] and (
-            _is_gemini_voice(s.get("voice", ""))
-            or _is_speechify_voice(s.get("voice", ""))
-            or _is_voxcpm_voice(s.get("voice", ""))
-        )
-    )
+    # Sessioni che hanno realmente avviato il libro con voci PREMIUM (Gemini,
+    # Speechify/Simba o VoxCPM: stessa tasca di pagamento/rimborso) — esclude
+    # le anteprime. Il flag e' calcolato in _parse_log_sessions su GENERATE o
+    # su OPTIMIZE con voce (wizard combinato, ancora in ottimizzazione AI).
+    gemini_started = sum(1 for s in sessions.values() if s.get("premium_started"))
     # Sessioni di traduzione: qualunque evento del flusso traduzione.
     _TR_OPS_STAT = {"TRANSLATE", "TR_COMPLETE", "TR_CANCEL", "TRANSLATE_ADOPT",
                     "DOWNLOAD_TRANSLATION", "TR_EMAIL_SENT", "TR_EMAIL_FAILED"}
@@ -4611,11 +4623,7 @@ def admin_logs():
                 card_cls = "card card-in-progress"
             else:
                 card_cls = "card"
-            is_gemini_run = (
-                "GENERATE" in s["events"]
-                and (_is_gemini_voice(voice_raw) or _is_speechify_voice(voice_raw)
-                     or _is_voxcpm_voice(voice_raw))
-            )
+            is_gemini_run = bool(s.get("premium_started"))
             session_platform = html_mod.escape(s.get("platform", "") or "")
             session_transferred = s.get("transferred", False)
             data_attrs = (
@@ -14562,8 +14570,12 @@ def api_optimize():
     )
     thread.start()
 
+    # Con auto_generate la voce di destinazione viaggia sull'evento OPTIMIZE:
+    # il pannello admin classifica la sessione PREMIUM da subito, senza
+    # aspettare il GENERATE scritto a fine ottimizzazione.
     _log_activity(job_id, job.get("original_filename", ""), "OPTIMIZE",
-                  client_id, job.get("client_ip", ""), "",
+                  client_id, job.get("client_ip", ""),
+                  job.get("opt_voice", "") if auto_generate else "",
                   browser_lang=job.get("browser_lang", ""))
 
     return jsonify({"status": "started", "batch": batch, "auto_generate": auto_generate})
