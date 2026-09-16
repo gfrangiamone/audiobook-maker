@@ -90,7 +90,19 @@ OUT = "Testo ottimizzato dopo il nuovo tentativo."
 def _setup(monkeypatch, factories, sleeps):
     client = _Client(factories)
     monkeypatch.setattr(ge, "_llm_client", client)
-    monkeypatch.setattr(ge.time, "sleep", lambda s: sleeps.append(s))
+    # `ge.time` e' il modulo `time`: la patch e' globale al processo. I thread
+    # di sfondo lasciati vivi da altri moduli di test (cleanup, sonde a 30/60 s)
+    # inondavano `sleeps` e li mandavano in busy-loop. Si registra solo il
+    # thread del test; gli altri dormono davvero.
+    mio = threading.get_ident()
+    dormi = ge.time.sleep
+
+    def _sleep(s):
+        if threading.get_ident() == mio:
+            sleeps.append(s)
+        else:
+            dormi(s)
+    monkeypatch.setattr(ge.time, "sleep", _sleep)
     monkeypatch.setattr(ge, "LLM_FIRST_EVENT_TIMEOUT_SEC", 0.2)
     monkeypatch.setattr(ge, "LLM_OVERLOAD_BACKOFF_SEC", 20.0)
     return client
