@@ -517,7 +517,14 @@ MAX_VOXCPM_TEXT_CHARS = int(os.environ.get("ABM_MAX_VOXCPM_TEXT_CHARS",
 # locale e nome nel catalogo di voci inventate). Difesa in profondita' contro
 # stored XSS nelle pagine admin e injection nel formato "#"-separato
 # dell'Activity Log.
-_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-/]{1,80}$")
+# Id voce ammessi: lettere e cifre di qualunque alfabeto (\w), segni
+# combinanti (forma NFD di "Chloé" mandata da qualche browser), ':' '.' '-'
+# '/' e lo spazio. L'id VoxCPM e' `voxcpm:v2:<locale>/<Nome>` e 27 voci del
+# catalogo portano il nome accentato (Chloé, Álvaro, João), 4 cinesi lo
+# portano con uno spazio (Peiyu 3): la vecchia classe ASCII le rifiutava con
+# "Invalid voice id." a generazione gia' avviata. Restano fuori < > " ' # e
+# a capo: e' la difesa anti-XSS sul log admin, non un vincolo di alfabeto.
+_VOICE_ID_RE = re.compile(r"^[\w\u0300-\u036f:.\-/ ]{1,80}$")
 # Mese del business log (activity_YYYY-MM.log): vincola il nome file
 # costruito dal parametro utente.
 _YM_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
