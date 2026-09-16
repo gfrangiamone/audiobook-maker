@@ -3993,6 +3993,12 @@ def _voxcpm_pre_pass(plan, voice, rate, work_dir, job_id, reusable,
                             for _riga in _dett:
                                 _riga = dict(_riga)
                                 _riga["capitolo"] = ci
+                                # Il primo chunk del capitolo nel piano: e'
+                                # la chiave con cui l'assemblaggio sa dove
+                                # comincia il suo PCM nel libro.
+                                _riga["testa"] = indici[0]
+                                _riga["titolo"] = str(
+                                    plan[indici[0]].get("chapter_title") or "")
                                 _acc_d.append(_riga)
                         # `setdefault`: un job aperto da una versione
                         # precedente ha un `voxcpm_actual` senza la chiave.
@@ -4747,6 +4753,38 @@ _CODE_TAGLIATE_LOCK = threading.Lock()
 _CODE_TAGLIATE_CAMPI = ("coda_attesa", "detto", "scoperti", "scoperti_grezzi",
                         "caduta", "silenzio_ms", "resa", "livello", "mozza",
                         "conclamato", "fioco", "numeri", "grafia", "sospetto")
+# I campi scritti dall'app, non dal worker: dove sta la coda nel libro, per
+# poterla ascoltare (vedi `_voxcpm_posiziona_code`).
+_CODE_TAGLIATE_POSIZIONE = ("titolo", "inizio_s", "posizione_s",
+                            "nel_capitolo_s")
+
+
+def _voxcpm_posiziona_code(job, inizi_ms):
+    """Dove sta nel libro ogni coda tagliata. Non fatale.
+
+    `inizi_ms` mappa il primo chunk di un capitolo alla coppia (inizio del
+    suo PCM nel libro, inizio del capitolo M4B), in millisecondi. Il capitolo
+    M4B comincia prima del PCM — c'e' il silenzio d'apertura — e l'admin il
+    capitolo lo apre dal lettore: gli servono entrambe le misure.
+
+    Aggiunge a ogni riga `posizione_s` (dall'inizio del libro) e
+    `nel_capitolo_s` (dall'inizio del capitolo). Le righe senza `inizio_s`
+    (worker che non manda `chunk_samples`) restano senza: meglio nessun
+    minuto che il minuto sbagliato.
+    """
+    try:
+        for r in ((job.get("voxcpm_actual") or {}).get(
+                "code_tagliate_dettaglio") or []):
+            coppia = inizi_ms.get(r.get("testa"))
+            if coppia is None or r.get("inizio_s") is None:
+                continue
+            pcm_ms, cap_ms = coppia
+            pos = pcm_ms / 1000.0 + float(r["inizio_s"])
+            r["posizione_s"] = round(pos, 1)
+            r["nel_capitolo_s"] = round(pos - cap_ms / 1000.0, 1)
+    except Exception as e:
+        print(f"voxcpm: posizione delle code tagliate non calcolata "
+              f"(non fatale): {e}")
 
 
 def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
@@ -4784,7 +4822,7 @@ def _write_voxcpm_tails_dataset(job_id, job, voice_id, language, outcome):
                    "language": language, "outcome": outcome,
                    "capitolo": -1 if _cap is None else int(_cap),
                    "chunk": -1 if _chk is None else int(_chk)}
-            for k in _CODE_TAGLIATE_CAMPI:
+            for k in _CODE_TAGLIATE_CAMPI + _CODE_TAGLIATE_POSIZIONE:
                 if k in r:
                     rec[k] = r[k]
             blocco.append(json.dumps(rec, ensure_ascii=False,
@@ -6442,6 +6480,17 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
             # all'interno di un capitolo, sia come primo chunk di un capitolo
             # nuovo senza silence_path: in questo caso l'ascoltatore sente
             # ~gap_ms di silenzio in testa al cap, che e` esteticamente OK).
+            #
+            # Dove comincia nel libro il PCM dei capitoli VoxCPM che hanno
+            # code tagliate: serve a dire all'admin da che minuto ascoltarle.
+            # Solo quei capitoli, non tutti: e' un indirizzo, non un indice.
+            _vox_inizi_ms = {}
+            _vox_teste_difettose = set()
+            if use_voxcpm:
+                for _r in ((job.get("voxcpm_actual") or {}).get(
+                        "code_tagliate_dettaglio") or []):
+                    if _r.get("testa") is not None:
+                        _vox_teste_difettose.add(_r["testa"])
             for i, block in enumerate(plan):
                 if _check_cancelled():
                     raise _CancelledError("Job cancelled")
@@ -6502,6 +6551,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
                     current_ms += gap_ms_inter
                     if m4b_chapters:
                         m4b_chapters[-1]["end"] += gap_ms_inter
+                if i in _vox_teste_difettose:
+                    _vox_inizi_ms[i] = (current_ms,
+                                        m4b_chapters[-1]["start"] if m4b_chapters else 0)
                 all_parts.append(part_path)
 
                 # Log sul primo chunk per confermare che il TTS sta procedendo
@@ -6526,6 +6578,9 @@ def run_generation(job_id, info, voice, rate, single_file, output_format='m4b', 
 
             if m4b_chapters:
                 m4b_chapters[-1]["end"] = current_ms
+
+            if _vox_inizi_ms:
+                _voxcpm_posiziona_code(job, _vox_inizi_ms)
 
             print(f"[{job_id}] All chunks processed: {total_chunks} total, {failed_chunks} failed")
             job["progress_message"] = "Merging audio..."

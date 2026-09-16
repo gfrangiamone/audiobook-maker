@@ -1006,3 +1006,20 @@ def test_invalidare_il_catalogo_svuota_la_cache_dei_campioni(tmp_path, monkeypat
 
     voxcpm_tts.clone_block(VOCE)
     assert letture["n"] == 2
+
+
+def test_la_coda_tagliata_sa_dove_comincia_nel_capitolo():
+    # I campioni dei chunk (48 kHz, dopo lo stretch) fissano l'inizio di
+    # ciascuno dentro il PCM del capitolo: e' il minuto da cui ascoltarla.
+    dett = voxcpm_tts._dettaglio_code_tagliate(
+        [2], {}, CHUNKS, campioni=[48000, 96000, 24000], sample_rate=48000)
+    assert dett[0]["inizio_s"] == 3.0
+
+
+def test_senza_campioni_coerenti_niente_minuto():
+    # Un conteggio che non torna coi chunk darebbe un minuto sbagliato.
+    dett = voxcpm_tts._dettaglio_code_tagliate(
+        [1], {}, CHUNKS, campioni=[48000, 96000], sample_rate=48000)
+    assert "inizio_s" not in dett[0]
+    dett = voxcpm_tts._dettaglio_code_tagliate([1], {}, CHUNKS)
+    assert "inizio_s" not in dett[0]

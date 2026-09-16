@@ -387,3 +387,36 @@ def test_senza_code_tagliate_il_dataset_non_nasce(audit_isolato):
     generation_engine._write_voxcpm_audit("job-9", job_con_fattura(), VOCE,
                                           "it", "completed")
     assert list(audit_isolato.glob("voxcpm_code_tagliate_*.jsonl")) == []
+
+
+def test_la_coda_tagliata_prende_il_minuto_nel_libro():
+    # Il capitolo M4B comincia 1,5 s prima del suo PCM (silenzio d'apertura):
+    # la posizione nel capitolo la conta, quella nel libro parte dal PCM.
+    job = {"voxcpm_actual": {"code_tagliate_dettaglio": [
+        {"capitolo": 3, "testa": 40, "chunk": 7, "inizio_s": 62.25},
+        {"capitolo": 4, "testa": 55, "chunk": 1},
+        {"capitolo": 9, "testa": 99, "chunk": 2, "inizio_s": 5.0},
+    ]}}
+    generation_engine._voxcpm_posiziona_code(job, {40: (600000, 598500),
+                                                   55: (900000, 899000)})
+    righe = job["voxcpm_actual"]["code_tagliate_dettaglio"]
+    assert righe[0]["posizione_s"] == pytest.approx(662.25, abs=0.06)
+    assert righe[0]["nel_capitolo_s"] == pytest.approx(63.8, abs=0.1)
+    assert "posizione_s" not in righe[1]
+    assert "posizione_s" not in righe[2]
+
+
+def test_il_minuto_finisce_nel_dataset_delle_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("ABM_DATA_DIR", str(tmp_path))
+    job = {"voxcpm_actual": {"code_tagliate_dettaglio": [
+        {"capitolo": 3, "testa": 40, "chunk": 7, "coda_attesa": "fine.",
+         "detto": "fi", "titolo": "Tre", "inizio_s": 62.25,
+         "posizione_s": 662.3, "nel_capitolo_s": 63.8}]}}
+    generation_engine._write_voxcpm_tails_dataset(
+        "j1", job, "voxcpm:v2:it-IT/Matteo", "it", "completed")
+    (fp,) = list(tmp_path.glob("voxcpm_code_tagliate_*.jsonl"))
+    rec = json.loads(fp.read_text(encoding="utf-8").strip())
+    assert rec["titolo"] == "Tre"
+    assert rec["posizione_s"] == 662.3
+    assert rec["nel_capitolo_s"] == 63.8
+    assert "testa" not in rec

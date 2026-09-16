@@ -1142,7 +1142,8 @@ _CODA_DIAGNOSI_MISURE = ("scoperti", "scoperti_grezzi", "caduta",
                          "sospetto")
 
 
-def _dettaglio_code_tagliate(indici, giudizi, testi):
+def _dettaglio_code_tagliate(indici, giudizi, testi, campioni=None,
+                             sample_rate=48000):
     """Una riga per chunk consegnato con la coda ancora tagliata.
 
     Il worker su questi chunk spende tutti i suoi giri e poi li consegna
@@ -1156,7 +1157,21 @@ def _dettaglio_code_tagliate(indici, giudizi, testi):
 
     Il giudizio manca se il worker e' di una versione precedente: resta la
     riga col solo indice e la coda attesa, che e' comunque piu' di zero.
+
+    `campioni` sono i `chunk_samples` del worker: con quelli la riga dice
+    anche dove comincia il chunk dentro il PCM del capitolo (`inizio_s`), che
+    e' il punto da cui ascoltarlo. Senza, la chiave non c'e': uno zero
+    manderebbe ad ascoltare l'inizio del capitolo.
     """
+    inizi = None
+    if isinstance(campioni, list) and len(campioni) == len(testi) and sample_rate:
+        try:
+            inizi, somma = [], 0
+            for n in campioni:
+                inizi.append(somma / float(sample_rate))
+                somma += int(n)
+        except (TypeError, ValueError):
+            inizi = None
     fuori = []
     for i in indici:
         try:
@@ -1167,6 +1182,8 @@ def _dettaglio_code_tagliate(indici, giudizi, testi):
         riga = {"chunk": idx,
                 "coda_attesa": testo[-_CODA_DIAGNOSI_CAR:],
                 "detto": ""}
+        if inizi is not None and 0 <= idx < len(inizi):
+            riga["inizio_s"] = round(inizi[idx], 2)
         # Le chiavi di `verify_details` sono stringhe (JSON), ma un worker
         # che passasse interi non deve far sparire la diagnosi.
         g = giudizi.get(str(idx))
@@ -1422,7 +1439,9 @@ def synthesize_chapter(chunks, voice_id, dest_path, *, key="", session=None,
                     ", ".join(str(i) for i in _tagliate[:10]))
                 stats["code_tagliate_dettaglio"] = _dettaglio_code_tagliate(
                     _tagliate, out.get("verify_details") or {},
-                    payload["input"]["chunks"])
+                    payload["input"]["chunks"],
+                    campioni=out.get("chunk_samples"),
+                    sample_rate=int(out.get("sample_rate") or 48000))
                 for _d in stats["code_tagliate_dettaglio"][
                         :_CODA_DIAGNOSI_LOG_MAX]:
                     _LOG.warning("coda tagliata: %s", _riga_coda_tagliata(_d))
