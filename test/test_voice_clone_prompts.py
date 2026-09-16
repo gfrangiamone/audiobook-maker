@@ -32,10 +32,15 @@ def test_prompt_for_testo_unico_ignora_il_genere():
     assert vcp.prompt_for("it", "f").startswith("Ogni mattina")
 
 
-def test_prompt_for_hindi_cambia_col_genere():
+def test_prompt_for_hindi_e_neutra_rispetto_al_genere():
+    """La frase hindi attuale e' costruita in dativo («mujhe ... acchha lagta
+    hai»): nessun verbo concorda col genere di chi parla, quindi una sola
+    versione va bene per tutti. Il meccanismo per genere resta pero' nel
+    modulo, perche' l'hindi lo chiede appena si usa un verbo coniugato: lo
+    copre test_text_by_gender_ripiega_su_text."""
     m, f = vcp.prompt_for("hi", "m"), vcp.prompt_for("hi", "f")
-    assert m != f
-    assert "खोलता" in m and "खोलती" in f
+    assert m == f
+    assert "टहलता" not in m and "टहलती" not in m
 
 
 def test_lingua_sconosciuta_o_genere_sconosciuto():
