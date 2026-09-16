@@ -9718,6 +9718,20 @@ _VC_PAGES_FALLBACK = {
     "delete_btn": "Delete my voice",
     "deleted_title": "Voice deleted",
     "deleted_body": "Your voice sample and its files have been deleted.",
+    "gone_title": "This voice is no longer available",
+    "gone_deleted": "The voice sample this link points to has been deleted, "
+                    "together with every file derived from it.",
+    "gone_expired": "The voice sample this link points to has expired and has "
+                    "been removed, together with every file derived from it.",
+    "gone_refunded": "The voice sample this link points to was rejected and "
+                     "refunded, and its files have been removed.",
+    "gone_generic": "This link no longer opens anything: the voice it pointed "
+                    "to does not exist any more, or the address is incomplete.",
+    "gone_refund": "If you had paid for it, you received a voucher for the "
+                   "amount spent by email.",
+    "gone_books": "Audiobooks already generated with that voice are not "
+                  "affected: they stay yours.",
+    "gone_home": "Back to Audiobook Maker",
 }
 
 
@@ -9772,6 +9786,37 @@ def _vc_rec_by_manage(token):
     return rec
 
 
+def _vc_gone(stato=""):
+    """Pagina di cortesia per i link dell'email che non aprono piu' nulla.
+
+    Quei link restano nella casella di posta per sempre, ma la voce a cui
+    puntano puo' essere stata cancellata (o scaduta, o rifiutata col
+    rimborso): un «Not Found» nudo del server sembra un guasto nostro e
+    lascia l'utente senza sapere ne' perche' ne' che fine hanno fatto i suoi
+    soldi. `stato` e' lo stato terminale del record quando lo conosciamo:
+    410 Gone con la spiegazione precisa; se il token e' ignoto resta 404 con
+    il testo generico (potrebbe essere anche un indirizzo copiato a meta').
+    """
+    lang = _vc_page_lang()
+    t = _vc_txt(lang)
+    motivo = t.get("gone_" + stato) if stato else None
+    righe = [motivo or t["gone_generic"]]
+    if motivo:
+        righe += [t["gone_refund"], t["gone_books"]]
+    body = "".join(f"<p>{html_mod.escape(p)}</p>" for p in righe)
+    body += f"<p><a href=\"/\">{html_mod.escape(t['gone_home'])}</a></p>"
+    return _vc_page(t["gone_title"], body, status=410 if motivo else 404, lang=lang)
+
+
+def _vc_manage_gone(token):
+    """`_vc_gone` per un link di gestione: rilegge il record ignorando il
+    filtro sugli stati terminali, cosi' la pagina puo' dire *perche'* quel
+    link non apre piu' nulla invece di un generico «non trovato»."""
+    rec = voice_clone.by_manage_token(token or "")
+    stato = str((rec or {}).get("state") or "")
+    return _vc_gone(stato if stato in voice_clone._TERMINAL else "")
+
+
 @app.route("/vc/<token>/resume", methods=["GET", "POST"])
 def vc_resume(token):
     # I4: GET non deve mutare nulla (link cliccato da un client mail/preview
@@ -9781,7 +9826,7 @@ def vc_resume(token):
         abort(404)
     rec = voice_clone.by_resume_token(token)
     if rec is None or rec.get("state") in voice_clone._TERMINAL:
-        abort(404)
+        return _vc_gone(str((rec or {}).get("state") or ""))
     lang = _vc_page_lang()
     t = _vc_txt(lang)
     if request.method == "GET":
@@ -9811,7 +9856,7 @@ def vc_devices(token):
         abort(404)
     rec = _vc_rec_by_manage(token)
     if rec is None:
-        abort(404)
+        return _vc_manage_gone(token)
     lang = _vc_page_lang()
     t = _vc_txt(lang)
     righe = ""
@@ -9842,7 +9887,7 @@ def vc_devices_revoke(token):
         abort(404)
     rec = _vc_rec_by_manage(token)
     if rec is None:
-        abort(404)
+        return _vc_manage_gone(token)
     key = (request.form.get("key") or request.form.get("cid") or "").strip()
     for d in rec.get("devices") or []:
         if d.get("via") != "creator" and (d.get("cid") == key or _vc_device_key(d.get("cid")) == key):
@@ -9862,7 +9907,7 @@ def vc_delete(token):
         abort(404)
     rec = _vc_rec_by_manage(token)
     if rec is None:
-        abort(404)
+        return _vc_manage_gone(token)
     lang = _vc_page_lang()
     t = _vc_txt(lang)
     if request.method == "GET":
@@ -9872,7 +9917,7 @@ def vc_delete(token):
         return _vc_page(t["delete_title"], body, lang=lang)
     out = voice_clone.delete_by_owner(token)
     if out is None:
-        abort(404)
+        return _vc_manage_gone(token)
     _vc_log(out, "VOICE_CLONE_DELETED")
     return _vc_page(t["deleted_title"], f"<p>{html_mod.escape(t['deleted_body'])}</p>", lang=lang)
 

@@ -21,7 +21,15 @@
     "delete_p2": "If you have not approved the voice yet and want a refund, reject it from the app instead.",
     "delete_btn": "Delete my voice",
     "deleted_title": "Voice deleted",
-    "deleted_body": "Your voice sample and its files have been deleted."
+    "deleted_body": "Your voice sample and its files have been deleted.",
+    "gone_title": "This voice is no longer available",
+    "gone_deleted": "The voice sample this link points to has been deleted, together with every file derived from it.",
+    "gone_expired": "The voice sample this link points to has expired and has been removed, together with every file derived from it.",
+    "gone_refunded": "The voice sample this link points to was rejected and refunded, and its files have been removed.",
+    "gone_generic": "This link no longer opens anything: the voice it pointed to does not exist any more, or the address is incomplete.",
+    "gone_refund": "If you had paid for it, you received a voucher for the amount spent by email.",
+    "gone_books": "Audiobooks already generated with that voice are not affected: they stay yours.",
+    "gone_home": "Back to Audiobook Maker"
   },
   "it": {
     "brand": "Audiobook Maker",
@@ -45,7 +53,15 @@
     "delete_p2": "Se non hai ancora approvato la voce e vuoi il rimborso, rifiutala dall'app invece di cancellarla.",
     "delete_btn": "Cancella la mia voce",
     "deleted_title": "Voce cancellata",
-    "deleted_body": "Il tuo campione vocale e i suoi file sono stati cancellati."
+    "deleted_body": "Il tuo campione vocale e i suoi file sono stati cancellati.",
+    "gone_title": "Questa voce non è più disponibile",
+    "gone_deleted": "Il campione vocale a cui punta questo link è stato cancellato, insieme a tutti i file che ne derivavano.",
+    "gone_expired": "Il campione vocale a cui punta questo link è scaduto ed è stato rimosso, insieme a tutti i file che ne derivavano.",
+    "gone_refunded": "Il campione vocale a cui punta questo link è stato rifiutato e rimborsato, e i suoi file sono stati rimossi.",
+    "gone_generic": "Questo link non apre più nulla: la voce a cui puntava non esiste più, oppure l'indirizzo è incompleto.",
+    "gone_refund": "Se avevi pagato, hai ricevuto via email un voucher del valore speso.",
+    "gone_books": "Gli audiolibri già generati con quella voce non sono toccati: restano tuoi.",
+    "gone_home": "Torna ad Audiobook Maker"
   },
   "fr": {
     "brand": "Audiobook Maker",
@@ -69,7 +85,15 @@
     "delete_p2": "Si tu n'as pas encore approuvé la voix et que tu veux un remboursement, refuse-la depuis l'application au lieu de la supprimer.",
     "delete_btn": "Supprimer ma voix",
     "deleted_title": "Voix supprimée",
-    "deleted_body": "Ton échantillon vocal et ses fichiers ont été supprimés."
+    "deleted_body": "Ton échantillon vocal et ses fichiers ont été supprimés.",
+    "gone_title": "Cette voix n'est plus disponible",
+    "gone_deleted": "L'échantillon vocal auquel renvoie ce lien a été supprimé, ainsi que tous les fichiers qui en découlaient.",
+    "gone_expired": "L'échantillon vocal auquel renvoie ce lien a expiré et a été supprimé, ainsi que tous les fichiers qui en découlaient.",
+    "gone_refunded": "L'échantillon vocal auquel renvoie ce lien a été refusé et remboursé, et ses fichiers ont été supprimés.",
+    "gone_generic": "Ce lien n'ouvre plus rien : la voix vers laquelle il pointait n'existe plus, ou l'adresse est incomplète.",
+    "gone_refund": "Si vous aviez payé, vous avez reçu par e-mail un bon correspondant au montant dépensé.",
+    "gone_books": "Les livres audio déjà générés avec cette voix ne sont pas affectés : ils restent les vôtres.",
+    "gone_home": "Retour à Audiobook Maker"
   },
   "es": {
     "brand": "Audiobook Maker",
@@ -93,7 +117,15 @@
     "delete_p2": "Si todavía no has aprobado la voz y quieres el reembolso, recházala desde la aplicación en lugar de eliminarla.",
     "delete_btn": "Eliminar mi voz",
     "deleted_title": "Voz eliminada",
-    "deleted_body": "Tu muestra de voz y sus archivos han sido eliminados."
+    "deleted_body": "Tu muestra de voz y sus archivos han sido eliminados.",
+    "gone_title": "Esta voz ya no está disponible",
+    "gone_deleted": "La muestra de voz a la que apunta este enlace se ha eliminado, junto con todos los archivos derivados de ella.",
+    "gone_expired": "La muestra de voz a la que apunta este enlace ha caducado y se ha eliminado, junto con todos los archivos derivados de ella.",
+    "gone_refunded": "La muestra de voz a la que apunta este enlace fue rechazada y reembolsada, y sus archivos se han eliminado.",
+    "gone_generic": "Este enlace ya no abre nada: la voz a la que apuntaba ya no existe, o la dirección está incompleta.",
+    "gone_refund": "Si habías pagado, has recibido por correo electrónico un vale por el importe gastado.",
+    "gone_books": "Los audiolibros ya generados con esa voz no se ven afectados: siguen siendo tuyos.",
+    "gone_home": "Volver a Audiobook Maker"
   },
   "de": {
     "brand": "Audiobook Maker",
@@ -117,7 +149,15 @@
     "delete_p2": "Wenn du die Stimme noch nicht freigegeben hast und eine Rückerstattung willst, lehne sie in der App ab, statt sie zu löschen.",
     "delete_btn": "Meine Stimme löschen",
     "deleted_title": "Stimme gelöscht",
-    "deleted_body": "Deine Sprachprobe und ihre Dateien wurden gelöscht."
+    "deleted_body": "Deine Sprachprobe und ihre Dateien wurden gelöscht.",
+    "gone_title": "Diese Stimme ist nicht mehr verfügbar",
+    "gone_deleted": "Die Stimmprobe, auf die dieser Link verweist, wurde gelöscht – zusammen mit allen daraus erzeugten Dateien.",
+    "gone_expired": "Die Stimmprobe, auf die dieser Link verweist, ist abgelaufen und wurde entfernt – zusammen mit allen daraus erzeugten Dateien.",
+    "gone_refunded": "Die Stimmprobe, auf die dieser Link verweist, wurde abgelehnt und erstattet; ihre Dateien wurden entfernt.",
+    "gone_generic": "Dieser Link öffnet nichts mehr: Die Stimme, auf die er verwies, existiert nicht mehr, oder die Adresse ist unvollständig.",
+    "gone_refund": "Falls du bezahlt hast, hast du per E-Mail einen Gutschein über den gezahlten Betrag erhalten.",
+    "gone_books": "Bereits mit dieser Stimme erzeugte Hörbücher sind nicht betroffen: Sie bleiben dir erhalten.",
+    "gone_home": "Zurück zu Audiobook Maker"
   },
   "zh": {
     "brand": "Audiobook Maker",
@@ -141,7 +181,15 @@
     "delete_p2": "如果你还没有确认这个声音并且想要退款，请在应用中拒绝它，而不是删除。",
     "delete_btn": "删除我的声音",
     "deleted_title": "声音已删除",
-    "deleted_body": "你的声音样本及其文件已被删除。"
+    "deleted_body": "你的声音样本及其文件已被删除。",
+    "gone_title": "该声音已不再可用",
+    "gone_deleted": "此链接指向的语音样本已被删除，由它生成的所有文件也一并删除。",
+    "gone_expired": "此链接指向的语音样本已过期并被移除，由它生成的所有文件也一并删除。",
+    "gone_refunded": "此链接指向的语音样本已被拒绝并退款，相关文件已被移除。",
+    "gone_generic": "此链接已无法打开任何内容：它指向的声音不再存在，或者网址不完整。",
+    "gone_refund": "如果你已付款，我们已通过电子邮件向你发送等额的代金券。",
+    "gone_books": "已经用该声音生成的有声书不受影响，仍然属于你。",
+    "gone_home": "返回 Audiobook Maker"
   },
   "hi": {
     "brand": "Audiobook Maker",
@@ -165,6 +213,14 @@
     "delete_p2": "अगर आपने आवाज़ अभी स्वीकार नहीं की है और पैसे वापस चाहते हैं, तो उसे मिटाने के बजाय ऐप में अस्वीकार करें।",
     "delete_btn": "मेरी आवाज़ मिटाएँ",
     "deleted_title": "आवाज़ मिटा दी गई",
-    "deleted_body": "आपका आवाज़ नमूना और उसकी फ़ाइलें मिटा दी गई हैं।"
+    "deleted_body": "आपका आवाज़ नमूना और उसकी फ़ाइलें मिटा दी गई हैं।",
+    "gone_title": "यह आवाज़ अब उपलब्ध नहीं है",
+    "gone_deleted": "इस लिंक से जुड़ा आवाज़ का नमूना हटा दिया गया है, और उससे बनी सभी फ़ाइलें भी।",
+    "gone_expired": "इस लिंक से जुड़ा आवाज़ का नमूना समाप्त हो चुका है और हटा दिया गया है, उससे बनी सभी फ़ाइलों के साथ।",
+    "gone_refunded": "इस लिंक से जुड़ा आवाज़ का नमूना अस्वीकार कर दिया गया था और उसका पैसा लौटा दिया गया; उसकी फ़ाइलें हटा दी गई हैं।",
+    "gone_generic": "यह लिंक अब कुछ नहीं खोलता: जिस आवाज़ की ओर यह इशारा करता था वह अब मौजूद नहीं है, या पता अधूरा है।",
+    "gone_refund": "अगर आपने भुगतान किया था, तो खर्च की गई राशि का वाउचर आपको ईमेल से मिल चुका है।",
+    "gone_books": "उस आवाज़ से पहले बनाई गई ऑडियोबुक पर कोई असर नहीं पड़ता: वे आपकी ही रहती हैं।",
+    "gone_home": "Audiobook Maker पर वापस जाएँ"
   }
 }

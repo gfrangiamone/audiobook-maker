@@ -493,7 +493,32 @@ def test_pagine_vc(client, tmp_path):
     r = client.post(f"/vc/{rec['manage_token']}/delete")
     assert r.status_code == 200 and vc.get(rec["id"])["state"] == "deleted"
     assert not os.path.isdir(vc.voice_dir(rec["token"]))
-    assert client.get(f"/vc/{rec['manage_token']}/devices").status_code == 404
+    # dopo la cancellazione i link dell'email restano nella casella per
+    # sempre: 410 Gone con la spiegazione, non un «Not Found» nudo.
+    assert client.get(f"/vc/{rec['manage_token']}/devices").status_code == 410
+
+
+def test_i_link_email_di_una_voce_cancellata_spiegano_perche(client, tmp_path):
+    """Un link dell'email vive nella posta per sempre: quando la voce non c'e'
+    piu' deve atterrare su una pagina col marchio che dice cos'e' successo e
+    che fine hanno fatto i soldi, non sull'errore nudo del server."""
+    rec = _paid(tmp_path)
+    tok, resume = rec["manage_token"], rec["resume_token"]["value"]
+    client.post(f"/vc/{tok}/delete")
+    for url in (f"/vc/{tok}/devices", f"/vc/{tok}/delete", f"/vc/{resume}/resume"):
+        r = client.get(url, headers={"Accept-Language": "it"})
+        corpo = r.data.decode("utf-8")
+        assert r.status_code == 410, url
+        assert "non &#232; pi&#249; disponibile" in corpo or "non è più disponibile" in corpo
+        assert "<svg" in corpo and 'class="brand" href="/"' in corpo
+        assert "voucher" in corpo and "audiolibri" in corpo.lower()
+    # anche la revoca (POST) non deve finire su una pagina d'errore nuda
+    r = client.post(f"/vc/{tok}/devices/revoke", data={"key": "x"})
+    assert r.status_code == 410 and b"<svg" in r.data
+    # token mai esistito: resta 404 (puo' essere un indirizzo copiato a meta')
+    # ma con la stessa pagina, non col «Not Found» del server.
+    r = client.get("/vc/nope/devices", headers={"Accept-Language": "it"})
+    assert r.status_code == 404 and b"<svg" in r.data and "non apre" in r.data.decode("utf-8")
 
 
 def test_le_pagine_dei_link_email_seguono_la_lingua_del_browser(client, tmp_path):
