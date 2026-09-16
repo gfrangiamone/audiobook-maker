@@ -64,10 +64,21 @@ def test_fondo_rumoroso():
 
 def test_pausa_interna_lunga():
     x = _parlato(seconds=21.0)
-    x[int(6.0 * SR):int(7.6 * SR)] = 0.0          # buco da 1,6 s
+    x[int(6.0 * SR):int(8.6 * SR)] = 0.0          # buco da 2,6 s: interruzione vera
     mt = vca.apply_gate(vca.measure(x, SR), SR)
     assert "vc_gate_pauses" in mt.reasons
-    assert mt.longest_gap > 1.0
+    assert mt.longest_gap > vca.Gate().max_gap
+
+
+def test_la_pausa_di_fine_frase_non_e_un_difetto():
+    """Le frasi guidate sono tre: chi legge con calma stacca circa un secondo
+    a ogni punto. Con la vecchia soglia a 1,0 s una lettura ottima (misurata:
+    pause di 1,06 e 1,01 s sui due punti) veniva scartata per «troppe pause»."""
+    x = _parlato(seconds=21.0)
+    x[int(6.0 * SR):int(7.1 * SR)] = 0.0          # respiro di fine frase: 1,1 s
+    mt = vca.apply_gate(vca.measure(x, SR), SR)
+    assert mt.longest_gap > 1.0                    # la pausa c'e' ed e' misurata
+    assert "vc_gate_pauses" not in mt.reasons      # ma non e' un motivo di scarto
 
 
 def test_poco_parlato():

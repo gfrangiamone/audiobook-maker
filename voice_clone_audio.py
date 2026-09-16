@@ -245,7 +245,15 @@ class Gate:
     # file ricompressi a bitrate basso.
     min_bandwidth_ratio: float = 0.60   # rispetto a Nyquist
     max_clip_runs: int = 4
-    max_gap: float = 1.0
+    # Pausa singola piu' lunga tollerata. A 1,0 s (valore del worker, pensato
+    # per una frase sola) il gate scartava letture perfette: le frasi guidate
+    # sono tre, con due punti fermi e una domanda, e chi legge con calma stacca
+    # ~1 s a ogni punto. Misura su una registrazione vera bocciata a torto
+    # (SNR 63 dB, parlato 75%, banda 7500 Hz): pause di 1,06 e 1,01 s proprio
+    # sui due punti. Il VAD per giunta allunga il buco misurato, perche' taglia
+    # la coda smorzata della frase. A 1,8 s le pause di frase passano e restano
+    # fuori le interruzioni vere («mi fermo, ricomincio»), che stanno sopra i 2 s.
+    max_gap: float = 1.8
 
 
 def _env_float(name, default):
@@ -259,7 +267,8 @@ def _env_float(name, default):
 def gate_from_env():
     return Gate(min_sec=_env_float("ABM_VOICE_CLONE_MIN_SEC", 18.0),
                 max_sec=_env_float("ABM_VOICE_CLONE_MAX_SEC", 26.0),
-                min_bandwidth_ratio=_env_float("ABM_VOICE_CLONE_MIN_BAND_RATIO", 0.60))
+                min_bandwidth_ratio=_env_float("ABM_VOICE_CLONE_MIN_BAND_RATIO", 0.60),
+                max_gap=_env_float("ABM_VOICE_CLONE_MAX_GAP", 1.8))
 
 
 def apply_gate(mt, sr, g=None):
