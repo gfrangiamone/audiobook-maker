@@ -83,10 +83,53 @@
     return 'webm';
   }
 
+  /* MediaRecorder scrive WebM «in diretta»: nell'header manca l'elemento
+     Duration, quindi il lettore apre la registrazione con duration Infinity
+     (verificato: un WebM senza Duration da' duration=Infinity e seekable
+     fino a Infinity, uno normale da' 19.008). I controlli nativi con durata
+     infinita mostrano la barra gia' a fondo corsa: Chrome scopre la durata
+     vera solo leggendo il file fino in fondo, cosa che fa durante il play, e
+     lascia il cursore alla fine — l'ascolto pero' procede regolare.
+     Il rimedio e' anticipare quella lettura: una cercata oltre la fine a
+     lettore fermo costringe il parser ad arrivare in fondo e a pubblicare la
+     durata vera; appena e' nota si torna a zero. Sui file caricati dall'utente
+     (wav/mp3, durata gia' nell'header) non si tocca niente.
+     Restituisce la funzione che stacca i listener, per il cambio di sorgente. */
+  function vcFixDurata(el) {
+    if (!el || typeof el.addEventListener !== 'function') return function () {};
+    var staccato = false;
+    function stacca() {
+      if (staccato) return;
+      staccato = true;
+      el.removeEventListener('loadedmetadata', onMeta);
+      el.removeEventListener('durationchange', onDurata);
+    }
+    function nota() { return isFinite(el.duration) && el.duration > 0; }
+    function onDurata() {
+      /* Il primo durationchange porta ancora Infinity: si aspetta quello
+         buono, altrimenti si staccherebbe tutto prima della cercata. */
+      if (!nota()) return;
+      stacca();
+      /* La cercata lascia il cursore in fondo: senza questo ritorno a zero la
+         barra resterebbe al 100%, che e' proprio il difetto da togliere. */
+      if (el.paused) { try { el.currentTime = 0; } catch (e) {} }
+    }
+    function onMeta() {
+      if (nota()) { stacca(); return; }
+      /* Solo a lettore fermo: a riproduzione avviata la cercata salterebbe
+         alla fine e troncherebbe l'ascolto. */
+      if (!el.paused) return;
+      try { el.currentTime = 1e101; } catch (e) { stacca(); }
+    }
+    el.addEventListener('loadedmetadata', onMeta);
+    el.addEventListener('durationchange', onDurata);
+    return stacca;
+  }
+
   var VcCore = {
     vcPanelFor: vcPanelFor, vcGateKey: vcGateKey, vcGateKeys: vcGateKeys, vcPending: vcPending,
     vcHasReadyFor: vcHasReadyFor, vcButtonKey: vcButtonKey, vcVisible: vcVisible,
-    vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt,
+    vcUploadCheck: vcUploadCheck, vcRecordExt: vcRecordExt, vcFixDurata: vcFixDurata,
     ACCEPTED_EXT: ACCEPTED_EXT,
   };
 
@@ -97,7 +140,7 @@
   if (typeof window === 'undefined') return;
   window.VcCore = VcCore;
 
-  var S = {cfg: null, mine: [], cur: null, media: null, es: null};
+  var S = {cfg: null, mine: [], cur: null, media: null, es: null, localUrl: null, localFix: null};
   window._vcState = S;
   window._vcJustCreated = null;
 
@@ -130,12 +173,19 @@
      campione del server nasce solo se il controllo passa. L'URL precedente va
      revocato o ogni tentativo si lascia dietro un blob in memoria. */
   function vcSetLocalAudio(blob) {
+    if (S.localFix) { S.localFix(); S.localFix = null; }
     if (S.localUrl) { try { URL.revokeObjectURL(S.localUrl); } catch (e) {} S.localUrl = null; }
     var a = $('vcLocalAudio'); var blk = $('vcLocalBlock');
     if (!a || !blk) return;
     try { a.pause(); } catch (e) {}
     if (!blob) { a.removeAttribute('src'); blk.hidden = true; return; }
     S.localUrl = URL.createObjectURL(blob);
+    /* Nel markup il lettore e' preload="none": senza chiedere i metadati
+       subito, la durata della registrazione verrebbe risolta solo al play e
+       vcFixDurata non farebbe in tempo a rimettere la barra a zero. Il blob
+       e' gia' in memoria, leggerlo non costa banda. */
+    a.preload = 'metadata';
+    S.localFix = vcFixDurata(a);
     a.src = S.localUrl; blk.hidden = false;
   }
 

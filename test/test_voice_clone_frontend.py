@@ -927,3 +927,18 @@ def test_nome_della_voce_scelto_al_campionamento():
     form = _estrai_funzione(VC, "vcRenameForm")
     assert "/rename'" in form and "vcReloadCombo()" in form
     assert "o.textContent=(v.name||(v.owner?t('vc_voice_own'):t('vc_voice_shared')))" in JS
+
+
+def test_riascolto_locale_corregge_la_durata_del_webm():
+    """MediaRecorder scrive WebM senza Duration: il lettore parte con
+    duration Infinity e la barra sembra gia' a fine corsa appena si preme
+    play. Senza questo cablaggio la correzione sarebbe codice morto."""
+    corpo = _estrai_funzione(VC, "vcSetLocalAudio")
+    assert "vcFixDurata(" in corpo, "il lettore locale deve montare la correzione della durata"
+    assert "preload = 'metadata'" in corpo, "con preload=none la durata si risolverebbe solo al play"
+    assert "S.localFix" in corpo, "al cambio sorgente i listener vanno staccati"
+
+
+def test_richiesta_email_in_evidenza():
+    assert '<p class="vc-intro" data-t="vc_p3_intro"></p>' in HTML
+    assert re.search(r"(?m)^\.vc-intro\{[^}]*font-weight:\s*600", CSS)

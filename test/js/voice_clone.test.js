@@ -135,3 +135,65 @@ test('vcHasReadyFor: una voce pronta nella lingua', () => {
   assert.equal(VcCore.vcHasReadyFor(mine, 'it'), true);
   assert.equal(VcCore.vcHasReadyFor(mine, 'en'), false);
 });
+
+/* ---------- durata dei WebM registrati ---------- */
+
+/* Finto <audio>: tiene i listener e permette di far scattare gli eventi a
+   mano, nell'ordine in cui li manda il browser. */
+function fintoAudio(durataIniziale) {
+  return {
+    duration: durataIniziale, currentTime: 0, paused: true, _l: {},
+    addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); },
+    removeEventListener(t, f) {
+      const a = this._l[t] || []; const i = a.indexOf(f); if (i >= 0) a.splice(i, 1);
+    },
+    scatta(t) { (this._l[t] || []).slice().forEach(f => f()); },
+    listener() { return Object.keys(this._l).reduce((n, t) => n + this._l[t].length, 0); },
+  };
+}
+
+test('vcFixDurata: registrazione a durata ignota -> cercata in fondo e ritorno a zero', () => {
+  const a = fintoAudio(Infinity);
+  VcCore.vcFixDurata(a);
+  a.scatta('durationchange');            // Infinity: non e' ancora la durata vera
+  a.scatta('loadedmetadata');
+  assert.equal(a.currentTime, 1e101, 'senza la cercata il parser non legge fino in fondo');
+  // il parser arriva in fondo: durata vera, ma il cursore e' rimasto alla fine
+  a.duration = 19.001; a.currentTime = 19.001;
+  a.scatta('durationchange');
+  assert.equal(a.currentTime, 0, 'la barra deve tornare a inizio, non restare al 100%');
+  assert.equal(a.listener(), 0, 'a durata nota i listener vanno staccati');
+});
+
+test('vcFixDurata: file con durata gia nell header -> non si tocca niente', () => {
+  const a = fintoAudio(12.5);
+  VcCore.vcFixDurata(a);
+  a.scatta('loadedmetadata');
+  assert.equal(a.currentTime, 0);
+  assert.equal(a.listener(), 0);
+});
+
+test('vcFixDurata: a lettore avviato nessuna cercata (spezzerebbe l ascolto)', () => {
+  const a = fintoAudio(Infinity);
+  a.paused = false;
+  VcCore.vcFixDurata(a);
+  a.scatta('loadedmetadata');
+  assert.equal(a.currentTime, 0);
+  a.duration = 19.001; a.currentTime = 4;
+  a.scatta('durationchange');
+  assert.equal(a.currentTime, 4, 'non si riporta a zero chi sta ascoltando');
+});
+
+test('vcFixDurata: lo stacco restituito ripulisce al cambio di sorgente', () => {
+  const a = fintoAudio(Infinity);
+  const stacca = VcCore.vcFixDurata(a);
+  stacca();
+  assert.equal(a.listener(), 0);
+  a.scatta('loadedmetadata');
+  assert.equal(a.currentTime, 0, 'staccato non deve piu' + ' cercare');
+});
+
+test('vcFixDurata: elemento assente non fa esplodere il chiamante', () => {
+  assert.equal(typeof VcCore.vcFixDurata(null), 'function');
+  VcCore.vcFixDurata(null)();
+});

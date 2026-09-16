@@ -1381,6 +1381,11 @@ a:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:2px
    (display:block, testo maiuscolo) con dentro l'input inline a larghezza di
    default del browser: etichette e campi finivano di larghezze diverse e
    disallineati. Qui l'etichetta sta sopra e il campo occupa la riga. */
+/* La richiesta dell'email va vista: e' l'unico passo del pannello in cui
+   l'utente deve scrivere qualcosa, e in mezzo a bottoni e avvisi passava
+   inosservata. Il grassetto sta qui e non nella stringa: vale per tutte le
+   lingue (data-t scrive testo, non markup). */
+.vc-intro{font-weight:600}
 .vc-form{display:grid;gap:.7rem;margin:.8rem 0}
 .vc-fld{display:block;margin:0}
 .vc-fld input,.vc-fld select{width:100%;box-sizing:border-box}
