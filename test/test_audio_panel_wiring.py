@@ -348,6 +348,27 @@ def test_apply_book_language_riversa_la_voce_premium():
     )
 
 
+def test_la_nota_nomina_la_voce_premium_del_select():
+    """15/09/2026: libro inglese, VOXCPM2, accento americano. La nota diceva
+    «Voce impostata su Aarti (IN)» e il select mostrava Ashley (US): la
+    cascata non conosce l'accento premium e sceglie la prima voce del
+    catalogo, che il rebuild filtrato su en-US scarta. Il cambiamento della
+    voce premium va riscritto dal valore reale del select PRIMA della nota."""
+    piatto = _codice(_corpo("applyBookLanguage"))
+    m = re.search(r"(?:const|let|var)(\w+)=vp\?vp\.value:'';", piatto)
+    assert m, "applyBookLanguage non rilegge piu' la voce premium dal select"
+    vista = m.group(1)
+    nota = piatto.index("_showCascadeNote(")
+    assert m.start() < nota, "la voce del select viene riletta dopo la nota"
+    blocco = piatto[m.end():nota]
+    assert "c.dove==='premium'" in blocco and "esito.changes=" in blocco, (
+        "il cambiamento calcolato dalla cascata non viene scartato: la nota "
+        "nominerebbe una voce che il select non mostra"
+    )
+    assert "to:" + vista in blocco, \
+        "il cambiamento riscritto non annuncia la voce del select"
+
+
 # ── I1: la cascata non calpesta manutenzione e istanza non configurata ──
 
 def test_il_tab_premium_non_viene_disabilitato_in_manutenzione():

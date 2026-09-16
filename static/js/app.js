@@ -960,6 +960,7 @@ function applyBookLanguage(){
   if(!bookLangState.code)return;
   const linguaCambiata=(_linguaAnnunciata!==bookLangState.code);
   _linguaAnnunciata=bookLangState.code;
+  const vocePrimaPrem=document.getElementById('vvPremium')?.value||'';
   const esito=resolveAudioSelection({
     lang:bookLangState.code,
     catalog:voices,
@@ -969,7 +970,7 @@ function applyBookLanguage(){
       standardVoice:document.getElementById('vv')?.value||'',
       model:document.getElementById('vmPremium')?.value||'',
       premiumAccent:document.getElementById('geminiAccent')?.value||'',
-      premiumVoice:document.getElementById('vvPremium')?.value||''
+      premiumVoice:vocePrimaPrem
     }
   });
 
@@ -1064,6 +1065,20 @@ function applyBookLanguage(){
     if(vp&&vocePrem&&Array.prototype.some.call(vp.options,o=>o.value===vocePrem)){
       vp.value=vocePrem;
       _allineaMemoriaVocePremium(vocePrem);
+    }
+    /* La cascata sceglie la voce premium senza conoscere l'accento premium
+       (CONFINE in testa ad audio_cascade.js): per un libro inglese prende la
+       prima voce del catalogo, en-IN, mentre il rebuild filtra su en-US e il
+       select resta su un'altra voce. La nota deve nominare la voce che
+       l'utente ha davanti, non quella calcolata e scartata: si riscrive il
+       cambiamento a partire dal valore reale del select. */
+    const voceVista=vp?vp.value:'';
+    if(vp&&voceVista!==vocePrem){
+      esito.changes=esito.changes.filter(c=>!(c.what==='voice'&&c.dove==='premium'));
+      if(vocePrimaPrem&&voceVista&&voceVista!==vocePrimaPrem){
+        esito.changes.push({what:'voice',from:vocePrimaPrem,to:voceVista,
+                            reason:'voice_unavailable_in_accent',dove:'premium'});
+      }
     }
   }
 
