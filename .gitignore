@@ -26,6 +26,8 @@ venv/
 node_modules/
 backup/
 public/
+voxcpm2/
+data/
 out/
 
 
